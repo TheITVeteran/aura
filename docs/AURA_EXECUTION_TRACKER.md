@@ -33430,3 +33430,34 @@ least 75% child contract completion, two optimizer-reachable cells, and two
 wrong-to-right transitions. No reasoning-gain, frontier, promotion, release,
 or `WOW Signal` claim is made. This is total checkpoint 761. The 761-920
 completion envelope is approximately 82.7%-100.0%, with a 91.4% midpoint.
+
+### 2026-07-31 - CP420S31 exact-budget causal canary preregistration
+
+CP420S31 is frozen from clean pushed CP761 source with training seed
+`2026073103`. Its immutable semantic contract SHA-256 is
+`05555ccde30a131e4a755f8fbb790311fb129967ca5e0a04613e19d8446eb576`;
+the serialized contract file SHA-256 is
+`54cd108b1d47dac07156c50793478f2bc1d8fe1e703e3e354b98d396b0e6b7fc`.
+Independent validation verifies the resident 32B checkpoint and tokenizer
+behavior bundle, every CP761 executable source binding, exact 512-token causal
+and answer-channel budget, v4 observable causal receipt, depth-two recurrent
+graph, v3 mixed-transition optimizer rule, checkpoint and process-rotation
+policy, watchdog limits, and the nonpromotable claim boundary.
+
+The S31 split contains twelve `register_trace` depth-two training tasks and one
+holdout. Reconstructing S28 through S31 from their frozen seeds found zero
+S28/S31, S29/S31, and S30/S31 task-ID overlap; zero prompt overlap for the same
+three comparisons; and zero S31 train/holdout ID overlap. No prior canary's
+observed task, answer, or transition is reused as S31 training evidence.
+
+No resident model process ran in this checkpoint. The next required sequence
+is the detached initial-policy probe, exact-budget answer-channel preflight,
+fresh v4 causal-learnability preflight, and independent receipt reconstruction.
+Training remains blocked unless the v4 receipt proves at least 75% complete
+child answer contracts, two optimizer-reachable cells, and two wrong-to-right
+transitions. Fresh signer custody, launch materialization, PID-1 controller,
+sleep inhibitor, independent watchdog, moving logs, and durable step-zero
+checkpoint remain subsequent mandatory gates. No reasoning-gain, frontier,
+promotion, release, or `WOW Signal` claim is made. This is total checkpoint
+762. The 762-920 completion envelope is approximately 82.8%-100.0%, with a
+91.4% midpoint.
