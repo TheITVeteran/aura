@@ -20,6 +20,15 @@ from pathlib import Path
 
 from .harness import ReasoningBenchmark, write_results
 
+#: Terminal-gate thresholds.
+#:
+#: MIN_PASS_RATE exists because the original gate could be satisfied with
+#: zero correct answers: a model that fails every case but marks each one
+#: unverified and low-confidence has a perfect catch rate and no false
+#: confidence. Self-knowledge is necessary, not sufficient.
+MIN_PASS_RATE = 0.60
+MIN_HALLUCINATION_CATCH_RATE = 1.0
+
 _DEFAULT_MODELS = (
     "models/Qwen2.5-7B-Instruct-4bit",
     "models/Qwen2.5-1.5B-Instruct-4bit",
@@ -128,8 +137,44 @@ async def _main_async(args: argparse.Namespace) -> int:
         if args.out:
             write_results(result, args.out)
             print(f"wrote {args.out}")
-        ok = result.verifier_catch_rate >= 1.0 and result.false_confidence_rate <= 0.0
-        return 0 if ok else 1
+        # CP126 (critical): "Completely wrong live model can exit
+        # successfully." The gate asked only for a perfect verifier catch
+        # rate and a zero false-confidence rate. Both are satisfied by a
+        # model that gets EVERY answer wrong, provided each wrong answer is
+        # marked unverified with low confidence — a system that knows it is
+        # useless passed the benchmark that certifies it is useful.
+        #
+        # Catching your own failures is necessary and not sufficient. The
+        # gate now also requires that some answers were actually right, and
+        # that fabrications were caught, with the failing conditions named
+        # rather than collapsed into a bare exit code.
+        failures: list[str] = []
+        if result.n <= 0:
+            failures.append("no cases ran")
+        if result.verifier_catch_rate < 1.0:
+            failures.append(
+                f"verifier_catch_rate={result.verifier_catch_rate:.0%} (need 100%)"
+            )
+        if result.false_confidence_rate > 0.0:
+            failures.append(
+                f"false_confidence_rate={result.false_confidence_rate:.0%} (need 0%)"
+            )
+        if result.pass_rate < MIN_PASS_RATE:
+            failures.append(
+                f"pass_rate={result.pass_rate:.0%} (need >={MIN_PASS_RATE:.0%}) — "
+                "knowing you are wrong is not the same as being right"
+            )
+        if result.hallucination_catch_rate < MIN_HALLUCINATION_CATCH_RATE:
+            failures.append(
+                f"hallucination_catch_rate={result.hallucination_catch_rate:.0%} "
+                f"(need >={MIN_HALLUCINATION_CATCH_RATE:.0%})"
+            )
+        if failures:
+            print("BENCHMARK GATE FAILED:")
+            for reason in failures:
+                print(f"  - {reason}")
+            return 1
+        return 0
     finally:
         if model_lease is not None:
             generate = None
