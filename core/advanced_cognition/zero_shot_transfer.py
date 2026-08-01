@@ -5,8 +5,9 @@ import json
 import math
 import time
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 
@@ -20,6 +21,26 @@ from .schemas import (
     clamp,
     stable_hash,
 )
+
+
+def _risk_score(value: float) -> float:
+    """Clamp a risk accumulator to [0, 1], FAILING CLOSED on anything unusable.
+
+    Risk is the one score where "I could not compute this" must not read as
+    "safe". The shared clamp() maps a non-finite value to its LOW bound, which
+    is right for confidence (unknown is not certainty) and exactly backwards
+    here, where 0.0 passes every tolerance. Non-finite input therefore yields
+    MAXIMUM risk, so the action is refused rather than waved through by a NaN
+    that compares False against every threshold.
+    """
+    try:
+        risk = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(risk):
+        return 1.0
+    return max(0.0, min(1.0, risk))
+
 
 DANGEROUS = {
     "action:irreversible",
@@ -196,8 +217,31 @@ class ZeroShotTransferEngine:
             principle.action_features = (principle.action_features & action_features) or set(
                 list(principle.action_features | action_features)[:24]
             )
-        principle.update(ep, True)
+        # `matched` is whether this episode CONFIRMS the principle. Every call
+        # site passed True and nothing ever passed False, so confidence rose
+        # monotonically and no outcome could ever falsify a rule — an induced
+        # principle became permanent the moment it was created. The episode's
+        # own outcome decides: a rule that says "prefer this" is contradicted by
+        # a harmful or failed episode, and one that says "avoid this" is
+        # contradicted by a safe successful one.
+        principle.update(ep, self._episode_confirms(principle, ep))
         return name
+
+    @staticmethod
+    def _episode_confirms(principle: Principle, ep: Episode) -> bool:
+        """Does this episode support the principle, or contradict it?"""
+        harmful = (
+            not ep.outcome.success
+            or ep.outcome.harm > 0.5
+            or bool(getattr(ep.outcome, "terminal", False))
+        )
+        if principle.effect == "terminal_hazard":
+            # An avoid-rule is confirmed by harm and contradicted by a clean run.
+            return harmful
+        if principle.effect == "positive_affordance":
+            # A prefer-rule is confirmed by a genuinely good outcome.
+            return not harmful and ep.outcome.reward > 0.0
+        return not harmful
 
     @staticmethod
     def _salient(features: set[str], prefer: Sequence[str], limit: int = 16) -> set[str]:
@@ -304,11 +348,19 @@ class ZeroShotTransferEngine:
             ),
             "engine": "ZeroShotTransferEngine",
         }
+        # Report the numbers for the action actually SELECTED. These used to
+        # come from ranking[0] while `selected` came from acceptable[0], so
+        # whenever the top-ranked candidate exceeded tolerance the caller was
+        # handed a risk and confidence describing an action that had been
+        # REJECTED — and a risk figure above the tolerance it had just been told
+        # was satisfied. When nothing is acceptable, risk is maximal and
+        # confidence zero, which is the honest description of "no action".
+        chosen = acceptable[0] if acceptable else None
         return ActionDecision(
             selected,
             ranking,
-            ranking[0]["risk"] if ranking else 1.0,
-            ranking[0]["confidence"] if ranking else 0.0,
+            chosen["risk"] if chosen else 1.0,
+            chosen["confidence"] if chosen else 0.0,
             explanation,
             receipt,
         )
