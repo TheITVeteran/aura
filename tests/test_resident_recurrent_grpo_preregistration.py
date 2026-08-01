@@ -11,7 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
-from core.learning.verified_token_trace import build_tokenizer_bundle_identity
+from core.learning.verified_token_trace import (
+    build_tokenizer_bundle_identity,
+    observable_completion_receipt_sha256,
+)
 from tools import prepare_resident_recurrent_grpo_campaign as prereg
 
 BASE_IDENTITY = {"method": "sha256", "fingerprint": "1" * 64, "files": 4}
@@ -1377,7 +1380,22 @@ def _observable_completion(
             response_text.encode("utf-8")
         ).hexdigest(),
     }
-    return {**body, "receipt_sha256": prereg._document_sha(body)}
+    return {
+        **body,
+        "receipt_sha256": observable_completion_receipt_sha256(body),
+    }
+
+
+def test_observable_completion_fixture_uses_producer_codec_not_checkpoint_codec():
+    observable = _observable_completion(
+        'FINAL_ANSWER: {"answer": 1}',
+        max_tokens=8,
+    )
+    unsigned = dict(observable)
+    seal = unsigned.pop("receipt_sha256")
+
+    assert seal == observable_completion_receipt_sha256(unsigned)
+    assert seal != prereg._document_sha(unsigned)
 
 
 def _set_observable_response(

@@ -33461,3 +33461,51 @@ checkpoint remain subsequent mandatory gates. No reasoning-gain, frontier,
 promotion, release, or `WOW Signal` claim is made. This is total checkpoint
 762. The 762-920 completion envelope is approximately 82.8%-100.0%, with a
 91.4% midpoint.
+
+### 2026-07-31 - S31 negative causal verdict and producer-owned receipt seal
+
+CP420S31 completed its three resident-32B read-only gates under detached PID-1
+supervisors, independent sleep inhibitors, moving journals, and zero restarts.
+The initial-policy probe sealed policy digest
+`b7c2c4033c112fc5251b0d693d4a8d2b29d6d17679da1cb0fe80bfbe9a1109bc`.
+The exact-budget answer-channel probe produced five correct answers across six
+fresh samples and returned `answer_channel_operational`. The causal probe then
+evaluated four fresh depth-two `register_trace` cells and both frozen branches
+per cell at the preregistered 512-token budget.
+
+The sealed causal result is negative: four of eight child observations completed
+the strict answer contract, with three right-to-right, two right-to-wrong, zero
+wrong-to-right, and three wrong-to-wrong transitions. It contains zero optimizer-
+reachable cells and two regression cells, so it fails all three immutable launch
+requirements: 75% child contract completion, at least two optimizer-reachable
+cells, and at least two wrong-to-right transitions. Its verdict is
+`regression_without_learning_signal`. No signer custody, launch materialization,
+controller, trainer, checkpoint-zero state, or optimizer mutation was started.
+The causal supervisor was PID `50796`, its child was PID `50797`, and its terminal
+detached receipt digest is
+`dd338c326199c4acdd15497b4a54b68de3c390a4ea9cf45e64293be73237fd67`.
+
+Independent replay exposed a separate verifier defect after the immutable S31
+result was written. Observable completions are produced with the campaign-journal
+canonical JSON codec, but the preregistration verifier recomputed their seal with
+the checkpoint codec, whose byte framing includes a terminal newline. Fixtures
+had repeated the verifier's serializer rather than the producer's, masking the
+domain mismatch. `verified_token_trace` now owns the public completion-seal
+function; the producer, independent verifier, and fixtures all call that one
+implementation. A regression proves the producer seal is intentionally distinct
+from the checkpoint-document seal. Replaying the real S31 receipt through the
+corrected validator reconstructs the same 4/8 completion and 0/2/3/3 transition
+counts; the repair changes verification, not the immutable scientific result.
+
+Focused producer/verifier regressions pass 12/12 with strict Ruff and bytecode
+compilation. S31 is retained as immutable negative evidence. The next bounded
+RLC checkpoint must repair the mechanism rather than rerun the same raw policy:
+the current update canary starts from a zero-effect LoRA, while the historical
+resident recurrence-native adapter was trained under a different four-slot,
+assistant-bridge topology and is neither complete nor identity-compatible with
+the current 16-slot no-bridge execution spec. A fresh compatible recurrence-
+native warm-start contract, its independent identity validation, and a disjoint
+causal preflight are required before another GRPO allocation. No reasoning-gain,
+frontier, promotion, release, or `WOW Signal` claim is made. This is total
+checkpoint 763. The 763-920 completion envelope is approximately 82.9%-100.0%,
+with a 91.5% midpoint.

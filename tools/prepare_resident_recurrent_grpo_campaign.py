@@ -88,6 +88,7 @@ from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
 )
 from core.learning.verified_token_trace import (  # noqa: E402
     OBSERVABLE_COMPLETION_SCHEMA,
+    observable_completion_receipt_sha256,
     validate_tokenizer_bundle_identity,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
@@ -2369,7 +2370,7 @@ def _validate_causal_preflight_observable(
         or not response_text
         or normalized.get("response_utf8_sha256")
         != _sha256(response_text.encode("utf-8"))
-        or receipt_sha256 != _document_sha(normalized)
+        or receipt_sha256 != observable_completion_receipt_sha256(normalized)
         or (
             terminal_token_id is not None
             and (type(terminal_token_id) is not int or terminal_token_id < 0)

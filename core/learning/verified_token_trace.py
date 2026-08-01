@@ -97,6 +97,17 @@ def _sha256_json(value: Any) -> str:
     return _sha256_bytes(canonical_json_bytes(value))
 
 
+def observable_completion_receipt_sha256(value: Mapping[str, Any]) -> str:
+    """Seal a completion body with the producer's canonical JSON codec.
+
+    Completion receipts are embedded in larger training artifacts whose own
+    serializers can use different framing rules.  Validators must reuse this
+    seal rather than silently hashing the right body with a different codec.
+    """
+
+    return _sha256_json(dict(value))
+
+
 def _is_sha256(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -191,7 +202,7 @@ def observable_completion_from_trace(
         "response_text": response_text,
         "response_utf8_sha256": _sha256_bytes(response_text.encode("utf-8")),
     }
-    return {**body, "receipt_sha256": _sha256_json(body)}
+    return {**body, "receipt_sha256": observable_completion_receipt_sha256(body)}
 
 
 def observable_completion_from_adapter(
@@ -927,6 +938,7 @@ __all__ = [
     "canonical_behavior_logprob",
     "observable_completion_from_adapter",
     "observable_completion_from_trace",
+    "observable_completion_receipt_sha256",
     "tokenizer_adapter_source_sha256",
     "tokenizer_file_bindings",
     "tokenizer_file_bindings_from_bytes",
