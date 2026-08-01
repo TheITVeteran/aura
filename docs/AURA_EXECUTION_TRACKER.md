@@ -33654,3 +33654,30 @@ independent model processes before accepting any answer or causal result. No
 reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 767. The 767-920 completion envelope is approximately
 83.4%-100.0%, with a 91.7% midpoint.
+
+### 2026-07-31 - CP768 identity-bound S33 causal canary preregistration
+
+CP420S33 is frozen from clean pushed CP767 source with training seed
+`2026080102`. Its immutable semantic contract SHA-256 is
+`434e555b1eff06f7b546750992edb217621210d9573c50ac329e80567ed10ce2`;
+the serialized contract file SHA-256 is
+`3e1e7192b313f4d0f41c872bf4c5222b2992fd8d8711de9f1b99cb4e77b25036`.
+The contract binds LoRA initialization seed `3409887164` in training, initial-
+policy, answer-channel, and causal-preflight argv. Independent reconstruction
+confirms all four command surfaces carry exactly that value.
+
+The S33 split contains twelve `register_trace` depth-two training tasks and one
+holdout. Reconstructing S28 through S33 from their frozen seeds found zero task-
+ID and zero prompt overlap between S33 and each prior S28-S32 canary, plus zero
+S33 train/holdout ID and prompt overlap. The contract independently verifies
+the resident checkpoint and behavior bundle, executable source inventory,
+warm-start and topology receipts, exact token budgets, watchdog limits, and
+nonpromotable claim boundary.
+
+No resident model process ran in this checkpoint. The next gate must produce
+the same post-transfer policy digest independently in the initial-policy,
+answer-channel, and causal processes. Any digest divergence invalidates S33
+before result interpretation. GRPO remains blocked behind all causal thresholds.
+No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 768. The 768-920 completion envelope is approximately
+83.5%-100.0%, with a 91.7% midpoint.
