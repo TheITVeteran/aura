@@ -8,14 +8,38 @@ recurrent-depth status, and response quality gates.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import os
 import re
 from typing import Any
 
 from core.brain.homeostatic_modulator import HomeostaticModulator
 from core.brain.inference_feedback import InferenceFeedbackLoop
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Brain.UnifiedInference")
+
+#: Arguments generate_text_async receives EXPLICITLY. A caller option carrying
+#: any of these names would be splatted alongside the explicit value and raise
+#: "multiple values for argument" from inside the client.
+_RESERVED_CALL_ARGS = frozenset({
+    "messages", "max_tokens", "foreground_request", "origin", "prompt",
+})
+
+#: Bound on how many lexical surrogate ids the fallback will emit, so a very
+#: long generation cannot hand the feedback loop an unbounded vector.
+_MAX_FALLBACK_TOKENS = 2048
+
+
+def _request_deadline_s() -> float:
+    """Wall-clock ceiling for one unified generation."""
+    try:
+        value = float(os.getenv("AURA_UNIFIED_INFERENCE_TIMEOUT_S", "300") or 300)
+    except (TypeError, ValueError):
+        value = 300.0
+    return min(3600.0, max(5.0, value))
 
 
 class UnifiedInferenceEngine:
@@ -65,7 +89,22 @@ class UnifiedInferenceEngine:
             "num_ctx": get_lane_context_window(endpoint_name),
         }
         if options:
-            final_options.update(options)
+            # Caller options are merged then splatted as **final_options AFTER
+            # explicit messages/max_tokens/foreground_request/origin arguments.
+            # A caller passing any of those names produced a
+            # "multiple values for argument" TypeError from deep inside the
+            # client — a request-shape error surfacing as a crash. Reserved
+            # names are dropped here, loudly, rather than allowed to collide.
+            colliding = _RESERVED_CALL_ARGS & set(options)
+            if colliding:
+                logger.warning(
+                    "Unified inference: ignoring caller option(s) %s — they are "
+                    "passed explicitly and would collide at the call boundary.",
+                    ", ".join(sorted(colliding)),
+                )
+            final_options.update(
+                {k: v for k, v in options.items() if k not in _RESERVED_CALL_ARGS}
+            )
         max_tokens = int(
             final_options.pop(
                 "max_tokens",
@@ -76,14 +115,28 @@ class UnifiedInferenceEngine:
 
         model_path = get_lane_runtime_model_path(endpoint_name)
         client = get_mlx_client(model_path=model_path, origin=kwargs.get("origin", "unified_inference"))
-        text = await client.generate_text_async(
-            prompt or "",
-            messages=final_messages,
-            max_tokens=max_tokens,
-            foreground_request=bool(kwargs.get("foreground_request", True)),
-            origin=kwargs.get("origin", "unified_inference"),
-            **final_options,
-        )
+        # max_tokens was the ONLY bound: no wall-clock deadline, so a wedged
+        # or pathologically slow generation held the lane indefinitely with no
+        # cancellation point. The ceiling is generous and env-overridable — it
+        # exists to catch a hang, not to cut off legitimately long work.
+        try:
+            text = await asyncio.wait_for(
+                client.generate_text_async(
+                    prompt or "",
+                    messages=final_messages,
+                    max_tokens=max_tokens,
+                    foreground_request=bool(kwargs.get("foreground_request", True)),
+                    origin=kwargs.get("origin", "unified_inference"),
+                    **final_options,
+                ),
+                timeout=_request_deadline_s(),
+            )
+        except TimeoutError as exc:
+            record_degradation(
+                "unified_inference", exc, severity="warning",
+                action=f"abandoned a generation that exceeded {_request_deadline_s():.0f}s",
+            )
+            raise RuntimeError("internal_mlx_unified_inference_deadline_exceeded") from exc
         if not text:
             raise RuntimeError("internal_mlx_unified_inference_returned_no_text")
 
@@ -153,9 +206,31 @@ class UnifiedInferenceEngine:
                 logger.debug("Interoception pairing unavailable for feedback: %s", exc)
 
         if token_ids is None:
-            # Legacy heuristic path — hash-derived pseudo-token ids, no logprobs.
-            words = text.lower().split()
-            token_ids = [abs(hash(word)) % 100000 for word in words]
+            # Legacy heuristic path. These are NOT tokenizer ids and never were:
+            # Python's hash() is salted per process, so the same word produced a
+            # different "token id" on every run and none of them corresponded to
+            # anything in the vocabulary. Feeding those into the homeostatic loop
+            # as generation substrate was feeding it noise that merely looked
+            # like measurement.
+            #
+            # The fallback is kept — the loop still needs lexical structure when
+            # no trace exists — but it is made DETERMINISTIC (stable across
+            # processes and runs, so the same text yields the same signal) and
+            # bounded, and the caller is told plainly that this is not substrate
+            # evidence.
+            words = text.lower().split()[:_MAX_FALLBACK_TOKENS]
+            token_ids = [
+                int.from_bytes(
+                    hashlib.blake2b(w.encode("utf-8", "ignore"), digest_size=4).digest(),
+                    "big",
+                ) % 100000
+                for w in words
+            ]
+            if words:
+                logger.debug(
+                    "Unified inference feedback running on LEXICAL surrogate ids "
+                    "(no interoception trace): %d words.", len(words)
+                )
 
         feedback = self.feedback_loop.process_output(
             output_text=text,
