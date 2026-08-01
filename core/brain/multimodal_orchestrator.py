@@ -13,6 +13,12 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Brain.Multimodal")
 
+#: Ceilings on asset work triggered by one response. A single output could
+#: otherwise schedule unbounded sequential generation, each concept carrying its
+#: own multi-minute timeout.
+_MAX_MANIFEST_CONCEPTS = 3
+_MAX_MANIFEST_SCAN_CHARS = 20_000
+
 
 _MULTIMODAL_RECOVERABLE_ERRORS = (
     ImportError,
@@ -69,8 +75,34 @@ class MultimodalOrchestrator:
             self.voice_engine = ServiceContainer.get("voice_engine", default=None)
             self.event_bus = ServiceContainer.get("input_bus", default=None)
             self.capability_engine = ServiceContainer.get("capability_engine", default=None)
+            # ServiceContainer returns None rather than raising, so a boot where
+            # NOTHING was registered used to set _is_setup=True and log "Online".
+            # Every later call then returned immediately from the cache, so
+            # services registered afterwards were never picked up: the engine
+            # stayed permanently blind while reporting itself healthy.
+            available = [
+                name for name, svc in (
+                    ("voice", self.voice_engine),
+                    ("expression", self.event_bus),
+                    ("assets", self.capability_engine),
+                ) if svc is not None
+            ]
+            if not available:
+                _record_multimodal_degradation(
+                    RuntimeError("no multimodal dependencies registered"),
+                    action=(
+                        "left multimodal setup UNCACHED so a later registration "
+                        "can still be picked up"
+                    ),
+                    severity="warning",
+                )
+                logger.warning(
+                    "Multimodal setup found no modalities; will retry on next render."
+                )
+                return False
             self._is_setup = True
-            logger.info("✨ Multimodal Rendering Engine Online.")
+            logger.info("✨ Multimodal Rendering Engine Online (%s).",
+                        ", ".join(available))
             return True
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_multimodal_degradation(
@@ -121,7 +153,21 @@ class MultimodalOrchestrator:
             )
             scheduled.append("assets")
 
-        return {"ok": True, "scheduled": scheduled, "task_count": len(tasks)}
+        # ok=True used to be returned the instant the tasks were SCHEDULED, so
+        # voice, expression, and asset failures happened later and could not
+        # change the result — callers were told rendering succeeded when nothing
+        # had rendered yet. The result now describes what it actually knows: the
+        # work was accepted, not that it completed. Callers awaiting delivery
+        # should await `completion`.
+        return {
+            "ok": bool(scheduled),
+            "accepted": bool(scheduled),
+            "completed": False,
+            "reason": "" if scheduled else "no_modality_available",
+            "scheduled": scheduled,
+            "task_count": len(tasks),
+            "completion": asyncio.gather(*tasks, return_exceptions=True) if tasks else None,
+        }
 
     def _track_render_task(self, coro: Any, *, name: str) -> asyncio.Task:
         task = get_task_tracker().create_task(coro, name=name)
@@ -229,12 +275,37 @@ class MultimodalOrchestrator:
 
     @staticmethod
     def _manifestation_concepts(text: str) -> list[str]:
-        concepts = []
+        """Extract asset-generation concepts, BOUNDED and de-duplicated.
+
+        Concept count and input size were unbounded and each concept got its
+        own 120-second timeout, so a single response — or quoted user text, or
+        retrieved web content, or an adversarial continuation — could schedule
+        hours of sequential asset work in the lane. The tag is still an
+        untrusted channel (see the module note); bounding it limits the blast
+        radius until a structured intent channel exists.
+        """
+        concepts: list[str] = []
+        seen: set[str] = set()
+        # Scanning is capped so an enormous input cannot dominate the scan
+        # itself, independently of how many tags it contains.
+        scan = text[:_MAX_MANIFEST_SCAN_CHARS]
         for pattern in (r"\[Manifesting:\s*(.+?)\]", r"\[Drawing:\s*(.+?)\]"):
-            for match in re.finditer(pattern, text):
-                concept = " ".join(match.group(1).split())
-                if concept:
-                    concepts.append(concept[:500])
+            for match in re.finditer(pattern, scan):
+                concept = " ".join(match.group(1).split())[:500]
+                if not concept:
+                    continue
+                key = concept.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                concepts.append(concept)
+                if len(concepts) >= _MAX_MANIFEST_CONCEPTS:
+                    logger.warning(
+                        "Multimodal: manifestation concepts capped at %d; "
+                        "ignoring the rest of this response.",
+                        _MAX_MANIFEST_CONCEPTS,
+                    )
+                    return concepts
         return concepts
 
     def _select_asset_skill(self) -> str | None:
