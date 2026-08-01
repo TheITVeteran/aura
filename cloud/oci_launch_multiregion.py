@@ -79,18 +79,23 @@ def save_state(state):
 # ─── Setup ──────────────────────────────────────────────────
 config = oci.config.from_file()
 
-with open(SSH_KEY_FILE, encoding="utf-8") as f:
-    ssh_key = f.read().strip()
 
-state = load_state()
 
-print("╔══════════════════════════════════════════════════════╗")
-print("║   OCI ARM LAUNCHER — MULTI-REGION ROTATION          ║")
-print("╚══════════════════════════════════════════════════════╝")
-print(f"  Regions: {len(REGIONS)}")
-print(f"  Previous attempts: {state['total_attempts']}")
-print(f"  Regions with networking: {len(state['networks'])}")
-print()
+
+def _load_ssh_key() -> str:
+    """Read the SSH public key on use, not on import.
+
+    This was a module-level ``with open(...)``, so importing the module on a
+    machine without the key raised FileNotFoundError — the same class of
+    defect as the provisioning loop: an import must not touch the
+    filesystem, and must not be able to fail for environmental reasons.
+
+    Reading it per launch also means a rotated key is picked up without a
+    restart.
+    """
+    with open(SSH_KEY_FILE, encoding="utf-8") as handle:
+        return handle.read().strip()
+
 
 def get_clients(region):
     """Get OCI clients for a specific region."""
@@ -282,7 +287,7 @@ def try_launch(region):
             subnet_id=net["subnet_id"],
             assign_public_ip=True
         ),
-        metadata={"ssh_authorized_keys": ssh_key}
+        metadata={"ssh_authorized_keys": _load_ssh_key()}
     )
 
     response = compute.launch_instance(launch_details)
@@ -336,56 +341,82 @@ def try_launch(region):
     return "success"
 
 # ─── Main rotation loop ────────────────────────────────────
-print("[*] Starting multi-region rotation. Ctrl+C to stop.\n")
 
 skip_regions = set()
 region_idx = 0
 
-while MAX_ATTEMPTS <= 0 or state["total_attempts"] < MAX_ATTEMPTS:
-    region = REGIONS[region_idx % len(REGIONS)]
-    region_idx += 1
+def main() -> int:
+    """Run the multi-region rotation.
 
-    if region in skip_regions:
-        continue
+    CP126 (high): "Import can provision infrastructure across twenty
+    regions." The banner, the SSH-key read, the state load and the entire
+    rotation loop sat at module level with no ``__main__`` guard, so
+    merely importing this module started launching cloud instances — and
+    ended by calling ``sys.exit(1)``, taking the importing process with
+    it.
 
-    state["total_attempts"] += 1
-    attempt = state["total_attempts"]
-    timestamp = time.strftime("%H:%M:%S")
-    print(f"[{timestamp}] #{attempt} → {region}", end=" ", flush=True)
+    Test collection, a static analyser, or any ``from cloud import ...``
+    was enough. Spending money and killing the interpreter are both
+    things an import must never do.
+    """
+    state = load_state()
+    print("╔══════════════════════════════════════════════════════╗")
+    print("║   OCI ARM LAUNCHER — MULTI-REGION ROTATION          ║")
+    print("╚══════════════════════════════════════════════════════╝")
+    print(f"  Regions: {len(REGIONS)}")
+    print(f"  Previous attempts: {state['total_attempts']}")
+    print(f"  Regions with networking: {len(state['networks'])}")
+    print()
+    print("[*] Starting multi-region rotation. Ctrl+C to stop.\n")
+    while MAX_ATTEMPTS <= 0 or state["total_attempts"] < MAX_ATTEMPTS:
+        region = REGIONS[region_idx % len(REGIONS)]
+        region_idx += 1
 
-    try:
-        result = try_launch(region)
-        if result == "success":
-            save_state(state)
-            sys.exit(0)
-        elif result == "skip":
-            skip_regions.add(region)
+        if region in skip_regions:
+            continue
 
-    except oci.exceptions.ServiceError as e:
-        if e.status == 500 and "capacity" in str(e.message).lower():
-            print("Out of capacity.")
-        elif e.status == 429:
-            print("Rate limited. Extra wait...")
-            time.sleep(RETRY_INTERVAL)
-        elif "limit" in str(e.message).lower() or "quota" in str(e.message).lower():
-            print(f"Limit reached: {e.message[:80]}")
-            skip_regions.add(region)
-        elif "NotAuthorizedOrNotFound" in str(e.code):
-            print("Not subscribed. Skipping.")
-            skip_regions.add(region)
+        state["total_attempts"] += 1
+        attempt = state["total_attempts"]
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[{timestamp}] #{attempt} → {region}", end=" ", flush=True)
+
+        try:
+            result = try_launch(region)
+            if result == "success":
+                save_state(state)
+                sys.exit(0)
+            elif result == "skip":
+                skip_regions.add(region)
+
+        except oci.exceptions.ServiceError as e:
+            if e.status == 500 and "capacity" in str(e.message).lower():
+                print("Out of capacity.")
+            elif e.status == 429:
+                print("Rate limited. Extra wait...")
+                time.sleep(RETRY_INTERVAL)
+            elif "limit" in str(e.message).lower() or "quota" in str(e.message).lower():
+                print(f"Limit reached: {e.message[:80]}")
+                skip_regions.add(region)
+            elif "NotAuthorizedOrNotFound" in str(e.code):
+                print("Not subscribed. Skipping.")
+                skip_regions.add(region)
+            else:
+                print(f"Error ({e.status}): {e.message[:80]}")
+
+        except _OCI_RECOVERABLE_ERRORS as exc:
+            print(f"Error: {type(exc).__name__}: {str(exc)[:80]}")
+
+        save_state(state)
+
+        # Shorter sleep when rotating (we're hitting different regions)
+        if len(REGIONS) - len(skip_regions) > 3:
+            time.sleep(RETRY_INTERVAL // len(REGIONS) * 3 + 5)  # ~10-15s between regions
         else:
-            print(f"Error ({e.status}): {e.message[:80]}")
+            time.sleep(RETRY_INTERVAL)
+    print(f"[!] Max attempts ({MAX_ATTEMPTS}) reached. Giving up.")
+    return 1
+    return 0
 
-    except _OCI_RECOVERABLE_ERRORS as exc:
-        print(f"Error: {type(exc).__name__}: {str(exc)[:80]}")
 
-    save_state(state)
-
-    # Shorter sleep when rotating (we're hitting different regions)
-    if len(REGIONS) - len(skip_regions) > 3:
-        time.sleep(RETRY_INTERVAL // len(REGIONS) * 3 + 5)  # ~10-15s between regions
-    else:
-        time.sleep(RETRY_INTERVAL)
-
-print(f"[!] Max attempts ({MAX_ATTEMPTS}) reached. Giving up.")
-sys.exit(1)
+if __name__ == "__main__":
+    sys.exit(main())
