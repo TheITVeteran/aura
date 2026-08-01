@@ -137,6 +137,9 @@ TASK_SOURCES = ("verifiable", "recurrence_curriculum", "answer_channel_curriculu
 _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _PHASE_PROGRESS_SCHEMA = "aura.grpo.phase_progress.v1"
 _PHASE_PROGRESS_MAX_BYTES = 16 * 1024 * 1024
+_CAUSAL_LEARNABILITY_PREFLIGHT_SCHEMA = (
+    "aura.recurrent_causal_learnability_preflight.v3"
+)
 
 
 # Set by main() from --cot. Reasoning room is the fix the CP238 finding
@@ -1598,6 +1601,9 @@ def _causal_learnability_summary(
     optimizer_cells = 0
     mixed_cells = 0
     regression_cells = 0
+    parent_contract_complete_samples = 0
+    child_contract_complete_samples = 0
+    sample_count = 0
     for row in rows:
         transitions = row.get("transitions")
         if not isinstance(transitions, Mapping) or set(transitions) != set(transition_kinds):
@@ -1629,6 +1635,31 @@ def _causal_learnability_summary(
             raise ValueError("causal learnability optimizer-reachability flag differs")
         if row.get("mixed_transition_training_only") is not mixed_training_only:
             raise ValueError("causal learnability mixed-training flag differs")
+        samples = row.get("samples")
+        if not isinstance(samples, Sequence) or isinstance(samples, (str, bytes)):
+            raise ValueError("causal learnability row samples are invalid")
+        for sample in samples:
+            if not isinstance(sample, Mapping):
+                raise ValueError("causal learnability sample is invalid")
+            parent_termination = sample.get("parent_termination")
+            child_termination = sample.get("child_termination")
+            if parent_termination not in {
+                "contract_complete",
+                "eos_token",
+                "fixed_token_budget",
+            } or child_termination not in {
+                "contract_complete",
+                "eos_token",
+                "fixed_token_budget",
+            }:
+                raise ValueError("causal learnability sample termination is invalid")
+            sample_count += 1
+            parent_contract_complete_samples += int(
+                parent_termination == "contract_complete"
+            )
+            child_contract_complete_samples += int(
+                child_termination == "contract_complete"
+            )
         signal_cells += int(causal_signal)
         safe_signal_cells += int(regression_free_signal)
         strict_cells += int(strict_reachable)
@@ -1658,6 +1689,12 @@ def _causal_learnability_summary(
         "optimizer_training_reachable_cells": optimizer_cells,
         "mixed_transition_training_only_cells": mixed_cells,
         "regression_cells": regression_cells,
+        "parent_contract_complete_samples": parent_contract_complete_samples,
+        "child_contract_complete_samples": child_contract_complete_samples,
+        "child_contract_complete_fraction": round(
+            child_contract_complete_samples / sample_count if sample_count else 0.0,
+            6,
+        ),
         "verdict": verdict,
     }
 
@@ -2926,6 +2963,8 @@ def main(
                             "parent_grade_reason": _grade_reason(parent_verdict),
                             "child_correct": child_correct,
                             "child_grade_reason": _grade_reason(child_verdict),
+                            "parent_termination": parent_observable["termination"],
+                            "child_termination": child_observable["termination"],
                             "transition_kind": transition_kind,
                         }
                     )
@@ -2977,7 +3016,7 @@ def main(
             summary = _causal_learnability_summary(rows)
             verdict = str(summary["verdict"])
             body = {
-                "schema": "aura.recurrent_causal_learnability_preflight.v2",
+                "schema": _CAUSAL_LEARNABILITY_PREFLIGHT_SCHEMA,
                 "campaign_id": args.adapter_id,
                 "dataset_sha256": dataset_sha256,
                 "execution_spec_sha256": execution_spec.sha256,

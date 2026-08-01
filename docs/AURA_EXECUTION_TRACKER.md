@@ -16,15 +16,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 758 preserves S29's
-  complete negative result and repairs the three defects it exposed: mixed
-  verified transitions can train but cannot support a gain claim, fresh
-  causal-learnability evidence is mandatory before another update canary, and
-  every failed resident-model attempt rotates into a new native process. No
-  policy update or gain claim exists.**
-- Previous implementation milestone: **Checkpoint 757 froze S29 from clean
-  CP756 source with 12 fresh train tasks and three fresh holdouts, all disjoint
-  from S28 and internally disjoint.**
+- Current active implementation milestone: **Checkpoint 759 makes the next
+  resident canary answer-complete before it can train: all twelve engineering
+  groups target the only observed learnable family/depth, use a 512-token
+  budget, and require fresh v3 causal evidence with at least 75% complete child
+  answer contracts. No resident process ran and no gain claim exists.**
+- Previous implementation milestone: **Checkpoint 758 preserved S29's complete
+  negative result and separated mixed-transition optimizer evidence from
+  claim-level regression controls while enforcing native process rotation.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33315,3 +33314,46 @@ until powered held-out controls and external replay establish a real effect.
 No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 758. The 758-920 completion envelope is approximately
 82.4%-100.0%, with a 91.2% midpoint.
+
+### 2026-07-31 - Answer-complete depth-targeted S30 source profile
+
+S29 demonstrated that distributing twelve engineering groups across recurrence
+depths two, four, and eight spent most of the resident budget in cells that had
+not produced a learnable transition. Its only independently verified
+wrong-to-right transitions occurred in `register_trace` at depth two, while
+the 320-token ceiling frequently ended deeper traces before a valid final-
+answer contract. The next nonpromotable update canary therefore retains twelve
+fresh groups but allocates all of them to `register_trace` depth two and gives
+each parent and child decode 512 tokens. The broad claim campaign remains
+unchanged across every registered family and depth.
+
+The answer-channel preflight no longer silently replaces the preregistered
+campaign budget with 160 tokens. It now runs the exact campaign token budget,
+so preflight parseability describes the path that will train rather than a
+cheaper, behaviorally different decode. The causal-learnability receipt is now
+v3. Every sampled parent and child records its externally reconstructed
+observable termination; the receipt seals parent/child contract-complete
+counts and the child completion fraction. Before any update-canary training,
+the independent validator requires the current v3 schema, at least 75% child
+contract completion, at least two optimizer-reachable task cells, and at least
+two wrong-to-right transitions on fresh disjoint tasks. Historical v2 receipts
+remain exactly replayable but cannot authorize a new training allocation
+because they never measured answer completeness.
+
+The canary's immutable metadata now matches CP758's executable admission rule:
+nondegenerate mixed improvement/regression groups may train only under the
+explicit nonclaiming boundary, while a separate powered regression-control
+cohort remains mandatory for any causal-gain conclusion. The profile receipts
+selection by both family and depth rather than describing the narrower dataset
+as family-only selection.
+
+The focused update-canary, answer-channel, and causal-learnability suite passes
+23/23. The expanded preregistration, signed-transition, external-replay,
+policy-state-replay, rejection-transaction, and signer-service matrix passes
+164/164. Lint, bytecode compilation, and diff integrity pass. No resident model
+process ran in this checkpoint. The next step is a fresh S30 preregistration
+from clean pushed CP759 source, explicit S28/S29/S30 contamination checks, and
+detached policy, answer-channel, and causal-learnability preflights. No
+reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 759. The 759-920 completion envelope is approximately
+82.5%-100.0%, with a 91.2% midpoint.

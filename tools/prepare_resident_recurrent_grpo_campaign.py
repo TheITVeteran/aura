@@ -102,6 +102,9 @@ CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
 FULL_TRAINING_PROFILE = "full_training"
 UPDATE_CANARY_PROFILE = "update_canary"
 CAMPAIGN_PROFILES = frozenset({FULL_TRAINING_PROFILE, UPDATE_CANARY_PROFILE})
+CAUSAL_LEARNABILITY_SCHEMA_V2 = "aura.recurrent_causal_learnability_preflight.v2"
+CAUSAL_LEARNABILITY_SCHEMA = "aura.recurrent_causal_learnability_preflight.v3"
+CAUSAL_LEARNABILITY_MIN_CHILD_CONTRACT_FRACTION = 0.75
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
 DEFAULT_MODEL = "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
@@ -166,8 +169,8 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     ),
 }
 _UPDATE_CANARY_DOMAINS = ("register_trace",)
-_UPDATE_CANARY_DEPTHS = (2, 4, 8)
-_UPDATE_CANARY_TRAIN_PER_CELL = 4
+_UPDATE_CANARY_DEPTHS = (2,)
+_UPDATE_CANARY_TRAIN_PER_CELL = 12
 _UPDATE_CANARY_STEPS = (
     len(_UPDATE_CANARY_DOMAINS)
     * len(_UPDATE_CANARY_DEPTHS)
@@ -176,12 +179,16 @@ _UPDATE_CANARY_STEPS = (
 UPDATE_CANARY_PARAMETERS: Mapping[str, Any] = {
     **TRAINING_PARAMETERS,
     # The resident preflight reproduced safe final-edge improvement only in
-    # register_trace. This engineering canary uses fresh disjoint tasks from
-    # that family; the later claim campaign remains broad and unchanged.
+    # register_trace at depth two. S29's deeper cells consumed most of their
+    # answer budget without producing an admitted signal. This engineering
+    # canary therefore spends the same twelve groups on fresh depth-two tasks;
+    # the later claim campaign remains broad and unchanged.
     "domains": list(_UPDATE_CANARY_DOMAINS),
     "depths": list(_UPDATE_CANARY_DEPTHS),
     "train_per_cell": _UPDATE_CANARY_TRAIN_PER_CELL,
     "holdout_per_cell": 1,
+    "max_tokens": 512,
+    "calibrate_tokens": 512,
     "max_steps": _UPDATE_CANARY_STEPS,
     "eval_every": _UPDATE_CANARY_STEPS,
     "checkpoint_keep": _UPDATE_CANARY_STEPS,
@@ -772,11 +779,11 @@ def build_contract(
                     ),
                     "selection_basis": (
                         "fresh_disjoint_tasks_from_resident_preflight_"
-                        "verified_signal_family"
+                        "verified_signal_family_and_depth"
                     ),
                     "optimizer_admission_policy": (
-                        "verified_wrong_to_right_zero_right_to_wrong_"
-                        "nondegenerate_reward"
+                        "verified_wrong_to_right_nondegenerate_reward_"
+                        "mixed_regression_training_only_claim_blocked"
                     ),
                     "claim_control_policy": (
                         "same_group_or_external_powered_regression_control_required"
@@ -993,11 +1000,11 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
             ),
             "selection_basis": (
                 "fresh_disjoint_tasks_from_resident_preflight_"
-                "verified_signal_family"
+                "verified_signal_family_and_depth"
             ),
             "optimizer_admission_policy": (
-                "verified_wrong_to_right_zero_right_to_wrong_"
-                "nondegenerate_reward"
+                "verified_wrong_to_right_nondegenerate_reward_"
+                "mixed_regression_training_only_claim_blocked"
             ),
             "claim_control_policy": (
                 "same_group_or_external_powered_regression_control_required"
@@ -2131,7 +2138,11 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
     root = PurePosixPath(str(contract["paths"]["artifact_root"]))
     output = str(root / "answer-channel-preflight")
     params = contract["training"]["parameters"]
-    max_tokens = min(160, int(params["max_tokens"]))
+    # Parseability at a smaller budget is not evidence that the campaign's
+    # answer channel works. S29 showed the inverse failure: an artificial cap
+    # cut otherwise usable reasoning off before the answer contract. Run this
+    # gate at the exact preregistered campaign budget.
+    max_tokens = int(params["max_tokens"])
     return [
         "tools/train_grpo.py",
         "--model",
@@ -2320,6 +2331,9 @@ def validate_causal_learnability_preflight(
 ) -> dict[str, Any]:
     """Reconstruct the bounded probe and validate its nonclaiming receipt."""
 
+    schema = receipt.get("schema") if isinstance(receipt, Mapping) else None
+    if schema not in {CAUSAL_LEARNABILITY_SCHEMA_V2, CAUSAL_LEARNABILITY_SCHEMA}:
+        _fail("causal_learnability_preflight_schema_invalid")
     required = {
         "schema",
         "campaign_id",
@@ -2347,6 +2361,14 @@ def validate_causal_learnability_preflight(
         "verdict",
         "receipt_sha256",
     }
+    if schema == CAUSAL_LEARNABILITY_SCHEMA:
+        required.update(
+            {
+                "parent_contract_complete_samples",
+                "child_contract_complete_samples",
+                "child_contract_complete_fraction",
+            }
+        )
     normalized = dict(receipt)
     if set(normalized) != required:
         _fail("causal_learnability_preflight_schema_invalid")
@@ -2355,7 +2377,10 @@ def validate_causal_learnability_preflight(
         _fail("causal_learnability_preflight_receipt_mismatch")
     normalized["receipt_sha256"] = observed_sha256
     if (
-        normalized["schema"] != "aura.recurrent_causal_learnability_preflight.v2"
+        normalized["schema"] not in {
+            CAUSAL_LEARNABILITY_SCHEMA_V2,
+            CAUSAL_LEARNABILITY_SCHEMA,
+        }
         or normalized["campaign_id"]
         != f"{contract['campaign_id']}-causal-learnability-preflight"
         or normalized["execution_spec_sha256"]
@@ -2455,6 +2480,8 @@ def validate_causal_learnability_preflight(
     optimizer_cells = 0
     mixed_cells = 0
     regression_cells = 0
+    parent_contract_complete_samples = 0
+    child_contract_complete_samples = 0
     for task_index, (cell, expected_task) in enumerate(
         zip(cells, probe_train, strict=True)
     ):
@@ -2493,6 +2520,23 @@ def validate_causal_learnability_preflight(
                 or sample.get("transition_kind") not in transition_kinds
             ):
                 _fail("causal_learnability_preflight_sample_invalid")
+            if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+                if sample.get("parent_termination") not in {
+                    "contract_complete",
+                    "eos_token",
+                    "fixed_token_budget",
+                } or sample.get("child_termination") not in {
+                    "contract_complete",
+                    "eos_token",
+                    "fixed_token_budget",
+                }:
+                    _fail("causal_learnability_preflight_sample_termination_invalid")
+                parent_contract_complete_samples += int(
+                    sample["parent_termination"] == "contract_complete"
+                )
+                child_contract_complete_samples += int(
+                    sample["child_termination"] == "contract_complete"
+                )
             expected_seed = _stable_seed(
                 int(params["seed"]) + 733,
                 "causal-learnability-preflight",
@@ -2573,6 +2617,19 @@ def validate_causal_learnability_preflight(
         or normalized["verdict"] != verdict
     ):
         _fail("causal_learnability_preflight_summary_mismatch")
+    if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+        child_fraction = round(
+            child_contract_complete_samples / normalized["sample_count"],
+            6,
+        )
+        if (
+            normalized["parent_contract_complete_samples"]
+            != parent_contract_complete_samples
+            or normalized["child_contract_complete_samples"]
+            != child_contract_complete_samples
+            or normalized["child_contract_complete_fraction"] != child_fraction
+        ):
+            _fail("causal_learnability_preflight_completion_summary_mismatch")
     return normalized
 
 
@@ -2591,7 +2648,10 @@ def require_causal_learnability_training_gate(
         _fail("causal_learnability_training_gate_missing")
     receipt = validate_causal_learnability_preflight(contract, _strict_json(path))
     if (
-        receipt["optimizer_training_reachable_cells"] < 2
+        receipt["schema"] != CAUSAL_LEARNABILITY_SCHEMA
+        or receipt["child_contract_complete_fraction"]
+        < CAUSAL_LEARNABILITY_MIN_CHILD_CONTRACT_FRACTION
+        or receipt["optimizer_training_reachable_cells"] < 2
         or receipt["transition_counts"]["wrong_to_right"] < 2
     ):
         _fail("causal_learnability_training_gate_underpowered")

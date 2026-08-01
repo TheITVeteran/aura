@@ -141,13 +141,13 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
 
     assert receipt["campaign_profile"] == prereg.UPDATE_CANARY_PROFILE
     assert parameters["domains"] == ["register_trace"]
-    assert parameters["depths"] == [2, 4, 8]
-    assert parameters["train_per_cell"] == 4
+    assert parameters["depths"] == [2]
+    assert parameters["train_per_cell"] == 12
     assert parameters["holdout_per_cell"] == 1
     assert parameters["max_steps"] == 12
     assert parameters["eval_every"] == 12
     assert parameters["group_size"] == prereg.TRAINING_PARAMETERS["group_size"]
-    assert parameters["max_tokens"] == prereg.TRAINING_PARAMETERS["max_tokens"]
+    assert parameters["max_tokens"] == 512
     assert parameters["lora_rank"] == prereg.TRAINING_PARAMETERS["lora_rank"]
     assert parameters["lora_layers"] == prereg.TRAINING_PARAMETERS["lora_layers"]
     assert parameters["lora_targets"] == prereg.TRAINING_PARAMETERS["lora_targets"]
@@ -166,14 +166,18 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
         == contract["campaign_id"]
     )
     assert contract["training"]["dataset"]["train_tasks"] == 12
-    assert contract["training"]["dataset"]["holdout_tasks"] == 3
+    assert contract["training"]["dataset"]["holdout_tasks"] == 1
     assert (
         contract["training"]["completion_required"]["training_adequacy"]
         == prereg.recurrent_training_adequacy_policy()
     )
     assert contract["evaluation"]["engineering_canary"]["minimum_optimizer_updates"] == 3
     assert contract["evaluation"]["engineering_canary"]["selection_basis"] == (
-        "fresh_disjoint_tasks_from_resident_preflight_verified_signal_family"
+        "fresh_disjoint_tasks_from_resident_preflight_verified_signal_family_and_depth"
+    )
+    assert contract["evaluation"]["engineering_canary"]["optimizer_admission_policy"] == (
+        "verified_wrong_to_right_nondegenerate_reward_"
+        "mixed_regression_training_only_claim_blocked"
     )
     assert contract["evaluation"]["engineering_canary"]["claim_control_policy"] == (
         "same_group_or_external_powered_regression_control_required"
@@ -1271,6 +1275,12 @@ def test_answer_channel_preflight_command_is_bounded_and_source_separated():
     assert argv[argv.index("--task-source") + 1] == "answer_channel_curriculum"
     assert argv[argv.index("--domains") + 1] == "json_copy,typed_boolean,key_selection"
     assert argv[argv.index("--max-steps") + 1] == "1"
+    assert argv[argv.index("--max-tokens") + 1] == str(
+        contract["training"]["parameters"]["max_tokens"]
+    )
+    assert argv[argv.index("--calibrate-tokens") + 1] == str(
+        contract["training"]["parameters"]["max_tokens"]
+    )
     assert argv[argv.index("--max-minutes") + 1] == "45.0"
     assert argv[argv.index("--calibrate-minutes") + 1] == "10.0"
     assert "--trajectory-credit" not in argv
@@ -1392,6 +1402,8 @@ def _causal_learnability_receipt(contract):
                     "parent_grade_reason": "wrong_answer",
                     "child_correct": False,
                     "child_grade_reason": "wrong_answer",
+                    "parent_termination": "contract_complete",
+                    "child_termination": "contract_complete",
                     "transition_kind": "wrong_to_wrong",
                 }
             )
@@ -1415,7 +1427,7 @@ def _causal_learnability_receipt(contract):
             }
         )
     body = {
-        "schema": "aura.recurrent_causal_learnability_preflight.v2",
+        "schema": prereg.CAUSAL_LEARNABILITY_SCHEMA,
         "campaign_id": f"{contract['campaign_id']}-causal-learnability-preflight",
         "dataset_sha256": prereg._sha256(prereg.canonical_json_bytes(dataset)),
         "execution_spec_sha256": contract["execution_spec"]["semantic_sha256"],
@@ -1453,6 +1465,9 @@ def _causal_learnability_receipt(contract):
         "optimizer_training_reachable_cells": 0,
         "mixed_transition_training_only_cells": 0,
         "regression_cells": 0,
+        "parent_contract_complete_samples": len(tasks) * 2,
+        "child_contract_complete_samples": len(tasks) * 2,
+        "child_contract_complete_fraction": 1.0,
         "cells": cells,
         "claim_boundary": (
             "read_only_task_seed_specific_calibration_not_training_evidence_"
@@ -1475,6 +1490,49 @@ def test_causal_learnability_preflight_verifier_reconstructs_disjoint_probe():
     assert verified["policy_unchanged"] is True
 
 
+def test_causal_learnability_preflight_v2_remains_replayable_but_not_trainable(
+    tmp_path, monkeypatch
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "campaign"
+    receipt = _causal_learnability_receipt(contract)
+    receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V2
+    for key in (
+        "parent_contract_complete_samples",
+        "child_contract_complete_samples",
+        "child_contract_complete_fraction",
+    ):
+        receipt.pop(key)
+    for cell in receipt["cells"]:
+        for sample in cell["samples"]:
+            sample.pop("parent_termination")
+            sample.pop("child_termination")
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    assert prereg.validate_causal_learnability_preflight(contract, receipt) == receipt
+
+    path = (
+        tmp_path
+        / "campaign"
+        / "causal-learnability-preflight"
+        / "causal_learnability_preflight.json"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_bytes(prereg.canonical_json_bytes(receipt))
+    real_repo_path = prereg._repo_path
+
+    def _test_repo_path(relative, *, role, must_exist=True):
+        if role == "artifact_root":
+            return tmp_path / "campaign"
+        return real_repo_path(relative, role=role, must_exist=must_exist)
+
+    monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
+    with pytest.raises(prereg.PreregistrationError, match="underpowered"):
+        prereg.require_causal_learnability_training_gate(contract)
+
+
 def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
     contract = _contract()
     receipt = _causal_learnability_receipt(contract)
@@ -1484,6 +1542,21 @@ def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
     receipt["receipt_sha256"] = prereg._document_sha(unsigned)
 
     with pytest.raises(prereg.PreregistrationError, match="summary_mismatch"):
+        prereg.validate_causal_learnability_preflight(contract, receipt)
+
+
+def test_causal_learnability_preflight_rejects_resealed_completion_drift():
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+    receipt["cells"][0]["samples"][0]["child_termination"] = "fixed_token_budget"
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="completion_summary_mismatch",
+    ):
         prereg.validate_causal_learnability_preflight(contract, receipt)
 
 
@@ -1542,6 +1615,27 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
     monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
 
     assert prereg.require_causal_learnability_training_gate(contract) == receipt
+
+    for cell in receipt["cells"]:
+        for sample in cell["samples"]:
+            sample["child_termination"] = "fixed_token_budget"
+    receipt["cells"][0]["samples"][0]["child_termination"] = "contract_complete"
+    receipt["child_contract_complete_samples"] = 1
+    receipt["child_contract_complete_fraction"] = round(
+        1 / receipt["sample_count"], 6
+    )
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+    path.write_bytes(prereg.canonical_json_bytes(receipt))
+    with pytest.raises(prereg.PreregistrationError, match="underpowered"):
+        prereg.require_causal_learnability_training_gate(contract)
+
+    for cell in receipt["cells"]:
+        for sample in cell["samples"]:
+            sample["child_termination"] = "contract_complete"
+    receipt["child_contract_complete_samples"] = receipt["sample_count"]
+    receipt["child_contract_complete_fraction"] = 1.0
 
     second = receipt["cells"][1]
     second["samples"][0].update(
