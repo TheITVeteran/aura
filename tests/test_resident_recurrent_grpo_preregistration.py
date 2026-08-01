@@ -168,6 +168,10 @@ def test_preregistration_binds_warm_start_into_every_model_process(
     ):
         index = argv.index("--warm-start-contract")
         assert argv[index + 1] == commitment["path"]
+        seed_index = argv.index("--lora-initialization-seed")
+        assert argv[seed_index + 1] == str(
+            contract["training"]["parameters"]["lora_initialization_seed"]
+        )
 
 
 def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():

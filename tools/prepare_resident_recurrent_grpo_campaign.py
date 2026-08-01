@@ -452,6 +452,21 @@ def _training_parameters_for_profile(
     return {**parameters, "seed": seed}
 
 
+def _campaign_training_parameters(
+    profile: str,
+    *,
+    campaign_id: str,
+    seed: int | None = None,
+) -> Mapping[str, Any]:
+    parameters = dict(_training_parameters_for_profile(profile, seed=seed))
+    parameters["lora_initialization_seed"] = _stable_seed(
+        int(parameters["seed"]),
+        "lora-init",
+        campaign_id,
+    )
+    return parameters
+
+
 def _watchdog_policy_for_profile(profile: str) -> Mapping[str, Any]:
     if profile == FULL_TRAINING_PROFILE:
         return TRAINING_WATCHDOG_POLICY
@@ -534,6 +549,7 @@ def _training_argv(
         ("lora_rank", "--lora-rank"),
         ("lora_targets", "--lora-targets"),
         ("lora_layers", "--lora-layers"),
+        ("lora_initialization_seed", "--lora-initialization-seed"),
         ("learning_rate", "--learning-rate"),
         ("max_steps", "--max-steps"),
         ("eval_every", "--eval-every"),
@@ -667,8 +683,9 @@ def build_contract(
         _fail("campaign_id_invalid")
     if campaign_profile not in CAMPAIGN_PROFILES:
         _fail("campaign_profile_invalid")
-    params = _training_parameters_for_profile(
+    params = _campaign_training_parameters(
         campaign_profile,
+        campaign_id=campaign_id,
         seed=training_seed,
     )
     training_task_count = (
@@ -975,8 +992,9 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     if not isinstance(observed_parameters, Mapping):
         _fail("training_contract_invalid")
     training_seed = observed_parameters.get("seed")
-    expected_parameters = _training_parameters_for_profile(
+    expected_parameters = _campaign_training_parameters(
         str(campaign_profile),
+        campaign_id=str(campaign_id),
         seed=training_seed,
     )
     expected_watchdog = _watchdog_policy_for_profile(str(campaign_profile))
@@ -2297,6 +2315,8 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
         str(params["lora_targets"]),
         "--lora-layers",
         str(params["lora_layers"]),
+        "--lora-initialization-seed",
+        str(params["lora_initialization_seed"]),
         "--learning-rate",
         str(params["learning_rate"]),
         "--max-steps",
@@ -2400,6 +2420,8 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         str(params["lora_targets"]),
         "--lora-layers",
         str(params["lora_layers"]),
+        "--lora-initialization-seed",
+        str(params["lora_initialization_seed"]),
         "--learning-rate",
         str(params["learning_rate"]),
         "--max-steps",

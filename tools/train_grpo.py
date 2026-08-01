@@ -2301,6 +2301,14 @@ def main(
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-targets", default="o_proj,v_proj,q_proj")
     parser.add_argument("--lora-layers", type=int, default=24)
+    parser.add_argument(
+        "--lora-initialization-seed",
+        type=int,
+        help=(
+            "explicit uint32 LoRA initialization seed; proof campaigns bind "
+            "one value across training and every read-only probe"
+        ),
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--eval-every", type=int, default=50)
@@ -2420,6 +2428,10 @@ def main(
         parser.error("time budgets must be positive")
     if args.max_invocation_steps < 0:
         parser.error("--max-invocation-steps must be non-negative")
+    if args.lora_initialization_seed is not None and not (
+        0 <= args.lora_initialization_seed <= 0xFFFFFFFF
+    ):
+        parser.error("--lora-initialization-seed must be a uint32")
     if not 0.0 < args.memory_fraction <= 0.9:
         parser.error("--memory-fraction must be inside (0, 0.9]")
     try:
@@ -2531,6 +2543,11 @@ def main(
     )
 
     config = GRPOConfig(group_size=args.group_size, kl_coefficient=args.kl_coefficient)
+    lora_initialization_seed = (
+        args.lora_initialization_seed
+        if args.lora_initialization_seed is not None
+        else _stable_seed(args.seed, "lora-init", args.adapter_id)
+    )
     recurrent_config = None
     if execution_spec is not None:
         from core.learning.recurrent_grpo import RecurrentGRPOConfig
@@ -2639,7 +2656,7 @@ def main(
             "lora_rank": args.lora_rank,
             "lora_targets": args.lora_targets,
             "lora_layers": args.lora_layers,
-            "lora_initialization_seed": _stable_seed(args.seed, "lora-init", args.adapter_id),
+            "lora_initialization_seed": lora_initialization_seed,
             "learning_rate": args.learning_rate,
             "max_steps": args.max_steps,
             "eval_every": args.eval_every,
@@ -2740,7 +2757,7 @@ def main(
             total_layers = len(model.model.layers)
             adapted_indices = range(max(0, total_layers - args.lora_layers), total_layers)
             attached = 0
-            mx.random.seed(_stable_seed(args.seed, "lora-init", args.adapter_id))
+            mx.random.seed(lora_initialization_seed)
             for index in adapted_indices:
                 layer = model.model.layers[index]
                 for parent_name in ("self_attn", "mlp"):
@@ -2772,11 +2789,7 @@ def main(
                 lora_rank=args.lora_rank,
                 lora_layers=args.lora_layers,
                 lora_targets=targets,
-                initialization_seed=_stable_seed(
-                    args.seed,
-                    "lora-init",
-                    args.adapter_id,
-                ),
+                initialization_seed=lora_initialization_seed,
             )
             attached = len(attached_sites)
         if not attached:

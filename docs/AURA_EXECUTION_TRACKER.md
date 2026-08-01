@@ -33619,3 +33619,38 @@ two optimizer-reachable cells, and two wrong-to-right transitions. No
 reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 766. The 766-920 completion envelope is approximately
 83.3%-100.0%, with a 91.6% midpoint.
+
+### 2026-07-31 - CP767 cross-process recurrent policy identity repair
+
+S32's initial-policy probe completed under detached PID-1 supervision with
+zero restarts and independently reopened private adapter and optimizer
+snapshots. Runtime applied the intended 32 copied, 16 initialized, and 96
+dropped factors. The resulting policy digest was
+`6e59e7c6fffa7a6319c8d66fbd38bef4dd2d39904a673a864da941ce41462694`.
+The subsequent answer-channel process exposed a real cross-process identity
+defect before scientific evidence was accepted: its transferred policy digest
+was `0067b3777f575ab7b81296590f588920a3e884aa771b1eadde8bb6e69bc55200`.
+The answer probe was terminated after one of six observations and S32 is
+retained as invalid engineering evidence; no causal probe, signer, launch,
+trainer, checkpoint, or optimizer mutation ran.
+
+Root cause was the implicit LoRA initialization seed. `train_grpo` derived it
+from both dataset seed and adapter ID, while the answer and causal probes
+intentionally use distinct task seeds and adapter labels. The copied historical
+factors were identical, but the 16 newly initialized `q_proj` factors were not
+the same policy. Campaign construction now derives one uint32 seed from the
+frozen campaign identity, records it in training parameters, passes it
+explicitly to every model-owning command, and recomputes it during independent
+contract validation. `train_grpo` accepts and validates that explicit seed;
+legacy nonproof callers retain their prior deterministic derivation. A
+regression requires training, initial-policy, answer-channel, and causal argv
+to carry the exact same seed.
+
+The focused warm-start, campaign, adapter-identity, launch-materialization, and
+CLI matrix passes 112/112. Ruff, bytecode compilation, and diff integrity pass.
+The next checkpoint must freeze a fresh S33 contract because executable source
+changed, then prove byte-identical post-transfer policy digests across its
+independent model processes before accepting any answer or causal result. No
+reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 767. The 767-920 completion envelope is approximately
+83.4%-100.0%, with a 91.7% midpoint.
