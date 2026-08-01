@@ -33723,3 +33723,34 @@ is required because executable source changed. No reasoning-gain, frontier,
 promotion, release, or `WOW Signal` claim is made. This is total checkpoint
 769. The 769-920 completion envelope is approximately 83.6%-100.0%, with a
 91.8% midpoint.
+
+### 2026-08-01 - CP770 evidence-bound S34 causal canary preregistration
+
+CP420S34 is frozen from clean pushed CP769 source `743ee3fb3` with training
+seed `2026080103`. Its immutable semantic contract SHA-256 is
+`0896517dd4a49cd6e3dd39c7bd3f1bdc0828163ac3e89cc3cdf8dbbe23e4f489`;
+the serialized contract file SHA-256 is
+`c9f15204d40b14471f95b397da601fc2d3d6d71b1ff85d605c08ddbbd11250a4`.
+Independent verification reopens the resident 32B checkpoint, tokenizer and
+model behavior bundle, executable source inventory, recurrent execution spec,
+warm-start contract, exact answer/causal token budgets, watchdog limits, and
+nonpromotable update-canary boundary.
+
+Training, initial-policy, answer-channel, and causal processes all carry LoRA
+initialization seed `1556976447`. Both read-only probes additionally bind the
+frozen campaign's training-dataset digest
+`f10fb644409a37ba3d23671bdadca741a8b26b883fa6178f086d714c6509e6ce`
+before they may reopen the initial policy or sample. Reconstructing S28 through
+S34 found zero task-ID and zero prompt overlap between S34 and every S28-S33
+canary, plus zero S34 train/holdout ID and prompt overlap. No earlier
+observation is reused as S34 causal evidence.
+
+No resident model process ran in this checkpoint. The required live order is
+the detached initial-policy probe, answer-channel receipt v2, causal receipt
+v5, and independent reconstruction of each result. GRPO remains blocked unless
+the fresh causal evidence proves at least 75% complete child answer contracts,
+two optimizer-reachable cells, and two wrong-to-right transitions under the
+exact initial-policy custody chain. No reasoning-gain, frontier, promotion,
+release, or `WOW Signal` claim is made. This is total checkpoint 770. The
+770-920 completion envelope is approximately 83.7%-100.0%, with a 91.8%
+midpoint.
