@@ -34159,3 +34159,40 @@ claim is made. The next bounded milestone is the authority-bound durable resume
 state and exact cached trainer. This is total checkpoint 782. The 782-920
 completion envelope is approximately 85.0%-100.0%, with a 92.5% midpoint.
 Long soaks remain deferred.
+
+### 2026-08-01 - CP783 resident recurrent SFT durable state
+
+Resident supervised bootstrapping now has a dedicated crash-consistent
+checkpoint format rather than reusing the small-model research state. Every
+accepted optimizer update occupies a new immutable generation containing the
+recurrent adapter tensors, complete optimizer tensors, and strict state
+manifest. The complete manifest is durably published before the atomic latest
+pointer advances, so interruption exposes either the prior complete update or
+the next complete update and never a partially committed parameter state.
+
+The manifest binds authority, dataset, full resident checkpoint, behavior,
+personality, tokenizer, source closure, execution specification, trainer
+configuration, runtime, and trust policy identities. It also binds checkpoint
+sequence, optimizer-update count, epoch, cursor, complete without-replacement
+order and order digest, sampler and seed, split sizes, elapsed budget,
+invocation count, cumulative sample-history digest, initial adapter and topology
+identities, loss and validation trails, pending losses, baseline validation,
+terminal state, and halt reason. Only one-step progress is accepted. A
+same-step terminal publication is legal only once and only when adapter and
+optimizer bytes remain identical.
+
+Checkpoint inspection rejects noncanonical metadata, pointer or manifest
+tampering, tensor commitment drift, identity drift, missing or extra binding
+roles, repeated or skipped samples, cursor/step inconsistency, skipped sequence
+or optimizer updates, post-terminal progress, symlinked roots/generations, and
+partial-update flags. Metadata is size-bounded before reading and tensor
+artifacts are independently hashed before deserialization. The resident
+authority/state and adjacent small-model authority suites pass 47/47; Ruff,
+bytecode compilation, and diff integrity pass.
+
+No resident training has started and no model or adapter parameter changed.
+The next bounded milestone is the authority-bound exact cached resident trainer,
+followed by campaign preparation/controller and a real two-step resident canary.
+No reasoning-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal`
+claim is made. This is total checkpoint 783. The 783-920 completion envelope is
+approximately 85.1%-100.0%, with a 92.6% midpoint. Long soaks remain deferred.

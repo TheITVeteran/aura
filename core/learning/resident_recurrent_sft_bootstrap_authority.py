@@ -31,6 +31,7 @@ DATASET_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_dataset.v1"
 TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
+SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
 REQUIRED_SOURCE_ROLES: Final = frozenset(
     {
@@ -178,7 +179,7 @@ class ResidentSFTBootstrapConfig:
     branch_indices: tuple[int, ...] = (0, 1)
     objective: str = OBJECTIVE_NAME
     optimizer: str = "adamw"
-    sampler: str = "seeded_family_depth_balanced_without_replacement"
+    sampler: str = SAMPLER_NAME
     token_weighting: str = "uniform_nonnegative_normalized"
     schema: str = TRAINER_CONFIG_SCHEMA
 
@@ -189,7 +190,7 @@ class ResidentSFTBootstrapConfig:
             _fail("resident_sft_config_objective_invalid")
         if self.optimizer != "adamw":
             _fail("resident_sft_config_optimizer_invalid")
-        if self.sampler != "seeded_family_depth_balanced_without_replacement":
+        if self.sampler != SAMPLER_NAME:
             _fail("resident_sft_config_sampler_invalid")
         if self.token_weighting != "uniform_nonnegative_normalized":
             _fail("resident_sft_config_token_weighting_invalid")
@@ -944,6 +945,7 @@ __all__ = [
     "REQUIRED_SOURCE_ROLES",
     "ResidentSFTBootstrapAuthorityError",
     "ResidentSFTBootstrapConfig",
+    "SAMPLER_NAME",
     "TRAINER_CONFIG_SCHEMA",
     "TRAINING_AUTHORITY",
     "artifact_binding",

@@ -20,6 +20,9 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     sha256_json,
     validate_authority,
 )
+from core.learning.resident_recurrent_sft_bootstrap_state import (
+    authority_state_bindings,
+)
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -133,6 +136,21 @@ def test_resident_authority_binds_nonpromotable_cached_bootstrap() -> None:
     assert validated["post_training_gate"]["grpo_admission_before_gate"] is False
     assert validated["claims_not_supported"] == list(CLAIMS_NOT_SUPPORTED)
     assert validated["claim_state"]["promotion_allowed"] is False
+
+
+def test_resident_authority_derives_complete_checkpoint_bindings() -> None:
+    authority, _train, _validation, _sources = _authority()
+
+    bindings = authority_state_bindings(authority)
+
+    assert bindings["authority_sha256"] == authority["authority_sha256"]
+    assert bindings["dataset_sha256"] == authority["dataset"]["dataset_sha256"]
+    assert (
+        bindings["behavior_identity_sha256"]
+        == authority["model"]["behavior_bundle"]["bundle_sha256"]
+    )
+    assert bindings["source_closure_sha256"] == sha256_json(authority["sources"])
+    assert bindings["trainer_config_sha256"] == sha256_json(authority["trainer"])
 
 
 def test_dataset_commitment_rejects_identity_and_prompt_overlap() -> None:
