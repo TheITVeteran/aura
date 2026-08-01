@@ -4,14 +4,17 @@ Protected Enclaves & Cognitive Rollback.
 Ensures core identity, kinship data, and lore bibles are immune to memory decay.
 Proactively scans for silent errors, dormant services, and broken interfaces.
 """
-from core.runtime.errors import record_degradation
-from core.runtime.service_registry import get_runtime_service
+import ast
 import asyncio
+import hashlib
 import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.ImmuneSystem")
 
@@ -45,7 +48,7 @@ class ImmuneSystem:
         self.enclaves = ["identity_pillar", "DOME_lore", "kinship", "family_recipe"]
         self.protected_tags = self.enclaves
         self.rollback_active = False
-        self._last_scan_results: Dict[str, Any] = {}
+        self._last_scan_results: dict[str, Any] = {}
 
     def is_protected(self, metadata: dict) -> bool:
         """Checks if a memory fragment or belief is in a protected enclave."""
@@ -59,7 +62,7 @@ class ImmuneSystem:
         metadata = memory_fragment.get("metadata", {}) or memory_fragment
         return self.is_protected(metadata)
 
-    async def scan_system_health(self) -> Dict[str, Any]:
+    async def scan_system_health(self) -> dict[str, Any]:
         """Proactively scan all registered services for silent failures.
         
         Detects:
@@ -187,37 +190,143 @@ class ImmuneSystem:
         
         return report
 
-    def get_last_scan(self) -> Dict[str, Any]:
+    def get_last_scan(self) -> dict[str, Any]:
         """Return the most recent scan results."""
         return self._last_scan_results
 
-    async def initiate_rollback(self, snapshot_path: str):
-        """Emergency restoration of core files if self-architecture fails."""
+    async def initiate_rollback(self, snapshot_path: str) -> bool:
+        """Emergency restoration of core files if self-architecture fails.
+
+        This method OVERWRITES EXECUTABLE CORE CODE, so it is gated three ways
+        before a byte is copied: containment, integrity, and authority. Returns
+        whether the rollback was performed — it used to return None on every
+        path, so a caller could not distinguish "restored" from "refused".
+        """
         self.rollback_active = True
-        
+
         try:
-            # Audit Fix: Prevent path traversal by resolving absolute paths
-            # and checking the common prefix.
             base_dir = self.data_dir.resolve()
-            snapshot = Path(snapshot_path).resolve()
-            
-            if not str(snapshot).startswith(str(base_dir)):
-                logger.error("🛑 Security violation: Rollback path traversal detected! %s", snapshot_path)
-                return
+            try:
+                snapshot = Path(snapshot_path).resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                logger.error("Rollback failed: snapshot %s unresolvable: %s",
+                             snapshot_path, exc)
+                return False
 
-            if not snapshot.exists():
-                logger.error("Rollback failed: Snapshot %s not found.", snapshot_path)
-                return
+            # CONTAINMENT. The old check was
+            # str(snapshot).startswith(str(base_dir)), which accepts any SIBLING
+            # whose name merely begins with the base — "data/backups_evil"
+            # passes a "data/backups" prefix test. Compare resolved path
+            # components instead, which is what "inside this directory" means.
+            if snapshot != base_dir and base_dir not in snapshot.parents:
+                logger.error(
+                    "🛑 Security violation: rollback source %s is outside %s.",
+                    snapshot, base_dir,
+                )
+                return False
+            # resolve(strict=True) already followed links; require a regular
+            # file so a symlink swapped in afterwards cannot redirect the copy.
+            if not snapshot.is_file():
+                logger.error("Rollback failed: snapshot %s is not a regular file.",
+                             snapshot)
+                return False
 
-            logger.warning("🚨 CRITICAL FAILURE: Rolling back to %s", snapshot_path)
-            target = Path("core/cognition/cognitive_kernel.py")
+            # INTEGRITY. The snapshot was copied into executable core code with
+            # no hash, signature, or schema check of any kind — anything that
+            # landed in the backups directory became running code. A digest
+            # manifest is required, and the content must at minimum parse as the
+            # Python module it is about to replace.
+            if not await asyncio.to_thread(self._snapshot_integrity_ok, snapshot):
+                return False
+
+            # AUTHORITY. Overwriting core code is the most consequential act
+            # this module can take and it had no governance decision at all.
+            if not await self._rollback_authorized(snapshot):
+                logger.error("🛑 Rollback refused: no governing approval for %s.",
+                             snapshot)
+                return False
+
+            logger.warning("🚨 CRITICAL FAILURE: Rolling back to %s", snapshot)
+            target = Path("core/cognition/cognitive_kernel.py").resolve()
+            # Keep what we are about to destroy: an emergency restore that
+            # cannot itself be undone is a one-way door.
+            if target.exists():
+                undo = target.with_suffix(f".pre_rollback.{int(time.time())}.py")
+                await asyncio.to_thread(shutil.copy2, target, undo)
+                logger.info("Saved pre-rollback copy: %s", undo)
             await asyncio.to_thread(shutil.copy2, snapshot, target)
             logger.info("✅ Rollback complete: %s restored.", target)
-        except (OSError, IOError) as e:
+            return True
+        except OSError as e:
             record_degradation('immune_system', e)
             logger.error("Rollback error: %s", e)
+            return False
         finally:
             self.rollback_active = False
+
+    def _snapshot_integrity_ok(self, snapshot: Path) -> bool:
+        """Verify a snapshot against its digest manifest and check it parses.
+
+        A manifest sits beside the snapshot as ``<name>.sha256``. Its absence is
+        a refusal, not a warning: unsigned content must not become running code
+        just because nobody supplied a signature.
+        """
+        manifest = snapshot.with_suffix(snapshot.suffix + ".sha256")
+        if not manifest.is_file():
+            logger.error(
+                "🛑 Rollback refused: no integrity manifest at %s. Unsigned "
+                "content cannot be copied into executable core code.", manifest,
+            )
+            return False
+        try:
+            expected = manifest.read_text(encoding="utf-8").split()[0].strip().lower()
+            actual = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+        except (OSError, UnicodeDecodeError, IndexError) as exc:
+            logger.error("🛑 Rollback refused: manifest unreadable: %s", exc)
+            return False
+        if not expected or expected != actual:
+            logger.error(
+                "🛑 Rollback refused: snapshot digest mismatch (expected %s, got %s).",
+                expected or "<empty>", actual,
+            )
+            return False
+        try:
+            ast.parse(snapshot.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            logger.error(
+                "🛑 Rollback refused: snapshot is not valid Python (%s). "
+                "Restoring it would leave the kernel unimportable.", exc,
+            )
+            return False
+        return True
+
+    async def _rollback_authorized(self, snapshot: Path) -> bool:
+        """Ask the Will before overwriting executable core code.
+
+        Fails CLOSED: if governance cannot be consulted, the rollback does not
+        proceed. An emergency is not authority.
+        """
+        try:
+            from core.will import ActionDomain, get_will
+
+            decision = get_will().decide(
+                content=f"immune_rollback:{snapshot.name}",
+                source="immune_system",
+                domain=ActionDomain.SELF_MODIFICATION,
+                priority=0.95,
+                context={
+                    "operation": "core_code_rollback",
+                    "snapshot": str(snapshot),
+                    "target": "core/cognition/cognitive_kernel.py",
+                },
+            )
+            return bool(decision.is_approved())
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                'immune_system', exc, severity="warning",
+                action="refused core-code rollback because governance was unreachable",
+            )
+            return False
 
 # Singleton support
 _instance = None
