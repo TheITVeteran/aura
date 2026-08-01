@@ -42,6 +42,7 @@ Wire all six from orchestrator._init_autonomous_evolution():
     from core.fictional_ai_synthesis import register_all_fictional_engines
     register_all_fictional_engines(orchestrator=self)
 """
+from core.runtime.numeric_guards import bounded_int, unit_float
 
 import asyncio
 import json
@@ -444,6 +445,18 @@ class CognitiveHealthMonitor:
         topics_in_play: int,
         resolved_topics: int,
     ):
+        # CP126 (high): "Cortana accepts non-finite and unbounded quality
+        # signals." `nan > 0.6` is False, so a NaN silently counted as a
+        # FAILED turn; success_rate then decays and drives the rampancy /
+        # metastability verdict on evidence that was never a judgement.
+        # context_tokens and max_tokens feed a division, and topic counts
+        # feed subtraction, so all four are bounded here.
+        response_quality = unit_float(response_quality, default=0.0)
+        context_tokens = bounded_int(context_tokens, default=0, minimum=0)
+        max_tokens = bounded_int(max_tokens, default=1, minimum=1)
+        topics_in_play = bounded_int(topics_in_play, default=0, minimum=0)
+        resolved_topics = bounded_int(resolved_topics, default=0, minimum=0)
+
         self._total_turns += 1
         if response_quality > 0.6:
             self._successful_turns += 1

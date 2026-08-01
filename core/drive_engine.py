@@ -1,3 +1,4 @@
+from core.runtime.numeric_guards import bounded_float
 from core.runtime.errors import record_degradation
 import asyncio
 import logging
@@ -154,6 +155,14 @@ class DriveEngine:
         ticks, raises the seek_novelty flag and boosts curiosity.
         A meaningful FE increase (prediction error reduction) relieves boredom.
         """
+        # CP126 (high): "Non-finite free energy can corrupt boredom state."
+        # `nan < BOREDOM_FE_CEILING` is False, so a NaN reading took the
+        # "prediction error present" branch and quietly drained boredom by 3
+        # every tick — she could never reach the novelty threshold again. And
+        # because _last_fe_value was overwritten with the NaN, every
+        # subsequent fe_delta was NaN too, so the surprise-spike relief was
+        # dead as well. One bad reading disabled the drive permanently.
+        current_fe = bounded_float(current_fe, default=self._last_fe_value, minimum=0.0)
         fe_delta = current_fe - self._last_fe_value
         self._last_fe_value = current_fe
 
