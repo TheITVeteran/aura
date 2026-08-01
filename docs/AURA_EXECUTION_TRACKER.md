@@ -33792,3 +33792,29 @@ diff integrity pass. A fresh S35 contract is required because executable
 source changed. No reasoning-gain, frontier, promotion, release, or
 `WOW Signal` claim is made. This is total checkpoint 771. The 771-920
 completion envelope is approximately 83.8%-100.0%, with a 91.9% midpoint.
+
+### 2026-08-01 - CP772 source-manifest-bound S35 canary preregistration
+
+CP420S35 is frozen from clean pushed CP771 source `a93ea94cb` with training
+seed `2026080104`. Its immutable semantic contract SHA-256 is
+`abb40ecad7caba480ef10a0cd55f500f79427b456fa9ab3e6de08bf54b0f587d`;
+the serialized contract file SHA-256 is
+`7e34ab39ad49e9a3d62174e1af7d2ea0e32905ecb87fb8e37f01912b6653d5b1`.
+Independent verification reopens every model, behavior, execution, source,
+warm-start, resource, watchdog, and claim-boundary commitment.
+
+All four model processes carry LoRA initialization seed `2319872362`. The
+answer and causal processes bind frozen initial training-dataset digest
+`5e80728fa897264e8cefb2104c7de17b94a9df387534c175592dd7c321cbb937`
+and initial source-manifest digest
+`ef6fa75be2a98a2d2b4f637b3a2f0c0396d67aea45b4d8a6a17b392b17e25aec`.
+Reconstructing S28 through S35 found zero task-ID and zero prompt overlap
+between S35 and every earlier S28-S34 canary, plus zero S35 train/holdout ID
+and prompt overlap.
+
+No resident process ran in this checkpoint. S35 must now pass the detached
+initial policy, answer receipt v2, causal receipt v5, and independent artifact
+reconstruction in order. Training remains fail-closed behind every causal
+threshold. No reasoning-gain, frontier, promotion, release, or `WOW Signal`
+claim is made. This is total checkpoint 772. The 772-920 completion envelope
+is approximately 83.9%-100.0%, with a 92.0% midpoint.
