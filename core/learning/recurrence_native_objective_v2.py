@@ -908,6 +908,20 @@ class CachedSupervisedLivePathResult:
     bridge_tokens_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class CachedSupervisedLivePathEvaluation:
+    """Teacher-forced CE measured on the exact resident cached backend."""
+
+    value: float
+    branch_values: tuple[float, ...]
+    branch_indices: tuple[int, ...]
+    answer_token_count: int
+    execution_spec_sha256: str
+    prompt_tokens_sha256: str
+    answer_tokens_sha256: str
+    bridge_tokens_sha256: str
+
+
 @dataclass(frozen=True)
 class _PreparedLivePath:
     prompt_embeddings: Any
@@ -1874,42 +1888,15 @@ def cached_supervised_live_path_value_and_grad(
     import mlx.nn as nn
     from mlx.utils import tree_flatten, tree_map
 
-    answer = tuple(answer_tokens)
-    bridge = tuple(bridge_tokens)
-    if not answer or any(type(token) is not int or token < 0 for token in answer):
-        raise ValueError("answer_tokens must contain non-negative integers")
-    if any(type(token) is not int or token < 0 for token in bridge):
-        raise ValueError("bridge_tokens must contain non-negative integers")
-    weights = (
-        tuple(1.0 for _ in answer)
-        if token_loss_weights is None
-        else tuple(float(value) for value in token_loss_weights)
+    answer, bridge, weights, indices, weight_total = _cached_supervised_inputs(
+        answer_tokens,
+        bridge_tokens=bridge_tokens,
+        token_loss_weights=token_loss_weights,
+        branch_indices=branch_indices,
+        spec=spec,
     )
-    if (
-        len(weights) != len(answer)
-        or any(not math.isfinite(value) or value < 0.0 for value in weights)
-        or sum(weights) <= 0.0
-    ):
-        raise ValueError(
-            "token loss weights must be finite, non-negative, and token-aligned"
-        )
-    indices = (
-        tuple(range(len(spec.branch_roles)))
-        if branch_indices is None
-        else tuple(branch_indices)
-    )
-    if (
-        not indices
-        or len(set(indices)) != len(indices)
-        or any(
-            type(index) is not int or not 0 <= index < len(spec.branch_roles)
-            for index in indices
-        )
-    ):
-        raise ValueError("branch indices must be unique members of the live branch set")
 
     weight_tensor = mx.array(weights, dtype=mx.float32)
-    weight_total = float(sum(weights))
     branch_scale = 1.0 / len(indices)
     accumulated: Any | None = None
     branch_values: list[float] = []
@@ -1970,6 +1957,115 @@ def cached_supervised_live_path_value_and_grad(
             role="bridge_tokens",
         ),
     )
+
+
+def cached_supervised_live_path_loss(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int] = (),
+    token_loss_weights: Sequence[float] | None = None,
+    branch_indices: Sequence[int] | None = None,
+) -> CachedSupervisedLivePathEvaluation:
+    """Evaluate teacher-forced CE through the exact cached live policy."""
+
+    import mlx.core as mx
+
+    answer, bridge, weights, indices, weight_total = _cached_supervised_inputs(
+        answer_tokens,
+        bridge_tokens=bridge_tokens,
+        token_loss_weights=token_loss_weights,
+        branch_indices=branch_indices,
+        spec=spec,
+    )
+    weight_tensor = mx.array(weights, dtype=mx.float32)
+    branch_values: list[float] = []
+    for branch_index in indices:
+        logprobs = cached_live_path_token_logprobs(
+            model,
+            prompt_tokens,
+            answer,
+            spec=spec,
+            branch_index=branch_index,
+            bridge_tokens=bridge,
+            adapters_on=True,
+        )
+        value = -mx.sum(logprobs * weight_tensor) / weight_total
+        try:
+            mx.eval(value)
+            branch_value = float(value)
+        finally:
+            del value, logprobs
+            mx.clear_cache()
+        if not math.isfinite(branch_value) or branch_value < 0.0:
+            raise FloatingPointError("cached supervised live-path loss is non-finite")
+        branch_values.append(branch_value)
+    return CachedSupervisedLivePathEvaluation(
+        value=sum(branch_values) / len(branch_values),
+        branch_values=tuple(branch_values),
+        branch_indices=indices,
+        answer_token_count=len(answer),
+        execution_spec_sha256=spec.sha256,
+        prompt_tokens_sha256=_canonical_tokens_sha256(
+            prompt_tokens,
+            role="prompt_tokens",
+        ),
+        answer_tokens_sha256=_canonical_tokens_sha256(
+            answer,
+            role="answer_tokens",
+        ),
+        bridge_tokens_sha256=_canonical_optional_tokens_sha256(
+            bridge,
+            role="bridge_tokens",
+        ),
+    )
+
+
+def _cached_supervised_inputs(
+    answer_tokens: Sequence[int],
+    *,
+    bridge_tokens: Sequence[int],
+    token_loss_weights: Sequence[float] | None,
+    branch_indices: Sequence[int] | None,
+    spec: RLCExecutionSpec,
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[float, ...], tuple[int, ...], float]:
+    answer = tuple(answer_tokens)
+    bridge = tuple(bridge_tokens)
+    if not answer or any(type(token) is not int or token < 0 for token in answer):
+        raise ValueError("answer_tokens must contain non-negative integers")
+    if any(type(token) is not int or token < 0 for token in bridge):
+        raise ValueError("bridge_tokens must contain non-negative integers")
+    weights = (
+        tuple(1.0 for _ in answer)
+        if token_loss_weights is None
+        else tuple(float(value) for value in token_loss_weights)
+    )
+    weight_total = float(sum(weights))
+    if (
+        len(weights) != len(answer)
+        or any(not math.isfinite(value) or value < 0.0 for value in weights)
+        or weight_total <= 0.0
+    ):
+        raise ValueError(
+            "token loss weights must be finite, non-negative, and token-aligned"
+        )
+    indices = (
+        tuple(range(len(spec.branch_roles)))
+        if branch_indices is None
+        else tuple(branch_indices)
+    )
+    if (
+        not indices
+        or len(set(indices)) != len(indices)
+        or any(
+            type(index) is not int or not 0 <= index < len(spec.branch_roles)
+            for index in indices
+        )
+    ):
+        raise ValueError("branch indices must be unique members of the live branch set")
+    return answer, bridge, weights, indices, weight_total
 
 
 def live_path_branch_answer_ce_trail(
@@ -2826,6 +2922,7 @@ def depth_curriculum_loss_v2(
 
 
 __all__ = [
+    "CachedSupervisedLivePathEvaluation",
     "CachedSupervisedLivePathResult",
     "EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA",
     "EXACT_ADJOINT_INTERVENTION_SCHEMA",
@@ -2841,6 +2938,7 @@ __all__ = [
     "RECURRENT_TRANSITION_STATE_SCHEMA",
     "branch_mean_answer_loss",
     "cached_live_path_token_logprobs",
+    "cached_supervised_live_path_loss",
     "cached_supervised_live_path_value_and_grad",
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",

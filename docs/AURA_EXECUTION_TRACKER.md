@@ -34096,3 +34096,30 @@ weakpoint, ambient-law, reasoning-gain, frontier, promotion, release, or
 `WOW Signal` claim is made. This is total checkpoint 780. The 780-920
 completion envelope is approximately 84.8%-100.0%, with a 92.4% midpoint.
 Long soaks remain deferred.
+
+### 2026-08-01 - CP781 resident-cached supervised evaluation parity
+
+The recurrence-native objective now exposes a no-gradient teacher-forced
+evaluator over the same exact resident KV-cached policy as CP778's supervised
+gradient primitive. It streams one branch at a time, supports the identical
+validated token weighting and branch selection contract, rejects non-finite
+losses, and binds execution specification plus prompt, answer, and bridge token
+identities. Baseline, heldout, and checkpoint validation for the forthcoming
+resident SFT trainer therefore no longer need to measure a historical no-cache
+graph while training a cached one.
+
+A parity test proves equal weighted branch losses and equal ensemble loss
+between evaluation and gradient paths across both branches, equal identity
+bindings, and byte-for-byte unchanged trainable tensors after evaluation. The
+adjacent recurrence and GRPO suite passes 53/53; Ruff, bytecode compilation,
+and diff integrity pass. The existing small-checkpoint SFT authority and its
+historical objective remain unchanged so prior research evidence is not
+silently redefined.
+
+This checkpoint does not authorize a resident checkpoint, mutate parameters,
+or establish a reasoning gain. The next step remains a new source-bound
+resident supervised-bootstrap authority and resumable trainer, followed by
+fresh heldout causal lesion/restoration evidence. No reasoning-gain, frontier,
+promotion, release, or `WOW Signal` claim is made. This is total checkpoint
+781. The 781-920 completion envelope is approximately 84.9%-100.0%, with a
+92.4% midpoint. Long soaks remain deferred.

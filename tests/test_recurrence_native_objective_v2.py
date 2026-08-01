@@ -49,6 +49,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     _persist_and_score,
     _prepare_live_path,
     cached_live_path_token_logprobs,
+    cached_supervised_live_path_loss,
     cached_supervised_live_path_value_and_grad,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
@@ -261,6 +262,51 @@ def test_cached_supervised_objective_normalizes_token_weights():
             spec=spec,
             token_loss_weights=(0.0, 0.0, 0.0),
         )
+
+
+def test_cached_supervised_evaluation_matches_gradient_objective_without_mutation():
+    model = _model()
+    spec = _spec(
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    before = tuple(
+        (path, mx.array(value))
+        for path, value in tree_flatten(model.trainable_parameters())
+    )
+    mx.eval([value for _path, value in before])
+
+    evaluation = cached_supervised_live_path_loss(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        token_loss_weights=(0.0, 2.0, 1.0),
+    )
+    objective = cached_supervised_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        token_loss_weights=(0.0, 2.0, 1.0),
+    )
+
+    assert evaluation.value == pytest.approx(objective.value, abs=1e-5)
+    assert evaluation.branch_values == pytest.approx(objective.branch_values, abs=1e-5)
+    assert evaluation.branch_indices == objective.branch_indices == (0, 1)
+    assert evaluation.execution_spec_sha256 == spec.sha256
+    assert evaluation.prompt_tokens_sha256 == objective.prompt_tokens_sha256
+    assert evaluation.answer_tokens_sha256 == objective.answer_tokens_sha256
+    assert evaluation.bridge_tokens_sha256 == objective.bridge_tokens_sha256
+    after = tuple(tree_flatten(model.trainable_parameters()))
+    assert tuple(path for path, _value in before) == tuple(path for path, _value in after)
+    assert all(
+        bool(mx.array_equal(before_value, after_value))
+        for (_path, before_value), (_after_path, after_value) in zip(
+            before,
+            after,
+            strict=True,
+        )
+    )
 
 
 def test_final_transition_freezes_one_real_parent_child_edge() -> None:
