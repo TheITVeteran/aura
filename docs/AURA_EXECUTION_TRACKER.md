@@ -34460,6 +34460,23 @@ step is a fresh CP788 two-step canary from clean published `main`. No reasoning-
 gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
 made.
 
+### 2026-08-01 - CP789 trainer-side strict execution-spec parsing
+
+The CP788 canary proved the lexical venv interpreter and full trainer imports,
+then failed before model loading because the trainer's generic evidence reader
+still required the exact execution-spec bytes to be canonical JSON. This was
+the same obsolete whitespace constraint already removed from preparation, not
+a dependency or MLX failure. The generic reader now has explicit strict and
+canonical modes. Authority, dataset, journal, and receipt evidence remain
+canonical-only; the exact-byte-bound execution specification uses strict UTF-8
+JSON, rejects duplicate keys and non-finite constants, reconstructs the typed
+spec, and verifies its canonical semantic digest against authority. Focused
+regressions cover readable formatting, duplicate keys, and `NaN`. Both failed
+attempts stopped before resident model loading or checkpoint publication. The
+next step is a fresh CP789 canary from clean published `main`; no reasoning-
+gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
+made.
+
 ### 2026-08-01 - CP790 immutable imported-source closure across moving main
 
 The first CP789 invocation completed a real resident-32B optimizer step and
@@ -34485,19 +34502,27 @@ CP789 step-1 checkpoint remains quarantined evidence; a fresh CP790 canary must
 reproduce both steps under this continuation contract. No reasoning-gain,
 frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is made.
 
-### 2026-08-01 - CP789 trainer-side strict execution-spec parsing
+### 2026-08-01 - CP791 real resident-32B recurrent-SFT canary PASS
 
-The CP788 canary proved the lexical venv interpreter and full trainer imports,
-then failed before model loading because the trainer's generic evidence reader
-still required the exact execution-spec bytes to be canonical JSON. This was
-the same obsolete whitespace constraint already removed from preparation, not
-a dependency or MLX failure. The generic reader now has explicit strict and
-canonical modes. Authority, dataset, journal, and receipt evidence remain
-canonical-only; the exact-byte-bound execution specification uses strict UTF-8
-JSON, rejects duplicate keys and non-finite constants, reconstructs the typed
-spec, and verifies its canonical semantic digest against authority. Focused
-regressions cover readable formatting, duplicate keys, and `NaN`. Both failed
-attempts stopped before resident model loading or checkpoint publication. The
-next step is a fresh CP789 canary from clean published `main`; no reasoning-
-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
-made.
+The fresh CP790 canary completed both source-bound resident-32B invocations
+without retries. Invocation 1 published checkpoint sequence 2 at step 1;
+invocation 2 loaded that exact adapter and optimizer state and published
+sequence 3 at terminal step 2. Both detached receipts returned zero, both
+journal cells passed independent checkpoint/base-model verification and were
+committed, the final journal contains nine hash-chained events, and the sealed
+manifest covers both cells. The full base fingerprint remained
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`.
+No retry, stale heartbeat, process-containment failure, or source-closure drift
+occurred. Cell 2 launched successfully after unrelated `main` advancement,
+providing live evidence for CP790's immutable imported-source continuation
+contract.
+
+The canary's four-example held-out mean cached-objective loss moved from
+2.4943406135 at step 1 to 2.4727434665 at step 2 (about 0.87% lower). This is a
+small positive optimization signal on the frozen canary holdout, not a powered
+reasoning-gain result. The completion receipt correctly exposes only
+`resident_recurrent_sft_canary_lifecycle_completed`; `bootstrap_complete`,
+reasoning gain, frontier level, GRPO admission, promotion, and release remain
+false. The next step is the independently supervised full 96-step campaign,
+followed by its preregistered held-out/equal-compute causal proof gates. No
+`WOW Signal` claim is made.
