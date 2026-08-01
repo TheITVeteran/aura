@@ -191,6 +191,24 @@ def test_proof_campaign_adapter_topology_is_exact_and_reconstructable():
     )
 
 
+def test_proof_campaign_adapter_honors_bound_scale_and_dropout():
+    model = _model(seed=402)
+    attach_recurrent_policy_adapters(
+        model,
+        _spec(),
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj",),
+        initialization_seed=18,
+        lora_dropout=0.0,
+        lora_scale=7.5,
+    )
+
+    adapter = model.model.layers[2].self_attn.o_proj
+    assert isinstance(adapter, ScopedLoRALinear)
+    assert adapter.scale == 7.5
+
+
 def test_proof_campaign_adapter_topology_preflight_prevents_partial_mutation():
     model = _model(seed=403)
 

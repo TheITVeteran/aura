@@ -161,6 +161,7 @@ def artifact_binding(value: Any, *, role: str) -> dict[str, Any]:
 @dataclass(frozen=True, slots=True)
 class ResidentSFTBootstrapConfig:
     seed: int
+    lora_initialization_seed: int = 2026080107
     max_steps: int = 96
     max_invocation_steps: int = 4
     max_minutes: float = 480.0
@@ -195,6 +196,12 @@ class ResidentSFTBootstrapConfig:
         if self.token_weighting != "uniform_nonnegative_normalized":
             _fail("resident_sft_config_token_weighting_invalid")
         _integer(self.seed, role="resident_sft_seed", minimum=0, maximum=2**63 - 1)
+        _integer(
+            self.lora_initialization_seed,
+            role="resident_sft_lora_initialization_seed",
+            minimum=0,
+            maximum=0xFFFFFFFF,
+        )
         _integer(self.max_steps, role="resident_sft_max_steps", minimum=1, maximum=10_000)
         _integer(
             self.max_invocation_steps,
@@ -235,6 +242,8 @@ class ResidentSFTBootstrapConfig:
             minimum=0.0,
             maximum=0.5,
         )
+        if self.lora_dropout != 0.0:
+            _fail("resident_sft_lora_dropout_must_be_zero_for_exact_resume")
         allowed_targets = {
             "q_proj",
             "k_proj",
@@ -298,6 +307,7 @@ class ResidentSFTBootstrapConfig:
             "sampler": self.sampler,
             "token_weighting": self.token_weighting,
             "seed": self.seed,
+            "lora_initialization_seed": self.lora_initialization_seed,
             "max_steps": self.max_steps,
             "max_invocation_steps": self.max_invocation_steps,
             "max_minutes": self.max_minutes,
@@ -328,6 +338,7 @@ class ResidentSFTBootstrapConfig:
                 sampler=record["sampler"],
                 token_weighting=record["token_weighting"],
                 seed=record["seed"],
+                lora_initialization_seed=record["lora_initialization_seed"],
                 max_steps=record["max_steps"],
                 max_invocation_steps=record["max_invocation_steps"],
                 max_minutes=record["max_minutes"],

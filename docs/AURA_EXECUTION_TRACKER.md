@@ -34196,3 +34196,43 @@ followed by campaign preparation/controller and a real two-step resident canary.
 No reasoning-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal`
 claim is made. This is total checkpoint 783. The 783-920 completion envelope is
 approximately 85.1%-100.0%, with a 92.6% midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP784 exact resident SFT inputs and deterministic topology
+
+The resident bootstrap now has a shared pre-trainer execution contract instead
+of leaving tokenizer projection, sampling semantics, or LoRA initialization to
+trainer-local conventions. Each authority-normalized row is rendered through
+the resident chat template with an answer-contract instruction and generation
+boundary, tokenized without adding a second special-token layer, checked for
+answer leakage, round-tripped across the answer text, terminated with the bound
+EOS token, and rejected when prompt plus answer exceeds the configured sequence
+budget. The projected identity binds source identity, rendered prompt and answer
+digests, prompt and answer token digests and counts, EOS, bridge policy, and
+maximum sequence length.
+
+The promised family/depth-balanced without-replacement sampler is now an actual
+replayable algorithm. It deterministically shuffles rows within family/depth
+strata, alternates depth within each family, rotates active families, and emits
+one complete permutation per epoch. Its receipt binds seed, epoch, exact order,
+family counts, family/depth counts, and all-rows-once status. A cumulative
+sample-history hash chains each committed example to step, epoch, and cursor.
+This intentionally does not reuse the older family-balanced sampler whose equal
+family exposure repeats minority rows.
+
+LoRA initialization is now an explicit 32-bit authority field. Stochastic LoRA
+dropout is prohibited for exact resume. The shared recurrent-policy attachment
+constructor accepts and validates the authority-bound scale and dropout rather
+than silently applying defaults, while retaining seeded attachment to the last
+configured layers of the recurrent window. Existing callers retain identical
+default behavior.
+
+Projection, scheduling, authority, durable state, and recurrent-policy suites
+pass 62/62, covering prompt leakage, tokenizer mismatch, EOS and sequence
+budgets, duplicate projected identities, seed/epoch replay and sensitivity,
+order drift, history chaining, bound scale, and deterministic initialization;
+Ruff and diff integrity pass. No resident training has started and no model or
+adapter parameter changed. The next bounded milestone remains the exact cached
+resident trainer. No reasoning-gain, frontier, promotion, release,
+GRPO-admission, or `WOW Signal` claim is made. This is total checkpoint 784. The
+784-920 completion envelope is approximately 85.2%-100.0%, with a 92.6%
+midpoint. Long soaks remain deferred.

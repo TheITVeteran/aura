@@ -429,6 +429,8 @@ def attach_recurrent_policy_adapters(
     lora_layers: int,
     lora_targets: Sequence[str],
     initialization_seed: int,
+    lora_dropout: float = 0.0,
+    lora_scale: float = 20.0,
 ) -> tuple[str, ...]:
     """Attach the exact proof-campaign adapter topology to a frozen model.
 
@@ -449,6 +451,14 @@ def attach_recurrent_policy_adapters(
         or lora_layers < 1
         or type(initialization_seed) is not int
         or not 0 <= initialization_seed <= 0xFFFFFFFF
+        or isinstance(lora_dropout, bool)
+        or not isinstance(lora_dropout, (int, float))
+        or not math.isfinite(float(lora_dropout))
+        or not 0.0 <= float(lora_dropout) <= 0.5
+        or isinstance(lora_scale, bool)
+        or not isinstance(lora_scale, (int, float))
+        or not math.isfinite(float(lora_scale))
+        or not 0.0 < float(lora_scale) <= 1024.0
         or not isinstance(lora_targets, Sequence)
         or isinstance(lora_targets, (str, bytes, bytearray))
     ):
@@ -516,6 +526,8 @@ def attach_recurrent_policy_adapters(
             ScopedLoRALinear.from_base(
                 projection,
                 r=lora_rank,
+                dropout=float(lora_dropout),
+                scale=float(lora_scale),
                 block_index=layer_index,
                 site=site,
             ),

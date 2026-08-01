@@ -211,6 +211,16 @@ def test_authority_rejects_recomputed_config_weakening() -> None:
         validate_authority(weakened)
 
 
+def test_resident_config_requires_deterministic_adapter_initialization() -> None:
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="dropout_must_be_zero"):
+        ResidentSFTBootstrapConfig(seed=1, lora_dropout=0.1)
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="lora_initialization_seed_invalid",
+    ):
+        ResidentSFTBootstrapConfig(seed=1, lora_initialization_seed=2**32)
+
+
 def test_observed_identity_drift_is_rejected_after_valid_authority() -> None:
     authority, _train, _validation, _sources = _authority()
     changed_model = dict(authority["model"]["base_checkpoint"])
