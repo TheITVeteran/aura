@@ -2093,6 +2093,7 @@ def test_transition_reward_aggregate_rejects_regression_before_scalar_score() ->
         task_id="aggregate-test",
         config=TransitionRewardConfig(),
         created_at_unix_ns=1,
+        schema=reward_runtime.VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
     )
 
     assert batch["right_to_wrong"] == 1
@@ -2478,6 +2479,7 @@ def test_signed_right_to_wrong_rejects_before_gradient_even_with_improvement(
         token_encoder=_byte_encode,
         token_decoder=_byte_decode,
         created_at_unix_ns=1_800_000_224_000_000_000,
+        _schema=reward_runtime.VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
     )
 
     assert batch["wrong_to_right"] == 1
@@ -2510,6 +2512,88 @@ def test_signed_right_to_wrong_rejects_before_gradient_even_with_improvement(
             token_encoder=_byte_encode,
             token_decoder=_byte_decode,
             created_at_unix_ns=1_800_000_224_000_000_000,
+        )
+
+
+def test_v3_mixed_verified_transitions_are_training_only_not_claim_evidence(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> None:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    regressed = transition_outcome_episodes["right_to_wrong"]
+    evidence = (_transition_evidence(improved), _transition_evidence(regressed))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(regressed, prompt_sha256),
+    )
+    manifest, manifest_attestation = _signed_group_manifest(
+        (improved, regressed), samples, batch
+    )
+    admission = build_verified_transition_group_admission(
+        improved["store"],
+        batch,
+        evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+
+    assert batch["schema"] == reward_runtime.VERIFIED_TRANSITION_REWARD_SCHEMA
+    assert batch["optimizer_admitted"] is True
+    assert batch["optimizer_admission_reason"] == (
+        "admitted_mixed_transition_training_only"
+    )
+    assert batch["wrong_to_right"] == 1
+    assert batch["right_to_wrong"] == 1
+    assert batch["claim_control_satisfied"] is False
+    assert batch["claim_control_reason"] == (
+        "external_powered_regression_control_required"
+    )
+    assert admission["optimizer_admitted"] is True
+    assert admission["claim_control_satisfied"] is False
+    require_optimizer_admission(batch)
+    assert (
+        validate_verified_transition_group_admission(
+            improved["store"],
+            admission,
+            batch,
+            evidence,
+            samples,
+            prompt_tokens,
+            group_manifest=manifest,
+            group_manifest_attestation=manifest_attestation,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+        )
+        == admission
+    )
+
+    forged = _reseal({**batch, "claim_control_satisfied": True})
+    with pytest.raises(VerifiedTransitionRewardError):
+        validate_verified_transition_reward_batch(
+            improved["store"],
+            forged,
+            evidence,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
         )
 
 

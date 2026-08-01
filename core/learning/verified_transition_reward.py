@@ -29,9 +29,14 @@ from core.learning.verified_transition_episode import (
 )
 
 VERIFIED_TRANSITION_REWARD_SCHEMA_V1 = "aura.verified_transition.reward_batch.v1"
-VERIFIED_TRANSITION_REWARD_SCHEMA = "aura.verified_transition.reward_batch.v2"
+VERIFIED_TRANSITION_REWARD_SCHEMA_V2 = "aura.verified_transition.reward_batch.v2"
+VERIFIED_TRANSITION_REWARD_SCHEMA = "aura.verified_transition.reward_batch.v3"
 _SUPPORTED_REWARD_SCHEMAS = frozenset(
-    {VERIFIED_TRANSITION_REWARD_SCHEMA_V1, VERIFIED_TRANSITION_REWARD_SCHEMA}
+    {
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
+        VERIFIED_TRANSITION_REWARD_SCHEMA,
+    }
 )
 VERIFIED_TRANSITION_REWARD_CONFIG_SCHEMA = (
     "aura.verified_transition.reward_config.v1"
@@ -489,7 +494,7 @@ def _admission_reason_v1(
     return "admitted"
 
 
-def _admission_reason(
+def _admission_reason_v2(
     *,
     right_to_wrong: int,
     initially_correct: int,
@@ -502,6 +507,26 @@ def _admission_reason(
         return "no_verified_wrong_to_right_improvement"
     if len(set(rewards)) < 2:
         return "degenerate_structured_reward_group"
+    if initially_correct == 0:
+        return "admitted_verified_improvement_control_pending"
+    return "admitted"
+
+
+def _admission_reason_v3(
+    *,
+    right_to_wrong: int,
+    initially_correct: int,
+    wrong_to_right: int,
+    rewards: Sequence[int],
+) -> str:
+    """Admit useful contrasts for training without relaxing claim controls."""
+
+    if wrong_to_right == 0:
+        return "no_verified_wrong_to_right_improvement"
+    if len(set(rewards)) < 2:
+        return "degenerate_structured_reward_group"
+    if right_to_wrong:
+        return "admitted_mixed_transition_training_only"
     if initially_correct == 0:
         return "admitted_verified_improvement_control_pending"
     return "admitted"
@@ -541,11 +566,11 @@ def _assemble_reward_batch(
         _fail("transition_reward_scalar_invalid")
     if schema not in _SUPPORTED_REWARD_SCHEMAS:
         _fail("transition_reward_schema_invalid")
-    admission_policy = (
-        _admission_reason_v1
-        if schema == VERIFIED_TRANSITION_REWARD_SCHEMA_V1
-        else _admission_reason
-    )
+    admission_policy = {
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V1: _admission_reason_v1,
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V2: _admission_reason_v2,
+        VERIFIED_TRANSITION_REWARD_SCHEMA: _admission_reason_v3,
+    }[schema]
     reason = admission_policy(
         right_to_wrong=counts["right_to_wrong"],
         initially_correct=initially_correct,
@@ -555,6 +580,7 @@ def _assemble_reward_batch(
     optimizer_admitted = reason in {
         "admitted",
         "admitted_verified_improvement_control_pending",
+        "admitted_mixed_transition_training_only",
     }
     claim_control_satisfied = bool(
         optimizer_admitted and eir_defined and eir_micros == 0
@@ -579,7 +605,10 @@ def _assemble_reward_batch(
         "optimizer_admission_reason": reason,
         "created_at_unix_ns": created_at_unix_ns,
     }
-    if schema == VERIFIED_TRANSITION_REWARD_SCHEMA:
+    if schema in {
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
+        VERIFIED_TRANSITION_REWARD_SCHEMA,
+    }:
         document.update(
             {
                 "claim_control_satisfied": claim_control_satisfied,
@@ -742,10 +771,8 @@ def require_optimizer_admission(receipt: Mapping[str, Any]) -> None:
     if receipt.get("optimizer_admitted") is not True:
         raise VerifiedTransitionRewardAdmissionError(receipt)
     transitions = receipt.get("transitions")
-    if (
-        receipt.get("right_to_wrong") != 0
-        or not isinstance(transitions, list)
-        or any(not isinstance(row, Mapping) for row in transitions)
+    if not isinstance(transitions, list) or any(
+        not isinstance(row, Mapping) for row in transitions
     ):
         _fail("transition_reward_admission_invariant_invalid")
     schema = receipt.get("schema")
@@ -758,7 +785,10 @@ def require_optimizer_admission(receipt: Mapping[str, Any]) -> None:
         ):
             _fail("transition_reward_admission_invariant_invalid")
         return
-    if schema != VERIFIED_TRANSITION_REWARD_SCHEMA:
+    if schema not in {
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
+        VERIFIED_TRANSITION_REWARD_SCHEMA,
+    }:
         _fail("transition_reward_schema_invalid")
     if receipt.get("wrong_to_right", 0) <= 0 or len(
         {row.get("reward_micros") for row in transitions}
@@ -777,6 +807,17 @@ def require_optimizer_admission(receipt: Mapping[str, Any]) -> None:
             receipt.get("initially_correct") == 0
             and receipt.get("eir_defined") is False
             and receipt.get("eir_micros") is None
+            and receipt.get("claim_control_satisfied") is False
+            and receipt.get("claim_control_reason")
+            == "external_powered_regression_control_required"
+        )
+    elif reason == "admitted_mixed_transition_training_only":
+        valid = (
+            schema == VERIFIED_TRANSITION_REWARD_SCHEMA
+            and receipt.get("right_to_wrong", 0) > 0
+            and receipt.get("eir_defined") is True
+            and isinstance(receipt.get("eir_micros"), int)
+            and receipt.get("eir_micros", 0) > 0
             and receipt.get("claim_control_satisfied") is False
             and receipt.get("claim_control_reason")
             == "external_powered_regression_control_required"
@@ -858,6 +899,7 @@ __all__ = [
     "VERIFIED_TRANSITION_REWARD_CONFIG_SCHEMA",
     "VERIFIED_TRANSITION_REWARD_SCHEMA",
     "VERIFIED_TRANSITION_REWARD_SCHEMA_V1",
+    "VERIFIED_TRANSITION_REWARD_SCHEMA_V2",
     "TransitionRewardConfig",
     "VerifiedTransitionEvidence",
     "VerifiedTransitionRewardAdmissionError",

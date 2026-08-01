@@ -1595,6 +1595,8 @@ def _causal_learnability_summary(
     signal_cells = 0
     safe_signal_cells = 0
     strict_cells = 0
+    optimizer_cells = 0
+    mixed_cells = 0
     regression_cells = 0
     for row in rows:
         transitions = row.get("transitions")
@@ -1610,19 +1612,36 @@ def _causal_learnability_summary(
         causal_signal = counts["wrong_to_right"] > 0
         regression_free_signal = causal_signal and counts["right_to_wrong"] == 0
         strict_reachable = regression_free_signal and counts["right_to_right"] > 0
+        optimizer_reachable = causal_signal and (
+            counts["right_to_wrong"]
+            + counts["right_to_right"]
+            + counts["wrong_to_wrong"]
+            > 0
+        )
+        mixed_training_only = causal_signal and counts["right_to_wrong"] > 0
         if row.get("causal_signal") is not causal_signal:
             raise ValueError("causal learnability signal flag differs")
         if row.get("regression_free_signal") is not regression_free_signal:
             raise ValueError("causal learnability safe-signal flag differs")
         if row.get("strict_group_admission_reachable") is not strict_reachable:
             raise ValueError("causal learnability strict-reachability flag differs")
+        if row.get("optimizer_training_reachable") is not optimizer_reachable:
+            raise ValueError("causal learnability optimizer-reachability flag differs")
+        if row.get("mixed_transition_training_only") is not mixed_training_only:
+            raise ValueError("causal learnability mixed-training flag differs")
         signal_cells += int(causal_signal)
         safe_signal_cells += int(regression_free_signal)
         strict_cells += int(strict_reachable)
+        optimizer_cells += int(optimizer_reachable)
+        mixed_cells += int(mixed_training_only)
         regression_cells += int(counts["right_to_wrong"] > 0)
     verdict = (
         "strict_learnable_cell_observed"
         if strict_cells
+        else "mixed_transition_training_signal_observed"
+        if mixed_cells
+        else "optimizer_training_signal_control_pending"
+        if optimizer_cells
         else "causal_signal_without_same_group_control"
         if safe_signal_cells
         else "causal_signal_with_regression"
@@ -1636,6 +1655,8 @@ def _causal_learnability_summary(
         "causal_signal_cells": signal_cells,
         "regression_free_signal_cells": safe_signal_cells,
         "strict_group_admission_reachable_cells": strict_cells,
+        "optimizer_training_reachable_cells": optimizer_cells,
+        "mixed_transition_training_only_cells": mixed_cells,
         "regression_cells": regression_cells,
         "verdict": verdict,
     }
@@ -2933,6 +2954,15 @@ def main(
                             and row_counts["right_to_wrong"] == 0
                             and row_counts["right_to_right"] > 0
                         ),
+                        "optimizer_training_reachable": (
+                            row_counts["wrong_to_right"] > 0
+                            and sum(row_counts.values())
+                            > row_counts["wrong_to_right"]
+                        ),
+                        "mixed_transition_training_only": (
+                            row_counts["wrong_to_right"] > 0
+                            and row_counts["right_to_wrong"] > 0
+                        ),
                         "samples": sample_rows,
                     }
                 )
@@ -2947,7 +2977,7 @@ def main(
             summary = _causal_learnability_summary(rows)
             verdict = str(summary["verdict"])
             body = {
-                "schema": "aura.recurrent_causal_learnability_preflight.v1",
+                "schema": "aura.recurrent_causal_learnability_preflight.v2",
                 "campaign_id": args.adapter_id,
                 "dataset_sha256": dataset_sha256,
                 "execution_spec_sha256": execution_spec.sha256,
@@ -2983,6 +3013,7 @@ def main(
                 "[causal-learnability-preflight] "
                 f"verdict={verdict} "
                 f"strict_cells={summary['strict_group_admission_reachable_cells']} "
+                f"optimizer_cells={summary['optimizer_training_reachable_cells']} "
                 f"safe_signal_cells={summary['regression_free_signal_cells']} "
                 f"path={receipt_path}",
                 flush=True,

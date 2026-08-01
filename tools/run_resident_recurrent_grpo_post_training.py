@@ -700,7 +700,7 @@ class ControllerRun:
             before = start.get("progress_before")
             if not isinstance(before, Mapping):
                 _fail(f"training_attempt_{attempt}_start_invalid")
-            progressed = after.get("sha256") != before.get("sha256")
+            progressed = prereg.training_progress_advanced(before, after)
             terminal_success = returncode in {0, 3}
             checkpoint_evidence: dict[str, Any] | None = None
             if not terminal_success:
@@ -746,6 +746,55 @@ class ControllerRun:
                 _fail("training_attempt_budget_exhausted")
             time.sleep(float(policy["retry_backoff_s"]))
         _fail("training_attempt_budget_exhausted")
+
+    def ensure_causal_learnability_gate(self) -> dict[str, Any]:
+        """Run and verify the source-bound read-only gate before training."""
+
+        artifact_root = _resolved(
+            Path(str(self.contract["paths"]["artifact_root"])), must_exist=False
+        )
+        receipt_path = (
+            artifact_root
+            / "causal-learnability-preflight"
+            / "causal_learnability_preflight.json"
+        )
+        if receipt_path.is_file() and not receipt_path.is_symlink():
+            return prereg.require_causal_learnability_training_gate(self.contract)
+
+        contract_path = _resolved(Path(str(self.config["contract"]["path"])))
+        run_dir = artifact_root / "detached-causal-learnability-preflight"
+        if not (run_dir / detached.PLAN_FILE).exists():
+            result = prereg._launch_causal_learnability_preflight(  # noqa: SLF001
+                contract_path
+            )
+            if result != 0:
+                _fail(f"causal_learnability_preflight_launch_failed:{result}")
+            self.event("launched", {"run_dir": str(run_dir)})
+        status = self.wait_detached(
+            run_dir,
+            timeout_s=min(
+                14_400.0,
+                float(self.config["wait"]["training_terminal_timeout_s"]),
+            ),
+            role="causal_learnability_preflight",
+        )
+        receipt = _validate_detached_terminal(
+            status,
+            role="causal_learnability_preflight",
+            allowed_returncodes=frozenset({0}),
+        )
+        gate = prereg.require_causal_learnability_training_gate(self.contract)
+        self.event(
+            "admitted",
+            {
+                "receipt_sha256": receipt["receipt_sha256"],
+                "preflight_receipt_sha256": gate["receipt_sha256"],
+                "optimizer_training_reachable_cells": gate[
+                    "optimizer_training_reachable_cells"
+                ],
+            },
+        )
+        return gate
 
     def wait_for_exclusive_model_owner(self) -> dict[str, Any]:
         deadline = time.monotonic() + float(
@@ -1139,6 +1188,8 @@ class ControllerRun:
                 ],
             },
         )
+        self.set_stage("causal_learnability_preflight")
+        self.ensure_causal_learnability_gate()
         self.set_stage("detached_training")
         training_status = self.run_training_with_recovery()
         training_receipt = _validate_detached_terminal(

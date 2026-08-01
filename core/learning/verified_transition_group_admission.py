@@ -25,6 +25,7 @@ from core.learning.verified_transition_episode import (
 from core.learning.verified_transition_reward import (
     VERIFIED_TRANSITION_REWARD_SCHEMA,
     VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
+    VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
     VerifiedTransitionEvidence,
     require_optimizer_admission,
     rewards_for_recurrent_samples,
@@ -33,9 +34,14 @@ from core.learning.verified_transition_reward import (
 
 TRANSITION_GROUP_MANIFEST_SCHEMA = "aura.verified_transition.group_manifest.v1"
 TRANSITION_GROUP_ADMISSION_SCHEMA_V1 = "aura.verified_transition.group_admission.v1"
-TRANSITION_GROUP_ADMISSION_SCHEMA = "aura.verified_transition.group_admission.v2"
+TRANSITION_GROUP_ADMISSION_SCHEMA_V2 = "aura.verified_transition.group_admission.v2"
+TRANSITION_GROUP_ADMISSION_SCHEMA = "aura.verified_transition.group_admission.v3"
 _SUPPORTED_ADMISSION_SCHEMAS = frozenset(
-    {TRANSITION_GROUP_ADMISSION_SCHEMA_V1, TRANSITION_GROUP_ADMISSION_SCHEMA}
+    {
+        TRANSITION_GROUP_ADMISSION_SCHEMA_V1,
+        TRANSITION_GROUP_ADMISSION_SCHEMA_V2,
+        TRANSITION_GROUP_ADMISSION_SCHEMA,
+    }
 )
 _SHA256_LENGTH = 64
 _MAX_GROUP_SIZE = 1_024
@@ -450,11 +456,11 @@ def build_verified_transition_group_admission(
     require_optimizer_admission(reward)
     if _schema not in _SUPPORTED_ADMISSION_SCHEMAS:
         _fail("group_admission_schema_invalid")
-    expected_reward_schema = (
-        VERIFIED_TRANSITION_REWARD_SCHEMA_V1
-        if _schema == TRANSITION_GROUP_ADMISSION_SCHEMA_V1
-        else VERIFIED_TRANSITION_REWARD_SCHEMA
-    )
+    expected_reward_schema = {
+        TRANSITION_GROUP_ADMISSION_SCHEMA_V1: VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
+        TRANSITION_GROUP_ADMISSION_SCHEMA_V2: VERIFIED_TRANSITION_REWARD_SCHEMA_V2,
+        TRANSITION_GROUP_ADMISSION_SCHEMA: VERIFIED_TRANSITION_REWARD_SCHEMA,
+    }[_schema]
     if reward.get("schema") != expected_reward_schema:
         _fail("group_admission_reward_schema_mismatch")
     manifest = validate_transition_group_manifest(group_manifest)
@@ -585,7 +591,10 @@ def build_verified_transition_group_admission(
             minimum=1,
         ),
     }
-    if _schema == TRANSITION_GROUP_ADMISSION_SCHEMA:
+    if _schema in {
+        TRANSITION_GROUP_ADMISSION_SCHEMA_V2,
+        TRANSITION_GROUP_ADMISSION_SCHEMA,
+    }:
         document.update(
             {
                 "optimizer_admission_reason": reward[
@@ -646,6 +655,7 @@ def validate_verified_transition_group_admission(
 __all__ = [
     "TRANSITION_GROUP_ADMISSION_SCHEMA",
     "TRANSITION_GROUP_ADMISSION_SCHEMA_V1",
+    "TRANSITION_GROUP_ADMISSION_SCHEMA_V2",
     "TRANSITION_GROUP_MANIFEST_SCHEMA",
     "TransitionGroupPlanEntry",
     "VerifiedTransitionGroupError",

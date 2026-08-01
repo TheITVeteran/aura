@@ -164,6 +164,7 @@ def _verify_evidence(
         validate_campaign_trust_policy,
     )
     from core.learning.verified_recurrent_transition_repository import (
+        VerifiedRecurrentTransitionRepositoryError,
         verify_recurrent_evidence_manifest_artifacts,
     )
 
@@ -181,12 +182,15 @@ def _verify_evidence(
     )
     if policy.root_key_id != trust_material["root_key_id"]:
         raise SignerClientError("evidence_verifier_root_identity_mismatch")
-    receipt = verify_recurrent_evidence_manifest_artifacts(
-        document["evidence_manifest"],
-        campaign_trust_policy=policy,
-        verifier_identity=document["verifier_identity"],
-        verified_at_unix=document["verified_at_unix"],
-    )
+    try:
+        receipt = verify_recurrent_evidence_manifest_artifacts(
+            document["evidence_manifest"],
+            campaign_trust_policy=policy,
+            verifier_identity=document["verifier_identity"],
+            verified_at_unix=document["verified_at_unix"],
+        )
+    except VerifiedRecurrentTransitionRepositoryError as exc:
+        raise SignerClientError(f"evidence_verification_failed:{exc}") from exc
     recorded = _agent_call(
         Path(args.socket),
         role=args.role,

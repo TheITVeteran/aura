@@ -891,7 +891,7 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     ]
 
 
-def test_training_watchdog_retries_only_into_exact_durable_progress(
+def test_training_watchdog_rotates_process_after_durable_progress(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -956,20 +956,20 @@ def test_training_watchdog_retries_only_into_exact_durable_progress(
     monkeypatch.setattr(prereg, "_release_failed_training_runtime", lambda: None)
     monkeypatch.setattr(prereg.time, "sleep", lambda _seconds: None)
 
-    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 0
-    assert calls == 2
+    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 75
+    assert calls == 1
     journal = json.loads(
         (tmp_path / "artifacts/watchdog-test/training-watchdog/attempts.json").read_text(
             encoding="ascii"
         )
     )
-    assert [record["durable_progress"] for record in journal["records"]] == [True, True]
+    assert [record["durable_progress"] for record in journal["records"]] == [True]
     status = json.loads(
         (tmp_path / "artifacts/watchdog-test/training-watchdog/status.json").read_text(
             encoding="ascii"
         )
     )
-    assert status["state"] == "complete"
+    assert status["state"] == "retry_wait"
 
 
 def test_training_watchdog_propagates_diagnostic_terminal_without_retry_or_reclaim(
@@ -1310,9 +1310,14 @@ def test_causal_learnability_preflight_matches_training_object_and_budget():
     assert argv[argv.index("--model") + 1] == contract["model"]["path"]
     assert argv[argv.index("--execution-spec") + 1] == contract["execution_spec"]["path"]
     assert argv[argv.index("--task-source") + 1] == "recurrence_curriculum"
-    assert argv[argv.index("--domains") + 1] == "register_trace"
-    assert argv[argv.index("--depths") + 1] == "2,4,8"
-    assert argv[argv.index("--train-per-cell") + 1] == "2"
+    probe = prereg._causal_learnability_probe_parameters(contract)
+    assert argv[argv.index("--domains") + 1] == ",".join(probe["domains"])
+    assert argv[argv.index("--depths") + 1] == ",".join(
+        str(depth) for depth in probe["depths"]
+    )
+    assert argv[argv.index("--train-per-cell") + 1] == str(
+        probe["train_per_cell"]
+    )
     assert argv[argv.index("--group-size") + 1] == str(
         contract["training"]["parameters"]["group_size"]
     )
@@ -1339,12 +1344,11 @@ def test_causal_learnability_preflight_invokes_trainer_without_provider(monkeypa
     assert prereg._run_causal_learnability_preflight(contract) == 3
     argv = captured["argv"]
     assert isinstance(argv, list)
-    assert "register_trace" in argv
+    assert ",".join(contract["training"]["parameters"]["domains"]) in argv
     assert "--read-only-causal-learnability-preflight" in argv
 
 
 def _causal_learnability_receipt(contract):
-    params = contract["training"]["parameters"]
     tokenizer_files = list(contract["model"]["behavior_bundle"]["files"])
     if not tokenizer_files:
         tokenizer_files = [
@@ -1355,13 +1359,14 @@ def _causal_learnability_receipt(contract):
             "file_count": 1,
             "files": tokenizer_files,
         }
-    seed = int(params["seed"]) + 733
+    probe = prereg._causal_learnability_probe_parameters(contract)
+    seed = int(probe["seed"])
     tasks, holdout, _ = prereg._build_task_split(
-        task_source="recurrence_curriculum",
-        domains=["register_trace"],
-        depths=[2, 4, 8],
-        train_per_cell=2,
-        holdout_per_cell=1,
+        task_source=str(probe["task_source"]),
+        domains=list(probe["domains"]),
+        depths=list(probe["depths"]),
+        train_per_cell=int(probe["train_per_cell"]),
+        holdout_per_cell=int(probe["holdout_per_cell"]),
         seed=seed,
     )
     dataset = prereg._dataset_payload(tasks, holdout, seed=seed)
@@ -1404,11 +1409,13 @@ def _causal_learnability_receipt(contract):
                 "causal_signal": False,
                 "regression_free_signal": False,
                 "strict_group_admission_reachable": False,
+                "optimizer_training_reachable": False,
+                "mixed_transition_training_only": False,
                 "samples": samples,
             }
         )
     body = {
-        "schema": "aura.recurrent_causal_learnability_preflight.v1",
+        "schema": "aura.recurrent_causal_learnability_preflight.v2",
         "campaign_id": f"{contract['campaign_id']}-causal-learnability-preflight",
         "dataset_sha256": prereg._sha256(prereg.canonical_json_bytes(dataset)),
         "execution_spec_sha256": contract["execution_spec"]["semantic_sha256"],
@@ -1432,17 +1439,19 @@ def _causal_learnability_receipt(contract):
         "policy_before_sha256": "b" * 64,
         "policy_after_sha256": "b" * 64,
         "policy_unchanged": True,
-        "task_count": 6,
-        "sample_count": 12,
+        "task_count": len(tasks),
+        "sample_count": len(tasks) * 2,
         "transition_counts": {
             "wrong_to_right": 0,
             "right_to_wrong": 0,
             "right_to_right": 0,
-            "wrong_to_wrong": 12,
+            "wrong_to_wrong": len(tasks) * 2,
         },
         "causal_signal_cells": 0,
         "regression_free_signal_cells": 0,
         "strict_group_admission_reachable_cells": 0,
+        "optimizer_training_reachable_cells": 0,
+        "mixed_transition_training_only_cells": 0,
         "regression_cells": 0,
         "cells": cells,
         "claim_boundary": (
@@ -1462,7 +1471,7 @@ def test_causal_learnability_preflight_verifier_reconstructs_disjoint_probe():
     verified = prereg.validate_causal_learnability_preflight(contract, receipt)
 
     assert verified == receipt
-    assert verified["task_count"] == 6
+    assert verified["task_count"] == len(verified["cells"])
     assert verified["policy_unchanged"] is True
 
 
@@ -1476,6 +1485,113 @@ def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
 
     with pytest.raises(prereg.PreregistrationError, match="summary_mismatch"):
         prereg.validate_causal_learnability_preflight(contract, receipt)
+
+
+def test_causal_learnability_training_gate_requires_two_trainable_cells(
+    tmp_path, monkeypatch
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "campaign"
+    receipt = _causal_learnability_receipt(contract)
+    for cell in receipt["cells"][:2]:
+        cell["samples"][0].update(
+            {
+                "parent_correct": False,
+                "child_correct": True,
+                "child_grade_reason": "correct",
+                "transition_kind": "wrong_to_right",
+            }
+        )
+        cell["transitions"] = {
+            "wrong_to_right": 1,
+            "right_to_wrong": 0,
+            "right_to_right": 0,
+            "wrong_to_wrong": 1,
+        }
+        cell["causal_signal"] = True
+        cell["regression_free_signal"] = True
+        cell["optimizer_training_reachable"] = True
+    receipt["transition_counts"] = {
+        "wrong_to_right": 2,
+        "right_to_wrong": 0,
+        "right_to_right": 0,
+        "wrong_to_wrong": receipt["sample_count"] - 2,
+    }
+    receipt["causal_signal_cells"] = 2
+    receipt["regression_free_signal_cells"] = 2
+    receipt["optimizer_training_reachable_cells"] = 2
+    receipt["verdict"] = "optimizer_training_signal_control_pending"
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+    path = (
+        tmp_path
+        / "campaign"
+        / "causal-learnability-preflight"
+        / "causal_learnability_preflight.json"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_bytes(prereg.canonical_json_bytes(receipt))
+    real_repo_path = prereg._repo_path
+
+    def _test_repo_path(relative, *, role, must_exist=True):
+        if role == "artifact_root":
+            return tmp_path / "campaign"
+        return real_repo_path(relative, role=role, must_exist=must_exist)
+
+    monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
+
+    assert prereg.require_causal_learnability_training_gate(contract) == receipt
+
+    second = receipt["cells"][1]
+    second["samples"][0].update(
+        {
+            "child_correct": False,
+            "child_grade_reason": "wrong_answer",
+            "transition_kind": "wrong_to_wrong",
+        }
+    )
+    second["transitions"] = {
+        "wrong_to_right": 0,
+        "right_to_wrong": 0,
+        "right_to_right": 0,
+        "wrong_to_wrong": 2,
+    }
+    second["causal_signal"] = False
+    second["regression_free_signal"] = False
+    second["optimizer_training_reachable"] = False
+    receipt["transition_counts"]["wrong_to_right"] = 1
+    receipt["transition_counts"]["wrong_to_wrong"] += 1
+    receipt["causal_signal_cells"] = 1
+    receipt["regression_free_signal_cells"] = 1
+    receipt["optimizer_training_reachable_cells"] = 1
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+    path.write_bytes(prereg.canonical_json_bytes(receipt))
+    with pytest.raises(prereg.PreregistrationError, match="underpowered"):
+        prereg.require_causal_learnability_training_gate(contract)
+
+
+def test_training_progress_ignores_same_step_checkpoint_identity_churn():
+    before = {
+        "checkpoint_step": 12,
+        "optimizer_updates": 0,
+        "baseline_present": True,
+        "calibration_present": True,
+        "training_completion_present": False,
+        "training_receipt_present": False,
+        "sha256": "1" * 64,
+    }
+    after = {**before, "sha256": "2" * 64}
+
+    assert prereg.training_progress_advanced(before, after) is False
+    assert prereg.training_progress_advanced(
+        before, {**after, "checkpoint_step": 13}
+    ) is True
+    assert prereg.training_progress_advanced(
+        before, {**after, "training_completion_present": True}
+    ) is True
 
 
 def test_launch_initial_policy_probe_is_detached_and_nonresumable(tmp_path, monkeypatch):

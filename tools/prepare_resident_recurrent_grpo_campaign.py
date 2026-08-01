@@ -1600,6 +1600,7 @@ def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
         if path.is_file() and not path.is_symlink():
             files[relative] = _sha256(read_stable_bytes(path, max_bytes=32 * 1024 * 1024))
     checkpoint_step: int | None = None
+    optimizer_updates: int | None = None
     latest = training_root / "latest.json"
     if latest.is_file() and not latest.is_symlink():
         pointer = _strict_json(latest)
@@ -1610,6 +1611,8 @@ def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
                 complete = _strict_json(complete_path)
                 if type(complete.get("step")) is int:
                     checkpoint_step = int(complete["step"])
+                if type(complete.get("optimizer_updates")) is int:
+                    optimizer_updates = int(complete["optimizer_updates"])
                 files[f"{relative}/complete.json"] = _sha256(
                     read_stable_bytes(
                         complete_path,
@@ -1619,9 +1622,38 @@ def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
     document = {
         "schema": "aura.resident_recurrent_grpo.training_progress.v1",
         "checkpoint_step": checkpoint_step,
+        "optimizer_updates": optimizer_updates,
+        "baseline_present": "baseline-progress.json" in files,
+        "calibration_present": "calibration-progress.json" in files,
+        "training_completion_present": "training_completion.json" in files,
+        "training_receipt_present": "grpo_receipt.json" in files,
         "files": dict(sorted(files.items())),
     }
     return {**document, "sha256": _sha256(canonical_json_bytes(document))}
+
+
+def training_progress_advanced(
+    before: Mapping[str, Any], after: Mapping[str, Any]
+) -> bool:
+    """Ignore same-step invocation churn when deciding whether retry made progress."""
+
+    numeric_fields = ("checkpoint_step", "optimizer_updates")
+    for field in numeric_fields:
+        before_value = before.get(field)
+        after_value = after.get(field)
+        before_int = before_value if type(before_value) is int else -1
+        after_int = after_value if type(after_value) is int else -1
+        if after_int > before_int:
+            return True
+    for field in (
+        "baseline_present",
+        "calibration_present",
+        "training_completion_present",
+        "training_receipt_present",
+    ):
+        if before.get(field) is not True and after.get(field) is True:
+            return True
+    return False
 
 
 def _successful_training_disposition(
@@ -1901,6 +1933,8 @@ def _run_training(
     not_before = int(contract["launch_not_before_unix"])
     if time.time() < not_before:
         _fail("presentation_window_still_active")
+    if contract.get("campaign_profile") == UPDATE_CANARY_PROFILE:
+        require_causal_learnability_training_gate(contract)
     from tools import run_verified_recurrent_grpo_training
 
     argv = list(contract["training"]["argv"])
@@ -1982,7 +2016,7 @@ def _run_training(
                 )
             except Exception as exc:
                 error = exc
-        progressed = after["sha256"] != before["sha256"]
+        progressed = training_progress_advanced(before, after)
         consecutive_no_progress = 0 if progressed else consecutive_no_progress + 1
         record = {
             "attempt": attempt,
@@ -2052,8 +2086,10 @@ def _run_training(
             # this model-owning process so the next exact resume starts with a
             # fresh native allocator instead of reloading MLX in-process.
             return RESUMABLE_PROCESS_ROTATION_EXIT_CODE
-        _release_failed_training_runtime()
-        time.sleep(float(policy["retry_backoff_s"]))
+        # Model-owning retries always cross a process boundary. Reloading a
+        # released 32B MLX graph in this process can corrupt native allocator
+        # state on macOS; launchd performs the exact-resume retry instead.
+        return RESUMABLE_PROCESS_ROTATION_EXIT_CODE
 
     produced_dataset = (training_root / "dataset_manifest.json").read_bytes()
     if _sha256(produced_dataset) != contract["training"]["dataset"]["sha256"]:
@@ -2177,12 +2213,27 @@ def _run_answer_channel_preflight(contract: Mapping[str, Any]) -> int:
         sys.argv = previous
 
 
+def _causal_learnability_probe_parameters(
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    params = contract["training"]["parameters"]
+    return {
+        "task_source": str(params["task_source"]),
+        "domains": list(params["domains"]),
+        "depths": list(params["depths"]),
+        "train_per_cell": max(2, min(4, int(params["train_per_cell"]))),
+        "holdout_per_cell": 1,
+        "seed": int(params["seed"]) + 733,
+    }
+
+
 def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
     """Measure the exact optimizer transition object on fresh task seeds."""
 
     root = PurePosixPath(str(contract["paths"]["artifact_root"]))
     output = str(root / "causal-learnability-preflight")
     params = contract["training"]["parameters"]
+    probe = _causal_learnability_probe_parameters(contract)
     return [
         "tools/train_grpo.py",
         "--model",
@@ -2196,15 +2247,15 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         "--execution-spec",
         str(contract["execution_spec"]["path"]),
         "--task-source",
-        "recurrence_curriculum",
+        str(probe["task_source"]),
         "--domains",
-        "register_trace",
+        ",".join(probe["domains"]),
         "--depths",
-        "2,4,8",
+        ",".join(str(depth) for depth in probe["depths"]),
         "--train-per-cell",
-        "2",
+        str(probe["train_per_cell"]),
         "--holdout-per-cell",
-        "1",
+        str(probe["holdout_per_cell"]),
         "--group-size",
         str(params["group_size"]),
         "--temperature",
@@ -2244,7 +2295,7 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         "--memory-fraction",
         str(params["memory_fraction"]),
         "--seed",
-        str(int(params["seed"]) + 733),
+        str(probe["seed"]),
         "--cot",
         "--read-only-causal-learnability-preflight",
     ]
@@ -2287,6 +2338,8 @@ def validate_causal_learnability_preflight(
         "causal_signal_cells",
         "regression_free_signal_cells",
         "strict_group_admission_reachable_cells",
+        "optimizer_training_reachable_cells",
+        "mixed_transition_training_only_cells",
         "regression_cells",
         "cells",
         "claim_boundary",
@@ -2302,7 +2355,7 @@ def validate_causal_learnability_preflight(
         _fail("causal_learnability_preflight_receipt_mismatch")
     normalized["receipt_sha256"] = observed_sha256
     if (
-        normalized["schema"] != "aura.recurrent_causal_learnability_preflight.v1"
+        normalized["schema"] != "aura.recurrent_causal_learnability_preflight.v2"
         or normalized["campaign_id"]
         != f"{contract['campaign_id']}-causal-learnability-preflight"
         or normalized["execution_spec_sha256"]
@@ -2352,13 +2405,14 @@ def validate_causal_learnability_preflight(
         _fail("causal_learnability_preflight_tokenizer_mismatch")
 
     params = contract["training"]["parameters"]
-    probe_seed = int(params["seed"]) + 733
+    probe = _causal_learnability_probe_parameters(contract)
+    probe_seed = int(probe["seed"])
     probe_train, probe_holdout, _ = _build_task_split(
-        task_source="recurrence_curriculum",
-        domains=["register_trace"],
-        depths=[2, 4, 8],
-        train_per_cell=2,
-        holdout_per_cell=1,
+        task_source=str(probe["task_source"]),
+        domains=list(probe["domains"]),
+        depths=list(probe["depths"]),
+        train_per_cell=int(probe["train_per_cell"]),
+        holdout_per_cell=int(probe["holdout_per_cell"]),
         seed=probe_seed,
     )
     probe_payload = _dataset_payload(probe_train, probe_holdout, seed=probe_seed)
@@ -2398,6 +2452,8 @@ def validate_causal_learnability_preflight(
     signal_cells = 0
     safe_cells = 0
     strict_cells = 0
+    optimizer_cells = 0
+    mixed_cells = 0
     regression_cells = 0
     for task_index, (cell, expected_task) in enumerate(
         zip(cells, probe_train, strict=True)
@@ -2474,20 +2530,30 @@ def validate_causal_learnability_preflight(
         signal = counts["wrong_to_right"] > 0
         safe = signal and counts["right_to_wrong"] == 0
         strict = safe and counts["right_to_right"] > 0
+        optimizer_reachable = signal and sum(counts.values()) > counts["wrong_to_right"]
+        mixed_training_only = signal and counts["right_to_wrong"] > 0
         regression = counts["right_to_wrong"] > 0
         if (
             cell.get("causal_signal") is not signal
             or cell.get("regression_free_signal") is not safe
             or cell.get("strict_group_admission_reachable") is not strict
+            or cell.get("optimizer_training_reachable") is not optimizer_reachable
+            or cell.get("mixed_transition_training_only") is not mixed_training_only
         ):
             _fail("causal_learnability_preflight_cell_verdict_mismatch")
         signal_cells += int(signal)
         safe_cells += int(safe)
         strict_cells += int(strict)
+        optimizer_cells += int(optimizer_reachable)
+        mixed_cells += int(mixed_training_only)
         regression_cells += int(regression)
     verdict = (
         "strict_learnable_cell_observed"
         if strict_cells
+        else "mixed_transition_training_signal_observed"
+        if mixed_cells
+        else "optimizer_training_signal_control_pending"
+        if optimizer_cells
         else "causal_signal_without_same_group_control"
         if safe_cells
         else "causal_signal_with_regression"
@@ -2501,11 +2567,35 @@ def validate_causal_learnability_preflight(
         or normalized["causal_signal_cells"] != signal_cells
         or normalized["regression_free_signal_cells"] != safe_cells
         or normalized["strict_group_admission_reachable_cells"] != strict_cells
+        or normalized["optimizer_training_reachable_cells"] != optimizer_cells
+        or normalized["mixed_transition_training_only_cells"] != mixed_cells
         or normalized["regression_cells"] != regression_cells
         or normalized["verdict"] != verdict
     ):
         _fail("causal_learnability_preflight_summary_mismatch")
     return normalized
+
+
+def require_causal_learnability_training_gate(
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Require fresh, disjoint causal signal before allocating a training run."""
+
+    root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+        must_exist=False,
+    )
+    path = root / "causal-learnability-preflight" / "causal_learnability_preflight.json"
+    if not path.is_file() or path.is_symlink():
+        _fail("causal_learnability_training_gate_missing")
+    receipt = validate_causal_learnability_preflight(contract, _strict_json(path))
+    if (
+        receipt["optimizer_training_reachable_cells"] < 2
+        or receipt["transition_counts"]["wrong_to_right"] < 2
+    ):
+        _fail("causal_learnability_training_gate_underpowered")
+    return receipt
 
 
 def _launch_causal_learnability_preflight(contract_path: Path) -> int:

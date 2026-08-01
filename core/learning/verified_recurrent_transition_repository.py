@@ -31,6 +31,10 @@ from core.learning.recurrent_grpo import (
     recurrent_policy_tensor_map_sha256,
     validate_recurrent_policy_sample_receipt,
 )
+from core.learning.recurrent_training_prompt import (
+    RECURRENT_TRAINING_COT_PREAMBLE,
+    answer_contract_instruction,
+)
 from core.learning.verified_recurrent_transition_evidence import (
     VerifiedRecurrentTransitionEvidence,
     build_verified_recurrent_transition_evidence,
@@ -437,6 +441,45 @@ def _reconstruct_external_training_task(
     return _ExternallyBoundTrainingTask(task, public)
 
 
+def _verify_external_rendered_prompt_binding(
+    *,
+    task: Any,
+    package: Mapping[str, Any],
+    evidence_documents: Sequence[Mapping[str, Any]],
+) -> None:
+    """Bind one package to its task and immutable tokenizer observations."""
+
+    prompt_text = package.get("prompt_text")
+    prompt_tokens = package.get("prompt_tokens")
+    if not isinstance(prompt_text, str) or not isinstance(prompt_tokens, list):
+        _fail("external_recurrent_prompt_binding_invalid")
+    for document in evidence_documents:
+        parent = document.get("parent_token_trace")
+        child = document.get("child_token_trace")
+        if not isinstance(parent, Mapping) or not isinstance(child, Mapping):
+            _fail("external_recurrent_prompt_trace_missing")
+        parent_prompt = parent.get("prompt")
+        child_prompt = child.get("prompt")
+        if (
+            not isinstance(parent_prompt, Mapping)
+            or not isinstance(child_prompt, Mapping)
+            or parent_prompt != child_prompt
+            or parent_prompt.get("text") != prompt_text
+            or parent_prompt.get("token_ids") != prompt_tokens
+            or document.get("prompt_tokens") != prompt_tokens
+        ):
+            _fail("external_recurrent_prompt_trace_mismatch")
+
+    # Legacy evidence used the raw prompt. Production evidence records the
+    # tokenizer's full chat render around this exact canonical user content.
+    if prompt_text == task.prompt:
+        return
+    content = answer_contract_instruction(task) + "\n\n" + task.prompt
+    cot_content = RECURRENT_TRAINING_COT_PREAMBLE + "\n\n" + content
+    if content not in prompt_text and cot_content not in prompt_text:
+        _fail("external_recurrent_task_prompt_mismatch")
+
+
 class _ExternallyBoundTrainingTask:
     def __init__(self, source_task: Any, task_commitment: Mapping[str, Any]) -> None:
         self._source_task = source_task
@@ -669,8 +712,11 @@ def verify_recurrent_evidence_manifest_artifacts(
             if not isinstance(task_commitment, Mapping):
                 _fail("external_recurrent_task_commitment_missing")
             task = _reconstruct_external_training_task(task_commitment)
-            if task.prompt != package["prompt_text"]:
-                _fail("external_recurrent_task_prompt_mismatch")
+            _verify_external_rendered_prompt_binding(
+                task=task,
+                package=package,
+                evidence_documents=evidence_documents,
+            )
             tokenizer_adapter = _RecordedTokenizerTraceAdapter(evidence_documents)
             samples = tuple(
                 recurrent_policy_sample_from_receipt(json.loads(encoded))

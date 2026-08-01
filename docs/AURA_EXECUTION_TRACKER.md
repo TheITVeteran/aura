@@ -16,14 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 757 freezes S29 from
-  clean CP756 source with 12 fresh train tasks and three fresh holdouts. Their
-  task/prompt identities are disjoint from S28 and internally disjoint. The
-  resident policy and answer-channel preflights remain next; no policy update
-  or gain claim exists.**
-- Previous implementation milestone: **Checkpoint 756 made a fresh canary seed
-  an explicit immutable preregistration input while fixing every other profile
-  parameter.**
+- Current active implementation milestone: **Checkpoint 758 preserves S29's
+  complete negative result and repairs the three defects it exposed: mixed
+  verified transitions can train but cannot support a gain claim, fresh
+  causal-learnability evidence is mandatory before another update canary, and
+  every failed resident-model attempt rotates into a new native process. No
+  policy update or gain claim exists.**
+- Previous implementation milestone: **Checkpoint 757 froze S29 from clean
+  CP756 source with 12 fresh train tasks and three fresh holdouts, all disjoint
+  from S28 and internally disjoint.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33259,3 +33260,58 @@ closure, and retirement; it cannot establish broad reasoning gain or frontier
 performance. No reasoning-gain, frontier, promotion, release, or `WOW Signal`
 claim is made. This is total checkpoint 757. The 757-920 completion envelope is
 approximately 82.3%-100.0%, with a 91.1% midpoint.
+
+### 2026-07-31 - S29 negative result and causal-learnability gate
+
+CP420S29 completed all twelve preregistered resident-32B training groups under
+the controlled campaign. The vanilla holdout baseline scored zero of three.
+Every training group was rejected under the frozen v2 group-admission contract,
+so the campaign performed zero optimizer updates, retained the initial policy
+digest, and produced no evidence of reasoning gain. Two branches did make real,
+independently verified wrong-to-right transitions at recurrence depth two, but
+their groups also contained three right-to-wrong transitions. The historical
+v2 rule correctly prevented a claim, yet it also discarded the nondegenerate
+positive and negative preference contrast before the optimizer could learn
+from it. Only five of the first sixteen inspected completions were parseable;
+the 320-token ceiling frequently truncated depth-four and depth-eight traces.
+
+Fresh reward and group-admission evidence now use backward-compatible v3
+schemas. A mixed group containing at least one verified improvement and one
+verified regression may be admitted only for bounded optimizer training when
+its rewards are nondegenerate. It is sealed as
+`admitted_mixed_transition_training_only`, cannot satisfy claim controls, and
+explicitly requires a separate externally powered regression-control cohort.
+Historical v1 and v2 receipts retain their original semantics. The signed
+episode tests prove v3 mixed admission, preserved claim rejection, complete
+group reconstruction, and tamper rejection.
+
+The read-only causal-learnability preflight is now v2 and reconstructs its
+domains, depths, task counts, token budget, group size, and seed from the exact
+campaign contract. It distinguishes strict claim-ready cells, regression-free
+optimizer cells, and mixed-transition training-only cells. A fresh update
+canary cannot enter resident training unless a disjoint preflight proves at
+least two optimizer-reachable cells and two wrong-to-right transitions. A
+negative diagnostic still exits normally, but it cannot be mistaken for
+training permission.
+
+S29 also exposed a terminal external-replay mismatch: the verifier compared a
+raw task prompt with the fully rendered tokenizer chat prompt. Verification now
+binds the package prompt exactly to every parent and child tokenizer trace,
+then verifies the canonical answer contract and raw task inside that rendered
+prompt. Repository failures become deterministic signer errors instead of
+unstructured tracebacks. Two attempted in-process resident-model reloads after
+that failure triggered macOS native allocator assertions; model-owning failures
+therefore always return process-rotation code 75, and the outer controller alone
+starts a clean process from the last exact durable checkpoint. Progress checks
+now compare semantic step, optimizer, phase, and receipt advancement rather
+than accepting same-step checkpoint hash churn.
+
+The integrated recurrent-GRPO, preregistration, signed-transition, external-
+replay, and signer-service suite passes 155/155. Lint, bytecode compilation,
+and diff integrity pass. The next campaign must be freshly preregistered from
+clean pushed source, pass the new causal-learnability gate, use a token budget
+that does not truncate the measured answer channel, and remain nonpromotable
+until powered held-out controls and external replay establish a real effect.
+No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 758. The 758-920 completion envelope is approximately
+82.4%-100.0%, with a 91.2% midpoint.
