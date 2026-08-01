@@ -7,6 +7,7 @@ unified inference engine, and consciousness loop modules of Aura.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 import time
@@ -18,6 +19,30 @@ from core.container import ServiceContainer
 from core.runtime.errors import FallbackClassification, record_degradation
 
 logger = logging.getLogger("Aura.AGI.Integration")
+
+#: Failures that must leave start() rolled back rather than half-running.
+_AGI_START_ERRORS = (
+    ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError,
+)
+
+
+def _task_done(task: Any) -> bool:
+    """Best-effort completion check for any task-like handle."""
+    done = getattr(task, "done", None)
+    if callable(done):
+        try:
+            return bool(done())
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            return False
+    return False
+
+
+async def _await_quietly(task: asyncio.Task) -> None:
+    """Await a cancelled task without re-raising its CancelledError."""
+    try:
+        await task
+    except asyncio.CancelledError:
+        return
 
 _AGI_RUNTIME_ERRORS = (
     AttributeError,
@@ -68,12 +93,37 @@ class AGIIntegrationLayer:
         self.last_save_time = time.time()
         self.start_time = time.time()
 
-        # Local feedback & modulator instances
+        # Prefer the CANONICAL container-owned organs. Constructing private
+        # instances here forked the system: inference feedback and runtime
+        # telemetry accumulated in two places, so whichever one a consumer
+        # happened to hold saw a different picture of the same body. A private
+        # instance is now only a last resort, and it is recorded when it
+        # happens rather than silently federating.
         from core.brain.homeostatic_modulator import HomeostaticModulator
         from core.brain.inference_feedback import InferenceFeedbackLoop
 
-        self.modulator = HomeostaticModulator()
-        self.feedback_loop = InferenceFeedbackLoop()
+        self.modulator = ServiceContainer.get("homeostatic_modulator", default=None)
+        self.feedback_loop = ServiceContainer.get("inference_feedback_loop", default=None)
+        forked = []
+        if self.modulator is None:
+            self.modulator = HomeostaticModulator()
+            forked.append("homeostatic_modulator")
+            ServiceContainer.register_instance(
+                "homeostatic_modulator", self.modulator, required=False
+            )
+        if self.feedback_loop is None:
+            self.feedback_loop = InferenceFeedbackLoop()
+            forked.append("inference_feedback_loop")
+            ServiceContainer.register_instance(
+                "inference_feedback_loop", self.feedback_loop, required=False
+            )
+        if forked:
+            # Registering what we built keeps the NEXT consumer on the same
+            # instance, so at most one fork can ever exist.
+            logger.info(
+                "AGIIntegrationLayer created and published canonical %s.",
+                ", ".join(forked),
+            )
 
         # Phase 2 Proprioception, Grounding, and World Modeling
         from core.embodiment.digital_body import get_digital_body
@@ -94,32 +144,75 @@ class AGIIntegrationLayer:
             if self._running:
                 logger.warning("AGIIntegrationLayer is already running.")
                 return
+            # The running flag and the container registration used to be set
+            # BEFORE the task existed, so any failure below left the instance
+            # advertised as running with no loop behind it — permanently, since
+            # a later start() would return early on that same flag. Everything
+            # is now rolled back on failure and the flag is only set once a
+            # live task exists.
+            try:
+                ServiceContainer.register("agi_integration", self)
+
+                from core.utils.task_tracker import get_task_tracker
+
+                tracker = get_task_tracker()
+                self._loop_task = tracker.create_task(
+                    self._run_loop(), name="agi.integration_loop"
+                )
+            except _AGI_START_ERRORS as exc:
+                self._loop_task = None
+                self._running = False
+                record_degradation(
+                    "agi_integration", exc, severity="warning",
+                    action="AGI integration not started; left stopped rather than falsely running",
+                )
+                logger.error("AGIIntegrationLayer failed to start: %s", exc)
+                raise
             self._running = True
-
-            # Register in ServiceContainer
-            ServiceContainer.register("agi_integration", self)
-
-            # Spawn background tick loop using task tracker
-            from core.utils.task_tracker import get_task_tracker
-
-            tracker = get_task_tracker()
-            self._loop_task = tracker.create_task(self._run_loop(), name="agi.integration_loop")
             logger.info("AGIIntegrationLayer started background tick task.")
 
     async def stop(self) -> None:
-        """Stops the integration layer and performs final state saves."""
+        """Stops the integration layer and performs final state saves.
+
+        The task is AWAITED before the final save. Previously stop() cancelled,
+        dropped the reference, and saved immediately — so an in-flight tick
+        could still be mutating the very state being written, and the save
+        raced the loop it was supposed to be finalising.
+        """
         with self._lock:
             if not self._running:
                 return
             self._running = False
+            task, self._loop_task = self._loop_task, None
 
-            if self._loop_task:
-                self._loop_task.cancel()
-                self._loop_task = None
+        # The tracker may hand back something that is not a real asyncio.Task
+        # (a stub, a wrapper, a test double). Shutdown must not depend on the
+        # exact shape of that handle — cancel what can be cancelled, join what
+        # can be joined, and never crash the stop path over a missing method.
+        if task is not None and not _task_done(task):
+            cancel = getattr(task, "cancel", None)
+            if callable(cancel):
+                cancel()
+            try:
+                # Bounded: a wedged tick must not hold shutdown open forever,
+                # but the common case joins immediately.
+                if inspect.isawaitable(task) or isinstance(task, asyncio.Task):
+                    await asyncio.wait_for(
+                        asyncio.shield(_await_quietly(task)), timeout=5.0
+                    )
+            except (TimeoutError, asyncio.CancelledError):
+                logger.warning(
+                    "AGIIntegrationLayer tick did not stop within 5s; saving anyway."
+                )
+            except _AGI_START_ERRORS as exc:
+                record_degradation(
+                    "agi_integration", exc, severity="warning",
+                    action="continued shutdown after the tick loop errored on cancel",
+                )
 
-            # Final save of logit projection weights
-            self._save_projection_weights()
-            logger.info("AGIIntegrationLayer stopped.")
+        # Final save of logit projection weights, now that nothing is ticking.
+        self._save_projection_weights()
+        logger.info("AGIIntegrationLayer stopped.")
 
     async def _run_loop(self) -> None:
         """Background loop executing homeostatic ticks every 1 second."""
@@ -261,14 +354,49 @@ class AGIIntegrationLayer:
             # Safe default fallback modulation
             from core.brain.homeostatic_modulator import InferenceModulation
 
+            # head_weights used to be a hardcoded 32-element vector, invented
+            # here without consulting the resident checkpoint. If the active
+            # model does not have 32 attention heads that array is
+            # shape-incompatible — and it LOOKS usable, so it reaches the
+            # steering path and either errors deep inside or silently
+            # mis-weights heads. A fallback must not assert an architecture it
+            # never read.
+            #
+            # None means "no head weighting", which every consumer must already
+            # handle (the modulator legitimately returns unweighted modulation).
+            # If the true head count is discoverable we use it; otherwise we
+            # decline to guess.
             return InferenceModulation(
                 temperature=0.7,
                 top_p=0.9,
                 repetition_penalty=1.1,
                 logit_bias={},
-                head_weights=np.ones(32, dtype=np.float32),
+                head_weights=self._neutral_head_weights(),
                 urgency=0.5,
             )
+
+    def _neutral_head_weights(self) -> np.ndarray | None:
+        """Unweighted head vector sized to the ACTUAL model, or None.
+
+        Guessing a head count produces an array that is confidently the wrong
+        shape. Reading it costs one attribute lookup; not knowing it is a
+        legitimate answer.
+        """
+        heads = None
+        try:
+            registry = ServiceContainer.get("model_registry", default=None)
+            config = getattr(registry, "active_config", None) or {}
+            if isinstance(config, dict):
+                for key in ("num_attention_heads", "n_heads", "num_heads"):
+                    value = config.get(key)
+                    if isinstance(value, int) and 0 < value <= 512:
+                        heads = value
+                        break
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Head count not discoverable for fallback modulation: %s", exc)
+        if heads is None:
+            return None
+        return np.ones(heads, dtype=np.float32)
 
     def get_unified_telemetry(self) -> dict[str, Any]:
         """Aggregates and returns state telemetry from all subsystems."""

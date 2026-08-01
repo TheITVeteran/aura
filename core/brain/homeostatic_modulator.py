@@ -75,7 +75,11 @@ class InferenceModulation:
     top_p: float
     repetition_penalty: float
     logit_bias: dict[int, float]
-    head_weights: np.ndarray
+    #: Per-attention-head weighting, or None when the head count could not be
+    #: read from the resident checkpoint. None means "no head weighting" —
+    #: which is a real answer. Callers that guess a head count produce an array
+    #: that is confidently the wrong shape for the active model.
+    head_weights: np.ndarray | None
     urgency: float
     source_snapshot: dict[str, Any] = field(default_factory=dict)
 
