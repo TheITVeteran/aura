@@ -612,3 +612,30 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
         "baseline_validation",
     ):
         assert resumed.state[field] == uninterrupted.state[field]
+def test_execution_spec_reader_accepts_pretty_strict_json() -> None:
+    spec = RLCExecutionSpec(recurrent_steps=2)
+    payload = json.dumps(spec.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+
+    observed = trainer._read_json_bytes(
+        payload,
+        role="execution_spec",
+        canonical_required=False,
+    )
+
+    assert observed == spec.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (b'{"schema":"one","schema":"two"}', "execution_spec_duplicate_key"),
+        (b'{"value":NaN}', "execution_spec_non_finite"),
+    ],
+)
+def test_execution_spec_reader_rejects_ambiguous_json(payload: bytes, code: str) -> None:
+    with pytest.raises(trainer.ResidentSFTBootstrapTrainingError, match=code):
+        trainer._read_json_bytes(
+            payload,
+            role="execution_spec",
+            canonical_required=False,
+        )

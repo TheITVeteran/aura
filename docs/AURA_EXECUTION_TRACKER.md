@@ -34459,3 +34459,20 @@ failed attempt loaded the resident model or published a checkpoint. The next
 step is a fresh CP788 two-step canary from clean published `main`. No reasoning-
 gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
 made.
+
+### 2026-08-01 - CP789 trainer-side strict execution-spec parsing
+
+The CP788 canary proved the lexical venv interpreter and full trainer imports,
+then failed before model loading because the trainer's generic evidence reader
+still required the exact execution-spec bytes to be canonical JSON. This was
+the same obsolete whitespace constraint already removed from preparation, not
+a dependency or MLX failure. The generic reader now has explicit strict and
+canonical modes. Authority, dataset, journal, and receipt evidence remain
+canonical-only; the exact-byte-bound execution specification uses strict UTF-8
+JSON, rejects duplicate keys and non-finite constants, reconstructs the typed
+spec, and verifies its canonical semantic digest against authority. Focused
+regressions cover readable formatting, duplicate keys, and `NaN`. Both failed
+attempts stopped before resident model loading or checkpoint publication. The
+next step is a fresh CP789 canary from clean published `main`; no reasoning-
+gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
+made.

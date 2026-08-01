@@ -115,14 +115,29 @@ def _canonical_json_bytes(value: Any) -> bytes:
         raise ResidentSFTBootstrapTrainingError("resident_sft_trainer_noncanonical_value") from exc
 
 
-def _read_json_bytes(payload: bytes, *, role: str) -> Any:
+def _read_json_bytes(payload: bytes, *, role: str, canonical_required: bool = True) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                _fail(f"resident_sft_trainer_{role}_duplicate_key")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> Never:
+        _fail(f"resident_sft_trainer_{role}_non_finite")
+
     try:
-        value = json.loads(payload)
-    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise ResidentSFTBootstrapTrainingError(
             f"resident_sft_trainer_{role}_json_invalid"
         ) from exc
-    if _canonical_json_bytes(value) != payload:
+    if canonical_required and _canonical_json_bytes(value) != payload:
         _fail(f"resident_sft_trainer_{role}_noncanonical")
     return value
 
@@ -216,7 +231,7 @@ def _load_authority(path: Path, *, expected_sha256: str) -> dict[str, Any]:
 def _load_spec(authority: Mapping[str, Any]) -> RLCExecutionSpec:
     binding = authority["execution_spec"]
     payload = _bound_bytes(binding, role="execution_spec")
-    value = _read_json_bytes(payload, role="execution_spec")
+    value = _read_json_bytes(payload, role="execution_spec", canonical_required=False)
     if not isinstance(value, dict):
         _fail("resident_sft_trainer_execution_spec_invalid")
     try:
