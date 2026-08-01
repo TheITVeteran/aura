@@ -205,9 +205,14 @@ class ImmuneSystem:
         self.rollback_active = True
 
         try:
-            base_dir = self.data_dir.resolve()
+            # Path resolution and stat are blocking syscalls; this runs on the
+            # event loop, so they are offloaded like every other filesystem
+            # touch in this method.
+            base_dir = await asyncio.to_thread(self.data_dir.resolve)
             try:
-                snapshot = Path(snapshot_path).resolve(strict=True)
+                snapshot = await asyncio.to_thread(
+                    lambda: Path(snapshot_path).resolve(strict=True)
+                )
             except (OSError, RuntimeError) as exc:
                 logger.error("Rollback failed: snapshot %s unresolvable: %s",
                              snapshot_path, exc)
@@ -226,7 +231,7 @@ class ImmuneSystem:
                 return False
             # resolve(strict=True) already followed links; require a regular
             # file so a symlink swapped in afterwards cannot redirect the copy.
-            if not snapshot.is_file():
+            if not await asyncio.to_thread(snapshot.is_file):
                 logger.error("Rollback failed: snapshot %s is not a regular file.",
                              snapshot)
                 return False
@@ -247,10 +252,12 @@ class ImmuneSystem:
                 return False
 
             logger.warning("🚨 CRITICAL FAILURE: Rolling back to %s", snapshot)
-            target = Path("core/cognition/cognitive_kernel.py").resolve()
+            target = await asyncio.to_thread(
+                lambda: Path("core/cognition/cognitive_kernel.py").resolve()
+            )
             # Keep what we are about to destroy: an emergency restore that
             # cannot itself be undone is a one-way door.
-            if target.exists():
+            if await asyncio.to_thread(target.exists):
                 undo = target.with_suffix(f".pre_rollback.{int(time.time())}.py")
                 await asyncio.to_thread(shutil.copy2, target, undo)
                 logger.info("Saved pre-rollback copy: %s", undo)
