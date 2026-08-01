@@ -101,17 +101,35 @@ def dynamic_code(wid: str) -> str:
     return "DYN-" + hashlib.sha256(wid.encode()).hexdigest()[:10].upper()
 
 
+#: Successful live Aura API calls made by this process.
+#:
+#: CP126 (critical): "Unused Aura flag is reported as a live cognitive run."
+#: The ticket evidence and the final report both asserted "Completed by
+#: Aura" regardless of whether a single call had been made. This counter is
+#: what makes that claim falsifiable.
+AURA_CALL_COUNT = 0
+
+
 def send_to_aura(message: str, url: str = AURA_CHAT_URL, timeout: float = TIMEOUT_S) -> str:
-    """Send a message to Aura's /api/chat and return the response text."""
+    """Send a message to Aura's /api/chat and return the response text.
+
+    Only a call that returns text counts: an empty response means the API
+    was unreachable or answered with nothing, and neither is evidence that
+    the live cognitive pathway ran.
+    """
+    global AURA_CALL_COUNT
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, json={"message": message})
             resp.raise_for_status()
             data = resp.json()
-            return data.get("response", "")
+            text = data.get("response", "")
     except _AURA_API_ERRORS as e:
         log.error("Aura API error: %s", e)
         return ""
+    if text:
+        AURA_CALL_COUNT += 1
+    return text
 
 
 # ─── World Type Handlers ────────────────────────────────────────
@@ -167,7 +185,33 @@ class WorldProcessor:
                 t = json.loads(tf.read_text())
                 if t.get("status") != "done":
                     t["status"] = "done"
-                    t["completion_evidence"] = f"Completed by Aura via aletheia_runner. Outputs written to data/derived/ and reports/."
+                    # CP126 (critical): "Unused Aura flag is reported as a
+                    # live cognitive run." use_aura was stored and never
+                    # consulted, while every ticket and the final report
+                    # asserted "Completed by Aura" — so a direct-solve run
+                    # produced an apparently successful LIVE certificate
+                    # without a single Aura call. A benchmark that certifies
+                    # a pathway it did not exercise is worse than one that
+                    # fails, because the number gets quoted.
+                    t["aura_pathway"] = bool(self.use_aura)
+                    t["aura_calls_at_completion"] = int(AURA_CALL_COUNT)
+                    if self.use_aura and AURA_CALL_COUNT > 0:
+                        t["completion_evidence"] = (
+                            f"Completed by Aura via aletheia_runner "
+                            f"({AURA_CALL_COUNT} live API call(s)). Outputs "
+                            "written to data/derived/ and reports/."
+                        )
+                    else:
+                        reason = (
+                            "no live Aura call was made"
+                            if self.use_aura
+                            else "--use-aura was not set"
+                        )
+                        t["completion_evidence"] = (
+                            f"Completed by aletheia_runner DIRECT SOLVE ({reason}); "
+                            "this is not evidence of the live Aura pathway. "
+                            "Outputs written to data/derived/ and reports/."
+                        )
                     _write_text(tf, json.dumps(t, indent=2))
                     self.action_log.append(action_entry(
                         wid, "decision", str(tf.name),
