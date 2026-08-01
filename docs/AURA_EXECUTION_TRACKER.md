@@ -33945,3 +33945,46 @@ initial, answer, and causal sequence under the new cached policy before any
 update canary may launch. No reasoning-gain, frontier, promotion, release, or
 `WOW Signal` claim is made. This is total checkpoint 776. The 776-920
 completion envelope is approximately 84.3%-100.0%, with a 92.2% midpoint.
+
+### 2026-08-01 - CP777 verified S37 negative and teardown-safe evidence exit
+
+S37 passed its detached initial-policy probe with zero restarts, sealing policy
+`f2e8f567098f44d964dba283c99df42bec0e005fff96ae948fd43b9fb9e796fd`
+and probe receipt
+`af435a4105a06309aae5ba751e13d630dd71c0162b1041d1b9d40cf6dec657cc`.
+Its independently reconstructed answer receipt passed with six of six valid
+contracts and five of six correct answers. The causal process then exercised
+the repaired cached backend for 968.40 seconds and published receipt
+`9360d08f7ba1340c49799186b61bf2d0474e6f90e64e8695b426788b3bb2f726`.
+The independent verifier accepts that receipt and its exact initial-policy,
+warm-start, dataset, execution, model, tokenizer, behavior, and source
+bindings.
+
+The scientific result is a bounded negative, not an execution ambiguity. All
+eight parent/child samples were wrong-to-wrong, no wrong-to-right or
+right-to-wrong transition occurred, no cell made optimizer training reachable,
+and child contract completion was 0.5. The recurrent policy digest was exactly
+unchanged before and after the read-only probe. The cached-policy parity defect
+is therefore retired, while the current transferred warm start is falsified as
+an eligible final-edge GRPO launch state. Another seed-only canary or GRPO run
+is prohibited; the next mechanism is a current-topology, resident-cached,
+supervised recurrence bootstrap followed by fresh heldout causal lesion and
+restoration evidence.
+
+After the receipt was durable, independently validated in-process, and printed,
+the isolated macOS MLX child received `SIGTRAP` during native interpreter
+teardown. The detached supervisor correctly preserved return code `-5`, empty
+lineage, zero restarts, and containment, but consequently labeled completed
+scientific evidence as process failure. The exact detached causal command now
+requests a teardown-safe exit. Only after `_run_causal_learnability_preflight`
+has reopened and validated the immutable receipt and policy reference does the
+CLI flush both streams and bypass native teardown. Exceptions, missing or
+tampered receipts, and direct library/test calls retain ordinary failure and
+return semantics; the hard exit cannot manufacture evidence or accept a
+scientific gate.
+
+The focused causal lifecycle suite passes 13/13; Ruff, bytecode compilation,
+and diff integrity pass. No training, reasoning-gain, frontier, promotion,
+release, or `WOW Signal` claim is made. This is total checkpoint 777. The
+777-920 completion envelope is approximately 84.5%-100.0%, with a 92.2%
+midpoint. Long soaks remain deferred.

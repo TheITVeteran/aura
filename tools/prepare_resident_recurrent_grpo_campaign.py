@@ -3314,8 +3314,23 @@ def _launch_causal_learnability_preflight(contract_path: Path) -> int:
         "run-causal-learnability-preflight",
         "--contract",
         contract_absolute,
+        "--teardown-safe-exit",
     ]
     return run_detached_step.main(argv)
+
+
+def _exit_after_validated_model_receipt(code: int) -> Never:
+    """Leave an isolated MLX child without running unstable native teardown.
+
+    The caller reaches this boundary only after the producer has durably
+    published the causal receipt and this process has independently reopened
+    and validated it.  Keeping the hard exit here, rather than in the producer,
+    preserves ordinary exception handling and direct-call behavior.
+    """
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(int(code))
 
 
 def _launch_answer_channel_preflight(contract_path: Path) -> int:
@@ -3555,6 +3570,14 @@ def _parser() -> argparse.ArgumentParser:
     preflight_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     causal_preflight = subparsers.add_parser("run-causal-learnability-preflight")
     causal_preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
+    causal_preflight.add_argument(
+        "--teardown-safe-exit",
+        action="store_true",
+        help=(
+            "after receipt validation, bypass Python/native teardown in the "
+            "isolated model-owning child"
+        ),
+    )
     causal_preflight_launch = subparsers.add_parser(
         "launch-causal-learnability-preflight"
     )
@@ -3612,7 +3635,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.action == "launch-answer-channel-preflight":
                 return _launch_answer_channel_preflight(Path(args.contract))
             if args.action == "run-causal-learnability-preflight":
-                return _run_causal_learnability_preflight(contract)
+                result = _run_causal_learnability_preflight(contract)
+                if args.teardown_safe_exit:
+                    _exit_after_validated_model_receipt(result)
+                return result
             if args.action == "launch-causal-learnability-preflight":
                 return _launch_causal_learnability_preflight(Path(args.contract))
             if args.action == "verify-causal-learnability-preflight":

@@ -1556,6 +1556,39 @@ def test_causal_learnability_preflight_invokes_trainer_without_provider(monkeypa
     assert "--read-only-causal-learnability-preflight" in argv
 
 
+def test_causal_preflight_detached_child_exits_only_after_validated_run(
+    monkeypatch, tmp_path
+):
+    contract = _contract()
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    observed: list[tuple[str, int | None]] = []
+
+    monkeypatch.setattr(prereg, "_strict_json", lambda _path: contract)
+    monkeypatch.setattr(
+        prereg,
+        "_run_causal_learnability_preflight",
+        lambda _value: 0,
+    )
+
+    def fake_exit(code: int):
+        observed.append(("exit", code))
+        raise RuntimeError("hard-exit-sentinel")
+
+    monkeypatch.setattr(prereg, "_exit_after_validated_model_receipt", fake_exit)
+
+    with pytest.raises(RuntimeError, match="hard-exit-sentinel"):
+        prereg.main(
+            [
+                "run-causal-learnability-preflight",
+                "--contract",
+                str(contract_path),
+                "--teardown-safe-exit",
+            ]
+        )
+    assert observed == [("exit", 0)]
+
+
 def _observable_completion(
     response_text: str,
     *,
@@ -2235,3 +2268,4 @@ def test_launch_causal_learnability_preflight_is_detached_and_source_bound(
     assert command[0] == str(venv_python)
     assert command[2:4] == ["run-causal-learnability-preflight", "--contract"]
     assert command[4] == str(contract_path.resolve(strict=True))
+    assert command[5] == "--teardown-safe-exit"
