@@ -48,6 +48,8 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     _exchange_and_decorrelate,
     _persist_and_score,
     _prepare_live_path,
+    cached_live_path_token_logprobs,
+    cached_supervised_live_path_value_and_grad,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
     exact_adjoint_composite_live_path_value_and_grad,
@@ -190,6 +192,75 @@ def test_functional_executor_matches_live_cache_slots_and_logits():
     # KV-cache and full causal-sequence attention use different kernels, so the
     # logits are numerically close rather than bit-identical on MLX.
     assert float(mx.max(mx.abs(functional_logits - cached_logits))) < 0.01
+
+
+def test_cached_supervised_objective_matches_branch_ensemble_and_has_gradient():
+    model = _model()
+    spec = _spec(
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    expected_branches = [
+        -mx.mean(
+            cached_live_path_token_logprobs(
+                model,
+                PROMPT,
+                ANSWER,
+                spec=spec,
+                branch_index=branch_index,
+            )
+        )
+        for branch_index in range(2)
+    ]
+    mx.eval(expected_branches)
+
+    result = cached_supervised_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+    )
+
+    assert result.branch_indices == (0, 1)
+    assert result.answer_token_count == len(ANSWER)
+    assert result.execution_spec_sha256 == spec.sha256
+    assert result.value == pytest.approx(
+        sum(float(value) for value in expected_branches) / 2.0,
+        abs=1e-5,
+    )
+    flattened = tree_flatten(result.gradients)
+    assert flattened
+    assert all(bool(mx.all(mx.isfinite(value))) for _path, value in flattened)
+    assert any(float(mx.max(mx.abs(value))) > 0.0 for _path, value in flattened)
+
+
+def test_cached_supervised_objective_normalizes_token_weights():
+    model = _model()
+    spec = _spec()
+    result = cached_supervised_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        token_loss_weights=(0.0, 2.0, 0.0),
+    )
+    expected = -cached_live_path_token_logprobs(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        branch_index=0,
+    )[1]
+    mx.eval(expected)
+    assert result.value == pytest.approx(float(expected), abs=1e-5)
+
+    with pytest.raises(ValueError, match="token loss weights"):
+        cached_supervised_live_path_value_and_grad(
+            model,
+            PROMPT,
+            ANSWER,
+            spec=spec,
+            token_loss_weights=(0.0, 0.0, 0.0),
+        )
 
 
 def test_final_transition_freezes_one_real_parent_child_edge() -> None:

@@ -33988,3 +33988,32 @@ and diff integrity pass. No training, reasoning-gain, frontier, promotion,
 release, or `WOW Signal` claim is made. This is total checkpoint 777. The
 777-920 completion envelope is approximately 84.5%-100.0%, with a 92.2%
 midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP778 resident-cached supervised objective foundation
+
+The recurrence-native objective now exposes a bounded-memory supervised
+teacher-forcing primitive over the exact resident KV-cached RLC execution path.
+It scores answer tokens with the same token-at-a-time quantized kernels used by
+live generation, differentiates one branch graph at a time, averages branch
+gradients without retaining all branch graphs concurrently, and supports
+validated non-negative token weighting. The immutable result binds the exact
+execution specification plus prompt, answer, and bridge token digests so a
+trainer cannot silently substitute a different policy or example after the
+gradient is produced.
+
+The objective rejects empty or malformed answers, invalid branch selections,
+zero-weight losses, and any non-finite value or gradient. Focused tests prove
+that its value matches direct cached branch-ensemble cross entropy, all
+materialized gradients are finite with at least one nonzero component, and
+weighted losses are normalized exactly. The adjacent recurrence and GRPO suite
+passes 52/52; Ruff, bytecode compilation, and diff integrity pass.
+
+This checkpoint supplies only the reusable differentiable mechanism. It does
+not authorize resident training, alter model parameters, or establish any
+reasoning gain. The next training milestone must add a separate source-bound
+resident SFT authority, durable resumable campaign, disjoint synthetic train
+split, and heldout lesion/restoration proof rather than weakening the existing
+small-checkpoint research authority. No reasoning-gain, frontier, promotion,
+release, or `WOW Signal` claim is made. This is total checkpoint 778. The
+778-920 completion envelope is approximately 84.6%-100.0%, with a 92.3%
+midpoint. Long soaks remain deferred.
