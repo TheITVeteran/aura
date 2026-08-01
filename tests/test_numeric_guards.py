@@ -186,3 +186,92 @@ class TestTheGuardsAreUsedWhereItMattered:
         source = inspect.getsource(ReliabilityEngine.heartbeat)
         assert "unit_float(stability" in source
         assert "unit_float(pressure" in source
+
+
+class TestOneBadReadingCannotDisableADrive:
+    """CP126: "Non-finite free energy can corrupt boredom state."
+
+    `nan < BOREDOM_FE_CEILING` is False, so a NaN reading took the
+    "prediction error present" branch and drained boredom by three every
+    tick — the novelty threshold became unreachable. Worse, _last_fe_value
+    was overwritten with the NaN, so every later fe_delta was NaN too and
+    the surprise-spike relief died as well. One bad reading disabled the
+    drive permanently, in both directions.
+    """
+
+    def _engine(self):
+        from collections import deque
+
+        from core.drive_engine import DriveEngine
+
+        engine = DriveEngine.__new__(DriveEngine)
+        engine._last_fe_value = 0.5
+        engine._boredom_ticks = 100
+        engine._seek_novelty = False
+        engine._boredom_history = deque(maxlen=10)
+        engine._relieve_boredom = lambda *a, **k: None
+        return engine
+
+    @pytest.mark.parametrize("value", [NAN, INF, -INF])
+    def test_a_non_finite_reading_does_not_poison_the_last_value(self, value):
+        engine = self._engine()
+        engine.tick_boredom(value)
+        assert math.isfinite(engine._last_fe_value)
+
+    def test_a_finite_reading_still_updates_state(self):
+        engine = self._engine()
+        engine.tick_boredom(0.9)
+        assert engine._last_fe_value == 0.9
+
+    def test_boredom_still_accumulates_on_a_low_reading(self):
+        engine = self._engine()
+        engine._last_fe_value = 0.0
+        before = engine._boredom_ticks
+        engine.tick_boredom(0.0)
+        assert engine._boredom_ticks == before + 1
+
+
+class TestCorruptQualityIsNotAJudgement:
+    """CP126: "Cortana accepts non-finite and unbounded quality signals."
+
+    `nan > 0.6` is False, so a NaN quality silently counted as a FAILED
+    turn. success_rate feeds the rampancy/metastability verdict, so corrupt
+    input did not produce an error — it produced a confident judgement about
+    her cognitive health built on a non-judgement.
+    """
+
+    def _monitor(self):
+        from core.fictional_ai_synthesis import CognitiveHealthMonitor
+
+        monitor = CognitiveHealthMonitor.__new__(CognitiveHealthMonitor)
+        monitor._total_turns = 0
+        monitor._successful_turns = 0
+        monitor._unresolved_threads = 0
+        monitor._metastability_score = 0.5
+        monitor._rampancy_stage = 0
+        monitor._history = []
+        return monitor
+
+    def test_a_fully_corrupt_turn_does_not_raise(self):
+        monitor = self._monitor()
+        monitor.record_turn(
+            context_tokens=NAN, max_tokens=NAN, response_quality=NAN,
+            identity_markers_present=True, topics_in_play=NAN, resolved_topics=NAN,
+        )
+        assert monitor._total_turns == 1
+
+    def test_the_metastability_score_stays_finite(self):
+        monitor = self._monitor()
+        monitor.record_turn(
+            context_tokens=NAN, max_tokens=0, response_quality=INF,
+            identity_markers_present=False, topics_in_play=-5, resolved_topics=99,
+        )
+        assert math.isfinite(monitor._metastability_score)
+
+    def test_a_genuinely_good_turn_still_counts_as_success(self):
+        monitor = self._monitor()
+        monitor.record_turn(
+            context_tokens=100, max_tokens=1000, response_quality=0.9,
+            identity_markers_present=True, topics_in_play=2, resolved_topics=2,
+        )
+        assert monitor._successful_turns == 1
