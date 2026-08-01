@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Never, cast
 
@@ -21,6 +22,7 @@ from core.runtime.file_read_gateway import read_stable_bytes
 
 WARM_START_CONTRACT_SCHEMA = "aura.recurrent_policy_warm_start.v1"
 WARM_START_RECEIPT_SCHEMA = "aura.recurrent_policy_warm_start_receipt.v1"
+WARM_START_TOPOLOGY_AUDIT_SCHEMA = "aura.recurrent_policy_warm_start_topology_audit.v1"
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _TENSOR_KEY_RE = re.compile(
@@ -78,6 +80,12 @@ class RecurrentPolicyWarmStartError(RuntimeError):
 
 def _fail(code: str) -> Never:
     raise RecurrentPolicyWarmStartError(code)
+
+
+@dataclass(frozen=True)
+class _TensorDescriptor:
+    shape: tuple[int, ...]
+    dtype: str
 
 
 def _sha256(raw: bytes) -> str:
@@ -201,7 +209,8 @@ def _parse_json(raw: bytes, *, role: str) -> dict[str, Any]:
         ) from exc
     if not isinstance(value, dict):
         _fail(f"warm_start_{role}_invalid")
-    if raw != canonical_json_bytes(value):
+    canonical = canonical_json_bytes(value)
+    if raw not in {canonical, canonical + b"\n"}:
         _fail(f"warm_start_{role}_noncanonical")
     return value
 
@@ -620,6 +629,140 @@ def plan_recurrent_warm_start(
     return copied, report
 
 
+def build_recurrent_policy_tensor_metadata(
+    *,
+    model_config: Mapping[str, Any],
+    prelude_frac: float,
+    coda_frac: float,
+    lora_rank: int,
+    lora_layers: int,
+    lora_targets: Sequence[str],
+    adapter_dtype: str = "mlx.core.float32",
+) -> dict[str, dict[str, Any]]:
+    """Derive Qwen attention-LoRA topology without allocating the checkpoint."""
+
+    layer_count = model_config.get("num_hidden_layers")
+    hidden_size = model_config.get("hidden_size")
+    attention_heads = model_config.get("num_attention_heads")
+    kv_heads = model_config.get("num_key_value_heads")
+    configured_head_dim = model_config.get("head_dim")
+    if (
+        type(layer_count) is not int
+        or layer_count < 2
+        or type(hidden_size) is not int
+        or hidden_size < 1
+        or type(attention_heads) is not int
+        or attention_heads < 1
+        or type(kv_heads) is not int
+        or kv_heads < 1
+        or hidden_size % attention_heads
+        or attention_heads % kv_heads
+        or (
+            configured_head_dim is not None
+            and (type(configured_head_dim) is not int or configured_head_dim < 1)
+        )
+        or isinstance(prelude_frac, bool)
+        or not isinstance(prelude_frac, (int, float))
+        or not 0.0 < float(prelude_frac) < 1.0
+        or isinstance(coda_frac, bool)
+        or not isinstance(coda_frac, (int, float))
+        or not 0.0 < float(coda_frac) < 1.0
+        or type(lora_rank) is not int
+        or lora_rank < 1
+        or type(lora_layers) is not int
+        or lora_layers < 1
+        or not isinstance(adapter_dtype, str)
+        or not adapter_dtype
+    ):
+        _fail("warm_start_current_model_topology_invalid")
+    targets = _normalize_targets(lora_targets, role="current")
+    if not set(targets).issubset({"q_proj", "k_proj", "v_proj", "o_proj"}):
+        _fail("warm_start_current_target_unsupported")
+    prelude_end = max(1, int(layer_count * float(prelude_frac)))
+    coda_start = min(
+        layer_count - 1,
+        layer_count - max(1, int(layer_count * float(coda_frac))),
+    )
+    if coda_start - prelude_end < lora_layers:
+        _fail("warm_start_current_model_topology_invalid")
+    head_dim = configured_head_dim or hidden_size // attention_heads
+    attention_width = attention_heads * head_dim
+    kv_width = kv_heads * head_dim
+    dimensions = {
+        "q_proj": (hidden_size, attention_width),
+        "k_proj": (hidden_size, kv_width),
+        "v_proj": (hidden_size, kv_width),
+        "o_proj": (attention_width, hidden_size),
+    }
+    metadata: dict[str, dict[str, Any]] = {}
+    for layer in range(coda_start - lora_layers, coda_start):
+        for target in targets:
+            input_dims, output_dims = dimensions[target]
+            base = f"model.layers.{layer}.self_attn.{target}"
+            metadata[f"{base}.lora_a"] = {
+                "shape": [input_dims, lora_rank],
+                "dtype": adapter_dtype,
+            }
+            metadata[f"{base}.lora_b"] = {
+                "shape": [lora_rank, output_dims],
+                "dtype": adapter_dtype,
+            }
+    return metadata
+
+
+def audit_recurrent_warm_start_topology(
+    *,
+    contract: Mapping[str, Any],
+    repo_root: str | Path,
+    current_tensor_metadata: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Seal the transfer plan against a metadata-only current policy topology."""
+
+    validated = validate_recurrent_warm_start_contract(
+        contract,
+        repo_root=repo_root,
+    )
+    current: dict[str, _TensorDescriptor] = {}
+    for key, value in current_tensor_metadata.items():
+        shape = value.get("shape") if isinstance(value, Mapping) else None
+        dtype = value.get("dtype") if isinstance(value, Mapping) else None
+        if (
+            not isinstance(key, str)
+            or not isinstance(shape, list)
+            or not shape
+            or any(type(dimension) is not int or dimension <= 0 for dimension in shape)
+            or not isinstance(dtype, str)
+            or not dtype
+        ):
+            _fail("warm_start_current_tensor_metadata_invalid")
+        current[key] = _TensorDescriptor(tuple(shape), dtype)
+    source_binding = cast(Mapping[str, Any], validated["source_checkpoint"])["adapter"]
+    adapter_path, adapter_raw = _require_repo_file(
+        Path(repo_root),
+        cast(Mapping[str, Any], source_binding).get("path"),
+        role="adapter",
+        max_bytes=_MAX_TENSOR_BYTES,
+    )
+    source = _load_source_tensors(adapter_path, adapter_raw)
+    _copied, report = plan_recurrent_warm_start(
+        current_tensors=current,
+        source_tensors=source,
+        contract=validated,
+    )
+    body = {
+        "schema": WARM_START_TOPOLOGY_AUDIT_SCHEMA,
+        "contract_sha256": validated["contract_sha256"],
+        "current_tensor_metadata_sha256": _sha256(
+            canonical_json_bytes(dict(sorted(current_tensor_metadata.items())))
+        ),
+        **report,
+        "claim_eligible": False,
+        "runtime_application_required": True,
+        "causal_preflight_required": True,
+    }
+    return {**body, "receipt_sha256": _document_sha256(body)}
+
+
 def apply_recurrent_warm_start(
     model: Any,
     *,
@@ -756,7 +899,10 @@ __all__ = [
     "RecurrentPolicyWarmStartError",
     "WARM_START_CONTRACT_SCHEMA",
     "WARM_START_RECEIPT_SCHEMA",
+    "WARM_START_TOPOLOGY_AUDIT_SCHEMA",
     "apply_recurrent_warm_start",
+    "audit_recurrent_warm_start_topology",
+    "build_recurrent_policy_tensor_metadata",
     "build_recurrent_warm_start_contract",
     "load_recurrent_warm_start_contract",
     "plan_recurrent_warm_start",

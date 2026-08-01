@@ -33551,3 +33551,38 @@ is initialization evidence only; no reasoning-gain, frontier, promotion,
 release, or `WOW Signal` claim is made. This is total checkpoint 764. The
 764-920 completion envelope is approximately 83.0%-100.0%, with a 91.5%
 midpoint.
+
+### 2026-07-31 - CP765 resident recurrent warm-start topology seal
+
+The real resident warm-start contract is now built from the independently
+bound CP195 step-215 checkpoint and committed as
+`config/latent_cortex/resident_32b_recurrent_policy_warm_start.json`. Its
+contract SHA-256 is
+`c93b8ad2ef8dbe9e963c60cfe5ed1100a70338f971345fe0518fd0a136259070`.
+The source remains a bounded partial checkpoint at step 215/540, so the
+contract is explicitly nonclaiming and requires a fresh causal preflight.
+
+Preregistration now derives the current Qwen attention-LoRA topology directly
+from the resident model configuration and frozen recurrent execution spec,
+without allocating the 32B model. It runs the same transfer planner used by
+runtime application, seals the exact metadata and transfer report, and
+recomputes that report during independent contract validation. The resident
+audit proves that the current policy consists of 48 trainable factors across
+layers 40-47: 32 shape-and-dtype-identical historical `o_proj`/`v_proj`
+factors will be copied, 16 current `q_proj` factors retain deterministic
+initialization, and 96 historical factors outside the current layer
+intersection will be dropped and receipted. Its topology receipt SHA-256 is
+`4c6fc351be2b4a92815226e7b53bbd7a6851b55afebccd27fcf92b89b9926c5b`.
+An absent factor, shape mismatch, unsupported target, invalid recurrent
+window, changed source byte, or changed implementation fails before resident
+model allocation.
+
+The focused contract, topology, CLI, and campaign-preregistration matrix passes
+64/64. Ruff, bytecode compilation, and diff integrity pass. No resident model
+process ran in this checkpoint. The next checkpoint must freeze a fresh,
+disjoint S32 current-topology canary with this exact warm-start commitment,
+then run the read-only initial-policy, answer-channel, and causal gates. GRPO
+remains blocked unless that fresh causal receipt satisfies every immutable
+launch threshold. No reasoning-gain, frontier, promotion, release, or
+`WOW Signal` claim is made. This is total checkpoint 765. The 765-920
+completion envelope is approximately 83.2%-100.0%, with a 91.6% midpoint.

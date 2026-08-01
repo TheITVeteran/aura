@@ -136,6 +136,13 @@ def test_preregistration_binds_warm_start_into_every_model_process(
         "contract_sha256": "4" * 64,
         "checkpoint_status": "bounded_partial_checkpoint",
         "source_step": 215,
+        "topology_audit": {
+            "schema": "aura.recurrent_policy_warm_start_topology_audit.v1",
+            "copied_tensor_count": 32,
+            "initialized_tensor_count": 16,
+            "dropped_source_tensor_count": 96,
+            "claim_eligible": False,
+        },
         "claim_eligible": False,
         "causal_preflight_required": True,
     }

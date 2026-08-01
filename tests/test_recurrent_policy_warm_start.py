@@ -8,9 +8,12 @@ import mlx.core as mx
 import pytest
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+from core.learning import recurrent_policy_warm_start as warm_start_runtime
 from core.learning.recurrent_policy_warm_start import (
     RecurrentPolicyWarmStartError,
     apply_recurrent_warm_start,
+    audit_recurrent_warm_start_topology,
+    build_recurrent_policy_tensor_metadata,
     build_recurrent_warm_start_contract,
     load_recurrent_warm_start_contract,
     plan_recurrent_warm_start,
@@ -21,6 +24,22 @@ from core.learning.recurrent_policy_warm_start import (
 
 def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize("suffix", (b"", b"\n"))
+def test_source_json_accepts_only_supported_canonical_framing(suffix: bytes) -> None:
+    payload = {"schema": "fixture.v1", "value": 1}
+    raw = canonical_json_bytes(payload) + suffix
+    assert warm_start_runtime._parse_json(raw, role="fixture") == payload
+
+
+def test_source_json_rejects_pretty_or_crlf_framing() -> None:
+    for raw in (b'{"schema": "fixture.v1", "value": 1}', b'{"schema":"fixture.v1"}\r\n'):
+        with pytest.raises(
+            RecurrentPolicyWarmStartError,
+            match="warm_start_fixture_noncanonical",
+        ):
+            warm_start_runtime._parse_json(raw, role="fixture")
 
 
 def _tensor_key(layer: int, target: str, factor: str) -> str:
@@ -213,6 +232,90 @@ def test_transfer_plan_rejects_missing_required_factor(tmp_path: Path) -> None:
             source_tensors=source,
             contract=contract,
         )
+
+
+def test_metadata_only_topology_audit_seals_exact_transfer(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    metadata = build_recurrent_policy_tensor_metadata(
+        model_config={
+            "num_hidden_layers": 4,
+            "hidden_size": 3,
+            "num_attention_heads": 1,
+            "num_key_value_heads": 1,
+        },
+        prelude_frac=0.25,
+        coda_frac=0.25,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj", "v_proj", "q_proj"),
+    )
+
+    audit = audit_recurrent_warm_start_topology(
+        contract=contract,
+        repo_root=Path(tmp_path.anchor),
+        current_tensor_metadata=metadata,
+    )
+
+    assert audit["copied_tensor_count"] == 4
+    assert audit["initialized_tensor_count"] == 2
+    assert audit["dropped_source_tensor_count"] == 4
+    assert audit["current_tensor_count"] == 6
+    assert audit["source_tensor_count"] == 8
+    assert audit["claim_eligible"] is False
+    assert audit["runtime_application_required"] is True
+    unsigned = dict(audit)
+    claimed = unsigned.pop("receipt_sha256")
+    assert claimed == _sha(canonical_json_bytes(unsigned))
+
+
+def test_metadata_only_topology_audit_rejects_incompatible_shapes(
+    tmp_path: Path,
+) -> None:
+    contract = _contract(tmp_path)
+    metadata = build_recurrent_policy_tensor_metadata(
+        model_config={
+            "num_hidden_layers": 4,
+            "hidden_size": 4,
+            "num_attention_heads": 1,
+            "num_key_value_heads": 1,
+        },
+        prelude_frac=0.25,
+        coda_frac=0.25,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj", "v_proj", "q_proj"),
+    )
+
+    with pytest.raises(
+        RecurrentPolicyWarmStartError,
+        match="warm_start_required_tensor_missing_or_incompatible",
+    ):
+        audit_recurrent_warm_start_topology(
+            contract=contract,
+            repo_root=Path(tmp_path.anchor),
+            current_tensor_metadata=metadata,
+        )
+
+
+def test_tensor_metadata_honors_explicit_qwen_head_dimension() -> None:
+    metadata = build_recurrent_policy_tensor_metadata(
+        model_config={
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "head_dim": 6,
+        },
+        prelude_frac=0.25,
+        coda_frac=0.25,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("q_proj", "v_proj", "o_proj"),
+    )
+
+    assert metadata[_tensor_key(2, "q_proj", "b")]["shape"] == [2, 12]
+    assert metadata[_tensor_key(2, "v_proj", "b")]["shape"] == [2, 6]
+    assert metadata[_tensor_key(2, "o_proj", "a")]["shape"] == [12, 2]
 
 
 class _FakeModel:

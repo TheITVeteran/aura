@@ -87,6 +87,8 @@ from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     recurrent_training_adequacy_policy,
 )
 from core.learning.recurrent_policy_warm_start import (  # noqa: E402
+    audit_recurrent_warm_start_topology,
+    build_recurrent_policy_tensor_metadata,
     load_recurrent_warm_start_contract,
 )
 from core.learning.verified_token_trace import (  # noqa: E402
@@ -268,6 +270,10 @@ SOURCE_ROLES: Mapping[str, str] = {
     "recurrence": "core/brain/llm/latent_cortex/recurrence.py",
     "adapter": "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "adapter_identity": ("core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"),
+    "recurrent_policy_warm_start": "core/learning/recurrent_policy_warm_start.py",
+    "recurrent_policy_warm_start_builder": (
+        "tools/prepare_recurrent_policy_warm_start.py"
+    ),
     "campaign_runner": "tools/run_latent_cortex_paired_campaign.py",
     "campaign_freezer": "tools/prepare_latent_cortex_campaign.py",
     "campaign_verifier": "tools/verify_paired_campaign_evidence.py",
@@ -570,6 +576,9 @@ def _warm_start_commitment(
     *,
     base_checkpoint: Mapping[str, Any],
     behavior_bundle: Mapping[str, Any],
+    model_path: Path,
+    spec: RLCExecutionSpec,
+    parameters: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -580,11 +589,32 @@ def _warm_start_commitment(
         expected_model_behavior_bundle=behavior_bundle,
     )
     source = contract["source_checkpoint"]
+    model_config = _strict_json(model_path / "config.json")
+    targets = parameters.get("lora_targets")
+    if not isinstance(targets, str):
+        _fail("warm_start_current_topology_invalid")
+    try:
+        current_metadata = build_recurrent_policy_tensor_metadata(
+            model_config=model_config,
+            prelude_frac=spec.prelude_frac,
+            coda_frac=spec.coda_frac,
+            lora_rank=int(parameters["lora_rank"]),
+            lora_layers=int(parameters["lora_layers"]),
+            lora_targets=tuple(target.strip() for target in targets.split(",")),
+        )
+        topology_audit = audit_recurrent_warm_start_topology(
+            contract=contract,
+            repo_root=REPO_ROOT,
+            current_tensor_metadata=current_metadata,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PreregistrationError("warm_start_current_topology_invalid") from exc
     return {
         **_binding(path),
         "contract_sha256": contract["contract_sha256"],
         "checkpoint_status": source["checkpoint_status"],
         "source_step": source["step"],
+        "topology_audit": topology_audit,
         "claim_eligible": False,
         "causal_preflight_required": True,
     }
@@ -678,6 +708,9 @@ def build_contract(
         warm_start_contract,
         base_checkpoint=resolved_model_identity,
         behavior_bundle=resolved_behavior_identity,
+        model_path=model_path,
+        spec=spec,
+        parameters=params,
     )
     sources = {role: _binding(path) for role, path in SOURCE_ROLES.items()}
     training_argv = _training_argv(
@@ -987,6 +1020,9 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
             warm_start["path"],
             base_checkpoint=contract["model"]["base_checkpoint"],
             behavior_bundle=contract["model"]["behavior_bundle"],
+            model_path=_repo_path(DEFAULT_MODEL, role="model"),
+            spec=_spec,
+            parameters=expected_parameters,
         )
         if dict(warm_start) != expected_warm_start:
             _fail("warm_start_commitment_mismatch")
