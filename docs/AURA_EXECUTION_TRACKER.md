@@ -33586,3 +33586,36 @@ remains blocked unless that fresh causal receipt satisfies every immutable
 launch threshold. No reasoning-gain, frontier, promotion, release, or
 `WOW Signal` claim is made. This is total checkpoint 765. The 765-920
 completion envelope is approximately 83.2%-100.0%, with a 91.6% midpoint.
+
+### 2026-07-31 - CP766 warm-started S32 causal canary preregistration
+
+CP420S32 is frozen from clean pushed CP765 source with training seed
+`2026080101`. Its immutable semantic contract SHA-256 is
+`37828508d00628d63a46575c8b21d4ca3a5231123907234c72e15f1b6c8b1890`;
+the serialized contract file SHA-256 is
+`3438864781be34b5e12923b3815736f5e64a96275dc48f52b3e3cf79af4ef6a3`.
+Independent validation verifies the resident 32B checkpoint and tokenizer
+behavior bundle, current executable source inventory, exact 512-token causal
+and answer-channel budget, depth-two recurrent graph, fixed update-canary dose,
+watchdog limits, nonpromotable claim boundary, and warm-start contract
+`c93b8ad2ef8dbe9e963c60cfe5ed1100a70338f971345fe0518fd0a136259070`.
+The embedded topology receipt
+`4c6fc351be2b4a92815226e7b53bbd7a6851b55afebccd27fcf92b89b9926c5b`
+requires exactly 32 copied historical factors, 16 deterministic current
+factors, and 96 dropped source factors before any probe may proceed.
+
+The S32 split contains twelve `register_trace` depth-two training tasks and one
+holdout. Reconstructing S28 through S32 from their frozen seeds found zero task-
+ID and zero prompt overlap between S32 and each of S28, S29, S30, and S31, plus
+zero S32 train/holdout ID and prompt overlap. No prior canary observation is
+reused as S32 causal evidence.
+
+No resident model process ran in this checkpoint. The next required sequence
+is the detached initial-policy probe, exact-budget answer-channel preflight,
+fresh causal-learnability preflight, and independent receipt reconstruction.
+Training remains blocked unless the transferred policy is applied exactly and
+the fresh causal receipt proves at least 75% complete child answer contracts,
+two optimizer-reachable cells, and two wrong-to-right transitions. No
+reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 766. The 766-920 completion envelope is approximately
+83.3%-100.0%, with a 91.6% midpoint.
