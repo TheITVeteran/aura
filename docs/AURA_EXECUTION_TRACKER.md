@@ -34417,3 +34417,20 @@ model ownership. No reasoning-gain, frontier, physical-effect, promotion,
 release, GRPO-admission, or `WOW Signal` claim is made. This is total checkpoint
 786. The 786-920 completion envelope is approximately 85.4%-100.0%, with a
 92.7% midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP787 execution-spec artifact/semantic binding repair
+
+The first real CP786 canary preparation refused before model loading because
+the checked-in resident execution specification is intentionally readable,
+pretty-printed JSON while the preparer required canonical serialization. The
+authority already binds the exact file bytes and the independently normalized
+`RLCExecutionSpec.sha256`; requiring one whitespace serialization added no
+identity strength and made Aura's default launch input unusable. Preparation
+now accepts any strict UTF-8 JSON serialization, rejects duplicate keys and
+non-finite constants, reconstructs and validates the typed execution spec, and
+continues to bind both its exact artifact bytes and canonical semantic digest.
+Regression tests cover the checked-in formatting class and duplicate-key
+rejection. No model was loaded and no training step ran during the refused
+attempt. The next step is a fresh CP787 source-bound two-step canary after this
+repair is tested, published, and re-frozen from exact `main`. No reasoning-gain,
+frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is made.

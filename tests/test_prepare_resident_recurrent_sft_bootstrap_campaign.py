@@ -95,6 +95,29 @@ def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, profile: str) -
     )
 
 
+def test_load_spec_accepts_pretty_json_while_preserving_exact_bytes(tmp_path: Path) -> None:
+    spec = RLCExecutionSpec(recurrent_steps=2)
+    payload = json.dumps(spec.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    path = tmp_path / "spec.json"
+    path.write_bytes(payload)
+
+    loaded, observed_payload = prepare._load_spec(path)
+
+    assert loaded.to_dict() == spec.to_dict()
+    assert observed_payload == payload
+
+
+def test_load_spec_rejects_duplicate_keys(tmp_path: Path) -> None:
+    path = tmp_path / "spec.json"
+    path.write_text('{"schema":"aura.rlc_execution_spec.v1","schema":"duplicate"}')
+
+    with pytest.raises(
+        prepare.ResidentSFTCampaignPreparationError,
+        match="execution_spec_duplicate_key",
+    ):
+        prepare._load_spec(path)
+
+
 @pytest.mark.parametrize(
     ("profile", "steps", "invocations", "train_count", "validation_count"),
     [("canary", 2, 2, 12, 12), ("full", 96, 24, 144, 72)],

@@ -373,15 +373,29 @@ def _task_row(task: RecurrenceTrainingTask) -> dict[str, Any]:
 
 def _load_spec(path: Path) -> tuple[RLCExecutionSpec, bytes]:
     payload = read_stable_bytes(path, max_bytes=4 * 1024 * 1024)
+
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                _fail("resident_sft_prepare_execution_spec_duplicate_key")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> Never:
+        _fail("resident_sft_prepare_execution_spec_non_finite")
+
     try:
-        raw = json.loads(payload)
+        raw = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+        )
         spec = RLCExecutionSpec.from_dict(raw)
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise ResidentSFTCampaignPreparationError(
             "resident_sft_prepare_execution_spec_invalid"
         ) from exc
-    if _canonical(spec.to_dict()) != payload:
-        _fail("resident_sft_prepare_execution_spec_noncanonical")
     if spec.validate():
         _fail("resident_sft_prepare_execution_spec_unsupported")
     return spec, payload
