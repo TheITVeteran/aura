@@ -33389,3 +33389,44 @@ state, and the independent watchdog remain mandatory after those gates. No
 reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 760. The 760-920 completion envelope is approximately
 82.6%-100.0%, with a 91.3% midpoint.
+
+### 2026-07-31 - S30 causal-budget mismatch retired and proof receipt v4
+
+S30 completed its detached initial-policy, answer-channel, and causal-
+learnability probes under PID-1 supervisors with independent sleep inhibitors,
+moving heartbeats, zero restarts, and immutable receipts. The 512-token answer
+channel produced four valid and correct answers across six fresh samples. The
+causal probe found two independent optimizer-reachable depth-two cells: each
+contained one wrong-to-right transition and one wrong-to-wrong control, with
+zero right-to-wrong regressions. However, only two of eight child observations
+completed the final-answer contract, a 25% completion fraction below the frozen
+75% training gate. S30 is therefore blocked and no signer custody, launch
+bundle, controller, trainer, or optimizer mutation was started.
+
+The low completion rate exposed a concrete implementation defect. The causal
+preflight accepted the campaign's `--max-tokens 512` argument but called the
+causal sampler without a `RecurrentSamplingConfig`; the sampler silently used
+its independent 256-token default. The answer-channel preflight correctly used
+512, so the two gates were not measuring the same answer budget. The training
+gate prevented that mismatch from allocating a resident optimization run.
+
+Causal preflight receipts are now v4. The exact campaign token budget is passed
+to every parent/child matched-noise sample, sealed at the receipt and sample
+levels, and independently required to equal the preregistered budget. Every
+sample also retains sealed parent and child observable completions, including
+full and optimization token counts, termination, response text, and content
+hashes. The independent validator enforces exact schemas, reconstructs those
+hashes, and re-grades each synthetic output against the frozen task instead of
+trusting producer-supplied correctness flags. Resealed token-budget, observable,
+grade, count, and completion drift fail closed. Historical v2 and v3 receipts
+remain structurally replayable but cannot authorize a new training allocation.
+
+The focused preregistration and trainer-contract suite passes 98/98. Lint,
+bytecode compilation, and diff integrity pass. The next action is expanded
+signed-transition regression, a clean pushed checkpoint, then fresh S31
+preregistration with a new seed and new task identities. S31 must rerun all
+three detached gates; training remains blocked unless its v4 receipt proves at
+least 75% child contract completion, two optimizer-reachable cells, and two
+wrong-to-right transitions. No reasoning-gain, frontier, promotion, release,
+or `WOW Signal` claim is made. This is total checkpoint 761. The 761-920
+completion envelope is approximately 82.7%-100.0%, with a 91.4% midpoint.

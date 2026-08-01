@@ -87,6 +87,7 @@ from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     recurrent_training_adequacy_policy,
 )
 from core.learning.verified_token_trace import (  # noqa: E402
+    OBSERVABLE_COMPLETION_SCHEMA,
     validate_tokenizer_bundle_identity,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
@@ -103,7 +104,8 @@ FULL_TRAINING_PROFILE = "full_training"
 UPDATE_CANARY_PROFILE = "update_canary"
 CAMPAIGN_PROFILES = frozenset({FULL_TRAINING_PROFILE, UPDATE_CANARY_PROFILE})
 CAUSAL_LEARNABILITY_SCHEMA_V2 = "aura.recurrent_causal_learnability_preflight.v2"
-CAUSAL_LEARNABILITY_SCHEMA = "aura.recurrent_causal_learnability_preflight.v3"
+CAUSAL_LEARNABILITY_SCHEMA_V3 = "aura.recurrent_causal_learnability_preflight.v3"
+CAUSAL_LEARNABILITY_SCHEMA = "aura.recurrent_causal_learnability_preflight.v4"
 CAUSAL_LEARNABILITY_MIN_CHILD_CONTRACT_FRACTION = 0.75
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
@@ -2325,6 +2327,67 @@ def _run_causal_learnability_preflight(contract: Mapping[str, Any]) -> int:
         sys.argv = previous
 
 
+def _validate_causal_preflight_observable(
+    value: Any,
+    *,
+    max_tokens: int,
+    termination: str,
+) -> dict[str, Any]:
+    """Validate one persisted synthetic completion without trusting producer flags."""
+
+    required = {
+        "schema",
+        "full_token_count",
+        "optimization_token_count",
+        "termination",
+        "terminal_token_id",
+        "response_text",
+        "response_utf8_sha256",
+        "receipt_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        _fail("causal_learnability_preflight_observable_invalid")
+    normalized = dict(value)
+    receipt_sha256 = normalized.pop("receipt_sha256", None)
+    response_text = normalized.get("response_text")
+    full_token_count = normalized.get("full_token_count")
+    optimization_token_count = normalized.get("optimization_token_count")
+    terminal_token_id = normalized.get("terminal_token_id")
+    if (
+        normalized.get("schema") != OBSERVABLE_COMPLETION_SCHEMA
+        or type(full_token_count) is not int
+        or full_token_count != max_tokens
+        or type(optimization_token_count) is not int
+        or not 1 <= optimization_token_count <= full_token_count
+        or normalized.get("termination") != termination
+        or termination not in {"contract_complete", "eos_token", "fixed_token_budget"}
+        or (
+            termination == "fixed_token_budget"
+            and optimization_token_count != full_token_count
+        )
+        or not isinstance(response_text, str)
+        or not response_text
+        or normalized.get("response_utf8_sha256")
+        != _sha256(response_text.encode("utf-8"))
+        or receipt_sha256 != _document_sha(normalized)
+        or (
+            terminal_token_id is not None
+            and (type(terminal_token_id) is not int or terminal_token_id < 0)
+        )
+        or (termination != "eos_token" and terminal_token_id is not None)
+    ):
+        _fail("causal_learnability_preflight_observable_invalid")
+    normalized["receipt_sha256"] = receipt_sha256
+    return normalized
+
+
+def _preflight_grade_reason(verdict: Mapping[str, Any]) -> str:
+    reason = verdict.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    return "correct" if bool(verdict.get("correct")) else "incorrect"
+
+
 def validate_causal_learnability_preflight(
     contract: Mapping[str, Any],
     receipt: Mapping[str, Any],
@@ -2332,7 +2395,11 @@ def validate_causal_learnability_preflight(
     """Reconstruct the bounded probe and validate its nonclaiming receipt."""
 
     schema = receipt.get("schema") if isinstance(receipt, Mapping) else None
-    if schema not in {CAUSAL_LEARNABILITY_SCHEMA_V2, CAUSAL_LEARNABILITY_SCHEMA}:
+    if schema not in {
+        CAUSAL_LEARNABILITY_SCHEMA_V2,
+        CAUSAL_LEARNABILITY_SCHEMA_V3,
+        CAUSAL_LEARNABILITY_SCHEMA,
+    }:
         _fail("causal_learnability_preflight_schema_invalid")
     required = {
         "schema",
@@ -2367,6 +2434,15 @@ def validate_causal_learnability_preflight(
                 "parent_contract_complete_samples",
                 "child_contract_complete_samples",
                 "child_contract_complete_fraction",
+                "sampling_max_tokens",
+            }
+        )
+    elif schema == CAUSAL_LEARNABILITY_SCHEMA_V3:
+        required.update(
+            {
+                "parent_contract_complete_samples",
+                "child_contract_complete_samples",
+                "child_contract_complete_fraction",
             }
         )
     normalized = dict(receipt)
@@ -2379,6 +2455,7 @@ def validate_causal_learnability_preflight(
     if (
         normalized["schema"] not in {
             CAUSAL_LEARNABILITY_SCHEMA_V2,
+            CAUSAL_LEARNABILITY_SCHEMA_V3,
             CAUSAL_LEARNABILITY_SCHEMA,
         }
         or normalized["campaign_id"]
@@ -2430,6 +2507,12 @@ def validate_causal_learnability_preflight(
         _fail("causal_learnability_preflight_tokenizer_mismatch")
 
     params = contract["training"]["parameters"]
+    expected_sampling_max_tokens = int(params["max_tokens"])
+    if (
+        normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA
+        and normalized["sampling_max_tokens"] != expected_sampling_max_tokens
+    ):
+        _fail("causal_learnability_preflight_sampling_budget_mismatch")
     probe = _causal_learnability_probe_parameters(contract)
     probe_seed = int(probe["seed"])
     probe_train, probe_holdout, _ = _build_task_split(
@@ -2503,8 +2586,33 @@ def validate_causal_learnability_preflight(
         for sample in samples:
             pair_sha256 = sample.get("causal_transition_pair_sha256")
             branch_index = sample.get("branch_index")
+            sample_required = {
+                "branch_index",
+                "sample_seed",
+                "episode_id",
+                "causal_transition_pair_sha256",
+                "parent_correct",
+                "parent_grade_reason",
+                "child_correct",
+                "child_grade_reason",
+                "transition_kind",
+            }
+            if normalized["schema"] in {
+                CAUSAL_LEARNABILITY_SCHEMA_V3,
+                CAUSAL_LEARNABILITY_SCHEMA,
+            }:
+                sample_required.update({"parent_termination", "child_termination"})
+            if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+                sample_required.update(
+                    {
+                        "sampling_max_tokens",
+                        "parent_observable",
+                        "child_observable",
+                    }
+                )
             if (
-                not isinstance(sample.get("episode_id"), str)
+                set(sample) != sample_required
+                or not isinstance(sample.get("episode_id"), str)
                 or not sample["episode_id"]
                 or type(sample.get("sample_seed")) is not int
                 or type(branch_index) is not int
@@ -2521,6 +2629,48 @@ def validate_causal_learnability_preflight(
             ):
                 _fail("causal_learnability_preflight_sample_invalid")
             if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+                if (
+                    sample.get("sampling_max_tokens") != expected_sampling_max_tokens
+                    or sample.get("parent_termination") not in {
+                        "contract_complete",
+                        "eos_token",
+                        "fixed_token_budget",
+                    }
+                    or sample.get("child_termination") not in {
+                        "contract_complete",
+                        "eos_token",
+                        "fixed_token_budget",
+                    }
+                ):
+                    _fail("causal_learnability_preflight_sample_termination_invalid")
+                parent_observable = _validate_causal_preflight_observable(
+                    sample.get("parent_observable"),
+                    max_tokens=expected_sampling_max_tokens,
+                    termination=str(sample["parent_termination"]),
+                )
+                child_observable = _validate_causal_preflight_observable(
+                    sample.get("child_observable"),
+                    max_tokens=expected_sampling_max_tokens,
+                    termination=str(sample["child_termination"]),
+                )
+                parent_verdict = expected_task.grade(parent_observable["response_text"])
+                child_verdict = expected_task.grade(child_observable["response_text"])
+                if (
+                    sample["parent_correct"] is not bool(parent_verdict.get("correct"))
+                    or sample["child_correct"] is not bool(child_verdict.get("correct"))
+                    or sample["parent_grade_reason"]
+                    != _preflight_grade_reason(parent_verdict)
+                    or sample["child_grade_reason"]
+                    != _preflight_grade_reason(child_verdict)
+                ):
+                    _fail("causal_learnability_preflight_sample_grade_mismatch")
+                parent_contract_complete_samples += int(
+                    sample["parent_termination"] == "contract_complete"
+                )
+                child_contract_complete_samples += int(
+                    sample["child_termination"] == "contract_complete"
+                )
+            elif normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA_V3:
                 if sample.get("parent_termination") not in {
                     "contract_complete",
                     "eos_token",
@@ -2617,7 +2767,10 @@ def validate_causal_learnability_preflight(
         or normalized["verdict"] != verdict
     ):
         _fail("causal_learnability_preflight_summary_mismatch")
-    if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+    if normalized["schema"] in {
+        CAUSAL_LEARNABILITY_SCHEMA_V3,
+        CAUSAL_LEARNABILITY_SCHEMA,
+    }:
         child_fraction = round(
             child_contract_complete_samples / normalized["sample_count"],
             6,

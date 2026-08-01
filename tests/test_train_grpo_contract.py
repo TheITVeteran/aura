@@ -47,6 +47,7 @@ from tools.train_grpo import (
     _record_recurrent_step_failure,
     _render,
     _resolve_model_path,
+    _sample_causal_learnability_transition,
     _scheduled_verified_training_task,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
@@ -82,6 +83,39 @@ def test_stable_seed_has_a_fixed_process_independent_value():
     assert _stable_seed(7, "cell", 4) != _stable_seed(7, "cell", 5)
 
 
+def test_causal_preflight_sampler_uses_the_exact_campaign_token_budget(monkeypatch):
+    from core.learning import recurrent_grpo
+
+    captured = {}
+
+    def fake_sample(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return "sample"
+
+    monkeypatch.setattr(
+        recurrent_grpo,
+        "sample_final_recurrent_transition_completion",
+        fake_sample,
+    )
+
+    result = _sample_causal_learnability_transition(
+        object(),
+        [1, 2, 3],
+        spec=object(),
+        branch_index=1,
+        seed=7,
+        episode_id="campaign:causal:t0:b1",
+        max_tokens=512,
+        tokenizer=object(),
+        model_path="resident-model",
+    )
+
+    assert result == "sample"
+    assert captured["kwargs"]["sampling"].max_tokens == 512
+    assert captured["kwargs"]["branch_index"] == 1
+
+
 @pytest.mark.parametrize(
     ("transitions", "verdict", "strict", "safe"),
     (
@@ -103,7 +137,7 @@ def test_stable_seed_has_a_fixed_process_independent_value():
                 "right_to_right": 0,
                 "wrong_to_wrong": 1,
             },
-            "causal_signal_without_same_group_control",
+            "optimizer_training_signal_control_pending",
             0,
             1,
         ),
@@ -114,7 +148,7 @@ def test_stable_seed_has_a_fixed_process_independent_value():
                 "right_to_right": 0,
                 "wrong_to_wrong": 0,
             },
-            "causal_signal_with_regression",
+            "mixed_transition_training_signal_observed",
             0,
             0,
         ),
@@ -160,6 +194,15 @@ def test_causal_learnability_summary_preserves_nonclaiming_signal_boundaries(
             and transitions["right_to_wrong"] == 0
             and transitions["right_to_right"] > 0
         ),
+        "optimizer_training_reachable": (
+            transitions["wrong_to_right"] > 0
+            and sum(transitions.values()) > transitions["wrong_to_right"]
+        ),
+        "mixed_transition_training_only": (
+            transitions["wrong_to_right"] > 0
+            and transitions["right_to_wrong"] > 0
+        ),
+        "samples": [],
     }
 
     report = _causal_learnability_summary([row])

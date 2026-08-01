@@ -1358,6 +1358,44 @@ def test_causal_learnability_preflight_invokes_trainer_without_provider(monkeypa
     assert "--read-only-causal-learnability-preflight" in argv
 
 
+def _observable_completion(
+    response_text: str,
+    *,
+    max_tokens: int,
+    termination: str = "contract_complete",
+):
+    body = {
+        "schema": "aura.observable_completion.v1",
+        "full_token_count": max_tokens,
+        "optimization_token_count": (
+            max_tokens if termination == "fixed_token_budget" else 1
+        ),
+        "termination": termination,
+        "terminal_token_id": None,
+        "response_text": response_text,
+        "response_utf8_sha256": hashlib.sha256(
+            response_text.encode("utf-8")
+        ).hexdigest(),
+    }
+    return {**body, "receipt_sha256": prereg._document_sha(body)}
+
+
+def _set_observable_response(
+    sample: dict,
+    side: str,
+    response_text: str,
+    *,
+    max_tokens: int,
+    termination: str = "contract_complete",
+):
+    sample[f"{side}_termination"] = termination
+    sample[f"{side}_observable"] = _observable_completion(
+        response_text,
+        max_tokens=max_tokens,
+        termination=termination,
+    )
+
+
 def _causal_learnability_receipt(contract):
     tokenizer_files = list(contract["model"]["behavior_bundle"]["files"])
     if not tokenizer_files:
@@ -1380,6 +1418,7 @@ def _causal_learnability_receipt(contract):
         seed=seed,
     )
     dataset = prereg._dataset_payload(tasks, holdout, seed=seed)
+    max_tokens = int(contract["training"]["parameters"]["max_tokens"])
     cells = []
     for task_index, task in enumerate(tasks):
         samples = []
@@ -1399,9 +1438,18 @@ def _causal_learnability_receipt(contract):
                     ),
                     "causal_transition_pair_sha256": f"{branch_index + 1:064x}",
                     "parent_correct": False,
-                    "parent_grade_reason": "wrong_answer",
+                    "parent_grade_reason": "incorrect",
                     "child_correct": False,
-                    "child_grade_reason": "wrong_answer",
+                    "child_grade_reason": "incorrect",
+                    "sampling_max_tokens": max_tokens,
+                    "parent_observable": _observable_completion(
+                        "FINAL_ANSWER: {}",
+                        max_tokens=max_tokens,
+                    ),
+                    "child_observable": _observable_completion(
+                        "FINAL_ANSWER: {}",
+                        max_tokens=max_tokens,
+                    ),
                     "parent_termination": "contract_complete",
                     "child_termination": "contract_complete",
                     "transition_kind": "wrong_to_wrong",
@@ -1451,6 +1499,7 @@ def _causal_learnability_receipt(contract):
         "policy_before_sha256": "b" * 64,
         "policy_after_sha256": "b" * 64,
         "policy_unchanged": True,
+        "sampling_max_tokens": max_tokens,
         "task_count": len(tasks),
         "sample_count": len(tasks) * 2,
         "transition_counts": {
@@ -1497,6 +1546,7 @@ def test_causal_learnability_preflight_v2_remains_replayable_but_not_trainable(
     contract["paths"]["artifact_root"] = "campaign"
     receipt = _causal_learnability_receipt(contract)
     receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V2
+    receipt.pop("sampling_max_tokens")
     for key in (
         "parent_contract_complete_samples",
         "child_contract_complete_samples",
@@ -1505,8 +1555,50 @@ def test_causal_learnability_preflight_v2_remains_replayable_but_not_trainable(
         receipt.pop(key)
     for cell in receipt["cells"]:
         for sample in cell["samples"]:
+            sample.pop("sampling_max_tokens")
+            sample.pop("parent_observable")
+            sample.pop("child_observable")
             sample.pop("parent_termination")
             sample.pop("child_termination")
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    assert prereg.validate_causal_learnability_preflight(contract, receipt) == receipt
+
+    path = (
+        tmp_path
+        / "campaign"
+        / "causal-learnability-preflight"
+        / "causal_learnability_preflight.json"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_bytes(prereg.canonical_json_bytes(receipt))
+    real_repo_path = prereg._repo_path
+
+    def _test_repo_path(relative, *, role, must_exist=True):
+        if role == "artifact_root":
+            return tmp_path / "campaign"
+        return real_repo_path(relative, role=role, must_exist=must_exist)
+
+    monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
+    with pytest.raises(prereg.PreregistrationError, match="underpowered"):
+        prereg.require_causal_learnability_training_gate(contract)
+
+
+def test_causal_learnability_preflight_v3_remains_replayable_but_not_trainable(
+    tmp_path, monkeypatch
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "campaign"
+    receipt = _causal_learnability_receipt(contract)
+    receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V3
+    receipt.pop("sampling_max_tokens")
+    for cell in receipt["cells"]:
+        for sample in cell["samples"]:
+            sample.pop("sampling_max_tokens")
+            sample.pop("parent_observable")
+            sample.pop("child_observable")
     unsigned = dict(receipt)
     unsigned.pop("receipt_sha256")
     receipt["receipt_sha256"] = prereg._document_sha(unsigned)
@@ -1545,10 +1637,63 @@ def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
         prereg.validate_causal_learnability_preflight(contract, receipt)
 
 
+def test_causal_learnability_preflight_rejects_resealed_sampling_budget_drift():
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+    receipt["sampling_max_tokens"] //= 2
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="sampling_budget_mismatch",
+    ):
+        prereg.validate_causal_learnability_preflight(contract, receipt)
+
+
+def test_causal_learnability_preflight_regrades_resealed_observable_text():
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+    probe = prereg._causal_learnability_probe_parameters(contract)
+    tasks, _holdout, _ = prereg._build_task_split(
+        task_source=str(probe["task_source"]),
+        domains=list(probe["domains"]),
+        depths=list(probe["depths"]),
+        train_per_cell=int(probe["train_per_cell"]),
+        holdout_per_cell=int(probe["holdout_per_cell"]),
+        seed=int(probe["seed"]),
+    )
+    sample = receipt["cells"][0]["samples"][0]
+    _set_observable_response(
+        sample,
+        "parent",
+        tasks[0].answer,
+        max_tokens=receipt["sampling_max_tokens"],
+    )
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="sample_grade_mismatch",
+    ):
+        prereg.validate_causal_learnability_preflight(contract, receipt)
+
+
 def test_causal_learnability_preflight_rejects_resealed_completion_drift():
     contract = _contract()
     receipt = _causal_learnability_receipt(contract)
-    receipt["cells"][0]["samples"][0]["child_termination"] = "fixed_token_budget"
+    sample = receipt["cells"][0]["samples"][0]
+    _set_observable_response(
+        sample,
+        "child",
+        "incomplete",
+        max_tokens=receipt["sampling_max_tokens"],
+        termination="fixed_token_budget",
+    )
+    sample["child_grade_reason"] = "unparseable"
     unsigned = dict(receipt)
     unsigned.pop("receipt_sha256")
     receipt["receipt_sha256"] = prereg._document_sha(unsigned)
@@ -1566,7 +1711,18 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
     contract = _contract()
     contract["paths"]["artifact_root"] = "campaign"
     receipt = _causal_learnability_receipt(contract)
+    probe = prereg._causal_learnability_probe_parameters(contract)
+    tasks, _holdout, _ = prereg._build_task_split(
+        task_source=str(probe["task_source"]),
+        domains=list(probe["domains"]),
+        depths=list(probe["depths"]),
+        train_per_cell=int(probe["train_per_cell"]),
+        holdout_per_cell=int(probe["holdout_per_cell"]),
+        seed=int(probe["seed"]),
+    )
+    tasks_by_id = {task.task_id: task for task in tasks}
     for cell in receipt["cells"][:2]:
+        task = tasks_by_id[cell["task_id"]]
         cell["samples"][0].update(
             {
                 "parent_correct": False,
@@ -1574,6 +1730,12 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
                 "child_grade_reason": "correct",
                 "transition_kind": "wrong_to_right",
             }
+        )
+        _set_observable_response(
+            cell["samples"][0],
+            "child",
+            task.answer,
+            max_tokens=receipt["sampling_max_tokens"],
         )
         cell["transitions"] = {
             "wrong_to_right": 1,
@@ -1618,11 +1780,19 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
 
     for cell in receipt["cells"]:
         for sample in cell["samples"]:
-            sample["child_termination"] = "fixed_token_budget"
-    receipt["cells"][0]["samples"][0]["child_termination"] = "contract_complete"
-    receipt["child_contract_complete_samples"] = 1
+            if sample["child_correct"]:
+                continue
+            sample["child_grade_reason"] = "unparseable"
+            _set_observable_response(
+                sample,
+                "child",
+                "incomplete",
+                max_tokens=receipt["sampling_max_tokens"],
+                termination="fixed_token_budget",
+            )
+    receipt["child_contract_complete_samples"] = 2
     receipt["child_contract_complete_fraction"] = round(
-        1 / receipt["sample_count"], 6
+        2 / receipt["sample_count"], 6
     )
     unsigned = dict(receipt)
     unsigned.pop("receipt_sha256")
@@ -1633,7 +1803,15 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
 
     for cell in receipt["cells"]:
         for sample in cell["samples"]:
-            sample["child_termination"] = "contract_complete"
+            if sample["child_correct"]:
+                continue
+            sample["child_grade_reason"] = "incorrect"
+            _set_observable_response(
+                sample,
+                "child",
+                "FINAL_ANSWER: {}",
+                max_tokens=receipt["sampling_max_tokens"],
+            )
     receipt["child_contract_complete_samples"] = receipt["sample_count"]
     receipt["child_contract_complete_fraction"] = 1.0
 
@@ -1641,9 +1819,15 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
     second["samples"][0].update(
         {
             "child_correct": False,
-            "child_grade_reason": "wrong_answer",
+            "child_grade_reason": "incorrect",
             "transition_kind": "wrong_to_wrong",
         }
+    )
+    _set_observable_response(
+        second["samples"][0],
+        "child",
+        "FINAL_ANSWER: {}",
+        max_tokens=receipt["sampling_max_tokens"],
     )
     second["transitions"] = {
         "wrong_to_right": 0,

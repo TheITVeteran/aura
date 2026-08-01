@@ -138,7 +138,7 @@ _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _PHASE_PROGRESS_SCHEMA = "aura.grpo.phase_progress.v1"
 _PHASE_PROGRESS_MAX_BYTES = 16 * 1024 * 1024
 _CAUSAL_LEARNABILITY_PREFLIGHT_SCHEMA = (
-    "aura.recurrent_causal_learnability_preflight.v3"
+    "aura.recurrent_causal_learnability_preflight.v4"
 )
 
 
@@ -1583,6 +1583,38 @@ def _grade_reason(verdict: Mapping[str, Any]) -> str:
     return "correct" if bool(verdict.get("correct")) else "incorrect"
 
 
+def _sample_causal_learnability_transition(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: Any,
+    branch_index: int,
+    seed: int,
+    episode_id: str,
+    max_tokens: int,
+    tokenizer: Any,
+    model_path: str,
+) -> Any:
+    """Sample a causal edge at the campaign's exact answer budget."""
+
+    from core.learning.recurrent_grpo import (
+        RecurrentSamplingConfig,
+        sample_final_recurrent_transition_completion,
+    )
+
+    return sample_final_recurrent_transition_completion(
+        model,
+        prompt_tokens,
+        spec=spec,
+        branch_index=branch_index,
+        seed=seed,
+        episode_id=episode_id,
+        sampling=RecurrentSamplingConfig(max_tokens=max_tokens),
+        tokenizer=tokenizer,
+        model_path=model_path,
+    )
+
+
 def _causal_learnability_summary(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -2893,7 +2925,6 @@ def main(
         if args.read_only_causal_learnability_preflight:
             from core.learning.recurrent_grpo import (
                 recurrent_policy_sha256,
-                sample_final_recurrent_transition_completion,
             )
 
             assert execution_spec is not None
@@ -2911,7 +2942,7 @@ def main(
                         task.task_id,
                         branch_index,
                     )
-                    sample = sample_final_recurrent_transition_completion(
+                    sample = _sample_causal_learnability_transition(
                         model,
                         prompt_tokens,
                         spec=execution_spec,
@@ -2921,6 +2952,7 @@ def main(
                             f"{args.adapter_id}:causal-preflight:"
                             f"t{task_index}:b{branch_index}"
                         ),
+                        max_tokens=args.max_tokens,
                         tokenizer=tokenizer,
                         model_path=model_path,
                     )
@@ -2963,6 +2995,9 @@ def main(
                             "parent_grade_reason": _grade_reason(parent_verdict),
                             "child_correct": child_correct,
                             "child_grade_reason": _grade_reason(child_verdict),
+                            "sampling_max_tokens": sample.sampling_config.max_tokens,
+                            "parent_observable": parent_observable,
+                            "child_observable": child_observable,
                             "parent_termination": parent_observable["termination"],
                             "child_termination": child_observable["termination"],
                             "transition_kind": transition_kind,
@@ -3027,6 +3062,7 @@ def main(
                 "policy_before_sha256": policy_before,
                 "policy_after_sha256": policy_after,
                 "policy_unchanged": True,
+                "sampling_max_tokens": args.max_tokens,
                 "task_count": len(rows),
                 "sample_count": sum(len(row["samples"]) for row in rows),
                 **summary,
