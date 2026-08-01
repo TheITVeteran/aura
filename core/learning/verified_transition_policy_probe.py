@@ -13,6 +13,9 @@ from typing import Any, Never, cast
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     REQUIRED_SOURCE_ROLES,
 )
+from core.learning.recurrent_policy_warm_start import (
+    validate_recurrent_warm_start_receipt,
+)
 from core.learning.verified_token_trace import validate_tokenizer_bundle_identity
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.runtime.file_read_gateway import read_stable_bytes
@@ -22,6 +25,9 @@ INITIAL_RECURRENT_POLICY_PROBE_SCHEMA = (
 )
 INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2 = (
     "aura.verified_transition.initial_recurrent_policy_probe.v2"
+)
+INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3 = (
+    "aura.verified_transition.initial_recurrent_policy_probe.v3"
 )
 INITIAL_POLICY_STATE_CUSTODY_SCHEMA = (
     "aura.verified_transition.initial_policy_state_custody.v1"
@@ -47,6 +53,7 @@ _PROBE_KEYS_V2 = _PROBE_KEYS_V1 | {
     "initial_adapter_artifact",
     "initial_optimizer_artifact",
 }
+_PROBE_KEYS_V3 = _PROBE_KEYS_V2 | {"warm_start_receipt"}
 _ADAPTER_KEYS = frozenset(
     {
         "seed",
@@ -529,6 +536,7 @@ def build_initial_recurrent_policy_probe(
     initial_adapter_artifact: Mapping[str, Any] | None = None,
     optimizer_initialization: Mapping[str, Any] | None = None,
     initial_optimizer_artifact: Mapping[str, Any] | None = None,
+    warm_start_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     v2_values = (
         initial_adapter_artifact,
@@ -540,9 +548,13 @@ def build_initial_recurrent_policy_probe(
     ):
         _fail("initial_policy_probe_v2_state_incomplete")
     v2 = all(value is not None for value in v2_values)
+    if warm_start_receipt is not None and not v2:
+        _fail("initial_policy_probe_warm_start_requires_v2_state")
     body = {
         "schema": (
-            INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2
+            INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3
+            if warm_start_receipt is not None
+            else INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2
             if v2
             else INITIAL_RECURRENT_POLICY_PROBE_SCHEMA
         ),
@@ -574,6 +586,10 @@ def build_initial_recurrent_policy_probe(
                 initial_optimizer_artifact
             )
         )
+    if warm_start_receipt is not None:
+        body["warm_start_receipt"] = validate_recurrent_warm_start_receipt(
+            warm_start_receipt
+        )
     return validate_initial_recurrent_policy_probe(
         {**body, "receipt_sha256": _digest(body)}
     )
@@ -589,6 +605,8 @@ def validate_initial_recurrent_policy_probe(value: Any) -> dict[str, Any]:
         if schema == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA
         else _PROBE_KEYS_V2
         if schema == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2
+        else _PROBE_KEYS_V3
+        if schema == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3
         else None
     )
     if expected_keys is None or set(document) != expected_keys:
@@ -627,7 +645,10 @@ def validate_initial_recurrent_policy_probe(value: Any) -> dict[str, Any]:
     ):
         _sha256(document.get(role), role=role)
     validate_tokenizer_bundle_identity(document.get("tokenizer_bundle"))
-    if schema == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2:
+    if schema in {
+        INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+        INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3,
+    }:
         artifact = validate_initial_adapter_artifact_binding(
             document.get("initial_adapter_artifact")
         )
@@ -643,6 +664,13 @@ def validate_initial_recurrent_policy_probe(value: Any) -> dict[str, Any]:
         _validate_optimizer_adapter_topology(artifact, optimizer_artifact)
         if artifact["policy_sha256"] != document["initial_policy_sha256"]:
             _fail("initial_policy_probe_adapter_policy_mismatch")
+    if schema == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3:
+        warm_start = validate_recurrent_warm_start_receipt(
+            document.get("warm_start_receipt")
+        )
+        if warm_start["policy_after_sha256"] != document["initial_policy_sha256"]:
+            _fail("initial_policy_probe_warm_start_policy_mismatch")
+        document["warm_start_receipt"] = warm_start
     for role, binding in sources.items():
         _identifier(role, role="source_role")
         if (
@@ -672,6 +700,7 @@ def validate_initial_recurrent_policy_probe_identity(
     initial_adapter_artifact: Mapping[str, Any] | None = None,
     optimizer_initialization: Mapping[str, Any] | None = None,
     initial_optimizer_artifact: Mapping[str, Any] | None = None,
+    warm_start_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebuild a sealed probe at its original time and require exact identity."""
 
@@ -690,6 +719,7 @@ def validate_initial_recurrent_policy_probe_identity(
         initial_adapter_artifact=initial_adapter_artifact,
         optimizer_initialization=optimizer_initialization,
         initial_optimizer_artifact=initial_optimizer_artifact,
+        warm_start_receipt=warm_start_receipt,
     )
     if document != expected:
         _fail("initial_policy_probe_identity_mismatch")
@@ -700,6 +730,7 @@ __all__ = [
     "INITIAL_POLICY_STATE_CUSTODY_SCHEMA",
     "INITIAL_RECURRENT_POLICY_PROBE_SCHEMA",
     "INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2",
+    "INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3",
     "InitialRecurrentPolicyProbeError",
     "build_initial_policy_state_custody",
     "build_initial_recurrent_policy_probe",

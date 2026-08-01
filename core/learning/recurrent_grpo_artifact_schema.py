@@ -14,7 +14,8 @@ from core.learning.grpo import GRPO_SCHEMA, group_advantages
 PROTOCOL_SCHEMA_V5: Final = "aura.grpo_protocol.v5"
 PROTOCOL_SCHEMA_V6: Final = "aura.grpo_protocol.v6"
 PROTOCOL_SCHEMA_V7: Final = "aura.grpo_protocol.v7"
-PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v8"
+PROTOCOL_SCHEMA_V8: Final = "aura.grpo_protocol.v8"
+PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v9"
 TRAINING_RECEIPT_SCHEMA: Final = "aura.grpo_training.v5"
 STEP_RECEIPT_SCHEMA: Final = "aura.recurrent_grpo_step.v1"
 TRAINING_ADEQUACY_SCHEMA: Final = "aura.recurrent_grpo.training_adequacy.v1"
@@ -58,10 +59,14 @@ PROTOCOL_TRAINING_KEYS_V5: Final = frozenset(
         "rng_strategy",
     }
 )
-PROTOCOL_TRAINING_KEYS: Final = PROTOCOL_TRAINING_KEYS_V5 | {
+PROTOCOL_TRAINING_KEYS_V8: Final = PROTOCOL_TRAINING_KEYS_V5 | {
     "advantage_clip",
     "verified_trajectory_config",
     "verified_trajectory_config_sha256",
+    "max_invocation_steps",
+}
+PROTOCOL_TRAINING_KEYS: Final = PROTOCOL_TRAINING_KEYS_V8 | {
+    "warm_start_contract_sha256",
 }
 
 STEP_RECEIPT_KEYS: Final = frozenset(
@@ -563,8 +568,10 @@ __all__ = [
     "PROTOCOL_SCHEMA_V5",
     "PROTOCOL_SCHEMA_V6",
     "PROTOCOL_SCHEMA_V7",
+    "PROTOCOL_SCHEMA_V8",
     "PROTOCOL_TRAINING_KEYS",
     "PROTOCOL_TRAINING_KEYS_V5",
+    "PROTOCOL_TRAINING_KEYS_V8",
     "STEP_RECEIPT_KEYS",
     "STEP_RECEIPT_SCHEMA",
     "TRAINING_RECEIPT_SCHEMA",

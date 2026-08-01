@@ -2365,6 +2365,13 @@ def main(
         ),
     )
     parser.add_argument(
+        "--warm-start-contract",
+        help=(
+            "canonical repository-contained recurrent policy transfer contract; "
+            "the transferred state is applied before every probe or training path"
+        ),
+    )
+    parser.add_argument(
         "--read-only-answer-channel-preflight",
         action="store_true",
         help=(
@@ -2461,8 +2468,9 @@ def main(
         args.initial_policy_probe
         or args.read_only_answer_channel_preflight
         or args.read_only_causal_learnability_preflight
+        or args.warm_start_contract
     ):
-        parser.error("recurrent probes only apply to recurrent mode")
+        parser.error("recurrent probes and warm starts only apply to recurrent mode")
     recurrent_probe_modes = sum(
         (
             bool(args.initial_policy_probe),
@@ -2577,6 +2585,20 @@ def main(
     behavior_identity = model_behavior_bundle_identity(model_path)
     personality_identity = personality_bundle_identity(None)
     runtime_identity = runtime_environment_identity()
+    warm_start_contract = None
+    warm_start_contract_sha256 = None
+    if args.warm_start_contract:
+        from core.learning.recurrent_policy_warm_start import (
+            load_recurrent_warm_start_contract,
+        )
+
+        warm_start_contract = load_recurrent_warm_start_contract(
+            args.warm_start_contract,
+            repo_root=REPO_ROOT,
+            expected_base_checkpoint=base_identity,
+            expected_model_behavior_bundle=behavior_identity,
+        )
+        warm_start_contract_sha256 = warm_start_contract["contract_sha256"]
     protocol = {
         "schema": GRPO_PROTOCOL_SCHEMA,
         "adapter_id": args.adapter_id,
@@ -2632,6 +2654,7 @@ def main(
             "seed": args.seed,
             "memory_fraction": args.memory_fraction,
             "max_invocation_steps": args.max_invocation_steps,
+            "warm_start_contract_sha256": warm_start_contract_sha256,
             "rng_strategy": RNG_STRATEGY,
         },
     }
@@ -2657,6 +2680,12 @@ def main(
                 source_snapshot_dir / f"{role}.py",
                 source_bytes,
                 role=f"{role} source snapshot",
+            )
+        if warm_start_contract is not None:
+            _publish_immutable_bytes(
+                out_dir / "warm_start_contract.json",
+                canonical_json_bytes(warm_start_contract),
+                role="recurrent warm-start contract snapshot",
             )
 
     started_wall = time.time()
@@ -2703,6 +2732,7 @@ def main(
             attach_recurrent_policy_adapters,
             build_recurrent_policy_optimizer,
             recurrent_policy_optimizer_config,
+            recurrent_policy_sha256,
         )
 
         targets = tuple(t.strip() for t in args.lora_targets.split(","))
@@ -2752,6 +2782,37 @@ def main(
         if not attached:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
+
+        warm_start_receipt = None
+        if warm_start_contract is not None:
+            from core.learning.recurrent_policy_warm_start import (
+                apply_recurrent_warm_start,
+            )
+
+            assert execution_spec is not None
+            policy_before_sha256 = recurrent_policy_sha256(model, execution_spec)
+            warm_start_receipt = apply_recurrent_warm_start(
+                model,
+                contract=warm_start_contract,
+                repo_root=REPO_ROOT,
+                policy_before_sha256=policy_before_sha256,
+                policy_after=lambda candidate: recurrent_policy_sha256(
+                    candidate,
+                    execution_spec,
+                ),
+            )
+            _publish_immutable_bytes(
+                out_dir / "warm_start_receipt.json",
+                canonical_json_bytes(warm_start_receipt),
+                role="recurrent warm-start receipt",
+            )
+            print(
+                "[warm-start] "
+                f"copied={warm_start_receipt['copied_tensor_count']} "
+                f"initialized={warm_start_receipt['initialized_tensor_count']} "
+                f"policy={warm_start_receipt['policy_after_sha256']}",
+                flush=True,
+            )
 
         if args.initial_policy_probe:
             from mlx.utils import tree_flatten
@@ -2806,6 +2867,7 @@ def main(
                 "initial_adapter_artifact": initial_adapter_artifact,
                 "optimizer_initialization": (recurrent_policy_optimizer_config(args.learning_rate)),
                 "initial_optimizer_artifact": (initial_optimizer_artifact),
+                "warm_start_receipt": warm_start_receipt,
             }
             with interprocess_file_lock(out_dir / ".initial-policy-probe.lock"):
                 if probe_path.exists() or probe_path.is_symlink():
@@ -2861,7 +2923,7 @@ def main(
                 holdout,
                 spec=execution_spec,
                 max_tokens=args.max_tokens,
-                adapters_on=False,
+                adapters_on=True,
                 seed=_stable_seed(args.seed, "answer-channel-preflight"),
                 progress_label="answer-channel-preflight",
                 envelope=envelope,

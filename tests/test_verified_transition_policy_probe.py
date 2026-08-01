@@ -17,6 +17,7 @@ from core.learning.verified_token_trace import (
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_policy_probe import (
     INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+    INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3,
     InitialRecurrentPolicyProbeError,
     build_initial_policy_state_custody,
     build_initial_recurrent_policy_probe,
@@ -125,6 +126,32 @@ def _optimizer_artifact() -> dict:
     }
 
 
+def _warm_start_receipt(policy_after_sha256: str) -> dict:
+    copied = _adapter_keys()[:2]
+    initialized = _adapter_keys()[2:]
+    body = {
+        "schema": "aura.recurrent_policy_warm_start_receipt.v1",
+        "contract_sha256": "6" * 64,
+        "source_step": 215,
+        "policy_before_sha256": "7" * 64,
+        "policy_after_sha256": policy_after_sha256,
+        "copied_tensor_keys": copied,
+        "copied_tensor_count": len(copied),
+        "initialized_tensor_keys": initialized,
+        "initialized_tensor_count": len(initialized),
+        "dropped_source_tensor_keys": [],
+        "dropped_source_tensor_count": 0,
+        "current_tensor_count": len(copied) + len(initialized),
+        "source_tensor_count": len(copied),
+        "claim_eligible": False,
+        "causal_preflight_required": True,
+    }
+    return {
+        **body,
+        "receipt_sha256": hashlib.sha256(canonical_json_bytes(body)).hexdigest(),
+    }
+
+
 def test_policy_probe_round_trips_exactly() -> None:
     probe = _probe()
     assert validate_initial_recurrent_policy_probe(probe) == probe
@@ -170,6 +197,81 @@ def test_policy_probe_v2_binds_custodied_initial_adapter() -> None:
         == upgraded
     )
 
+
+def test_policy_probe_v3_cross_binds_warm_start_policy() -> None:
+    probe = _probe()
+    identity = {
+        key: probe[key]
+        for key in (
+            "campaign_id",
+            "initial_policy_sha256",
+            "dataset_sha256",
+            "execution_spec_sha256",
+            "base_checkpoint",
+            "model_behavior_bundle",
+            "tokenizer_bundle",
+            "adapter_initialization",
+            "source_bindings",
+        )
+    }
+    artifact = _adapter_artifact(probe["initial_policy_sha256"])
+    warm_start = _warm_start_receipt(probe["initial_policy_sha256"])
+
+    upgraded = build_initial_recurrent_policy_probe(
+        **identity,
+        initial_adapter_artifact=artifact,
+        optimizer_initialization=_optimizer_config(),
+        initial_optimizer_artifact=_optimizer_artifact(),
+        warm_start_receipt=warm_start,
+        created_at_unix_ns=probe["created_at_unix_ns"],
+    )
+
+    assert upgraded["schema"] == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3
+    assert upgraded["warm_start_receipt"] == warm_start
+    assert validate_initial_recurrent_policy_probe(upgraded) == upgraded
+    assert (
+        validate_initial_recurrent_policy_probe_identity(
+            upgraded,
+            **identity,
+            initial_adapter_artifact=artifact,
+            optimizer_initialization=_optimizer_config(),
+            initial_optimizer_artifact=_optimizer_artifact(),
+            warm_start_receipt=warm_start,
+        )
+        == upgraded
+    )
+
+
+def test_policy_probe_v3_rejects_warm_start_policy_substitution() -> None:
+    probe = _probe()
+
+    with pytest.raises(
+        InitialRecurrentPolicyProbeError,
+        match="initial_policy_probe_warm_start_policy_mismatch",
+    ):
+        build_initial_recurrent_policy_probe(
+            **{
+                key: probe[key]
+                for key in (
+                    "campaign_id",
+                    "initial_policy_sha256",
+                    "dataset_sha256",
+                    "execution_spec_sha256",
+                    "base_checkpoint",
+                    "model_behavior_bundle",
+                    "tokenizer_bundle",
+                    "adapter_initialization",
+                    "source_bindings",
+                )
+            },
+            initial_adapter_artifact=_adapter_artifact(
+                probe["initial_policy_sha256"]
+            ),
+            optimizer_initialization=_optimizer_config(),
+            initial_optimizer_artifact=_optimizer_artifact(),
+            warm_start_receipt=_warm_start_receipt("8" * 64),
+            created_at_unix_ns=probe["created_at_unix_ns"],
+        )
 
 def test_policy_probe_v2_rejects_adapter_policy_substitution() -> None:
     probe = _probe()

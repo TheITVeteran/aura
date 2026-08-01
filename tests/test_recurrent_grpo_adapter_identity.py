@@ -40,6 +40,7 @@ from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA_V5,
     PROTOCOL_SCHEMA_V6,
     PROTOCOL_SCHEMA_V7,
+    PROTOCOL_SCHEMA_V8,
     protocol_semantic_sha256,
     recurrent_training_adequacy_report,
 )
@@ -205,7 +206,9 @@ def _fixture(
     snapshot_dir = out / "source_snapshots"
     snapshot_dir.mkdir()
     fixture_source_roles = (
-        SOURCE_ROLES if protocol_schema == GRPO_PROTOCOL_SCHEMA else LEGACY_SOURCE_ROLES
+        SOURCE_ROLES
+        if protocol_schema in {GRPO_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V8}
+        else LEGACY_SOURCE_ROLES
     )
     for role in sorted(fixture_source_roles):
         payload = f"# frozen {role}\n".encode("ascii")
@@ -280,6 +283,10 @@ def _fixture(
         "memory_fraction": 0.4,
         "rng_strategy": "stateless_sha256_step_seeded_v1",
     }
+    if protocol_schema in {GRPO_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V8}:
+        training["max_invocation_steps"] = 0
+    if protocol_schema == GRPO_PROTOCOL_SCHEMA:
+        training["warm_start_contract_sha256"] = None
     if protocol_schema == PROTOCOL_SCHEMA_V5:
         training.pop("advantage_clip")
         training.pop("verified_trajectory_config")
@@ -651,6 +658,24 @@ def test_recurrent_grpo_v7_bundle_remains_verifiable_after_v8_migration(
     )
     assert protocol["schema"] == PROTOCOL_SCHEMA_V7
     assert "scope_reachability" not in protocol["sources"]
+
+
+def test_recurrent_grpo_v8_bundle_remains_verifiable_after_v9_migration(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path, protocol_schema=PROTOCOL_SCHEMA_V8)
+
+    identity = _validate(fixture)
+
+    assert identity == fixture["identity"]
+    protocol = json.loads(
+        (fixture["out"] / "campaign_adapter/training_protocol.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert protocol["schema"] == PROTOCOL_SCHEMA_V8
+    assert protocol["training"]["max_invocation_steps"] == 0
+    assert "warm_start_contract_sha256" not in protocol["training"]
 
 
 def test_recurrent_grpo_v6_bundle_with_trajectory_config_verifies_end_to_end(

@@ -463,6 +463,27 @@ def test_materializer_rejects_noncanonical_external_configuration(
         materializer._load_signer(path)
 
 
+def test_materializer_cross_binds_warm_start_to_initial_policy() -> None:
+    contract = {"warm_start": {"contract_sha256": "a" * 64}}
+    probe = {
+        "initial_policy_sha256": "b" * 64,
+        "warm_start_receipt": {
+            "contract_sha256": "a" * 64,
+            "policy_after_sha256": "b" * 64,
+            "claim_eligible": False,
+            "causal_preflight_required": True,
+        },
+    }
+
+    materializer._validate_probe_warm_start_binding(contract, probe)
+    probe["warm_start_receipt"]["policy_after_sha256"] = "c" * 64
+    with pytest.raises(
+        materializer.LaunchMaterializationError,
+        match="initial_policy_probe_warm_start_mismatch",
+    ):
+        materializer._validate_probe_warm_start_binding(contract, probe)
+
+
 def test_intervention_campaign_requires_external_initial_state_custody() -> None:
     assert (
         materializer._intervention_state_replay_required(
@@ -575,8 +596,16 @@ def test_materializer_derives_replay_contract_from_frozen_campaign_inputs(
     assert recurrent["advantage_clip_hex"] == (4.0).hex()
 
 
+@pytest.mark.parametrize(
+    "probe_schema",
+    (
+        materializer.INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+        materializer.INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3,
+    ),
+)
 def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
     tmp_path: Path,
+    probe_schema: str,
 ) -> None:
     mx = pytest.importorskip("mlx.core")
     adapter_path = (tmp_path / "initial_adapter.safetensors").resolve()
@@ -615,7 +644,7 @@ def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
         "bias_correction": False,
     }
     probe = {
-        "schema": materializer.INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+        "schema": probe_schema,
         "receipt_sha256": _sha("probe"),
         "initial_policy_sha256": adapter_artifact["policy_sha256"],
         "execution_spec_sha256": execution_spec_sha256,

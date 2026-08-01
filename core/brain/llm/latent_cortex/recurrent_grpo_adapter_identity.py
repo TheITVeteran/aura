@@ -29,8 +29,10 @@ from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA_V5,
     PROTOCOL_SCHEMA_V6,
     PROTOCOL_SCHEMA_V7,
+    PROTOCOL_SCHEMA_V8,
     PROTOCOL_TRAINING_KEYS,
     PROTOCOL_TRAINING_KEYS_V5,
+    PROTOCOL_TRAINING_KEYS_V8,
     STEP_RECEIPT_KEYS,
     RecurrentGRPOArtifactSchemaError,
     protocol_semantic_sha256,
@@ -409,6 +411,8 @@ def required_source_roles(protocol_schema: str) -> frozenset[str]:
 
     if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
         return REQUIRED_SOURCE_ROLES
+    if protocol_schema == PROTOCOL_SCHEMA_V8:
+        return REQUIRED_SOURCE_ROLES
     if protocol_schema in {PROTOCOL_SCHEMA_V5, PROTOCOL_SCHEMA_V6, PROTOCOL_SCHEMA_V7}:
         return LEGACY_REQUIRED_SOURCE_ROLES
     _fail("training_protocol_schema_invalid")
@@ -759,10 +763,12 @@ def validate_recurrent_grpo_adapter_identity(
         )
     )
     protocol_schema = protocol.get("schema")
-    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
         training_keys = set(PROTOCOL_TRAINING_KEYS)
-    elif protocol_schema == PROTOCOL_SCHEMA_V6:
-        training_keys = set(PROTOCOL_TRAINING_KEYS)
+    elif protocol_schema == PROTOCOL_SCHEMA_V8:
+        training_keys = set(PROTOCOL_TRAINING_KEYS_V8)
+    elif protocol_schema in {PROTOCOL_SCHEMA_V6, PROTOCOL_SCHEMA_V7}:
+        training_keys = set(PROTOCOL_TRAINING_KEYS_V8) - {"max_invocation_steps"}
     elif protocol_schema == PROTOCOL_SCHEMA_V5:
         training_keys = set(PROTOCOL_TRAINING_KEYS_V5)
     else:
@@ -778,9 +784,15 @@ def validate_recurrent_grpo_adapter_identity(
     provider_contract_sha256 = training.get("verified_transition_provider_contract_sha256")
     lora_initialization_seed = training.get("lora_initialization_seed")
     advantage_clip = training.get("advantage_clip", 4.0)
+    max_invocation_steps = training.get("max_invocation_steps", 0)
+    warm_start_contract_sha256 = training.get("warm_start_contract_sha256")
     trajectory_group_config = None
     trajectory_group_config_sha256 = None
-    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
+    if protocol_schema in {
+        TRAINING_PROTOCOL_SCHEMA,
+        PROTOCOL_SCHEMA_V8,
+        PROTOCOL_SCHEMA_V7,
+    }:
         trajectory_group_config = training.get("verified_trajectory_config")
         trajectory_group_config_sha256 = training.get("verified_trajectory_config_sha256")
         if trajectory_group_config is None:
@@ -829,6 +841,16 @@ def validate_recurrent_grpo_adapter_identity(
         or not 0.0 <= float(trajectory_shaping_weight) <= 0.49
         or type(min_signal_groups) is not int
         or min_signal_groups < 1
+        or type(max_invocation_steps) is not int
+        or max_invocation_steps < 0
+        or (
+            protocol_schema == TRAINING_PROTOCOL_SCHEMA
+            and warm_start_contract_sha256 is not None
+            and (
+                not isinstance(warm_start_contract_sha256, str)
+                or _SHA256_RE.fullmatch(warm_start_contract_sha256) is None
+            )
+        )
     ):
         _fail("training_protocol_cross_binding_mismatch")
     protocol_sha256 = sha256_bytes(payloads["training_protocol"])
@@ -904,7 +926,11 @@ def validate_recurrent_grpo_adapter_identity(
         "verdict",
         "elapsed_minutes",
     }
-    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
+    if protocol_schema in {
+        TRAINING_PROTOCOL_SCHEMA,
+        PROTOCOL_SCHEMA_V8,
+        PROTOCOL_SCHEMA_V7,
+    }:
         receipt_keys.add("training_adequacy")
     _exact(receipt, receipt_keys, role="training_receipt")
     config = _exact(
@@ -1001,7 +1027,11 @@ def validate_recurrent_grpo_adapter_identity(
         trajectory_shaping_weight=float(trajectory_shaping_weight),
         advantage_clip=float(advantage_clip),
     )
-    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
+    if protocol_schema in {
+        TRAINING_PROTOCOL_SCHEMA,
+        PROTOCOL_SCHEMA_V8,
+        PROTOCOL_SCHEMA_V7,
+    }:
         history = receipt.get("history")
         learning_signal = receipt.get("learning_signal")
         if not isinstance(history, list) or not isinstance(learning_signal, Mapping):

@@ -126,6 +126,43 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert receipt["claim_eligible"] is False
 
 
+def test_preregistration_binds_warm_start_into_every_model_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commitment = {
+        "path": "config/latent_cortex/recurrent_warm_start.json",
+        "sha256": "3" * 64,
+        "size_bytes": 1024,
+        "contract_sha256": "4" * 64,
+        "checkpoint_status": "bounded_partial_checkpoint",
+        "source_step": 215,
+        "claim_eligible": False,
+        "causal_preflight_required": True,
+    }
+    monkeypatch.setattr(
+        prereg,
+        "_warm_start_commitment",
+        lambda path, **_kwargs: dict(commitment) if path is not None else None,
+    )
+    contract = prereg.build_contract(
+        committed_at="2026-07-21T15:00:00-07:00",
+        warm_start_contract=commitment["path"],
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+
+    assert prereg.validate_contract(contract, verify_model=False)["claim_eligible"] is False
+    assert contract["warm_start"] == commitment
+    for argv in (
+        contract["training"]["argv"],
+        prereg._policy_probe_argv(contract),
+        prereg._answer_channel_preflight_argv(contract),
+        prereg._causal_learnability_preflight_argv(contract),
+    ):
+        index = argv.index("--warm-start-contract")
+        assert argv[index + 1] == commitment["path"]
+
+
 def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     contract = prereg.build_contract(
         campaign_id="resident-32b-recurrent-grpo-cp420s14-update-canary",

@@ -33509,3 +33509,45 @@ causal preflight are required before another GRPO allocation. No reasoning-gain,
 frontier, promotion, release, or `WOW Signal` claim is made. This is total
 checkpoint 763. The 763-920 completion envelope is approximately 82.9%-100.0%,
 with a 91.5% midpoint.
+
+### 2026-07-31 - CP764 current-topology recurrent warm-start custody
+
+The S31 negative result is now followed by a mechanism change rather than a
+seed-only retry. Aura has a fail-closed recurrent-policy warm-start contract
+that binds the source checkpoint completion record, adapter bytes, training
+configuration, historical execution spec, full base-checkpoint identity,
+tokenizer/model behavior bundle, tensor topology, transfer policy, and the
+exact implementation bytes that validate and apply the transfer. Partial
+historical checkpoints remain explicitly nonclaiming. Only declared,
+shape-and-dtype-identical LoRA factors at the current layer intersection may be
+copied; new current targets retain deterministic initialization and every
+unmatched source tensor is recorded as dropped. A changed source artifact,
+noncanonical document, path escape, topology gap, undeclared current target,
+or policy-digest mismatch fails closed.
+
+The live training path now uses protocol v9. It binds the warm-start contract
+digest and the process-rotation setting that the prior protocol schema omitted,
+applies the transfer immediately after deterministic adapter attachment, and
+publishes an immutable transfer receipt before any policy probe, answer probe,
+causal probe, provider creation, or optimizer work. The initial policy receipt
+is v3 and cross-binds that transfer receipt to the exact adapter snapshot and
+policy digest. Launch materialization accepts v3 custody, copies and reopens
+the exact adapter and optimizer bytes, and rejects a warm-start contract/probe
+substitution. The answer-channel preflight now exposes the actual recurrent
+adapter; a nonzero transferred policy can no longer pass raw-base smoke tests
+and then silently change policy at training time. Historical v5-v8 recurrent
+adapter bundles remain independently verifiable.
+
+The reproducible `tools/prepare_recurrent_policy_warm_start.py` CLI publishes a
+contract exactly once, replays all bound bytes, and refuses output rebinding.
+The affected warm-start, policy-probe, protocol-identity, preregistration,
+launch-materialization, and CLI matrix passes 120/120. Ruff, bytecode
+compilation, and diff integrity pass. No resident model process ran in this
+checkpoint. The next checkpoint must build the real contract from the
+historical resident step-215 checkpoint, independently verify the expected
+32 copied o/v tensors, 16 deterministic q tensors, and 96 dropped historical
+tensors, then freeze a fresh disjoint current-topology canary. The warm start
+is initialization evidence only; no reasoning-gain, frontier, promotion,
+release, or `WOW Signal` claim is made. This is total checkpoint 764. The
+764-920 completion envelope is approximately 83.0%-100.0%, with a 91.5%
+midpoint.

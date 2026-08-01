@@ -66,6 +66,7 @@ from core.learning.verified_transition_measurement_chain import (
 )
 from core.learning.verified_transition_policy_probe import (
     INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+    INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3,
     build_initial_policy_state_custody,
     inspect_initial_adapter_snapshot,
     inspect_initial_optimizer_snapshot,
@@ -100,6 +101,12 @@ from tools.run_verified_recurrent_grpo_training import (
 SIGNER_CONFIG_SCHEMA = "aura.verified_transition.external_signer_config.v1"
 MATERIALIZATION_INTENT_SCHEMA = "aura.verified_transition.launch_materialization_intent.v2"
 MATERIALIZATION_RECEIPT_SCHEMA = "aura.verified_transition.launch_materialization_receipt.v2"
+_CUSTODY_PROBE_SCHEMAS = frozenset(
+    {
+        INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+        INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V3,
+    }
+)
 _SIGNER_CONFIG_KEYS = frozenset(
     {
         "schema",
@@ -406,13 +413,36 @@ def _intervention_state_replay_required(
     return isinstance(config, Mapping) and isinstance(config.get("intervention_config"), Mapping)
 
 
+def _validate_probe_warm_start_binding(
+    contract: Mapping[str, Any],
+    probe: Mapping[str, Any],
+) -> None:
+    warm_start = contract.get("warm_start")
+    probe_warm_start = probe.get("warm_start_receipt")
+    if warm_start is None:
+        if probe_warm_start is not None:
+            _fail("initial_policy_probe_warm_start_unexpected")
+        return
+    if (
+        not isinstance(warm_start, Mapping)
+        or not isinstance(probe_warm_start, Mapping)
+        or probe_warm_start.get("contract_sha256")
+        != warm_start.get("contract_sha256")
+        or probe_warm_start.get("policy_after_sha256")
+        != probe.get("initial_policy_sha256")
+        or probe_warm_start.get("claim_eligible") is not False
+        or probe_warm_start.get("causal_preflight_required") is not True
+    ):
+        _fail("initial_policy_probe_warm_start_mismatch")
+
+
 def _validate_materialized_initial_state(
     *,
     probe: Mapping[str, Any],
     provider_config: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     custody_value = provider_config.get("initial_policy_state_custody")
-    if probe.get("schema") != INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2:
+    if probe.get("schema") not in _CUSTODY_PROBE_SCHEMAS:
         if custody_value is not None:
             _fail("initial_policy_state_custody_unexpected")
         return None
@@ -793,6 +823,7 @@ def materialize_launch(
         or probe["model_behavior_bundle"] != contract["model"]["behavior_bundle"]
     ):
         _fail("initial_policy_probe_contract_mismatch")
+    _validate_probe_warm_start_binding(contract, probe)
     for role, binding in probe["source_bindings"].items():
         if contract["sources"].get(role) != binding:
             _fail("initial_policy_probe_source_mismatch")
@@ -829,7 +860,7 @@ def materialize_launch(
 
     if (
         _intervention_state_replay_required(contract)
-        and probe["schema"] != INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2
+        and probe["schema"] not in _CUSTODY_PROBE_SCHEMAS
     ):
         _fail("intervention_initial_policy_state_custody_required")
 
@@ -872,7 +903,7 @@ def materialize_launch(
 
     ensure_private_directory(launch_root)
     initial_policy_state_custody = None
-    if probe["schema"] == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2:
+    if probe["schema"] in _CUSTODY_PROBE_SCHEMAS:
         source_artifact = probe["initial_adapter_artifact"]
         source_optimizer_artifact = probe["initial_optimizer_artifact"]
         try:

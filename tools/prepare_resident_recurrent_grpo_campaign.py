@@ -86,6 +86,9 @@ from core.learning.recurrent_grpo import (  # noqa: E402
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     recurrent_training_adequacy_policy,
 )
+from core.learning.recurrent_policy_warm_start import (  # noqa: E402
+    load_recurrent_warm_start_contract,
+)
 from core.learning.verified_token_trace import (  # noqa: E402
     OBSERVABLE_COMPLETION_SCHEMA,
     observable_completion_receipt_sha256,
@@ -100,7 +103,8 @@ from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools import run_detached_step  # noqa: E402
 from tools.train_grpo import _build_task_split, _dataset_payload, _stable_seed  # noqa: E402
 
-CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
+CONTRACT_SCHEMA_V1 = "aura.resident_recurrent_grpo_preregistration.v1"
+CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v2"
 FULL_TRAINING_PROFILE = "full_training"
 UPDATE_CANARY_PROFILE = "update_canary"
 CAMPAIGN_PROFILES = frozenset({FULL_TRAINING_PROFILE, UPDATE_CANARY_PROFILE})
@@ -489,6 +493,7 @@ def _training_argv(
     model: str,
     output: str,
     execution_spec: str,
+    warm_start_contract: str | None = None,
     parameters: Mapping[str, Any] | None = None,
 ) -> list[str]:
     params = parameters or TRAINING_PARAMETERS
@@ -555,7 +560,34 @@ def _training_argv(
         argv.append("--cot")
     if params.get("fixed_update_canary"):
         argv.append("--fixed-update-canary")
+    if warm_start_contract is not None:
+        argv.extend(("--warm-start-contract", warm_start_contract))
     return argv
+
+
+def _warm_start_commitment(
+    path: str | None,
+    *,
+    base_checkpoint: Mapping[str, Any],
+    behavior_bundle: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    contract = load_recurrent_warm_start_contract(
+        path,
+        repo_root=REPO_ROOT,
+        expected_base_checkpoint=base_checkpoint,
+        expected_model_behavior_bundle=behavior_bundle,
+    )
+    source = contract["source_checkpoint"]
+    return {
+        **_binding(path),
+        "contract_sha256": contract["contract_sha256"],
+        "checkpoint_status": source["checkpoint_status"],
+        "source_step": source["step"],
+        "claim_eligible": False,
+        "causal_preflight_required": True,
+    }
 
 
 def _dataset_commitment(
@@ -597,6 +629,7 @@ def build_contract(
     artifact_root: str = DEFAULT_ROOT,
     committed_at: str,
     training_seed: int | None = None,
+    warm_start_contract: str | None = None,
     model_identity: Mapping[str, Any] | None = None,
     behavior_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -641,12 +674,18 @@ def build_contract(
     resolved_behavior_identity = dict(
         behavior_identity or model_behavior_bundle_identity(model_path)
     )
+    warm_start = _warm_start_commitment(
+        warm_start_contract,
+        base_checkpoint=resolved_model_identity,
+        behavior_bundle=resolved_behavior_identity,
+    )
     sources = {role: _binding(path) for role, path in SOURCE_ROLES.items()}
     training_argv = _training_argv(
         campaign_id=campaign_id,
         model=model,
         output=paths["training_output"],
         execution_spec=execution_spec,
+        warm_start_contract=(warm_start["path"] if warm_start is not None else None),
         parameters=params,
     )
     trajectory_config_commitment = _verified_trajectory_config_commitment(
@@ -709,6 +748,7 @@ def build_contract(
             "behavior_bundle": resolved_behavior_identity,
             "personality_adapter": "none",
         },
+        "warm_start": warm_start,
         "execution_spec": spec_binding,
         "sources": sources,
         "paths": paths,
@@ -857,6 +897,7 @@ def build_contract(
 
 
 def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True) -> dict[str, Any]:
+    schema = contract.get("schema")
     expected_keys = {
         "schema",
         "campaign_id",
@@ -876,7 +917,11 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         "required_stage_order",
         "contract_sha256",
     }
-    if set(contract) != expected_keys or contract.get("schema") != CONTRACT_SCHEMA:
+    if schema == CONTRACT_SCHEMA:
+        expected_keys.add("warm_start")
+    elif schema != CONTRACT_SCHEMA_V1:
+        _fail("contract_schema_invalid")
+    if set(contract) != expected_keys:
         _fail("contract_schema_invalid")
     material = dict(contract)
     claimed_sha = material.pop("contract_sha256")
@@ -930,11 +975,31 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     paths = contract.get("paths")
     if not isinstance(paths, Mapping):
         _fail("training_contract_invalid")
+    warm_start = contract.get("warm_start") if schema == CONTRACT_SCHEMA else None
+    expected_warm_start = None
+    if warm_start is not None:
+        if not isinstance(warm_start, Mapping) or not isinstance(
+            warm_start.get("path"),
+            str,
+        ):
+            _fail("warm_start_commitment_invalid")
+        expected_warm_start = _warm_start_commitment(
+            warm_start["path"],
+            base_checkpoint=contract["model"]["base_checkpoint"],
+            behavior_bundle=contract["model"]["behavior_bundle"],
+        )
+        if dict(warm_start) != expected_warm_start:
+            _fail("warm_start_commitment_mismatch")
     expected_argv = _training_argv(
         campaign_id=campaign_id,
         model=DEFAULT_MODEL,
         output=str(paths.get("training_output")),
         execution_spec=DEFAULT_SPEC,
+        warm_start_contract=(
+            str(expected_warm_start["path"])
+            if expected_warm_start is not None
+            else None
+        ),
         parameters=expected_parameters,
     )
     expected_trajectory_config = _verified_trajectory_config_commitment(
@@ -2122,6 +2187,18 @@ def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:
     return argv
 
 
+def _warm_start_argv(contract: Mapping[str, Any]) -> list[str]:
+    commitment = contract.get("warm_start")
+    if commitment is None:
+        return []
+    if not isinstance(commitment, Mapping) or not isinstance(
+        commitment.get("path"),
+        str,
+    ):
+        _fail("warm_start_commitment_invalid")
+    return ["--warm-start-contract", str(commitment["path"])]
+
+
 def _run_initial_policy_probe(contract: Mapping[str, Any]) -> int:
     validate_contract(contract, verify_model=True)
     from tools import train_grpo
@@ -2210,6 +2287,7 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
         str(int(params["seed"]) + 311),
         "--calibrate",
         "--cot",
+        *_warm_start_argv(contract),
         "--read-only-answer-channel-preflight",
     ]
 
@@ -2311,6 +2389,7 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         "--seed",
         str(probe["seed"]),
         "--cot",
+        *_warm_start_argv(contract),
         "--read-only-causal-learnability-preflight",
     ]
 
@@ -3069,6 +3148,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--artifact-root", default=DEFAULT_ROOT)
     prepare.add_argument("--committed-at", required=True)
     prepare.add_argument("--training-seed", type=int)
+    prepare.add_argument("--warm-start-contract")
     verify = subparsers.add_parser("verify")
     verify.add_argument("--contract", default=DEFAULT_CONTRACT)
     verify.add_argument("--skip-model", action="store_true")
@@ -3122,6 +3202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 artifact_root=args.artifact_root,
                 committed_at=args.committed_at,
                 training_seed=args.training_seed,
+                warm_start_contract=args.warm_start_contract,
             )
             _write_once(Path(args.contract), contract)
             receipt = validate_contract(contract, verify_model=True)
