@@ -64,6 +64,7 @@ def _authority() -> tuple[dict[str, object], bytes, bytes, dict[str, bytes]]:
     sources = _source_payloads()
     authority = build_authority(
         campaign_id="resident-32b-recurrent-sft-bootstrap-cp782",
+        campaign_scope="full_bootstrap",
         committed_at="2026-08-01T01:00:00-07:00",
         expires_at="2026-08-08T01:00:00-07:00",
         model_path="training/fused-model/aura-32b",
@@ -97,8 +98,7 @@ def _authority() -> tuple[dict[str, object], bytes, bytes, dict[str, bytes]]:
             ),
         },
         sources={
-            role: _binding(f"sources/{role}.py", payload)
-            for role, payload in sources.items()
+            role: _binding(f"sources/{role}.py", payload) for role, payload in sources.items()
         },
         runtime_identity={
             "identity_sha256": SHA_C,
@@ -112,6 +112,7 @@ def _authority() -> tuple[dict[str, object], bytes, bytes, dict[str, bytes]]:
             "semantic_sha256": SHA_C,
         },
         artifact_root="artifacts/cp782",
+        artifact_root_identity={"st_dev": 1, "st_ino": 2},
         config=ResidentSFTBootstrapConfig(seed=2026080107),
     )
     return authority, train_payload, validation_payload, sources
@@ -132,6 +133,7 @@ def test_resident_authority_binds_nonpromotable_cached_bootstrap() -> None:
     )
 
     assert validated["training_authority"] == TRAINING_AUTHORITY
+    assert validated["campaign_scope"] == "full_bootstrap"
     assert validated["trainer"]["objective"] == "cached_supervised_live_path_ce.v1"
     assert validated["model"]["base_checkpoint_immutable"] is True
     assert validated["post_training_gate"]["grpo_admission_before_gate"] is False
@@ -152,6 +154,22 @@ def test_resident_authority_derives_complete_checkpoint_bindings() -> None:
     )
     assert bindings["source_closure_sha256"] == sha256_json(authority["sources"])
     assert bindings["trainer_config_sha256"] == sha256_json(authority["trainer"])
+    assert bindings["campaign_scope_sha256"] == sha256_json("full_bootstrap")
+    assert bindings["artifact_root_identity_sha256"] == sha256_json(
+        authority["artifact_root_identity"]
+    )
+
+
+def test_resident_authority_rejects_malformed_artifact_root_identity() -> None:
+    authority, _train, _validation, _sources = _authority()
+    authority["artifact_root_identity"] = {"st_dev": 1, "st_ino": -1}
+    _recompute_authority_sha256(authority)
+
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="artifact_root_identity_invalid",
+    ):
+        validate_authority(authority)
 
 
 def test_dataset_commitment_rejects_identity_and_prompt_overlap() -> None:

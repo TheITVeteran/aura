@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Never, cast
 
+from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
+
 PLAN_SCHEMA = "aura.latent_cortex.campaign_plan.v1"
 PLAN_VERSION = 1
 CELL_SCHEMA = "aura.latent_cortex.campaign_cell.v1"
@@ -347,25 +349,58 @@ class _ReplayState:
 class CampaignJournal:
     """Single-writer append-only campaign journal."""
 
-    def __init__(self, path: Path | str, plan: CampaignPlan) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        plan: CampaignPlan,
+        *,
+        custody: DirectoryCustody | None = None,
+    ) -> None:
         if not isinstance(plan, CampaignPlan):
             _fail("plan_type_invalid")
         self.path = Path(path).expanduser().absolute()
         self.plan = plan
         self._closed = True
         self._lock_fd: int | None = None
+        self._lock_identity: tuple[int, int] | None = None
         self._journal_fd: int | None = None
+        self._journal_payload = b""
         self._lock_key = str(self.path)
         self._process_lock_registered = False
         self._recovered_attempts: set[str] = set()
+        self._custody = custody
+        self._custody_relative: str | None = None
 
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if custody is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            try:
+                relative = self.path.relative_to(custody.path)
+            except ValueError:
+                _fail("journal_outside_custody")
+            if relative.parent != Path("."):
+                custody.ensure_directory(relative.parent)
+            self._custody_relative = relative.as_posix()
         self._acquire_lock()
         try:
-            self._journal_fd = self._open_regular_append_file(self.path)
-            self._closed = False
-            if os.fstat(self._journal_fd).st_size == 0:
-                self._write_genesis()
+            if custody is not None and self._custody_relative is not None:
+                self._closed = False
+                if custody.file_exists(self._custody_relative):
+                    self._journal_payload = custody.read_bytes(
+                        self._custody_relative,
+                        max_bytes=_MAX_JOURNAL_BYTES,
+                    )
+                if not self._journal_payload:
+                    self._write_genesis()
+            else:
+                self._journal_fd = self._open_regular_append_file(
+                    self.path,
+                    custody=None,
+                    relative=None,
+                )
+                self._closed = False
+                if os.fstat(self._journal_fd).st_size == 0:
+                    self._write_genesis()
             self._state = self._replay()
             self._recovered_attempts = {
                 attempt_id
@@ -377,15 +412,28 @@ class CampaignJournal:
             raise
 
     @staticmethod
-    def _open_regular_append_file(path: Path) -> int:
+    def _open_regular_append_file(
+        path: Path,
+        *,
+        custody: DirectoryCustody | None,
+        relative: str | None,
+    ) -> int:
         if path.is_symlink():
             _fail("journal_symlink_rejected")
         flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
-            fd = os.open(path, flags, 0o600)
-        except OSError:
+            if custody is not None and relative is not None:
+                fd = custody.open_file(
+                    relative,
+                    flags,
+                    mode=0o600,
+                    create_parents=True,
+                )
+            else:
+                fd = os.open(path, flags, 0o600)
+        except (OSError, SecurePathCustodyError):
             _fail("journal_open_failed")
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
@@ -405,23 +453,113 @@ class CampaignJournal:
                 _fail("journal_lock_symlink_rejected")
             flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
             flags |= getattr(os, "O_NOFOLLOW", 0)
-            self._lock_fd = os.open(lock_path, flags, 0o600)
-            if not stat.S_ISREG(os.fstat(self._lock_fd).st_mode):
+            if self._custody is not None and self._custody_relative is not None:
+                lock_relative = str(
+                    Path(self._custody_relative).with_name(
+                        f"{Path(self._custody_relative).name}.lock"
+                    )
+                )
+                self._lock_fd = self._custody.open_file(
+                    lock_relative,
+                    flags,
+                    mode=0o600,
+                    create_parents=True,
+                )
+            else:
+                self._lock_fd = os.open(lock_path, flags, 0o600)
+            lock_stat = os.fstat(self._lock_fd)
+            if (
+                not stat.S_ISREG(lock_stat.st_mode)
+                or lock_stat.st_uid != os.geteuid()
+                or lock_stat.st_nlink != 1
+            ):
                 _fail("journal_lock_not_regular_file")
             try:
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 _fail("journal_writer_locked")
+            self._lock_identity = (int(lock_stat.st_dev), int(lock_stat.st_ino))
+            self._verify_lock_binding()
         except BaseException:  # noqa: BLE001 - resource cleanup on any exit; original re-raised
             if self._lock_fd is not None:
                 os.close(self._lock_fd)
                 self._lock_fd = None
+                self._lock_identity = None
             with _PROCESS_LOCK_GUARD:
                 _PROCESS_LOCKS.discard(self._lock_key)
                 self._process_lock_registered = False
             raise
 
+    def _lock_relative_path(self) -> str | None:
+        if self._custody_relative is None:
+            return None
+        relative = Path(self._custody_relative)
+        return str(relative.with_name(f"{relative.name}.lock"))
+
+    def _verify_lock_binding(self) -> None:
+        fd = self._lock_fd
+        expected = self._lock_identity
+        if fd is None or expected is None:
+            _fail("journal_lock_identity_drift")
+        held = os.fstat(fd)
+        if (
+            not stat.S_ISREG(held.st_mode)
+            or held.st_uid != os.geteuid()
+            or held.st_nlink != 1
+            or (int(held.st_dev), int(held.st_ino)) != expected
+        ):
+            _fail("journal_lock_identity_drift")
+        entry_fd = -1
+        try:
+            relative = self._lock_relative_path()
+            if self._custody is not None and relative is not None:
+                entry_fd = self._custody.open_file(relative, os.O_RDONLY)
+            else:
+                flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                entry_fd = os.open(self.path.with_name(f"{self.path.name}.lock"), flags)
+            entry = os.fstat(entry_fd)
+            if (
+                not stat.S_ISREG(entry.st_mode)
+                or entry.st_uid != os.geteuid()
+                or entry.st_nlink != 1
+                or (int(entry.st_dev), int(entry.st_ino)) != expected
+            ):
+                _fail("journal_lock_identity_drift")
+        except CampaignJournalError:
+            raise
+        except (OSError, SecurePathCustodyError):
+            _fail("journal_lock_identity_drift")
+        finally:
+            if entry_fd >= 0:
+                os.close(entry_fd)
+
     def _write_all(self, payload: bytes) -> None:
+        self._verify_lock_binding()
+        if self._custody is not None and self._custody_relative is not None:
+            try:
+                current = (
+                    self._custody.read_bytes(
+                        self._custody_relative,
+                        max_bytes=_MAX_JOURNAL_BYTES,
+                    )
+                    if self._custody.file_exists(self._custody_relative)
+                    else b""
+                )
+                if current != self._journal_payload:
+                    _fail("journal_changed_during_session")
+                combined = current + payload
+                if len(combined) > _MAX_JOURNAL_BYTES:
+                    _fail("journal_too_large")
+                self._custody.atomic_write_bytes(
+                    self._custody_relative,
+                    combined,
+                    mode=0o600,
+                )
+                self._journal_payload = combined
+                return
+            except SecurePathCustodyError:
+                _fail("journal_append_failed")
         if self._journal_fd is None:
             _fail("journal_closed")
         fd = self._journal_fd
@@ -448,6 +586,17 @@ class CampaignJournal:
         self._write_all(canonical_json_bytes(record) + b"\n")
 
     def _read_all(self) -> bytes:
+        self._verify_lock_binding()
+        if self._custody is not None and self._custody_relative is not None:
+            try:
+                payload = self._custody.read_bytes(
+                    self._custody_relative,
+                    max_bytes=_MAX_JOURNAL_BYTES,
+                )
+            except SecurePathCustodyError:
+                _fail("journal_read_failed")
+            self._journal_payload = payload
+            return payload
         if self._journal_fd is None:
             _fail("journal_closed")
         fd = self._journal_fd
@@ -655,8 +804,9 @@ class CampaignJournal:
             _fail("journal_event_state_invalid")
 
     def _assert_open(self) -> None:
-        if self._closed or self._journal_fd is None:
+        if self._closed or (self._custody is None and self._journal_fd is None):
             _fail("journal_closed")
+        self._verify_lock_binding()
 
     def _protocol_metadata(self) -> dict[str, Any]:
         metadata = self.plan.to_dict().get("metadata")
@@ -690,6 +840,18 @@ class CampaignJournal:
 
     def _assert_unchanged_size(self) -> None:
         self._assert_open()
+        self._verify_lock_binding()
+        if self._custody is not None and self._custody_relative is not None:
+            try:
+                current = self._custody.read_bytes(
+                    self._custody_relative,
+                    max_bytes=_MAX_JOURNAL_BYTES,
+                )
+            except SecurePathCustodyError:
+                _fail("journal_read_failed")
+            if current != self._journal_payload or len(current) != self._state.size_bytes:
+                _fail("journal_changed_during_session")
+            return
         fd = self._journal_fd
         if fd is None:
             _fail("journal_closed")
@@ -758,6 +920,29 @@ class CampaignJournal:
             incomplete,
             sealed,
             self._state.head_sha256,
+        )
+
+    def attempt_status(self, cell_id: str) -> dict[str, Any]:
+        """Return durable attempt accounting for one cell without exposing mutable state."""
+
+        self._assert_open()
+        if cell_id not in self.plan.cell_ids:
+            _fail("unknown_cell")
+        active_id = self._state.active_by_cell.get(cell_id)
+        active = self._state.attempts.get(active_id) if active_id is not None else None
+        return cast(
+            dict[str, Any],
+            _normalize_json(
+                {
+                    "attempt_count": self._state.start_counts.get(cell_id, 0),
+                    "active_attempt_id": active_id,
+                    "active_attempt_number": active.attempt_number if active is not None else None,
+                    "active_state": active.state if active is not None else None,
+                    "recovered": active_id in self._recovered_attempts
+                    if active_id is not None
+                    else False,
+                }
+            ),
         )
 
     def start_cell(self, cell_id: str) -> str:
@@ -1265,7 +1450,23 @@ class CampaignJournal:
         if target in {self.path, self.path.with_name(f"{self.path.name}.lock")}:
             _fail("manifest_path_conflicts_with_journal")
         payload = canonical_json_bytes(manifest) + b"\n"
-        self._atomic_publish(target, payload)
+        if self._custody is not None:
+            try:
+                relative = target.relative_to(self._custody.path).as_posix()
+            except ValueError:
+                _fail("manifest_outside_custody")
+            try:
+                if not self._custody.write_bytes_once(relative, payload, mode=0o600):
+                    existing = self._custody.read_bytes(
+                        relative,
+                        max_bytes=max(len(payload), 1),
+                    )
+                    if existing != payload:
+                        _fail("manifest_already_exists_with_different_content")
+            except SecurePathCustodyError:
+                _fail("manifest_publish_failed")
+        else:
+            self._atomic_publish(target, payload)
         return manifest
 
     @staticmethod
@@ -1330,6 +1531,7 @@ class CampaignJournal:
             finally:
                 os.close(self._lock_fd)
                 self._lock_fd = None
+                self._lock_identity = None
         if self._process_lock_registered:
             with _PROCESS_LOCK_GUARD:
                 _PROCESS_LOCKS.discard(self._lock_key)

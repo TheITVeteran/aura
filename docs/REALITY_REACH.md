@@ -2,7 +2,10 @@
 
 Status: active implementation initiative
 
-Source concept: LAWC-08 MacBook Reality Reach final report, reviewed 2026-08-01.
+Source concepts: LAWC-08 MacBook Reality Reach final report and the checksum-
+verified LAWC-09 Reality Reach v2.0 package, reviewed 2026-08-01. The package is
+an engineering and experiment-design input, not evidence that Aura has run its
+physical experiments or satisfied this ledger.
 
 ## Purpose
 
@@ -61,6 +64,18 @@ language alone.
    issue physical-effect receipts for their own outputs.
 10. Unsupported extraordinary requests return an informative upper bound or
     typed no-go certificate and leave the evidence level unchanged.
+11. Reality Reach is bidirectional. A hardware adapter that declares an
+    actuator must implement typed command admission, idempotent actuation,
+    independent effect verification, cancellation, safe-state transition, and
+    rollback or an explicit non-reversibility certificate. `declarations()` and
+    `read()` alone can never make an actuator executable.
+12. Command acceptance, transport completion, actuator execution, observed
+    local effect, and promoted evidence are separate monotonic receipt states.
+    No earlier state may stand in for a later one.
+13. Aura's autonomy is intrinsic rather than a user preference toggle. Safe,
+    reversible, policy-bounded experiments may use standing authority; hazard,
+    privacy, legal, exclusivity, or irreversible constraints remain enforced by
+    the ordinary Will and ActionExecutor path rather than bypassed here.
 
 ## Runtime Ownership
 
@@ -95,11 +110,21 @@ language alone.
 - [x] Return content-addressed reachable, partial, or unreachable certificates.
 - [x] Test canonical identity, tamper rejection, no-channel, sensor-floor,
   shared-reference, ambient, constraint, and evidence-ceiling behavior.
+- [ ] Correct route semantics so allowed channels can express alternatives,
+  required sets, and synchronized composites; apply cross-channel constraints
+  to the explicitly named channel set rather than whichever registry is tried
+  first.
+- [ ] Replace string inequality as a proxy for independent metrology with typed
+  reference, clock, transport, calibration, and physical-source lineage plus
+  common-driver rejection.
 
 ### RR-02 Live channel convergence
 
-- [x] Define a canonical live reading envelope with value, unit, monotonic-age
+- [x] Define a canonical live reading envelope with value, unit, bounded age
   evaluation, provenance, scenario identity, uncertainty, status, and digest.
+- [ ] Replace wall-clock-only reading age with monotonic capture/sequence
+  lineage, reboot/session identity, wall-clock provenance, and backward-clock
+  handling; verify stale detection across clock adjustment and restart.
 - [x] Add an attributable host-resource adapter for CPU, memory, root disk,
   thermal pressure, and battery state without treating unavailable fallback
   numbers or simulated observations as live evidence.
@@ -112,10 +137,16 @@ language alone.
   mechanical/chassis observations.
 - [x] Distinguish unavailable, stale, permission-denied, degraded, simulated,
   and calibrated channels without discarding healthy observations.
-- [x] Continuously bind live channel state to the registry snapshot used by each
-  certificate; invalidate stale plans when the inventory changes.
+- [x] Bind each reachability analysis to the live registry snapshot used by its
+  certificate.
+- [ ] Bind executable plans to inventory, device, permission, calibration, and
+  reference generations and invalidate them before dispatch when any generation
+  changes; no stale-plan claim is complete until executable plans exist.
 - [ ] Add calibration identity, uncertainty, clock/reference lineage, sensor
   saturation, dropout, aliasing, and unit-conversion tests.
+- [ ] Define readiness as at least one currently usable declared channel plus a
+  healthy refresh loop; declarations with every reading unavailable are
+  inventory-known but not operationally ready.
 
 ### RR-03 Production digital twin
 
@@ -162,8 +193,29 @@ language alone.
 
 ### RR-06 Governed experiment execution
 
+- [ ] Replace the read-only adapter protocol with a versioned bidirectional
+  `RealityAdapter` contract supporting `declarations`, `read`, `prepare`,
+  `actuate`, `verify_effect`, `cancel`, `safe_state`, and `rollback`.
+- [ ] Define canonical `ActuationCommand`, `ActuationLease`, `ActuationReceipt`,
+  `EffectReceipt`, and `RollbackReceipt` envelopes with units, preconditions,
+  deadlines, idempotency keys, capability identity, command lineage, expected
+  effects, safe envelopes, abort predicates, and content digests.
+- [ ] Require adapters to declare reversibility, compensation semantics,
+  command rate and magnitude limits, exclusivity, permissions, warmup/cooldown,
+  watchdog behavior, independent observation routes, and failure modes.
+- [ ] Implement one transaction coordinator whose state machine distinguishes
+  planned, admitted, dispatched, executed, effect-verified, compensated,
+  rolled-back, cancelled, timed-out, indeterminate, and manually-reconciled
+  states without repeating side effects after restart.
 - [ ] Compile reachable contracts into typed, reversible action schedules and
   observation schedules through the world bridge and `ActionExecutor`.
+- [ ] Repair physical dispatch ownership: construct and lifecycle-register
+  `HardwareManager`, route registered hardware through
+  `BaseHardwareDevice.safe_execute`, and prove robotics/environment actions
+  cannot fall through to an unrelated AppleScript handler.
+- [ ] Remove direct motor dispatch from `ActionBody`; all physical effects must
+  enter through the transaction coordinator, `ActionExecutor`, device-local
+  interlocks, and independent post-action readback.
 - [ ] Enforce legal, safety, thermal, privacy, resource, timing, and device
   constraints before and during every intervention.
 - [ ] Add abort, safe-state, rollback, cancellation, timeout, retry, and manual
@@ -174,6 +226,17 @@ language alone.
   network experiments without blocking Aura's event loop or conversation lane.
 - [ ] Resume interrupted campaigns from durable trial boundaries without
   repeating side effects or silently changing the preregistration.
+- [ ] Add shadow, simulation, hardware-in-loop, and live modes that share the
+  exact command schema while keeping evidence ceilings and physical receipts
+  impossible outside the live independently observed mode.
+- [ ] Build production adapters for supported speakers/microphones, display and
+  camera, bounded compute/thermal load, and power-management controls exposed
+  by documented macOS APIs; unsupported Wi-Fi, Bluetooth, fan, voltage, radio,
+  or chassis control must remain typed unavailable rather than shell-shaped.
+- [ ] Add an external actuator bridge with mutually authenticated capability
+  discovery, lease expiry, replay defense, bounded commands, remote safe-state,
+  effect telemetry, custody identity, and explicit separation between Mac-
+  originated plans and externally executed physical effects.
 
 ### RR-07 Evidence promotion and independent verification
 
@@ -250,8 +313,50 @@ language alone.
 - [ ] Complete semantic review and independent evidence audit; close only when
   every acceptance item has a reproducible artifact and no unresolved warning.
 
+### RR-11 Universal integration and causal use
+
+- [ ] Publish verified observations and action effects into the world model,
+  embodiment bridge, digital twin residuals, scientific engine, episodic and
+  semantic memory, belief revision, curiosity, planning, and generated Q&A with
+  one shared provenance identity rather than copied summaries.
+- [ ] Let RLC branches consume typed current observations, counterfactual twin
+  rollouts, action affordances, and effect receipts through the ordinary live
+  context/grounding path; test whether this improves grounded planning without
+  treating extra information or tool use as an intrinsic reasoning gain.
+- [ ] Let RLC propose experiment schedules only through a deterministic compiler
+  and verifier; compare vanilla, RLC, lesioned-grounding, and equal-information
+  controls on heldout system-identification and intervention tasks.
+- [ ] Connect actuation outcomes to agency credit assignment, error
+  intelligence, adaptive immunity, allostasis, resource admission, and
+  StabilityGuardian so failed predictions cause bounded model repair rather
+  than hard-coded narration or repeated unsafe action.
+- [ ] Expose live inventory, active leases, command state, effect verification,
+  rollback readiness, calibration, uncertainty, and evidence boundaries to the
+  neural stream, health API, audit export, and Mycelial Soul Map without
+  blocking conversation readiness.
+- [ ] Add permission revocation, device replacement, stale capability,
+  disconnect, duplicated command, delayed effect, partial effect, sensor spoof,
+  common-driver, rollback failure, process crash, reboot, and concurrent-agent
+  chaos tests across the complete causal path.
+- [ ] Run three clean installed-app journeys where Aura autonomously discovers a
+  safe opportunity, explains or executes it in her own generated language,
+  produces physical and effect receipts, survives restart, and accurately
+  recalls what happened and what remains uncertain.
+- [ ] Treat the LAWC v2 scalar-field equations only as conditional model
+  equations until a coupling, potential, boundary conditions, actuator,
+  instrument, and calibration are specified; comparison bounds and Landauer's
+  ideal limit must never be described as measured MacBook capabilities.
+- [ ] Reject package-style empirical promotion that ignores configured alpha,
+  holdout assignments, phase-preserving complex inversion, raw trial custody,
+  physical-mode identity, or independent readback. Synthetic low-variance
+  effect sizes and smoothed-transfer residual peaks are software fixtures, not
+  physical weakpoint evidence.
+
 ## Current Evidence
 
-RR-01 is implemented and covered by focused contract tests. No live channel has
-yet been promoted through this system. No physical effect, weakpoint, ambient
-law modification, or acceptance criterion is claimed from the foundation.
+RR-01 and the initial RR-02 host inventory slice are implemented and covered by
+focused contract tests. The LAWC-09 archive checksum verifies, but its bundled
+synthetic and package-local validation remains external reference evidence; it
+does not establish an Aura live hardware result. No Aura physical actuation,
+physical effect, weakpoint, ambient law modification, or acceptance criterion
+is claimed from the foundation.

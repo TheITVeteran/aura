@@ -21,6 +21,7 @@ from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignPlan,
     canonical_json_bytes,
 )
+from core.runtime.secure_path_custody import DirectoryCustody
 
 
 def _plan(count: int = 2) -> CampaignPlan:
@@ -146,6 +147,55 @@ def test_journal_replay_returns_only_committed_cells(tmp_path: Path) -> None:
     ]
 
 
+def test_custodied_journal_rejects_post_open_hardlink_without_external_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    path = root / "campaign.jsonl"
+    outside = tmp_path / "outside.jsonl"
+    plan = _plan(1)
+    with DirectoryCustody.acquire(root, create=True, private=True) as custody:
+        with CampaignJournal(path, plan, custody=custody) as journal:
+            genesis = path.read_bytes()
+            os.link(path, outside)
+            _assert_code(
+                "journal_read_failed",
+                lambda: journal.start_cell(plan.cell_ids[0]),
+            )
+    assert outside.read_bytes() == genesis
+
+
+def test_custodied_journal_refuses_replaced_lock_entry(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    path = root / "campaign.jsonl"
+    lock_path = root / "campaign.jsonl.lock"
+    displaced = root / "campaign.jsonl.lock.displaced"
+    plan = _plan(1)
+    with DirectoryCustody.acquire(root, create=True, private=True) as custody:
+        with CampaignJournal(path, plan, custody=custody) as journal:
+            genesis = path.read_bytes()
+            lock_path.rename(displaced)
+            lock_path.write_bytes(b"")
+            replacement_fd = os.open(lock_path, os.O_RDWR)
+            try:
+                import fcntl
+
+                fcntl.flock(replacement_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _assert_code("journal_lock_identity_drift", journal.resume)
+                _assert_code(
+                    "journal_lock_identity_drift",
+                    lambda: journal.attempt_status(plan.cell_ids[0]),
+                )
+                _assert_code(
+                    "journal_lock_identity_drift",
+                    lambda: journal.start_cell(plan.cell_ids[0]),
+                )
+            finally:
+                fcntl.flock(replacement_fd, fcntl.LOCK_UN)
+                os.close(replacement_fd)
+            assert path.read_bytes() == genesis
+
+
 def test_claimed_action_intervention_survives_restart_without_auto_retry(
     tmp_path: Path,
 ) -> None:
@@ -163,14 +213,17 @@ def test_claimed_action_intervention_survives_restart_without_auto_retry(
             expected_journal_head_sha256=head,
             expected_journal_event_count=2,
         )
-        assert journal.claim_action_intervention(
-            cell_id,
-            attempt_id,
-            intervention_sha256="a" * 64,
-            request_payload_sha256="b" * 64,
-            expected_journal_head_sha256=head,
-            expected_journal_event_count=2,
-        ) == claim
+        assert (
+            journal.claim_action_intervention(
+                cell_id,
+                attempt_id,
+                intervention_sha256="a" * 64,
+                request_payload_sha256="b" * 64,
+                expected_journal_head_sha256=head,
+                expected_journal_event_count=2,
+            )
+            == claim
+        )
 
     with CampaignJournal(path, plan) as resumed:
         assert resumed.resume().sealed_cell_ids == (cell_id,)
@@ -747,3 +800,33 @@ def test_duplicate_json_keys_and_noncanonical_records_fail_closed(tmp_path: Path
     lines[1] = json.dumps(parsed, sort_keys=False).encode("utf-8")
     noncanonical.write_bytes(b"\n".join(lines) + b"\n")
     _assert_code("journal_event_noncanonical", lambda: CampaignJournal(noncanonical, plan))
+
+
+def test_attempt_status_survives_restart_and_counts_failed_attempts(tmp_path: Path) -> None:
+    plan = _plan(1)
+    journal_path = tmp_path / "attempt-status.jsonl"
+    with CampaignJournal(journal_path, plan) as journal:
+        cell_id = plan.cell_ids[0]
+        first = journal.start_cell(cell_id)
+        assert journal.attempt_status(cell_id) == {
+            "attempt_count": 1,
+            "active_attempt_id": first,
+            "active_attempt_number": 1,
+            "active_state": "STARTED",
+            "recovered": False,
+        }
+
+    with CampaignJournal(journal_path, plan) as recovered:
+        status = recovered.attempt_status(plan.cell_ids[0])
+        assert status["attempt_count"] == 1
+        assert status["active_attempt_id"] == first
+        assert status["recovered"] is True
+        recovered.fail_cell(plan.cell_ids[0], first, reason="contained_after_restart")
+        second = recovered.start_cell(plan.cell_ids[0])
+        assert recovered.attempt_status(plan.cell_ids[0]) == {
+            "attempt_count": 2,
+            "active_attempt_id": second,
+            "active_attempt_number": 2,
+            "active_state": "STARTED",
+            "recovered": False,
+        }

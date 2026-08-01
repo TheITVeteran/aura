@@ -71,6 +71,11 @@ from core.runtime.detached_worker_origin_channel import (  # noqa: E402
     DetachedWorkerOriginChannelServer,
     create_worker_origin_socketpair,
 )
+from core.runtime.secure_path_custody import (  # noqa: E402
+    DirectoryCustody,
+    SecurePathCustodyError,
+    validate_directory_identity,
+)
 
 SCHEMA_PREFIX = "aura.detached_step"
 PLAN_FILE = "detached_plan.json"
@@ -81,18 +86,60 @@ LOG_FILE = "detached.log"
 LOCK_FILE = ".detached.lock"
 CONTROL_SOCKET_PREFIX = "aura-detached-control"
 WORKER_ORIGIN_POLICY_SCHEMA = f"{SCHEMA_PREFIX}.worker_origin_policy.v1"
-WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA = (
-    f"{SCHEMA_PREFIX}.worker_origin_lifecycle_artifact.v1"
-)
-WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA = (
-    f"{SCHEMA_PREFIX}.worker_origin_quarantine_receipt.v1"
-)
+WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA = f"{SCHEMA_PREFIX}.worker_origin_lifecycle_artifact.v1"
+WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA = f"{SCHEMA_PREFIX}.worker_origin_quarantine_receipt.v1"
 _MAX_WORKER_ORIGIN_CELLS = 16_384
 _MAX_WORKER_ORIGIN_TRUST_POLICY_BYTES = 1024 * 1024
 _MAX_WORKER_ORIGIN_TRUST_ROOT_BYTES = 64 * 1024
 _POLL_S = 1.0
 _TERM_GRACE_S = 5.0
 _IDENTITY_GRACE_S = 10.0
+_ACTIVE_RUN_CUSTODIES: dict[Path, DirectoryCustody] = {}
+
+
+def _custody_for_path(path: Path) -> tuple[DirectoryCustody, str] | None:
+    absolute = path.expanduser().absolute()
+    matches: list[tuple[int, DirectoryCustody, str]] = []
+    for root, custody in _ACTIVE_RUN_CUSTODIES.items():
+        try:
+            relative = absolute.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if relative and relative != ".":
+            matches.append((len(root.parts), custody, relative))
+    if not matches:
+        return None
+    _depth, custody, relative = max(matches, key=lambda item: item[0])
+    return custody, relative
+
+
+@contextmanager
+def _run_directory_custody(
+    path: Path,
+    *,
+    create: bool,
+    expected_identity: dict[str, int] | None = None,
+) -> Iterator[DirectoryCustody]:
+    absolute = path.expanduser().absolute()
+    custody = DirectoryCustody.acquire(
+        absolute,
+        create=create,
+        expected_identity=expected_identity,
+        private=True,
+    )
+    prior = _ACTIVE_RUN_CUSTODIES.get(custody.path)
+    _ACTIVE_RUN_CUSTODIES[custody.path] = custody
+    try:
+        yield custody
+    finally:
+        if _ACTIVE_RUN_CUSTODIES.get(custody.path) is custody:
+            if prior is None:
+                del _ACTIVE_RUN_CUSTODIES[custody.path]
+            else:
+                _ACTIVE_RUN_CUSTODIES[custody.path] = prior
+        custody.close()
+
+
 _HANDOFF_WAIT_S = 5.0
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DARWIN_SANDBOX = Path("/usr/bin/sandbox-exec")
@@ -100,9 +147,7 @@ _DARWIN_CAFFEINATE = Path("/usr/bin/caffeinate")
 _NO_FORK_SANDBOX_PROFILE = "(version 1) (allow default) (deny process-fork)"
 _PRECONTAINED_SANDBOX_MODE = "precontained-sandbox"
 _SUPERVISOR_SANDBOX_MODE = "supervisor-no-fork"
-_CONTAINMENT_MODES = frozenset(
-    {_PRECONTAINED_SANDBOX_MODE, _SUPERVISOR_SANDBOX_MODE}
-)
+_CONTAINMENT_MODES = frozenset({_PRECONTAINED_SANDBOX_MODE, _SUPERVISOR_SANDBOX_MODE})
 _MAX_SANDBOX_PROFILE_BYTES = 1024 * 1024
 _REQUIRED_PRECONTAINED_PROFILE_MARKERS = (
     "(version 1)",
@@ -110,9 +155,7 @@ _REQUIRED_PRECONTAINED_PROFILE_MARKERS = (
     "(deny network*)",
     "(deny process-fork)",
 )
-_SOURCE_SUFFIXES = frozenset(
-    {".json", ".py", ".pyi", ".sb", ".sh", ".toml", ".yaml", ".yml"}
-)
+_SOURCE_SUFFIXES = frozenset({".json", ".py", ".pyi", ".sb", ".sh", ".toml", ".yaml", ".yml"})
 _EXECUTABLE_SOURCE_SUFFIXES = frozenset({".py", ".pyi", ".sh"})
 _SAFE_ENVIRONMENT_KEYS = (
     "AURA_DATA_DIR",
@@ -319,7 +362,9 @@ def _git_tracked_paths(
             timeout=30.0,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise DetachedStepError(f"could not enumerate Git-tracked execution source: {root}") from exc
+        raise DetachedStepError(
+            f"could not enumerate Git-tracked execution source: {root}"
+        ) from exc
     paths: set[Path] = set()
     raw_paths = [(raw, True) for raw in tracked_result.stdout.split(b"\0")]
     raw_paths.extend((raw, False) for raw in untracked_result.stdout.split(b"\0"))
@@ -335,9 +380,7 @@ def _git_tracked_paths(
         absolute = root / relative
         if _is_excluded(absolute, excluded_roots):
             if tracked:
-                raise DetachedStepError(
-                    "execution exclusion contains Git-tracked source"
-                )
+                raise DetachedStepError("execution exclusion contains Git-tracked source")
             continue
         if tracked or relative.suffix.lower() in _EXECUTABLE_SOURCE_SUFFIXES:
             paths.add(relative)
@@ -406,7 +449,10 @@ def _source_tree_paths(
     paths: list[Path] = []
     for path in root.rglob("*"):
         relative = path.relative_to(root)
-        if any(part in {".git", ".mypy_cache", ".pytest_cache", "__pycache__"} for part in relative.parts):
+        if any(
+            part in {".git", ".mypy_cache", ".pytest_cache", "__pycache__"}
+            for part in relative.parts
+        ):
             continue
         if _is_excluded(path, excluded_roots):
             continue
@@ -418,7 +464,9 @@ def _source_tree_paths(
 def _source_file_arguments(command: list[str], cwd: Path) -> list[Path]:
     paths: set[Path] = set()
     for argument in command[1:]:
-        candidate_value = argument.split("=", 1)[1] if argument.startswith("--") and "=" in argument else argument
+        candidate_value = (
+            argument.split("=", 1)[1] if argument.startswith("--") and "=" in argument else argument
+        )
         if not candidate_value or candidate_value.startswith("-"):
             continue
         candidate = Path(candidate_value).expanduser()
@@ -577,9 +625,7 @@ def _verify_execution_manifest_current(manifest: Any) -> None:
 
 def _frozen_environment() -> dict[str, str]:
     environment = {
-        key: value
-        for key in _SAFE_ENVIRONMENT_KEYS
-        if (value := os.environ.get(key)) is not None
+        key: value for key in _SAFE_ENVIRONMENT_KEYS if (value := os.environ.get(key)) is not None
     }
     environment.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     environment.setdefault("LANG", "C.UTF-8")
@@ -653,6 +699,20 @@ def _verify_launcher_binding(binding: Any, path: Path) -> dict[str, Any]:
 
 
 def _fsync_directory(path: Path) -> None:
+    absolute = path.expanduser().absolute()
+    root_custody = _ACTIVE_RUN_CUSTODIES.get(absolute)
+    if root_custody is not None:
+        root_custody.fsync()
+        return
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        descriptor = custody.open_directory(relative)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
     try:
         os.fsync(descriptor)
@@ -665,6 +725,17 @@ def _atomic_write(path: Path, value: Any, *, replace: bool = True) -> None:
 
 
 def _atomic_write_bytes(path: Path, payload: bytes, *, replace: bool = True) -> None:
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        try:
+            if replace:
+                custody.atomic_write_bytes(relative, payload, mode=0o600)
+            elif not custody.write_bytes_once(relative, payload, mode=0o600):
+                raise DetachedStepError(f"artifact already exists: {path}")
+        except SecurePathCustodyError as exc:
+            raise DetachedStepError(f"custodied artifact write failed: {path}") from exc
+        return
     if path.is_symlink():
         raise DetachedStepError(f"symlink artifact rejected: {path}")
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
@@ -693,11 +764,17 @@ def _atomic_write_bytes(path: Path, payload: bytes, *, replace: bool = True) -> 
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file():
-        raise DetachedStepError(f"artifact is unavailable: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        bound = _custody_for_path(path)
+        if bound is not None:
+            custody, relative = bound
+            payload = custody.read_bytes(relative, max_bytes=256 * 1024 * 1024)
+            value = json.loads(payload)
+        else:
+            if path.is_symlink() or not path.is_file():
+                raise DetachedStepError(f"artifact is unavailable: {path}")
+            value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, SecurePathCustodyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DetachedStepError(f"artifact is invalid: {path}") from exc
     if not isinstance(value, dict):
         raise DetachedStepError(f"artifact must contain an object: {path}")
@@ -705,6 +782,48 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_json_artifact_with_digest(path: Path, *, max_bytes: int) -> tuple[dict[str, Any], str]:
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        try:
+            descriptor = custody.open_file(relative, os.O_RDONLY)
+        except SecurePathCustodyError as exc:
+            raise DetachedStepError(f"evidence artifact is unavailable: {path}") from exc
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or before.st_nlink != 1
+                or before.st_size <= 0
+                or before.st_size > max_bytes
+            ):
+                raise DetachedStepError(f"evidence artifact ownership or size is invalid: {path}")
+            payload = os.read(descriptor, before.st_size + 1)
+            after = os.fstat(descriptor)
+            if (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ) or len(payload) != before.st_size:
+                raise DetachedStepError(f"evidence artifact changed while reading: {path}")
+        finally:
+            os.close(descriptor)
+        try:
+            value = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DetachedStepError(f"evidence artifact is invalid: {path}") from exc
+        if not isinstance(value, dict):
+            raise DetachedStepError(f"evidence artifact must contain an object: {path}")
+        return value, hashlib.sha256(payload).hexdigest()
     if path.is_symlink() or not path.is_file():
         raise DetachedStepError(f"evidence artifact is unavailable: {path}")
     before = path.stat()
@@ -751,6 +870,43 @@ def _strict_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _read_stable_private_bytes(path: Path, *, max_bytes: int, role: str) -> bytes:
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        try:
+            descriptor = custody.open_file(relative, os.O_RDONLY)
+        except SecurePathCustodyError as exc:
+            raise DetachedStepError(f"{role} is unavailable: {path}") from exc
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or before.st_nlink != 1
+                or before.st_mode & 0o022
+                or before.st_size <= 0
+                or before.st_size > max_bytes
+            ):
+                raise DetachedStepError(f"{role} ownership, mode, or size is invalid: {path}")
+            payload = os.read(descriptor, before.st_size + 1)
+            after = os.fstat(descriptor)
+            if (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ) or len(payload) != before.st_size:
+                raise DetachedStepError(f"{role} changed while reading: {path}")
+            return payload
+        finally:
+            os.close(descriptor)
     if path.is_symlink() or not path.is_file():
         raise DetachedStepError(f"{role} is unavailable: {path}")
     before = path.stat()
@@ -832,19 +988,25 @@ def _positive_integer(value: Any, *, role: str, maximum: int | None = None) -> i
         or (maximum is not None and value > maximum)
     ):
         raise DetachedStepError(f"{role} must be a bounded positive integer")
-    return value
+    return int(value)
 
 
 def _ensure_private_directory(path: Path) -> None:
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        try:
+            custody.ensure_directory(relative)
+        except SecurePathCustodyError as exc:
+            raise DetachedStepError(f"worker-origin artifact directory is invalid: {path}") from exc
+        return
     if path.exists() or path.is_symlink():
         if path.is_symlink() or not path.is_dir():
             raise DetachedStepError(f"worker-origin artifact directory is invalid: {path}")
     else:
         parent = path.parent
         if parent.is_symlink() or not parent.is_dir():
-            raise DetachedStepError(
-                f"worker-origin artifact parent is unavailable: {parent}"
-            )
+            raise DetachedStepError(f"worker-origin artifact parent is unavailable: {parent}")
         parent_stat = parent.stat()
         if parent_stat.st_uid != os.geteuid() or parent_stat.st_mode & 0o022:
             raise DetachedStepError(
@@ -853,24 +1015,27 @@ def _ensure_private_directory(path: Path) -> None:
         path.mkdir(mode=0o700)
         _fsync_directory(parent)
     directory_stat = path.stat()
-    if (
-        directory_stat.st_uid != os.geteuid()
-        or directory_stat.st_mode & 0o077
-    ):
-        raise DetachedStepError(
-            f"worker-origin artifact directory is not private: {path}"
-        )
+    if directory_stat.st_uid != os.geteuid() or directory_stat.st_mode & 0o077:
+        raise DetachedStepError(f"worker-origin artifact directory is not private: {path}")
 
 
 def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
     path = run_dir / ATTEMPTS_FILE
-    if not path.exists():
-        return []
-    if path.is_symlink() or not path.is_file():
-        raise DetachedStepError(f"attempt journal is invalid: {path}")
     try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError) as exc:
+        bound = _custody_for_path(path)
+        if bound is not None:
+            custody, relative = bound
+            if not custody.file_exists(relative):
+                return []
+            payload = custody.read_bytes(relative, max_bytes=256 * 1024 * 1024)
+            raw_lines = payload.decode("utf-8").splitlines()
+        else:
+            if not path.exists():
+                return []
+            if path.is_symlink() or not path.is_file():
+                raise DetachedStepError(f"attempt journal is invalid: {path}")
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, SecurePathCustodyError, UnicodeDecodeError) as exc:
         raise DetachedStepError(f"attempt journal is unreadable: {path}") from exc
     events: list[dict[str, Any]] = []
     previous = ""
@@ -972,11 +1137,7 @@ def _read_attempts(run_dir: Path) -> list[dict[str, Any]]:
                 raise DetachedStepError(
                     f"attempt journal has invalid worker-origin quarantine: {path}"
                 )
-            receipt_body = {
-                key: value
-                for key, value in receipt.items()
-                if key != "receipt_sha256"
-            }
+            receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
             if receipt.get("receipt_sha256") != _sha256(receipt_body):
                 raise DetachedStepError(
                     f"attempt journal worker-origin quarantine hash mismatch: {path}"
@@ -1026,6 +1187,14 @@ def _append_attempt_event(run_dir: Path, event_body: dict[str, Any]) -> dict[str
 
 @contextmanager
 def _locked(run_dir: Path) -> Iterator[None]:
+    root_custody = _ACTIVE_RUN_CUSTODIES.get(run_dir.expanduser().absolute())
+    if root_custody is not None:
+        try:
+            with root_custody.file_lock(LOCK_FILE):
+                yield
+            return
+        except SecurePathCustodyError as exc:
+            raise DetachedStepError(f"run directory custody failed: {run_dir}") from exc
     run_dir.mkdir(parents=True, exist_ok=True)
     if run_dir.is_symlink() or not run_dir.is_dir():
         raise DetachedStepError(f"run directory is invalid: {run_dir}")
@@ -1450,7 +1619,9 @@ def _executed_command(plan: dict[str, Any]) -> list[str]:
     return _sandboxed_command(plan, list(plan["command"]))
 
 
-def _start_power_assertion(child_pid: int, log: Any, plan: dict[str, Any]) -> subprocess.Popen[Any] | None:
+def _start_power_assertion(
+    child_pid: int, log: Any, plan: dict[str, Any]
+) -> subprocess.Popen[Any] | None:
     power_assertion = plan.get("power_assertion")
     if power_assertion is None:
         return None
@@ -1482,15 +1653,22 @@ def _stop_power_assertion(assertion: subprocess.Popen[Any] | None) -> None:
 
 
 def _open_secure_log(path: Path) -> Any:
-    descriptor = os.open(
-        path,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_APPEND
-        | getattr(os, "O_CLOEXEC", 0)
-        | _NOFOLLOW,
-        0o600,
-    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    bound = _custody_for_path(path)
+    if bound is not None:
+        custody, relative = bound
+        descriptor = custody.open_file(
+            relative,
+            flags,
+            mode=0o600,
+            create_parents=True,
+        )
+    else:
+        descriptor = os.open(
+            path,
+            flags | getattr(os, "O_CLOEXEC", 0) | _NOFOLLOW,
+            0o600,
+        )
     try:
         file_stat = os.fstat(descriptor)
         if (
@@ -1525,7 +1703,13 @@ def _spawn_gated_target(
     inherited_fds: tuple[int, ...] = (),
 ) -> tuple[subprocess.Popen[Any], int]:
     gate_read_fd, gate_write_fd = os.pipe()
-    wrapper = [sys.executable, str(Path(__file__).resolve()), "_exec_gate", str(gate_read_fd), *command]
+    wrapper = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "_exec_gate",
+        str(gate_read_fd),
+        *command,
+    ]
     try:
         child = subprocess.Popen(
             wrapper,
@@ -1564,8 +1748,7 @@ def _create_control_socket(
     filename = (
         f"{CONTROL_SOCKET_PREFIX}-{os.geteuid()}-{str(plan['plan_sha256'])[:16]}-{attempt}.sock"
     )
-    candidate = run_dir / filename
-    socket_path = candidate if len(os.fsencode(candidate)) < 100 else Path("/tmp") / filename
+    socket_path = Path("/tmp") / filename
     if socket_path.exists() or socket_path.is_symlink():
         raise DetachedStepError(f"control socket path already exists: {socket_path}")
     control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -1738,27 +1921,17 @@ def _record_worker_origin_quarantine_locked(
     supervisor_start_token = str(launched.get("supervisor_start_token") or "")
     worker_pid = int(broker_start.get("worker_pid") or 0)
     worker_start_token = str(broker_start.get("worker_start_token") or "")
-    worker_process_group_id = int(
-        broker_start.get("worker_process_group_id") or 0
-    )
+    worker_process_group_id = int(broker_start.get("worker_process_group_id") or 0)
     if _identity_state(supervisor_pid, supervisor_start_token) != "dead":
-        raise DetachedStepError(
-            "worker-origin quarantine requires a dead prior supervisor"
-        )
+        raise DetachedStepError("worker-origin quarantine requires a dead prior supervisor")
     if _identity_state(worker_pid, worker_start_token) != "dead":
-        raise DetachedStepError(
-            "worker-origin quarantine requires a contained worker"
-        )
+        raise DetachedStepError("worker-origin quarantine requires a contained worker")
     if _process_group_exists(worker_process_group_id):
-        raise DetachedStepError(
-            "worker-origin quarantine requires an empty worker process group"
-        )
+        raise DetachedStepError("worker-origin quarantine requires an empty worker process group")
 
     start_origin = broker_start.get("worker_origin")
     if not isinstance(start_origin, dict):
-        raise DetachedStepError(
-            "worker-origin quarantine start metadata is unavailable"
-        )
+        raise DetachedStepError("worker-origin quarantine start metadata is unavailable")
     paths = _worker_origin_artifact_paths(
         contract,
         supervisor_attempt=attempt,
@@ -1773,13 +1946,9 @@ def _record_worker_origin_quarantine_locked(
         )
         lifecycle_sha256 = str(lifecycle.get("artifact_sha256") or "")
         if len(lifecycle_sha256) != 64:
-            raise DetachedStepError(
-                "worker-origin quarantine lifecycle digest is invalid"
-            )
+            raise DetachedStepError("worker-origin quarantine lifecycle digest is invalid")
 
-    prior_journal_head_sha256 = (
-        str(events[-1]["event_sha256"]) if events else ""
-    )
+    prior_journal_head_sha256 = str(events[-1]["event_sha256"]) if events else ""
     quarantined_at_unix = int(time.time())
     receipt_body = {
         "schema": WORKER_ORIGIN_QUARANTINE_RECEIPT_SCHEMA,
@@ -1795,12 +1964,8 @@ def _record_worker_origin_quarantine_locked(
         "containment_token": broker_start["containment_token"],
         "worker_origin_contract_sha256": contract["contract_sha256"],
         "session_id": start_origin["session_id"],
-        "authorization_request_sha256": start_origin[
-            "authorization_request_sha256"
-        ],
-        "authorization_attestation_sha256": start_origin[
-            "authorization_attestation_sha256"
-        ],
+        "authorization_request_sha256": start_origin["authorization_request_sha256"],
+        "authorization_attestation_sha256": start_origin["authorization_attestation_sha256"],
         "payload_path": start_origin["payload_path"],
         "request_path": start_origin["request_path"],
         "attestation_path": start_origin["attestation_path"],
@@ -1874,14 +2039,10 @@ def _prepare_broker_worker_origin(
             protocol_sha256=contract["protocol_sha256"],
             detached_plan_sha256=plan["plan_sha256"],
             broker_policy_sha256=broker_policy["policy_sha256"],
-            executable_binding_sha256=broker_policy["executable_binding"][
-                "binding_sha256"
-            ],
+            executable_binding_sha256=broker_policy["executable_binding"]["binding_sha256"],
             environment_sha256=plan["execution_environment_sha256"],
             sandbox_sha256=_sha256(plan["execution_sandbox"]),
-            source_manifest_sha256=broker_policy["execution_manifest"][
-                "manifest_sha256"
-            ],
+            source_manifest_sha256=broker_policy["execution_manifest"]["manifest_sha256"],
             session_id=secrets.token_hex(16),
             supervisor_attempt=supervisor_attempt,
             arm=contract["arm"],
@@ -1893,9 +2054,7 @@ def _prepare_broker_worker_origin(
         )
         request = authority.request_authorization(signed_at_unix=int(time.time()))
     except (CampaignTrustError, DetachedWorkerOriginError, ValueError) as exc:
-        raise BrokerRequestError(
-            f"worker-origin authority preparation failed: {exc}"
-        ) from exc
+        raise BrokerRequestError(f"worker-origin authority preparation failed: {exc}") from exc
     _atomic_write(paths["payload"], authority.authorization_payload, replace=False)
     _atomic_write(paths["request"], request, replace=False)
     return PreparedBrokerWorkerOrigin(
@@ -1917,8 +2076,7 @@ def _admit_broker_worker_origin(
         return
     if not prepared.attestation_path.is_file():
         raise BrokerRequestError(
-            "worker-origin external authorization required at "
-            f"{prepared.attestation_path}"
+            f"worker-origin external authorization required at {prepared.attestation_path}"
         )
     attestation = _read_canonical_private_json(
         prepared.attestation_path,
@@ -1931,9 +2089,7 @@ def _admit_broker_worker_origin(
             now_unix=int(time.time()),
         )
     except DetachedWorkerOriginError as exc:
-        raise BrokerRequestError(
-            f"worker-origin authorization rejected: {exc.code}"
-        ) from exc
+        raise BrokerRequestError(f"worker-origin authorization rejected: {exc.code}") from exc
     prepared.authorized = True
 
 
@@ -1958,9 +2114,7 @@ def _finalize_broker_worker_origin(
     }:
         existing_receipt = prepared.authority.lifecycle_receipt
         if existing_receipt is None:
-            raise DetachedStepError(
-                "finalized worker-origin authority has no lifecycle receipt"
-            )
+            raise DetachedStepError("finalized worker-origin authority has no lifecycle receipt")
         event_origin = existing_receipt
     elif successful:
         try:
@@ -2049,7 +2203,9 @@ def _start_broker_worker(
     prepared_origins: dict[str, PreparedBrokerWorkerOrigin],
 ) -> ActiveBrokerWorker:
     request_id = str(request.get("request_id") or "")
-    if len(request_id) != 32 or any(character not in "0123456789abcdef" for character in request_id):
+    if len(request_id) != 32 or any(
+        character not in "0123456789abcdef" for character in request_id
+    ):
         raise BrokerRequestError("broker request id is invalid")
     policy = _matching_broker_policy(plan, request)
     prepared_origin = prepared_origins.get(policy["policy_sha256"])
@@ -2079,9 +2235,7 @@ def _start_broker_worker(
         environment["AURA_DETACHED_RUN_TOKEN"] = containment_token
         inherited_fds: tuple[int, ...] = ()
         if prepared_origin is not None:
-            origin_supervisor_socket, origin_worker_socket = (
-                create_worker_origin_socketpair()
-            )
+            origin_supervisor_socket, origin_worker_socket = create_worker_origin_socketpair()
             origin_server = DetachedWorkerOriginChannelServer(
                 origin_supervisor_socket,
                 prepared_origin.authority,
@@ -2137,9 +2291,7 @@ def _start_broker_worker(
                     "timeout_s": float(request["timeout_s"]),
                     "worker_origin": (
                         {
-                            "contract_sha256": policy["worker_origin"][
-                                "contract_sha256"
-                            ],
+                            "contract_sha256": policy["worker_origin"]["contract_sha256"],
                             "session_id": origin_server.session_id,
                             "authorization_payload": prepared_origin.authority.authorization_payload,
                             "authorization_request_sha256": prepared_origin.request[
@@ -2317,9 +2469,7 @@ def _finish_broker_worker(
         worker.log.close()
     if origin_channel_error is not None:
         origin_detail = f"worker-origin channel failed: {origin_channel_error}"
-        cleanup_error = (
-            f"{cleanup_error}; {origin_detail}" if cleanup_error else origin_detail
-        )
+        cleanup_error = f"{cleanup_error}; {origin_detail}" if cleanup_error else origin_detail
     if worker.worker_origin is not None:
         try:
             lifecycle = _finalize_broker_worker_origin(
@@ -2352,14 +2502,13 @@ def _finish_broker_worker(
             if lifecycle.get("completion_error") is not None:
                 returncode = 70
                 cleanup_error = (
-                    f"worker-origin completion rejected: "
-                    f"{lifecycle['completion_error']}"
+                    f"worker-origin completion rejected: {lifecycle['completion_error']}"
                 )
         except BaseException as exc:  # noqa: BLE001 - origin finalization is part of the broker verdict
             returncode = 70
-            cleanup_error = (
-                f"worker-origin finalization failed: {type(exc).__name__}: {exc}"
-            )[:1000]
+            cleanup_error = (f"worker-origin finalization failed: {type(exc).__name__}: {exc}")[
+                :1000
+            ]
         finally:
             if worker.worker_origin_server is not None:
                 worker.worker_origin_server.close()
@@ -2523,7 +2672,11 @@ def _record_target_started(
         events = _read_attempts(run_dir)
         grouped = _events_by_attempt(events)
         launched = grouped.get(attempt, {}).get("LAUNCHED")
-        if launched is None or "TARGET_STARTED" in grouped[attempt] or "TERMINAL" in grouped[attempt]:
+        if (
+            launched is None
+            or "TARGET_STARTED" in grouped[attempt]
+            or "TERMINAL" in grouped[attempt]
+        ):
             raise DetachedStepError("target start violates the attempt state machine")
         if (
             launched.get("plan_sha256") != plan["plan_sha256"]
@@ -2568,7 +2721,9 @@ def _publish_terminal_receipt(
             return
         launched = grouped.get(attempt, {}).get("LAUNCHED")
         if launched is None:
-            raise DetachedStepError("cannot publish a terminal receipt without a launch reservation")
+            raise DetachedStepError(
+                "cannot publish a terminal receipt without a launch reservation"
+            )
         terminal = _append_attempt_event_locked(
             run_dir,
             {
@@ -2724,10 +2879,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                             )
                         except BrokerRequestError as broker_start_exc:
                             _send_broker_rejection(request, child.pid, broker_start_exc)
-            if (
-                active_broker is not None
-                and active_broker.worker_origin_server is not None
-            ):
+            if active_broker is not None and active_broker.worker_origin_server is not None:
                 try:
                     active_broker.worker_origin_server.poll_once()
                 except DetachedWorkerOriginChannelError as origin_channel_exc:
@@ -2782,8 +2934,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             if direct_returncode is not None:
                 returncode = direct_returncode
                 if (
-                    os.environ.get("AURA_DETACHED_TEST_CRASH_POINT")
-                    == "after_target_exit"
+                    os.environ.get("AURA_DETACHED_TEST_CRASH_POINT") == "after_target_exit"
                     and "PYTEST_CURRENT_TEST" in os.environ
                 ):
                     os._exit(91)
@@ -2832,8 +2983,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
             try:
                 poll_interval = (
                     0.01
-                    if active_broker is not None
-                    and active_broker.worker_origin_server is not None
+                    if active_broker is not None and active_broker.worker_origin_server is not None
                     else _POLL_S
                 )
                 returncode = child.wait(
@@ -2870,9 +3020,10 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                         active_broker,
                         force_returncode=70,
                     )
-                    broker_containment_verified = bool(
-                        broker_response["containment_verified"]
-                    ) and broker_containment_verified
+                    broker_containment_verified = (
+                        bool(broker_response["containment_verified"])
+                        and broker_containment_verified
+                    )
                 except BaseException as broker_cleanup_exc:  # noqa: BLE001 - broker cleanup error captured for the receipt
                     if supervisor_error is None:
                         supervisor_error = broker_cleanup_exc
@@ -2900,8 +3051,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                     containment_token,
                 )
                 containment_verified = (
-                    plan.get("fork_policy") == "kernel_denied"
-                    and broker_containment_verified
+                    plan.get("fork_policy") == "kernel_denied" and broker_containment_verified
                 )
             except BaseException as cleanup_exc:  # noqa: BLE001 - cleanup error captured for the receipt
                 if supervisor_error is None:
@@ -2913,8 +3063,7 @@ def _supervise(run_dir: Path, plan: dict[str, Any], attempt: int) -> None:
                 returncode = 70
         else:
             containment_verified = (
-                plan.get("fork_policy") == "kernel_denied"
-                and broker_containment_verified
+                plan.get("fork_policy") == "kernel_denied" and broker_containment_verified
             )
         try:
             _stop_power_assertion(power_assertion)
@@ -3022,7 +3171,14 @@ def _daemonize(run_dir: Path, plan: dict[str, Any], attempt: int) -> tuple[int, 
                 os.close(null_fd)
         soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
         max_fd = 65_536 if soft_limit == resource.RLIM_INFINITY else min(int(soft_limit), 65_536)
-        os.closerange(3, max_fd)
+        preserved_fds = {custody.fileno() for custody in _ACTIVE_RUN_CUSTODIES.values()}
+        for descriptor in range(3, max_fd):
+            if descriptor in preserved_fds:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         _supervise(run_dir, plan, attempt)
     except BaseException as exc:  # noqa: BLE001 - supervisor last-resort: failure becomes status file
         supervisor_pid = os.getpid()
@@ -3128,7 +3284,11 @@ def _parse_broker_policy_json(
         value = json.loads(raw)
     except json.JSONDecodeError:
         parser.error("--broker-policy-json must contain a JSON object array")
-    if not isinstance(value, list) or not value or any(not isinstance(item, dict) for item in value):
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, dict) for item in value)
+    ):
         parser.error("--broker-policy-json must contain a non-empty JSON object array")
     return value
 
@@ -3202,14 +3362,10 @@ def _build_worker_origin_policy(value: Any) -> dict[str, Any] | None:
         raise DetachedStepError("worker-origin allowed cells are invalid") from exc
 
     trust_policy_path = (
-        Path(str(value.get("trust_policy_path") or ""))
-        .expanduser()
-        .resolve(strict=True)
+        Path(str(value.get("trust_policy_path") or "")).expanduser().resolve(strict=True)
     )
     trust_root_path = (
-        Path(str(value.get("trust_root_path") or ""))
-        .expanduser()
-        .resolve(strict=True)
+        Path(str(value.get("trust_root_path") or "")).expanduser().resolve(strict=True)
     )
     trust_policy_document = _read_canonical_private_json(
         trust_policy_path,
@@ -3234,9 +3390,7 @@ def _build_worker_origin_policy(value: Any) -> dict[str, Any] | None:
             f"worker-origin trust policy is not admissible: {exc.code}"
         ) from exc
 
-    artifact_dir = (
-        Path(str(value.get("artifact_dir") or "")).expanduser().resolve(strict=False)
-    )
+    artifact_dir = Path(str(value.get("artifact_dir") or "")).expanduser().resolve(strict=False)
     if (
         not artifact_dir.is_absolute()
         or artifact_dir == artifact_dir.parent
@@ -3254,9 +3408,7 @@ def _build_worker_origin_policy(value: Any) -> dict[str, Any] | None:
         "trust_policy_sha256": verified_policy.policy_sha256,
         "trust_root_path": str(trust_root_path),
         "trust_root_binding": _fingerprint_file(trust_root_path),
-        "trust_root_public_key_pem_b64": base64.b64encode(trust_root_pem).decode(
-            "ascii"
-        ),
+        "trust_root_public_key_pem_b64": base64.b64encode(trust_root_pem).decode("ascii"),
         "trust_root_key_id": verified_policy.root_key_id,
         "artifact_dir": str(artifact_dir),
         "arm": arm,
@@ -3331,18 +3483,14 @@ def _verify_worker_origin_policy(value: Any, *, require_current: bool) -> dict[s
         raise DetachedStepError("detached worker-origin allowed cells are invalid")
     try:
         if compute_allowed_cell_digest(allowed_cells) != value["allowed_cell_digest"]:
-            raise DetachedStepError(
-                "detached worker-origin allowed-cell digest is invalid"
-            )
+            raise DetachedStepError("detached worker-origin allowed-cell digest is invalid")
     except WorkerOriginError as exc:
-        raise DetachedStepError(
-            "detached worker-origin allowed cells are invalid"
-        ) from exc
+        raise DetachedStepError("detached worker-origin allowed cells are invalid") from exc
+    trust_root_encoded = value.get("trust_root_public_key_pem_b64")
+    if not isinstance(trust_root_encoded, str):
+        raise DetachedStepError("detached worker-origin trust root is invalid")
     try:
-        trust_root_pem = base64.b64decode(
-            value.get("trust_root_public_key_pem_b64"),
-            validate=True,
-        )
+        trust_root_pem = base64.b64decode(trust_root_encoded, validate=True)
     except (TypeError, ValueError) as exc:
         raise DetachedStepError("detached worker-origin trust root is invalid") from exc
     try:
@@ -3375,8 +3523,7 @@ def _verify_worker_origin_policy(value: Any, *, require_current: bool) -> dict[s
     if (
         current_policy_document != value.get("trust_policy_document")
         or current_trust_root != trust_root_pem
-        or value.get("trust_policy_binding")
-        != _fingerprint_file(trust_policy_path)
+        or value.get("trust_policy_binding") != _fingerprint_file(trust_policy_path)
         or value.get("trust_root_binding") != _fingerprint_file(trust_root_path)
     ):
         raise DetachedStepError("detached worker-origin trust files changed")
@@ -3390,17 +3537,10 @@ def _verify_worker_origin_policy(value: Any, *, require_current: bool) -> dict[s
         raise DetachedStepError("detached worker-origin execution identity is invalid")
     if artifact_dir.exists() or artifact_dir.is_symlink():
         if artifact_dir.is_symlink() or not artifact_dir.is_dir():
-            raise DetachedStepError(
-                "detached worker-origin artifact directory is invalid"
-            )
+            raise DetachedStepError("detached worker-origin artifact directory is invalid")
         artifact_dir_stat = artifact_dir.stat()
-        if (
-            artifact_dir_stat.st_uid != os.geteuid()
-            or artifact_dir_stat.st_mode & 0o077
-        ):
-            raise DetachedStepError(
-                "detached worker-origin artifact directory is not private"
-            )
+        if artifact_dir_stat.st_uid != os.geteuid() or artifact_dir_stat.st_mode & 0o077:
+            raise DetachedStepError("detached worker-origin artifact directory is not private")
     return value
 
 
@@ -3455,9 +3595,7 @@ def _verify_persisted_worker_origin_quarantine(
         "quarantined_at_unix",
         "receipt_sha256",
     }
-    receipt_body = {
-        key: value for key, value in receipt.items() if key != "receipt_sha256"
-    }
+    receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     quarantined_at = receipt.get("quarantined_at_unix")
     started_at = broker_start.get("recorded_at")
     if (
@@ -3470,20 +3608,14 @@ def _verify_persisted_worker_origin_quarantine(
         or receipt.get("broker_policy_sha256") != policy["policy_sha256"]
         or receipt.get("request_id") != broker_start.get("request_id")
         or int(receipt.get("supervisor_attempt") or 0) != attempt
-        or int(receipt.get("supervisor_pid") or 0)
-        != int(broker_start.get("supervisor_pid") or 0)
-        or receipt.get("supervisor_start_token")
-        != broker_start.get("supervisor_start_token")
-        or int(receipt.get("worker_pid") or 0)
-        != int(broker_start.get("worker_pid") or 0)
+        or int(receipt.get("supervisor_pid") or 0) != int(broker_start.get("supervisor_pid") or 0)
+        or receipt.get("supervisor_start_token") != broker_start.get("supervisor_start_token")
+        or int(receipt.get("worker_pid") or 0) != int(broker_start.get("worker_pid") or 0)
         or int(receipt.get("worker_process_group_id") or 0)
         != int(broker_start.get("worker_process_group_id") or 0)
-        or receipt.get("worker_start_token")
-        != broker_start.get("worker_start_token")
-        or receipt.get("containment_token")
-        != broker_start.get("containment_token")
-        or receipt.get("worker_origin_contract_sha256")
-        != contract["contract_sha256"]
+        or receipt.get("worker_start_token") != broker_start.get("worker_start_token")
+        or receipt.get("containment_token") != broker_start.get("containment_token")
+        or receipt.get("worker_origin_contract_sha256") != contract["contract_sha256"]
         or receipt.get("session_id") != authorization["session_id"]
         or receipt.get("authorization_request_sha256")
         != start_origin.get("authorization_request_sha256")
@@ -3493,10 +3625,8 @@ def _verify_persisted_worker_origin_quarantine(
         or receipt.get("request_path") != str(paths["request"])
         or receipt.get("attestation_path") != str(paths["attestation"])
         or receipt.get("lifecycle_path") != str(paths["lifecycle"])
-        or receipt.get("lifecycle_artifact_sha256")
-        != lifecycle_artifact_sha256
-        or receipt.get("prior_journal_head_sha256")
-        != quarantine_event.get("previous_event_sha256")
+        or receipt.get("lifecycle_artifact_sha256") != lifecycle_artifact_sha256
+        or receipt.get("prior_journal_head_sha256") != quarantine_event.get("previous_event_sha256")
         or receipt.get("supervisor_identity_observed") != "dead"
         or receipt.get("worker_identity_observed") != "dead"
         or receipt.get("worker_process_group_empty") is not True
@@ -3512,9 +3642,7 @@ def _verify_persisted_worker_origin_quarantine(
         or quarantined_at < int(float(started_at))
         or quarantine_event.get("recorded_at") != float(quarantined_at)
     ):
-        raise DetachedStepError(
-            "worker-origin quarantine receipt binding is invalid"
-        )
+        raise DetachedStepError("worker-origin quarantine receipt binding is invalid")
 
 
 def _verify_persisted_worker_origin_bundle(
@@ -3533,16 +3661,10 @@ def _verify_persisted_worker_origin_bundle(
     )
     start_origin = broker_start.get("worker_origin") if broker_start else None
     response_origin = (
-        broker_response.get("worker_origin_lifecycle")
-        if broker_response is not None
-        else None
+        broker_response.get("worker_origin_lifecycle") if broker_response is not None else None
     )
     if contract is None:
-        if (
-            start_origin is not None
-            or response_origin is not None
-            or broker_quarantine is not None
-        ):
+        if start_origin is not None or response_origin is not None or broker_quarantine is not None:
             raise DetachedStepError(
                 "broker journal asserts worker-origin custody without a contract"
             )
@@ -3553,9 +3675,7 @@ def _verify_persisted_worker_origin_bundle(
         supervisor_attempt=attempt,
         broker_policy_sha256=policy["policy_sha256"],
     )
-    present = {
-        role: path.exists() or path.is_symlink() for role, path in paths.items()
-    }
+    present = {role: path.exists() or path.is_symlink() for role, path in paths.items()}
     if not any(present.values()):
         if broker_start is not None:
             raise DetachedStepError("broker worker-origin artifacts are missing")
@@ -3587,9 +3707,7 @@ def _verify_persisted_worker_origin_bundle(
             expected_protocol_sha256=contract["protocol_sha256"],
         )
     except (CampaignTrustError, WorkerOriginError, TypeError, ValueError) as exc:
-        raise DetachedStepError(
-            "persisted worker-origin authorization is invalid"
-        ) from exc
+        raise DetachedStepError("persisted worker-origin authorization is invalid") from exc
 
     expected_authorization = {
         "campaign_name": contract["campaign_name"],
@@ -3597,14 +3715,10 @@ def _verify_persisted_worker_origin_bundle(
         "protocol_sha256": contract["protocol_sha256"],
         "detached_plan_sha256": plan["plan_sha256"],
         "broker_policy_sha256": policy["policy_sha256"],
-        "executable_binding_sha256": policy["executable_binding"][
-            "binding_sha256"
-        ],
+        "executable_binding_sha256": policy["executable_binding"]["binding_sha256"],
         "environment_sha256": plan["execution_environment_sha256"],
         "sandbox_sha256": _sha256(plan["execution_sandbox"]),
-        "source_manifest_sha256": policy["execution_manifest"][
-            "manifest_sha256"
-        ],
+        "source_manifest_sha256": policy["execution_manifest"]["manifest_sha256"],
         "supervisor_attempt": attempt,
         "arm": contract["arm"],
         "worker_attempt_slot": contract["worker_attempt_slot"],
@@ -3613,19 +3727,12 @@ def _verify_persisted_worker_origin_bundle(
         "adapter_identity_sha256": contract["adapter_identity_sha256"],
         "worker_key_custody": WORKER_KEY_CUSTODY_DETACHED_SUPERVISOR,
     }
-    if any(
-        authorization.get(key) != value
-        for key, value in expected_authorization.items()
-    ):
-        raise DetachedStepError(
-            "persisted worker-origin authorization binding is invalid"
-        )
+    if any(authorization.get(key) != value for key, value in expected_authorization.items()):
+        raise DetachedStepError("persisted worker-origin authorization binding is invalid")
 
     signed_payload = request.get("signed_payload")
     signed_at_unix = (
-        signed_payload.get("signed_at_unix")
-        if isinstance(signed_payload, dict)
-        else None
+        signed_payload.get("signed_at_unix") if isinstance(signed_payload, dict) else None
     )
     if isinstance(signed_at_unix, bool) or not isinstance(signed_at_unix, int):
         raise DetachedStepError("worker-origin authorization request time is invalid")
@@ -3637,13 +3744,9 @@ def _verify_persisted_worker_origin_bundle(
             signed_at_unix=signed_at_unix,
         )
     except ValueError as exc:
-        raise DetachedStepError(
-            "worker-origin authorization request is invalid"
-        ) from exc
+        raise DetachedStepError("worker-origin authorization request is invalid") from exc
     if request != expected_request:
-        raise DetachedStepError(
-            "worker-origin authorization request binding is invalid"
-        )
+        raise DetachedStepError("worker-origin authorization request binding is invalid")
 
     attestation: dict[str, Any] | None = None
     if present["attestation"]:
@@ -3661,9 +3764,7 @@ def _verify_persisted_worker_origin_bundle(
                 not_after_unix=signed_at_unix,
             )
         except WorkerOriginError as exc:
-            raise DetachedStepError(
-                "persisted worker-origin attestation is invalid"
-            ) from exc
+            raise DetachedStepError("persisted worker-origin attestation is invalid") from exc
     if broker_start is not None:
         expected_start_keys = {
             "contract_sha256",
@@ -3680,12 +3781,10 @@ def _verify_persisted_worker_origin_bundle(
             not isinstance(start_origin, dict)
             or set(start_origin) != expected_start_keys
             or attestation is None
-            or start_origin.get("contract_sha256")
-            != contract["contract_sha256"]
+            or start_origin.get("contract_sha256") != contract["contract_sha256"]
             or start_origin.get("session_id") != authorization["session_id"]
             or start_origin.get("authorization_payload") != authorization
-            or start_origin.get("authorization_request_sha256")
-            != request["request_sha256"]
+            or start_origin.get("authorization_request_sha256") != request["request_sha256"]
             or start_origin.get("authorization_attestation_sha256")
             != hashlib.sha256(canonical_json_bytes(attestation)).hexdigest()
             or start_origin.get("request_path") != str(paths["request"])
@@ -3693,11 +3792,12 @@ def _verify_persisted_worker_origin_bundle(
             or start_origin.get("attestation_path") != str(paths["attestation"])
             or start_origin.get("lifecycle_path") != str(paths["lifecycle"])
         ):
-            raise DetachedStepError(
-                "attempt journal worker-origin start binding is invalid"
-            )
+            raise DetachedStepError("attempt journal worker-origin start binding is invalid")
     elif start_origin is not None:
         raise DetachedStepError("orphaned worker-origin start metadata")
+
+    if not isinstance(broker_start, dict):
+        raise DetachedStepError("worker-origin broker start metadata is invalid")
 
     if not present["lifecycle"]:
         _verify_persisted_worker_origin_quarantine(
@@ -3732,19 +3832,14 @@ def _verify_persisted_worker_origin_bundle(
         "completion_error",
         "artifact_sha256",
     }
-    lifecycle_body = {
-        key: value for key, value in lifecycle.items() if key != "artifact_sha256"
-    }
+    lifecycle_body = {key: value for key, value in lifecycle.items() if key != "artifact_sha256"}
     event_origin = lifecycle.get("event_origin")
     lifecycle_signed = (
-        event_origin.get("signed_payload")
-        if isinstance(event_origin, dict)
-        else None
+        event_origin.get("signed_payload") if isinstance(event_origin, dict) else None
     )
     if (
         set(lifecycle) != lifecycle_keys
-        or lifecycle.get("schema")
-        != WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA
+        or lifecycle.get("schema") != WORKER_ORIGIN_LIFECYCLE_ARTIFACT_SCHEMA
         or lifecycle.get("broker_policy_sha256") != policy["policy_sha256"]
         or lifecycle.get("authorization_payload") != authorization
         or lifecycle.get("authorization_request") != request
@@ -3753,6 +3848,8 @@ def _verify_persisted_worker_origin_bundle(
         or not isinstance(lifecycle_signed, dict)
     ):
         raise DetachedStepError("worker-origin lifecycle artifact binding is invalid")
+    if not isinstance(event_origin, dict):
+        raise DetachedStepError("worker-origin lifecycle event origin is invalid")
     _verify_persisted_worker_origin_quarantine(
         plan=plan,
         policy=policy,
@@ -3811,14 +3908,9 @@ def _verify_persisted_worker_origin_bundle(
             or occurred_at_unix < int(float(started_at)) - 1
             or occurred_at_unix > int(float(finished_at)) + 1
         ):
-            raise DetachedStepError(
-                "worker-origin lifecycle time binding is invalid"
-            )
+            raise DetachedStepError("worker-origin lifecycle time binding is invalid")
     if (
-        (
-            expected_event_type == "terminal"
-            and result_count != len(contract["allowed_cells"])
-        )
+        (expected_event_type == "terminal" and result_count != len(contract["allowed_cells"]))
         or (result_count == 0 and previous_origin_sha256 != ZERO_SHA256)
         or (result_count > 0 and previous_origin_sha256 == ZERO_SHA256)
         or (broker_start is None and result_count != 0)
@@ -3832,24 +3924,16 @@ def _verify_persisted_worker_origin_bundle(
         else "awaiting_external_signature"
     )
     expected_return_code = 0 if expected_event_type == "terminal" else None
-    expected_reason = (
-        None
-        if expected_event_type == "terminal"
-        else lifecycle_signed.get("reason")
-    )
+    expected_reason = None if expected_event_type == "terminal" else lifecycle_signed.get("reason")
     completion_error = lifecycle.get("completion_error")
-    if (
-        expected_event_type == "terminal"
-        and completion_error is not None
-    ) or (
+    if (expected_event_type == "terminal" and completion_error is not None) or (
         expected_event_type == "abandoned"
         and (
             (
                 completion_error is not None
                 and (
                     not isinstance(completion_error, str)
-                    or expected_reason
-                    != f"completion_rejected:{completion_error}"
+                    or expected_reason != f"completion_rejected:{completion_error}"
                 )
             )
             or (
@@ -3859,9 +3943,7 @@ def _verify_persisted_worker_origin_bundle(
             )
         )
     ):
-        raise DetachedStepError(
-            "worker-origin lifecycle completion binding is invalid"
-        )
+        raise DetachedStepError("worker-origin lifecycle completion binding is invalid")
     try:
         verify_worker_lifecycle_event_origin(
             policy=verified_policy if attestation is not None else None,
@@ -3873,17 +3955,14 @@ def _verify_persisted_worker_origin_bundle(
             expected_result_count=result_count,
             expected_previous_origin_sha256=previous_origin_sha256,
             expected_completed_cell_ids=[
-                cell["cell_id"]
-                for cell in contract["allowed_cells"][:result_count]
+                cell["cell_id"] for cell in contract["allowed_cells"][:result_count]
             ],
             expected_occurred_at_unix=occurred_at_unix,
             expected_return_code=expected_return_code,
             expected_reason=expected_reason,
         )
     except WorkerOriginError as exc:
-        raise DetachedStepError(
-            "worker-origin lifecycle signature is invalid"
-        ) from exc
+        raise DetachedStepError("worker-origin lifecycle signature is invalid") from exc
 
     expected_summary = {
         "artifact_path": str(paths["lifecycle"]),
@@ -3894,9 +3973,7 @@ def _verify_persisted_worker_origin_bundle(
         "session_id": authorization["session_id"],
     }
     if broker_response is not None and response_origin != expected_summary:
-        raise DetachedStepError(
-            "attempt journal worker-origin lifecycle summary is invalid"
-        )
+        raise DetachedStepError("attempt journal worker-origin lifecycle summary is invalid")
     if broker_response is None and response_origin is not None:
         raise DetachedStepError("orphaned worker-origin lifecycle summary")
 
@@ -3933,9 +4010,7 @@ def _build_broker_policy(
             raise DetachedStepError("broker policy stdout parent must exist")
         timeout_s_max = specification.get("timeout_s_max")
         max_invocations = specification.get("max_invocations")
-        worker_origin = _build_worker_origin_policy(
-            specification.get("worker_origin")
-        )
+        worker_origin = _build_worker_origin_policy(specification.get("worker_origin"))
         if (
             not isinstance(timeout_s_max, (int, float))
             or isinstance(timeout_s_max, bool)
@@ -3995,14 +4070,10 @@ def _build_plan(
             or Path(resolved_command[0]) != _DARWIN_SANDBOX
             or resolved_command[1] != "-f"
         ):
-            raise DetachedStepError(
-                "precontained target must start with exact sandbox-exec -f"
-            )
+            raise DetachedStepError("precontained target must start with exact sandbox-exec -f")
         profile_path = Path(resolved_command[2])
         if not profile_path.is_absolute():
-            raise DetachedStepError(
-                "precontained sandbox profile path must be absolute"
-            )
+            raise DetachedStepError("precontained sandbox profile path must be absolute")
         profile_payload = _read_stable_private_bytes(
             profile_path,
             max_bytes=_MAX_SANDBOX_PROFILE_BYTES,
@@ -4011,39 +4082,28 @@ def _build_plan(
         try:
             profile = profile_payload.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise DetachedStepError(
-                "precontained sandbox profile is not UTF-8"
-            ) from exc
+            raise DetachedStepError("precontained sandbox profile is not UTF-8") from exc
         if (
-            any(
-                marker not in profile
-                for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS
-            )
+            any(marker not in profile for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS)
             or "(allow default)" in profile
             or "(allow network" in profile
             or "(allow process-fork" in profile
         ):
-            raise DetachedStepError(
-                "precontained sandbox profile lacks the required deny boundary"
-            )
+            raise DetachedStepError("precontained sandbox profile lacks the required deny boundary")
         sandbox = {
             "mode": _PRECONTAINED_SANDBOX_MODE,
             "path": str(_DARWIN_SANDBOX),
             "sha256": _sha256_file(_DARWIN_SANDBOX),
             "profile_path": str(profile_path),
             "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
-            "required_markers": list(
-                _REQUIRED_PRECONTAINED_PROFILE_MARKERS
-            ),
+            "required_markers": list(_REQUIRED_PRECONTAINED_PROFILE_MARKERS),
         }
     else:
         sandbox = {
             "path": str(_DARWIN_SANDBOX),
             "sha256": _sha256_file(_DARWIN_SANDBOX),
             "profile": _NO_FORK_SANDBOX_PROFILE,
-            "profile_sha256": hashlib.sha256(
-                _NO_FORK_SANDBOX_PROFILE.encode("utf-8")
-            ).hexdigest(),
+            "profile_sha256": hashlib.sha256(_NO_FORK_SANDBOX_PROFILE.encode("utf-8")).hexdigest(),
         }
     power_assertion = (
         {"path": str(_DARWIN_CAFFEINATE), "sha256": _sha256_file(_DARWIN_CAFFEINATE)}
@@ -4055,9 +4115,7 @@ def _build_plan(
     if resume_contract == "none" and resume_verifier is not None:
         raise DetachedStepError("resume verifier command requires target_checkpoint contract")
     resolved_verifier = (
-        _resolve_command(resume_verifier, cwd, environment)
-        if resume_verifier is not None
-        else None
+        _resolve_command(resume_verifier, cwd, environment) if resume_verifier is not None else None
     )
     command_sha256 = _sha256(resolved_command)
     target_execution_manifest = _build_execution_manifest(
@@ -4170,23 +4228,28 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
     if plan.get("plan_sha256") != _sha256(body):
         raise DetachedStepError(f"detached plan hash mismatch: {path}")
     command = plan.get("command")
-    if not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command):
+    if (
+        not isinstance(command, list)
+        or not command
+        or any(not isinstance(item, str) or not item for item in command)
+    ):
         raise DetachedStepError(f"detached plan command is invalid: {path}")
     if plan.get("command_sha256") != _sha256(command):
         raise DetachedStepError(f"detached plan command hash mismatch: {path}")
     environment = plan.get("execution_environment")
     if (
         not isinstance(environment, dict)
-        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in environment.items())
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in environment.items()
+        )
         or plan.get("execution_environment_sha256") != _sha256(environment)
     ):
         raise DetachedStepError(f"detached plan environment binding is invalid: {path}")
     executable = Path(command[0])
     if not executable.is_absolute() or not executable.is_file():
         raise DetachedStepError(f"detached plan executable is unavailable: {path}")
-    executable_binding = _verify_launcher_binding(
-        plan.get("executable_binding"), executable
-    )
+    executable_binding = _verify_launcher_binding(plan.get("executable_binding"), executable)
     if plan.get("executable_sha256") != executable_binding["resolved_sha256"]:
         raise DetachedStepError(f"detached plan executable hash mismatch: {path}")
     sandbox = plan.get("execution_sandbox")
@@ -4203,12 +4266,9 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
             or command[1] != "-f"
             or command[2] != str(profile_path)
             or not profile_path.is_absolute()
-            or sandbox.get("required_markers")
-            != list(_REQUIRED_PRECONTAINED_PROFILE_MARKERS)
+            or sandbox.get("required_markers") != list(_REQUIRED_PRECONTAINED_PROFILE_MARKERS)
         ):
-            raise DetachedStepError(
-                f"detached precontained sandbox binding mismatch: {path}"
-            )
+            raise DetachedStepError(f"detached precontained sandbox binding mismatch: {path}")
         profile_payload = _read_stable_private_bytes(
             profile_path,
             max_bytes=_MAX_SANDBOX_PROFILE_BYTES,
@@ -4221,27 +4281,19 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
                 f"detached precontained sandbox profile is invalid: {path}"
             ) from exc
         if (
-            sandbox.get("profile_sha256")
-            != hashlib.sha256(profile_payload).hexdigest()
-            or any(
-                marker not in profile
-                for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS
-            )
+            sandbox.get("profile_sha256") != hashlib.sha256(profile_payload).hexdigest()
+            or any(marker not in profile for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS)
             or "(allow default)" in profile
             or "(allow network" in profile
             or "(allow process-fork" in profile
         ):
-            raise DetachedStepError(
-                f"detached precontained sandbox profile drift: {path}"
-            )
+            raise DetachedStepError(f"detached precontained sandbox profile drift: {path}")
     elif (
         sandbox_path != _DARWIN_SANDBOX
         or sandbox.get("sha256") != _sha256_file(sandbox_path)
         or sandbox.get("profile") != _NO_FORK_SANDBOX_PROFILE
         or sandbox.get("profile_sha256")
-        != hashlib.sha256(
-            _NO_FORK_SANDBOX_PROFILE.encode("utf-8")
-        ).hexdigest()
+        != hashlib.sha256(_NO_FORK_SANDBOX_PROFILE.encode("utf-8")).hexdigest()
     ):
         raise DetachedStepError(f"detached plan sandbox hash mismatch: {path}")
     power_assertion = plan.get("power_assertion")
@@ -4249,9 +4301,8 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
         if not isinstance(power_assertion, dict):
             raise DetachedStepError(f"detached plan power assertion binding is invalid: {path}")
         assertion_path = Path(str(power_assertion.get("path") or ""))
-        if (
-            assertion_path != _DARWIN_CAFFEINATE
-            or power_assertion.get("sha256") != _sha256_file(assertion_path)
+        if assertion_path != _DARWIN_CAFFEINATE or power_assertion.get("sha256") != _sha256_file(
+            assertion_path
         ):
             raise DetachedStepError(f"detached plan power assertion hash mismatch: {path}")
     _verify_execution_manifest_structure(plan.get("target_execution_manifest"))
@@ -4286,9 +4337,8 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
     ):
         raise DetachedStepError(f"detached plan has an unexpected resume verifier: {path}")
     broker_policy = plan.get("broker_policy")
-    if (
-        not isinstance(broker_policy, list)
-        or plan.get("broker_policy_sha256") != _sha256(broker_policy)
+    if not isinstance(broker_policy, list) or plan.get("broker_policy_sha256") != _sha256(
+        broker_policy
     ):
         raise DetachedStepError(f"detached plan broker policy binding is invalid: {path}")
     seen_broker_commands: set[str] = set()
@@ -4322,9 +4372,7 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
             or (worker_origin is not None and max_invocations != 1)
         ):
             raise DetachedStepError(f"detached plan broker policy entry binding is invalid: {path}")
-        _verify_launcher_binding(
-            policy.get("executable_binding"), Path(command[0])
-        )
+        _verify_launcher_binding(policy.get("executable_binding"), Path(command[0]))
         _verify_execution_manifest_structure(policy.get("execution_manifest"))
         _verify_worker_origin_policy(worker_origin, require_current=False)
         seen_broker_commands.add(command_sha)
@@ -4360,7 +4408,9 @@ def _events_by_attempt(events: list[dict[str, Any]]) -> dict[int, dict[str, dict
     return grouped
 
 
-def _broker_events(attempt_events: dict[str, dict[str, Any]], event_type: str) -> list[dict[str, Any]]:
+def _broker_events(
+    attempt_events: dict[str, dict[str, Any]], event_type: str
+) -> list[dict[str, Any]]:
     prefix = f"{event_type}:"
     return [event for key, event in attempt_events.items() if key.startswith(prefix)]
 
@@ -4374,7 +4424,9 @@ def _materialize_terminal_receipt_locked(run_dir: Path, terminal: dict[str, Any]
     if receipt_path.exists():
         materialized = _verified_receipt(receipt_path)
         if materialized != receipt:
-            raise DetachedStepError("terminal receipt differs from the authoritative journal record")
+            raise DetachedStepError(
+                "terminal receipt differs from the authoritative journal record"
+            )
     else:
         _atomic_write(receipt_path, receipt, replace=False)
     return receipt
@@ -4395,7 +4447,7 @@ def _verify_persisted_resume_verdict(
     if (
         plan.get("resume_contract") != "target_checkpoint"
         or not isinstance(verdict, dict)
-        or verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v2"
+        or verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v3"
         or verdict.get("plan_sha256") != plan["plan_sha256"]
         or verdict.get("command_sha256") != plan.get("command_sha256")
         or verdict.get("prior_attempt") != attempt - 1
@@ -4403,15 +4455,13 @@ def _verify_persisted_resume_verdict(
         or verdict.get("verdict") != "safe_to_resume"
     ):
         raise DetachedStepError("attempt journal resume verdict is invalid")
-    evidence_path = Path(str(verdict.get("evidence_path") or ""))
-    expected_name = f"resume_evidence_attempt_{attempt - 1}_{prior_head[:16]}.json"
-    if evidence_path.parent != run_dir or evidence_path.name != expected_name:
-        raise DetachedStepError("attempt journal resume evidence path is invalid")
-    evidence, evidence_sha = _read_json_artifact_with_digest(evidence_path, max_bytes=1_048_576)
+    evidence = verdict.get("evidence")
+    if not isinstance(evidence, dict):
+        raise DetachedStepError("attempt journal resume evidence is invalid")
+    evidence_sha = _sha256(evidence)
     checkpoint_sequence = verdict.get("checkpoint_sequence")
     if (
-        evidence != verdict.get("evidence")
-        or evidence_sha != verdict.get("evidence_sha256")
+        evidence_sha != verdict.get("evidence_sha256")
         or not isinstance(checkpoint_sequence, int)
         or isinstance(checkpoint_sequence, bool)
         or checkpoint_sequence < 0
@@ -4478,8 +4528,7 @@ def _verify_run_locked(
         if target is not None:
             if (
                 control is None
-                or
-                int(target.get("supervisor_pid") or 0) != supervisor_pid
+                or int(target.get("supervisor_pid") or 0) != supervisor_pid
                 or target.get("supervisor_start_token") != supervisor_token
                 or int(target.get("child_pid") or 0) <= 0
                 or int(target.get("child_process_group_id") or 0) <= 1
@@ -4487,9 +4536,7 @@ def _verify_run_locked(
                 or len(str(target.get("containment_token") or "")) != 64
             ):
                 raise DetachedStepError("attempt journal target identity is invalid")
-        policy_by_sha = {
-            str(policy["policy_sha256"]): policy for policy in plan["broker_policy"]
-        }
+        policy_by_sha = {str(policy["policy_sha256"]): policy for policy in plan["broker_policy"]}
         broker_starts = _broker_events(attempt_events, "BROKER_STARTED")
         broker_terminals = {
             str(event.get("request_id") or ""): event
@@ -4572,8 +4619,7 @@ def _verify_run_locked(
                 or response.get("request_id") != request_id
                 or response.get("policy_sha256") != policy_sha
                 or response.get("command_sha256") != policy["command_sha256"]
-                or int(response.get("worker_pid") or 0)
-                != int(broker_start.get("worker_pid") or 0)
+                or int(response.get("worker_pid") or 0) != int(broker_start.get("worker_pid") or 0)
                 or response.get("worker_start_token") != broker_start.get("worker_start_token")
                 or not isinstance(response.get("containment_verified"), bool)
                 or (
@@ -4651,16 +4697,18 @@ def _verify_run_locked(
     status_path = run_dir / STATUS_FILE
     status = _read_json(status_path) if status_path.is_file() else {}
     if status:
-        if status.get("schema") != f"{SCHEMA_PREFIX}.status.v1" or status.get("plan_sha256") != plan_sha:
+        if (
+            status.get("schema") != f"{SCHEMA_PREFIX}.status.v1"
+            or status.get("plan_sha256") != plan_sha
+        ):
             raise DetachedStepError("detached status binding mismatch")
         status_attempt = int(status.get("supervisor_attempt") or 0)
         if status_attempt not in grouped:
             raise DetachedStepError("detached status references an unknown attempt")
         launched = grouped[status_attempt]["LAUNCHED"]
-        if (
-            int(status.get("supervisor_pid") or 0) != int(launched.get("supervisor_pid") or 0)
-            or status.get("supervisor_start_token") != launched.get("supervisor_start_token")
-        ):
+        if int(status.get("supervisor_pid") or 0) != int(
+            launched.get("supervisor_pid") or 0
+        ) or status.get("supervisor_start_token") != launched.get("supervisor_start_token"):
             raise DetachedStepError("detached status supervisor identity mismatch")
         target = grouped[status_attempt].get("TARGET_STARTED")
         if int(status.get("child_pid") or 0) > 0 and (
@@ -4685,18 +4733,6 @@ def _run_resume_verifier(
         raise DetachedStepError("target_checkpoint plan has no verified resume command")
     if len(prior_journal_head_sha256) != 64:
         raise DetachedStepError("target checkpoint prior journal head is invalid")
-    evidence_path = run_dir / (
-        f"resume_evidence_attempt_{prior_attempt}_{prior_journal_head_sha256[:16]}.json"
-    )
-    if evidence_path.exists() or evidence_path.is_symlink():
-        evidence_stat = evidence_path.lstat()
-        if (
-            not stat.S_ISREG(evidence_stat.st_mode)
-            or evidence_stat.st_uid != os.geteuid()
-            or evidence_stat.st_nlink != 1
-        ):
-            raise DetachedStepError("existing resume evidence artifact is unsafe")
-        evidence_path.unlink()
     environment = dict(plan["execution_environment"])
     environment.update(
         {
@@ -4704,7 +4740,7 @@ def _run_resume_verifier(
             "AURA_DETACHED_COMMAND_SHA256": str(plan["command_sha256"]),
             "AURA_DETACHED_PRIOR_ATTEMPT": str(prior_attempt),
             "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256": prior_journal_head_sha256,
-            "AURA_DETACHED_RESUME_EVIDENCE_PATH": str(evidence_path),
+            "AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT": "stdout-v3",
         }
     )
     _verify_execution_manifest_current(plan["resume_verifier_execution_manifest"])
@@ -4733,12 +4769,11 @@ def _run_resume_verifier(
     checkpoint_sequence = verdict.get("checkpoint_sequence")
     checkpoint_identity = str(verdict.get("checkpoint_identity") or "")
     if (
-        verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v2"
+        verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v3"
         or verdict.get("plan_sha256") != plan["plan_sha256"]
         or verdict.get("command_sha256") != plan["command_sha256"]
         or verdict.get("prior_attempt") != prior_attempt
         or verdict.get("prior_journal_head_sha256") != prior_journal_head_sha256
-        or verdict.get("evidence_path") != str(evidence_path)
         or not isinstance(evidence, dict)
         or not isinstance(checkpoint_sequence, int)
         or isinstance(checkpoint_sequence, bool)
@@ -4747,16 +4782,15 @@ def _run_resume_verifier(
         or len(evidence_sha) != 64
         or len(checkpoint_identity) != 64
         or any(
-            character not in "0123456789abcdef"
-            for character in evidence_sha + checkpoint_identity
+            character not in "0123456789abcdef" for character in evidence_sha + checkpoint_identity
         )
     ):
         raise DetachedStepError("target checkpoint verifier verdict binding is invalid")
-    artifact, artifact_sha = _read_json_artifact_with_digest(evidence_path, max_bytes=1_048_576)
-    if artifact != evidence or artifact_sha != evidence_sha:
-        raise DetachedStepError("target checkpoint evidence artifact binding is invalid")
+    artifact_sha = _sha256(evidence)
+    if artifact_sha != evidence_sha:
+        raise DetachedStepError("target checkpoint evidence binding is invalid")
     if (
-        evidence.get("schema") != f"{SCHEMA_PREFIX}.resume_evidence.v1"
+        evidence.get("schema") != f"{SCHEMA_PREFIX}.resume_evidence.v2"
         or evidence.get("plan_sha256") != plan["plan_sha256"]
         or evidence.get("command_sha256") != plan["command_sha256"]
         or evidence.get("prior_attempt") != prior_attempt
@@ -4780,6 +4814,28 @@ def _run_resume_verifier(
 
 
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).expanduser().absolute()
+    expected_identity: dict[str, int] | None = None
+    if args.run_dir_identity_json:
+        try:
+            parsed_identity = json.loads(args.run_dir_identity_json)
+            if not isinstance(parsed_identity, dict):
+                raise ValueError
+            expected_identity = validate_directory_identity(parsed_identity)
+        except (json.JSONDecodeError, ValueError, SecurePathCustodyError) as exc:
+            parser.error(f"--run-dir-identity-json is invalid: {exc}")
+    with _run_directory_custody(
+        run_dir,
+        create=True,
+        expected_identity=expected_identity,
+    ):
+        return _launch_custodied(args, parser)
+
+
+def _launch_custodied(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> dict[str, Any]:
     if not args.name or len(args.name) > 120 or any(ch.isspace() for ch in args.name):
         parser.error("--name must be a non-empty whitespace-free identifier")
     if not math.isfinite(args.timeout) or args.timeout <= 0.0:
@@ -4788,7 +4844,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
     cwd = Path(args.cwd).expanduser().resolve(strict=True)
     if not cwd.is_dir():
         parser.error("--cwd must resolve to a directory")
-    run_dir = Path(args.run_dir).expanduser().resolve(strict=False)
+    run_dir = Path(args.run_dir).expanduser().absolute()
     output_roots: list[Path] = []
     for value in args.execution_output_root:
         output_root = Path(value).expanduser().resolve(strict=False)
@@ -4821,7 +4877,9 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
             if prior_receipt is not None:
                 raise DetachedStepError("terminal receipt already exists; run is immutable")
             if not args.resume:
-                raise DetachedStepError("existing detached plan has no terminal receipt; use --resume explicitly")
+                raise DetachedStepError(
+                    "existing detached plan has no terminal receipt; use --resume explicitly"
+                )
             if _comparable_plan(plan) != _comparable_plan(requested_plan):
                 raise DetachedStepError("existing detached plan differs")
             if plan.get("resume_contract") != "target_checkpoint":
@@ -4852,12 +4910,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
                 for broker_start in _broker_events(latest, "BROKER_STARTED"):
                     if str(broker_start.get("request_id") or "") in broker_terminal_ids:
                         continue
-                    worker_cleanup_performed = _terminate_stale_broker_worker(
-                        broker_start
-                    )
-                    recovered_stale_child = (
-                        worker_cleanup_performed or recovered_stale_child
-                    )
+                    worker_cleanup_performed = _terminate_stale_broker_worker(broker_start)
+                    recovered_stale_child = worker_cleanup_performed or recovered_stale_child
                     _record_worker_origin_quarantine_locked(
                         run_dir,
                         plan,
@@ -4948,8 +5002,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
             },
         )
         if (
-            os.environ.get("AURA_DETACHED_TEST_CRASH_POINT")
-            == "after_reservation_before_release"
+            os.environ.get("AURA_DETACHED_TEST_CRASH_POINT") == "after_reservation_before_release"
             and "PYTEST_CURRENT_TEST" in os.environ
         ):
             os._exit(94)
@@ -5026,8 +5079,21 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
     }
 
 
-def _status(run_dir: Path) -> dict[str, Any]:
-    run_dir = run_dir.expanduser().resolve(strict=True)
+def _status(
+    run_dir: Path,
+    *,
+    expected_identity: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    with _run_directory_custody(
+        run_dir,
+        create=False,
+        expected_identity=expected_identity,
+    ) as custody:
+        return _status_custodied(custody.path)
+
+
+def _status_custodied(run_dir: Path) -> dict[str, Any]:
+    run_dir = run_dir.expanduser().absolute()
     with _locked(run_dir):
         plan, attempts, status, receipt = _verify_run_locked(run_dir)
     grouped = _events_by_attempt(attempts)
@@ -5038,10 +5104,14 @@ def _status(run_dir: Path) -> dict[str, Any]:
     supervisor_pid = int(launched.get("supervisor_pid") or 0)
     supervisor_start = str(launched.get("supervisor_start_token") or "")
     supervisor_state = _identity_state(supervisor_pid, supervisor_start)
-    child_state = _identity_state(
-        int(target.get("child_pid") or 0),
-        str(target.get("child_start_token") or ""),
-    ) if target else "dead"
+    child_state = (
+        _identity_state(
+            int(target.get("child_pid") or 0),
+            str(target.get("child_start_token") or ""),
+        )
+        if target
+        else "dead"
+    )
     return {
         "schema": f"{SCHEMA_PREFIX}.inspection.v1",
         "run_dir": str(run_dir),
@@ -5072,8 +5142,21 @@ def _status(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def _stop(run_dir: Path) -> dict[str, Any]:
-    run_dir = run_dir.expanduser().resolve(strict=True)
+def _stop(
+    run_dir: Path,
+    *,
+    expected_identity: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    with _run_directory_custody(
+        run_dir,
+        create=False,
+        expected_identity=expected_identity,
+    ) as custody:
+        return _stop_custodied(custody.path)
+
+
+def _stop_custodied(run_dir: Path) -> dict[str, Any]:
+    run_dir = run_dir.expanduser().absolute()
     with _locked(run_dir):
         _plan, attempts, _status_body, receipt = _verify_run_locked(run_dir)
         if receipt is not None:
@@ -5115,6 +5198,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True)
     launch = subparsers.add_parser("launch", help="launch one detached step")
     launch.add_argument("--run-dir", required=True)
+    launch.add_argument("--run-dir-identity-json", default="")
     launch.add_argument("--name", required=True)
     launch.add_argument("--cwd", default=str(Path(__file__).resolve().parents[1]))
     launch.add_argument("--timeout", type=float, required=True)

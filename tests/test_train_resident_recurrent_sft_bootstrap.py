@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     REQUIRED_SOURCE_ROLES,
     ResidentSFTBootstrapConfig,
@@ -28,6 +30,8 @@ from core.learning.resident_recurrent_sft_bootstrap_execution import (
 )
 from core.learning.resident_recurrent_sft_bootstrap_state import (
     BINDING_ROLES,
+    authority_state_bindings,
+    load_checkpoint,
     validate_checkpoint_state,
 )
 from tools import train_resident_recurrent_sft_bootstrap as trainer
@@ -204,6 +208,7 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
     authority = {
         "authority_sha256": "a" * 64,
         "campaign_id": "resident-32b-recurrent-sft-bootstrap-cp-test",
+        "campaign_scope": "full_bootstrap",
         "trainer": {"max_steps": 4},
     }
     state = {
@@ -222,6 +227,7 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
         base_before=base,
         base_after=base,
         halt_reason="max_steps",
+        required_end_step=4,
     )
 
     assert receipt["bootstrap_complete"] is True
@@ -229,6 +235,21 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
     assert receipt["claim_state"]["reasoning_gain_proven"] is False
     assert receipt["claim_state"]["grpo_admission"] is False
     assert json.loads((tmp_path / "status.json").read_text())["terminal"] is True
+
+    canary_authority = {**authority, "campaign_scope": "canary_lifecycle"}
+    canary_receipt = trainer._publish_receipt(
+        tmp_path / "canary",
+        authority=canary_authority,
+        state=state,
+        checkpoint_sha256="c" * 64,
+        base_before=base,
+        base_after=base,
+        halt_reason="max_steps",
+        required_end_step=4,
+    )
+    assert canary_receipt["canary_lifecycle_complete"] is True
+    assert canary_receipt["bootstrap_complete"] is False
+    assert canary_receipt["claim_state"]["resident_sft_complete"] is False
 
     changed = dict(base)
     changed["fingerprint"] = "d" * 64
@@ -241,6 +262,7 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
             base_before=base,
             base_after=changed,
             halt_reason="max_steps",
+            required_end_step=4,
         )
 
 
@@ -297,9 +319,7 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     train_path.write_bytes(train_payload)
     validation_path.write_bytes(validation_payload)
 
-    source_payloads = {
-        role: f"source:{role}\n".encode("ascii") for role in REQUIRED_SOURCE_ROLES
-    }
+    source_payloads = {role: f"source:{role}\n".encode("ascii") for role in REQUIRED_SOURCE_ROLES}
     source_bindings = {}
     for role, payload in source_payloads.items():
         path = tmp_path / f"source-{role}.txt"
@@ -344,8 +364,12 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
         branch_indices=(0,),
     )
     now = datetime.now(UTC)
+    run_root = tmp_path / "artifacts" / "run"
+    run_root.mkdir(parents=True)
+    run_stat = run_root.stat()
     authority = build_authority(
         campaign_id="resident-32b-recurrent-sft-bootstrap-cp-test",
+        campaign_scope="full_bootstrap",
         committed_at=(now - timedelta(minutes=1)).isoformat(),
         expires_at=(now + timedelta(hours=1)).isoformat(),
         model_path="model",
@@ -381,6 +405,7 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
             "semantic_sha256": sha256_json(trust),
         },
         artifact_root="artifacts/run",
+        artifact_root_identity={"st_dev": run_stat.st_dev, "st_ino": run_stat.st_ino},
         config=config,
     )
     authority_path = tmp_path / "authority.json"
@@ -446,6 +471,8 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
             authority=authority_path,
             expected_authority_sha256=authority["authority_sha256"],
             resume_policy="auto",
+            invocation_step_budget=1,
+            required_end_step=1,
         )
     )
 
@@ -455,16 +482,34 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     assert first_status["step"] == 1
     assert first_status["terminal"] is False
     assert first_status["halt_reason"] == "invocation_step_limit"
-    first_receipt = json.loads(
-        (run / "invocation-0001.json").read_text(encoding="ascii")
-    )
+    first_receipt = json.loads((run / "invocation-0001.json").read_text(encoding="ascii"))
     assert first_receipt["bootstrap_complete"] is False
+
+    # Replaying the exact detached command after a supervisor crash must certify
+    # the already-durable target, never spend the relative budget a second time.
+    assert (
+        trainer._run(
+            SimpleNamespace(
+                authority=authority_path,
+                expected_authority_sha256=authority["authority_sha256"],
+                resume_policy="required",
+                invocation_step_budget=1,
+                required_end_step=1,
+            )
+        )
+        == 0
+    )
+    replay_status = json.loads((run / "status.json").read_text(encoding="ascii"))
+    assert replay_status["step"] == 1
+    assert len(list((run / "checkpoints").iterdir())) == 2
 
     second_result = trainer._run(
         SimpleNamespace(
             authority=authority_path,
             expected_authority_sha256=authority["authority_sha256"],
             resume_policy="required",
+            invocation_step_budget=1,
+            required_end_step=2,
         )
     )
 
@@ -478,3 +523,92 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     receipt = json.loads((run / "invocation-0002.json").read_text(encoding="ascii"))
     assert receipt["bootstrap_complete"] is True
     assert receipt["claim_state"]["reasoning_gain_proven"] is False
+
+    uninterrupted_config = replace(config, max_invocation_steps=2)
+    uninterrupted_root = tmp_path / "artifacts" / "uninterrupted"
+    uninterrupted_root.mkdir(parents=True)
+    uninterrupted_stat = uninterrupted_root.stat()
+    uninterrupted_authority = build_authority(
+        campaign_id="resident-32b-recurrent-sft-bootstrap-cp-test-uninterrupted",
+        campaign_scope="full_bootstrap",
+        committed_at=(now - timedelta(minutes=1)).isoformat(),
+        expires_at=(now + timedelta(hours=1)).isoformat(),
+        model_path="model",
+        model_identity=model_identity,
+        behavior_identity=behavior_identity,
+        personality_identity=personality_identity,
+        tokenizer_identity=tokenizer_identity,
+        execution_spec={
+            "path": "spec.json",
+            "sha256": sha256_bytes(spec_payload),
+            "size_bytes": len(spec_payload),
+            "semantic_sha256": spec.sha256,
+        },
+        dataset=build_dataset_commitment(train_rows, validation_rows),
+        dataset_artifacts={
+            "train": {
+                "path": "train.json",
+                "sha256": sha256_bytes(train_payload),
+                "size_bytes": len(train_payload),
+            },
+            "validation": {
+                "path": "validation.json",
+                "sha256": sha256_bytes(validation_payload),
+                "size_bytes": len(validation_payload),
+            },
+        },
+        sources=source_bindings,
+        runtime_identity=runtime_identity,
+        trust_policy={
+            "path": "trust.json",
+            "sha256": sha256_bytes(trust_payload),
+            "size_bytes": len(trust_payload),
+            "semantic_sha256": sha256_json(trust),
+        },
+        artifact_root="artifacts/uninterrupted",
+        artifact_root_identity={
+            "st_dev": uninterrupted_stat.st_dev,
+            "st_ino": uninterrupted_stat.st_ino,
+        },
+        config=uninterrupted_config,
+    )
+    uninterrupted_authority_path = tmp_path / "authority-uninterrupted.json"
+    uninterrupted_authority_path.write_bytes(trainer._canonical_json_bytes(uninterrupted_authority))
+    assert (
+        trainer._run(
+            SimpleNamespace(
+                authority=uninterrupted_authority_path,
+                expected_authority_sha256=uninterrupted_authority["authority_sha256"],
+                resume_policy="auto",
+                invocation_step_budget=2,
+                required_end_step=2,
+            )
+        )
+        == 0
+    )
+
+    resumed = load_checkpoint(run, expected_bindings=authority_state_bindings(authority))
+    uninterrupted = load_checkpoint(
+        tmp_path / "artifacts" / "uninterrupted",
+        expected_bindings=authority_state_bindings(uninterrupted_authority),
+    )
+    assert adapter_tensor_fingerprint(resumed.adapter_tensors) == adapter_tensor_fingerprint(
+        uninterrupted.adapter_tensors
+    )
+    assert resumed.optimizer_tensors.keys() == uninterrupted.optimizer_tensors.keys()
+    assert all(
+        bool(mx.array_equal(resumed.optimizer_tensors[key], uninterrupted.optimizer_tensors[key]))
+        for key in resumed.optimizer_tensors
+    )
+    for field in (
+        "step",
+        "epoch",
+        "cursor",
+        "order",
+        "order_sha256",
+        "sample_history_sha256",
+        "loss_trail",
+        "validation_trail",
+        "baseline_validation",
+    ):
+        assert resumed.state[field] == uninterrupted.state[field]

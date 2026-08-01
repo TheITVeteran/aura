@@ -37,26 +37,25 @@ def _safe_resume_verifier() -> list[str]:
         sys.executable,
         "-c",
         (
-            "import hashlib,json,os,pathlib; "
+            "import hashlib,json,os; "
             "plan=os.environ['AURA_DETACHED_PLAN_SHA256']; "
             "command=os.environ['AURA_DETACHED_COMMAND_SHA256']; "
             "attempt=int(os.environ['AURA_DETACHED_PRIOR_ATTEMPT']); "
             "head=os.environ['AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256']; "
-            "path=pathlib.Path(os.environ['AURA_DETACHED_RESUME_EVIDENCE_PATH']); "
-            "e={'schema':'aura.detached_step.resume_evidence.v1','plan_sha256':plan,"
+            "e={'schema':'aura.detached_step.resume_evidence.v2','plan_sha256':plan,"
             "'command_sha256':command,'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0,"
             "'checkpoint_state':'test-safe'}; "
-            "raw=(json.dumps(e,sort_keys=True,separators=(',',':'))+'\\n').encode(); "
-            "path.write_bytes(raw); esha=hashlib.sha256(raw).hexdigest(); "
+            "raw=json.dumps(e,sort_keys=True,separators=(',',':')).encode(); "
+            "esha=hashlib.sha256(raw).hexdigest(); "
             "identity=hashlib.sha256(json.dumps({'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0,"
             "'evidence_sha256':esha},sort_keys=True,separators=(',',':')).encode()).hexdigest(); "
-            "print(json.dumps({'schema':'aura.detached_step.resume_verdict.v2',"
+            "print(json.dumps({'schema':'aura.detached_step.resume_verdict.v3',"
             "'plan_sha256':plan,'command_sha256':command,'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0,"
             "'checkpoint_identity':identity,'verdict':'safe_to_resume',"
-            "'evidence_path':str(path),'evidence_sha256':esha,'evidence':e}))"
+            "'evidence_sha256':esha,'evidence':e}))"
         ),
     ]
 
@@ -81,21 +80,19 @@ def _replaying_resume_verifier(state_path: Path) -> list[str]:
             "    command=os.environ['AURA_DETACHED_COMMAND_SHA256']\n"
             "    attempt=int(os.environ['AURA_DETACHED_PRIOR_ATTEMPT'])\n"
             "    head=os.environ['AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256']\n"
-            "    path=pathlib.Path(os.environ['AURA_DETACHED_RESUME_EVIDENCE_PATH'])\n"
-            "    evidence={'schema':'aura.detached_step.resume_evidence.v1',"
+            "    evidence={'schema':'aura.detached_step.resume_evidence.v2',"
             "'plan_sha256':plan,'command_sha256':command,'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0}\n"
-            "    raw=(json.dumps(evidence,sort_keys=True,separators=(',',':'))+'\\n').encode()\n"
-            "    path.write_bytes(raw)\n"
+            "    raw=json.dumps(evidence,sort_keys=True,separators=(',',':')).encode()\n"
             "    evidence_sha=hashlib.sha256(raw).hexdigest()\n"
             "    identity=hashlib.sha256(json.dumps({'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0,"
             "'evidence_sha256':evidence_sha},sort_keys=True,separators=(',',':')).encode()).hexdigest()\n"
-            "    verdict={'schema':'aura.detached_step.resume_verdict.v2',"
+            "    verdict={'schema':'aura.detached_step.resume_verdict.v3',"
             "'plan_sha256':plan,'command_sha256':command,'prior_attempt':attempt,"
             "'prior_journal_head_sha256':head,'checkpoint_sequence':0,"
             "'checkpoint_identity':identity,'verdict':'safe_to_resume',"
-            "'evidence_path':str(path),'evidence_sha256':evidence_sha,'evidence':evidence}\n"
+            "'evidence_sha256':evidence_sha,'evidence':evidence}\n"
             "    state.write_text(json.dumps(verdict,sort_keys=True,separators=(',',':')))\n"
             "    print(json.dumps(verdict))\n"
         ),
@@ -732,6 +729,36 @@ def test_log_symlink_is_rejected_without_touching_target(tmp_path: Path) -> None
     assert receipt["status"] == "supervisor_failed"
     assert receipt["child_pid"] == 0
     assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_custodied_detached_write_rejects_root_exchange_without_redirect(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    replacement = tmp_path / "replacement"
+    replacement.mkdir()
+    with detached._run_directory_custody(run_dir, create=True) as custody:
+        displaced = tmp_path / "displaced"
+        run_dir.rename(displaced)
+        replacement.rename(run_dir)
+        with pytest.raises(detached.DetachedStepError, match="custodied artifact write failed"):
+            detached._atomic_write(run_dir / detached.STATUS_FILE, {"state": "forbidden"})
+        assert custody.identity["st_ino"] == displaced.stat().st_ino
+    assert list(run_dir.iterdir()) == []
+    assert not (displaced / detached.STATUS_FILE).exists()
+
+
+def test_custodied_detached_write_rejects_nested_symlink_without_redirect(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with detached._run_directory_custody(run_dir, create=True):
+        (run_dir / "nested").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(detached.DetachedStepError, match="custodied artifact write failed"):
+            detached._atomic_write(run_dir / "nested" / "status.json", {"state": "forbidden"})
+    assert list(outside.iterdir()) == []
 
 
 def test_supervisor_fault_after_target_release_cleans_group(

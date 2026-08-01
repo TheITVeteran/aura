@@ -68,6 +68,7 @@ RESUME_MIGRATION_KEYS = frozenset(
     }
 )
 IDENTITY_RECEIPT_SCHEMA_V2 = "aura.recurrence_adapter_identity_receipt.v2"
+DEPENDENCY_TREE_SCHEMA_V1 = "aura.runtime_dependency_tree.v1"
 
 SOURCE_ROLES = frozenset(
     {
@@ -278,18 +279,24 @@ def _migration_certificate_summary(value: Any) -> dict[str, Any]:
     change = value.get("required_execution_change")
     trainer = value.get("new_trainer")
     recovery_attempts = value.get("recovery_attempts")
-    if not all(
-        isinstance(item, Mapping)
-        for item in (source, destination, failure, change, trainer)
-    ) or not isinstance(recovery_attempts, list):
+    if (
+        not isinstance(source, Mapping)
+        or not isinstance(destination, Mapping)
+        or not isinstance(failure, Mapping)
+        or not isinstance(change, Mapping)
+        or not isinstance(trainer, Mapping)
+        or not isinstance(recovery_attempts, list)
+    ):
         _fail("checkpoint_migration_schema_invalid")
     complete = destination.get("complete")
     adapter = destination.get("adapter")
     optimizer = destination.get("optimizer")
     tombstone = failure.get("tombstone")
-    if not all(
-        isinstance(item, Mapping)
-        for item in (complete, adapter, optimizer, tombstone)
+    if (
+        not isinstance(complete, Mapping)
+        or not isinstance(adapter, Mapping)
+        or not isinstance(optimizer, Mapping)
+        or not isinstance(tombstone, Mapping)
     ):
         _fail("checkpoint_migration_schema_invalid")
     return _resume_migration_identity(
@@ -506,13 +513,81 @@ def model_behavior_bundle_identity(model_path: str | Path) -> dict[str, Any]:
     }
 
 
-def runtime_environment_identity() -> dict[str, Any]:
-    dependencies: dict[str, str] = {}
-    for distribution in ("mlx", "mlx-lm", "numpy"):
+def _distribution_tree_identity(distribution_name: str) -> dict[str, Any]:
+    try:
+        distribution = importlib.metadata.distribution(distribution_name)
+    except importlib.metadata.PackageNotFoundError:
+        _fail(f"runtime_dependency_missing_{distribution_name}")
+    declared_files = distribution.files
+    if not declared_files:
+        _fail(f"runtime_dependency_files_missing_{distribution_name}")
+    records: list[dict[str, Any]] = []
+    for declared in sorted(declared_files, key=str):
+        declared_label = str(declared)
+        declared_parts = PurePosixPath(declared_label).parts
+        label = (
+            declared_label
+            if not PurePosixPath(declared_label).is_absolute()
+            and all(part not in {"", ".", ".."} for part in declared_parts)
+            else (
+                "external/"
+                f"{sha256_bytes(declared_label.encode('utf-8'))}/"
+                f"{PurePosixPath(declared_label).name}"
+            )
+        )
+        path = Path(str(distribution.locate_file(declared)))
+        if path.is_symlink():
+            _fail(f"runtime_dependency_symlink_{distribution_name}")
         try:
-            dependencies[distribution] = importlib.metadata.version(distribution)
-        except importlib.metadata.PackageNotFoundError:
-            _fail(f"runtime_dependency_missing_{distribution}")
+            before = path.stat()
+            if not path.is_file():
+                _fail(f"runtime_dependency_file_invalid_{distribution_name}")
+            payload = path.read_bytes()
+            after = path.stat()
+        except OSError:
+            _fail(f"runtime_dependency_file_unreadable_{distribution_name}")
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if before_identity != after_identity or len(payload) != before.st_size:
+            _fail(f"runtime_dependency_changed_while_hashing_{distribution_name}")
+        records.append(
+            {
+                "path": label,
+                "sha256": sha256_bytes(payload),
+                "size_bytes": len(payload),
+            }
+        )
+    records.sort(key=lambda record: record["path"])
+    if not records:
+        _fail(f"runtime_dependency_files_missing_{distribution_name}")
+    body = {
+        "schema": DEPENDENCY_TREE_SCHEMA_V1,
+        "distribution": distribution_name,
+        "version": distribution.version,
+        "file_count": len(records),
+        "total_bytes": sum(record["size_bytes"] for record in records),
+        "files": records,
+    }
+    return {**body, "tree_sha256": sha256_bytes(canonical_json_bytes(body))}
+
+
+def runtime_environment_identity() -> dict[str, Any]:
+    dependencies = {
+        distribution: _distribution_tree_identity(distribution)
+        for distribution in ("mlx", "mlx-lm", "numpy")
+    }
     body = {
         "python": platform.python_version(),
         "platform_system": platform.system(),
@@ -577,12 +652,84 @@ def _runtime_identity(value: Any) -> dict[str, Any]:
         role="training_runtime",
     )
     dependencies = value["dependencies"]
-    if (
-        not isinstance(dependencies, Mapping)
-        or set(dependencies) != {"mlx", "mlx-lm", "numpy"}
-        or any(not isinstance(item, str) or not item for item in dependencies.values())
-    ):
+    if not isinstance(dependencies, Mapping) or set(dependencies) != {
+        "mlx",
+        "mlx-lm",
+        "numpy",
+    }:
         _fail("training_runtime_dependencies_invalid")
+    normalized_dependencies: dict[str, Any] = {}
+    for distribution_name in ("mlx", "mlx-lm", "numpy"):
+        dependency = _exact(
+            dependencies[distribution_name],
+            {
+                "schema",
+                "distribution",
+                "version",
+                "file_count",
+                "total_bytes",
+                "files",
+                "tree_sha256",
+            },
+            role="training_runtime_dependency",
+        )
+        files = dependency["files"]
+        if (
+            dependency["schema"] != DEPENDENCY_TREE_SCHEMA_V1
+            or dependency["distribution"] != distribution_name
+            or not isinstance(dependency["version"], str)
+            or not dependency["version"]
+            or not isinstance(files, list)
+            or not files
+        ):
+            _fail("training_runtime_dependency_invalid")
+        normalized_files: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for record in files:
+            binding = _artifact_binding(
+                record,
+                role="training_runtime_dependency_file",
+                allow_empty=True,
+            )
+            if binding["path"] in seen:
+                _fail("training_runtime_dependency_file_duplicate")
+            seen.add(binding["path"])
+            normalized_files.append(binding)
+        if normalized_files != sorted(normalized_files, key=lambda item: item["path"]):
+            _fail("training_runtime_dependency_files_unsorted")
+        file_count = _integer(
+            dependency["file_count"],
+            role="training_runtime_dependency_file_count",
+            minimum=1,
+            maximum=1_000_000,
+        )
+        total_bytes = _integer(
+            dependency["total_bytes"],
+            role="training_runtime_dependency_total_bytes",
+            minimum=0,
+            maximum=MAX_ARTIFACT_BYTES,
+        )
+        if file_count != len(normalized_files) or total_bytes != sum(
+            item["size_bytes"] for item in normalized_files
+        ):
+            _fail("training_runtime_dependency_cardinality_mismatch")
+        dependency_body = {
+            "schema": DEPENDENCY_TREE_SCHEMA_V1,
+            "distribution": distribution_name,
+            "version": dependency["version"],
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+            "files": normalized_files,
+        }
+        tree_sha256 = _sha(
+            dependency["tree_sha256"], role="training_runtime_dependency_tree"
+        )
+        if tree_sha256 != sha256_bytes(canonical_json_bytes(dependency_body)):
+            _fail("training_runtime_dependency_digest_mismatch")
+        normalized_dependencies[distribution_name] = {
+            **dependency_body,
+            "tree_sha256": tree_sha256,
+        }
     body = {
         key: value[key]
         for key in (
@@ -593,6 +740,7 @@ def _runtime_identity(value: Any) -> dict[str, Any]:
             "dependencies",
         )
     }
+    body["dependencies"] = normalized_dependencies
     if any(
         not isinstance(body[key], str) or not body[key]
         for key in (

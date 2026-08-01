@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import signal
+import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -72,6 +73,10 @@ from core.runtime.atomic_writer import (  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
+from core.runtime.secure_path_custody import (  # noqa: E402
+    DirectoryCustody,
+    SecurePathCustodyError,
+)
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     absent_personality_identity,
     resident_bootstrap_runtime_identity,
@@ -107,9 +112,7 @@ def _canonical_json_bytes(value: Any) -> bytes:
             allow_nan=False,
         ).encode("ascii")
     except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
-        raise ResidentSFTBootstrapTrainingError(
-            "resident_sft_trainer_noncanonical_value"
-        ) from exc
+        raise ResidentSFTBootstrapTrainingError("resident_sft_trainer_noncanonical_value") from exc
 
 
 def _read_json_bytes(payload: bytes, *, role: str) -> Any:
@@ -125,19 +128,21 @@ def _read_json_bytes(payload: bytes, *, role: str) -> Any:
 
 
 def _resolve_repo_path(relative: Any, *, role: str, directory: bool = False) -> Path:
-    if (
-        not isinstance(relative, str)
-        or not relative
-        or "\\" in relative
-        or "\x00" in relative
-    ):
+    if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
         _fail(f"resident_sft_trainer_{role}_path_invalid")
     pure = PurePosixPath(relative)
     if pure.is_absolute() or str(pure) != relative or ".." in pure.parts:
         _fail(f"resident_sft_trainer_{role}_path_invalid")
     lexical = REPO_ROOT / pure
-    if lexical.is_symlink():
-        _fail(f"resident_sft_trainer_{role}_symlink_forbidden")
+    current = REPO_ROOT
+    for component in pure.parts:
+        current /= component
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            _fail(f"resident_sft_trainer_{role}_path_unavailable")
+        if stat.S_ISLNK(mode):
+            _fail(f"resident_sft_trainer_{role}_symlink_forbidden")
     try:
         resolved = lexical.resolve(strict=True)
         resolved.relative_to(REPO_ROOT.resolve(strict=True))
@@ -150,6 +155,31 @@ def _resolve_repo_path(relative: Any, *, role: str, directory: bool = False) -> 
     return resolved
 
 
+def _resolve_repo_output_path(relative: Any, *, role: str) -> Path:
+    if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
+        _fail(f"resident_sft_trainer_{role}_path_invalid")
+    pure = PurePosixPath(relative)
+    if pure.is_absolute() or str(pure) != relative or ".." in pure.parts:
+        _fail(f"resident_sft_trainer_{role}_path_invalid")
+    current = REPO_ROOT
+    for component in pure.parts:
+        current /= component
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            break
+        if stat.S_ISLNK(mode):
+            _fail(f"resident_sft_trainer_{role}_symlink_forbidden")
+    resolved = (REPO_ROOT / pure).resolve(strict=False)
+    try:
+        resolved.relative_to(REPO_ROOT.resolve(strict=True))
+    except ValueError as exc:
+        raise ResidentSFTBootstrapTrainingError(
+            f"resident_sft_trainer_{role}_path_unavailable"
+        ) from exc
+    return resolved
+
+
 def _bound_bytes(binding: Mapping[str, Any], *, role: str) -> bytes:
     required = {"path", "sha256", "size_bytes"}
     if not isinstance(binding, Mapping) or not required.issubset(binding):
@@ -158,20 +188,17 @@ def _bound_bytes(binding: Mapping[str, Any], *, role: str) -> bytes:
     try:
         payload = read_stable_bytes(path, max_bytes=MAX_DOCUMENT_BYTES)
     except OSError as exc:
-        raise ResidentSFTBootstrapTrainingError(
-            f"resident_sft_trainer_{role}_unreadable"
-        ) from exc
-    if (
-        len(payload) != binding["size_bytes"]
-        or sha256_bytes(payload) != binding["sha256"]
-    ):
+        raise ResidentSFTBootstrapTrainingError(f"resident_sft_trainer_{role}_unreadable") from exc
+    if len(payload) != binding["size_bytes"] or sha256_bytes(payload) != binding["sha256"]:
         _fail(f"resident_sft_trainer_{role}_binding_drift")
     return cast(bytes, payload)
 
 
 def _load_authority(path: Path, *, expected_sha256: str) -> dict[str, Any]:
     try:
-        payload = read_stable_bytes(path.expanduser().resolve(strict=True), max_bytes=MAX_DOCUMENT_BYTES)
+        payload = read_stable_bytes(
+            path.expanduser().resolve(strict=True), max_bytes=MAX_DOCUMENT_BYTES
+        )
     except OSError as exc:
         raise ResidentSFTBootstrapTrainingError(
             "resident_sft_trainer_authority_unreadable"
@@ -179,7 +206,11 @@ def _load_authority(path: Path, *, expected_sha256: str) -> dict[str, Any]:
     value = _read_json_bytes(payload, role="authority")
     if not isinstance(value, dict):
         _fail("resident_sft_trainer_authority_invalid")
-    return validate_authority(value, expected_authority_sha256=expected_sha256)
+    authority: dict[str, Any] = validate_authority(
+        value,
+        expected_authority_sha256=expected_sha256,
+    )
+    return authority
 
 
 def _load_spec(authority: Mapping[str, Any]) -> RLCExecutionSpec:
@@ -300,21 +331,42 @@ def _publish_sampling_receipt(
     *,
     seed: int,
     epoch: int,
+    custody: DirectoryCustody | None = None,
 ) -> dict[str, Any]:
     receipt = sampling_receipt(rows, order, seed=seed, epoch=epoch)
     payload = _canonical_json_bytes(receipt)
-    directory = ensure_private_directory(out_dir / "sampling")
+    directory = (
+        custody.ensure_directory("sampling")
+        if custody is not None
+        else ensure_private_directory(out_dir / "sampling")
+    )
     path = directory / f"epoch-{epoch:08d}.json"
-    if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
+    published = (
+        custody.write_bytes_once(
+            f"sampling/epoch-{epoch:08d}.json",
+            payload,
+            mode=0o600,
+        )
+        if custody is not None
+        else atomic_write_bytes_if_absent(path, payload, mode=0o600)
+    )
+    if not published:
         try:
-            observed = read_stable_bytes(path, max_bytes=MAX_DOCUMENT_BYTES)
-        except OSError as exc:
+            observed = (
+                custody.read_bytes(
+                    f"sampling/epoch-{epoch:08d}.json",
+                    max_bytes=MAX_DOCUMENT_BYTES,
+                )
+                if custody is not None
+                else read_stable_bytes(path, max_bytes=MAX_DOCUMENT_BYTES)
+            )
+        except (OSError, SecurePathCustodyError) as exc:
             raise ResidentSFTBootstrapTrainingError(
                 "resident_sft_trainer_sampling_receipt_unreadable"
             ) from exc
         if observed != payload:
             _fail("resident_sft_trainer_sampling_receipt_drift")
-    return receipt
+    return cast(dict[str, Any], receipt)
 
 
 def _state_document(
@@ -376,29 +428,37 @@ def _publish_receipt(
     base_before: Mapping[str, Any],
     base_after: Mapping[str, Any],
     halt_reason: str,
+    required_end_step: int,
+    custody: DirectoryCustody | None = None,
 ) -> dict[str, Any]:
-    complete = bool(
+    terminal_target_reached = bool(
         state["terminal"]
         and halt_reason == "max_steps"
         and state["step"] == authority["trainer"]["max_steps"]
     )
+    campaign_scope = authority["campaign_scope"]
+    bootstrap_complete = terminal_target_reached and campaign_scope == "full_bootstrap"
+    canary_lifecycle_complete = terminal_target_reached and campaign_scope == "canary_lifecycle"
     body = {
         "schema": INVOCATION_SCHEMA,
         "authority_sha256": authority["authority_sha256"],
         "campaign_id": authority["campaign_id"],
+        "campaign_scope": campaign_scope,
         "invocation_count": state["invocation_count"],
         "checkpoint_sequence": state["checkpoint_sequence"],
         "checkpoint_complete_sha256": checkpoint_sha256,
         "step": state["step"],
         "max_steps": authority["trainer"]["max_steps"],
+        "required_end_step": required_end_step,
         "terminal": state["terminal"],
         "halt_reason": halt_reason,
-        "bootstrap_complete": complete,
+        "canary_lifecycle_complete": canary_lifecycle_complete,
+        "bootstrap_complete": bootstrap_complete,
         "base_checkpoint_before": dict(base_before),
         "base_checkpoint_after": dict(base_after),
         "base_checkpoint_immutable": dict(base_before) == dict(base_after),
         "claim_state": {
-            "resident_sft_complete": complete,
+            "resident_sft_complete": bootstrap_complete,
             "causal_gain_proven": False,
             "reasoning_gain_proven": False,
             "frontier_level_proven": False,
@@ -410,11 +470,11 @@ def _publish_receipt(
     if not receipt["base_checkpoint_immutable"]:
         _fail("resident_sft_trainer_base_checkpoint_changed")
     payload = _canonical_json_bytes(receipt)
-    atomic_write_bytes(
-        out_dir / f"invocation-{state['invocation_count']:04d}.json",
-        payload,
-        mode=0o600,
-    )
+    invocation_name = f"invocation-{state['invocation_count']:04d}.json"
+    if custody is None:
+        atomic_write_bytes(out_dir / invocation_name, payload, mode=0o600)
+    else:
+        custody.atomic_write_bytes(invocation_name, payload, mode=0o600)
     status_body = {
         "schema": STATUS_SCHEMA,
         "authority_sha256": authority["authority_sha256"],
@@ -425,13 +485,13 @@ def _publish_receipt(
         "terminal": state["terminal"],
         "halt_reason": halt_reason,
     }
-    atomic_write_bytes(
-        out_dir / "status.json",
-        _canonical_json_bytes(
-            {**status_body, "status_sha256": sha256_json(status_body)}
-        ),
-        mode=0o600,
+    status_payload = _canonical_json_bytes(
+        {**status_body, "status_sha256": sha256_json(status_body)}
     )
+    if custody is None:
+        atomic_write_bytes(out_dir / "status.json", status_payload, mode=0o600)
+    else:
+        custody.atomic_write_bytes("status.json", status_payload, mode=0o600)
     return receipt
 
 
@@ -441,8 +501,13 @@ def _run(args: argparse.Namespace) -> int:
         args.authority,
         expected_sha256=args.expected_authority_sha256,
     )
-    out_dir = REPO_ROOT / PurePosixPath(authority_preview["artifact_root"])
-    checkpoint_exists = (out_dir / "latest.json").exists()
+    out_dir = _resolve_repo_output_path(authority_preview["artifact_root"], role="artifact_root")
+    out_custody = DirectoryCustody.acquire(
+        out_dir,
+        expected_identity=authority_preview["artifact_root_identity"],
+        private=True,
+    )
+    checkpoint_exists = out_custody.file_exists("latest.json")
     allow_expired_resume = checkpoint_exists and args.resume_policy in {"auto", "required"}
     authority = validate_authority(
         authority_preview,
@@ -454,8 +519,29 @@ def _run(args: argparse.Namespace) -> int:
         _fail("resident_sft_trainer_checkpoint_exists_resume_required")
     if args.resume_policy == "required" and not checkpoint_exists:
         _fail("resident_sft_trainer_resume_checkpoint_missing")
-    out_dir = ensure_private_directory(out_dir).resolve(strict=True)
+    if out_custody.identity != authority["artifact_root_identity"]:
+        _fail("resident_sft_trainer_artifact_root_identity_drift")
+    out_dir = out_custody.path
+    if out_dir != _resolve_repo_output_path(
+        authority_preview["artifact_root"], role="artifact_root"
+    ):
+        _fail("resident_sft_trainer_artifact_root_identity_drift")
     config = ResidentSFTBootstrapConfig.from_dict(authority["trainer"])
+    invocation_step_budget = (
+        config.max_invocation_steps
+        if getattr(args, "invocation_step_budget", None) is None
+        else args.invocation_step_budget
+    )
+    if (
+        type(invocation_step_budget) is not int
+        or not 1 <= invocation_step_budget <= config.max_invocation_steps
+    ):
+        _fail("resident_sft_trainer_invocation_step_budget_invalid")
+    required_end_step_arg = getattr(args, "required_end_step", None)
+    if required_end_step_arg is not None and (
+        type(required_end_step_arg) is not int or not 0 <= required_end_step_arg <= config.max_steps
+    ):
+        _fail("resident_sft_trainer_required_end_step_invalid")
     train_rows, validation_rows, sources = _load_dataset_and_sources(authority)
     spec = _load_spec(authority)
     _load_trust_policy(authority)
@@ -474,8 +560,14 @@ def _run(args: argparse.Namespace) -> int:
     ):
         _fail("resident_sft_trainer_preload_identity_drift")
     bindings = authority_state_bindings(authority)
+    out_custody.verify()
 
-    with interprocess_file_lock(out_dir / ".trainer.lock"):
+    trainer_lock = (
+        out_custody.file_lock(".trainer.lock")
+        if out_custody is not None
+        else interprocess_file_lock(out_dir / ".trainer.lock")
+    )
+    with trainer_lock:
         import mlx.core as mx
         import mlx.optimizers as optim
         from mlx.utils import tree_flatten, tree_unflatten
@@ -557,7 +649,9 @@ def _run(args: argparse.Namespace) -> int:
                 order,
                 seed=config.seed,
                 epoch=epoch,
+                custody=out_custody,
             )
+            out_custody.verify()
             sample_history = initial_sample_history()
             invocation_count = 1
             prior_elapsed = 0.0
@@ -567,7 +661,11 @@ def _run(args: argparse.Namespace) -> int:
             sequence = 0
 
             if checkpoint_exists:
-                loaded = load_checkpoint(out_dir, expected_bindings=bindings)
+                loaded = load_checkpoint(
+                    out_dir,
+                    expected_bindings=bindings,
+                    custody=out_custody,
+                )
                 state = loaded.state
                 assert_adapter_tensor_topology(expected_adapter, loaded.adapter_tensors)
                 if (
@@ -575,20 +673,24 @@ def _run(args: argparse.Namespace) -> int:
                     or state["adapter_topology_sha256"] != topology_sha
                 ):
                     _fail("resident_sft_trainer_resume_adapter_identity_drift")
-                loaded_adapter_sha = adapter_tensor_fingerprint(
-                    loaded.adapter_tensors
-                )
+                loaded_adapter_sha = adapter_tensor_fingerprint(loaded.adapter_tensors)
                 model.load_weights(list(loaded.adapter_tensors.items()), strict=False)
                 optimizer.state = tree_unflatten(list(loaded.optimizer_tensors.items()))
                 optimizer.init(model.trainable_parameters())
                 mx.eval(model.trainable_parameters(), optimizer.state)
-                if (
-                    adapter_tensor_fingerprint(adapter_tensor_dict(model))
-                    != loaded_adapter_sha
-                ):
+                if adapter_tensor_fingerprint(adapter_tensor_dict(model)) != loaded_adapter_sha:
                     _fail("resident_sft_trainer_loaded_adapter_drift")
                 if state["terminal"]:
-                    inspected = inspect_checkpoint(out_dir, expected_bindings=bindings)
+                    required_end_step = (
+                        config.max_steps if required_end_step_arg is None else required_end_step_arg
+                    )
+                    if state["step"] != required_end_step:
+                        _fail("resident_sft_trainer_required_end_step_overshot")
+                    inspected = inspect_checkpoint(
+                        out_dir,
+                        expected_bindings=bindings,
+                        custody=out_custody,
+                    )
                     base_after = full_weight_checkpoint_identity(model_dir)
                     receipt = _publish_receipt(
                         out_dir,
@@ -598,7 +700,10 @@ def _run(args: argparse.Namespace) -> int:
                         base_before=base_before,
                         base_after=base_after,
                         halt_reason=state["halt_reason"],
+                        required_end_step=required_end_step,
+                        custody=out_custody,
                     )
+                    out_custody.verify()
                     print(json.dumps(receipt, sort_keys=True), flush=True)
                     return 0
                 step = state["step"]
@@ -616,6 +721,7 @@ def _run(args: argparse.Namespace) -> int:
                     order,
                     seed=config.seed,
                     epoch=epoch,
+                    custody=out_custody,
                 )
                 sample_history = state["sample_history_sha256"]
                 invocation_count = state["invocation_count"] + 1
@@ -658,23 +764,32 @@ def _run(args: argparse.Namespace) -> int:
                     adapter_tensors=expected_adapter,
                     optimizer_tensors=dict(tree_flatten(optimizer.state)),
                     state=initial_state,
+                    custody=out_custody,
                 )
+                out_custody.verify()
                 sequence = 1
 
             invocation_started_step = step
+            required_end_step = (
+                min(config.max_steps, step + invocation_step_budget)
+                if required_end_step_arg is None
+                else required_end_step_arg
+            )
+            if step > required_end_step:
+                _fail("resident_sft_trainer_required_end_step_overshot")
 
             def elapsed() -> float:
                 return prior_elapsed + time.monotonic() - started
 
             halt_reason = "invocation_step_limit"
-            while step < config.max_steps:
+            while step < config.max_steps and step < required_end_step:
                 if INTERRUPTED:
                     halt_reason = "interrupted"
                     break
                 if elapsed() >= config.max_minutes * 60.0:
                     halt_reason = "wall_clock"
                     break
-                if step - invocation_started_step >= config.max_invocation_steps:
+                if step - invocation_started_step >= invocation_step_budget:
                     halt_reason = "invocation_step_limit"
                     break
                 if cursor >= len(order):
@@ -691,7 +806,9 @@ def _run(args: argparse.Namespace) -> int:
                         order,
                         seed=config.seed,
                         epoch=epoch,
+                        custody=out_custody,
                     )
+                    out_custody.verify()
                 row = projected_train[order[cursor]]
                 before_update = adapter_tensor_fingerprint(adapter_tensor_dict(model))
                 result = cached_supervised_live_path_value_and_grad(
@@ -775,13 +892,21 @@ def _run(args: argparse.Namespace) -> int:
                     adapter_tensors=adapter,
                     optimizer_tensors=dict(tree_flatten(optimizer.state)),
                     state=state,
+                    custody=out_custody,
                 )
+                out_custody.verify()
                 if terminal:
                     halt_reason = str(halt)
                     break
 
-            inspected = inspect_checkpoint(out_dir, expected_bindings=bindings)
+            inspected = inspect_checkpoint(
+                out_dir,
+                expected_bindings=bindings,
+                custody=out_custody,
+            )
             final_state = inspected.state
+            if final_state["step"] != required_end_step:
+                _fail("resident_sft_trainer_required_end_step_not_reached")
             if halt_reason == "wall_clock" and not final_state["terminal"]:
                 sequence += 1
                 final_state = _state_document(
@@ -810,8 +935,14 @@ def _run(args: argparse.Namespace) -> int:
                     adapter_tensors=adapter_tensor_dict(model),
                     optimizer_tensors=dict(tree_flatten(optimizer.state)),
                     state=final_state,
+                    custody=out_custody,
                 )
-                inspected = inspect_checkpoint(out_dir, expected_bindings=bindings)
+                out_custody.verify()
+                inspected = inspect_checkpoint(
+                    out_dir,
+                    expected_bindings=bindings,
+                    custody=out_custody,
+                )
                 final_state = inspected.state
             base_after = full_weight_checkpoint_identity(model_dir)
             receipt = _publish_receipt(
@@ -822,7 +953,10 @@ def _run(args: argparse.Namespace) -> int:
                 base_before=base_before,
                 base_after=base_after,
                 halt_reason=halt_reason,
+                required_end_step=required_end_step,
+                custody=out_custody,
             )
+            out_custody.verify()
             print(json.dumps(receipt, sort_keys=True), flush=True)
             del model, tokenizer, optimizer
             mx.synchronize()
@@ -839,6 +973,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--authority", type=Path, required=True)
     parser.add_argument("--expected-authority-sha256", required=True)
     parser.add_argument("--resume-policy", choices=sorted(RESUME_POLICIES), default="auto")
+    parser.add_argument("--invocation-step-budget", type=int)
+    parser.add_argument("--required-end-step", type=int)
     args = parser.parse_args(argv)
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, _signal_handler)

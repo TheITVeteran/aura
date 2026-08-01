@@ -19,6 +19,7 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (
     save_checkpoint,
     validate_checkpoint_state,
 )
+from core.runtime.secure_path_custody import DirectoryCustody
 
 
 def _sha(value: str) -> str:
@@ -290,6 +291,25 @@ def test_checkpoint_root_symlink_is_forbidden(tmp_path: Path) -> None:
             optimizer_tensors=_optimizer(),
             state=_state(),
         )
+
+
+def test_custodied_checkpoint_refuses_nested_symlink_without_external_write(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with DirectoryCustody.acquire(run, create=True, private=True) as custody:
+        (run / "checkpoints").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(ResidentSFTBootstrapStateError, match="root_symlink"):
+            save_checkpoint(
+                run,
+                adapter_tensors=_adapter(),
+                optimizer_tensors=_optimizer(),
+                state=_state(),
+                custody=custody,
+            )
+    assert list(outside.iterdir()) == []
 
 
 def test_inspection_rejects_checkpoint_root_replaced_by_symlink(tmp_path: Path) -> None:

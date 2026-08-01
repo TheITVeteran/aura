@@ -25,11 +25,16 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     CURRENT_REGISTRY_VERSION,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.runtime.secure_path_custody import (
+    SecurePathCustodyError,
+    validate_directory_identity,
+)
 
 AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v1"
 DATASET_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_dataset.v1"
 TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
+CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
@@ -37,10 +42,12 @@ REQUIRED_SOURCE_ROLES: Final = frozenset(
     {
         "authority",
         "state",
+        "bootstrap_execution",
         "trainer",
         "preparer",
         "controller",
         "objective",
+        "recurrent_sft_execution",
         "execution_spec",
         "recurrence_adapter",
         "adapter_identity",
@@ -53,6 +60,8 @@ REQUIRED_SOURCE_ROLES: Final = frozenset(
         "detached_campaign_evidence",
         "detached_runner",
         "atomic_writer",
+        "secure_path_custody",
+        "file_read_gateway",
         "model_lane_control",
         "mlx_memory_guard",
     }
@@ -125,6 +134,18 @@ def _relative_path(value: Any, *, role: str) -> str:
     ):
         _fail(f"{role}_path_invalid")
     return value
+
+
+def _directory_identity(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        _fail("resident_sft_artifact_root_identity_invalid")
+    try:
+        identity: dict[str, int] = validate_directory_identity(value)
+        return identity
+    except SecurePathCustodyError as exc:
+        raise ResidentSFTBootstrapAuthorityError(
+            "resident_sft_artifact_root_identity_invalid"
+        ) from exc
 
 
 def _integer(value: Any, *, role: str, minimum: int, maximum: int) -> int:
@@ -296,7 +317,9 @@ class ResidentSFTBootstrapConfig:
         if (
             not self.branch_indices
             or len(self.branch_indices) != len(set(self.branch_indices))
-            or any(type(index) is not int or index < 0 or index > 31 for index in self.branch_indices)
+            or any(
+                type(index) is not int or index < 0 or index > 31 for index in self.branch_indices
+            )
         ):
             _fail("resident_sft_branch_indices_invalid")
 
@@ -360,9 +383,7 @@ class ResidentSFTBootstrapConfig:
         except (TypeError, ValueError, KeyError) as exc:
             if isinstance(exc, ResidentSFTBootstrapAuthorityError):
                 raise
-            raise ResidentSFTBootstrapAuthorityError(
-                "resident_sft_config_schema_invalid"
-            ) from exc
+            raise ResidentSFTBootstrapAuthorityError("resident_sft_config_schema_invalid") from exc
 
 
 def _normalized_row(value: Any, *, split: str, index: int) -> dict[str, Any]:
@@ -415,8 +436,7 @@ def _normalized_splits(
     if not 1 <= len(validation_rows) <= _MAX_ROWS:
         _fail("resident_sft_validation_count_invalid")
     train = [
-        _normalized_row(row, split="train", index=index)
-        for index, row in enumerate(train_rows)
+        _normalized_row(row, split="train", index=index) for index, row in enumerate(train_rows)
     ]
     validation = [
         _normalized_row(row, split="validation", index=index)
@@ -526,8 +546,7 @@ def _validate_dataset(value: Any) -> dict[str, Any]:
         or record.get("train_validation_id_overlap") != 0
         or record.get("train_validation_prompt_overlap") != 0
         or record.get("evaluation_registry") != CURRENT_REGISTRY_VERSION
-        or record.get("training_only_families")
-        != sorted(CURRENT_EXCLUDED_TRAINING_FAMILIES)
+        or record.get("training_only_families") != sorted(CURRENT_EXCLUDED_TRAINING_FAMILIES)
         or record.get("answer_contract") != "final_answer_v1"
     ):
         _fail("resident_sft_dataset_policy_invalid")
@@ -555,9 +574,7 @@ def _validate_time_window(
         committed = datetime.fromisoformat(committed_at)
         expires = datetime.fromisoformat(expires_at)
     except ValueError as exc:
-        raise ResidentSFTBootstrapAuthorityError(
-            "resident_sft_authority_time_invalid"
-        ) from exc
+        raise ResidentSFTBootstrapAuthorityError("resident_sft_authority_time_invalid") from exc
     if committed.tzinfo is None or expires.tzinfo is None or expires <= committed:
         _fail("resident_sft_authority_time_invalid")
     if now is not None:
@@ -574,6 +591,7 @@ def _validate_time_window(
 def build_authority(
     *,
     campaign_id: str,
+    campaign_scope: str,
     committed_at: str,
     expires_at: str,
     model_path: str,
@@ -588,11 +606,14 @@ def build_authority(
     runtime_identity: Mapping[str, Any],
     trust_policy: Mapping[str, Any],
     artifact_root: str,
+    artifact_root_identity: Mapping[str, Any],
     config: ResidentSFTBootstrapConfig,
 ) -> dict[str, Any]:
     _identifier(campaign_id, role="resident_sft_campaign")
     if not campaign_id.startswith("resident-32b-recurrent-sft-bootstrap-cp"):
         _fail("resident_sft_campaign_identity_invalid")
+    if campaign_scope not in CAMPAIGN_SCOPES:
+        _fail("resident_sft_campaign_scope_invalid")
     committed_at, expires_at = _validate_time_window(committed_at, expires_at)
     if not isinstance(config, ResidentSFTBootstrapConfig):
         _fail("resident_sft_config_invalid")
@@ -677,6 +698,7 @@ def build_authority(
         "schema": AUTHORITY_SCHEMA,
         "training_authority": TRAINING_AUTHORITY,
         "campaign_id": campaign_id,
+        "campaign_scope": campaign_scope,
         "committed_at": committed_at,
         "expires_at": expires_at,
         "model": {
@@ -695,6 +717,7 @@ def build_authority(
         "runtime": runtime,
         "trust_policy": trust_binding,
         "artifact_root": _relative_path(artifact_root, role="resident_sft_artifact_root"),
+        "artifact_root_identity": _directory_identity(artifact_root_identity),
         "trainer": config.to_dict(),
         "checkpoint_contract": {
             "every_committed_step_durable": True,
@@ -753,6 +776,7 @@ def validate_authority(
         "schema",
         "training_authority",
         "campaign_id",
+        "campaign_scope",
         "committed_at",
         "expires_at",
         "model",
@@ -764,6 +788,7 @@ def validate_authority(
         "runtime",
         "trust_policy",
         "artifact_root",
+        "artifact_root_identity",
         "trainer",
         "checkpoint_contract",
         "post_training_gate",
@@ -787,6 +812,7 @@ def validate_authority(
         or not str(record.get("campaign_id", "")).startswith(
             "resident-32b-recurrent-sft-bootstrap-cp"
         )
+        or record.get("campaign_scope") not in CAMPAIGN_SCOPES
     ):
         _fail("resident_sft_authority_policy_invalid")
     _validate_time_window(
@@ -881,6 +907,7 @@ def validate_authority(
     )
     _sha(trust["semantic_sha256"], role="resident_sft_trust_policy_semantic")
     _relative_path(record.get("artifact_root"), role="resident_sft_artifact_root")
+    record["artifact_root_identity"] = _directory_identity(record.get("artifact_root_identity"))
     checkpoint_contract = record.get("checkpoint_contract")
     post_training = record.get("post_training_gate")
     claim_state = record.get("claim_state")
@@ -915,9 +942,7 @@ def validate_authority(
         }
     ):
         _fail("resident_sft_claim_boundary_invalid")
-    if observed_model_identity is not None and dict(observed_model_identity) != dict(
-        base_identity
-    ):
+    if observed_model_identity is not None and dict(observed_model_identity) != dict(base_identity):
         _fail("resident_sft_model_binding_drift")
     observed_pairs = (
         (observed_behavior_identity, model["behavior_bundle"], "behavior"),
@@ -972,6 +997,7 @@ def authorize_bound_artifacts(
 
 __all__ = [
     "AUTHORITY_SCHEMA",
+    "CAMPAIGN_SCOPES",
     "CLAIMS_NOT_SUPPORTED",
     "DATASET_SCHEMA",
     "OBJECTIVE_NAME",

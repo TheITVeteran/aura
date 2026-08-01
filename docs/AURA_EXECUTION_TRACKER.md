@@ -34282,3 +34282,138 @@ controller, followed by the real source-bound two-step resident canary. No
 reasoning-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal`
 claim is made. This is total checkpoint 785. The 785-920 completion envelope is
 approximately 85.3%-100.0%, with a 92.7% midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP786 source-bound resident SFT campaign lifecycle
+
+Resident recurrent bootstrapping now has an immutable preparation and
+controller layer around CP785's exact cached trainer. Preparation requires a
+clean published `main`, builds deterministic disjoint recurrence-only train and
+validation sets for explicit canary or full profiles, loads only the bound
+tokenizer, full-hashes the resident checkpoint, and binds behavior,
+personality, tokenizer runtime, execution specification, Python/MLX runtime,
+the exact installed `mlx`, `mlx-lm`, and `numpy` package trees by per-file bytes,
+trust policy, datasets, and every source role into one authority. It emits an
+ordered `CampaignPlan` whose cells cover the configured optimizer steps without
+gaps or overlaps and leaves every gain, promotion, GRPO, frontier, release, and
+`WOW Signal` claim false.
+
+The controller uses Aura's hardened detached-step supervisor for each bounded
+trainer process rather than introducing a second subprocess system. Each cell
+has an append-only campaign-journal attempt, immutable detached plan, process-
+group containment, heartbeat/status stream, terminal receipt, and exact
+checkpoint verifier. Every trainer invocation is bound to an absolute required
+end step. Replaying a child after its checkpoint became durable therefore
+certifies the already-reached target without spending a relative budget again;
+an observed checkpoint beyond the target fails closed. A successful cell
+requires exact target equality, a zero detached return code, an authority-bound
+trainer receipt, independent checkpoint reinspection, and a fresh full base-
+checkpoint identity match.
+
+Crash reconciliation imports staged success only after replaying those same
+checkpoint, invocation, and base-identity checks. Journal attempt counts,
+immutable dispatch reservations, existing failure results, and detached run
+directories survive controller restarts, so launch or timeout crashes cannot
+reset the retry budget. A recovered live attempt reattaches to the same
+supervisor; a pre-dispatch crash becomes an explicit no-progress result. Two
+consecutive no-progress attempts terminate the campaign. Stale heartbeats and
+wall-clock timeouts use the detached runner's authenticated stop channel and
+must prove process containment before rotation.
+
+A target checkpoint paired with a missing or nonzero detached receipt is not
+mistaken for a commit and no longer wedges recovery. Reconciliation skips the
+failed record; a new certification-only attempt starts at the already-durable
+absolute target, runs the same contained trainer path without another optimizer
+update, republishes the invocation receipt, and commits only after all checkpoint
+and base-identity evidence revalidates. Campaign scope is separately hashed into
+the authority and every checkpoint. A canary may publish only
+`canary_lifecycle_complete=true`; its `bootstrap_complete` and
+`resident_sft_complete` claims remain false. Only the full 96-step authority may
+publish those completion claims.
+
+Full campaigns cannot call the controller directly. The full entrypoint must
+prove that the current controller is the child of the launchd-owned
+`/usr/bin/caffeinate -i` process, and installation verifies a live launchd PID
+before publishing its receipt. Preparation requires every bound source to be
+tracked and byte-identical to `HEAD`; execution freezes the complete tracked
+tree at the exact published commit rather than allowing descendant commits.
+The direct execution dependency closure now includes recurrent-SFT execution,
+bootstrap execution, the file-read gateway, and descriptor-bound path custody.
+Security-sensitive directory chains are opened component by component with
+`O_DIRECTORY|O_NOFOLLOW`; artifact, training, and controller roots are bound by
+device/inode identity, retained by open descriptors across execution, and
+reverified at mutation and checkpoint boundaries. Immutable preparation files
+are created and read through descriptor-relative `mkdirat`/`openat`/`linkat`/
+`renameat` equivalents, so pre-existing links, stale roots, accidental
+namespace drift, and exchanges outside the trusted OS principal fail rather
+than redirecting evidence. The signed controller configuration binds an exact
+`exclusive_effective_os_user` threat model. A malicious concurrent process
+under the same effective UID or a privileged actor is outside that boundary:
+such a peer can signal or trace the trainer, bypass discretionary permissions,
+and race any finite userspace path check, so descriptor custody does not falsely
+claim same-UID or privilege isolation. Launch therefore
+requires exclusive ownership of that user and the resident model lane. An
+immutable preparation intent preserves the original
+timestamp across construction crashes.
+
+The trainer retains a bounded invocation budget but treats the plan's absolute
+target as the legal postcondition. Tokenizer-only preparation enforces the same
+EOS contract as MLX-LM without loading the resident weights. The complete
+bounded lifecycle surface passes 175/175 across authority, state, execution,
+identity, preparer, controller, trainer, journal, path custody, and all detached-
+supervisor cases. The entire 48-case detached crash/resume, custody,
+resume-protocol, journal, and launchd suite also passes three fresh consecutive
+repetitions (144/144), with
+no recurrence of the prior intermittent plan-drift symptom. Targeted mypy
+reports no issues; Ruff and diff integrity pass. The adversarial suite includes
+canonical/idempotent preparation, frozen-intent replay, exact tracked-source
+binding, live symlink/pathname exchange rejection, malformed nested policy
+rejection, exact plan coverage, durable attempt accounting, restart recovery at
+journal/reservation/result boundaries, target-plus-failed-receipt certification,
+two-strike no-progress termination, stale-heartbeat containment, manual full-
+profile refusal, positive and adversarial launchd/caffeinate parent lineage,
+terminal handling for unexpected launchd-supervised failures, root-exchange,
+nested-symlink, and external-hardlink non-redirection at controller, detached-
+run, and checkpoint boundaries, scope-honest canary receipts, absolute-target
+replay, and a real tiny-Qwen
+comparison proving
+that resumed and uninterrupted runs end with identical adapter tensors,
+optimizer tensors, sample history, loss trail, and validation trail.
+
+The second adversarial review found five additional release blockers before the
+real canary. CP786 now revalidates each opened descendant parent against its
+lexical device/inode chain immediately before and after publication and rolls
+back a just-published leaf on detected drift within the bound OS-user trust
+domain. Custodied campaign journals use
+atomic whole-ledger replacement instead of appending to a long-lived inode, so
+post-open hardlinks, renames, and unlinks cannot receive later events. The
+single-writer lock records its device/inode identity and reopens its
+descriptor-relative directory entry before every read or mutation, preventing
+a renamed lock from silently creating a second writer inside that trust domain.
+Detached
+resume evidence no longer crosses a filesystem pathname: verifier protocol v3
+returns canonical evidence in-band, and the supervisor independently rehashes
+and binds it to the plan, command, prior attempt, journal head, and checkpoint.
+The resident controller emits that exact protocol while holding signed campaign
+custodies, and a cross-module test proves the detached verifier accepts it.
+Fatal/restartable status publication now occurs before those custodies close;
+the outer CLI never reacquires an unsigned campaign root, and nested detached
+CLI exits become a stable terminal controller error rather than escaping
+launchd classification.
+
+The checksum supplied with the LAWC-09 Reality Reach v2.0 archive also verifies.
+Its acoustic, optical, thermal, internal-world, weakpoint, bounds, ledger, and
+external-adapter materials are now recorded as reference inputs to RR-02 through
+RR-11. The Reality Reach plan now requires a bidirectional adapter protocol with
+typed prepare/actuate/effect-verification/cancel/safe-state/rollback semantics,
+transaction receipts, hardware interlocks, external-actuator custody, and
+causal integration with world modeling, science, memory, agency, health, Q&A,
+and separately controlled RLC grounding. Package-local or synthetic results do
+not count as Aura hardware evidence.
+
+No resident 32B update or Aura physical actuation has run. The next bounded
+step is to publish this source closure, prepare the real two-step resident
+canary from that exact commit, and execute it only after confirming exclusive
+model ownership. No reasoning-gain, frontier, physical-effect, promotion,
+release, GRPO-admission, or `WOW Signal` claim is made. This is total checkpoint
+786. The 786-920 completion envelope is approximately 85.4%-100.0%, with a
+92.7% midpoint. Long soaks remain deferred.

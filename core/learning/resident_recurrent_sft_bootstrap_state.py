@@ -11,9 +11,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Never, cast
@@ -31,6 +34,7 @@ from core.runtime.atomic_writer import (
     ensure_private_directory,
     interprocess_file_lock,
 )
+from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
 CHECKPOINT_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_checkpoint.v1"
 POINTER_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_pointer.v1"
@@ -43,6 +47,8 @@ MAX_METADATA_BYTES: Final = 16 * 1024 * 1024
 BINDING_ROLES: Final = frozenset(
     {
         "authority_sha256",
+        "campaign_scope_sha256",
+        "artifact_root_identity_sha256",
         "dataset_sha256",
         "model_identity_sha256",
         "behavior_identity_sha256",
@@ -85,9 +91,7 @@ def _normalized_json(value: Any, *, role: str) -> Any:
     try:
         return json.loads(canonical_json_bytes(value))
     except (TypeError, ValueError, UnicodeError, RecursionError, OverflowError) as exc:
-        raise ResidentSFTBootstrapStateError(
-            f"resident_sft_state_{role}_invalid"
-        ) from exc
+        raise ResidentSFTBootstrapStateError(f"resident_sft_state_{role}_invalid") from exc
 
 
 def _nonnegative_float(value: Any, *, role: str) -> float:
@@ -121,12 +125,12 @@ def authority_state_bindings(authority: Mapping[str, Any]) -> dict[str, str]:
     model = validated["model"]
     bindings = {
         "authority_sha256": validated["authority_sha256"],
+        "campaign_scope_sha256": sha256_json(validated["campaign_scope"]),
+        "artifact_root_identity_sha256": sha256_json(validated["artifact_root_identity"]),
         "dataset_sha256": validated["dataset"]["dataset_sha256"],
         "model_identity_sha256": model["base_checkpoint"]["fingerprint"],
         "behavior_identity_sha256": model["behavior_bundle"]["bundle_sha256"],
-        "personality_identity_sha256": model["personality_bundle"][
-            "identity_sha256"
-        ],
+        "personality_identity_sha256": model["personality_bundle"]["identity_sha256"],
         "tokenizer_identity_sha256": validated["tokenizer"]["identity_sha256"],
         "source_closure_sha256": sha256_json(validated["sources"]),
         "execution_spec_sha256": validated["execution_spec"]["semantic_sha256"],
@@ -147,7 +151,7 @@ def validate_expected_bindings(bindings: Mapping[str, Any]) -> dict[str, str]:
 
 
 def order_sha256(*, order: Sequence[int], seed: int, epoch: int) -> str:
-    return sha256_json(
+    digest: str = sha256_json(
         {
             "epoch": epoch,
             "order": list(order),
@@ -155,6 +159,7 @@ def order_sha256(*, order: Sequence[int], seed: int, epoch: int) -> str:
             "seed": seed,
         }
     )
+    return digest
 
 
 def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -185,9 +190,7 @@ def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
     }
     if not isinstance(state, Mapping) or set(state) != required:
         _fail("resident_sft_state_schema_invalid")
-    bindings = validate_expected_bindings(
-        {role: state[role] for role in BINDING_ROLES}
-    )
+    bindings = validate_expected_bindings({role: state[role] for role in BINDING_ROLES})
     for role in (
         "order_sha256",
         "sample_history_sha256",
@@ -267,9 +270,7 @@ def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
         _fail("resident_sft_state_terminal_invalid")
     halt_reason = state.get("halt_reason")
     if halt_reason is not None and (
-        not isinstance(halt_reason, str)
-        or not halt_reason
-        or len(halt_reason) > 160
+        not isinstance(halt_reason, str) or not halt_reason or len(halt_reason) > 160
     ):
         _fail("resident_sft_state_halt_reason_invalid")
     if state["terminal"] != (halt_reason is not None):
@@ -308,7 +309,17 @@ class LoadedResidentSFTCheckpoint:
     optimizer_tensors: dict[str, Any]
 
 
-def _root(path: Path, *, create: bool) -> Path:
+def _root(
+    path: Path,
+    *,
+    create: bool,
+    custody: DirectoryCustody | None = None,
+) -> Path:
+    if custody is not None:
+        custody.verify()
+        if path.expanduser().absolute() != custody.path:
+            _fail("resident_sft_state_root_custody_mismatch")
+        return custody.path
     requested = path.expanduser()
     if requested.is_symlink():
         _fail("resident_sft_state_root_symlink_forbidden")
@@ -317,9 +328,7 @@ def _root(path: Path, *, create: bool) -> Path:
     try:
         resolved = requested.resolve(strict=True)
     except (FileNotFoundError, OSError) as exc:
-        raise ResidentSFTBootstrapStateError(
-            "resident_sft_state_root_unavailable"
-        ) from exc
+        raise ResidentSFTBootstrapStateError("resident_sft_state_root_unavailable") from exc
     if not resolved.is_dir() or resolved.is_symlink():
         _fail("resident_sft_state_root_invalid")
     return resolved
@@ -330,8 +339,18 @@ def _read_bytes(
     *,
     role: str,
     max_bytes: int = MAX_ARTIFACT_BYTES,
+    custody: DirectoryCustody | None = None,
 ) -> bytes:
     try:
+        if custody is not None:
+            try:
+                relative = path.expanduser().absolute().relative_to(custody.path).as_posix()
+            except ValueError:
+                _fail(f"resident_sft_state_{role}_outside_custody")
+            payload = custody.read_bytes(relative, max_bytes=max_bytes)
+            if not payload:
+                _fail(f"resident_sft_state_{role}_size_invalid")
+            return payload
         if path.is_symlink() or not path.is_file():
             _fail(f"resident_sft_state_{role}_file_invalid")
         size = path.stat().st_size
@@ -340,29 +359,41 @@ def _read_bytes(
         payload = path.read_bytes()
     except ResidentSFTBootstrapStateError:
         raise
-    except (OSError, FileNotFoundError) as exc:
-        raise ResidentSFTBootstrapStateError(
-            f"resident_sft_state_{role}_unreadable"
-        ) from exc
+    except (OSError, FileNotFoundError, SecurePathCustodyError) as exc:
+        raise ResidentSFTBootstrapStateError(f"resident_sft_state_{role}_unreadable") from exc
     if len(payload) != size:
         _fail(f"resident_sft_state_{role}_size_invalid")
     return payload
 
 
-def _read_json(path: Path, *, role: str) -> dict[str, Any]:
-    payload = _read_bytes(path, role=role, max_bytes=MAX_METADATA_BYTES)
+def _read_json(
+    path: Path,
+    *,
+    role: str,
+    custody: DirectoryCustody | None = None,
+) -> dict[str, Any]:
+    payload = _read_bytes(
+        path,
+        role=role,
+        max_bytes=MAX_METADATA_BYTES,
+        custody=custody,
+    )
     try:
         value = json.loads(payload)
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ResidentSFTBootstrapStateError(
-            f"resident_sft_state_{role}_json_invalid"
-        ) from exc
+        raise ResidentSFTBootstrapStateError(f"resident_sft_state_{role}_json_invalid") from exc
     if not isinstance(value, dict) or canonical_json_bytes(value) != payload:
         _fail(f"resident_sft_state_{role}_noncanonical")
     return value
 
 
-def _write_safetensors(path: Path, tensors: Mapping[str, Any], *, role: str) -> bytes:
+def _write_safetensors(
+    path: Path,
+    tensors: Mapping[str, Any],
+    *,
+    role: str,
+    custody: DirectoryCustody | None = None,
+) -> bytes:
     if (
         not isinstance(tensors, Mapping)
         or not tensors
@@ -371,13 +402,30 @@ def _write_safetensors(path: Path, tensors: Mapping[str, Any], *, role: str) -> 
         _fail(f"resident_sft_state_{role}_tensor_mapping_invalid")
     import mlx.core as mx
 
-    scratch = path.parent / f".{path.stem}.{uuid.uuid4().hex}.tmp.safetensors"
+    scratch_parent: tempfile.TemporaryDirectory[str] | None = None
+    if custody is not None:
+        scratch_parent = tempfile.TemporaryDirectory(prefix="aura-resident-sft-")
+        scratch = Path(scratch_parent.name) / f"{role}.safetensors"
+    else:
+        scratch = path.parent / f".{path.stem}.{uuid.uuid4().hex}.tmp.safetensors"
     try:
         mx.save_safetensors(str(scratch), dict(tensors))
         payload = _read_bytes(scratch, role=f"{role}_scratch")
     finally:
-        durable_unlink(scratch, missing_ok=True)
-    atomic_write_bytes(path, payload, mode=0o600)
+        if scratch_parent is None:
+            durable_unlink(scratch, missing_ok=True)
+        else:
+            scratch_parent.cleanup()
+    if custody is None:
+        atomic_write_bytes(path, payload, mode=0o600)
+    else:
+        try:
+            relative = path.expanduser().absolute().relative_to(custody.path).as_posix()
+            custody.atomic_write_bytes(relative, payload, mode=0o600)
+        except (ValueError, SecurePathCustodyError) as exc:
+            raise ResidentSFTBootstrapStateError(
+                f"resident_sft_state_{role}_custodied_write_failed"
+            ) from exc
     return payload
 
 
@@ -389,7 +437,12 @@ def _artifact_binding(path: str, payload: bytes) -> dict[str, Any]:
     }
 
 
-def _contained_generation(root: Path, value: Any) -> Path:
+def _contained_generation(
+    root: Path,
+    value: Any,
+    *,
+    custody: DirectoryCustody | None = None,
+) -> Path:
     if (
         not isinstance(value, str)
         or not value.startswith("checkpoints/")
@@ -398,15 +451,20 @@ def _contained_generation(root: Path, value: Any) -> Path:
         _fail("resident_sft_state_checkpoint_path_invalid")
     checkpoint_root_path = root / "checkpoints"
     generation_path = root / value
+    if custody is not None:
+        try:
+            descriptor = custody.open_directory(value)
+        except SecurePathCustodyError as exc:
+            raise ResidentSFTBootstrapStateError(
+                "resident_sft_state_checkpoint_path_escape"
+            ) from exc
+        os.close(descriptor)
+        return generation_path
     if checkpoint_root_path.is_symlink() or generation_path.is_symlink():
         _fail("resident_sft_state_checkpoint_path_symlink_forbidden")
     checkpoint_root = checkpoint_root_path.resolve(strict=True)
     generation = generation_path.resolve(strict=True)
-    if (
-        generation.parent != checkpoint_root
-        or generation.is_symlink()
-        or not generation.is_dir()
-    ):
+    if generation.parent != checkpoint_root or generation.is_symlink() or not generation.is_dir():
         _fail("resident_sft_state_checkpoint_path_escape")
     return generation
 
@@ -416,6 +474,7 @@ def _validate_binding(
     complete: Mapping[str, Any],
     *,
     role: str,
+    custody: DirectoryCustody | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     binding = complete.get(role)
     expected_name = f"{role}.safetensors"
@@ -428,42 +487,68 @@ def _validate_binding(
         or not 1 <= binding["size_bytes"] <= MAX_ARTIFACT_BYTES
     ):
         _fail(f"resident_sft_state_{role}_binding_invalid")
-    payload = _read_bytes(generation / expected_name, role=role)
-    if (
-        len(payload) != binding["size_bytes"]
-        or sha256_bytes(payload) != binding["sha256"]
-    ):
+    payload = _read_bytes(
+        generation / expected_name,
+        role=role,
+        custody=custody,
+    )
+    if len(payload) != binding["size_bytes"] or sha256_bytes(payload) != binding["sha256"]:
         _fail(f"resident_sft_state_{role}_commitment_mismatch")
     return dict(binding), payload
+
+
+@contextmanager
+def _checkpoint_lock(
+    root: Path,
+    custody: DirectoryCustody | None,
+) -> Iterator[None]:
+    if custody is not None:
+        try:
+            with custody.file_lock(".checkpoint.lock"):
+                yield
+            return
+        except SecurePathCustodyError as exc:
+            raise ResidentSFTBootstrapStateError(
+                "resident_sft_state_checkpoint_lock_failed"
+            ) from exc
+    with interprocess_file_lock(root / ".checkpoint.lock"):
+        yield
 
 
 def inspect_checkpoint(
     out_dir: Path,
     *,
     expected_bindings: Mapping[str, Any],
+    custody: DirectoryCustody | None = None,
+    _lock: bool = True,
 ) -> InspectedResidentSFTCheckpoint:
     expected = validate_expected_bindings(expected_bindings)
-    root = _root(out_dir, create=False)
-    with interprocess_file_lock(root / ".checkpoint.lock"):
-        pointer = _read_json(root / "latest.json", role="pointer")
+    root = _root(out_dir, create=False, custody=custody)
+    lock = _checkpoint_lock(root, custody) if _lock else nullcontext()
+    with lock:
+        pointer = _read_json(root / "latest.json", role="pointer", custody=custody)
         if (
-            set(pointer)
-            != {"schema", "checkpoint", "checkpoint_sequence", "complete_sha256"}
+            set(pointer) != {"schema", "checkpoint", "checkpoint_sequence", "complete_sha256"}
             or pointer.get("schema") != POINTER_SCHEMA
             or type(pointer.get("checkpoint_sequence")) is not int
             or pointer["checkpoint_sequence"] < 1
             or not _is_sha256(pointer.get("complete_sha256"))
         ):
             _fail("resident_sft_state_pointer_invalid")
-        generation = _contained_generation(root, pointer["checkpoint"])
+        generation = _contained_generation(root, pointer["checkpoint"], custody=custody)
         complete_payload = _read_bytes(
             generation / "complete.json",
             role="complete",
             max_bytes=MAX_METADATA_BYTES,
+            custody=custody,
         )
         if sha256_bytes(complete_payload) != pointer["complete_sha256"]:
             _fail("resident_sft_state_complete_commitment_mismatch")
-        complete = _read_json(generation / "complete.json", role="complete")
+        complete = _read_json(
+            generation / "complete.json",
+            role="complete",
+            custody=custody,
+        )
         if set(complete) != {
             "schema",
             "checkpoint_id",
@@ -495,11 +580,13 @@ def inspect_checkpoint(
             generation,
             complete,
             role="adapter",
+            custody=custody,
         )
         optimizer_binding, _optimizer = _validate_binding(
             generation,
             complete,
             role="optimizer",
+            custody=custody,
         )
         return InspectedResidentSFTCheckpoint(
             checkpoint_dir=generation,
@@ -536,22 +623,38 @@ def save_checkpoint(
     adapter_tensors: Mapping[str, Any],
     optimizer_tensors: Mapping[str, Any],
     state: Mapping[str, Any],
+    custody: DirectoryCustody | None = None,
 ) -> Path:
     """Durably publish one complete optimizer update and advance ``latest``."""
 
     validated = validate_checkpoint_state(state)
-    root = _root(out_dir, create=True)
+    root = _root(out_dir, create=True, custody=custody)
     checkpoint_path = root / "checkpoints"
-    if checkpoint_path.is_symlink():
-        _fail("resident_sft_state_checkpoint_root_symlink_forbidden")
-    checkpoints = ensure_private_directory(checkpoint_path).resolve(strict=True)
-    with interprocess_file_lock(root / ".checkpoint.lock"):
+    if custody is not None:
+        try:
+            checkpoints = custody.ensure_directory("checkpoints")
+        except SecurePathCustodyError as exc:
+            raise ResidentSFTBootstrapStateError(
+                "resident_sft_state_checkpoint_root_symlink_forbidden"
+            ) from exc
+    else:
+        if checkpoint_path.is_symlink():
+            _fail("resident_sft_state_checkpoint_root_symlink_forbidden")
+        checkpoints = ensure_private_directory(checkpoint_path).resolve(strict=True)
+    with _checkpoint_lock(root, custody):
         previous: dict[str, Any] | None = None
         previous_inspected: InspectedResidentSFTCheckpoint | None = None
-        if (root / "latest.json").exists():
+        latest_exists = (
+            custody.file_exists("latest.json")
+            if custody is not None
+            else (root / "latest.json").exists()
+        )
+        if latest_exists:
             previous_inspected = inspect_checkpoint(
                 root,
                 expected_bindings={role: validated[role] for role in BINDING_ROLES},
+                custody=custody,
+                _lock=False,
             )
             previous = previous_inspected.state
         _validate_transition(previous, validated)
@@ -559,24 +662,28 @@ def save_checkpoint(
             f"sequence-{validated['checkpoint_sequence']:08d}-"
             f"step-{validated['step']:08d}-{uuid.uuid4().hex}"
         )
-        generation = ensure_private_directory(checkpoints / checkpoint_id)
+        generation = (
+            custody.ensure_directory(f"checkpoints/{checkpoint_id}")
+            if custody is not None
+            else ensure_private_directory(checkpoints / checkpoint_id)
+        )
         adapter_payload = _write_safetensors(
             generation / "adapter.safetensors",
             adapter_tensors,
             role="adapter",
+            custody=custody,
         )
         optimizer_payload = _write_safetensors(
             generation / "optimizer.safetensors",
             optimizer_tensors,
             role="optimizer",
+            custody=custody,
         )
         if previous is not None and validated["step"] == previous["step"]:
             if (
                 previous_inspected is None
-                or sha256_bytes(adapter_payload)
-                != previous_inspected.adapter_binding["sha256"]
-                or sha256_bytes(optimizer_payload)
-                != previous_inspected.optimizer_binding["sha256"]
+                or sha256_bytes(adapter_payload) != previous_inspected.adapter_binding["sha256"]
+                or sha256_bytes(optimizer_payload) != previous_inspected.optimizer_binding["sha256"]
             ):
                 _fail("resident_sft_state_terminal_tensor_drift")
         complete = {
@@ -588,19 +695,30 @@ def save_checkpoint(
             "optimizer": _artifact_binding("optimizer.safetensors", optimizer_payload),
         }
         complete_payload = canonical_json_bytes(complete)
-        atomic_write_bytes(generation / "complete.json", complete_payload, mode=0o600)
+        if custody is None:
+            atomic_write_bytes(generation / "complete.json", complete_payload, mode=0o600)
+        else:
+            custody.atomic_write_bytes(
+                f"checkpoints/{checkpoint_id}/complete.json",
+                complete_payload,
+                mode=0o600,
+            )
         pointer = {
             "schema": POINTER_SCHEMA,
             "checkpoint": f"checkpoints/{checkpoint_id}",
             "checkpoint_sequence": validated["checkpoint_sequence"],
             "complete_sha256": sha256_bytes(complete_payload),
         }
-        atomic_write_text(
-            root / "latest.json",
-            canonical_json_bytes(pointer).decode("ascii"),
-            encoding="ascii",
-            mode=0o600,
-        )
+        pointer_payload = canonical_json_bytes(pointer)
+        if custody is None:
+            atomic_write_text(
+                root / "latest.json",
+                pointer_payload.decode("ascii"),
+                encoding="ascii",
+                mode=0o600,
+            )
+        else:
+            custody.atomic_write_bytes("latest.json", pointer_payload, mode=0o600)
         return cast(Path, generation)
 
 
@@ -608,12 +726,35 @@ def load_checkpoint(
     out_dir: Path,
     *,
     expected_bindings: Mapping[str, Any],
+    custody: DirectoryCustody | None = None,
 ) -> LoadedResidentSFTCheckpoint:
-    inspected = inspect_checkpoint(out_dir, expected_bindings=expected_bindings)
+    inspected = inspect_checkpoint(
+        out_dir,
+        expected_bindings=expected_bindings,
+        custody=custody,
+    )
     import mlx.core as mx
 
-    adapter = mx.load(str(inspected.checkpoint_dir / "adapter.safetensors"))
-    optimizer = mx.load(str(inspected.checkpoint_dir / "optimizer.safetensors"))
+    if custody is None:
+        adapter = mx.load(str(inspected.checkpoint_dir / "adapter.safetensors"))
+        optimizer = mx.load(str(inspected.checkpoint_dir / "optimizer.safetensors"))
+    else:
+        checkpoint_relative = inspected.checkpoint_dir.relative_to(custody.path)
+        adapter_payload = custody.read_bytes(
+            checkpoint_relative / "adapter.safetensors",
+            max_bytes=MAX_ARTIFACT_BYTES,
+        )
+        optimizer_payload = custody.read_bytes(
+            checkpoint_relative / "optimizer.safetensors",
+            max_bytes=MAX_ARTIFACT_BYTES,
+        )
+        with tempfile.TemporaryDirectory(prefix="aura-resident-sft-load-") as temporary:
+            adapter_path = Path(temporary) / "adapter.safetensors"
+            optimizer_path = Path(temporary) / "optimizer.safetensors"
+            adapter_path.write_bytes(adapter_payload)
+            optimizer_path.write_bytes(optimizer_payload)
+            adapter = mx.load(str(adapter_path))
+            optimizer = mx.load(str(optimizer_path))
     if not isinstance(adapter, dict) or not adapter:
         _fail("resident_sft_state_adapter_tensor_container_invalid")
     if not isinstance(optimizer, dict) or not optimizer:
