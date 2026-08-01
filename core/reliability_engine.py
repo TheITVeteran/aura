@@ -3,6 +3,7 @@ The single source of truth for zero-break runtime.
 Watches every service, enforces circuit breakers, graceful degradation,
 and guarantees cognitive_stability never drops below 0.85.
 """
+from core.runtime.numeric_guards import unit_float
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -72,6 +73,13 @@ class ReliabilityEngine:
         )
 
     async def heartbeat(self, service_name: str, stability: float = 1.0, pressure: float = 0.0):
+        # CP126 (high): "Global stability trusts arbitrary pressure values."
+        # get_global_stability multiplies stability * (1 - pressure), so a
+        # pressure above 1 flips the term negative and a NaN from any single
+        # service makes the whole mean NaN — one misreporting service takes
+        # the global stability signal down with it.
+        stability = unit_float(stability, default=1.0)
+        pressure = unit_float(pressure, default=0.0)
         """Called by every service every 15s."""
         if service_name in self.services:
             svc = self.services[service_name]

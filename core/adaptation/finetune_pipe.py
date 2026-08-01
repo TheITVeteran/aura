@@ -4,6 +4,7 @@ This module hooks into the event bus to listen for successful task executions,
 extracts the reasoning trajectory, and writes it to a JSONL dataset in Alpaca/ShareGPT format.
 This allows Aura to generate her own active-learning data for future fine-tuning.
 """
+from core.runtime.numeric_guards import is_finite_number, unit_float
 
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -72,8 +73,15 @@ class FinetunePipe:
                 output=full_response
             )
             # Attach quality score for priority rotation
-            if quality_score < 0:
+            # CP126 (high): "Caller quality accepts non-finite and
+            # out-of-range values." `quality_score < 0` is False for NaN, so
+            # a NaN skipped the heuristic fallback AND became the stored
+            # score — and rotation sorts on it, where NaN compares False
+            # against everything and pins a sample at one end of the
+            # priority order permanently.
+            if not is_finite_number(quality_score) or quality_score < 0:
                 quality_score = self._compute_quality_score(reasoning, final_action)
+            quality_score = unit_float(quality_score, default=0.0)
             formatted_entry["_quality"] = round(quality_score, 4)
             if metadata:
                 formatted_entry["_meta"] = metadata

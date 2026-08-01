@@ -3,6 +3,7 @@
 Runs arbitrary Python code inside the sandbox.
 Ensures safety by validating AST for banned imports/functions.
 """
+from core.runtime.numeric_guards import positive_float
 
 import ast
 import hashlib
@@ -85,7 +86,15 @@ class CodeExecutionActuator(BaseActuator):
         operator = SandboxOperator()
         
         code = params["code"]
-        timeout_s = float(params.get("timeout_s", 15.0))
+        # CP126 (high): "Execution timeout accepts arbitrary floats."
+        # float() alone admits NaN, inf, zero and negatives. A NaN timeout
+        # compares False against every deadline check, so a synthesized tool
+        # ran unbounded; a zero or negative one means "already expired" and
+        # kills it before it starts. This is caller data reaching a
+        # subprocess boundary.
+        timeout_s = positive_float(
+            params.get("timeout_s", 15.0), default=15.0, maximum=600.0,
+        )
         
         res = operator.execute_synthesized_tool(code, timeout_s=timeout_s)
         
