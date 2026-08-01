@@ -62,6 +62,9 @@ from tools import run_detached_step as detached  # noqa: E402
 from tools.prepare_resident_recurrent_sft_bootstrap_campaign import (  # noqa: E402
     CONTROLLER_CONFIG_SCHEMA,
 )
+from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
+    resident_bootstrap_runtime_identity,
+)
 
 STATUS_SCHEMA: Final = "aura.resident_recurrent_sft_controller_status.v1"
 ATTEMPT_SCHEMA: Final = "aura.resident_recurrent_sft_controller_attempt.v1"
@@ -487,6 +490,8 @@ def _load_contracts(
         now=datetime.now(UTC),
         allow_expired_resume=(training_path / "latest.json").exists(),
     )
+    if resident_bootstrap_runtime_identity() != authority.get("runtime"):
+        _fail("resident_sft_controller_runtime_identity_drift")
     _verify_authority_artifacts(authority)
     if (
         authority_path.as_posix()
@@ -858,7 +863,10 @@ def _launch_args(
     required_end_step: int,
     resume: bool,
 ) -> list[str]:
-    python = str(Path(sys.executable).resolve(strict=True))
+    interpreter = authority.get("runtime", {}).get("interpreter", {})
+    python = interpreter.get("executable")
+    if not isinstance(python, str) or not python:
+        _fail("resident_sft_controller_interpreter_identity_invalid")
     controller = str(Path(__file__).resolve(strict=True))
     trainer = str(
         (REPO_ROOT / "tools/train_resident_recurrent_sft_bootstrap.py").resolve(strict=True)
@@ -1568,7 +1576,7 @@ def _verify_resume_custodied(
 
 def install_launchd(config_path: Path) -> dict[str, Any]:
     global _ACTIVE_CUSTODIES
-    config, _authority, _plan = _load_contracts(config_path.expanduser().resolve(strict=True))
+    config, authority, _plan = _load_contracts(config_path.expanduser().resolve(strict=True))
     if config["profile"] != "full" or config["launch"] != {
         "label": f"com.aura.resident-sft.{config['campaign_id']}",
         "launchd_required": True,
@@ -1582,6 +1590,7 @@ def install_launchd(config_path: Path) -> dict[str, Any]:
         return _install_launchd_custodied(
             config_path=config_path,
             config=config,
+            authority=authority,
             label=label,
             custodies=custodies,
         )
@@ -1595,11 +1604,15 @@ def _install_launchd_custodied(
     *,
     config_path: Path,
     config: Mapping[str, Any],
+    authority: Mapping[str, Any],
     label: str,
     custodies: Sequence[DirectoryCustody],
 ) -> dict[str, Any]:
     root = custodies[-1].path
-    python = str(Path(sys.executable).resolve(strict=True))
+    interpreter = authority.get("runtime", {}).get("interpreter", {})
+    python = interpreter.get("executable")
+    if not isinstance(python, str) or not python:
+        _fail("resident_sft_controller_interpreter_identity_invalid")
     payload = {
         "Label": label,
         "ProgramArguments": [

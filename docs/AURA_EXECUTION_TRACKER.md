@@ -34434,3 +34434,28 @@ rejection. No model was loaded and no training step ran during the refused
 attempt. The next step is a fresh CP787 source-bound two-step canary after this
 repair is tested, published, and re-frozen from exact `main`. No reasoning-gain,
 frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is made.
+
+### 2026-08-01 - CP788 resident interpreter and dependency preflight binding
+
+The first CP787 canary controller consumed its two no-progress attempts before
+model loading because the launch path resolved `.venv/bin/python` through its
+symlink to the Homebrew base executable. That dropped the virtual environment's
+site-packages and both trainers failed immediately while importing
+`cryptography`. The controller correctly stopped at the two-strike limit, but
+preparation had not proven that the interpreter it identified was the one the
+detached trainer would execute.
+
+Resident runtime identity now binds the lexical virtual-environment executable,
+its resolved binary, exact binary bytes, `sys.prefix`, and `base_prefix` in
+addition to the per-file MLX dependency trees. Preparation executes a bounded
+subprocess import of the real trainer entry point with that lexical interpreter
+before checkpoint hashing completes. The controller independently recomputes
+the complete runtime identity, refuses drift, and passes the authority-bound
+lexical executable to detached trainer, resume verifier, and full launchd/
+`caffeinate` paths without dereferencing the venv launcher. Focused tests pass
+42/42; Ruff and strict targeted MyPy pass; a live import preflight succeeds with
+`.venv/bin/python` and records the exact Python 3.12 binary identity. Neither
+failed attempt loaded the resident model or published a checkpoint. The next
+step is a fresh CP788 two-step canary from clean published `main`. No reasoning-
+gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
+made.

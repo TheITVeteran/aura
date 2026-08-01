@@ -25,6 +25,11 @@ def test_runtime_identity_binds_installed_dependency_bytes() -> None:
     claimed = body.pop("identity_sha256")
 
     assert claimed == sha256_json(body)
+    interpreter = observed["interpreter"]
+    assert Path(interpreter["executable"]).is_absolute()
+    assert Path(interpreter["real_executable"]).is_file()
+    assert interpreter["size_bytes"] > 0
+    assert len(interpreter["sha256"]) == 64
     for name in ("mlx", "mlx-lm", "numpy"):
         dependency = observed["dependencies"][name]
         assert dependency["distribution"] == name

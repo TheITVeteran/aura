@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,7 @@ def test_launch_command_caps_partial_resume_to_exact_cell_remainder(
     authority = {
         "authority_sha256": "c" * 64,
         "artifact_root": "artifacts/run/training",
+        "runtime": {"interpreter": {"executable": str(Path(sys.executable).absolute())}},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
     (tmp_path / "authority.json").write_text("{}")
@@ -183,6 +185,11 @@ def test_launch_command_caps_partial_resume_to_exact_cell_remainder(
     assert args[budget_index + 1] == "2"
     target_index = args.index("--required-end-step")
     assert args[target_index + 1] == "4"
+    lexical_python = str(Path(sys.executable).absolute())
+    resolved_python = str(Path(sys.executable).resolve())
+    assert lexical_python in args
+    if resolved_python != lexical_python:
+        assert resolved_python not in args
     verifier = json.loads(args[args.index("--resume-verifier-json") + 1])
     assert verifier[-2:] == ["--minimum-step", "2"]
 

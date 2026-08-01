@@ -82,8 +82,13 @@ def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, profile: str) -
     monkeypatch.setattr(
         prepare,
         "resident_bootstrap_runtime_identity",
-        lambda: {"identity_sha256": "7" * 64, "runtime": "test"},
+        lambda: {
+            "identity_sha256": "7" * 64,
+            "runtime": "test",
+            "interpreter": {"executable": "/test/venv/bin/python"},
+        },
     )
+    monkeypatch.setattr(prepare, "_probe_training_entrypoint", lambda _runtime: None)
     return prepare.prepare_campaign(
         profile=profile,
         campaign_id=f"resident-32b-recurrent-sft-bootstrap-cp-test-{profile}",

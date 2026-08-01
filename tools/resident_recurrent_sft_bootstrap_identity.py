@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -61,7 +64,38 @@ def resident_bootstrap_tokenizer_identity(
 
 
 def resident_bootstrap_runtime_identity() -> dict[str, Any]:
-    return cast(dict[str, Any], runtime_environment_identity())
+    runtime = cast(dict[str, Any], runtime_environment_identity())
+    runtime_body = dict(runtime)
+    runtime_body.pop("identity_sha256")
+    executable = Path(os.path.abspath(sys.executable))
+    real_executable = executable.resolve(strict=True)
+    before = real_executable.stat()
+    payload = real_executable.read_bytes()
+    after = real_executable.stat()
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise TokenizerValidationError("resident_runtime_interpreter_changed")
+    runtime_body["interpreter"] = {
+        "schema": "aura.resident_recurrent_sft_python.v1",
+        "executable": str(executable),
+        "real_executable": str(real_executable),
+        "sys_prefix": str(Path(sys.prefix).resolve(strict=True)),
+        "base_prefix": str(Path(sys.base_prefix).resolve(strict=True)),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+    return {**runtime_body, "identity_sha256": sha256_json(runtime_body)}
 
 
 __all__ = [

@@ -14,7 +14,7 @@ import math
 import stat
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, Never
@@ -401,6 +401,23 @@ def _load_spec(path: Path) -> tuple[RLCExecutionSpec, bytes]:
     return spec, payload
 
 
+def _probe_training_entrypoint(runtime_identity: Mapping[str, Any]) -> None:
+    interpreter = runtime_identity.get("interpreter")
+    executable = interpreter.get("executable") if isinstance(interpreter, Mapping) else None
+    if not isinstance(executable, str) or not executable:
+        _fail("resident_sft_prepare_interpreter_identity_invalid")
+    result = subprocess.run(
+        [executable, "-c", "import tools.train_resident_recurrent_sft_bootstrap"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        _fail("resident_sft_prepare_trainer_import_preflight_failed")
+
+
 def _source_bindings() -> dict[str, dict[str, Any]]:
     if set(SOURCE_PATHS) != REQUIRED_SOURCE_ROLES:
         _fail("resident_sft_prepare_source_roles_invalid")
@@ -535,6 +552,7 @@ def prepare_campaign(
     del tokenizer
     source_bindings = _source_bindings()
     runtime_identity = resident_bootstrap_runtime_identity()
+    _probe_training_entrypoint(runtime_identity)
     model_identity = full_weight_checkpoint_identity(model_path)
     behavior_identity = model_behavior_bundle_identity(model_path)
     personality_identity = absent_personality_identity()
@@ -550,6 +568,7 @@ def prepare_campaign(
         "independent_os_supervisor_required_for_full": True,
         "sleep_inhibitor_required_for_full": True,
         "heartbeat_monitor_supplemental_only": True,
+        "trainer_import_preflight_required": True,
         "training_only": True,
         "promotion_allowed": False,
         "gain_claim_allowed": False,
