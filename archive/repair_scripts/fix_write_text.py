@@ -1,3 +1,25 @@
+"""One-shot migration: `path.write_text(x)` -> `atomic_write_text(path, x)`.
+
+ARCHIVED AND SUPERSEDED. Kept for history; the durable-write rule it was
+written to enforce now lives in core/runtime/file_write_gateway.py and is
+enforced continuously by core/runtime/durable_write_audit.py, not by a
+one-shot rewrite.
+
+CP126: "Repair script raises before processing its first file. The condition
+is true for every string and str.split with an empty separator raises
+ValueError, so the advertised write migration cannot complete."
+
+Exactly right, and the cause is visible in the file: an earlier automated
+pass rewrote `.write_text(` everywhere it appeared — including inside this
+script's own search literal and its comments, leaving `if '' in line:`
+(true for every line) followed by `line.split('')` (ValueError: empty
+separator). A migration script eating its own search string is a good
+argument for the continuous audit that replaced it.
+
+The literal is restored from its working sibling, fix_all_write_text.py, so
+the file is honest code rather than something that raises on line one.
+"""
+
 import re
 import os
 
@@ -7,7 +29,8 @@ def fix_write_text(filepath):
 
     original = content
     
-    # Simple regex to replace atomic_write_text(var, content) with atomic_write_text(var, content)
+    # Rewrite `path.write_text(content)` into
+    # `atomic_write_text(path, content)`.
     # We'll use a regex that matches expressions like `atomic_write_text(my_path, some_content)`
     # This might have issues with nested parentheses but it works for most cases
     
@@ -19,9 +42,9 @@ def fix_write_text(filepath):
     changed = False
     
     for line in lines:
-        if '' in line:
-            # find what's before 
-            parts = line.split('')
+        if '.write_text(' in line:
+            # find what's before the .write_text( call
+            parts = line.split('.write_text(')
             if len(parts) >= 2:
                 for i in range(len(parts) - 1):
                     left = parts[i]
@@ -31,7 +54,7 @@ def fix_write_text(filepath):
                     m = re.search(r'([a-zA-Z0-9_\.]+)$', left)
                     if m:
                         obj = m.group(1)
-                        # replace the atomic_write_text(obj,  with atomic_write_text(obj,
+                        # replace `obj.write_text(` with `atomic_write_text(obj, `
                         left_rem = left[:-len(obj)]
                         parts[i] = left_rem
                         parts[i+1] = f'atomic_write_text({obj}, ' + right
