@@ -169,6 +169,73 @@ def test_stale_reading_is_removed_from_effective_inventory() -> None:
     assert FailureCode.NO_CHANNEL in _codes(certificate)
 
 
+def test_freshness_uses_monotonic_lineage_after_wall_clock_rollback() -> None:
+    clocks = {"wall": NOW_NS, "monotonic": 10_000_000_000}
+    service = RealityReachService(
+        (StaticAdapter(_declaration(stale_after_s=1.0), (_reading(),)),),
+        clock_ns=lambda: clocks["wall"],
+        monotonic_clock_ns=lambda: clocks["monotonic"],
+        session_id="test-session",
+    )
+
+    first = service.refresh()["test.cpu"]
+    clocks["wall"] -= 3_600_000_000_000
+    clocks["monotonic"] += 2_000_000_000
+    later = service.reading("test.cpu")
+
+    assert first.session_id == "test-session"
+    assert first.sequence == 1
+    assert first.ingested_monotonic_ns == 10_000_000_000
+    assert later is not None
+    assert later.status == ReadingStatus.STALE
+    assert later.error == "reading_stale:age_ns=2000000000"
+
+
+def test_prior_service_session_reading_cannot_be_replayed_as_live() -> None:
+    replayed = replace(
+        _reading(),
+        ingested_at_ns=NOW_NS,
+        ingested_monotonic_ns=9_000_000_000,
+        session_id="prior-session",
+        sequence=8,
+    )
+    service = RealityReachService(
+        (StaticAdapter(_declaration(), (replayed,)),),
+        clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: 10_000_000_000,
+        session_id="current-session",
+    )
+
+    reading = service.refresh()["test.cpu"]
+
+    assert reading.status == ReadingStatus.STALE
+    assert reading.session_id == "current-session"
+    assert reading.sequence == 1
+    assert reading.error == "reading_session_mismatch"
+
+
+def test_refresh_sequence_and_operational_readiness_require_live_evidence() -> None:
+    service = RealityReachService(
+        (StaticAdapter(_declaration(), (_reading(),)),),
+        clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: 10_000_000_000,
+        session_id="test-session",
+    )
+
+    assert service.is_ready() is False
+    first = service.refresh()["test.cpu"]
+    second = service.refresh()["test.cpu"]
+
+    assert first.sequence == 1
+    assert second.sequence == 2
+    assert first.sha256 != second.sha256
+    assert service.is_ready() is True
+    status = service.status()
+    assert status["session_id"] == "test-session"
+    assert status["refresh_generation"] == 2
+    assert status["last_refresh_monotonic_ns"] == 10_000_000_000
+
+
 def test_out_of_domain_and_expired_calibration_are_not_live_evidence() -> None:
     out_of_domain = RealityReachService(
         (StaticAdapter(_declaration(), (_reading(value=101.0),)),),
@@ -197,6 +264,7 @@ def test_missing_or_failed_adapter_reading_becomes_explicitly_unavailable() -> N
     assert reading.status == ReadingStatus.UNAVAILABLE
     assert reading.value is None
     assert "adapter_missing_reading" in reading.error
+    assert missing.is_ready() is False
 
 
 def test_adapter_registration_collision_rolls_back_atomically() -> None:

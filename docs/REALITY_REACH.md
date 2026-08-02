@@ -122,7 +122,7 @@ language alone.
 
 - [x] Define a canonical live reading envelope with value, unit, bounded age
   evaluation, provenance, scenario identity, uncertainty, status, and digest.
-- [ ] Replace wall-clock-only reading age with monotonic capture/sequence
+- [x] Replace wall-clock-only reading age with monotonic capture/sequence
   lineage, reboot/session identity, wall-clock provenance, and backward-clock
   handling; verify stale detection across clock adjustment and restart.
 - [x] Add an attributable host-resource adapter for CPU, memory, root disk,
@@ -144,7 +144,7 @@ language alone.
   changes; no stale-plan claim is complete until executable plans exist.
 - [ ] Add calibration identity, uncertainty, clock/reference lineage, sensor
   saturation, dropout, aliasing, and unit-conversion tests.
-- [ ] Define readiness as at least one currently usable declared channel plus a
+- [x] Define readiness as at least one currently usable declared channel plus a
   healthy refresh loop; declarations with every reading unavailable are
   inventory-known but not operationally ready.
 

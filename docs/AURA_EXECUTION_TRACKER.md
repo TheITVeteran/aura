@@ -34553,3 +34553,30 @@ and first durable checkpoint evidence. No bootstrap-complete, reasoning-gain,
 frontier, promotion, release, GRPO-admission, physical-effect, or `WOW Signal`
 claim is made. This is total checkpoint 792 of the current 920-checkpoint
 completion envelope, approximately 86.1% by count. Long soaks remain deferred.
+
+### 2026-08-01 - CP793 Reality Reach monotonic observation lineage
+
+Reality Reach readings are no longer aged solely from wall time. Every service
+instance now has a distinct session identity; each serialized refresh stamps a
+monotonic ingestion time, wall ingestion time, refresh sequence, and explicit
+wall-clock source into the content-addressed reading envelope. Freshness after
+ingestion is computed from the monotonic clock, so a wall-clock rollback cannot
+make an old observation fresh. Replayed readings from another service session,
+missing monotonic lineage, regressed monotonic clocks, future wall captures,
+and readings already stale at ingestion receive distinct machine-readable
+states instead of entering the effective inventory.
+
+Refreshes are single-writer operations, status exposes the session and last
+monotonic refresh, and readiness now requires at least one currently available
+normalized reading rather than merely a declared channel. Adapter failures and
+missing readings retain explicit unavailable envelopes with the same session
+and sequence lineage. The Reality Reach foundation, live service, and boot
+contract suites pass 23/23; focused Ruff, compilation, and diff integrity pass.
+This closes the RR-02 monotonic/session freshness and operational-readiness
+items. Hardware inventory convergence, bidirectional actuation, transaction
+coordination, independent effect verification, and physical acceptance tests
+remain open. No physical effect, evidence promotion, bootstrap-complete,
+reasoning-gain, frontier, release, or `WOW Signal` claim is made. This is total
+checkpoint 793 of the current 920-checkpoint completion envelope,
+approximately 86.2% by count. The resident 32B full campaign remains active and
+its model/import closure is untouched. Long soaks remain deferred.
