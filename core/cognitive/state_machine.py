@@ -41,12 +41,21 @@ def _record_state_machine_degradation(
     *,
     action: str,
     severity: str = "warning",
+    enforce_failure_policy: bool = True,
 ) -> None:
+    """Record a state-machine degradation.
+
+    ``enforce_failure_policy=False`` is for input the engine correctly
+    rejected: bad parameters from a model are not a state-machine fault, and
+    minting a CRITICAL incident for them is what the capability engine
+    already learned not to do (see its input-validation severity tests).
+    """
     record_degradation(
         "state_machine",
         error,
         severity=severity,
         action=action,
+        enforce_failure_policy=enforce_failure_policy,
     )
 
 
@@ -907,6 +916,38 @@ class StateMachine:
                     logger.warning("Param validation failed for %s: %s", tool_name, eval_err)
                     # Fallback to raw params
                     validated_params = params
+
+                # CP126: "Argument validation failure returns a dictionary
+                # containing raw_params and _error rather than a terminal
+                # rejection. Downstream callers can execute a skill with
+                # malformed or schema-incompatible input while the engine
+                # reports that it rejected them."
+                #
+                # This is that downstream caller. extract_and_validate_args
+                # deliberately does not raise — raising turned bad model input
+                # into CRITICAL incidents — so it marks the rejection with
+                # _error and trusts the consumer to read it. Nothing did, and
+                # the rejected parameters went straight into execution: a
+                # skill ran on input the engine had already refused, with the
+                # refusal riding along as an extra key.
+                if isinstance(validated_params, dict) and validated_params.get("_error"):
+                    rejection = str(validated_params.get("_error") or "invalid parameters")
+                    _record_state_machine_degradation(
+                        ValueError(f"{tool_name}: {rejection}"),
+                        action="refused skill execution on parameters the engine rejected",
+                        enforce_failure_policy=False,
+                    )
+                    logger.warning(
+                        "Refusing '%s': the engine rejected its parameters (%s)",
+                        tool_name,
+                        rejection[:200],
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"Invalid parameters for {tool_name}: {rejection}",
+                        "status": "blocked_by_parameter_validation",
+                        "tool": tool_name,
+                    }, []
 
                 return await self._execute_skill_logic(
                     tool_name, validated_params, user_input, priority=priority, origin=origin
