@@ -96,6 +96,7 @@ class Reversibility(StrEnum):
 
 
 class ActuationState(StrEnum):
+    PLANNED = "planned"
     PREPARED = "prepared"
     ADMITTED = "admitted"
     DISPATCHED = "dispatched"
@@ -108,6 +109,7 @@ class ActuationState(StrEnum):
     TIMED_OUT = "timed_out"
     INDETERMINATE = "indeterminate"
     FAILED = "failed"
+    MANUALLY_RECONCILED = "manually_reconciled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +395,8 @@ class ActuationReceipt:
             raise ValueError("transport completion requires command acceptance")
         if self.state == ActuationState.EXECUTED and not self.executed:
             raise ValueError("executed state requires executed=True")
+        if self.executed and self.state != ActuationState.EXECUTED:
+            raise ValueError("executed=True requires the executed state")
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -203,7 +203,7 @@ language alone.
 - [x] Require adapters to declare reversibility, compensation semantics,
   command rate and magnitude limits, exclusivity, permissions, warmup/cooldown,
   watchdog behavior, independent observation routes, and failure modes.
-- [ ] Implement one transaction coordinator whose state machine distinguishes
+- [x] Implement one transaction coordinator whose state machine distinguishes
   planned, admitted, dispatched, executed, effect-verified, compensated,
   rolled-back, cancelled, timed-out, indeterminate, and manually-reconciled
   states without repeating side effects after restart.

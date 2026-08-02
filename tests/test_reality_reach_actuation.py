@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.reality_reach import (
     ActuationCommand,
     ActuationLease,
@@ -277,3 +279,19 @@ def test_effect_cannot_be_verified_without_independent_observation() -> None:
         assert "independent observation" in str(exc)
     else:
         raise AssertionError("unobserved effect was marked verified")
+
+
+def test_actuation_receipt_execution_flag_matches_state() -> None:
+    with pytest.raises(ValueError, match="requires the executed state"):
+        ActuationReceipt(
+            receipt_id="test.actuation.invalid.1",
+            command_sha256=DIGEST,
+            preparation_sha256=DIGEST,
+            adapter_id="test.full",
+            state=ActuationState.FAILED,
+            accepted=True,
+            transport_completed=True,
+            executed=True,
+            recorded_at_ns=NOW_NS,
+            detail_sha256=DIGEST,
+        )

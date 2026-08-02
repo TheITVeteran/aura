@@ -39,6 +39,11 @@ from core.reality_reach.live import (
     register_reality_reach_service,
 )
 from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
+from core.reality_reach.transactions import (
+    RealityActuationCoordinator,
+    RealityActuationError,
+    get_reality_actuation_coordinator,
+)
 
 __all__ = [
     "ActuationCommand",
@@ -63,6 +68,8 @@ __all__ = [
     "PreparedActuation",
     "RealityIR",
     "RealityAdapter",
+    "RealityActuationCoordinator",
+    "RealityActuationError",
     "RealityLayer",
     "ReadingStatus",
     "ReachabilityCertificate",
@@ -74,4 +81,5 @@ __all__ = [
     "RollbackReceipt",
     "get_reality_reach_service",
     "register_reality_reach_service",
+    "get_reality_actuation_coordinator",
 ]

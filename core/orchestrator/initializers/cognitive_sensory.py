@@ -192,10 +192,16 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
     async def _reality_reach() -> None:
         from core.reality_reach.live import get_reality_reach_service
+        from core.reality_reach.transactions import get_reality_actuation_coordinator
 
         service = get_reality_reach_service()
         await asyncio.to_thread(service.refresh)
+        coordinator = await asyncio.to_thread(
+            get_reality_actuation_coordinator,
+            service,
+        )
         orchestrator.reality_reach = service
+        orchestrator.reality_actuation = coordinator
         ServiceContainer.register_instance(
             "reality_reach",
             service,
@@ -205,7 +211,17 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             required_for="physical reachability and experiment evidence",
             failure_policy="degrade_with_receipt",
         )
+        ServiceContainer.register_instance(
+            "reality_actuation",
+            coordinator,
+            required=False,
+            owner="core/reality_reach/transactions.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="governed physical actuation and effect reconciliation",
+            failure_policy="degrade_with_receipt",
+        )
         report["registered"]["reality_reach"] = service.__class__.__name__
+        report["registered"]["reality_actuation"] = coordinator.__class__.__name__
 
     await _run_phase(
         orchestrator,

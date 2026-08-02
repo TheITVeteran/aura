@@ -60,6 +60,11 @@ class DriveControllerService(Service):
         return {"energy": 100, "curiosity": 50, "focus": 50}
 
 
+class RealityActuationService(Service):
+    def is_alive(self):
+        return True
+
+
 def test_cognitive_sensory_initializer_degradation_audit_is_clean():
     from tools.audit_degradation import analyze_file
 
@@ -90,6 +95,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         monkeypatch,
         "core.reality_reach.live",
         get_reality_reach_service=lambda: Service(),
+    )
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.transactions",
+        get_reality_actuation_coordinator=lambda _service: RealityActuationService(),
     )
     _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
@@ -147,6 +157,8 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["drive_engine"].is_alive() is True
     assert registered["reality_reach"] is orchestrator.reality_reach
     assert registered["reality_reach"].refreshed is True
+    assert registered["reality_actuation"] is orchestrator.reality_actuation
+    assert registered["reality_actuation"].is_alive() is True
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
 
 

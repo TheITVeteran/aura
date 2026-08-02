@@ -369,6 +369,16 @@ class RealityReachService:
         with self._lock:
             return self._actuator_adapters.get(channel_id)
 
+    def actuator_capability(self, channel_id: str) -> ActuatorCapability | None:
+        if channel_id not in self.executable_actuator_channels():
+            return None
+        with self._lock:
+            for capabilities in self._adapter_capabilities.values():
+                for capability in capabilities:
+                    if capability.channel_id == channel_id:
+                        return capability
+        return None
+
     def executable_actuator_channels(self) -> tuple[str, ...]:
         readings = self.readings()
         with self._lock:

@@ -34616,3 +34616,39 @@ promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 920-checkpoint completion envelope, approximately 86.3% by count. The resident
 32B full campaign remains active and its model/import closure is untouched.
 Long soaks remain deferred.
+
+### 2026-08-01 - CP795 governed Reality Reach effect transactions
+
+Reality Reach physical effects now enter a single durable coordinator beneath
+the canonical `ActionExecutor` path rather than calling an adapter directly.
+Each content-addressed command receives an owner-only, atomically published
+transaction record. The state machine separates planning, Will admission,
+dispatch, transport execution, independent effect verification, cancellation,
+safe-state recovery, compensation or rollback, timeout, indeterminate effect,
+and authority-bound manual reconciliation. Replaying a terminal, dispatched,
+executed, or indeterminate transaction never repeats the physical side effect.
+
+Actuation leases are minted only inside the governed effect handler and bind
+the service session, Will receipt, command, adapter, and both wall and monotonic
+expiry. Inventory drift, capability mismatch, expired commands, malformed
+receipt lineage, symlinked or non-private transaction custody, digest changes,
+and impossible execution-state combinations fail closed. Adapter calls have
+bounded watchdogs. Failed independent verification invokes rollback; unknown
+transport completion invokes the declared safe-state path; failed recovery is
+durably marked indeterminate for explicit reconciliation instead of guessed.
+Only a matching independently observed effect receipt plus a canonical
+authority receipt can reconcile a post-execution crash.
+
+The coordinator is registered with the cognitive/sensory service spine and
+exposes distinct liveness and executable-readiness. The focused Reality Reach
+and boot contract suite passes 39/39; Ruff, compilation, strict targeted MyPy,
+import smoke, degradation audit, and diff integrity pass. This closes the
+durable RR-06 transaction-coordinator item. Real hardware adapters, typed plan
+compilation, cross-process exclusivity, rate/cooldown enforcement, public
+cancellation, device-local interlocks, and live independently observed
+physical acceptance remain open and are not implied by this checkpoint. No
+physical effect, evidence promotion, bootstrap-complete, reasoning-gain,
+frontier, release, or `WOW Signal` claim is made. This is total checkpoint 795
+of the current 920-checkpoint completion envelope, approximately 86.4% by
+count. The resident training campaign remains separately supervised; long
+soaks remain deferred.
