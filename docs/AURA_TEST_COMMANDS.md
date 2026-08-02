@@ -1,8 +1,14 @@
 # Aura Test Commands
 
+The commands, in the order you actually want them.
+
+One rule before any of it: **never launch test chunks while editing Python
+files.** Chunks spawn fresh processes mid-run and will import half-written
+modules, and the failures you get back will be fiction.
+
 ## Baseline Discovery
 
-Use these first for the current runtime-breaker milestone:
+Start here for the current runtime-breaker milestone:
 
 ```bash
 python -m pytest tests/test_orchestrator_compatibility.py -q

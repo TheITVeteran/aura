@@ -2,8 +2,14 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-Aura must degrade honestly when a model or provider is missing, slow, unsafe, or
-returns low-confidence output.
+When a model is missing, slow, unsafe, or returns something it isn't
+confident in, Aura has to degrade **honestly**.
+
+That word is carrying the policy. The failure mode this exists to prevent is
+not the model going down — it is the runtime covering for the model going
+down, serving a confident-sounding fallback, and reporting success. A visible
+degradation is recoverable. A hidden one is a wrong answer with no signal
+attached to it.
 
 ## Failure Modes
 

@@ -1,12 +1,14 @@
 # Aura Flagship Readiness Gate
 
-This patch adds a conservative release gate:
+A conservative release gate. Conservative meaning it only flags things that
+are wrong in every case, so a hit is a bug rather than a discussion:
 
 ```bash
 python -m core.runtime.flagship_readiness --strict .
 ```
 
-It scans for high-leverage runtime hygiene problems:
+Each pattern below is here because it caused a real incident in this
+runtime, not because a style guide dislikes it:
 
 - raw production `asyncio.create_task` / `asyncio.ensure_future`
 - direct `Path.write_text` calls that may bypass durable persistence policy

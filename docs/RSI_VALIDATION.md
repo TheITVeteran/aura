@@ -2,9 +2,15 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-Aura now has a bounded, identity-preserving RSI validation path. It does not
-remove governance, bypass the Constitution, acquire external compute, or edit
-hidden evals. It proves the parts that are safe and useful:
+A bounded, identity-preserving path for validating recursive self-improvement.
+
+What it does not do, stated first because that is the part people assume:
+it does not remove governance, bypass the Constitution, acquire external
+compute, or touch hidden evals. Self-improvement that can rewrite its own
+constraints is not self-improvement, it is an unbounded process with a
+flattering name.
+
+What it proves, and only this:
 
 - read-only AST/source self-model over architecture files;
 - fail-closed RSI authorization by default;

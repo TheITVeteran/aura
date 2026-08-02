@@ -2,8 +2,12 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-Aura stores only the data needed for continuity, safety receipts, diagnostics,
-and user-requested memory.
+Aura keeps four things: what she needs for continuity, safety receipts,
+diagnostics, and whatever you asked her to remember.
+
+Nothing else. Retention here is a design constraint rather than a promise —
+the classes below decide what gets written at all, so data that falls
+outside them is never collected and never has to be deleted.
 
 ## Retention Classes
 

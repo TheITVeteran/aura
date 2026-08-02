@@ -2,10 +2,13 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-Aura's Autonomous Architecture Governor (ASA) is an audit-first software
-architect subsystem. It builds a live architecture graph, detects structural
-and governance smells, creates staged refactor plans, runs candidates in a
-local shadow workspace, verifies proof obligations, promotes only eligible
+The Autonomous Architecture Governor is an audit-first architect. Audit-first
+matters: it looks before it proposes, and proposes before it touches
+anything.
+
+It builds a live architecture graph, finds structural and governance smells,
+stages refactor plans, runs candidates in a local shadow workspace, verifies
+proof obligations, promotes only eligible
 low-risk changes, monitors after promotion, and restores from rollback packets
 when delayed regression appears.
 
