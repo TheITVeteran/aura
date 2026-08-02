@@ -534,6 +534,7 @@ class InferenceGate:
     # Class-level defaults for observation-path cooldowns so partially
     # constructed instances (test doubles via __new__, hot-reload edges) can
     # never crash the status/recovery path with AttributeError.
+    _closing_clients: set[Any] = set()
     _last_status_recovery_schedule_at: float = 0.0
     _last_cortex_policy_deferred_log_at: float = 0.0
     _last_stale_reset_log_at: float = 0.0
@@ -588,6 +589,10 @@ class InferenceGate:
         self._diagnostic_metadata_lock = checked_lock(
             "inference_gate.diagnostic_metadata", rank=LockRank.LEAF
         )
+        # Clients whose async close is still in flight. Holding the handle is
+        # the difference between "shutting down" and "orphaned": once the
+        # last reference goes, nothing can reap a close that hangs.
+        self._closing_clients: set[Any] = set()
         self._generation_metadata_context: ContextVar[dict[str, Any] | None] = (
             ContextVar(
                 f"aura_inference_gate_generation_metadata_{id(self)}",
@@ -1831,11 +1836,24 @@ class InferenceGate:
                 result = close()
                 if inspect.isawaitable(result):
                     if running_loop is not None:
+                        # CP126 residue: "continues to clear the client
+                        # reference. Processes and buffers can remain live
+                        # after cleanup reports completion."
+                        #
+                        # Dropping self._mlx_client below while this close
+                        # is still in flight orphans a live worker: nothing
+                        # holds the handle, so nothing can kill it if the
+                        # close hangs. Keep a strong reference until the
+                        # close actually finishes.
+                        self._closing_clients.add(client)
                         task = running_loop.create_task(
                             asyncio.wait_for(result, timeout=10.0),
                             name=f"inference_gate_close_{type(client).__name__}",
                         )
                         task.add_done_callback(self._log_task_exception)
+                        task.add_done_callback(
+                            lambda _t, _c=client: self._closing_clients.discard(_c)
+                        )
                         _record_inference_degradation(
                             RuntimeError(
                                 f"{type(client).__name__}.close deferred to running loop "
@@ -1870,12 +1888,12 @@ class InferenceGate:
 
         logger.warning(
             "🛡️ Foreground admission tightening for %s "
-            "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB reason=%s).",
+            "(pressure=%s available=%s process=%s/%s reason=%s).",
             requested_tier,
-            snapshot["pressure_pct"],
-            snapshot["available_gb"],
-            snapshot.get("process_rss_gb", 0.0),
-            snapshot.get("process_rss_limit_gb", 0.0),
+            format_metric(snapshot, "pressure_pct", unit="%"),
+            format_metric(snapshot, "available_gb", unit="GB"),
+            format_metric(snapshot, "process_rss_gb", unit="GB"),
+            format_metric(snapshot, "process_rss_limit_gb", unit="GB"),
             snapshot.get("reason", ""),
         )
         await self._shed_background_workers_for_memory_pressure()
@@ -1884,12 +1902,12 @@ class InferenceGate:
         if not tightened["can_admit"] and protected_foreground and requested_tier != "secondary":
             logger.warning(
                 "🛡️ Protected foreground request proceeding under reduced headroom for tier=%s "
-                "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB).",
+                "(pressure=%s available=%s process=%s/%s).",
                 requested_tier,
-                tightened["pressure_pct"],
-                tightened["available_gb"],
-                tightened.get("process_rss_gb", 0.0),
-                tightened.get("process_rss_limit_gb", 0.0),
+                format_metric(tightened, "pressure_pct", unit="%"),
+                format_metric(tightened, "available_gb", unit="GB"),
+                format_metric(tightened, "process_rss_gb", unit="GB"),
+                format_metric(tightened, "process_rss_limit_gb", unit="GB"),
             )
         return tightened
 
