@@ -15,8 +15,11 @@
 
 ## Intended Use
 
-Aura is designed as a personal cognitive AI assistant that runs locally on the
-user's hardware. It provides:
+A personal cognitive AI assistant that runs on the user's own hardware.
+Local means local — no inference leaves the machine unless someone
+explicitly turns on the cloud lane, which ships without an API key.
+
+What it provides:
 
 - Conversational AI with persistent memory and identity
 - Tool execution (filesystem, shell, browser, research)

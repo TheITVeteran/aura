@@ -2,9 +2,14 @@
 
 ## Core Principle
 
-Aura's autonomous behavior is bounded by the Unified Will. Every autonomous
-action — maintenance, learning, self-repair, background inference, memory
-consolidation — follows the same governance path as user-requested actions:
+Everything autonomous is bounded by the Unified Will — maintenance,
+learning, self-repair, background inference, memory consolidation, all of
+it.
+
+The important word is *same*. Autonomous actions don't get a second, looser
+path. They go through the governance the user's requests go through, which
+is the only version of this that means anything: a system with a separate
+autonomous lane is a system with an ungoverned lane.
 
 ```
 perception → shared state → attention → goals → planning → Unified Will → AuthorityGateway → action → verification → memory commit

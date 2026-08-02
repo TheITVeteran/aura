@@ -1,8 +1,18 @@
 # Guide to Evaluating Aura: Cognitive Agent Runtime
 
-This guide provides step-by-step instructions for an independent researcher or reviewer to clone, install, boot, test, and audit Aura from a clean checkout. 
+Clone it, install it, boot it, test it, audit it. From a clean checkout, in
+order, with nothing taken on trust.
 
-By following this protocol, you will be able to verify that Aura is a serious, governed cognitive-agent runtime with deterministic boundaries, robust self-healing pathways, and empirically load-bearing modules.
+This protocol is written so it can come out negative. Following it should
+let you decide for yourself whether the governance boundaries hold, whether
+the self-healing paths actually run, and whether the modules are load-bearing
+or decorative — and if any of them fail on your machine, the protocol has
+done its job. A verification you can't fail isn't one.
+
+Two documents to have open beside this one:
+[CLAIMS_NOT_SUPPORTED.md](CLAIMS_NOT_SUPPORTED.md) for what is deliberately
+not claimed, and [docs/DOC_STATUS.md](docs/DOC_STATUS.md) for which docs are
+current versus dated records of a single run.
 
 ---
 

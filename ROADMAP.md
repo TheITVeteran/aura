@@ -1,8 +1,15 @@
 # ROADMAP — Path to a Perfect Score
 
-This document is the live, code-grounded map from where Aura is today to
-the highest defensible score across every dimension reviewers have
-flagged. It is an engineering artifact, not a marketing pitch.
+Where Aura is today, where it can defensibly get to, and the actual code
+that closes the gap. Every row points at file paths.
+
+This is an engineering artifact, not a pitch. The grades are meant to be
+uncomfortable in places.
+
+**One caveat before you quote anything here.** These letter grades were
+scored before the July–August work — Reality Reach, the faculty self-model,
+the engineering spine, the whole endurance-ceiling fix — and have not been
+re-scored since. Treat the grades as dated and the closure plans as live.
 
 The columns are:
 

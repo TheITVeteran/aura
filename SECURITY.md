@@ -2,10 +2,17 @@
 
 ## Supported Versions
 
+Aura is calendar-versioned; the authoritative string is `version` in
+`pyproject.toml`. There is no 1.0 release line, and an earlier revision of
+this file implying otherwise was wrong.
+
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | ✅ Active  |
-| < 1.0   | ❌ Research only, no security patches |
+| Current `main` | ✅ Active — this is the only supported line |
+| Anything older | ❌ Research only, no security patches |
+
+Practically: this is single-owner research software with one deployment.
+"Supported" means the current tip gets fixes. Nothing is backported.
 
 ## Reporting a Vulnerability
 
@@ -26,10 +33,13 @@ Response SLA:
 
 ## Security Architecture
 
-Aura is a locally-deployed AI cognitive runtime. Its threat model differs from
-cloud SaaS — the primary trust boundary is the local machine, but the AI agent
-surfaces (tool use, memory, model routing, autonomous action) create unique
-attack vectors.
+Aura runs locally, so the threat model doesn't look like cloud SaaS. The
+primary trust boundary is the machine itself.
+
+That's the easy part. The harder part is that the agent surfaces — tool use,
+memory, model routing, autonomous action — are attack surface that most
+local software doesn't have. A local text editor can't be talked into
+running something. This can.
 
 ### Trust Boundaries
 
