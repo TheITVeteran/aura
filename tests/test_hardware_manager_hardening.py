@@ -90,3 +90,21 @@ def test_hardware_manager_rejects_empty_device_id():
 
     with pytest.raises(ValueError):
         manager.register_device(device)
+
+
+def test_hardware_manager_lifecycle_is_idempotent_and_preserves_registry():
+    manager = HardwareManager()
+    device = Device("persistent")
+    manager.register_device(device)
+
+    asyncio.run(manager.start())
+    asyncio.run(manager.start())
+
+    assert manager.is_alive() is True
+    assert manager.is_ready() is True
+    assert manager.status()["registered_devices"] == 1
+
+    asyncio.run(manager.stop())
+
+    assert manager.is_alive() is False
+    assert manager.get_device("persistent") is device

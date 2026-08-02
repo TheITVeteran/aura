@@ -34652,3 +34652,26 @@ frontier, release, or `WOW Signal` claim is made. This is total checkpoint 795
 of the current 920-checkpoint completion envelope, approximately 86.4% by
 count. The resident training campaign remains separately supervised; long
 soaks remain deferred.
+
+### 2026-08-01 - CP797 hardware-manager runtime ownership
+
+Aura now constructs one `HardwareManager` singleton during cognitive/sensory
+boot, starts it before registration, publishes it through the service
+container and orchestrator, and exposes explicit liveness, readiness, and
+health. Startup is idempotent, shutdown disconnects devices without deleting
+the registry, and a later lifecycle restart retains the same registered device
+identities rather than silently forgetting the physical body. Optional hardware
+absence continues to degrade independently without blocking conversation.
+
+The focused hardware, boot, and Reality Reach contract family passes 43/43;
+Ruff, compilation, strict targeted MyPy, degradation audit, and diff integrity
+pass. This closes the missing runtime-owner half of the RR-06 hardware-dispatch
+repair, but does not close that ledger item: `RoboticsActuator` still has to be
+removed from the generic world-actuator path, device capabilities must be
+declared rather than inferred, and every physical effect must enter the durable
+Reality Reach coordinator through `BaseHardwareDevice.safe_execute`, local
+interlocks, and independent readback. No physical effect, evidence promotion,
+bootstrap-complete, reasoning-gain, frontier, release, or `WOW Signal` claim is
+made. This is total checkpoint 797 of the current 920-checkpoint completion
+envelope, approximately 86.6% by count. The immutable CP796 resident campaign
+continues separately; long soaks remain deferred.

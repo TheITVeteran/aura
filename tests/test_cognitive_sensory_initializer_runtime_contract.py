@@ -101,6 +101,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         "core.reality_reach.transactions",
         get_reality_actuation_coordinator=lambda _service: RealityActuationService(),
     )
+    _install_module(
+        monkeypatch,
+        "core.embodiment.hardware_manager",
+        get_hardware_manager=lambda: Service(),
+    )
     _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
     _install_module(monkeypatch, "core.guardians.memory_guard", MemoryGuard=Service)
@@ -159,6 +164,8 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_reach"].refreshed is True
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
+    assert registered["hardware_manager"] is orchestrator.hardware_manager
+    assert registered["hardware_manager"].started is True
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
 
 

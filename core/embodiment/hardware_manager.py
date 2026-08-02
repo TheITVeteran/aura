@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from core.runtime.base_module import AuraBaseModule
@@ -62,12 +63,12 @@ def _safe_device_id(value: object) -> str:
         text = ""
     return text[:128]
 
-class HardwareManager(AuraBaseModule):
+class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import is untyped
     """
     Manages the lifecycle, discovery, and coordination of all connected physical components.
     Acts as the bridge between Aura's software brain and her physical body.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("HardwareManager")
         self.devices: dict[str, BaseHardwareDevice] = {}
         self.connection_failures: dict[str, str] = {}
@@ -75,6 +76,8 @@ class HardwareManager(AuraBaseModule):
         
     async def start(self) -> None:
         """Initialize and auto-connect to registered hardware."""
+        if self._started:
+            return
         self.logger.info("Initializing Embodiment Hardware Manager...")
         self._started = True
 
@@ -126,8 +129,20 @@ class HardwareManager(AuraBaseModule):
                     severity="warning",
                     extra={"device_id": device_id, "device_name": str(device_name)[:128]},
                 )
-        self.devices.clear()
         self._started = False
+
+    def is_alive(self) -> bool:
+        """The manager is alive once its lifecycle has started."""
+
+        return self._started
+
+    def is_ready(self) -> bool:
+        """Readiness means registry operations are live, not that hardware exists."""
+
+        return self._started
+
+    def status(self) -> dict[str, Any]:
+        return dict(self.get_health())
 
     def register_device(self, device: BaseHardwareDevice) -> None:
         """Add a new hardware device to the registry."""
@@ -180,7 +195,7 @@ class HardwareManager(AuraBaseModule):
         return serialized
 
     def get_health(self) -> dict[str, Any]:
-        base = super().get_health()
+        base: dict[str, Any] = dict(super().get_health())
         connected = sum(1 for device in self.devices.values() if getattr(device, "is_connected", False))
         base.update(
             {
@@ -192,3 +207,19 @@ class HardwareManager(AuraBaseModule):
             }
         )
         return base
+
+
+_HARDWARE_MANAGER: HardwareManager | None = None
+_HARDWARE_MANAGER_LOCK = threading.Lock()
+
+
+def get_hardware_manager() -> HardwareManager:
+    global _HARDWARE_MANAGER
+    if _HARDWARE_MANAGER is None:
+        with _HARDWARE_MANAGER_LOCK:
+            if _HARDWARE_MANAGER is None:
+                _HARDWARE_MANAGER = HardwareManager()
+    return _HARDWARE_MANAGER
+
+
+__all__ = ["HardwareManager", "get_hardware_manager"]

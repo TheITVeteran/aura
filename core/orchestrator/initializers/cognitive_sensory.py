@@ -231,6 +231,31 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         severity="warning",
     )
 
+    async def _hardware_manager() -> None:
+        from core.embodiment.hardware_manager import get_hardware_manager
+
+        manager = get_hardware_manager()
+        await manager.start()
+        orchestrator.hardware_manager = manager
+        ServiceContainer.register_instance(
+            "hardware_manager",
+            manager,
+            required=False,
+            owner="core/embodiment/hardware_manager.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="registered physical-device lifecycle and interlocks",
+            failure_policy="degrade_with_receipt",
+        )
+        report["registered"]["hardware_manager"] = manager.__class__.__name__
+
+    await _run_phase(
+        orchestrator,
+        "hardware_manager",
+        "Registered no physical hardware manager; device actuation remains unavailable",
+        _hardware_manager,
+        severity="warning",
+    )
+
     async def _multimodal_orchestrator() -> None:
         from core.brain.multimodal_orchestrator import MultimodalOrchestrator
 
