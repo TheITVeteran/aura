@@ -49,12 +49,20 @@ def _process_start_time() -> float:
     question with no number at all because the orchestrator lookup was the only
     source and it returned nothing.
     """
+    # ResourceObserver is the single owner of process observation. Reading
+    # psutil directly here was a second, unowned path: under test it bypassed
+    # the deterministic observer conftest installs, and in production it
+    # bypassed the provenance stamp every other reader carries.
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
 
-        return float(psutil.Process(os.getpid()).create_time())
+        observed = get_resource_observer().process(os.getpid())
+        create_time = getattr(observed, "create_time", None)
+        if create_time is not None:
+            return float(create_time)
     except _RECOVERABLE:
         return 0.0
+    return 0.0
 
 
 def _uptime_line() -> str:
@@ -92,15 +100,16 @@ def _memory_lines() -> list[str]:
     lines: list[str] = []
     rss_gb = 0.0
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
 
-        proc = psutil.Process(os.getpid())
-        rss_gb = proc.memory_info().rss / 1e9
-        virt = psutil.virtual_memory()
+        observer = get_resource_observer()
+        proc = observer.process(os.getpid())
+        rss_gb = float(getattr(proc, "rss_bytes", 0.0) or 0.0) / 1e9
+        virt = observer.memory()
         lines.append(
             f"- This process holds {rss_gb:.1f}GB resident; the host is at "
-            f"{virt.percent:.0f}% of {virt.total / 1e9:.0f}GB with "
-            f"{virt.available / 1e9:.1f}GB available."
+            f"{virt.percent:.0f}% of {virt.total_bytes / 1e9:.0f}GB with "
+            f"{virt.available_bytes / 1e9:.1f}GB available."
         )
     except _RECOVERABLE as exc:
         record_degradation("self_state_report", exc, severity="info", action="omitted memory lines")

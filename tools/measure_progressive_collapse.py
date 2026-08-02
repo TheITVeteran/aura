@@ -100,6 +100,10 @@ def measure(
     import mlx.core as mx
     from mlx_lm import load
 
+    from core.runtime.model_lane_control import (
+        estimate_model_job_footprint_gb,
+        standalone_model_lane,
+    )
     from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
     from core.learning.progressive_recurrent_objective import (
         DEFAULT_DISPLACEMENT_FLOOR,
@@ -110,7 +114,18 @@ def measure(
     from core.learning.recurrence_native_objective_v4 import trajectory_loss_v4
 
     started = time.time()
-    model, tokenizer = load(model_path)
+    # A standalone tool that loads a 32B into the same GPU/RAM the live
+    # runtime uses must reserve the lane first. Loading without a lease is
+    # how two 20GB models end up resident at once.
+    request_gb = estimate_model_job_footprint_gb(model_path, purpose="measurement")
+    with standalone_model_lane(
+        owner_id="progressive-collapse-measurement",
+        model_path=model_path,
+        purpose="measurement",
+        request_gb=request_gb,
+        metadata={"tool": "measure_progressive_collapse"},
+    ):
+        model, tokenizer = load(model_path)
     tasks = task_battery(
         list(families), [depth], per_family, seed=seed
     )

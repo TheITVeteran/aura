@@ -21,6 +21,14 @@ from core.runtime.process_identity import (
 )
 
 
+# Creation time is a HOST fact. conftest installs a SimulatedResourceObserver
+# process-wide so ordinary tests do not depend on the developer machine, and
+# that simulation legitimately knows nothing about a subprocess this file just
+# spawned. Tests that read real process state opt in, exactly as conftest
+# documents.
+pytestmark = pytest.mark.host_observation
+
+
 @pytest.fixture
 def live_process():
     proc = subprocess.Popen(["/bin/sleep", "60"])

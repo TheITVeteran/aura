@@ -223,7 +223,23 @@ def _execute(request_path: Path, result_path: Path) -> dict[str, Any]:
     try:
         from mlx_lm import load
 
-        loaded = load(contract["model"]["path"])
+        from core.runtime.model_lane_control import (
+            estimate_model_job_footprint_gb,
+            standalone_model_lane,
+        )
+
+        # Replay loads the same resident-class weights the live runtime uses.
+        # Without a lane lease it can land beside a live model and double the
+        # wired footprint.
+        _model_path = contract["model"]["path"]
+        with standalone_model_lane(
+            owner_id="verified-recurrent-policy-replay",
+            model_path=_model_path,
+            purpose="replay",
+            request_gb=estimate_model_job_footprint_gb(_model_path, purpose="replay"),
+            metadata={"tool": "replay_verified_recurrent_policy_states"},
+        ):
+            loaded = load(_model_path)
         model = loaded[0] if isinstance(loaded, tuple) else loaded
         spec = RLCExecutionSpec.from_dict(json.loads(contract["execution_spec"]["document_json"]))
         adapter = contract["initial_policy_state_custody"]["adapter_initialization"]

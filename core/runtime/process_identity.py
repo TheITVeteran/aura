@@ -261,6 +261,11 @@ def _pid_of(process: Any) -> int | None:
 def _create_time(pid: int) -> float | None:
     """Kernel-reported creation time, or None when it cannot be read."""
 
+    # ResourceObserver is the single owner of process observation in this
+    # codebase, and it already exposes create_time. The direct psutil
+    # fallback that used to sit here was redundant AND a second, unowned
+    # observation path — the exact thing the resource-observation ownership
+    # gate exists to prevent. One reader, one owner.
     try:
         from core.runtime.resource_observation import get_resource_observer
 
@@ -270,12 +275,6 @@ def _create_time(pid: int) -> float | None:
             return float(create_time)
     except _IDENTITY_ERRORS as exc:
         _logger.debug("resource observer could not time pid %s: %s", pid, exc)
-    try:
-        import psutil
-
-        return float(psutil.Process(pid).create_time())
-    except Exception as exc:  # noqa: BLE001 - psutil raises its own hierarchy
-        _logger.debug("psutil could not time pid %s: %s", pid, exc)
     return None
 
 

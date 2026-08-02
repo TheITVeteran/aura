@@ -139,6 +139,16 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "from_pretrained"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/skills/image_gen.py"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "acquire_synchronous_in_process_model_lane",
       "min_guard_sites": 1,
       "modules": [
@@ -157,16 +167,6 @@
       ],
       "ownership_mode": "in_process_sync_heartbeat",
       "path": "core/voice/duplex/tts_stream.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "from_pretrained"
-      ],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/skills/image_gen.py"
     },
     {
       "expected_load_references": 1,
@@ -249,6 +249,17 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/eval_intrinsic_accuracy.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/evaluate_recurrent_sft_falsification.py",
       "purpose": "evaluation"
     },
     {
@@ -342,6 +353,16 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/measure_progressive_collapse.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/nonparametric_proof.py"
     },
     {
@@ -383,8 +404,7 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
-      "path": "tools/rlc_accuracy_ladder.py",
-      "purpose": "evaluation"
+      "path": "tools/replay_verified_recurrent_policy_states.py"
     },
     {
       "expected_load_references": 1,
@@ -394,7 +414,8 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
-      "path": "tools/run_latent_cortex_paired_campaign.py"
+      "path": "tools/rlc_accuracy_ladder.py",
+      "purpose": "evaluation"
     },
     {
       "expected_load_references": 1,
@@ -406,6 +427,16 @@
       "ownership_mode": "standalone_process",
       "path": "tools/run_falsification_matrix.py",
       "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_latent_cortex_paired_campaign.py"
     },
     {
       "expected_load_references": 1,
@@ -447,17 +478,6 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
-      "path": "tools/evaluate_recurrent_sft_falsification.py",
-      "purpose": "evaluation"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "standalone_process",
       "path": "tools/train_grpo.py",
       "purpose": "training"
     },
@@ -482,6 +502,16 @@
       "ownership_mode": "standalone_process",
       "path": "tools/train_recurrent_sft_controls.py",
       "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/train_resident_recurrent_sft_bootstrap.py"
     },
     {
       "expected_load_references": 1,
