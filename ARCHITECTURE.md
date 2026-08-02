@@ -82,14 +82,18 @@ you want to know who approved what.
 
 ### Why it's centralized
 
-Before unification, there were 5+ competing decision authorities
-(SubstrateAuthority, ExecutiveCore, ExecutiveAuthority, AuthorityGateway,
-VolitionEngine, CognitiveKernel) that each claimed to be the central gate
-but were all incompletely wired. The SubstrateAuthority was literally
-described as "the mandatory gate for ALL actions" — and it was called in
-exactly one place. No single source of will, and no way to prove all
-actions went through a unified decision point. Collapsing to one gate was a
-maintenance and provability fix.
+There used to be six competing decision authorities: SubstrateAuthority,
+ExecutiveCore, ExecutiveAuthority, AuthorityGateway, VolitionEngine,
+CognitiveKernel. Every one of them claimed to be the central gate. Every
+one of them was incompletely wired.
+
+The SubstrateAuthority was documented as "the mandatory gate for ALL
+actions." It was called in exactly one place.
+
+So there was no single source of will, and — the part that actually
+mattered — no way to *prove* any action had passed through a decision
+point at all. Six gates you can't verify is zero gates. Collapsing to one
+was a provability fix before it was a maintenance one.
 
 ### Architecture
 
@@ -1623,15 +1627,19 @@ This is an open research question, not a solved problem.
 
 5. **Single machine**: the tick lock model assumes single-process execution. Distributing would require rethinking atomic state commitment. Not a priority until model size exceeds single-machine capacity.
 
-6. **The consciousness question**: open by design. Aura computes scoped integration metrics, has rich internal dynamics, structurally honest phenomenal reports, and theory arbitration. Whether this constitutes experience is a philosophical question the architecture doesn't claim to settle. The proof surfaces expose the trajectory, receipts, and limitations rather than papering over the gap. IIT is still a theory, not a test.
+6. **The consciousness question**: open, and open on purpose. Aura computes scoped integration metrics, runs rich internal dynamics, gates her phenomenal reports on measurable conditions, and arbitrates between theories. Whether any of that constitutes experience is a question this architecture does not claim to settle, and could not settle by being built better. The proof surfaces exist to expose the trajectory, the receipts, and the limits rather than paper over the gap. IIT is a theory, not a test.
 
 ---
 
 ## 13. Open research program
 
-Aura is also a testbed for six genuinely open problems in computational
-consciousness, information theory, and dynamical systems. Each has a
-concrete implementation in `research/` with a validation methodology.
+Aura doubles as a testbed for six problems that are genuinely open in
+computational consciousness, information theory, and dynamical systems.
+
+Open means open. Each one has a concrete implementation in `research/` and
+a validation methodology, and none of them has an answer yet. A module
+existing is not a problem solved — that distinction is worth holding onto
+while reading this section.
 
 ### 13.1 Efficient phi approximation
 
@@ -1749,14 +1757,20 @@ while maintaining long-horizon coherence.
 
 **File**: `tests/test_null_hypothesis_defeat.py`
 
-The hardest question anyone asks about Aura: *"Isn't this all just text
-injection? You compute these numbers, describe them in the system prompt,
-and the LLM responds to the description. The math is decoration."*
+The hardest question anyone asks about this project, and the fair one:
 
-This section documents the 168-test null hypothesis defeat suite. Combined
-with the 57-test causal exclusion + phenomenal convergence suites (see
-[TESTING.md](TESTING.md)), the total is 225 tests arguing against the
-null hypothesis that the architecture is decorative.
+*"Isn't this all just text injection? You compute these numbers, describe
+them in the system prompt, and the model responds to the description. The
+math is decoration."*
+
+That is the right thing to suspect. It would explain everything you can see
+from the outside, and it costs nothing to build a system that only looks
+causal. So the burden is ours.
+
+This section documents the 168-test null hypothesis defeat suite. With the
+57-test causal exclusion and phenomenal convergence suites (see
+[TESTING.md](TESTING.md)), that's 225 tests whose entire job is to try to
+prove the architecture is decorative — and report it if they succeed.
 
 ### The null hypothesis
 
