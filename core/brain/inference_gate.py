@@ -67,6 +67,7 @@ from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
 from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.process_identity import assert_owned, capture_identity
 
 logger = logging.getLogger("Aura.InferenceGate")
 _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
@@ -3042,6 +3043,20 @@ class InferenceGate:
                 # (kill mid-load → warmup_deferred → repeat).
                 kill_client = self._mlx_client
                 kill_process = getattr(kill_client, "_process", None)
+                # CP126: "Recovery kills a private process handle without
+                # generation ownership proof ... no PID start-time ...
+                # binding at the kill point."
+                #
+                # Every check below is followed by an await, and the kill
+                # itself hops to a thread. In that window the worker can
+                # exit, the client can spawn a replacement, and the
+                # replacement can land on the same PID — after which this
+                # kills a healthy new worker and every log line reads like
+                # recovery working. Bind to (pid, create_time) here and
+                # re-check it at the kill.
+                kill_identity = capture_identity(
+                    kill_process, label="cortex_recovery_attempt_3"
+                )
                 if kill_process is None:
                     logger.debug("[RECOVERY] No worker process handle to clean up.")
                 elif self._cortex_worker_is_legitimately_loading(kill_client):
@@ -3051,6 +3066,18 @@ class InferenceGate:
                 elif self._lane_reports_active_generation(self.get_conversation_status()):
                     logger.info(
                         "[RECOVERY] Skipping stale-process kill: lane reports an active generation."
+                    )
+                elif not assert_owned(
+                    kill_identity,
+                    getattr(kill_client, "_process", None),
+                    action="stale-worker kill",
+                    subsystem="inference_gate.recovery",
+                ):
+                    # Not a failure: the worker this decision was about is
+                    # already gone, which is the outcome the kill wanted.
+                    logger.info(
+                        "[RECOVERY] Stale-process kill unnecessary; the bound "
+                        "worker is no longer the current one."
                     )
                 else:
                     try:
@@ -9762,9 +9789,19 @@ class InferenceGate:
                 "warming",
                 "recovering",
             }
+            cleanup_identity = capture_identity(proc, label="cascade_cleanup")
+            if not assert_owned(
+                cleanup_identity,
+                getattr(client, "_process", None),
+                action="stuck-worker force-kill",
+                subsystem="inference_gate.cascade_cleanup",
+            ):
+                # The handle stopped being the client's current process
+                # between the liveness check above and here.
+                return
             logger.warning(
-                "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
-                getattr(proc, "pid", "unknown"),
+                "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker %s",
+                cleanup_identity.describe() if cleanup_identity else "pid=unknown",
             )
             proc.kill()
             if hasattr(proc, "join"):
