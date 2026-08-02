@@ -42,10 +42,11 @@ import re
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
 from contextlib import asynccontextmanager
 from itertools import islice
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Coroutine, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any, ClassVar, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -104,21 +105,37 @@ _VAULT_MAC_KEY_FILENAME = "mycelium_vault.key"
 _VAULT_MAC_ALGORITHM = "hmac-sha256"
 
 
-def _vault_mac_key(base_dir: Path) -> Optional[bytes]:
+def _vault_mac_key(base_dir: Path) -> bytes | None:
     """Read or mint the vault tamper-evidence key, or None if it can't exist."""
     key_path = base_dir / "data" / _VAULT_MAC_KEY_FILENAME
     try:
         if key_path.exists():
-            existing = key_path.read_bytes().strip()
+            # NO .strip(). The key is 32 raw random bytes, and stripping treats
+            # whitespace-valued bytes as padding: a key that happens to begin or
+            # end with 0x20/0x09/0x0a/0x0b/0x0c/0x0d comes back SHORTER than it
+            # was written. Measured at ~4.6% of generated keys, each of which
+            # silently breaks vault tamper-evidence forever after — the MAC is
+            # then computed with a key that never existed.
+            existing = key_path.read_bytes()
             if existing:
                 return existing
         import secrets
 
         raw = secrets.token_bytes(32)
         key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_bytes(raw)
-        os.chmod(key_path, 0o600)
+        # Create exclusively at 0600 rather than write-then-chmod. The old
+        # sequence left the MAC key world-readable for the window between the
+        # write and the chmod, and a plain write is not exclusive — two
+        # processes racing to initialise could each believe they had authored
+        # the key, leaving one holding a value the other overwrote. Matches how
+        # container.py and continuity.py already mint their key material.
+        fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with open(fd, "wb") as handle:
+            handle.write(raw)
         return raw
+    except FileExistsError:
+        # Another process won the race and its key is authoritative.
+        return key_path.read_bytes()
     except (OSError, RuntimeError, ValueError) as exc:
         record_degradation(
             "mycelium",
@@ -138,8 +155,8 @@ def _vault_mac(key: bytes, encoded: str) -> str:
 
 
 def _cohesion_from_topology(
-    strengths: List[float], confidences: List[float]
-) -> Optional[float]:
+    strengths: list[float], confidences: list[float]
+) -> float | None:
     """Fraction of the topology that is not weak, or None when there is none.
 
     CP126 40325f75. The old number was ``mean(edge strengths + route
@@ -225,7 +242,7 @@ from core.governance.durable_learning import (
 from core.runtime.turn_outcome import VerificationGrade
 
 
-def _evidence_identity(evidence: Any) -> Optional[str]:
+def _evidence_identity(evidence: Any) -> str | None:
     """A stable id for the evidence behind an outcome, when it carries one.
 
     Without an id, a durable update cannot be found again when its evidence
@@ -245,7 +262,7 @@ def _evidence_identity(evidence: Any) -> Optional[str]:
     return None
 
 
-def _redact_source_path(path: Any) -> Optional[str]:
+def _redact_source_path(path: Any) -> str | None:
     """Return a project-relative module path, never an absolute filesystem path.
 
     Public topology/report read models are API- and UI-facing; leaking
@@ -326,10 +343,10 @@ class HardwiredPathway(BaseModel):
     pathway_id: str
     pattern: Any  # Union[str, re.Pattern]
     skill_name: str
-    param_map: Dict[str, Union[int, str]] = Field(default_factory=dict)
+    param_map: dict[str, int | str] = Field(default_factory=dict)
     priority: float = 1.0
-    source_file: Optional[str] = None
-    dependencies: List[str] = Field(default_factory=list)
+    source_file: str | None = None
+    dependencies: list[str] = Field(default_factory=list)
     # An untested pathway is not a proven-reliable one. Start below the
     # reinforce ceiling so confidence reflects earned, not assumed, reliability.
     confidence: float = 0.5
@@ -345,7 +362,7 @@ class HardwiredPathway(BaseModel):
     unverified_reinforcements: int = 0
     created_at: float = Field(default_factory=time.time)
     last_matched: float = Field(default_factory=time.monotonic)
-    direct_response: Optional[str] = None  # Legacy non-user emergency response only
+    direct_response: str | None = None  # Legacy non-user emergency response only
     color: str = "#4A90E2"                 # Default Aura Blue
     description: str = ""
     size: float = 1.0
@@ -409,7 +426,7 @@ class HardwiredPathway(BaseModel):
         return self.confidence < self.PRUNE_THRESHOLD
 
     @property
-    def verified_success_rate(self) -> Optional[float]:
+    def verified_success_rate(self) -> float | None:
         """Success rate over VERIFIED outcomes, or None when there are none.
 
         None rather than 0.0: no verified evidence is not a bad record
@@ -436,7 +453,7 @@ class HardwiredPathway(BaseModel):
         total = self.hit_count + self.miss_count
         return self.hit_count / total if total > 0 else 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Legacy helper. Use .model_dump() instead."""
         data = self.model_dump()
         # For UI compatibility: frontend expects 'id'
@@ -463,12 +480,12 @@ class Hypha(BaseModel):
     pulse_count: int = 0
     active: bool = True
     is_physical: bool = False
-    source_file: Optional[str] = None
-    target_file: Optional[str] = None
+    source_file: str | None = None
+    target_file: str | None = None
     color: str = "#4A90E2"
     description: str = ""
     size: float = 1.0
-    trace: List[str] = Field(default_factory=list)
+    trace: list[str] = Field(default_factory=list)
 
     #: The scale an edge's strength lives on. Named because ``get_system_cohesion``
     #: used to average this quantity with route confidence — which tops out at
@@ -514,7 +531,7 @@ class NeuralRoot(Hypha):
     liveness_contract: str = "on_demand"
     state: str = "unbound"
     owner_generation: str = ""
-    attested_identity: Dict[str, Any] = Field(default_factory=dict)
+    attested_identity: dict[str, Any] = Field(default_factory=dict)
     last_activity_at: float = 0.0
     last_probe_at: float = 0.0
     last_probe_success_at: float = 0.0
@@ -537,7 +554,7 @@ class RootedFlowHandle:
         self._target = target
         self._priority = priority
         self._hypha_id = f"{source}->{target}"
-        self._error: Optional[BaseException] = None
+        self._error: BaseException | None = None
         # CP126 34f01634: an absorbed failure leaves the caller's ``async with``
         # completing normally, so a failed action reads as a finished one unless
         # the caller remembers to ask. Remembering is not a safeguard. The
@@ -558,7 +575,7 @@ class RootedFlowHandle:
         return self._error is not None
 
     @property
-    def error(self) -> Optional[BaseException]:
+    def error(self) -> BaseException | None:
         self._acknowledge()
         return self._error
 
@@ -620,7 +637,7 @@ _DEFERRED_PULSE_LOCK = threading.Lock()
 def _defer_pulse(
     network: "MycelialNetwork",
     source: str,
-    target: Optional[str],
+    target: str | None,
     *,
     success: bool,
 ) -> None:
@@ -646,7 +663,7 @@ def _defer_pulse(
 def _take_deferred_pulses(
     network: "MycelialNetwork",
     source: str,
-    target: Optional[str],
+    target: str | None,
 ) -> tuple[int, int]:
     key = f"{source}->{target or '*'}"
     with _DEFERRED_PULSE_LOCK:
@@ -672,7 +689,7 @@ def _track_absorbed_flow(
         pending.append(handle)
 
 
-def _sweep_absorbed_flows(network: "MycelialNetwork") -> List["RootedFlowHandle"]:
+def _sweep_absorbed_flows(network: "MycelialNetwork") -> list["RootedFlowHandle"]:
     """Return absorbed failures that survived a full sweep unacknowledged.
 
     Acknowledgement can only happen after the ``async with`` block returns, so a
@@ -681,8 +698,8 @@ def _sweep_absorbed_flows(network: "MycelialNetwork") -> List["RootedFlowHandle"
     """
     with _ABSORBED_FLOW_LOCK:
         pending = network._absorbed_flows
-        survivors: List[RootedFlowHandle] = []
-        unclaimed: List[RootedFlowHandle] = []
+        survivors: list[RootedFlowHandle] = []
+        unclaimed: list[RootedFlowHandle] = []
         for handle in pending:
             if handle._acknowledged:
                 continue
@@ -698,7 +715,7 @@ def _sweep_absorbed_flows(network: "MycelialNetwork") -> List["RootedFlowHandle"
 def _merge_deferred_pulses(
     network: "MycelialNetwork",
     source: str,
-    target: Optional[str],
+    target: str | None,
     counts: tuple[int, int],
 ) -> None:
     if counts == (0, 0):
@@ -723,7 +740,7 @@ class MycelialNetwork:
     def __new__(cls, *args, **kwargs):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(MycelialNetwork, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
             return cls._instance
 
     def __init__(self):
@@ -734,64 +751,64 @@ class MycelialNetwork:
             if MycelialNetwork._initialized:
                 return
 
-            self._async_lock: Optional[asyncio.Lock] = None
+            self._async_lock: asyncio.Lock | None = None
             
             # Phase XXIII: Aegis Protection Flag
             object.__setattr__(self, "_aegis_locked", False)
 
             # --- Hardwired Pathways ---
-            self.pathways: Dict[str, HardwiredPathway] = {}
-            self._pathway_order: List[str] = []
+            self.pathways: dict[str, HardwiredPathway] = {}
+            self._pathway_order: list[str] = []
 
             # --- General Hyphae ---
-            self.hyphae: Dict[str, Hypha] = {}
+            self.hyphae: dict[str, Hypha] = {}
 
             # --- Discovery Engine ---
-            self._execution_log: List[Dict[str, Any]] = []
-            self._discovery_candidates: Dict[str, int] = defaultdict(int)
-            self._route_signal_log_state: Dict[str, Tuple[str, float, int]] = {}
-            self._hypha_alert_times: Dict[str, float] = {}
-            self._deferred_pulses: Dict[str, Tuple[int, int]] = {}
-            self._absorbed_flows: List[RootedFlowHandle] = []
+            self._execution_log: list[dict[str, Any]] = []
+            self._discovery_candidates: dict[str, int] = defaultdict(int)
+            self._route_signal_log_state: dict[str, tuple[str, float, int]] = {}
+            self._hypha_alert_times: dict[str, float] = {}
+            self._deferred_pulses: dict[str, tuple[int, int]] = {}
+            self._absorbed_flows: list[RootedFlowHandle] = []
             self._absorbed_flow_overflow: int = 0
             self._unclaimed_absorptions: int = 0
             #: None until a vault generation has been published into this
             #: instance — "never restored" is not the same claim as "restored
             #: without tamper evidence".
-            self._restored_from_vault_at: Optional[float] = None
-            self._restored_generation_attested: Optional[bool] = None
+            self._restored_from_vault_at: float | None = None
+            self._restored_generation_attested: bool | None = None
 
             # --- Props ---
-            self.ui_callback: Optional[Callable[[str], Coroutine]] = None
-            self.mapped_files: Dict[str, Dict[str, Any]] = {}
+            self.ui_callback: Callable[[str], Coroutine] | None = None
+            self.mapped_files: dict[str, dict[str, Any]] = {}
             self.infrastructure_mapped: bool = False
-            self._centrality: Dict[str, int] = {}
-            self._critical_modules: List[str] = []
-            self._cross_links: Dict[str, List[str]] = {}
+            self._centrality: dict[str, int] = {}
+            self._critical_modules: list[str] = []
+            self._cross_links: dict[str, list[str]] = {}
             self._is_mapping: bool = False
             # Mapping lifecycle and topology data share one lock. Separate locks
             # previously allowed publication and shutdown to acquire them in
             # opposite orders and made a coherent graph generation impossible.
             self._mapping_lock = MycelialNetwork._lock
-            self._mapping_thread: Optional[threading.Thread] = None
-            self._mapping_admission_token: Optional[object] = None
+            self._mapping_thread: threading.Thread | None = None
+            self._mapping_admission_token: object | None = None
             self._mapping_generation: int = 0
             self._topology_revision: int = 0
             self._topology_structure_revision: int = 0
-            self._last_vault_sync_revision: Optional[int] = None
-            self._last_vault_sync_at: Optional[float] = None
+            self._last_vault_sync_revision: int | None = None
+            self._last_vault_sync_at: float | None = None
             self._last_vault_sync_lag_revisions: int = 0
-            self._mapping_started_at: Optional[float] = None
-            self._mapping_completed_at: Optional[float] = None
-            self._mapping_last_error: Optional[str] = None
+            self._mapping_started_at: float | None = None
+            self._mapping_completed_at: float | None = None
+            self._mapping_last_error: str | None = None
             self._created_at_monotonic = time.monotonic()
-            self._deferred_mapping_reason: Optional[str] = None
+            self._deferred_mapping_reason: str | None = None
             self._stop_event = threading.Event()
-            self._topology_counts_cache: Dict[str, int] = {}
-            self._topology_summary_cache: Dict[str, int] = {}
+            self._topology_counts_cache: dict[str, int] = {}
+            self._topology_summary_cache: dict[str, int] = {}
             
             # Legacy compat
-            self.direct_roots: Dict[str, str] = {}
+            self.direct_roots: dict[str, str] = {}
             
             # Reflex Core (SOMA)
             try:
@@ -801,7 +818,7 @@ class MycelialNetwork:
                 self.reflex = None
 
             # --- Platform Binding ---
-            self._neural_roots: List[NeuralRoot] = []
+            self._neural_roots: list[NeuralRoot] = []
 
             self._publish_topology_read_models_locked()
             
@@ -996,7 +1013,7 @@ class MycelialNetwork:
         base_dir: str,
         *,
         force: bool = False,
-        _admission_token: Optional[object] = None,
+        _admission_token: object | None = None,
     ) -> None:
         """Run the optional mapper without leaving a false running state."""
         try:
@@ -1047,10 +1064,10 @@ class MycelialNetwork:
         pathway_id: str,
         pattern: str,
         skill_name: str,
-        param_map: Optional[Dict[str, Any]] = None,
+        param_map: dict[str, Any] | None = None,
         priority: float = 1.0,
         activity_label: str = "",
-        direct_response: Optional[str] = None,
+        direct_response: str | None = None,
     ) -> None:
         """Register a hardwired intent→skill pathway with regex param extraction.
 
@@ -1110,7 +1127,7 @@ class MycelialNetwork:
         )
 
 
-    def match_hardwired(self, text: str) -> Optional[Tuple[HardwiredPathway, Dict[str, Any]]]:
+    def match_hardwired(self, text: str) -> tuple[HardwiredPathway, dict[str, Any]] | None:
         """Match user text against all hardwired pathways with parameter extraction (Issue 77)."""
         if not isinstance(text, str) or not text.strip():
             return None
@@ -1152,7 +1169,7 @@ class MycelialNetwork:
             match = _safe_pattern_search(pw.pattern, text_clean)
             if match:
                 # Extract params from capture groups
-                params: Dict[str, Any] = {}
+                params: dict[str, Any] = {}
                 for param_name, mapping in pw.param_map.items():
                     if isinstance(mapping, int):
                         try:
@@ -1215,7 +1232,7 @@ class MycelialNetwork:
                 logger.info("🍄 [MYCELIUM] Hypha established: %s", hypha_id)
             return hypha.model_copy(deep=True)
 
-    def add_hypha(self, source: str, target: str, link_type: str = "general", metadata: Optional[Dict] = None):
+    def add_hypha(self, source: str, target: str, link_type: str = "general", metadata: dict | None = None):
         """Enterprise method for adding a hypha with rich metadata."""
         hypha_id = f"{source}->{target}"
         with MycelialNetwork._lock:
@@ -1234,7 +1251,7 @@ class MycelialNetwork:
                 self._mark_topology_mutated_locked(structure_changed=True)
                 logger.info("🍄 [MYCELIUM] Hypha added: %s (%s)", hypha_id, link_type)
 
-    def get_hypha(self, source: str, target: str = None) -> Optional[Hypha]:
+    def get_hypha(self, source: str, target: str = None) -> Hypha | None:
         """Return a detached hypha read model."""
         if target is None and "->" in source:
             hypha_id = source
@@ -1251,13 +1268,13 @@ class MycelialNetwork:
             return hypha.model_copy(deep=True) if hypha is not None else None
 
     @staticmethod
-    def _hypha_id(source: str, target: Optional[str] = None) -> str:
+    def _hypha_id(source: str, target: str | None = None) -> str:
         return source if target is None and "->" in source else f"{source}->{target}"
 
     def pulse_hypha(
         self,
         source: str,
-        target: Optional[str] = None,
+        target: str | None = None,
         *,
         success: bool = True,
     ) -> bool:
@@ -1312,7 +1329,7 @@ class MycelialNetwork:
         finally:
             MycelialNetwork._lock.release()
 
-    def log_hypha(self, source: str, target: Optional[str], message: str) -> bool:
+    def log_hypha(self, source: str, target: str | None, message: str) -> bool:
         """Append an owned trace entry to the current edge."""
         hypha_id = self._hypha_id(source, target)
         with MycelialNetwork._lock:
@@ -1334,8 +1351,8 @@ class MycelialNetwork:
         target: str,
         *,
         priority: float,
-        message: Optional[str] = None,
-        success: Optional[bool] = None,
+        message: str | None = None,
+        success: bool | None = None,
     ) -> Hypha:
         """Atomically bind one flow event to the currently published owner."""
         hypha_id = self._hypha_id(source, target)
@@ -1366,7 +1383,7 @@ class MycelialNetwork:
     def set_hypha_strength(
         self,
         source: str,
-        target: Optional[str],
+        target: str | None,
         strength: float,
     ) -> bool:
         """Set current edge strength through the topology owner."""
@@ -1392,7 +1409,7 @@ class MycelialNetwork:
         self.establish_connection(layer_name, "cognition", priority=0.9)
         self.establish_connection("cognition", layer_name, priority=0.8)
 
-    def route_signal(self, source: str, target: str, payload: Dict[str, Any]):
+    def route_signal(self, source: str, target: str, payload: dict[str, Any]):
         """Directly route a cognitive signal between subsystems."""
         owner = self._active_owner()
         if owner is None:
@@ -1412,7 +1429,7 @@ class MycelialNetwork:
         except RuntimeError:
             return False
 
-    def _log_route_signal(self, source: str, target: str, payload: Dict[str, Any]) -> None:
+    def _log_route_signal(self, source: str, target: str, payload: dict[str, Any]) -> None:
         """Emit route-signal telemetry on state change instead of every pulse."""
         key = f"{source}->{target}"
         payload_text = str(payload)[:160]
@@ -1459,7 +1476,7 @@ class MycelialNetwork:
             payload_text,
         )
 
-    async def emit_reflex(self, signal_type: str, metadata: Dict = None):
+    async def emit_reflex(self, signal_type: str, metadata: dict = None):
         """Broadcast a critical reflex signal across the mycelial network."""
         owner = self._active_owner()
         if owner is None:
@@ -1473,7 +1490,7 @@ class MycelialNetwork:
             logger.warning("No Reflex Core online to handle signal: %s", signal_type)
             return False
 
-    async def emit(self, signal_type: str, metadata: Dict = None):
+    async def emit(self, signal_type: str, metadata: dict = None):
         """Compatibility event-bus bridge for callers that treat mycelium like a bus."""
         owner = self._active_owner()
         if owner is None:
@@ -1553,7 +1570,7 @@ class MycelialNetwork:
         return f"{source}->{root_kind}:{target_id}"
 
     @staticmethod
-    def _canonical_root_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    def _canonical_root_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(evidence, dict):
             raise TypeError("neural root evidence must be a dictionary")
         try:
@@ -1579,7 +1596,7 @@ class MycelialNetwork:
         root_kind: str,
         target_id: str,
         owner_generation: str,
-        evidence: Dict[str, Any],
+        evidence: dict[str, Any],
         liveness_contract: str = "heartbeat",
         stale_after_s: float = 30.0,
     ) -> NeuralRoot:
@@ -1665,7 +1682,7 @@ class MycelialNetwork:
         target_id: str,
         owner_generation: str,
         success: bool = True,
-        evidence: Dict[str, Any] | None = None,
+        evidence: dict[str, Any] | None = None,
     ) -> bool:
         """Refresh only the root owned by the matching live generation."""
         hypha_id = self._neural_root_id(source, root_kind, target_id)
@@ -1923,7 +1940,7 @@ class MycelialNetwork:
             activity_label=f"Aura is executing {skill_name}...",
         )
 
-    def match_direct_root(self, text: str) -> Optional[str]:
+    def match_direct_root(self, text: str) -> str | None:
         """Legacy shim: returns just the skill name for old orchestrator code."""
         result = self.match_hardwired(text)
         if result:
@@ -1934,7 +1951,7 @@ class MycelialNetwork:
     # DISCOVERY ENGINE — Slime Mold Exploration
     # ======================================================================
 
-    def record_execution(self, message: str, skill_name: str, params: Dict[str, Any], success: bool):
+    def record_execution(self, message: str, skill_name: str, params: dict[str, Any], success: bool):
         """Record a non-hardwired skill execution for pathway discovery.
 
         Called by the orchestrator after the state machine successfully routes
@@ -2123,7 +2140,7 @@ class MycelialNetwork:
     @asynccontextmanager
     async def rooted_flow(self, source: str, target: str, activity: str = None,
                           timeout: float = 60.0, priority: float = 1.0,
-                          absorb_failures: Optional[bool] = None):
+                          absorb_failures: bool | None = None):
         """Wraps a process in a mycelial root. If it stalls, the root overrides.
 
         ``absorb_failures`` decides whether a failure inside the block reaches
@@ -2258,10 +2275,10 @@ class MycelialNetwork:
     def map_infrastructure(
         self,
         base_dir: str,
-        scan_dirs: Optional[List[str]] = None,
+        scan_dirs: list[str] | None = None,
         *,
         force: bool = False,
-        _admission_token: Optional[object] = None,
+        _admission_token: object | None = None,
     ) -> bool:
         """Publish one complete code-map generation or retain the previous one.
 
@@ -2339,7 +2356,7 @@ class MycelialNetwork:
     def _map_infrastructure_generation(
         self,
         base_dir: str,
-        scan_dirs: Optional[List[str]],
+        scan_dirs: list[str] | None,
         *,
         previously_mapped: bool,
     ) -> bool:
@@ -2355,7 +2372,7 @@ class MycelialNetwork:
         logger.info("🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: %s", base)
 
         # 1. Discover all .py files.
-        all_files: Dict[str, Path] = {}  # module_key → file_path
+        all_files: dict[str, Path] = {}  # module_key → file_path
         if scan_dirs == list(_DEFAULT_INFRASTRUCTURE_SCAN_DIRS):
             for py_file in base.glob("*.py"):
                 if not py_file.name.startswith("__"):
@@ -2381,8 +2398,8 @@ class MycelialNetwork:
         logger.info("🍄 [MYCELIUM] Discovered %d Python modules.", len(all_files))
 
         # 2. Parse imports and build dependency edges
-        dependency_graph: Dict[str, List[str]] = {}
-        mapped_files: Dict[str, Dict[str, Any]] = {}
+        dependency_graph: dict[str, list[str]] = {}
+        mapped_files: dict[str, dict[str, Any]] = {}
         for module_key, file_path in all_files.items():
             if self._stop_event.is_set():
                 logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during parsing.")
@@ -2398,7 +2415,7 @@ class MycelialNetwork:
             }
 
         # 3. Create physical Hypha connections for import relationships
-        physical_hyphae: Dict[str, Hypha] = {}
+        physical_hyphae: dict[str, Hypha] = {}
         for module_key, deps in dependency_graph.items():
             for dep in deps:
                 if dep in all_files:
@@ -2418,7 +2435,7 @@ class MycelialNetwork:
         # 4. Compute Module Centrality (reverse dependency index)
         #    Centrality = how many other modules depend on this one.
         #    High centrality = load-bearing pillar; failure has wide blast radius.
-        reverse_deps: Dict[str, int] = {}
+        reverse_deps: dict[str, int] = {}
         for _module_key, deps in dependency_graph.items():
             for dep in deps:
                 if dep in all_files:
@@ -2442,7 +2459,7 @@ class MycelialNetwork:
         # 5. Cross-Layer Linking: connect logical subsystem hyphae to physical backing
         #    Maps abstract subsystem names (e.g., "cognition") to the directory/module
         #    patterns they correspond to in the codebase.
-        SUBSYSTEM_ALIASES: Dict[str, List[str]] = {
+        SUBSYSTEM_ALIASES: dict[str, list[str]] = {
             "cognition": ["cognitive", "brain", "cognitive_engine", "cognitive_integration"],
             "personality": ["personality", "persona", "identity"],
             "memory": ["memory", "dual_memory", "episodic"],
@@ -2485,11 +2502,11 @@ class MycelialNetwork:
             return any(alias in mp for alias in aliases)
 
         def _build_cross_links(
-            logical_hyphae: Dict[str, Hypha],
-        ) -> Dict[str, List[str]]:
-            links: Dict[str, List[str]] = {}
+            logical_hyphae: dict[str, Hypha],
+        ) -> dict[str, list[str]]:
+            links: dict[str, list[str]] = {}
             for logical_name, logical_hypha in logical_hyphae.items():
-                backing_physical: List[str] = []
+                backing_physical: list[str] = []
                 for physical_name, physical_hypha in physical_hyphae.items():
                     source_matches = _matches_subsystem(
                         logical_hypha.source, physical_hypha.source
@@ -2653,12 +2670,12 @@ class MycelialNetwork:
 
     @staticmethod
     def _build_pathway_annotations(
-        pathway_skills: Dict[str, str],
-        all_files: Dict[str, Path],
-        dependency_graph: Dict[str, List[str]],
-    ) -> Dict[str, Tuple[str, List[str]]]:
+        pathway_skills: dict[str, str],
+        all_files: dict[str, Path],
+        dependency_graph: dict[str, list[str]],
+    ) -> dict[str, tuple[str, list[str]]]:
         """Build pathway-to-module annotations outside the topology lock."""
-        annotations: Dict[str, Tuple[str, List[str]]] = {}
+        annotations: dict[str, tuple[str, list[str]]] = {}
         for pathway_id, skill_name in pathway_skills.items():
             skill = skill_name.lower().replace("_", "")
             for module_key, file_path in all_files.items():
@@ -2694,9 +2711,9 @@ class MycelialNetwork:
             return True
         return False
 
-    def _extract_imports(self, file_path: Path, base_dir: Path) -> List[str]:
+    def _extract_imports(self, file_path: Path, base_dir: Path) -> list[str]:
         """Parse a Python file's AST and extract import targets as dotted module keys."""
-        imports: List[str] = []
+        imports: list[str] = []
         try:
             source = file_path.read_text(encoding="utf-8", errors="ignore")
             tree = ast.parse(source, filename=str(file_path))
@@ -2728,7 +2745,7 @@ class MycelialNetwork:
 
         return imports
 
-    def get_mapped_files_snapshot(self) -> Dict[str, Dict[str, Any]]:
+    def get_mapped_files_snapshot(self) -> dict[str, dict[str, Any]]:
         """Return one detached infrastructure-map generation for concurrent readers."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -2736,8 +2753,8 @@ class MycelialNetwork:
                 return owner.get_mapped_files_snapshot()
             return self._mapped_files_snapshot_locked()
 
-    def _mapped_files_snapshot_locked(self) -> Dict[str, Dict[str, Any]]:
-        snapshot: Dict[str, Dict[str, Any]] = {}
+    def _mapped_files_snapshot_locked(self) -> dict[str, dict[str, Any]]:
+        snapshot: dict[str, dict[str, Any]] = {}
         for module_key, module_data in self.mapped_files.items():
             detached = dict(module_data)
             imports = detached.get("imports")
@@ -2754,7 +2771,7 @@ class MycelialNetwork:
                 return owner.get_route_cache_token()
             return id(self), self._topology_structure_revision
 
-    def get_graph_snapshot(self) -> Dict[str, Any]:
+    def get_graph_snapshot(self) -> dict[str, Any]:
         """Return topology and code map from one published generation."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -2772,7 +2789,7 @@ class MycelialNetwork:
                 "topology_structure_revision": self._topology_structure_revision,
             }
 
-    def get_runtime_snapshot(self) -> Dict[str, Any]:
+    def get_runtime_snapshot(self) -> dict[str, Any]:
         """Return the complete API read model under one topology lock."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -2783,7 +2800,7 @@ class MycelialNetwork:
                 "infrastructure": self._infrastructure_report_snapshot_locked(),
             }
 
-    def get_topology_counts(self) -> Dict[str, int]:
+    def get_topology_counts(self) -> dict[str, int]:
         """Return the atomically replaced count read model without graph copying."""
         owner = MycelialNetwork._instance
         owner_stop = getattr(owner, "_stop_event", None)
@@ -2796,7 +2813,7 @@ class MycelialNetwork:
             return owner.get_topology_counts()
         return dict(self._topology_counts_cache)
 
-    def get_topology_summary(self) -> Dict[str, int]:
+    def get_topology_summary(self) -> dict[str, int]:
         """Return the precomputed user-facing topology summary lock-free."""
         owner = MycelialNetwork._instance
         owner_stop = getattr(owner, "_stop_event", None)
@@ -2809,7 +2826,7 @@ class MycelialNetwork:
             return owner.get_topology_summary()
         return dict(self._topology_summary_cache)
 
-    def get_rooted_flow_integrity(self) -> Dict[str, int]:
+    def get_rooted_flow_integrity(self) -> dict[str, int]:
         """How many absorbed failures are outstanding, and how many went unclaimed.
 
         ``unclaimed`` is the number a caller never collected — each one is a
@@ -2827,7 +2844,7 @@ class MycelialNetwork:
             "absorptions_untracked_overflow": overflow,
         }
 
-    def get_hypha_signal_snapshot(self, *, limit: int) -> List[Tuple[float, float]]:
+    def get_hypha_signal_snapshot(self, *, limit: int) -> list[tuple[float, float]]:
         """Return detached strength/recency inputs for bounded numeric consumers."""
         bounded_limit = max(0, int(limit))
         with MycelialNetwork._lock:
@@ -2850,7 +2867,7 @@ class MycelialNetwork:
             return "deferred"
         return "idle"
 
-    def get_infrastructure_report(self) -> Dict[str, Any]:
+    def get_infrastructure_report(self) -> dict[str, Any]:
         """Return a summary of the infrastructure mapping for API/UI consumption."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -2858,7 +2875,7 @@ class MycelialNetwork:
                 return owner.get_infrastructure_report()
             return self._infrastructure_report_snapshot_locked()
 
-    def _infrastructure_report_snapshot_locked(self) -> Dict[str, Any]:
+    def _infrastructure_report_snapshot_locked(self) -> dict[str, Any]:
         mapped_files = self._mapped_files_snapshot_locked()
         physical_hyphae = {
             name: {
@@ -2939,7 +2956,7 @@ class MycelialNetwork:
             self._async_lock = asyncio.Lock()
         async with self._async_lock:
             now = time.monotonic()
-            weak_pathways: List[Tuple[str, float]] = []
+            weak_pathways: list[tuple[str, float]] = []
             with MycelialNetwork._lock:
                 owner = self._active_owner_locked()
                 if owner is None:
@@ -3081,7 +3098,7 @@ class MycelialNetwork:
     # INTROSPECTION — Topology & Health Reporting
     # ======================================================================
 
-    def get_network_topology(self) -> Dict[str, Any]:
+    def get_network_topology(self) -> dict[str, Any]:
         """Full network state for UI visualization and health monitoring."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -3090,7 +3107,7 @@ class MycelialNetwork:
             return self._network_topology_snapshot_locked()
 
     @staticmethod
-    def _redact_read_model_paths(data: Dict[str, Any]) -> Dict[str, Any]:
+    def _redact_read_model_paths(data: dict[str, Any]) -> dict[str, Any]:
         """Redact absolute path fields from a public read-model dict."""
         for field_name in ("source_file", "target_file", "file", "path"):
             if field_name in data and data[field_name]:
@@ -3098,7 +3115,7 @@ class MycelialNetwork:
         return data
 
     @staticmethod
-    def _redact_read_model_payloads(data: Dict[str, Any]) -> Dict[str, Any]:
+    def _redact_read_model_payloads(data: dict[str, Any]) -> dict[str, Any]:
         """Replace payload surfaces with their shape.
 
         CP126 479423bb. ``to_dict()`` and ``model_dump()`` were returned
@@ -3122,10 +3139,10 @@ class MycelialNetwork:
         return data
 
     @classmethod
-    def _public_read_model(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _public_read_model(cls, data: dict[str, Any]) -> dict[str, Any]:
         return cls._redact_read_model_payloads(cls._redact_read_model_paths(data))
 
-    def _network_topology_snapshot_locked(self) -> Dict[str, Any]:
+    def _network_topology_snapshot_locked(self) -> dict[str, Any]:
         # Public read models must not leak absolute filesystem paths, and must
         # not carry route payloads or edge traces (CP126 363d2438, 479423bb).
         pathways = {
@@ -3179,7 +3196,7 @@ class MycelialNetwork:
             ),
         }
 
-    def get_unity_report(self) -> Dict[str, Any]:
+    def get_unity_report(self) -> dict[str, Any]:
         """Backward-compatible unity report."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -3209,7 +3226,7 @@ class MycelialNetwork:
             },
         }
 
-    def get_system_cohesion(self) -> Optional[float]:
+    def get_system_cohesion(self) -> float | None:
         """Fraction of the topology that is not weak, in [0, 1].
 
         ``None`` when there is no topology to measure. Callers that turn this
@@ -3227,7 +3244,7 @@ class MycelialNetwork:
             confidences = [pw.confidence for pw in self.pathways.values()]
         return _cohesion_from_topology(strengths, confidences)
 
-    def get_cohesion_report(self) -> Dict[str, Any]:
+    def get_cohesion_report(self) -> dict[str, Any]:
         """Cohesion with the sample it was computed from and its definition."""
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
@@ -3256,7 +3273,7 @@ class MycelialNetwork:
             "range": [0.0, 1.0],
         }
 
-    def _calculate_cohesion(self) -> Optional[float]:
+    def _calculate_cohesion(self) -> float | None:
         """Backward-compatible internal alias for the owner-backed read API."""
         return self.get_system_cohesion()
 
@@ -3264,10 +3281,10 @@ class MycelialNetwork:
     # PILLAR 3: THE ROOT VAULT (Aegis Persistence)
     # ======================================================================
 
-    def _vault_snapshot_locked(self) -> Dict[str, Any]:
+    def _vault_snapshot_locked(self) -> dict[str, Any]:
         now_monotonic = time.monotonic()
         captured_at_unix = time.time()
-        pathways: Dict[str, Dict[str, Any]] = {}
+        pathways: dict[str, dict[str, Any]] = {}
         for key, pathway in self.pathways.items():
             data = pathway.to_dict()
             data.pop("id", None)
@@ -3294,7 +3311,7 @@ class MycelialNetwork:
             data.pop("last_matched", None)
             pathways[key] = data
 
-        hyphae: Dict[str, Dict[str, Any]] = {}
+        hyphae: dict[str, dict[str, Any]] = {}
         for key, hypha in self.hyphae.items():
             data = hypha.model_dump()
             if isinstance(hypha, NeuralRoot):
@@ -3363,8 +3380,8 @@ class MycelialNetwork:
         value: Any,
         label: str,
         *,
-        minimum: Optional[float] = None,
-        maximum: Optional[float] = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{label} must be a finite number")
@@ -3384,7 +3401,7 @@ class MycelialNetwork:
         return value
 
     @staticmethod
-    def _vault_optional_string(value: Any, label: str) -> Optional[str]:
+    def _vault_optional_string(value: Any, label: str) -> str | None:
         if value is not None and not isinstance(value, str):
             raise ValueError(f"{label} must be a string or null")
         return value
@@ -3397,7 +3414,7 @@ class MycelialNetwork:
         now_monotonic: float,
         captured_at_unix: float,
         elapsed_since_capture_s: float,
-    ) -> Dict[str, HardwiredPathway]:
+    ) -> dict[str, HardwiredPathway]:
         if not isinstance(raw, dict):
             raise ValueError("vault pathways must be an object")
         allowed = {
@@ -3407,7 +3424,7 @@ class MycelialNetwork:
             "direct_response", "color", "description", "size",
             "verified_hits", "verified_misses", "unverified_reinforcements",
         }
-        restored: Dict[str, HardwiredPathway] = {}
+        restored: dict[str, HardwiredPathway] = {}
         for key, value in raw.items():
             if not isinstance(key, str) or not isinstance(value, dict):
                 raise ValueError("vault pathway entries must be named objects")
@@ -3533,7 +3550,7 @@ class MycelialNetwork:
         *,
         now_monotonic: float,
         elapsed_since_capture_s: float,
-    ) -> Dict[str, Hypha]:
+    ) -> dict[str, Hypha]:
         if not isinstance(raw, dict):
             raise ValueError("vault hyphae must be an object")
         allowed = {
@@ -3544,7 +3561,7 @@ class MycelialNetwork:
             "owner_generation", "attested_identity", "last_activity_at",
             "last_probe_at", "last_probe_success_at", "stale_after_s", "last_error",
         }
-        restored: Dict[str, Hypha] = {}
+        restored: dict[str, Hypha] = {}
         for key, value in raw.items():
             if not isinstance(key, str) or not isinstance(value, dict):
                 raise ValueError("vault hypha entries must be named objects")
@@ -3704,7 +3721,7 @@ class MycelialNetwork:
         return True
 
     @staticmethod
-    def _enforce_vault_cardinality(payload: Dict[str, Any]) -> None:
+    def _enforce_vault_cardinality(payload: dict[str, Any]) -> None:
         """Bound the vault before decoding it.
 
         Serialized size first: the whole payload is already in memory as a
@@ -3741,7 +3758,7 @@ class MycelialNetwork:
                     raise ValueError(f"vault module imports exceed their limit: {key}")
 
     @classmethod
-    def _decode_vault_topology(cls, payload: Any) -> Dict[str, Any]:
+    def _decode_vault_topology(cls, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict) or payload.get("schema_version") != 3:
             raise ValueError("unsupported mycelium vault schema")
         # CP126 944a6043: every field was type-checked and none was counted, so
@@ -3793,7 +3810,7 @@ class MycelialNetwork:
         cross_links = payload.get("cross_links")
         if not isinstance(raw_mapped_files, dict):
             raise ValueError("vault mapped-files surface is malformed")
-        mapped_files: Dict[str, Dict[str, Any]] = {}
+        mapped_files: dict[str, dict[str, Any]] = {}
         mapped_paths: set[str] = set()
         for key, value in raw_mapped_files.items():
             if not isinstance(key, str) or not key or not isinstance(value, dict):
@@ -3856,7 +3873,7 @@ class MycelialNetwork:
             raise ValueError("vault critical-module surface is malformed")
         if len(set(critical_modules)) != len(critical_modules):
             raise ValueError("vault critical-module surface contains duplicates")
-        computed_centrality: Dict[str, int] = {}
+        computed_centrality: dict[str, int] = {}
         for module in mapped_files.values():
             for dependency in module["imports"]:
                 if dependency in mapped_files:

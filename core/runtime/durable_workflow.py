@@ -19,15 +19,15 @@ Key contracts:
 """
 from __future__ import annotations
 
-
 import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.state_ownership import state_root
@@ -58,10 +58,10 @@ class WorkflowStatus(str, Enum):
 class WorkflowStep:
     step_id: str
     name: str
-    apply: Callable[[Dict[str, Any]], Union[Any, Awaitable[Any]]]
-    rollback: Optional[Callable[[Dict[str, Any]], Union[None, Awaitable[None]]]] = None
+    apply: Callable[[dict[str, Any]], Any | Awaitable[Any]]
+    rollback: Callable[[dict[str, Any]], None | Awaitable[None]] | None = None
     human_approval: bool = False
-    receipt_id: Optional[str] = None
+    receipt_id: str | None = None
 
 
 @dataclass
@@ -69,13 +69,22 @@ class WorkflowCheckpoint:
     workflow_id: str
     objective: str
     status: WorkflowStatus
-    completed_steps: List[str] = field(default_factory=list)
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    failed_step: Optional[str] = None
-    failure_reason: Optional[str] = None
-    paused_at_step: Optional[str] = None
+    completed_steps: list[str] = field(default_factory=list)
+    outputs: dict[str, Any] = field(default_factory=dict)
+    failed_step: str | None = None
+    failure_reason: str | None = None
+    paused_at_step: str | None = None
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+
+
+#: Statuses that describe work still owed. PAUSED_FOR_APPROVAL counts: the
+#: workflow is waiting on a human, not finished, and a restart must not lose it.
+_RESUMABLE_STATUSES = frozenset({
+    WorkflowStatus.PENDING,
+    WorkflowStatus.RUNNING,
+    WorkflowStatus.PAUSED_FOR_APPROVAL,
+})
 
 
 class WorkflowStore:
@@ -83,7 +92,7 @@ class WorkflowStore:
 
     SCHEMA_VERSION = 1
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(self, root: Path | None = None):
         self.root = Path(root) if root else (state_root() / "workflows")
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -98,7 +107,36 @@ class WorkflowStore:
             schema_name="workflow_checkpoint",
         )
 
-    def load(self, workflow_id: str) -> Optional[WorkflowCheckpoint]:
+    def unfinished(self) -> list[WorkflowCheckpoint]:
+        """Every workflow that was interrupted rather than completed.
+
+        This is what made resume() unreachable in practice: the store could
+        save and load BY ID, but nothing could discover which workflows were
+        still owed work — and knowing the id is exactly what a crash destroys.
+        Recovery has to start from "what was I doing?", not from a caller
+        remembering.
+
+        Corrupt or unreadable checkpoints are skipped rather than aborting the
+        scan: one bad file must not hide every other resumable workflow.
+        """
+        out: list[WorkflowCheckpoint] = []
+        try:
+            paths = sorted(self.root.glob("*.json"))
+        except OSError:
+            return out
+        for path in paths:
+            try:
+                env = read_json_envelope(path)
+                payload = env.get("payload") or {}
+                payload["status"] = WorkflowStatus(payload.get("status", "pending"))
+                checkpoint = WorkflowCheckpoint(**payload)
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+            if checkpoint.status in _RESUMABLE_STATUSES:
+                out.append(checkpoint)
+        return out
+
+    def load(self, workflow_id: str) -> WorkflowCheckpoint | None:
         path = self.root / f"{workflow_id}.json"
         if not path.exists():
             return None
@@ -109,15 +147,15 @@ class WorkflowStore:
 
 
 class DurableWorkflowEngine:
-    def __init__(self, *, store: Optional[WorkflowStore] = None):
+    def __init__(self, *, store: WorkflowStore | None = None):
         self.store = store or WorkflowStore()
 
     async def run(
         self,
         objective: str,
-        steps: List[WorkflowStep],
+        steps: list[WorkflowStep],
         *,
-        workflow_id: Optional[str] = None,
+        workflow_id: str | None = None,
     ) -> WorkflowCheckpoint:
         workflow_id = workflow_id or f"wf-{uuid.uuid4()}"
         checkpoint = self.store.load(workflow_id)
@@ -175,6 +213,6 @@ class DurableWorkflowEngine:
     async def resume(
         self,
         workflow_id: str,
-        steps: List[WorkflowStep],
+        steps: list[WorkflowStep],
     ) -> WorkflowCheckpoint:
         return await self.run(objective=workflow_id, steps=steps, workflow_id=workflow_id)

@@ -28,19 +28,19 @@ References:
 """
 from __future__ import annotations
 
+import io
 import logging
 import math
-import os
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.PlasticityGovernor")
@@ -570,15 +570,20 @@ class PlasticityGovernor:
                 save_dict[f"{name}__theta_star"] = snap.theta_star
                 save_dict[f"{name}__fisher"] = snap.fisher_diag
                 save_dict[f"{name}__count"] = np.array([snap._consolidation_count])
-            # Atomic replace: a crash mid-write previously left a truncated
-            # .npz that the next boot would fail to load, silently discarding
-            # every consolidation ever made.
-            tmp_path = _FISHER_PATH.with_suffix(".npz.tmp")
-            with open(tmp_path, "wb") as handle:
-                np.savez_compressed(handle, **save_dict)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, _FISHER_PATH)
+            # Atomic replace through the GOVERNED gateway. A crash mid-write
+            # previously left a truncated .npz the next boot would fail to
+            # load, silently discarding every consolidation ever made. An
+            # earlier version of this fix did its own open()+fsync+replace,
+            # which bought atomicity by bypassing the write gateway — the
+            # durable-write ratchet caught it. Serialising to a buffer and
+            # handing the bytes to the gateway gets both properties.
+            buffer = io.BytesIO()
+            np.savez_compressed(buffer, **save_dict)
+            get_file_write_gateway().write_bytes(
+                _FISHER_PATH,
+                buffer.getvalue(),
+                source="adaptation.plasticity_governor.fisher_state",
+            )
             logger.debug("Plasticity state saved")
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             # OSError was outside the handler, so a full disk or permission

@@ -90,6 +90,17 @@ def _default_sessions_dir() -> Path:
 
 
 SESSIONS_DIR = _default_sessions_dir()
+
+#: The only phase meaning the engagement genuinely finished.
+_TERMINAL_SESSION_PHASES = frozenset({"complete"})
+
+#: Phases from which resuming is meaningful. persist_failed is deliberately
+#: here: the research WAS done and only the memory commit failed, which is the
+#: most worthwhile thing to retry and the easiest to lose.
+_RESUMABLE_SESSION_PHASES = frozenset({
+    "fetched", "comprehended", "reflected", "gated", "persisted",
+    "persist_failed",
+})
 DEFAULT_LOOP_INTERVAL = 600.0   # 10 minutes between engagements
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 3
 _ENGAGEMENT_RECOVERABLE_ERRORS = (
@@ -649,6 +660,53 @@ class AutonomousResearchOrchestrator:
                     "phase": "scheduler_attempt",
                 },
             )
+
+    def unfinished_sessions(self) -> list[dict[str, Any]]:
+        """Engagements that were interrupted rather than completed.
+
+        The class documents session resume and writes checkpoints for it, but
+        nothing ever SCANNED for unfinished work — so after a restart the
+        checkpoints existed and no code could find them. Recovery has to start
+        from "what was I doing?", because knowing the session id is exactly
+        what a crash destroys.
+
+        A corrupt checkpoint is skipped rather than aborting the scan: one bad
+        file must not hide every other resumable session.
+        """
+        out: list[dict[str, Any]] = []
+        try:
+            paths = sorted(self._sessions_dir.glob("*.json"))
+        except OSError as exc:
+            _record_research_degradation(
+                exc, severity="warning",
+                action="could not scan for unfinished research sessions",
+            )
+            return out
+
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            phase = str(payload.get("phase") or "")
+            # "complete" is the only phase that means the engagement finished.
+            # persist_failed is explicitly NOT terminal — it is exactly the
+            # case worth resuming, because the research happened and only the
+            # commit did not.
+            if phase in _TERMINAL_SESSION_PHASES:
+                continue
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            out.append({
+                "session_path": str(path),
+                "session_id": path.stem,
+                "phase": phase or "unknown",
+                "item_title": str(result.get("item_title") or ""),
+                "started_at": result.get("started_at"),
+                "resumable": phase in _RESUMABLE_SESSION_PHASES,
+            })
+        return out
 
     def _save_session(self, path: Path, payload: dict[str, Any]) -> None:
         phase = str(payload.get("phase", "unknown"))

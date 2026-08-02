@@ -24,16 +24,15 @@ References:
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import math
-import os
 import threading
 import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -416,15 +415,20 @@ class MetaLearner:
             }
             for name, params in self._meta_params.items():
                 save_dict[f"meta_{name}"] = params
-            # Atomic replace: writing in place meant a crash mid-write left a
-            # truncated .npz that the next boot could not read, silently
-            # discarding every meta-cycle ever completed.
-            tmp_path = _STATE_PATH.with_suffix(".npz.tmp")
-            with open(tmp_path, "wb") as handle:
-                np.savez_compressed(handle, **save_dict)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, _STATE_PATH)
+            # Atomic replace through the GOVERNED gateway. Writing in place
+            # meant a crash mid-write left a truncated .npz the next boot could
+            # not read, silently discarding every meta-cycle completed. An
+            # earlier version of this fix did its own open()+fsync+replace,
+            # which bought atomicity by bypassing the write gateway — the
+            # durable-write ratchet caught it. Serialising to a buffer and
+            # handing the bytes to the gateway gets both.
+            buffer = io.BytesIO()
+            np.savez_compressed(buffer, **save_dict)
+            get_file_write_gateway().write_bytes(
+                _STATE_PATH,
+                buffer.getvalue(),
+                source="adaptation.meta_learner.state",
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             # OSError was outside the handler, so a full disk or permission
             # failure escaped a routine save.
