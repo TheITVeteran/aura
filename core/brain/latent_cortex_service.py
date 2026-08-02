@@ -202,6 +202,16 @@ def _controller_outcome(
 # on this scale, so unknown must never map to it. High enough to damp heavy
 # allocation, low enough that a body which never reports does not freeze the
 # service outright.
+#: Wall-clock reserved for handoff, decode flush and receipt writing, so the
+#: episode does not consume the caller's entire deadline (CP126 d607a287).
+_DEADLINE_RESERVE_S = 8.0
+#: On short deadlines a constant reserve would consume most of the budget, so
+#: the reserve is proportional instead.
+_DEADLINE_RESERVE_FRACTION = 0.2
+#: Below this there is no episode worth planning; the caller gets the floor
+#: and the overrun is theirs to see rather than hidden in a larger budget.
+_MIN_USABLE_WALL_CLOCK_S = 0.5
+
 _UNKNOWN_BODY_PRESSURE = 0.6
 
 
@@ -523,11 +533,23 @@ class LatentCortexService:
         timeout_s: float | None = None,
         requested_decode_tokens: int | None = None,
     ) -> tuple[dict, dict]:
-        """(config, budget) for one episode: the Will's thought allocation.
+        """(config, budget) for one episode: a POLICY allocation.
 
         More stakes/uncertainty ⇒ deeper recurrence, wider branches, bigger
         budget. Body pressure damps everything — deep thought is a luxury a
         strained body rations first.
+
+        CP126 60007362: this said "the Will's thought allocation". It is not.
+        No Will service is consulted, no scoped authority is taken, no policy
+        decision is made and no allocation receipt is signed by governance —
+        the method clamps caller-supplied stakes and uncertainty, reads body
+        pressure, and applies fixed arithmetic. Naming a heuristic after the
+        governance organ makes it look authorized when nothing authorized it,
+        which is exactly the shape of claim this campaign removes.
+
+        What it IS is a deterministic compute policy, and the receipt returned
+        alongside the budget records the inputs and coefficients so the
+        arithmetic can be checked rather than trusted (CP126 8a7e39cc).
         """
         stakes = self._unit_signal(stakes, name="stakes")
         uncertainty = self._unit_signal(uncertainty, name="uncertainty")
@@ -697,10 +719,21 @@ class LatentCortexService:
                 }
             )
             if owner_timeout_s is not None:
-                budget["wall_clock_s"] = min(
-                    max(105.0, budget["wall_clock_s"]),
-                    max(15.0, owner_timeout_s - 8.0),
-                )
+                budget["wall_clock_s"] = max(105.0, budget["wall_clock_s"])
+        # CP126 d607a287: the caller's deadline was applied ONLY inside the
+        # foreground >=20B branch, so every other profile ignored it entirely
+        # and planned against a budget the caller could not wait for. And the
+        # clamp that did exist used max(15.0, timeout - 8.0), which HANDS BACK
+        # 15 seconds when the caller has 10 — a floor that outranks the
+        # deadline is not a deadline.
+        #
+        # Every profile is clamped, and the reserve scales with what is
+        # actually available so a short deadline still leaves margin instead
+        # of being overrun by a constant.
+        if owner_timeout_s is not None:
+            reserve = min(_DEADLINE_RESERVE_S, owner_timeout_s * _DEADLINE_RESERVE_FRACTION)
+            usable = max(_MIN_USABLE_WALL_CLOCK_S, owner_timeout_s - reserve)
+            budget["wall_clock_s"] = min(float(budget["wall_clock_s"]), usable)
         if requested_decode_tokens is not None:
             # Answer-surface overrides are part of the allocation request, not
             # a post-hoc mutation. The adaptive plan must commit the same floor
@@ -727,13 +760,40 @@ class LatentCortexService:
             requested_decode_tokens=int(config["decode_max_tokens"]),
         )
         config, budget = apply_adaptive_compute_plan(config, budget, adaptive_plan)
+        # CP126 8a7e39cc: the coefficients and thresholds below are a fixed
+        # heuristic with no model-specific calibration, no uncertainty
+        # interval, no control-policy comparison and no safety-outcome
+        # evidence. That is a defensible starting policy and an indefensible
+        # thing to leave unstated, so the receipt records the inputs, the
+        # profile, the deadline actually granted, and — explicitly — that the
+        # policy is uncalibrated. A reader can then check the arithmetic
+        # instead of trusting the number, and the absence of calibration is a
+        # visible gap rather than an implied endorsement.
         self._last_allocation = {
+            "schema": "aura.latent_cortex.allocation_receipt.v1",
             "stakes": stakes,
             "uncertainty": uncertainty,
+            "novelty": novelty,
+            "effort": str(effort),
             "body_pressure": pressure,
             "headroom": headroom,
             "allocation_profile": allocation_profile,
             "model_parameter_count": model_parameter_count,
+            "owner_timeout_s": owner_timeout_s,
+            "granted_wall_clock_s": float(budget.get("wall_clock_s", 0.0)),
+            "deadline_respected": (
+                owner_timeout_s is None
+                or float(budget.get("wall_clock_s", 0.0)) <= owner_timeout_s
+            ),
+            # Honesty fields: this is a policy, not a governed decision, and
+            # its constants are not calibrated against outcomes.
+            "authority": "policy_heuristic",
+            "will_decision": None,
+            "calibrated": False,
+            "calibration_basis": (
+                "hand-tuned coefficients; no model-specific calibration, "
+                "uncertainty interval, or control-policy comparison"
+            ),
             "adaptive_compute": adaptive_plan,
             "config": dict(config),
             "budget": dict(budget),
