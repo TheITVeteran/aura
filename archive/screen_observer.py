@@ -281,21 +281,39 @@ class ScreenObserver:
 
                 return self._kg
     
-    def get_status(self) -> dict[str, Any]:
-        """Get full status of all sensory systems."""
-        vision_data = self.read_vision()
-        audio_data = self.read_audio()
+    async def get_status(self) -> dict[str, Any]:
+        """Get full status of all sensory systems.
+
+        CP126: "Synchronous status leaks coroutine objects. get_status calls
+        async read_vision and read_audio without awaiting them and exposes
+        the async vision_active method object instead of a boolean. The
+        subsequent audio_data.get access can raise."
+
+        All four are async. Unawaited, read_vision()/read_audio() returned
+        coroutine objects — so `last_capture: vision_data is not None` was
+        True whether or not a frame had ever been captured, and
+        `audio_data.get(...)` raised AttributeError on a coroutine. The
+        `active` fields exposed the bound method itself, which is always
+        truthy, so both sensors reported active while stopped.
+
+        Now async, and every value is awaited. A status that reports a dead
+        sensor as active is worse than no status.
+        """
+        vision_data = await self.read_vision()
+        audio_data = await self.read_audio()
+        vision_active = await self.vision_active()
+        audio_active = await self.audio_active()
         
         return {
             "vision": {
-                "active": self.vision_active,
+                "active": vision_active,
                 "pid": self._vision_proc.pid if self._vision_proc and self._vision_proc.poll() is None else None,
                 "last_capture": vision_data is not None,
                 "frames_captured": self._observation_count,
                 "note": "Screen capture active but image interpretation requires a vision-capable model (llava/qwen-vl)"
             },
             "audio": {
-                "active": self.audio_active,
+                "active": audio_active,
                 "pid": self._audio_proc.pid if self._audio_proc and self._audio_proc.poll() is None else None,
                 "last_transcript": audio_data.get("transcript", "")[:200] if audio_data else None,
                 "note": "Audio capture + local transcription"
