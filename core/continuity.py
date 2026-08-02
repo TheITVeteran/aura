@@ -22,6 +22,8 @@ from core.state.aura_state import (
     _is_speculative_autonomy_label,
     _normalize_goal_text,
 )
+import hashlib
+import hmac
 
 logger = logging.getLogger(__name__)
 _CONTINUITY_PATH: Path | None = None
@@ -98,6 +100,66 @@ def is_evaluation_contamination(value: Any) -> bool:
     """Public predicate for keeping proof/control prompts out of lived state."""
 
     return _looks_like_evaluation_contamination(value)
+
+
+#: Bytes of the local HMAC key that authenticates the continuity record.
+_CONTINUITY_KEY_BYTES = 32
+
+
+def _continuity_key_path() -> Path:
+    return _get_continuity_path().with_name(".continuity_hmac.key")
+
+
+def _continuity_key() -> bytes | None:
+    """Local signing key, created on first use. None if unavailable.
+
+    Returning None rather than raising: continuity is a convenience, and a
+    key that cannot be created must not stop the runtime from booting. The
+    consequence of None is that the record is treated as unauthenticated,
+    which is handled explicitly at the read.
+    """
+    path = _continuity_key_path()
+    try:
+        if path.exists():
+            key = path.read_bytes()
+            if len(key) == _CONTINUITY_KEY_BYTES:
+                return key
+        candidate = os.urandom(_CONTINUITY_KEY_BYTES)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as handle:
+            handle.write(candidate)
+        return candidate
+    except FileExistsError:
+        try:
+            key = path.read_bytes()
+            return key if len(key) == _CONTINUITY_KEY_BYTES else None
+        except OSError:
+            return None
+    except (OSError, ValueError) as exc:
+        record_degradation("continuity", exc)
+        return None
+
+
+def continuity_signature(payload: dict[str, Any]) -> str:
+    """HMAC over the record's canonical form, excluding the signature field."""
+    key = _continuity_key()
+    if key is None:
+        return ""
+    body = {k: v for k, v in payload.items() if k != "signature"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return hmac.new(key, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _signed_record_payload(record: Any) -> dict[str, Any]:
+    """The record as JSON, carrying an HMAC the loader can verify.
+
+    Written on every persist so an authentic record round-trips; the loader
+    withholds narrative fields from anything that does not verify.
+    """
+    payload = asdict(record)
+    payload.pop("signature", None)
+    payload["signature"] = continuity_signature(payload)
+    return payload
 
 
 def sanitize_continuity_summary(value: Any) -> str:
@@ -218,6 +280,56 @@ class ContinuityEngine:
         try:
             with open(path) as f:
                 data = json.load(f)
+
+            # CP126 (critical): "Unsigned continuity text is injected into
+            # live cognition. Persisted subject threads, objectives, and
+            # commitments are read from an unauthenticated local JSON record
+            # and incorporated into system-prompt and reentry context."
+            #
+            # The text below reaches the system prompt, so anything able to
+            # write this file writes into Aura's next thought. Sanitization
+            # already flattens structure and drops evaluation contamination;
+            # what was missing is any check that the runtime wrote it.
+            #
+            # The record now carries an HMAC over its own canonical form. A
+            # missing or wrong signature does not refuse the boot — losing
+            # continuity is not worth failing to start over — but the
+            # narrative fields that reach cognition are dropped, so an
+            # unauthenticated file can influence timing and counters and
+            # cannot put words in her mouth.
+            claimed_signature = str(data.pop("signature", "") or "")
+            expected_signature = continuity_signature(data)
+            authentic = bool(
+                expected_signature
+                and claimed_signature
+                and hmac.compare_digest(claimed_signature, expected_signature)
+            )
+            if not authentic:
+                record_degradation(
+                    "continuity",
+                    PermissionError(
+                        "continuity record failed signature verification; "
+                        "narrative fields withheld from cognition"
+                    ),
+                    severity="warning",
+                    action="loaded continuity timing without its unverified narrative",
+                    enforce_failure_policy=False,
+                )
+                logger.warning(
+                    "⚠️ Continuity record is unsigned or does not verify — "
+                    "timing kept, narrative dropped."
+                )
+                for narrative_field in (
+                    "rolling_summary",
+                    "subject_thread",
+                    "active_objectives",
+                    "open_commitments",
+                ):
+                    if narrative_field in data:
+                        data[narrative_field] = (
+                            [] if isinstance(data[narrative_field], list) else ""
+                        )
+
             self._record = ContinuityRecord(**data)
             self._record.rolling_summary = sanitize_continuity_summary(
                 self._record.rolling_summary
@@ -443,7 +555,7 @@ class ContinuityEngine:
             with governed_scope_sync(lifecycle_receipt):
                 get_file_write_gateway().write_text(
                     path,
-                    json.dumps(asdict(record), indent=2),
+                    json.dumps(_signed_record_payload(record), indent=2),
                     source="continuity.shutdown_record",
                 )
             self._record = record
@@ -742,7 +854,7 @@ class ContinuityEngine:
             with governed_scope_sync(recovery_receipt):
                 get_file_write_gateway().write_text(
                     path,
-                    json.dumps(asdict(self._record), indent=2),
+                    json.dumps(_signed_record_payload(self._record), indent=2),
                     source="continuity.executive_failure_obligation",
                 )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
