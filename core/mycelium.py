@@ -102,6 +102,8 @@ def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
 #: carried through to the restore path, which reports what it verified rather
 #: than asserting the topology is trusted (CP126 3901c6f3).
 _VAULT_MAC_KEY_FILENAME = "mycelium_vault.key"
+#: Key length, named once so the mint and the length check cannot disagree.
+_VAULT_MAC_KEY_BYTES = 32
 _VAULT_MAC_ALGORITHM = "hmac-sha256"
 
 
@@ -117,11 +119,16 @@ def _vault_mac_key(base_dir: Path) -> bytes | None:
             # silently breaks vault tamper-evidence forever after — the MAC is
             # then computed with a key that never existed.
             existing = key_path.read_bytes()
-            if existing:
+            # Length-checked, not merely non-empty. The exclusive create below
+            # cannot truncate an existing key, but it can still be interrupted
+            # partway through its single write, leaving a short file. Accepting
+            # that would pin the vault to a truncated key forever; treating it
+            # as absent lets the miss below mint a whole one.
+            if len(existing) == _VAULT_MAC_KEY_BYTES:
                 return existing
         import secrets
 
-        raw = secrets.token_bytes(32)
+        raw = secrets.token_bytes(_VAULT_MAC_KEY_BYTES)
         key_path.parent.mkdir(parents=True, exist_ok=True)
         # Create exclusively at 0600 rather than write-then-chmod. The old
         # sequence left the MAC key world-readable for the window between the

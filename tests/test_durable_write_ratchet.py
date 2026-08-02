@@ -190,3 +190,85 @@ class TestTheScanWorksInsideAWorktree:
             "def save(p, payload):\n    p.write_text(payload)\n", encoding="utf-8",
         )
         assert scan_direct_writes(roots=("core",), repo_root=tmp_path).writes == []
+
+
+class TestExemptionsAreNarrow:
+    """The scanner learned two new exemptions. A scanner that over-exempts is
+    worse than none, so each is pinned together with the near-miss it must
+    still catch."""
+
+    @staticmethod
+    def _flagged(source: str) -> bool:
+        import ast
+        import textwrap
+
+        from core.runtime.durable_write_audit import _WriteVisitor
+
+        visitor = _WriteVisitor("probe.py")
+        visitor.visit(ast.parse(textwrap.dedent(source)))
+        return bool(visitor.found)
+
+    def test_plain_write_is_still_caught(self):
+        assert self._flagged("def f():\n path.write_bytes(b'x')\n")
+        assert self._flagged("def f():\n with open(p, 'wb') as h: h.write(b'x')\n")
+
+    def test_exclusive_create_is_exempt_both_spellings(self):
+        """O_CREAT|O_EXCL cannot truncate — it fails when the file exists —
+        and the gateway's replace semantics would lose the exclusivity that
+        key minting needs."""
+        two_step = (
+            "import os\n"
+            "def f():\n"
+            " fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n"
+            " with open(fd, 'wb') as h: h.write(b'x')\n"
+        )
+        inline = (
+            "import os\n"
+            "def f():\n"
+            " with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as h:\n"
+            "  h.write(b'x')\n"
+        )
+        assert not self._flagged(two_step)
+        assert not self._flagged(inline)
+
+    def test_os_open_without_o_excl_is_still_caught(self):
+        """The exemption is O_EXCL, not os.open. Without it the open DOES
+        truncate, which is the whole hazard."""
+        assert self._flagged(
+            "import os\n"
+            "def f():\n"
+            " fd = os.open(p, os.O_WRONLY | os.O_CREAT, 0o600)\n"
+            " with open(fd, 'wb') as h: h.write(b'x')\n"
+        )
+
+    def test_exclusive_fd_exemption_does_not_leak_across_functions(self):
+        """A name is only exempt in the scope that earned it."""
+        assert self._flagged(
+            "import os\n"
+            "def a():\n"
+            " fd = os.open(p, os.O_EXCL, 0o600)\n"
+            "def b():\n"
+            " with open(fd, 'wb') as h: h.write(b'x')\n"
+        )
+
+    def test_tempdir_derived_paths_are_exempt(self):
+        assert not self._flagged(
+            "import tempfile\n"
+            "from pathlib import Path\n"
+            "def f():\n"
+            " with tempfile.TemporaryDirectory() as t:\n"
+            "  q = Path(t) / 'a.bin'\n"
+            "  q.write_bytes(b'x')\n"
+        )
+
+    def test_a_real_path_beside_a_tempdir_is_still_caught(self):
+        """Opening a TemporaryDirectory must not bless every write in the
+        function — only the ones actually derived from it."""
+        assert self._flagged(
+            "import tempfile\n"
+            "from pathlib import Path\n"
+            "def f():\n"
+            " with tempfile.TemporaryDirectory() as t:\n"
+            "  real = Path('/var/db') / 'a.bin'\n"
+            "  real.write_bytes(b'x')\n"
+        )

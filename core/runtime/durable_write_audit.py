@@ -157,11 +157,82 @@ class _WriteVisitor(ast.NodeVisitor):
         self.rel_path = rel_path
         self.found: list[DirectWrite] = []
         self._scope: list[str] = []
+        #: Names bound to a descriptor from ``os.open(..., O_EXCL, ...)``.
+        #: Scoped, so a name reused in another function cannot inherit an
+        #: exemption it did not earn.
+        self._exclusive_fds: list[set[str]] = [set()]
+        #: Names that are, or are derived from, a temporary directory.
+        self._temp_names: list[set[str]] = [set()]
 
     def _enter(self, node: Any) -> None:
         self._scope.append(node.name)
+        self._exclusive_fds.append(set())
+        self._temp_names.append(set())
         self.generic_visit(node)
+        self._temp_names.pop()
+        self._exclusive_fds.pop()
         self._scope.pop()
+
+    def visit_With(self, node: ast.With) -> None:  # noqa: N802 - ast API
+        """Bind ``with tempfile.TemporaryDirectory() as x`` to a temp name.
+
+        Everything under such a directory is deleted when the block exits, so a
+        crash mid-write cannot corrupt durable state — there is no durable
+        state. The scanner already trusts receivers *named* like temporaries;
+        this extends the same judgement to paths demonstrably derived from one,
+        which is how the compliant idiom actually reads.
+        """
+        for item in node.items:
+            if _is_tempfile_call(item.context_expr) and isinstance(item.optional_vars, ast.Name):
+                self._temp_names[-1].add(item.optional_vars.id)
+        self.generic_visit(node)
+
+    visit_AsyncWith = visit_With  # noqa: N815 - ast API casing
+
+    def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802 - ast API
+        """Notice ``fd = os.open(path, ... | os.O_EXCL, 0o600)``.
+
+        This is the one shape of raw write that is not the hazard this scanner
+        exists to find. The ratchet's premise is truncation: a plain open
+        destroys the old contents before the new ones land. ``O_CREAT|O_EXCL``
+        cannot do that — it *fails* when the file already exists, so there is
+        no durable state for it to shorten.
+
+        It also cannot be replaced by the gateway without losing the property
+        it was chosen for. The gateway is temp-file-plus-replace, which is
+        atomic but NOT exclusive: two processes minting a key would each write
+        their own and the loser would return a value the file no longer holds.
+        Key material needs the exclusivity, so the primitive is correct and
+        flagging it would push callers toward a weaker write.
+        """
+        if _is_exclusive_open(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._exclusive_fds[-1].add(target.id)
+        # `adapter_path = Path(temporary) / "adapter.safetensors"` — and
+        # `scratch = tempfile.mkdtemp()` — are both still the temporary.
+        if _is_tempfile_call(node.value) or self._is_temp_derived(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self._temp_names[-1].add(target.id)
+        self.generic_visit(node)
+
+    def _is_temp_derived(self, node: ast.AST) -> bool:
+        """Does this expression trace back to a temporary directory?"""
+        if isinstance(node, ast.Name):
+            return any(node.id in scope for scope in self._temp_names)
+        if isinstance(node, ast.BinOp):
+            # Path joins: judge the base, exactly as _receiver_is_safe does.
+            return self._is_temp_derived(node.left)
+        if isinstance(node, ast.Call):
+            # Path(temporary), Path(temporary).resolve(), ...
+            func = node.func
+            if isinstance(func, ast.Attribute):
+                return self._is_temp_derived(func.value)
+            return any(self._is_temp_derived(arg) for arg in node.args)
+        if isinstance(node, ast.Attribute):
+            return self._is_temp_derived(node.value)
+        return False
 
     visit_FunctionDef = _enter          # noqa: N815 - ast API casing
     visit_AsyncFunctionDef = _enter     # noqa: N815
@@ -180,12 +251,32 @@ class _WriteVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast API
         func = node.func
         if isinstance(func, ast.Attribute):
-            if func.attr in _DIRECT_WRITE_METHODS and not _receiver_is_safe(func.value):
+            if (
+                func.attr in _DIRECT_WRITE_METHODS
+                and not _receiver_is_safe(func.value)
+                and not self._is_temp_derived(func.value)
+            ):
                 self._record(node, func.attr)
         elif isinstance(func, ast.Name) and func.id == "open":
-            if _opens_for_writing(node):
+            if _opens_for_writing(node) and not self._wraps_exclusive_fd(node):
                 self._record(node, "open")
         self.generic_visit(node)
+
+    def _wraps_exclusive_fd(self, node: ast.Call) -> bool:
+        """``open(fd, "wb")`` where fd came from an exclusive create.
+
+        The first argument is a descriptor, not a path: this call adopts a file
+        that ``os.open`` already created, it does not open one by name.
+        """
+        if not node.args:
+            return False
+        first = node.args[0]
+        # Inline: open(os.open(path, ...O_EXCL, 0o600), "wb").
+        if _is_exclusive_open(first):
+            return True
+        if not isinstance(first, ast.Name):
+            return False
+        return any(first.id in scope for scope in self._exclusive_fds)
 
 
 def _receiver_is_safe(node: ast.AST) -> bool:
@@ -203,6 +294,51 @@ def _receiver_is_safe(node: ast.AST) -> bool:
         return _receiver_is_safe(node.left)
     lowered = name.lower()
     return any(marker in lowered for marker in _SAFE_RECEIVER_MARKERS)
+
+
+#: Factories whose result is deleted by the runtime, not kept as state.
+_TEMPFILE_FACTORIES = frozenset(
+    {"TemporaryDirectory", "NamedTemporaryFile", "mkdtemp", "mkstemp"}
+)
+
+
+def _is_tempfile_call(node: ast.AST) -> bool:
+    """Is this a ``tempfile`` factory call?"""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in _TEMPFILE_FACTORIES
+    if isinstance(func, ast.Name):
+        return func.id in _TEMPFILE_FACTORIES
+    return False
+
+
+def _is_exclusive_open(node: ast.AST) -> bool:
+    """Is this ``os.open(...)`` with ``O_EXCL`` among its flags?
+
+    Matched structurally rather than by rendering the source, so
+    ``os.O_EXCL``, a bare ``O_EXCL``, and any ``|`` combination of them all
+    read the same. Requires the call to actually be ``os.open`` — a local
+    helper named ``open`` must not inherit the exemption.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    is_os_open = (
+        isinstance(func, ast.Attribute)
+        and func.attr == "open"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "os"
+    )
+    if not is_os_open:
+        return False
+    return any(
+        isinstance(sub, ast.Attribute) and sub.attr == "O_EXCL"
+        or isinstance(sub, ast.Name) and sub.id == "O_EXCL"
+        for arg in node.args[1:]
+        for sub in ast.walk(arg)
+    )
 
 
 def _opens_for_writing(node: ast.Call) -> bool:

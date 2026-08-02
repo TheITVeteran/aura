@@ -105,6 +105,18 @@ def _home() -> Path:
 #: just declared to be its own live root.
 _ORIGINAL_HOME: Path = _home()
 
+#: Publish that reference point so it survives a spawn. Without this, every
+#: child re-infers "the live instance" from the HOME it was handed, and a child
+#: given a sandbox HOME concludes the sandbox is the live instance — making the
+#: ownership guard refuse the child's own legitimate state writes. Exported
+#: once, at the moment the true value is still knowable, it propagates through
+#: ordinary environment inheritance to every descendant with no per-spawn code.
+#:
+#: setdefault, never overwrite: if this process was itself told the answer by a
+#: parent, that parent was closer to the truth than this process is.
+if not os.environ.get("AURA_LIVE_STATE_ROOT"):
+    os.environ["AURA_LIVE_STATE_ROOT"] = str(_ORIGINAL_HOME / _LIVE_ROOT_NAME)
+
 
 def live_state_root() -> Path:
     """The REAL instance's state root. Fixed for the life of the process.
@@ -112,7 +124,30 @@ def live_state_root() -> Path:
     Deliberately not recomputed from the current ``HOME``: this is the thing
     being protected, and a protected resource whose identity follows a
     mutable environment variable is not protected.
+
+    The one exception is inheritance, and it exists because the rule above
+    breaks down across a spawn. ``_ORIGINAL_HOME`` is "the home this process
+    started with", which is only the same as "the real user's home" for a
+    process that was not handed a redirected one at exec. A child spawned by a
+    test already has the fake ``HOME`` at import, so it concludes the sandbox
+    IS the live instance and refuses to write its own state — the guard firing
+    on the thing it was meant to protect. The parent knows the true answer, so
+    it passes it down (see ``subprocess_gateway``), and a child prefers what it
+    was told over what it can infer.
+
+    This does not weaken the guard: anything able to set this variable can
+    already set ``AURA_ALLOW_LIVE_STATE_WRITE``. It is inherited trust from the
+    parent, not a self-declaration — the protection this module provides is
+    against accident, and an accident cannot forge a parent.
     """
+    inherited = os.environ.get("AURA_LIVE_STATE_ROOT") or ""
+    if inherited:
+        try:
+            return Path(inherited).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            # An unusable value must fall back to inference rather than
+            # disabling the guard.
+            pass
     return _ORIGINAL_HOME / _LIVE_ROOT_NAME
 
 

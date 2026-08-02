@@ -997,6 +997,22 @@ class SubprocessGateway:
                     "AURA_MODEL_LANE_DELEGATION_TOKEN": model_delegation_token,
                 }
             )
+            # Tell the child WHERE the reservation lives instead of letting it
+            # re-derive the path. Both sides used to guess from HOME and the
+            # runtime profile, and they can disagree: a child that starts with
+            # HOME already redirected cannot detect the redirection, so it
+            # applies a profile suffix the parent did not, looks in
+            # `.aura-test/` for a record written to `.aura/`, and silently
+            # falls back to an uninherited lease — claiming a second lane
+            # against a budget that was already spent. The parent knows the
+            # real path; passing it makes the two agree by construction.
+            controller_state_path = getattr(model_controller, "state_path", None)
+            if controller_state_path is not None:
+                process_env["AURA_MODEL_LANE_STATE_PATH"] = str(controller_state_path)
+            # Which world that path belongs to is handled generally, by
+            # core.runtime.state_ownership exporting AURA_LIVE_STATE_ROOT into
+            # this process's environment so every child inherits the true
+            # identity of the live instance rather than re-inferring it.
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command,
