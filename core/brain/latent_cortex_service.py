@@ -812,6 +812,7 @@ class LatentCortexService:
         answer_replacement_private: Any = None,
         expected_objective: str = "",
         expected_request_payload_sha256: str = "",
+        allocated_budget: dict[str, Any] | None = None,
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -2588,6 +2589,38 @@ class LatentCortexService:
             or budget.get("exhausted") is not False
         ):
             errors.append("incomplete_or_exhausted_compute_receipt")
+        elif isinstance(allocated_budget, dict):
+            # CP126 0673f84a: the checks above compare the worker's spend
+            # against the worker's OWN reported maximum, which any receipt can
+            # satisfy by reporting a large enough ceiling. Nothing compared
+            # either number with what this facade actually allocated, so an
+            # episode could spend far more than its budget and still produce a
+            # self-consistent, passing receipt.
+            allocated_max = allocated_budget.get("max_layer_apps")
+            if type(allocated_max) is int and allocated_max > 0:
+                # Independent, not elif: a receipt can declare a ceiling above
+                # its allocation without spending it, and a spend above the
+                # allocation is the fact that matters even when the declared
+                # ceiling explains it. Chaining them made the spend check
+                # unreachable.
+                if budget["max_layer_apps"] > allocated_max:
+                    errors.append("compute_ceiling_exceeds_allocation")
+                if budget["spent_layer_apps"] > allocated_max:
+                    errors.append("compute_spend_exceeds_allocation")
+            allocated_wall = allocated_budget.get("wall_clock_s")
+            spent_wall = budget.get("wall_clock_s")
+            if (
+                isinstance(allocated_wall, (int, float))
+                and math.isfinite(float(allocated_wall))
+                and allocated_wall > 0
+                and isinstance(spent_wall, (int, float))
+                and not isinstance(spent_wall, bool)
+                and math.isfinite(float(spent_wall))
+                # A small overrun is scheduling noise; a large one means the
+                # deadline was not honoured.
+                and float(spent_wall) > float(allocated_wall) * 1.25
+            ):
+                errors.append("wall_clock_exceeds_allocation")
         if not positive_int(receipt, "decode_requested_tokens") or receipt.get(
             "decode_requested_tokens"
         ) != config.get("decode_max_tokens"):
@@ -4578,6 +4611,7 @@ class LatentCortexService:
                 answer_replacement_private=private_answer_replacement,
                 expected_objective=visible_objective,
                 expected_request_payload_sha256=expected_request_sha256,
+                allocated_budget=budget,
             )
             if not contract_errors and adaptive_plan is not None:
                 try:
