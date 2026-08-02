@@ -21,7 +21,9 @@ from core.brain.llm.latent_cortex.output_quality import (
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.dialogue.referents import borrowed_first_person_spans
 from core.dialogue.shared_history import has_fabricated_shared_history
+from core.runtime.errors import record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
+from core.runtime.turn_outcome import note_candidate, note_suppression
 
 logger = logging.getLogger("Aura.Conversation.ResponseReliability")
 
@@ -6519,6 +6521,72 @@ def assess_model_text_integrity(
 
 
 def assess_user_facing_reply(
+    user_message: Any,
+    reply_text: Any,
+    *,
+    recent_user_messages: Iterable[str] | None = None,
+    grounding: Iterable[str] | None = None,
+) -> ConversationReplyAssessment:
+    """Classify a reply, and record the verdict on the turn's candidate ledger.
+
+    This gate is where answers died. It ran at fifteen call sites, each of
+    which discarded the text on a bad verdict, and the turn then reported an
+    infrastructure failure for a reply it had been holding — measured live,
+    a correct 240-character answer rejected for ``truncated_tail`` while the
+    person was handed "I couldn't get to an answer I'd stand behind".
+
+    Recording here rather than at the call sites is deliberate: it is ONE
+    place, every caller inherits it, and a new call site cannot forget. The
+    verdict itself is unchanged — this observes, it does not soften. What
+    changes is that a rejected candidate stays recoverable, so the turn
+    finalizer can find it instead of apologising over it.
+
+    A reply carrying an internal leak is recorded UNRECOVERABLE: some text
+    genuinely must never reach a person, and the ledger must not resurrect
+    it.
+    """
+    assessment = _assess_user_facing_reply(
+        user_message,
+        reply_text,
+        recent_user_messages=recent_user_messages,
+        grounding=grounding,
+    )
+    _record_on_turn_ledger(reply_text, assessment)
+    return assessment
+
+
+def _record_on_turn_ledger(
+    reply_text: Any, assessment: ConversationReplyAssessment
+) -> None:
+    """Mirror one gate verdict onto the bound turn. Never raises, never blocks.
+
+    No turn bound (background work, tools, tests) means no-op.
+    """
+    text = str(reply_text or "").strip()
+    if not text:
+        return
+    try:
+        candidate_id = note_candidate(text, source="reliability_gate")
+        if candidate_id is None or assessment.ok:
+            return
+        reasons = tuple(assessment.reasons or ())
+        note_suppression(
+            candidate_id,
+            gate="response_reliability",
+            reasons=reasons,
+            hard=bool(assessment.hard_failure),
+            recoverable=not (set(reasons) & _INTERNAL_LEAK_REASONS),
+        )
+    except (AttributeError, LookupError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "response_reliability",
+            exc,
+            severity="warning",
+            action="skipped one candidate-ledger write; the verdict itself stands",
+        )
+
+
+def _assess_user_facing_reply(
     user_message: Any,
     reply_text: Any,
     *,

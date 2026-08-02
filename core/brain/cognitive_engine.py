@@ -19,6 +19,13 @@ from core.goals.objective_lifecycle import (
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
+from core.runtime.turn_outcome import (
+    TurnOutcome,
+    UserVisibleState,
+    bind_turn,
+    finalize_turn,
+    recoverable_answer,
+)
 from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
 from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AuraState, CognitiveMode
@@ -1553,6 +1560,52 @@ class CognitiveEngine:
         origin: str | None = None,
         **kwargs,
     ) -> Thought:
+        """Execute a cognitive cycle, under one turn ledger and one finalizer.
+
+        The cycle used to be able to end holding an answer. Every gate below
+        this point that rejects a draft records it on the bound turn instead
+        of destroying it, so when the cycle would otherwise return an empty
+        thought there is somewhere to ask "do we actually have something?".
+
+        The binding is a contextvar, so concurrent turns do not share a
+        ledger, and the finalizer runs exactly once per cycle in the
+        ``finally`` — including when a phase raises, which is precisely the
+        path that used to leave no record of what the turn had.
+        """
+        outcome = TurnOutcome(origin=str(origin or "unknown"))
+        try:
+            with bind_turn(outcome):
+                thought = await self._think_within_turn(
+                    objective, context, mode, origin, **kwargs
+                )
+        except BaseException as exc:
+            outcome.record_error(
+                f"{type(exc).__name__}: {exc}",
+                retryable=not isinstance(exc, (MemoryError, SystemExit, KeyboardInterrupt)),
+            )
+            finalize_turn(outcome, subsystem="cognitive_engine")
+            raise
+
+        content = str(getattr(thought, "content", "") or "").strip()
+        if content:
+            outcome.mark_served(content)
+        else:
+            # No answer surfaced. Before this is recorded as a failed cycle,
+            # ask the ledger whether a gate suppressed something servable —
+            # a recoverable draft here IS the live defect, and the finalizer
+            # escalates it by name rather than as generic infrastructure noise.
+            outcome.mark_served("", state=UserVisibleState.NOTHING_SERVED)
+        finalize_turn(outcome, subsystem="cognitive_engine")
+        return thought
+
+    async def _think_within_turn(
+        self,
+        objective: str,
+        context: dict[str, Any] = None,
+        mode: ThinkingMode = ThinkingMode.FAST,
+        origin: str | None = None,
+        **kwargs,
+    ) -> Thought:
         """
         Execute a cognitive cycle to produce a thought.
         This now drives the 8 phases to transform state.
@@ -2297,6 +2350,34 @@ class CognitiveEngine:
                     or "user_cycle_no_response"
                 ),
                 generation_metadata=dict(state.response_modifiers),
+            )
+
+        # Last stop before this turn tells a person it has nothing. Ask the
+        # ledger: did a gate suppress a draft that is still servable? Measured
+        # live, the answer was sometimes yes — a complete 240-character reply
+        # rejected for `truncated_tail` while the person got an apology.
+        #
+        # This does NOT overrule the gates. Text they marked unrecoverable
+        # (prompt leaks, corrupted output, policy refusals) never comes back;
+        # `best_recoverable_candidate` excludes it. What comes back is a draft
+        # a heuristic merely disliked, and only when the alternative is
+        # nothing at all.
+        salvaged = recoverable_answer()
+        if salvaged:
+            logger.warning(
+                "🩹 CognitiveEngine: no answer-quality response for origin=%s, but the "
+                "turn still held a recoverable %d-char draft; serving it rather than "
+                "reporting an empty cycle.",
+                origin,
+                len(salvaged),
+            )
+            return Thought(
+                id=str(uuid.uuid4()),
+                content=salvaged,
+                mode=mode,
+                confidence=0.4,
+                reasoning=["Recovered a gate-suppressed draft; nothing else survived."],
+                metadata={"recovered_from_suppression": True},
             )
 
         logger.warning(
