@@ -7,6 +7,7 @@ MindTick in production.
 """
 import asyncio
 import logging
+import os
 import time
 from typing import Optional
 
@@ -45,10 +46,57 @@ class LifeLoop:
         self._last_error = ""
         self._last_success_at = 0.0
 
+    #: Env override for the one legitimate case: deliberately running the
+    #: boxed simulation on a host that also has a live runtime registered.
+    ALLOW_BESIDE_MIND_TICK_ENV = "AURA_ALLOW_LIFE_LOOP_BESIDE_MIND_TICK"
+
+    @staticmethod
+    def _mind_tick_is_live() -> bool:
+        """Is the production cognitive rhythm already running?"""
+        try:
+            from core.container import ServiceContainer
+
+            return ServiceContainer.get("mind_tick", default=None) is not None
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            # Cannot tell. Say no rather than blocking a boxed simulation on
+            # a container that is not up — this guard exists to prevent a
+            # double rhythm, not to gate the simulator on import health.
+            return False
+
     async def start(self) -> None:
-        """Start the standalone simulation loop in the background."""
+        """Start the standalone simulation loop in the background.
+
+        This module's own docstring has always said the loop "must not be
+        started beside MindTick in production". That was a comment, and
+        ``start()`` enforced nothing — a caller who had not read it got two
+        organism rhythms driving one state, which is exactly the failure the
+        sentence was written to prevent.
+
+        The rule is now the code. Refuses rather than warns, because a second
+        life loop is not a degraded mode: both rhythms would write the same
+        organism state and neither would be wrong from where it stood.
+        """
         if self._running:
             return
+
+        if self._mind_tick_is_live() and not os.environ.get(
+            self.ALLOW_BESIDE_MIND_TICK_ENV, ""
+        ).strip():
+            message = (
+                "refusing to start the standalone organism simulation: MindTick "
+                "is live and is the runtime's single organism rhythm. Set "
+                f"{self.ALLOW_BESIDE_MIND_TICK_ENV}=1 to override deliberately."
+            )
+            logger.error("%s", message)
+            record_degradation(
+                "organism_life_loop",
+                RuntimeError(message),
+                severity="warning",
+                action="refused to start a second organism rhythm beside MindTick",
+                enforce_failure_policy=False,
+            )
+            return
+
         self._running = True
         self._task = get_task_tracker().create_task(
             self._loop_run(),
