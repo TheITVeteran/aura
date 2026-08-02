@@ -7525,25 +7525,45 @@ class InferenceGate:
         # ── Operational Resource Stakes: persistent viability constrains action ──
         # This newer ledger is stricter than the legacy multiplier above: it can
         # downgrade the large-model lane and hard-cap output when viability drops.
+        stakes_token_ceiling: int | None = None
         try:
             from core.container import ServiceContainer
 
             stakes = ServiceContainer.get("resource_stakes", default=None)
             if stakes is not None and hasattr(stakes, "action_envelope"):
                 envelope = stakes.action_envelope("high" if deep_handoff else "normal")
+                # CP126 (critical): "A resource-stakes block can be undone by
+                # later token modifiers. A denied envelope caps max_tokens at
+                # 128, but later homeostatic modifiers impose a 384 minimum,
+                # temporal continuity can grow the budget to 4096, and runtime
+                # sampling biases still run. resource_stakes_blocked
+                # suppresses only selected foreground floors, not these."
+                #
+                # A cap applied here is a suggestion — a dozen later
+                # transformations each raise or scale the budget, and asking
+                # every one of them to remember a flag is how the flag ends up
+                # checked in four places and missed in six. The envelope's
+                # limit is recorded as a CEILING and re-applied as the last
+                # token transformation before generation, next to the existing
+                # caller-cap clamp that already works this way.
                 if not envelope.allowed:
                     requested_tier = "primary"
                     deep_handoff = False
                     if not protected_compact_capability_contract:
                         max_tokens = min(max_tokens, 128)
+                        stakes_token_ceiling = 128
                     context["resource_stakes_blocked"] = True
                 else:
                     if not protected_compact_capability_contract:
-                        max_tokens = min(max_tokens, max(1, int(envelope.max_tokens)))
+                        envelope_cap = max(1, int(envelope.max_tokens))
+                        max_tokens = min(max_tokens, envelope_cap)
+                        stakes_token_ceiling = envelope_cap
                     if "large_model_cortex" in set(envelope.disabled_capabilities):
                         requested_tier = "primary"
                         deep_handoff = False
                 context["resource_stakes_envelope"] = envelope.as_dict()
+                if stakes_token_ceiling is not None:
+                    context["resource_stakes_token_ceiling"] = stakes_token_ceiling
         except _INFERENCE_RECOVERABLE_ERRORS as _stakes_exc:
             record_degradation(
                 "inference_gate",
@@ -8333,9 +8353,18 @@ class InferenceGate:
                     output_contract.hard_token_ceiling,
                 )
 
-        # No policy floor may expand a caller-admitted ceiling. Keep this as
-        # the final token-budget transformation before prompt construction and
-        # every local/cloud provider call below.
+        # No policy floor may expand a caller-admitted ceiling, and none may
+        # expand a viability ceiling either. Keep both as the final
+        # token-budget transformations before prompt construction and every
+        # local/cloud provider call below.
+        if stakes_token_ceiling is not None and max_tokens > stakes_token_ceiling:
+            logger.info(
+                "🪫 Resource-stakes ceiling re-applied after later modifiers: %d→%d.",
+                max_tokens,
+                stakes_token_ceiling,
+            )
+            max_tokens = max(1, min(max_tokens, stakes_token_ceiling))
+            context["max_tokens"] = max_tokens
         if explicit_max_tokens_cap is not None:
             max_tokens = max(1, min(max_tokens, explicit_max_tokens_cap))
             context["max_tokens"] = max_tokens
