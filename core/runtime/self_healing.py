@@ -40,6 +40,7 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.service_registry import get_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SelfHealing")
 
@@ -53,7 +54,7 @@ _SELF_HEALING_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
-_DIR = Path.home() / ".aura" / "data" / "self_healing"
+_DIR = state_root() / "data" / "self_healing"
 _DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER = _DIR / "events.jsonl"
 

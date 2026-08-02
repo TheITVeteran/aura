@@ -14,10 +14,11 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ConversationPersistence")
 
-DEFAULT_PERSIST_DIR = Path.home() / ".aura" / "data" / "conversations"
+DEFAULT_PERSIST_DIR = state_root() / "data" / "conversations"
 
 
 def _env_int(name: str, default: int, *, low: int, high: int) -> int:

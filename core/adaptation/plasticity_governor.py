@@ -41,10 +41,11 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.PlasticityGovernor")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "plasticity"
+_DATA_DIR = state_root() / "data" / "plasticity"
 _FISHER_PATH = _DATA_DIR / "fisher_state.npz"
 
 

@@ -31,12 +31,13 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.state_ownership import state_root
 
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache",
               ".pytest_cache", ".ruff_cache", "dist", "build", ".aura"}
 _MAX_ENTRIES = 20_000          # hard ceiling so a survey can never run away
 _DIGEST_RELPATH = Path(".aura") / "workspace_digest.md"
-_RUN_LEDGER = Path.home() / ".aura" / "data" / "environmental_agency" / "runs.jsonl"
+_RUN_LEDGER = state_root() / "data" / "environmental_agency" / "runs.jsonl"
 
 
 @dataclass

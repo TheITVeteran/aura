@@ -21,6 +21,7 @@ from typing import Any
 from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.resource_observation import get_resource_observer
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.CRSMClosureScheduler")
 
@@ -93,7 +94,7 @@ class CRSMClosureScheduler:
             _env_int("AURA_CRSM_AUTOCLOSE_TIMEOUT_S", 3 * 3600)
         )
         self._state_path = (
-            Path(os.getenv("AURA_STATE_DIR", str(Path.home() / ".aura" / "run")))
+            Path(os.getenv("AURA_STATE_DIR", str(state_root() / "run")))
             / "crsm_closure_state.json"
         )
 

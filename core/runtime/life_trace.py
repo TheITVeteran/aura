@@ -26,6 +26,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from core.runtime.state_ownership import state_root
 
 
 EVENT_TYPES = (
@@ -94,7 +95,7 @@ class LifeTraceLedger:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "life_trace.sqlite3"
             except (ImportError, AttributeError, RuntimeError):
-                db_path = Path.home() / ".aura" / "life_trace.sqlite3"
+                db_path = state_root() / "life_trace.sqlite3"
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

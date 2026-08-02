@@ -17,6 +17,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ class SimulationWellRegistry:
 
                 manifest_path = config.paths.data_dir / "simulation_well" / "manifest.json"
             except (ImportError, AttributeError, RuntimeError):
-                manifest_path = Path.home() / ".aura" / "data" / "simulation_well" / "manifest.json"
+                manifest_path = state_root() / "data" / "simulation_well" / "manifest.json"
         self.manifest_path = Path(manifest_path)
         self._datasets: dict[str, SimulationDataset] = {}
         self._load_error: str | None = None

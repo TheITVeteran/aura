@@ -36,6 +36,7 @@ from core.executive.execution_policy import (
 )
 from core.runtime.errors import record_degradation
 from core.runtime.receipts import AutonomyReceipt, get_receipt_store
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.StandingAuthority")
 
@@ -923,7 +924,7 @@ class StandingAuthorityManager:
             )
             try:
                 repo_root = Path(__file__).resolve().parents[2]
-                aura_state = Path.home() / ".aura"
+                aura_state = state_root()
                 target = Path(str(raw_path)).expanduser()
                 if not target.is_absolute():
                     target = repo_root / target

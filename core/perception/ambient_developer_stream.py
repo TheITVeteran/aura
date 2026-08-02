@@ -28,6 +28,7 @@ from core.runtime.background_policy import (
 )
 from core.runtime.errors import record_degradation
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.AmbientDeveloperStream")
 
@@ -410,7 +411,7 @@ class AmbientDeveloperStream:
             raw = [part.strip() for part in configured.split(os.pathsep) if part.strip()]
             return tuple((Path(part).expanduser() if Path(part).is_absolute() else self.project_root / part).resolve() for part in raw)
         roots = [
-            Path.home() / ".aura" / "data" / "terminal",
+            state_root() / "data" / "terminal",
             self.project_root / "logs" / "terminal",
         ]
         return tuple(path.resolve() for path in roots)

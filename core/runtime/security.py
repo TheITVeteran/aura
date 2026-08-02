@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Security")
 
@@ -121,6 +122,6 @@ class SandboxPolicy:
 
 
 def default_workspace_policy(root: Optional[Path] = None) -> SandboxPolicy:
-    workspace = (root or Path.home() / ".aura" / "workspace").expanduser().resolve()
+    workspace = (root or state_root() / "workspace").expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     return SandboxPolicy(workspace_root=workspace)

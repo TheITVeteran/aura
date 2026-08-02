@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Memory.AuraSelfProfile")
 _PROFILE_PERSISTENCE_ERRORS = (
@@ -57,7 +58,7 @@ class AuraSelfProfile:
     
     def __init__(self, storage_path: Optional[str] = None):
         self._storage_path = Path(
-            storage_path or (Path.home() / ".aura" / "data" / "aura_self_profile.json")
+            storage_path or (state_root() / "data" / "aura_self_profile.json")
         )
         self._profile_data: Dict[str, List[SelfProfileFact]] = {
             "capability": [],

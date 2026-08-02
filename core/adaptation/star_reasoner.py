@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.container import ServiceContainer
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.STaR")
 
@@ -163,7 +164,7 @@ class STaRReasoner:
             from core.config import config
             self._data_dir = config.paths.data_dir / "star"
         except (ImportError, AttributeError):
-            self._data_dir = Path.home() / ".aura" / "data" / "star"
+            self._data_dir = state_root() / "data" / "star"
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._accepted_path = self._data_dir / "accepted_traces.jsonl"
         self._stats_path = self._data_dir / "star_stats.json"

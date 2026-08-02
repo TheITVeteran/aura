@@ -40,11 +40,12 @@ from enum import Enum
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Projects")
 
 
-_PROJECT_DIR = Path.home() / ".aura" / "data" / "projects"
+_PROJECT_DIR = state_root() / "data" / "projects"
 _PROJECT_DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _PROJECT_DIR / "ledger.jsonl"
 

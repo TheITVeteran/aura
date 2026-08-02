@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 from core.runtime.service_registry import register_runtime_service
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SafeBackup")
 
@@ -34,7 +35,7 @@ class SafeBackupSystem:
             self.backup_root = Path(backup_root or config.paths.data_dir / "backups")
         except (ImportError, AttributeError):
             # Fallback if config is not fully initialized
-            self.backup_root = Path.home() / ".aura" / "backups"
+            self.backup_root = state_root() / "backups"
             
         self.backup_root.mkdir(parents=True, exist_ok=True)
         self._last_backup: float = 0.0

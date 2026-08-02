@@ -31,6 +31,7 @@ from typing import Any
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SelfRepairBacklog")
 
@@ -106,7 +107,7 @@ class SelfRepairBacklog:
     """Parses defect registers into approval-gated repair goals."""
 
     seen_path: Path = field(
-        default_factory=lambda: Path.home() / ".aura" / "data" / "self_repair_seen.json"
+        default_factory=lambda: state_root() / "data" / "self_repair_seen.json"
     )
     _seen: set[str] = field(default_factory=set)
     _inflight: set[str] = field(default_factory=set, init=False, repr=False)

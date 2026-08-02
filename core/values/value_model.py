@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.runtime.errors import record_degradation
 from core.social.other_agent_model import Signal  # reuse the decaying confidence-weighted scalar
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Values.ValueModel")
 
@@ -122,7 +123,7 @@ class BoundedValueModel:
                 from core.config import config
                 storage_path = config.paths.memory_dir / "value_model.json"
             except (ImportError, AttributeError, RuntimeError):
-                storage_path = Path.home() / ".aura" / "data" / "memory" / "value_model.json"
+                storage_path = state_root() / "data" / "memory" / "value_model.json"
         self._path = Path(storage_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._autosave = autosave

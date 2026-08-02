@@ -37,10 +37,11 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Community")
 
-_DIR = Path.home() / ".aura" / "data" / "community"
+_DIR = state_root() / "data" / "community"
 _DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _DIR / "ledger.jsonl"
 

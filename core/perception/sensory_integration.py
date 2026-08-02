@@ -32,6 +32,7 @@ from core.runtime.permission_gates import camera_allowed
 from core.runtime.service_access import optional_service
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SensoryIntegration")
 
@@ -670,7 +671,7 @@ class AVProductionSystem:
     """
     
     def __init__(self, output_dir: str | None = None) -> None:
-        base_dir = Path(output_dir) if output_dir else Path.home() / ".aura" / "data" / "media"
+        base_dir = Path(output_dir) if output_dir else state_root() / "data" / "media"
         self.output_dir = base_dir
         self.image_dir = base_dir / "generated_images"
         self.video_dir = base_dir / "edited_video"

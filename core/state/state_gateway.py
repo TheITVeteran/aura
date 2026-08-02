@@ -30,6 +30,7 @@ from core.runtime.gateways import (
     StateMutationRequest,
 )
 from core.runtime.receipts import StateMutationReceipt, get_receipt_store
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.StateGateway")
 _SAFE_DOMAIN = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
@@ -53,7 +54,7 @@ class ConcreteStateGateway(StateGatewayBase):
         root: Path | None = None,
         governance_decide: Callable[..., Any] | None = None,
     ):
-        self.root = Path(root) if root else (Path.home() / ".aura" / "state")
+        self.root = Path(root) if root else (state_root() / "state")
         self.root.mkdir(parents=True, exist_ok=True)
         self._governance = governance_decide
         self._lock = threading.RLock()

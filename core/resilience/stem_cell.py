@@ -49,11 +49,12 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_bytes
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.StemCell")
 
 
-_STEM_DIR = Path.home() / ".aura" / "data" / "stem_cells"
+_STEM_DIR = state_root() / "data" / "stem_cells"
 _STEM_KEY_FILE = _STEM_DIR / "stem_cells.key"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
 _MAX_HEADER_BYTES = 64 * 1024

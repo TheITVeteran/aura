@@ -34,6 +34,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
 
@@ -113,7 +114,7 @@ class PerceptionDaemon:
         self.privacy_mode = False
         self.redacted_patterns = ["password", "token", "key", "secret", "private"]
         self._file_scan_root = Path(
-            os.getenv("AURA_PERCEPTION_FILE_SCAN_ROOT", str(Path.home() / ".aura"))
+            os.getenv("AURA_PERCEPTION_FILE_SCAN_ROOT", str(state_root()))
         )
 
         logger.info("📡 PerceptionDaemon initialized.")

@@ -33,6 +33,7 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.EpistemicTracker")
 
@@ -53,7 +54,7 @@ def _default_db_path() -> Path:
 
         return Path(config.paths.data_dir) / "epistemic_map.json"
     except (ImportError, AttributeError, TypeError, ValueError):
-        return Path.home() / ".aura" / "data" / "epistemic_map.json"
+        return state_root() / "data" / "epistemic_map.json"
 
 
 def _record_epistemic_degradation(

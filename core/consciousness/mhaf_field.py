@@ -30,11 +30,12 @@ from core.utils.task_tracker import get_task_tracker
 
 from .mhaf.hrr import HRREncoder
 from .mhaf.phi_estimator import compute_local_phi
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.MHAF")
 
 HRR_DIM = 256
-_DATA_PATH = Path.home() / ".aura" / "data" / "mhaf_state.json"
+_DATA_PATH = state_root() / "data" / "mhaf_state.json"
 
 
 @dataclass

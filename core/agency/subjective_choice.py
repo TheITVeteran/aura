@@ -27,6 +27,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SubjectiveChoice")
 
@@ -236,7 +237,7 @@ class SubjectiveChoiceEngine:
                 state_path = Path(config.paths.data_dir) / "cognitive" / "subjective_choices.json"
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("subjective_choice_engine", exc, severity="debug")
-                state_path = Path.home() / ".aura" / "data" / "cognitive" / "subjective_choices.json"
+                state_path = state_root() / "data" / "cognitive" / "subjective_choices.json"
         self._state_path = Path(state_path)
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._load()

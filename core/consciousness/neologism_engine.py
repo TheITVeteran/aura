@@ -33,10 +33,11 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.NeologismEngine")
 
-_LEXICON_PATH = Path.home() / ".aura" / "data" / "private_lexicon.json"
+_LEXICON_PATH = state_root() / "data" / "private_lexicon.json"
 _ALIEN_DISTANCE_THRESHOLD = 0.6  # cosine distance above which a state is "alien"
 _MIN_CLUSTER_SIZE = 3  # minimum states to form a nameable cluster
 _STATE_VECTOR_DIMS = 48

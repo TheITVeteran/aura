@@ -44,6 +44,7 @@ from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import (
     get_task_tracker,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ShutdownCoordinator")
 
@@ -725,7 +726,7 @@ def shutdown_verdict_path() -> Path:
         return Path(configured).expanduser().resolve()
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return Path(tempfile.gettempdir()) / f"aura-shutdown-report-pytest-{os.getpid()}.json"
-    return Path.home() / ".aura" / "run" / "shutdown_report.json"
+    return state_root() / "run" / "shutdown_report.json"
 
 
 def _shutdown_verdict_history_path(target: Path) -> Path:
@@ -990,7 +991,7 @@ def shutdown_request_snapshot() -> dict[str, object]:
 def _write_grace_flag(*, reason: str, created_at_unix: float) -> None:
     from pathlib import Path
 
-    grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+    grace_file = state_root() / "run" / "grace_exit.flag"
 
     # A test process must never drop a shutdown-grace flag into the REAL
     # ~/.aura/run: the live desktop runtime reads that directory, and a leaked

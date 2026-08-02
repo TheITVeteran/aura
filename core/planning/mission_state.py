@@ -32,6 +32,7 @@ from core.container import ServiceContainer
 from core.planning.task_graph import TaskGraph, TaskNode
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.MissionState")
 
@@ -103,7 +104,7 @@ class MissionState:
     DB_NAME = "missions.db"
 
     def __init__(self, data_dir: str | None = None) -> None:
-        self._data_dir = Path(data_dir) if data_dir else Path.home() / ".aura" / "data" / "missions"
+        self._data_dir = Path(data_dir) if data_dir else state_root() / "data" / "missions"
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._data_dir / self.DB_NAME
         self._active_missions: dict[str, Mission] = {}

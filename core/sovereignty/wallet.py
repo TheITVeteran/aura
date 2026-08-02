@@ -47,10 +47,11 @@ from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Wallet")
 
-_WALLET_DIR = Path.home() / ".aura" / "data" / "wallet"
+_WALLET_DIR = state_root() / "data" / "wallet"
 _WALLET_DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _WALLET_DIR / "ledger.jsonl"
 _CAP_PATH = _WALLET_DIR / "cap.json"

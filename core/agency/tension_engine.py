@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 
 from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
 from core.container import ServiceContainer
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Agency")
 
@@ -89,7 +90,7 @@ class TensionEngine:
                 from core.config import config
                 self._persist_path = config.paths.data_dir / "tensions.json"
             except (ImportError, AttributeError, RuntimeError):
-                self._persist_path = Path.home() / ".aura" / "data" / "tensions.json"
+                self._persist_path = state_root() / "data" / "tensions.json"
 
         self._tensions: Dict[str, Tension] = {}
         self._load()

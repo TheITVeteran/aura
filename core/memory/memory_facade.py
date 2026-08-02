@@ -16,6 +16,7 @@ from typing import Any
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Memory")
 
@@ -604,7 +605,7 @@ class MemoryFacade:
 
             root = Path(get_memory_write_gateway().root)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            root = Path.home() / ".aura" / "memory"
+            root = state_root() / "memory"
         if not root.exists():
             return []
 

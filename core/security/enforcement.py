@@ -25,6 +25,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Security.Enforcement")
 _ENFORCEMENT_ERRORS = (
@@ -126,7 +127,7 @@ class Quarantine:
                 from core.config import config
                 quarantine_dir = Path(config.paths.home_dir) / "data" / "quarantine"
             except (ImportError, AttributeError, RuntimeError):
-                quarantine_dir = Path.home() / ".aura" / "data" / "quarantine"
+                quarantine_dir = state_root() / "data" / "quarantine"
         self._dir = Path(quarantine_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 

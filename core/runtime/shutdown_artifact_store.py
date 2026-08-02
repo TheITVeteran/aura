@@ -14,6 +14,7 @@ from core.runtime.atomic_writer import (
     atomic_write_text,
     ensure_private_directory,
 )
+from core.runtime.state_ownership import state_root
 
 
 def write_shutdown_artifact(
@@ -29,7 +30,7 @@ def write_shutdown_artifact(
     if not parent.exists():
         ensure_private_directory(parent)
     else:
-        aura_root = Path.home() / ".aura"
+        aura_root = state_root()
         if parent == aura_root or parent.is_relative_to(aura_root):
             parent.chmod(0o700)
     atomic_write_text(target, str(text), encoding=encoding)

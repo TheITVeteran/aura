@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Migrations")
 
@@ -64,7 +65,7 @@ def migrate_payload(payload: Dict[str, Any], current_version: int, target_versio
 
 def run_migrations(*, target_version: Optional[int] = None, dry_run: bool = False) -> Dict[str, Any]:
     target = target_version or CURRENT_SCHEMA_VERSION
-    home = Path.home() / ".aura"
+    home = state_root()
     candidate_dirs = [home / "state", home / "memory", home / "workflows", home / "receipts"]
     migrated: List[str] = []
     skipped: List[str] = []

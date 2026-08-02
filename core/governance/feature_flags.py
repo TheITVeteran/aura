@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Governance.FeatureFlags")
 
@@ -97,7 +98,7 @@ class FeatureFlags:
     def __init__(self, config_path: Path | None = None) -> None:
         self._flags: dict[str, bool] = {}
         self._overrides: dict[str, bool] = {}
-        self._config_path = config_path or (Path.home() / ".aura" / "feature_flags.json")
+        self._config_path = config_path or (state_root() / "feature_flags.json")
         self._change_log: list[dict[str, Any]] = []
         self._load()
 

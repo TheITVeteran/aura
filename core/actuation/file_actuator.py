@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from core.actuation.world_actuator import get_world_actuator
+from core.runtime.state_ownership import state_root
 
 #: Hard ceiling on a single actuated write. A boundary with no byte limit is
 #: a disk-fill primitive (CP126 1fa38892).
@@ -92,7 +93,7 @@ def _workspace_roots() -> list[Path]:
         import tempfile
 
         roots = [
-            Path(os.path.expanduser("~/.aura")).resolve(strict=False),
+            state_root().resolve(strict=False),
             Path(tempfile.gettempdir()).resolve(strict=False),
         ]
     return roots

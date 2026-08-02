@@ -36,6 +36,7 @@ from core.governance.will import ActionDomain
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.HostAutomation")
 
@@ -888,7 +889,7 @@ class HostAutomationProvider:
             ts = time.strftime("%Y%m%d_%H%M%S")
             unique = f"{time.time_ns() % 1_000_000_000:09d}"
             folder = "screenshots" if retain_capture else "ephemeral"
-            save_dir = Path.home() / ".aura" / "data" / folder
+            save_dir = state_root() / "data" / folder
             directory_result = await ActionExecutor.execute(
                 domain=ActionDomain.FILE_WRITE,
                 action_name="host_automation.ensure_screenshot_directory",
@@ -917,7 +918,7 @@ class HostAutomationProvider:
             except (OSError, RuntimeError, ValueError):
                 resolved = None
             allowed_roots = [
-                (Path.home() / ".aura" / "data").resolve(),
+                (state_root() / "data").resolve(),
                 (Path.home() / "Desktop" / "Aura").resolve(),
                 (Path.home() / "Documents" / "Aura").resolve(),
             ]

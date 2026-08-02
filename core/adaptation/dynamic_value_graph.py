@@ -30,10 +30,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.DynamicValueGraph")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "value_graph"
+_DATA_DIR = state_root() / "data" / "value_graph"
 _GRAPH_PATH = _DATA_DIR / "value_graph.json"
 
 
@@ -292,6 +293,19 @@ class DynamicValueGraph:
         self._cycle_count: int = 0
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load()
+        if not self._nodes:
+            # Nothing persisted — a fresh install, or any runtime with its
+            # own state root. The graph must not come up EMPTY: the
+            # high-risk-tool restraint in core/agency/agency_core.py reads
+            # an empty value graph as "the restraint could not run", which
+            # is a refusal, so a new user would find python_sandbox,
+            # shell_executor and file_operations permanently refused with a
+            # CRITICAL degradation on every attempt.
+            #
+            # This went unnoticed because the developer machine always had a
+            # persisted graph. It only surfaced once test runs stopped
+            # sharing the live instance's state directory.
+            self.import_from_heartstone()
         logger.info(
             "DynamicValueGraph initialized: %d nodes, cycle=%d",
             len(self._nodes), self._cycle_count,

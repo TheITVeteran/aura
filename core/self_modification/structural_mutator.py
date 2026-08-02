@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from core.runtime.state_ownership import state_root
 
 
 MUTATION_KINDS = {
@@ -88,7 +89,7 @@ class StructuralMutator:
                 from core.config import config
                 db_path = Path(config.paths.data_dir) / "structural_mutations.sqlite3"
             except (ImportError, AttributeError, RuntimeError):
-                db_path = Path.home() / ".aura" / "structural_mutations.sqlite3"
+                db_path = state_root() / "structural_mutations.sqlite3"
         self._db_path = Path(db_path)
         try:
             get_task_tracker().create_task(get_storage_gateway().create_dir(self._db_path.parent, cause='StructuralMutator.__init__'))

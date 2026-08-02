@@ -23,6 +23,7 @@ from core.architect.models import (
 )
 from core.architect.semantic_classifier import SemanticClassifier
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.state_ownership import state_root
 
 
 class LiveArchitectureGraphBuilder:
@@ -205,8 +206,8 @@ class LiveArchitectureGraphBuilder:
             is_live_workspace = False
         if is_live_workspace:
             external_candidates = [
-                Path.home() / ".aura" / "receipts",
-                Path.home() / ".aura" / "logs" / "receipts",
+                state_root() / "receipts",
+                state_root() / "logs" / "receipts",
             ]
         for directory in local_candidates:
             if not directory.exists() or not directory.is_dir():
@@ -222,7 +223,7 @@ class LiveArchitectureGraphBuilder:
         local_receipts.extend(self._load_life_trace_receipts(root / "data" / "life_trace.sqlite3"))
         local_receipts.extend(self._load_coverage_receipts(root))
         if is_live_workspace:
-            external_receipts.extend(self._load_life_trace_receipts(Path.home() / ".aura" / "life_trace.sqlite3"))
+            external_receipts.extend(self._load_life_trace_receipts(state_root() / "life_trace.sqlite3"))
         local_receipts.sort(key=lambda receipt: receipt.timestamp, reverse=True)
         external_receipts.sort(key=lambda receipt: receipt.timestamp, reverse=True)
         return (local_receipts + external_receipts)[: self.config.runtime_receipt_limit]

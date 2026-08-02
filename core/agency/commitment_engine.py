@@ -36,10 +36,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.CommitmentEngine")
 
-PERSIST_PATH = Path.home() / ".aura" / "data" / "commitments.json"
+PERSIST_PATH = state_root() / "data" / "commitments.json"
 CHECK_INTERVAL = 1800.0  # check commitments every 30 minutes
 
 

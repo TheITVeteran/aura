@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ExpertLoRALibrary")
 
@@ -269,7 +270,7 @@ class ExpertLoRALibrary:
         applier: AdapterApplier | None = None,
     ) -> None:
         self._manifest_path = Path(
-            manifest_path or os.path.expanduser("~/.aura/data/adapters/library.json")
+            manifest_path or str(state_root() / "data/adapters/library.json")
         )
         self._max_resident = int(max_resident if max_resident is not None
                                  else os.getenv("AURA_EXPERT_LORA_MAX_RESIDENT", "2"))

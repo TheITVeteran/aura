@@ -81,6 +81,7 @@ from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 # import numpy as np  # Removed unused import
 
@@ -1368,7 +1369,7 @@ class PhenomenologicalExperiencer:
     """
 
     def __init__(self, save_dir: str | None = None):
-        self.save_dir = Path(save_dir) if save_dir else Path.home() / ".aura" / "phenomenology"
+        self.save_dir = Path(save_dir) if save_dir else state_root() / "phenomenology"
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
         # Core components

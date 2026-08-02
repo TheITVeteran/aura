@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.state_ownership import state_root
 
 _DEFAULT_IMPORTS = {
     "asyncio": "import asyncio",
@@ -53,7 +54,7 @@ class RepairImportPolicy:
 
     def __init__(self, policy_path: str | Path | None = None) -> None:
         self.policy_path = Path(
-            policy_path or Path.home() / ".aura" / "config" / "repair_import_policy.json"
+            policy_path or state_root() / "config" / "repair_import_policy.json"
         )
         self._approved = dict(_DEFAULT_IMPORTS)
         self._receipts: dict[str, str] = {key: "builtin-policy" for key in self._approved}

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.RecursiveSelfImprovement")
 _RSI_RECOVERABLE_ERRORS = (
@@ -160,7 +161,7 @@ class RecursiveSelfImprovementLoop:
 
                 ledger_path = Path(config.paths.data_dir) / "learning" / "recursive_self_improvement.jsonl"
             except (ImportError, AttributeError, RuntimeError):
-                ledger_path = Path.home() / ".aura" / "data" / "learning" / "recursive_self_improvement.jsonl"
+                ledger_path = state_root() / "data" / "learning" / "recursive_self_improvement.jsonl"
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
 

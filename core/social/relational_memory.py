@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.RelationalMemory")
 
@@ -212,7 +213,7 @@ class RelationalMemoryAuthority:
                 storage_path = config.paths.data_dir / "memory" / "relational_memory.v1.json"
             except (ImportError, AttributeError, RuntimeError):
                 storage_path = (
-                    Path.home() / ".aura" / "data" / "memory" / "relational_memory.v1.json"
+                    state_root() / "data" / "memory" / "relational_memory.v1.json"
                 )
         self.storage_path = Path(storage_path)
         self._lock = threading.RLock()

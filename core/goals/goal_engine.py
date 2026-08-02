@@ -20,6 +20,7 @@ from core.goals.objective_lifecycle import is_transient_foreground_projection
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.state.aura_state import _origin_is_user_anchored
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.GoalEngine")
 
@@ -253,7 +254,7 @@ class GoalEngine:
                 extra={"phase": "default_path_lookup"},
             )
             logger.debug("GoalEngine default path lookup failed: %s", exc)
-            return Path.home() / ".aura" / "data" / "goals" / "goal_lifecycle.db"
+            return state_root() / "data" / "goals" / "goal_lifecycle.db"
 
     def _initialize(self) -> None:
         try:

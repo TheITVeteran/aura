@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.PlanFailureMemory")
 
@@ -129,7 +130,7 @@ class PlanFailureMemory:
                 db_path = Path(config.paths.data_dir) / "plan_failure_memory.sqlite3"
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("plan_failure_memory", exc, severity="debug")
-                db_path = Path.home() / ".aura" / "data" / "plan_failure_memory.sqlite3"
+                db_path = state_root() / "data" / "plan_failure_memory.sqlite3"
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

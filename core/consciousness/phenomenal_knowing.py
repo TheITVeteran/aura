@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 
 def _now() -> float:
@@ -48,7 +49,7 @@ def _default_state_dir() -> Path:
 
         return Path(config.paths.data_dir) / "consciousness" / "phenomenal_knowing"
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return Path.home() / ".aura" / "data" / "consciousness" / "phenomenal_knowing"
+        return state_root() / "data" / "consciousness" / "phenomenal_knowing"
 
 
 @dataclass(slots=True)

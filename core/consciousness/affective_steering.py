@@ -114,6 +114,7 @@ import numpy as np
 
 from core.consciousness.caa import ProductionCAA, RegisteredVector, VectorProvenance, VectorRegistry
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.AffectiveSteering")
 
@@ -498,7 +499,7 @@ class SteeringVectorLibrary:
                     stage="library_cache_dir",
                 )
                 logger.debug("Steering vector cache config unavailable, using user cache: %s", exc)
-                cache_dir = Path.home() / ".aura" / "steering_vectors"
+                cache_dir = state_root() / "steering_vectors"
 
         self._cache_dir = cache_dir
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1896,7 +1897,7 @@ class AffectiveSteeringEngine:
                 extra={"n_layers": n_layers, "d_model": d_model},
             )
             logger.debug("Runtime steering cache config unavailable, using user cache: %s", exc)
-            base = Path.home() / ".aura" / "steering_vectors"
+            base = state_root() / "steering_vectors"
         return base / f"dmodel_{int(d_model)}_layers_{int(n_layers)}"
 
     @staticmethod

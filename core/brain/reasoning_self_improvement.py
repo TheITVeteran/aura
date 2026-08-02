@@ -39,6 +39,7 @@ from core.brain.reasoning_solved_cache import (
     _problem_key,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ReasoningSelfImprovement")
 
@@ -123,7 +124,7 @@ class ReasoningSelfImprovement:
         cacheable_task_types: frozenset[str] = DEFAULT_CACHEABLE_TASK_TYPES,
     ) -> None:
         self._path = Path(
-            path or os.path.expanduser("~/.aura/data/runtime/reasoning_traces.json")
+            path or str(state_root() / "data/runtime/reasoning_traces.json")
         )
         self._max_traces = max(64, int(max_traces))
         self._min_confidence = float(min_confidence)

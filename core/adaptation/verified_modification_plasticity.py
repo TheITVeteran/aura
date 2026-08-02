@@ -15,6 +15,7 @@ from pathlib import Path
 
 from core.learning.synthetic_data_flywheel import SyntheticDataFlywheel, VerifiedTrace
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class VerifiedModificationPlasticityBridge:
 
     def __init__(self, root: str | Path | None = None) -> None:
         self.root = Path(
-            root or Path.home() / ".aura" / "data" / "learning" / "verified_modifications"
+            root or state_root() / "data" / "learning" / "verified_modifications"
         )
         self.root.mkdir(parents=True, exist_ok=True)
         self.receipt_path = self.root / "handoffs.jsonl"

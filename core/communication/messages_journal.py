@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 _SCHEMA_VERSION = 1
 _ENDPOINT_RE = re.compile(r"^msg_[0-9a-f]{32}$")
@@ -89,7 +90,7 @@ def default_messages_journal_path() -> Path:
     test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
     if test_root:
         return Path(test_root).expanduser() / "messages_delivery.sqlite3"
-    return Path.home() / ".aura" / "data" / "messages_delivery.sqlite3"
+    return state_root() / "data" / "messages_delivery.sqlite3"
 
 
 def content_digest(value: str) -> str:

@@ -43,6 +43,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.MemorySynthesizer")
 
@@ -213,7 +214,7 @@ class MemorySynthesizer:
         self._memory_facade = None
         self._snapshot: WorldviewSnapshot | None = None
         self._snapshot_path = (
-            snapshot_path or Path.home() / ".aura" / "data" / "worldview_snapshot.json"
+            snapshot_path or state_root() / "data" / "worldview_snapshot.json"
         )
         self._new_since_synthesis = 0
         self._last_synthesis = 0.0

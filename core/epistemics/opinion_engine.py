@@ -30,6 +30,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.OpinionEngine")
 
@@ -67,7 +68,7 @@ class OpinionEngine:
         max_opinions: int = 500,
     ):
         self.orchestrator = orchestrator
-        self._db_path = db_path or Path.home() / ".aura" / "opinions.json"
+        self._db_path = db_path or state_root() / "opinions.json"
         self._opinions: dict[str, Opinion] = {}  # topic → Opinion
         self._max_opinions = max_opinions
         self._load()

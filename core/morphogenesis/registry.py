@@ -12,6 +12,7 @@ from .cell import MorphogenCell, CellHandler
 from .field import MorphogenField
 from .organs import Organ, OrganStabilizer
 from .types import CellLifecycle, CellManifest, MorphogenesisConfig, json_safe, stable_digest
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Morphogenesis.Registry")
 
@@ -21,7 +22,7 @@ def _default_root() -> Path:
         from core.config import config
         return Path(config.paths.data_dir) / "morphogenesis"
     except (ImportError, AttributeError, RuntimeError):
-        return Path.home() / ".aura" / "data" / "morphogenesis"
+        return state_root() / "data" / "morphogenesis"
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any], *, schema_name: str) -> None:

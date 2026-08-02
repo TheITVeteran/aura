@@ -45,10 +45,11 @@ from pathlib import Path
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.TrustEngine")
 
-TRUST_LOG_PATH = Path.home() / ".aura" / "data" / "trust_log.jsonl"
+TRUST_LOG_PATH = state_root() / "data" / "trust_log.jsonl"
 
 # How many suspicious signals before escalating to SUSPICIOUS
 SUSPICIOUS_THRESHOLD = 3

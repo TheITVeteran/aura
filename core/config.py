@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 try:
     import yaml
@@ -56,11 +57,25 @@ class Paths(BaseModel):
     home_dir: Path = Field(default_factory=lambda: Path.home().expanduser().resolve() / ".aura")
 
     def _effective_home_dir(self) -> Path:
+        """Where THIS runtime keeps its state.
+
+        Resolved through ``state_root()`` rather than ``home_dir``, so the
+        separation between live, test and bench state is structural instead
+        of a convention each subsystem has to observe. For a live runtime
+        the answer is unchanged — the real ``~/.aura``. For a test or bench
+        run it is a sibling directory.
+
+        This is the fix for tests writing into the live instance: the guard
+        in the write gateway catches a stray path, but a store that resolves
+        its own root from ``Path.home()`` would simply be blocked rather
+        than redirected, and a blocked test is not a working one. Here it
+        gets its own world instead.
+        """
         cached = self.__class__._runtime_home_cache
         if cached is not None:
             return cached
 
-        candidate = self.home_dir.expanduser().resolve()
+        candidate = state_root()
         try:
             candidate.mkdir(parents=True, exist_ok=True)
             from core.runtime.atomic_writer import atomic_write_text

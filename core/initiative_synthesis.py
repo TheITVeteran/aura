@@ -47,6 +47,7 @@ from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
 from core.container import ServiceContainer
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.InitiativeSynthesis")
 
@@ -672,7 +673,7 @@ class InitiativeSynthesizer:
             from core.config import config
             p = Path(config.paths.data_dir) / "unresolved_tensions.json"
         except (ImportError, AttributeError, RuntimeError):
-            p = Path.home() / ".aura" / "data" / "unresolved_tensions.json"
+            p = state_root() / "data" / "unresolved_tensions.json"
         self._tension_persistence_path = p
         return p
 

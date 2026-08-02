@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Never
 
 from core.runtime.flags import FlagKind, declare
+from core.runtime.state_ownership import state_root
 
 _SCHEMA_VERSION = 1
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -192,7 +193,7 @@ def default_chat_delivery_db_path() -> Path:
     test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
     if test_root:
         return Path(test_root).expanduser() / "chat_delivery.sqlite3"
-    return Path.home() / ".aura" / "data" / "chat_delivery.sqlite3"
+    return state_root() / "data" / "chat_delivery.sqlite3"
 
 
 def canonical_request_hash(payload: dict[str, Any]) -> str:

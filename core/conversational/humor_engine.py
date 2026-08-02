@@ -18,6 +18,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Humor")
 
@@ -36,7 +37,7 @@ HUMOR_TYPES = (
     "deadpan",
 )
 
-_DEFAULT_DATA_PATH = Path.home() / ".aura" / "data" / "humor_profiles.json"
+_DEFAULT_DATA_PATH = state_root() / "data" / "humor_profiles.json"
 _SNAPSHOT_NAMESPACE = "humor_profile:v1"
 _SNAPSHOT_KIND = "style_preference"
 _FEEDBACK_WINDOW_SECONDS = 30 * 60

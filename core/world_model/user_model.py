@@ -14,9 +14,10 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger(__name__)
-_USER_MODEL_PATH = Path.home() / ".aura" / "data" / "user_model.json"
+_USER_MODEL_PATH = state_root() / "data" / "user_model.json"
 _SAVE_DEBOUNCE_SECONDS = 1.5
 
 

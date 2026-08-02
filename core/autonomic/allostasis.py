@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Allostasis")
 
@@ -786,7 +787,7 @@ class AllostasisEngine:
         elif test_root:
             self._dir = Path(test_root) / "allostasis"
         else:
-            self._dir = Path.home() / ".aura" / "data" / "allostasis"
+            self._dir = state_root() / "data" / "allostasis"
         self._events_path = self._dir / "forecasts.jsonl"
         self._state_path = self._dir / "state.json"
         self._dir_ready = False

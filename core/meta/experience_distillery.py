@@ -29,10 +29,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ExperienceDistillery")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "experience_distillery"
+_DATA_DIR = state_root() / "data" / "experience_distillery"
 _DB_PATH = _DATA_DIR / "lessons.db"
 
 

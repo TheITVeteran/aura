@@ -26,6 +26,7 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Environment")
 
@@ -101,7 +102,7 @@ def _data_path(filename: str) -> Path:
 
         root = config.paths.data_dir
     except (ImportError, AttributeError, RuntimeError):
-        root = Path.home() / ".aura" / "data"
+        root = state_root() / "data"
     root.mkdir(parents=True, exist_ok=True)
     return root / filename
 

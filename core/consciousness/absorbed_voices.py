@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.AbsorbedVoices")
 
@@ -184,7 +185,7 @@ class AbsorbedVoices:
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
         except (ImportError, AttributeError, RuntimeError):
-            p = Path.home() / ".aura" / "data" / "memory" / PERSIST_FILENAME
+            p = state_root() / "data" / "memory" / PERSIST_FILENAME
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
 

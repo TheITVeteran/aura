@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class RepairCalibrationStore:
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         if db_path is None:
-            db_path = Path.home() / ".aura" / "data" / "selfmod" / "repair_calibration.sqlite3"
+            db_path = state_root() / "data" / "selfmod" / "repair_calibration.sqlite3"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

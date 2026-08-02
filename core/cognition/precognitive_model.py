@@ -43,6 +43,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Precognitive")
 
@@ -353,7 +354,7 @@ class PrecognitiveEngine:
         self._prefetch_total: int = 0
 
         # Persistence
-        self._data_path = Path.home() / ".aura" / "data" / "precognitive_patterns.json"
+        self._data_path = state_root() / "data" / "precognitive_patterns.json"
         self._last_save: float = 0.0
         self._load_patterns()
 

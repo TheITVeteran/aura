@@ -46,11 +46,12 @@ from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.UserRecognizer")
 
-PROFILE_PATH    = Path.home() / ".aura" / "creator_profile.json"
-FINGERPRINT_PATH = Path.home() / ".aura" / "data" / "owner_fingerprint.json"
+PROFILE_PATH    = state_root() / "creator_profile.json"
+FINGERPRINT_PATH = state_root() / "data" / "owner_fingerprint.json"
 PBKDF2_ITERATIONS = 260_000  # NIST 2023 recommendation for PBKDF2-SHA256
 
 

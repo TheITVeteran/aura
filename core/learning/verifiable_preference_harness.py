@@ -42,6 +42,7 @@ from typing import Any
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.VerifiablePreference")
 
@@ -100,7 +101,7 @@ class VerifiablePreferenceHarness:
                 store_path = Path(config.paths.data_dir) / "verifiable_preferences.jsonl"
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("verifiable_preference_harness", exc, severity="debug")
-                store_path = Path.home() / ".aura" / "data" / "verifiable_preferences.jsonl"
+                store_path = state_root() / "data" / "verifiable_preferences.jsonl"
         self._store_path = Path(store_path)
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_seen()

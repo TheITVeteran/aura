@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.runtime.errors import record_degradation
 from core.container import ServiceContainer
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ConstitutionalGate")
 
@@ -124,7 +125,7 @@ class ConstitutionalGate:
             from core.config import config
             self._log_path = config.paths.data_dir / "safety" / "constitutional_log.jsonl"
         except (ImportError, AttributeError):
-            self._log_path = Path.home() / ".aura" / "data" / "safety" / "constitutional_log.jsonl"
+            self._log_path = state_root() / "data" / "safety" / "constitutional_log.jsonl"
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def start(self) -> None:

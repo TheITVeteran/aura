@@ -34,10 +34,11 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.HierarchicalBrain")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "hierarchical_brain"
+_DATA_DIR = state_root() / "data" / "hierarchical_brain"
 _STATE_PATH = _DATA_DIR / "brain_state.npz"
 
 

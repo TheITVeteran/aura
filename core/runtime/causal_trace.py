@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
+from core.runtime.state_ownership import state_root
 
 
 _active_span: contextvars.ContextVar[Optional["TraceSpanContext"]] = contextvars.ContextVar(
@@ -132,7 +133,7 @@ def extract_trace_carrier(payload: Mapping[str, Any] | None, *, fallback_name: s
 
 
 def _ledger_path() -> Path:
-    root = Path(os.environ.get("AURA_TRACE_LEDGER", "")) if os.environ.get("AURA_TRACE_LEDGER") else Path.home() / ".aura" / "data" / "traces"
+    root = Path(os.environ.get("AURA_TRACE_LEDGER", "")) if os.environ.get("AURA_TRACE_LEDGER") else state_root() / "data" / "traces"
     root.mkdir(parents=True, exist_ok=True)
     return root / "causal_trace.jsonl"
 

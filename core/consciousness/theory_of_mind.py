@@ -19,6 +19,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ToM")
 
@@ -177,7 +178,7 @@ class TheoryOfMindEngine:
             from core.config import config
             return Path(config.paths.data_dir) / "memory" / "theory_of_mind.json"
         except (ImportError, AttributeError, RuntimeError):
-            return Path.home() / ".aura" / "data" / "memory" / "theory_of_mind.json"
+            return state_root() / "data" / "memory" / "theory_of_mind.json"
 
     @staticmethod
     def _sanitize_interaction_history(value: Any) -> list[dict[str, Any]]:

@@ -17,6 +17,7 @@ from pathlib import Path
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.security.zenith_secrets import get_secret, set_secret
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Horcrux")
 try:
@@ -140,7 +141,7 @@ def reconstruct_secret(shares_dict: dict[int, bytes]) -> bytes:
 # ═══════════════════════════════════════════════════════════
 def _load_or_create_local_hardware_seed() -> bytes:
     """Return a stable private seed when hardware identifiers are unavailable."""
-    seed_path = Path.home() / ".aura" / ".hardware_seed"
+    seed_path = state_root() / ".hardware_seed"
     try:
         if seed_path.exists():
             seed = seed_path.read_bytes().strip()
@@ -222,7 +223,7 @@ class HorcruxManager:
     ):
         self.threshold = 3
         self.num_shares = 5
-        self.aura_dir = os.path.expanduser(base_dir) if base_dir else os.path.expanduser("~/.aura")
+        self.aura_dir = os.path.expanduser(base_dir) if base_dir else str(state_root())
         os.makedirs(self.aura_dir, exist_ok=True)
         self.hardware_base = get_hardware_seed()
         self.derived_key = None

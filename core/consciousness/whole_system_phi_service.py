@@ -29,6 +29,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.service_access import optional_service
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.WholeSystemPhi")
 
@@ -674,7 +675,7 @@ class WholeSystemPhiService:
         from core.runtime.file_write_gateway import get_file_write_gateway
 
         root = Path(str(_PHI_DIR_FLAG.value() or "")
-                    or (Path.home() / ".aura" / "data" / "phi"))
+                    or (state_root() / "data" / "phi"))
         target = root / "whole_system_latest.json"
         payload = {"estimate": est.to_dict(), "probe": probe}
         with local_internal_governed_scope("whole_system_phi",

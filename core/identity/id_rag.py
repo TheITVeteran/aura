@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Identity.IDRAG")
 
@@ -121,7 +122,7 @@ class IdentityChronicle:
 
                 db_path = config.paths.data_dir / "identity_chronicle.db"
             except (ImportError, AttributeError, RuntimeError):
-                db_path = Path.home() / ".aura" / "identity_chronicle.db"
+                db_path = state_root() / "identity_chronicle.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()

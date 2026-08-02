@@ -25,6 +25,7 @@ from datetime import datetime
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.UnifiedSelf")
 _UNIFIED_SELF_RECOVERABLE_ERRORS = (
@@ -127,7 +128,7 @@ class UnifiedSelf:
 
     def __init__(self, storage_path: Optional[str] = None):
         self._storage_path = Path(
-            storage_path or (Path.home() / ".aura" / "data" / "unified_self.json")
+            storage_path or (state_root() / "data" / "unified_self.json")
         )
         self._state = UnifiedSelfState()
         self._subsystems: Dict[str, Any] = {}  # Connected subsystems

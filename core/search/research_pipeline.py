@@ -19,6 +19,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.thought_stream import get_emitter
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SearchPipeline")
 
@@ -334,7 +335,7 @@ class SearchArtifactStore:
 
             return config.paths.data_dir / "search" / "web_artifacts.jsonl"
         except (ImportError, AttributeError):
-            return Path.home() / ".aura" / "data" / "search" / "web_artifacts.jsonl"
+            return state_root() / "data" / "search" / "web_artifacts.jsonl"
 
     def _read_all(self) -> list[SearchArtifact]:
         if not self.path.exists():

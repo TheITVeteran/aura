@@ -51,6 +51,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Ontogeny.Experience")
 
@@ -763,7 +764,7 @@ def _default_db_path() -> Path:
     except (ImportError, AttributeError, RuntimeError, OSError) as exc:
         record_degradation("ontogeny_experience", exc, severity="debug",
                            action="config paths unavailable; using home fallback")
-        return Path.home() / ".aura" / "data" / "ontogeny" / "experience.db"
+        return state_root() / "data" / "ontogeny" / "experience.db"
 
 
 def _classify_store(path: Path) -> str:
@@ -773,7 +774,7 @@ def _classify_store(path: Path) -> str:
 
         live_root = Path(config.paths.data_dir).resolve()
     except (ImportError, AttributeError, RuntimeError, OSError):
-        live_root = (Path.home() / ".aura" / "data").resolve()
+        live_root = (state_root() / "data").resolve()
     try:
         resolved = path.resolve()
     except OSError:

@@ -21,6 +21,7 @@ from typing import Any
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ScreenPerception")
 
@@ -72,7 +73,7 @@ class ScreenPerception:
     @staticmethod
     def _prepare_screenshot_path(capture_count: int) -> str:
         ts = time.strftime("%Y%m%d_%H%M%S")
-        save_dir = Path.home() / ".aura" / "data" / "screenshots"
+        save_dir = state_root() / "data" / "screenshots"
         save_dir.mkdir(parents=True, exist_ok=True)
         return str(save_dir / f"screen_{ts}_{capture_count}.png")
 

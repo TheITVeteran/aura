@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.GrowthLadder")
 
@@ -77,7 +78,7 @@ class ModificationProposal:
 class GrowthLadder:
     def __init__(self, orchestrator=None, state_path: Optional[Path] = None):
         self.orchestrator = orchestrator
-        self._state_path = state_path or Path.home() / ".aura" / "growth_ladder.json"
+        self._state_path = state_path or state_root() / "growth_ladder.json"
         self._current_level = ModificationLevel.OBSERVATION
         self._level_start_times: Dict[int, float] = {0: time.time()}
         self._proposals: List[ModificationProposal] = []

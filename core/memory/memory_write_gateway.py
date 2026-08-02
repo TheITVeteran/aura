@@ -44,6 +44,7 @@ from core.runtime.receipts import (
     MemoryWriteReceipt,
     get_receipt_store,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.MemoryWriteGateway")
 _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]{1,160}$")
@@ -71,7 +72,7 @@ def _default_memory_root() -> Path:
     test_runtime_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
     if test_runtime_root:
         return Path(test_runtime_root) / "memory"
-    return Path.home() / ".aura" / "memory"
+    return state_root() / "memory"
 
 
 class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):

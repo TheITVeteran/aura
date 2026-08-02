@@ -15,6 +15,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.StreamOfBeing")
 
@@ -1017,7 +1018,7 @@ class StreamOfBeing:
                     severity="warning",
                     stage="resolve_save_dir_config",
                 )
-            candidates.append(Path.home() / ".aura" / "stream_of_being")
+            candidates.append(state_root() / "stream_of_being")
 
         candidates.append(Path(tempfile.gettempdir()) / "aura_stream_of_being")
         last_error: BaseException | None = None

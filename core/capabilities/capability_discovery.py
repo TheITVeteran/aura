@@ -25,6 +25,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.CapabilityDiscovery")
 
@@ -512,7 +513,7 @@ class CapabilityDiscovery:
             Path.home() / "Documents" / "Aura",
             Path.home() / "Desktop" / "Aura",
             Path.home() / "Downloads",
-            Path.home() / ".aura" / "data",
+            state_root() / "data",
             Path(tempfile.gettempdir()),
         ]
         for d in candidates:

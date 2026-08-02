@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ def get_adaptive_mood(db_path: Optional[str | Path] = None) -> AdaptiveMoodCoeff
                     from core.config import config
                     db_path = Path(config.paths.data_dir) / "adaptive_mood.sqlite3"
                 except (AttributeError, ImportError, OSError):
-                    db_path = Path.home() / ".aura" / "adaptive_mood.sqlite3"
+                    db_path = state_root() / "adaptive_mood.sqlite3"
             _singleton = AdaptiveMoodCoefficients(db_path=db_path)
         return _singleton
 

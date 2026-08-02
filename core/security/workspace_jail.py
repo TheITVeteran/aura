@@ -13,12 +13,13 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Security.WorkspaceJail")
 
 # Default allowed roots. The jail permits I/O within these trees.
 _DEFAULT_ALLOWED_ROOTS: tuple[str, ...] = (
-    str(Path.home() / ".aura"),
+    str(state_root()),
     str(Path.home() / "Desktop"),
     str(Path.home() / "Documents"),
     str(Path.home() / "Downloads"),

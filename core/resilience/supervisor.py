@@ -21,6 +21,7 @@ from core.runtime.errors import FallbackClassification, Severity, record_degrada
 from core.runtime.resource_observation import get_resource_observer
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 try:
     import psutil
@@ -186,7 +187,7 @@ class SovereignSupervisor:
             logger.info("Process exited (code %s). Supervisor stopping.", return_code)
             return
 
-        grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+        grace_file = state_root() / "run" / "grace_exit.flag"
         graceful = return_code == 0 or self._grace_flag_matches_child(grace_file)
         if grace_file.exists():
             grace_file.unlink(missing_ok=True)

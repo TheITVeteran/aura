@@ -27,6 +27,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.GovernanceVault")
 
@@ -39,7 +40,7 @@ class TamperDetected(SecurityException):
     """Raised when artifact content hash does not match sealed hash."""
 
 
-_DB_DIR = Path.home() / ".aura" / "data" / "governance"
+_DB_DIR = state_root() / "data" / "governance"
 _DB_PATH = _DB_DIR / "vault.db"
 
 _SCHEMA_VERSION = 1

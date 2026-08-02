@@ -18,6 +18,7 @@ from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_tex
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.tasks.managed_command import ManagedCommandResult
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Airlock")
 _PIPE = -1
@@ -63,7 +64,7 @@ class AirlockProtocol:
         test_timeout_s: float = 600.0,
     ):
         self.repo_root = Path(repo_root or config.paths.project_root).resolve()
-        self.sandbox_dir = Path(sandbox_dir or (Path.home() / ".aura" / "tmp" / "airlock_sandbox")).resolve()
+        self.sandbox_dir = Path(sandbox_dir or (state_root() / "tmp" / "airlock_sandbox")).resolve()
         self._command_runner = command_runner or self._default_command_runner
         self.test_timeout_s = test_timeout_s
         

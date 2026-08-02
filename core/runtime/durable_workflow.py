@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.DurableWorkflow")
 
@@ -83,7 +84,7 @@ class WorkflowStore:
     SCHEMA_VERSION = 1
 
     def __init__(self, root: Optional[Path] = None):
-        self.root = Path(root) if root else (Path.home() / ".aura" / "workflows")
+        self.root = Path(root) if root else (state_root() / "workflows")
         self.root.mkdir(parents=True, exist_ok=True)
 
     def save(self, checkpoint: WorkflowCheckpoint) -> None:

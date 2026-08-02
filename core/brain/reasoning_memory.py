@@ -25,6 +25,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_append_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ReasoningMemory")
 
@@ -86,7 +87,7 @@ class ReasoningMemory:
 
             base = aura_data_dir()
         except (ImportError, RuntimeError, OSError):
-            base = Path.home() / ".aura" / "data"
+            base = state_root() / "data"
         base.mkdir(parents=True, exist_ok=True)
         return base / "reasoning_reflections.jsonl"
 

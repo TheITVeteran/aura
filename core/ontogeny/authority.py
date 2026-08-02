@@ -46,6 +46,7 @@ from core.ontogeny.calibration import CalibrationMonitor, wilson
 from core.ontogeny.experience import Episode, OutcomeKind
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Ontogeny.Authority")
 
@@ -518,7 +519,7 @@ def _default_authority_path() -> Path:
 
         return Path(config.paths.data_dir) / "ontogeny" / "authority.json"
     except (ImportError, AttributeError, RuntimeError, OSError):
-        return Path.home() / ".aura" / "data" / "ontogeny" / "authority.json"
+        return state_root() / "data" / "ontogeny" / "authority.json"
 
 
 _ledger: AuthorityLedger | None = None

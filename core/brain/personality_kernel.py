@@ -20,6 +20,7 @@ from pathlib import Path
 from core.being.panzer_soul import get_panzer_soul
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Kernel")
 
@@ -38,9 +39,9 @@ class KernelIntegrityError(RuntimeError):
 class PersonalityKernel:
     def __init__(self):
         self.soul = get_panzer_soul()
-        self.key_file = Path.home() / ".aura" / ".identity_key"
-        self.seal_file = Path.home() / ".aura" / "identity.seal"
-        self.init_marker = Path.home() / ".aura" / ".identity_initialized"
+        self.key_file = state_root() / ".identity_key"
+        self.seal_file = state_root() / "identity.seal"
+        self.init_marker = state_root() / ".identity_initialized"
         self.secret_key = self._load_or_generate_key()
 
         # Verify integrity instantly

@@ -20,6 +20,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.errors import FallbackClassification, PersistenceCorruption, record_degradation
+from core.runtime.state_ownership import state_root
 
 try:
     from ..thought_stream import get_emitter
@@ -157,8 +158,8 @@ class PersonalityEngine:
     
     def __init__(self):
         # --- Identity Core (Phase 14 Consolidation) ---
-        self.key_file = Path.home() / ".aura" / ".identity_key"
-        self.seal_file = Path.home() / ".aura" / "identity.seal"
+        self.key_file = state_root() / ".identity_key"
+        self.seal_file = state_root() / "identity.seal"
         self.secret_key = self._load_or_generate_key()
         
         # --- Persona Profiles ---

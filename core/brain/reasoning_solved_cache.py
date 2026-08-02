@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ReasoningSolvedCache")
 
@@ -161,7 +162,7 @@ class ReasoningSolvedCache:
     ) -> None:
         self._path = Path(
             path
-            or os.path.expanduser("~/.aura/data/runtime/reasoning_solved_cache.json")
+            or str(state_root() / "data/runtime/reasoning_solved_cache.json")
         )
         self._max_entries = max(16, int(max_entries))
         self._ttl_s = max(60.0, float(ttl_s))

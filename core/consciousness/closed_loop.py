@@ -27,6 +27,7 @@ import numpy as np
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ClosedLoop")
 
@@ -828,7 +829,7 @@ class ClosedCausalLoop:
                 stage="closed_loop_save_dir_config",
             )
             logger.debug("Closed loop save directory config unavailable: %s", exc)
-            self._save_dir = Path.home() / ".aura" / "closed_loop"
+            self._save_dir = state_root() / "closed_loop"
         try:
             self._save_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:

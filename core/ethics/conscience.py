@@ -54,11 +54,12 @@ from typing import Any, Dict, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Conscience")
 
 
-_CONSCIENCE_DIR = Path.home() / ".aura" / "data" / "conscience"
+_CONSCIENCE_DIR = state_root() / "data" / "conscience"
 _CONSCIENCE_DIR.mkdir(parents=True, exist_ok=True)
 _VIOLATIONS_PATH = _CONSCIENCE_DIR / "violations.jsonl"
 _RULES_HASH_PATH = _CONSCIENCE_DIR / "rules.sha256"

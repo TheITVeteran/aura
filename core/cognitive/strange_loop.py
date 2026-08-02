@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Cognitive.StrangeLoop")
 
@@ -123,7 +124,7 @@ LEVEL_WEIGHTS = LEVEL_WEIGHTS / LEVEL_WEIGHTS.sum()  # Normalize to sum=1
 # Persistence path for model weights.
 _PERSIST_DIR = Path(os.environ.get(
     "AURA_DATA_DIR",
-    os.path.expanduser("~/.aura/data"),
+    str(state_root() / "data"),
 )) / "strange_loop"
 
 _PERSIST_INTERVAL_S: float = 120.0  # Save weights every 2 minutes

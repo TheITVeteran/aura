@@ -34,8 +34,9 @@ from core.runtime.settings_schema import (
     SETTINGS_SCHEMA_VERSION,
     migrated_settings_snapshot,
 )
+from core.runtime.state_ownership import state_root
 
-_DEFAULT_SETTINGS_PATH = Path.home() / ".aura" / "data" / "settings" / "runtime.json"
+_DEFAULT_SETTINGS_PATH = state_root() / "data" / "settings" / "runtime.json"
 logger = logging.getLogger("Aura.RuntimeSettings")
 
 # Reads must never raise into a subsystem gate — fall back to the default instead.

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 
 from core.runtime.flags import aura_root_override
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("core.utils.paths")
 
@@ -46,7 +47,7 @@ def get_paths() -> Dict[str, Path]:
 def aura_root() -> Path:
     """Returns the root directory for Aura data/logs, defaulting to ~/.aura"""
     override = aura_root_override()
-    return Path(override or Path.home() / ".aura").expanduser().resolve()
+    return Path(override or state_root()).expanduser().resolve()
 
 
 def aura_data_dir() -> Path:

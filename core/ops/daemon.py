@@ -24,11 +24,12 @@ from core.runtime.shutdown_coordinator import (
     request_shutdown,
 )
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Daemon")
 
-DAEMON_SOCKET = Path.home() / ".aura" / "sockets" / "cognitive.sock"
-DAEMON_PID_FILE = Path.home() / ".aura" / "run" / "aura_daemon.pid"
+DAEMON_SOCKET = state_root() / "sockets" / "cognitive.sock"
+DAEMON_PID_FILE = state_root() / "run" / "aura_daemon.pid"
 
 
 def _unlink_daemon_socket() -> None:

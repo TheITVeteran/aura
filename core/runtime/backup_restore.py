@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from core.runtime.archive_gateway import get_archive_gateway
+from core.runtime.state_ownership import state_root
 
 
 BACKUP_INCLUDED_DIRS: List[str] = [
@@ -38,7 +39,7 @@ def aura_home() -> Path:
     override = os.environ.get("AURA_HOME")
     if override:
         return Path(override).expanduser().resolve()
-    return Path.home() / ".aura"
+    return state_root()
 
 
 def _ensure_dir(p: Path, *, cause: str) -> None:

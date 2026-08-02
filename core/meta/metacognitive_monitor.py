@@ -38,10 +38,11 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.MetaCognitive")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "metacognitive"
+_DATA_DIR = state_root() / "data" / "metacognitive"
 _LOG_PATH = _DATA_DIR / "reflection_log.jsonl"
 
 

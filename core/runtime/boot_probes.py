@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.BootProbes")
 _BOOT_PROBE_RECOVERABLE_ERRORS = (
@@ -111,7 +112,7 @@ async def probe_memory_write_read(
             ConcreteMemoryWriteGateway,
         )
 
-        root = tmp_root or (Path.home() / ".aura" / "boot_probe_memory")
+        root = tmp_root or (state_root() / "boot_probe_memory")
         gateway = ConcreteMemoryWriteGateway(root=root, governance_decide=_approve_boot_probe_governance)
     else:
         gateway = gateway_factory()
@@ -137,7 +138,7 @@ async def probe_state_mutate_read(
     if gateway_factory is None:
         from core.state.state_gateway import ConcreteStateGateway
 
-        root = tmp_root or (Path.home() / ".aura" / "boot_probe_state")
+        root = tmp_root or (state_root() / "boot_probe_state")
         gateway = ConcreteStateGateway(root=root, governance_decide=_approve_boot_probe_governance)
     else:
         gateway = gateway_factory()

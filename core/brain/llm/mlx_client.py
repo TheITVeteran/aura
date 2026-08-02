@@ -46,6 +46,7 @@ from core.utils.task_tracker import get_task_tracker
 
 from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("LLM.MLX")
 
@@ -281,7 +282,7 @@ _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "detail": "",
     "checked_at": 0.0,
 }
-_MLX_RUNTIME_PROBE_CACHE_PATH = Path.home() / ".aura" / "data" / "mlx_runtime_probe.json"
+_MLX_RUNTIME_PROBE_CACHE_PATH = state_root() / "data" / "mlx_runtime_probe.json"
 
 # Visible conversation-readiness probe. The lane may only claim "ready" after
 # this exact question comes back with an answer that actually responds to it.
@@ -6730,7 +6731,7 @@ class MLXLocalClient:
             raise RuntimeError("MLX IPC queues must be created before worker spawn")
         ctx = self._mp_context
 
-        lock_dir = Path.home() / ".aura" / "run"
+        lock_dir = state_root() / "run"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_file_path = str(lock_dir / "mlx_spawn.lock")
         lock_file = _open_spawn_lock_file(lock_file_path)

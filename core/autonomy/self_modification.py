@@ -47,11 +47,12 @@ from core.container import ServiceContainer
 from core.governance_context import local_internal_governed_scope
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SelfModification.Autonomous")
 
 # ── Persistence ─────────────────────────────────────────────────────────────
-_DATA_DIR = Path.home() / ".aura" / "data" / "self_modification"
+_DATA_DIR = state_root() / "data" / "self_modification"
 _AUDIT_LOG_PATH = _DATA_DIR / "audit_log.jsonl"
 _OUTBOX_PATH = _DATA_DIR / "pending_outbox.jsonl"
 _MAX_AUDIT_ENTRIES = working_history_retention_policy("AURA_SELF_MODIFICATION_AUDIT_MAX").max_items

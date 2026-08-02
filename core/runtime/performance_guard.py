@@ -42,11 +42,12 @@ from typing import Any, Deque, Dict, List, Optional
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.PerformanceGuard")
 
 
-_PERF_DIR = Path.home() / ".aura" / "data" / "performance"
+_PERF_DIR = state_root() / "data" / "performance"
 _PERF_DIR.mkdir(parents=True, exist_ok=True)
 _SAMPLES_PATH = _PERF_DIR / "samples.jsonl"
 

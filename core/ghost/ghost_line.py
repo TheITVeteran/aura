@@ -53,6 +53,7 @@ from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.audit_chain import AuditChain, canonical_json, hash_receipt_body, sha256_hex
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import checked_lock
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Ghost.GhostLine")
 
@@ -261,7 +262,7 @@ class GhostLine:
     def __init__(self, *, root: Path | None = None):
         env_root = os.environ.get("AURA_GHOST_DIR")
         self.root = Path(root) if root else (
-            Path(env_root) if env_root else (Path.home() / ".aura" / "data" / "ghost")
+            Path(env_root) if env_root else (state_root() / "data" / "ghost")
         )
         self.chain_dir = self.root / "chain"
         self.frames_dir = self.root / "frames"

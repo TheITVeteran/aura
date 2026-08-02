@@ -28,6 +28,7 @@ from core.reality_reach.contracts import ChannelDeclaration, ChannelKind
 from core.reality_reach.live import AdapterInventoryEntry, ChannelReading, ReadingStatus
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_lock
+from core.runtime.state_ownership import state_root
 
 _SCHEMA_VERSION = 2
 _LEGACY_SCHEMA_VERSION = 1
@@ -375,7 +376,7 @@ def default_reality_historian_path() -> Path:
     test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
     if test_root:
         return Path(test_root).expanduser() / "reality_historian.sqlite3"
-    return Path.home() / ".aura" / "data" / "reality_historian.sqlite3"
+    return state_root() / "data" / "reality_historian.sqlite3"
 
 
 def _digest(value: Any) -> str:

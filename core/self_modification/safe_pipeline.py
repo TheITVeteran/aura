@@ -54,11 +54,12 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SelfModSafePipeline")
 
 
-_LEDGER_DIR = Path.home() / ".aura" / "data" / "selfmod"
+_LEDGER_DIR = state_root() / "data" / "selfmod"
 _LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER_PATH = _LEDGER_DIR / "pipeline.jsonl"
 _STAGING_DIR = _LEDGER_DIR / "staged"

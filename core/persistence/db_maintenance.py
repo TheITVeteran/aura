@@ -25,6 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Persistence.Maintenance")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -166,7 +167,7 @@ class DatabaseMaintenance:
         if db_path is None:
             runtime_dir = os.environ.get(
                 "AURA_ENV_RUNTIME_DIR",
-                str(Path.home() / ".aura" / "live-source" / "data"),
+                str(state_root() / "live-source" / "data"),
             )
             db_path = str(Path(runtime_dir) / "aura_state.db")
 

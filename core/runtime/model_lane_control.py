@@ -41,6 +41,7 @@ from core.runtime.atomic_writer import (
 from core.runtime.flags import FlagKind, declare
 from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ModelLaneControl")
 
@@ -953,7 +954,7 @@ class ModelLaneController:
         self.state_path = Path(
             state_path
             or configured_state_path
-            or (Path.home() / ".aura" / "run" / "model_lane_control.json")
+            or (state_root() / "run" / "model_lane_control.json")
         )
         self.lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
         self._receipt_store = receipt_store

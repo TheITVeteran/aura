@@ -114,7 +114,7 @@ def _run(cmd: list[str], root: Path, timeout: float = 45.0) -> dict[str, Any]:
 
 def _log_candidates(root: Path) -> list[Path]:
     candidates: list[Path] = []
-    for base in (root / "logs", Path.home() / ".aura" / "logs"):
+    for base in (root / "logs", state_root() / "logs"):
         if base.exists():
             try:
                 candidates.extend(sorted(base.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10])
@@ -287,6 +287,7 @@ import threading
 
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.FlagshipDoctor")
 
@@ -781,7 +782,7 @@ class FlagshipDoctorDaemon:
         if os.getenv("AURA_FLAGSHIP_DOCTOR_DB_MAINTENANCE", "").strip().lower() in {"1", "true", "yes", "on"}:
             db_paths = [
                 self.root / "tests" / "test_projects.db",
-                Path.home() / ".aura" / "live-source" / "tests" / "test_projects.db",
+                state_root() / "live-source" / "tests" / "test_projects.db",
             ]
 
             for db_path in db_paths:

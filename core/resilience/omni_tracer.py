@@ -27,8 +27,9 @@ from typing import Any, Dict, Optional
 from core.governance_context import local_internal_governed_scope
 from core.runtime import resource_psutil as psutil
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
-_TRACE_FILE = Path.home() / ".aura" / "run" / "omni_trace.jsonl"
+_TRACE_FILE = state_root() / "run" / "omni_trace.jsonl"
 _OMNI_LOCK = threading.Lock()
 logger = logging.getLogger("Aura.OmniTracer")
 

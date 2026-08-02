@@ -41,13 +41,14 @@ import numpy as np
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ExperienceConsolidator")
 
 CONSOLIDATION_INTERVAL = 4 * 3600.0  # every 4 hours
 MIN_EXPERIENCES_TO_RUN = 5  # don't consolidate with too little data
-NARRATIVE_PATH = Path.home() / ".aura" / "data" / "self_narrative.json"
-CONSOL_LOG_PATH = Path.home() / ".aura" / "data" / "consolidation_log.jsonl"
+NARRATIVE_PATH = state_root() / "data" / "self_narrative.json"
+CONSOL_LOG_PATH = state_root() / "data" / "consolidation_log.jsonl"
 MAX_NARRATIVE_AGE_HOURS = 96  # force re-consolidation after 4 days
 INFERENCE_TIMEOUT_SECS = 60.0  # max time to wait for LLM consolidation
 MAX_CONSECUTIVE_FAILURES = 6  # exponential backoff ceiling

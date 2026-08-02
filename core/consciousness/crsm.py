@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.CRSM")
 
@@ -47,7 +48,7 @@ HIDDEN_DIM  = 32   # size of the self-state vector
 LR          = 0.005
 CLIP_GRAD   = 1.0
 PRED_ERR_THRESHOLD = 0.15  # only learn when surprise is meaningful
-PERSIST_PATH = Path.home() / ".aura" / "data" / "crsm_state.json"
+PERSIST_PATH = state_root() / "data" / "crsm_state.json"
 
 
 # ── Minimal numpy GRU cell ────────────────────────────────────────────────────

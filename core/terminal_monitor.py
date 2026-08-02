@@ -15,11 +15,12 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.TerminalMonitor")
 
 # Persistent blacklist for error fingerprints
-BLACKLIST_PATH = Path.home() / ".aura" / "data" / "terminal_blacklist.json"
+BLACKLIST_PATH = state_root() / "data" / "terminal_blacklist.json"
 
 # Bounds so long-lived runtimes cannot grow the monitor's registries forever
 # or exhaust memory from a corrupt/hostile blacklist file.

@@ -19,6 +19,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Memory.UserProfile")
 
@@ -34,7 +35,7 @@ _MAX_FACTS_PER_AGENT = 30
 _MAX_VALUE_CHARS = 320
 _MAX_KEY_CHARS = 100
 _MAX_EVIDENCE_PER_FACT = 8
-_DEFAULT_LEGACY_PATH = Path.home() / ".aura" / "data" / "user_profile.json"
+_DEFAULT_LEGACY_PATH = state_root() / "data" / "user_profile.json"
 _CORRECTION_STOPWORDS = {
     "and",
     "for",

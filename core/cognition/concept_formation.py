@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Cognition.ConceptFormation")
 
@@ -122,7 +123,7 @@ class ConceptFormationEngine:
                 from core.config import config
                 storage_path = config.paths.memory_dir / "concepts.json"
             except (ImportError, AttributeError, RuntimeError):
-                storage_path = Path.home() / ".aura" / "data" / "memory" / "concepts.json"
+                storage_path = state_root() / "data" / "memory" / "concepts.json"
         self._path = Path(storage_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._sim_t = similarity_threshold

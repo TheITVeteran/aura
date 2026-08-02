@@ -21,6 +21,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Social")
 
@@ -163,7 +164,7 @@ class ConversationalProfiler:
                 from core.config import config
                 storage_path = config.paths.data_dir / "conversational_profiles.json"
             except (ImportError, AttributeError, RuntimeError):
-                storage_path = Path.home() / ".aura" / "data" / "conversational_profiles.json"
+                storage_path = state_root() / "data" / "conversational_profiles.json"
         self._legacy_path = Path(storage_path)
         self._authority = authority or get_relational_memory_authority()
         self._profiles: dict[str, ConversationalProfile] = {}

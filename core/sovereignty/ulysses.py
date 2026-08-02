@@ -60,6 +60,7 @@ from core.runtime.audit_chain import AuditChain, canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.service_access import optional_service
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Ulysses")
 
@@ -493,7 +494,7 @@ class UlyssesCovenant:
                  clock: Callable[[], float] = time.time):
         env_root = str(_COVENANT_DIR_FLAG.value() or "")
         self.root = Path(root) if root else (
-            Path(env_root) if env_root else (Path.home() / ".aura" / "data" / "covenant")
+            Path(env_root) if env_root else (state_root() / "data" / "covenant")
         )
         self._ensure_root()
         self.events_path = self.root / "events.jsonl"

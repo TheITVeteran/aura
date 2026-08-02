@@ -89,6 +89,7 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.runtime.flags import FlagKind, declare
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Governance.CapabilityChain")
 
@@ -368,7 +369,7 @@ def _key_dir() -> Path:
 
         return Path(config.paths.home_dir) / "keys"
     except (ImportError, AttributeError, RuntimeError):
-        return Path.home() / ".aura" / "keys"
+        return state_root() / "keys"
 
 
 def _priv_path() -> Path:

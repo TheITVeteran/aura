@@ -14,6 +14,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ class PatchGenealogyGraph:
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         if db_path is None:
-            db_path = Path.home() / ".aura" / "data" / "selfmod" / "patch_genealogy.sqlite3"
+            db_path = state_root() / "data" / "selfmod" / "patch_genealogy.sqlite3"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

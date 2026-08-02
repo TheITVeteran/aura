@@ -53,10 +53,11 @@ from typing import Any, Callable, Deque, Dict, List, Optional
 import numpy as np
 from core.runtime.atomic_writer import interprocess_file_lock
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.LesionMatrix")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "lesion_studies"
+_DATA_DIR = state_root() / "data" / "lesion_studies"
 _RESULTS_PATH = _DATA_DIR / "latest_lesion_matrix.json"
 #: Durable longitudinal record. CP126 1c536bf5: the in-memory deque was never
 #: loaded and persistence overwrote a single "latest" file, so repeated studies

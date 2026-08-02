@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.runtime.atomic_writer import read_json_envelope
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.VectorIndex")
 
 
 def rebuild_vector_index(*, source: Optional[Path] = None) -> Dict[str, Any]:
-    root = source or (Path.home() / ".aura" / "memory")
+    root = source or (state_root() / "memory")
     if not root.exists():
         return {"command": "rebuild-index", "ok": False, "error": "memory_root_missing"}
     rebuilt = 0

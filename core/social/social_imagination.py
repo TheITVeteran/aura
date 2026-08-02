@@ -20,6 +20,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SocialImagination")
 
@@ -209,7 +210,7 @@ class SocialImagination:
 
                 storage_path = config.paths.data_dir / "social_imagination.json"
             except (ImportError, AttributeError, RuntimeError):
-                storage_path = Path.home() / ".aura" / "data" / "social_imagination.json"
+                storage_path = state_root() / "data" / "social_imagination.json"
         self._legacy_path = Path(storage_path)
         self._authority = authority or get_relational_memory_authority()
         self._frames: dict[str, list[SocialImaginationFrame]] = {}

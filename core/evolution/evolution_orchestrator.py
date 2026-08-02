@@ -40,6 +40,7 @@ from core.runtime.background_policy import (
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Evolution")
 
@@ -122,7 +123,7 @@ class EvolutionOrchestrator:
     """Orchestrates Aura's evolutionary progression across all axes."""
 
     _TICK_INTERVAL = 300.0  # Evaluate every 5 minutes
-    _STATE_FILE = Path.home() / ".aura" / "evolution_state.json"
+    _STATE_FILE = state_root() / "evolution_state.json"
 
     def __init__(self) -> None:
         self._snapshot = EvolutionSnapshot()

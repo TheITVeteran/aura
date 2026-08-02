@@ -40,10 +40,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Relationships")
 
-_REL_DIR = Path.home() / ".aura" / "data" / "relationships"
+_REL_DIR = state_root() / "data" / "relationships"
 _REL_DIR.mkdir(parents=True, exist_ok=True)
 
 

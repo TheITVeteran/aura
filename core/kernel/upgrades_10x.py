@@ -32,6 +32,7 @@ from core.state.aura_state import AuraState
 from core.utils.task_tracker import get_task_tracker
 
 from .bridge import Phase
+from core.runtime.state_ownership import state_root
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -99,7 +100,7 @@ class EternalMemoryPhase(Phase):
 
     def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
-        self.vault_path = Path.home() / ".aura" / "eternal_vault.jsonl"
+        self.vault_path = state_root() / "eternal_vault.jsonl"
         self.vault_path.parent.mkdir(exist_ok=True)
         self._summary_cache: list[dict[str, str]] = []
         self._last_summary_refresh_at: float = 0.0

@@ -19,6 +19,7 @@ from core.autonomy.research_goal_filter import (
 from core.runtime import background_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ResearchCycle")
 
@@ -191,7 +192,7 @@ class ResearchCycle:
             from core.config import config
             self._record_path = config.paths.data_dir / "research" / "cycle_history.jsonl"
         except (ImportError, AttributeError):
-            self._record_path = Path.home() / ".aura" / "research" / "cycle_history.jsonl"
+            self._record_path = state_root() / "research" / "cycle_history.jsonl"
 
         try:
             self._record_path.parent.mkdir(parents=True, exist_ok=True)
@@ -437,7 +438,7 @@ class ResearchCycle:
         if hasattr(state.cognition, "pending_intents"):
             state.cognition.pending_intents.append({
                 "type":    "eternal_append",
-                "path":    str(Path.home() / ".aura" / "research_history.jsonl"),
+                "path":    str(state_root() / "research_history.jsonl"),
                 "payload": entry,
             })
 

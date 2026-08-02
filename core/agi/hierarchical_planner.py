@@ -50,10 +50,11 @@ from typing import Any, Dict, List, Optional
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.numeric_safety import validated_scalar, validated_unit
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.HierarchicalPlanner")
 
-PERSIST_PATH = Path.home() / ".aura" / "data" / "hierarchical_goals.json"
+PERSIST_PATH = state_root() / "data" / "hierarchical_goals.json"
 CHECK_IN_INTERVAL = 3600.0   # check in on stalled goals every hour
 
 SCHEMA_VERSION = 2

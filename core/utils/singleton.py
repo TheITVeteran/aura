@@ -13,6 +13,7 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.resource_observation import get_resource_observer
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Utils.Singleton")
 _PROCESS_METADATA_ERRORS = (AttributeError, ImportError, OSError, RuntimeError, ValueError)
@@ -39,12 +40,12 @@ def singleton[T](cls: type[T]) -> Callable[..., T]:
 
 
 def instance_lock_path(lock_name: str = "singleton") -> Path:
-    return Path.home() / ".aura" / "locks" / f"{lock_name}.lock"
+    return state_root() / "locks" / f"{lock_name}.lock"
 
 
 def boot_blocked_path() -> Path:
     """Where a refused start publishes WHY, for the launcher/GUI to surface."""
-    return Path.home() / ".aura" / "run" / "boot_blocked.json"
+    return state_root() / "run" / "boot_blocked.json"
 
 
 def clear_boot_blocked() -> None:
@@ -132,7 +133,7 @@ def _publish_boot_blocked(lock_name: str, holder_pid: int) -> None:
 
 
 def instance_lock_metadata_path(lock_name: str = "singleton") -> Path:
-    return Path.home() / ".aura" / "locks" / f"{lock_name}.lock.meta.json"
+    return state_root() / "locks" / f"{lock_name}.lock.meta.json"
 
 
 def parse_instance_lock_pid(raw: str) -> int | None:

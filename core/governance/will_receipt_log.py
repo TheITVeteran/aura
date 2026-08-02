@@ -27,10 +27,11 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.WillReceiptLog")
 
-_DIR = Path.home() / ".aura" / "data" / "will_receipts"
+_DIR = state_root() / "data" / "will_receipts"
 _DIR.mkdir(parents=True, exist_ok=True)
 _PATH = _DIR / "receipts.jsonl"
 

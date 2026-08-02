@@ -39,6 +39,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.DecisionPreferenceLearner")
 
@@ -95,7 +96,7 @@ class DecisionPreferenceLearner:
                 state_path = Path(config.paths.data_dir) / "cognitive" / "decision_preferences.json"
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("decision_preference_learner", exc, severity="debug")
-                state_path = Path.home() / ".aura" / "data" / "cognitive" / "decision_preferences.json"
+                state_path = state_root() / "data" / "cognitive" / "decision_preferences.json"
         self._state_path = Path(state_path)
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._load()

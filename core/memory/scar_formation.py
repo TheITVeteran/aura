@@ -39,10 +39,11 @@ from typing import Any
 from core.container import ServiceContainer
 from core.memory.scar_court import get_scar_court
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ScarFormation")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "scars"
+_DATA_DIR = state_root() / "data" / "scars"
 _SCAR_FILE = _DATA_DIR / "scars.json"
 
 

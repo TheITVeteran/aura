@@ -16,6 +16,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.resource_observation import get_resource_observer
+from core.runtime.state_ownership import state_root
 
 try:
     import psutil
@@ -24,7 +25,7 @@ except ImportError:  # pragma: no cover - exercised on minimal installs
 
 REAPER_MANIFEST_ENV = "AURA_REAPER_MANIFEST"
 LEGACY_REAPER_MANIFEST = Path(tempfile.gettempdir()) / "aura_reaper_manifest.json"
-DEFAULT_REAPER_MANIFEST_DIR = Path.home() / ".aura" / "run" / "reaper"
+DEFAULT_REAPER_MANIFEST_DIR = state_root() / "run" / "reaper"
 POLL_INTERVAL = 1.0  # seconds
 
 logger = logging.getLogger("Aura.Reaper")

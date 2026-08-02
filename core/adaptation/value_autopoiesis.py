@@ -33,10 +33,11 @@ from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ValueAutopoiesis")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "value_evolution"
+_DATA_DIR = state_root() / "data" / "value_evolution"
 _EVOLUTION_LOG_PATH = _DATA_DIR / "evolution_log.jsonl"
 _STATE_PATH = _DATA_DIR / "autopoiesis_state.json"
 

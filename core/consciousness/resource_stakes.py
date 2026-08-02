@@ -31,6 +31,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.ResourceStakes")
 
@@ -77,7 +78,7 @@ class ResourceStakesEngine:
                 from core.config import config
                 data_dir = config.paths.data_dir / "consciousness"
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-                data_dir = Path.home() / ".aura" / "data" / "consciousness"
+                data_dir = state_root() / "data" / "consciousness"
         data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = data_dir / self._STATE_FILE
         self._state = ResourceState()

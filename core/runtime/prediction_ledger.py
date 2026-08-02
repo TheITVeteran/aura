@@ -37,6 +37,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from core.runtime.state_ownership import state_root
 
 
 SCHEMA_VERSION = 1
@@ -127,7 +128,7 @@ class PredictionLedger:
         self.db_path = (
             Path(db_path)
             if db_path is not None
-            else Path.home() / ".aura" / "data" / "prediction_ledger.db"
+            else state_root() / "data" / "prediction_ledger.db"
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

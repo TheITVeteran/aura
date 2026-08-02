@@ -13,6 +13,7 @@ from typing import Any
 from core.runtime import resource_psutil as psutil
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.DemoSupport")
 
@@ -142,7 +143,7 @@ def _repo_root() -> Path:
 
 
 def _demo_state_path() -> Path:
-    home = Path.home() / ".aura" / "data"
+    home = state_root() / "data"
     home.mkdir(parents=True, exist_ok=True)
     return home / "demo_last_activity.json"
 

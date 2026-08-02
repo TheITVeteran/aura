@@ -40,11 +40,12 @@ from core.state.aura_state import (
     IdentityKernel,
     SomaState,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Self")
 
 # ── Persistence ──────────────────────────────────────────────────────────────
-_PERSIST_DIR = Path.home() / ".aura" / "data" / "self"
+_PERSIST_DIR = state_root() / "data" / "self"
 _PERSIST_PATH = _PERSIST_DIR / "canonical_self.json"
 _PERSIST_INTERVAL = 300.0  # 5 minutes
 

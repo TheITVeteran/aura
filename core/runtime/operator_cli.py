@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 COMMAND_HANDLERS: Dict[str, Callable[[argparse.Namespace], Dict[str, Any]]] = {}
 
@@ -131,7 +132,7 @@ def cmd_conformance(args: argparse.Namespace) -> Dict[str, Any]:
     report.results.append(proof_runtime_singularity(snapshot))
     report.results.append(proof_service_graph(snapshot))
     report.results.append(proof_boot_readiness("ready", {"vault": True, "model": True}))
-    tmp = Path.home() / ".aura" / "conformance_probe"
+    tmp = state_root() / "conformance_probe"
     tmp.mkdir(parents=True, exist_ok=True)
     report.results.append(proof_persistence_atomic(tmp))
     report.results.append(
@@ -163,7 +164,7 @@ def cmd_conformance(args: argparse.Namespace) -> Dict[str, Any]:
 def cmd_backup(args: argparse.Namespace) -> Dict[str, Any]:
     from core.runtime.backup_restore import perform_backup
 
-    target = Path(args.target) if args.target else (Path.home() / ".aura" / "backups")
+    target = Path(args.target) if args.target else (state_root() / "backups")
     return perform_backup(target=target)
 
 
@@ -379,7 +380,7 @@ def cmd_plugin(args: argparse.Namespace) -> Dict[str, Any]:
             }
 
     elif cmd == "scan":
-        plugins_dir = Path.home() / ".aura" / "plugins"
+        plugins_dir = state_root() / "plugins"
         plugins_dir.mkdir(parents=True, exist_ok=True)
         files = list(plugins_dir.glob("**/*.py"))
         report = []

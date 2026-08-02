@@ -24,6 +24,7 @@ from core.runtime.control_plane import (
     get_runtime_control_plane,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ResourceArbitrator")
 
@@ -38,7 +39,7 @@ class ResourceArbitrator:
         lock_path: str | Path | None = None,
     ) -> None:
         self._admission = admission or get_runtime_control_plane().admission
-        self._lock_path = str(lock_path or (Path.home() / ".aura" / "run" / "vram.lock"))
+        self._lock_path = str(lock_path or (state_root() / "run" / "vram.lock"))
         self._state_lock = threading.RLock()
         self._inference_leases: dict[str, list[str]] = {}
         self._evolution_lease_id = ""

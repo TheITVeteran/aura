@@ -25,6 +25,7 @@ from core.runtime.atomic_writer import atomic_write_bytes_if_absent, ensure_priv
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.service_registry import get_runtime_service
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.BlackHole")
 
@@ -96,7 +97,7 @@ def _local_key_path():
 
         return Path(config.paths.home_dir) / "keys" / "black_hole_local.key"
     except (ImportError, AttributeError, RuntimeError):
-        return Path.home() / ".aura" / "keys" / "black_hole_local.key"
+        return state_root() / "keys" / "black_hole_local.key"
 
 
 def _read_local_key(path: Path) -> bytes:

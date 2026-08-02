@@ -36,6 +36,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.IntegrityGuardian")
 _INTEGRITY_GUARDIAN_ERRORS = (
@@ -48,9 +49,9 @@ _INTEGRITY_GUARDIAN_ERRORS = (
     ValueError,
 )
 
-MANIFEST_PATH   = Path.home() / ".aura" / "data" / "integrity_manifest.json"
-ALERT_LOG_PATH  = Path.home() / ".aura" / "data" / "integrity_alerts.jsonl"
-RESTORE_BACKUP_DIR = Path.home() / ".aura" / "data" / "integrity_restore_backups"
+MANIFEST_PATH   = state_root() / "data" / "integrity_manifest.json"
+ALERT_LOG_PATH  = state_root() / "data" / "integrity_alerts.jsonl"
+RESTORE_BACKUP_DIR = state_root() / "data" / "integrity_restore_backups"
 CHECK_INTERVAL  = 1800.0  # 30 minutes
 
 # These files are extra-critical — any change is an emergency

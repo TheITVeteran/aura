@@ -20,6 +20,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,7 @@ class MarkdownWorkspace:
 
                 storage_path = config.paths.data_dir / "markdown_workspace" / "workspace.json"
             except (ImportError, AttributeError, RuntimeError):
-                storage_path = Path.home() / ".aura" / "data" / "markdown_workspace" / "workspace.json"
+                storage_path = state_root() / "data" / "markdown_workspace" / "workspace.json"
         self.storage_path = Path(storage_path)
         self.default_user = default_user
         self._lock = threading.RLock()

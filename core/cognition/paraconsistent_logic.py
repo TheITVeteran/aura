@@ -40,13 +40,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.memory.retention_policy import working_history_retention_policy
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Cognition.Paraconsistent")
 
 # ---------------------------------------------------------------------------
 # Persistence path
 # ---------------------------------------------------------------------------
-_DEFAULT_GRAPH_PATH = Path.home() / ".aura" / "data" / "belief_graph.json"
+_DEFAULT_GRAPH_PATH = state_root() / "data" / "belief_graph.json"
 _MAX_BELIEFS = working_history_retention_policy("AURA_PARACONSISTENT_BELIEF_MAX").max_items
 _MAX_PARADOXES = working_history_retention_policy("AURA_PARACONSISTENT_PARADOX_MAX").max_items
 

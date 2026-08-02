@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from core.runtime.state_ownership import state_root
 
 
 @dataclass
@@ -31,7 +32,7 @@ class LessonStore:
         self.db_path = (
             Path(db_path)
             if db_path is not None
-            else Path.home() / ".aura" / "data" / "curriculum_lessons.db"
+            else state_root() / "data" / "curriculum_lessons.db"
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

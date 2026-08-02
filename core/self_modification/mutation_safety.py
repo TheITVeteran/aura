@@ -51,6 +51,7 @@ from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("core.self_modification.mutation_safety")
 
@@ -253,7 +254,7 @@ class QuarantineStore:
         self.root = (
             Path(root)
             if root is not None
-            else Path.home() / ".aura" / "data" / "mutation_quarantine"
+            else state_root() / "data" / "mutation_quarantine"
         )
         self.root.mkdir(parents=True, exist_ok=True)
 

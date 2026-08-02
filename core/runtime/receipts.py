@@ -29,6 +29,7 @@ from core.runtime.atomic_writer import (
 )
 from core.runtime.audit_chain import AuditChain
 from core.runtime.flags import FlagKind, declare
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("core.runtime.receipts")
 
@@ -402,7 +403,7 @@ class ReceiptStore:
             if root is not None
             else Path(configured_root)
             if configured_root
-            else (Path.home() / ".aura" / "receipts")
+            else (state_root() / "receipts")
         )
         self.root.mkdir(parents=True, exist_ok=True)
         try:

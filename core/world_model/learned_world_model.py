@@ -41,10 +41,11 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.LearnedWorldModel")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "world_model"
+_DATA_DIR = state_root() / "data" / "world_model"
 _MODEL_PATH = _DATA_DIR / "vrnn_state.npz"
 
 #: Every parameter the model actually learns. Naming them here makes the list

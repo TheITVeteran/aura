@@ -17,6 +17,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 try:
     from core.runtime import resource_psutil as psutil
@@ -164,7 +165,7 @@ class StabilityGuardian:
             from core.config import config
             self._log_path = config.paths.data_dir / "stability" / "health_log.jsonl"
         except (ImportError, AttributeError):
-            self._log_path = Path.home() / ".aura" / "stability" / "health_log.jsonl"
+            self._log_path = state_root() / "stability" / "health_log.jsonl"
             
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
 

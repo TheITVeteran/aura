@@ -51,6 +51,7 @@ import numpy as np
 
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Ontogeny.State")
 
@@ -339,7 +340,7 @@ def _default_state_path() -> Path:
 
         return Path(config.paths.data_dir) / "ontogeny" / "state.npz"
     except (ImportError, AttributeError, RuntimeError, OSError):
-        return Path.home() / ".aura" / "data" / "ontogeny" / "state.npz"
+        return state_root() / "data" / "ontogeny" / "state.npz"
 
 
 _state: OntogeneticState | None = None

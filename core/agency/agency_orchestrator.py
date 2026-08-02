@@ -37,6 +37,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.AgencyOrchestrator")
 
@@ -176,7 +177,7 @@ class _ReceiptLog:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (
-            Path.home() / ".aura" / "data" / "agency_receipts" / "agency_receipts.jsonl"
+            state_root() / "data" / "agency_receipts" / "agency_receipts.jsonl"
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         from collections import deque

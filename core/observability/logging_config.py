@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Pattern, Union, Optional
 import structlog
 from structlog.dev import ConsoleRenderer
+from core.runtime.state_ownership import state_root
 
 # ── Redaction Patterns ─────────────────────────────────────────
 
@@ -149,7 +150,7 @@ def _resolve_log_dir(log_dir: Optional[Path]) -> Path:
     env_log_dir = os.environ.get("AURA_LOG_DIR")
     if env_log_dir:
         return Path(env_log_dir)
-    return Path.home() / ".aura" / "logs"
+    return state_root() / "logs"
 
 def setup_logging(
     name: str = "Aura",

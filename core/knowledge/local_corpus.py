@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Knowledge.LocalCorpus")
 
@@ -47,7 +48,7 @@ def default_corpus_db_path() -> Path:
     override = os.environ.get("AURA_KNOWLEDGE_DB", "").strip()
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".aura" / "knowledge" / "corpus.db"
+    return state_root() / "knowledge" / "corpus.db"
 
 
 @dataclass(frozen=True)

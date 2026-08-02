@@ -33,10 +33,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.HeartstoneValues")
 
-_PERSIST_PATH = Path.home() / ".aura" / "data" / "heartstone_values.json"
+_PERSIST_PATH = state_root() / "data" / "heartstone_values.json"
 
 # Bounds
 _MIN = 0.10

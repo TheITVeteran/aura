@@ -81,6 +81,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Cognitive.HomeostaticRL")
 
@@ -211,7 +212,7 @@ class HomeostaticRL:
                 from core.utils.paths import aura_data_dir
                 data_dir = aura_data_dir() / "cognitive"
             except (ImportError, AttributeError, RuntimeError):
-                data_dir = Path.home() / ".aura" / "data" / "cognitive"
+                data_dir = state_root() / "data" / "cognitive"
         data_dir.mkdir(parents=True, exist_ok=True)
         self._state_path: Path = data_dir / _STATE_FILENAME
 

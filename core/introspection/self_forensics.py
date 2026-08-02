@@ -30,6 +30,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Introspection.SelfForensics")
 
@@ -56,7 +57,7 @@ def is_self_forensics_question(text: str | None) -> bool:
 
 def _read_grace_flag() -> str:
     try:
-        flag = Path.home() / ".aura" / "run" / "grace_exit.flag"
+        flag = state_root() / "run" / "grace_exit.flag"
         data = json.loads(flag.read_text(encoding="utf-8"))
         age_h = max(0.0, time.time() - float(data.get("created_at_unix", 0.0))) / 3600.0
         reason = str(data.get("reason") or "unspecified")

@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.EmergentGoals")
 
@@ -97,7 +98,7 @@ class EmergentGoalEngine:
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("emergent_goals", exc)
                 logger.debug("EmergentGoalEngine config path lookup failed: %s", exc)
-                db_path = Path.home() / ".aura" / "emergent_goals.sqlite3"
+                db_path = state_root() / "emergent_goals.sqlite3"
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()

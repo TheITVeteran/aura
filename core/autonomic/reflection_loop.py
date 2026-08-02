@@ -25,6 +25,7 @@ from core.runtime.background_policy import (
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.AutonomicReflectionLoop")
 
@@ -54,7 +55,7 @@ def _default_journal_path() -> Path:
 
         return config.paths.data_dir / "dreams" / "autonomic_reflections.jsonl"
     except _RUNTIME_ERRORS:
-        return Path.home() / ".aura" / "data" / "dreams" / "autonomic_reflections.jsonl"
+        return state_root() / "data" / "dreams" / "autonomic_reflections.jsonl"
 
 
 @dataclass(frozen=True)

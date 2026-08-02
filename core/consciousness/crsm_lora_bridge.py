@@ -39,6 +39,7 @@ from pathlib import Path
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.CRSMLoraBridge")
 
@@ -46,7 +47,7 @@ CAPTURE_THRESHOLD   = 0.20   # prediction_error must exceed this to capture
 MIN_HEDONIC_DELTA   = -0.05  # allow slightly negative outcomes (learning from mistakes)
 MAX_BUFFER_SIZE     = 500    # rolling capture buffer
 MIN_QUALITY         = 0.30   # discard examples below this quality
-PERSIST_PATH        = Path.home() / ".aura" / "data" / "crsm_lora_buffer.jsonl"
+PERSIST_PATH        = state_root() / "data" / "crsm_lora_buffer.jsonl"
 
 #: How long a captured moment may remain in the training corpus.
 #:

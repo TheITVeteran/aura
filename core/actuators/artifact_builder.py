@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ArtifactBuilder")
 
@@ -76,7 +77,7 @@ def _output_dir() -> Path:
 
         base = Path(config.paths.data_dir)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        base = Path.home() / ".aura" / "data"
+        base = state_root() / "data"
     out = base / "generated_artifacts"
     out.mkdir(parents=True, exist_ok=True)
     return out

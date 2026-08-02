@@ -55,10 +55,11 @@ from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.skill_contract import ActionExpectation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.WorldBridge")
 
-_WORLD_DIR = Path.home() / ".aura" / "data" / "world"
+_WORLD_DIR = state_root() / "data" / "world"
 _WORLD_DIR.mkdir(parents=True, exist_ok=True)
 _PERMS_PATH = _WORLD_DIR / "permissions.json"
 _WORKSPACE_DIR = _WORLD_DIR / "workspace"

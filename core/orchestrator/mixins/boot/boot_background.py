@@ -6,6 +6,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class BootBackgroundMixin:
 
     async def _cognitive_heartbeat_task(self):
         """A background coroutine that constantly updates the heartbeat file for the Lazarus brainstem."""
-        heartbeat_file = Path.home() / ".aura" / "run" / "heartbeat.pulse"
+        heartbeat_file = state_root() / "run" / "heartbeat.pulse"
         logger.info("💓 Heartbeat monitor starting (Lazarus Protocol active)")
         _last_continuity_save = 0.0
         while getattr(self, "_running", True):

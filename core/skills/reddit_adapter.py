@@ -48,6 +48,7 @@ from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Skills.Reddit")
 
@@ -101,7 +102,7 @@ COMMENT_COOLDOWN_S = 600  # 1 comment per 10 minutes (new account safety)
 POST_COOLDOWN_S = 3600  # 1 post per hour
 
 # ── Storage ───────────────────────────────────────────────────────────
-_STORAGE_DIR = Path(os.path.expanduser("~/.aura/runtime/reddit"))
+_STORAGE_DIR = Path(str(state_root() / "runtime/reddit"))
 _STORAGE_STATE_FILE = _STORAGE_DIR / "browser_state.json"
 _COMMENT_HISTORY_FILE = _STORAGE_DIR / "comment_history.json"
 _CONNECTION_STATE_FILE = _STORAGE_DIR / "connection_state.json"

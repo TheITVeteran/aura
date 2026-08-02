@@ -45,6 +45,7 @@ from typing import Any, Callable
 from core.runtime.audit_chain import AuditChain
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.VerifierFoundry")
 
@@ -194,7 +195,7 @@ class VerifierFoundry:
         env_root = str(_FOUNDRY_DIR_FLAG.value() or "")
         self.root = Path(root) if root else (
             Path(env_root) if env_root
-            else (Path.home() / ".aura" / "data" / "verifier_foundry")
+            else (state_root() / "data" / "verifier_foundry")
         )
         self._ensure_root()
         self.events_path = self.root / "events.jsonl"

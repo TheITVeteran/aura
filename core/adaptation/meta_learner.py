@@ -40,10 +40,11 @@ import numpy as np
 
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.MetaLearner")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "meta_learning"
+_DATA_DIR = state_root() / "data" / "meta_learning"
 _STATE_PATH = _DATA_DIR / "meta_state.npz"
 _LOG_PATH = _DATA_DIR / "meta_learning_log.jsonl"
 

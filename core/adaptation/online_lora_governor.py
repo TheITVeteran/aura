@@ -18,6 +18,7 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.resource_observation import ResourceObserver, get_resource_observer
+from core.runtime.state_ownership import state_root
 
 
 @dataclass
@@ -53,7 +54,7 @@ class OnlineLoRAGovernor:
         observer: ResourceObserver | None = None,
     ) -> None:
         self.receipt_path = Path(
-            receipt_path or Path.home() / ".aura" / "data" / "runtime" / "online_lora_updates.jsonl"
+            receipt_path or state_root() / "data" / "runtime" / "online_lora_updates.jsonl"
         )
         self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
         self._observer = observer

@@ -51,6 +51,7 @@ from core.brain.llm.latent_cortex.worker_capture_identity import (
     validate_worker_capture_launch_challenge,
     validate_worker_capture_origin_binding,
 )
+from core.runtime.state_ownership import state_root
 
 ACTION_STATE_RUNTIME_SCHEMA: Final = "aura.rlc.action_state_runtime.v1"
 ACTION_STATE_RESTORE_RECEIPT_SCHEMA: Final = (
@@ -590,7 +591,7 @@ def action_state_store_root() -> Path:
         if "PYTEST_CURRENT_TEST" not in os.environ:
             _fail("action_state_runtime_test_root_outside_tests")
         return Path(override).expanduser().absolute()
-    return Path.home() / ".aura" / "private" / "rlc-action-state-v1"
+    return state_root() / "private" / "rlc-action-state-v1"
 
 
 def open_action_state_store() -> tuple[

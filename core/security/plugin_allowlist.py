@@ -36,6 +36,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 SCHEMA_VERSION = 1
 logger = logging.getLogger("Aura.PluginAllowlist")
@@ -82,7 +83,7 @@ class PluginAllowlist:
         self.path = (
             Path(path)
             if path is not None
-            else Path.home() / ".aura" / "plugins" / "allowlist.json"
+            else state_root() / "plugins" / "allowlist.json"
         )
         self.plugin_root = Path(plugin_root) if plugin_root is not None else None
         self.path.parent.mkdir(parents=True, exist_ok=True)

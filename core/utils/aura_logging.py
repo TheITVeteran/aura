@@ -13,6 +13,7 @@ from typing import Optional
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, aura_root_override, declare
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.state_ownership import state_root
 
 _SQLITE_LOGGING_FLAG = declare(
     "AURA_LOG_SQLITE_ENABLED",
@@ -33,7 +34,7 @@ WEBHOOK_URL = str(_ALERTS_WEBHOOK_FLAG.value() or "").strip()
 
 def _default_db_file() -> Path:
     override = aura_root_override()
-    root = Path(override).expanduser() if override else Path.home() / ".aura"
+    root = Path(override).expanduser() if override else state_root()
     return root.resolve() / "data" / "aura_memory.db"
 
 

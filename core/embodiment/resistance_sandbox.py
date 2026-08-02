@@ -40,6 +40,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Embodiment.ResistanceSandbox")
 
@@ -177,7 +178,7 @@ class ResistanceSandbox:
             from core.config import config
             return config.paths.data_dir / "sandbox"
         except (ImportError, AttributeError, RuntimeError):
-            return Path.home() / ".aura" / "data" / "sandbox"
+            return state_root() / "data" / "sandbox"
 
     def _load_state(self):
         """Load persistent state from disk."""

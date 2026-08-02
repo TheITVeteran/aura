@@ -31,10 +31,11 @@ from pathlib import Path
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SkillSynthesizer")
 
-PERSIST_PATH = Path.home() / ".aura" / "data" / "synthesized_skills.json"
+PERSIST_PATH = state_root() / "data" / "synthesized_skills.json"
 
 # Skill template — all synthesized skills follow this pattern
 import re as _re

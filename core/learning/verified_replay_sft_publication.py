@@ -50,6 +50,7 @@ from core.runtime.file_write_gateway import (
     get_file_write_gateway,
 )
 from core.runtime.service_registry import get_runtime_service
+from core.runtime.state_ownership import state_root
 
 VERIFIED_REPLAY_SFT_PUBLICATION_SCHEMA: Final = (
     "aura.rlc.verified_replay_sft_publication_commit.v1"
@@ -632,7 +633,7 @@ def default_verified_replay_sft_publication_root() -> Path:
 
         home = Path(config.paths.home_dir)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        home = Path.home() / ".aura"
+        home = state_root()
     return home / "private" / "rlc" / "verified_replay_sft"
 
 

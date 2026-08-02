@@ -36,13 +36,14 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.memory.retention_policy import working_history_retention_policy
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Creativity.AestheticEngine")
 
 # ---------------------------------------------------------------------------
 # Journal persistence path
 # ---------------------------------------------------------------------------
-_DEFAULT_JOURNAL_PATH = Path.home() / ".aura" / "data" / "aesthetic_journal.json"
+_DEFAULT_JOURNAL_PATH = state_root() / "data" / "aesthetic_journal.json"
 _MAX_JOURNAL_ENTRIES = working_history_retention_policy("AURA_AESTHETIC_JOURNAL_MAX").max_items
 
 # ---------------------------------------------------------------------------

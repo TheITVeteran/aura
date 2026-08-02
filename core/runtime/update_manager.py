@@ -47,13 +47,14 @@ from typing import List, Optional
 
 from core.runtime.archive_gateway import get_archive_gateway
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.UpdateManager")
 
 
-_DEFAULT_BACKUP_DIR = Path.home() / ".aura" / "data" / "backups"
-_DEFAULT_RELEASE_DIR = Path.home() / ".aura" / "data" / "releases"
-_DEFAULT_LIVE_LINK = Path.home() / ".aura" / "live-source"
+_DEFAULT_BACKUP_DIR = state_root() / "data" / "backups"
+_DEFAULT_RELEASE_DIR = state_root() / "data" / "releases"
+_DEFAULT_LIVE_LINK = state_root() / "live-source"
 _HMAC_CHUNK_SIZE = 1024 * 1024
 
 

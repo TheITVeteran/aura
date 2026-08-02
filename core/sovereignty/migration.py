@@ -49,10 +49,11 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.archive_gateway import get_archive_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Migration")
 
-_MIG_DIR = Path.home() / ".aura" / "data" / "migration"
+_MIG_DIR = state_root() / "data" / "migration"
 _MIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -142,14 +143,14 @@ class LocalArchiveProvider(CloudProvider):
 
 
 _ARCHIVE_PATHS: List[Path] = [
-    Path.home() / ".aura" / "data" / "scars",
-    Path.home() / ".aura" / "data" / "agency_receipts",
-    Path.home() / ".aura" / "data" / "stem_cells",
-    Path.home() / ".aura" / "data" / "projects",
-    Path.home() / ".aura" / "data" / "relationships",
-    Path.home() / ".aura" / "data" / "wallet",
-    Path.home() / ".aura" / "data" / "world",
-    Path.home() / ".aura" / "data" / "conscience",
+    state_root() / "data" / "scars",
+    state_root() / "data" / "agency_receipts",
+    state_root() / "data" / "stem_cells",
+    state_root() / "data" / "projects",
+    state_root() / "data" / "relationships",
+    state_root() / "data" / "wallet",
+    state_root() / "data" / "world",
+    state_root() / "data" / "conscience",
 ]
 
 

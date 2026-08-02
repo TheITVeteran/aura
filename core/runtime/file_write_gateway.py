@@ -33,6 +33,8 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 
+from core.runtime.state_ownership import assert_state_path_allowed
+
 logger = logging.getLogger("Aura.FileWriteGateway")
 _FILE_WRITE_DOMAINS = (
     "file_write",
@@ -1503,6 +1505,7 @@ def _coerce_target(path: PathLike) -> Path:
     target = Path(path).expanduser()
     if target.exists() and target.is_dir() and not target.is_symlink():
         raise IsADirectoryError(f"target path is a directory: {target}")
+    assert_state_path_allowed(target, source="file_write_gateway")
     return target
 
 
@@ -1510,7 +1513,9 @@ def _coerce_path_allow_dir(path: PathLike) -> Path:
     """Coerce a path argument for operations that legitimately act on directories."""
     if path is None:
         raise ValueError("target path is required")
-    return Path(path).expanduser()
+    target = Path(path).expanduser()
+    assert_state_path_allowed(target, source="file_write_gateway")
+    return target
 
 
 _gateway: FileWriteGateway | None = None

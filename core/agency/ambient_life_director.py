@@ -22,6 +22,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.AmbientLifeDirector")
 
@@ -92,7 +93,7 @@ class AmbientLifeDirector:
                 state_path = Path(config.paths.data_dir) / "cognitive" / "ambient_life_director.json"
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("ambient_life_director", exc, severity="debug")
-                state_path = Path.home() / ".aura" / "data" / "cognitive" / "ambient_life_director.json"
+                state_path = state_root() / "data" / "cognitive" / "ambient_life_director.json"
         self._state_path = Path(state_path)
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._load()

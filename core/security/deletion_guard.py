@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Security.DeletionGuard")
 
@@ -74,7 +75,7 @@ class DeletionGuard:
                 from core.config import config
                 recycle_dir = Path(config.paths.home_dir) / "data" / "deletion_recycle"
             except (ImportError, AttributeError, RuntimeError):
-                recycle_dir = Path.home() / ".aura" / "data" / "deletion_recycle"
+                recycle_dir = state_root() / "data" / "deletion_recycle"
         self._recycle = Path(recycle_dir)
         self._recycle.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

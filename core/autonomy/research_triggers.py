@@ -27,10 +27,11 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("research_triggers")
 
-DEFAULT_TRIGGER_PATH = Path.home() / ".aura" / "data" / "autonomy" / "research-triggers.jsonl"
+DEFAULT_TRIGGER_PATH = state_root() / "data" / "autonomy" / "research-triggers.jsonl"
 RING_LIMIT = 500
 _TRIGGER_PERSISTENCE_ERRORS = (OSError, TypeError, ValueError)
 _BLOCKED_PAYLOAD_SURFACES = (

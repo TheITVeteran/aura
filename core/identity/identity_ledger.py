@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.IdentityLedger")
 
@@ -192,7 +193,7 @@ class IdentityLedger:
     SCHEMA_VERSION = 1
 
     def __init__(self, *, root: Optional[Path] = None):
-        self.root = Path(root) if root else (Path.home() / ".aura" / "identity")
+        self.root = Path(root) if root else (state_root() / "identity")
         self.root.mkdir(parents=True, exist_ok=True)
         self.commitments = CommitmentTracker()
         self.preferences = PreferenceHistory()

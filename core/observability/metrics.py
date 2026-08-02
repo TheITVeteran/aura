@@ -16,6 +16,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, Optional
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Observability.Metrics")
 
@@ -329,7 +330,7 @@ class MetricsCollector:
             from pathlib import Path
             db_path = Path(os.environ.get(
                 "AURA_ENV_RUNTIME_DIR",
-                str(Path.home() / ".aura" / "live-source" / "data"),
+                str(state_root() / "live-source" / "data"),
             )) / "aura_state.db"
             if db_path.exists():
                 self._db_size_bytes = db_path.stat().st_size
@@ -518,7 +519,7 @@ def check_readiness() -> Dict[str, Any]:
         from pathlib import Path
         db_path = Path(os.environ.get(
             "AURA_ENV_RUNTIME_DIR",
-            str(Path.home() / ".aura" / "live-source" / "data"),
+            str(state_root() / "live-source" / "data"),
         )) / "aura_state.db"
         if db_path.exists():
             # Quick integrity check

@@ -15,8 +15,9 @@ from typing import Any, Iterable
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
-_COURT_DIR = Path.home() / ".aura" / "data" / "scars"
+_COURT_DIR = state_root() / "data" / "scars"
 _COURT_LEDGER = _COURT_DIR / "scar_court.jsonl"
 
 

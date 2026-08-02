@@ -32,6 +32,7 @@ from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_ml
 from core.runtime.errors import record_degradation
 
 from .model_registry import resolve_personality_adapter
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("MLXWorker")
 
@@ -3352,8 +3353,8 @@ def _named_lora_module_ids(model: Any) -> set[int]:
 def _expert_adapter_approved_roots() -> list[Path]:
     """Directories an IPC-supplied adapter path may resolve under."""
     roots = [
-        Path(os.path.expanduser("~/.aura/data/adapters")),
-        Path(os.path.expanduser("~/.aura/models")),
+        Path(str(state_root() / "data/adapters")),
+        Path(str(state_root() / "models")),
     ]
     try:
         # Repo artifacts: training pipelines publish adapters here.
@@ -4191,7 +4192,7 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
         return None  # drafting for a small model is pointless
     draft_candidates = [
         Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-1.5B-Instruct-4bit",
-        Path.home() / ".aura" / "live-source" / "models" / "Qwen2.5-1.5B-Instruct-4bit",
+        state_root() / "live-source" / "models" / "Qwen2.5-1.5B-Instruct-4bit",
     ]
     default_draft = next((str(c) for c in draft_candidates if c.is_dir()), str(draft_candidates[0]))
     draft_path = os.environ.get("AURA_SPECULATIVE_DRAFT_PATH", default_draft)

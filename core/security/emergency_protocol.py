@@ -66,6 +66,7 @@ from core.governance_context import local_internal_governed_scope
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.EmergencyProtocol")
 try:
@@ -99,7 +100,7 @@ SNAPSHOT_THRESHOLD  = 0.40   # take snapshot
 MINIMAL_MODE_THRESHOLD = 0.65  # enter minimal mode
 SHUTDOWN_THRESHOLD  = 0.90   # graceful shutdown if threat is this severe
 
-THREAT_LOG_PATH = Path.home() / ".aura" / "data" / "threat_log.jsonl"
+THREAT_LOG_PATH = state_root() / "data" / "threat_log.jsonl"
 
 # Vault snapshot rotation: keep at most this many snapshots
 MAX_VAULT_SNAPSHOTS = 10
@@ -422,7 +423,7 @@ class EmergencyProtocol:
 
         identity_hash = hashlib.sha256(identity_seed.encode()).hexdigest()
         # Store in a non-obvious subdirectory
-        vault_dir = Path.home() / ".aura" / "vault" / identity_hash[:16]
+        vault_dir = state_root() / "vault" / identity_hash[:16]
         return vault_dir
 
     def _derive_encryption_key(self) -> bytes:

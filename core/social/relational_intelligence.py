@@ -22,6 +22,7 @@ from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.RelationalIntelligence")
 
@@ -223,7 +224,7 @@ class RelationalIntelligence:
                 from core.config import config
                 data_path = config.paths.data_dir / "relational_intelligence.json"
             except (ImportError, AttributeError, RuntimeError):
-                data_path = Path.home() / ".aura" / "data" / "relational_intelligence.json"
+                data_path = state_root() / "data" / "relational_intelligence.json"
         self._legacy_path = Path(data_path)
         self._authority = authority or get_relational_memory_authority()
 

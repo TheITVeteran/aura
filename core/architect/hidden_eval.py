@@ -40,10 +40,11 @@ from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List
 
 import numpy as np
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.HiddenEval")
 
-_DATA_DIR = Path.home() / ".aura" / "data" / "hidden_eval"
+_DATA_DIR = state_root() / "data" / "hidden_eval"
 _RESULTS_PATH = _DATA_DIR / "eval_history.jsonl"
 _SCENARIOS_PATH = _DATA_DIR / "sealed_scenarios.json"
 

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.state_ownership import state_root
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ class AmendmentProposal:
 
 
 class AmendmentCourt:
-    LEDGER = Path.home() / ".aura" / "data" / "governance" / "amendments.jsonl"
+    LEDGER = state_root() / "data" / "governance" / "amendments.jsonl"
 
     def propose(
         self,

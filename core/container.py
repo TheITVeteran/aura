@@ -28,6 +28,7 @@ from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.concurrency import RobustLock
 import hmac
 import os
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Container")
 
@@ -1317,7 +1318,7 @@ class ServiceContainer:
         except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             record_degradation("container", exc)
             logger.debug("Falling back to default sovereignty seal path after config lookup failed: %s", exc)
-            return Path.home() / ".aura" / "data" / "sovereignty_seal.json"
+            return state_root() / "data" / "sovereignty_seal.json"
 
     @classmethod
     def _manifest_snapshot(cls) -> dict[str, str]:

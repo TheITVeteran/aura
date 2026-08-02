@@ -42,6 +42,7 @@ from core.brain.llm.latent_cortex.persistence import (
 from core.runtime.atomic_writer import interprocess_file_lock
 from core.runtime.file_read_gateway import read_stable_bytes
 from core.runtime.service_registry import get_runtime_service
+from core.runtime.state_ownership import state_root
 
 VERIFIED_REPLAY_PAYLOAD_SCHEMA = "aura.rlc.verified_replay_payload.v1"
 VERIFIED_REPLAY_ENTRY_SCHEMA = "aura.rlc.verified_replay_entry.v1"
@@ -156,7 +157,7 @@ def default_verified_replay_path() -> Path:
 
         home = Path(config.paths.home_dir)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        home = Path.home() / ".aura"
+        home = state_root()
     return home / "private" / "rlc" / "verified_replay_buffer.v1.json"
 
 

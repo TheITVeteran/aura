@@ -53,6 +53,7 @@ from typing import Any, Deque, Dict, Optional
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Consciousness.SynapticPlasticity")
 
@@ -67,7 +68,7 @@ WEIGHT_CLIP = 1.5             # Max absolute weight value
 IDENTITY_LOCK_THRESHOLD = 0.005   # Variance below this → locked
 IDENTITY_LOCK_WINDOW = 50    # Must be stable for this many updates
 MODULATION_STRENGTH = 0.15   # How strongly the matrix affects sampling
-PERSIST_PATH = Path.home() / ".aura" / "data" / "synaptic_plasticity_state.json"
+PERSIST_PATH = state_root() / "data" / "synaptic_plasticity_state.json"
 PERSIST_INTERVAL = 60        # Save every 60 seconds
 
 

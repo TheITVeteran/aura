@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Security.NetworkSentinel")
 _SCHEMA_VERSION = 1
@@ -19,7 +20,7 @@ def _default_baseline_path() -> Path:
 
         return Path(config.paths.home_dir) / "data" / "security" / "network_baseline.json"
     except (ImportError, AttributeError, RuntimeError):
-        return Path.home() / ".aura" / "data" / "security" / "network_baseline.json"
+        return state_root() / "data" / "security" / "network_baseline.json"
 
 
 @dataclass

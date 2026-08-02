@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.TasteModel")
 
@@ -55,7 +56,7 @@ class TasteModel:
     _ERRORS = (OSError, ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError)
 
     def __init__(self, path: str | Path | None = None, *, lr: float = _LR) -> None:
-        self._path = Path(path or os.path.expanduser("~/.aura/data/runtime/taste_model.json"))
+        self._path = Path(path or str(state_root() / "data/runtime/taste_model.json"))
         self._lr = float(lr)
         self._lock = threading.RLock()
         self._weights: dict[str, float] = dict(FEATURE_PRIORS)

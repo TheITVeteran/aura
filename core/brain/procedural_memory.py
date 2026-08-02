@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ProceduralMemory")
 
@@ -124,8 +125,7 @@ class ProceduralMemory:
     def __init__(self, path: str | Path | None = None) -> None:
         import os
 
-        self._path = Path(path or os.path.expanduser(
-            "~/.aura/data/runtime/procedural_playbooks.json"))
+        self._path = Path(path or str(state_root() / "data/runtime/procedural_playbooks.json"))
         self._lock = threading.RLock()
         self._books: dict[str, Playbook] = {}
         self._dirty = 0

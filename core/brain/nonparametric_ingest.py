@@ -24,6 +24,7 @@ import numpy as np
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.NonParametricIngest")
 
@@ -151,8 +152,8 @@ def collect_trusted_pairs(
     pairs: list[tuple[str, str]] = []
     if sources is None:
         sources = [
-            (Path(os.path.expanduser("~/.aura/data/runtime/reasoning_solved_cache.json")), "entries"),
-            (Path(os.path.expanduser("~/.aura/data/runtime/reasoning_traces.json")), "traces"),
+            (Path(str(state_root() / "data/runtime/reasoning_solved_cache.json")), "entries"),
+            (Path(str(state_root() / "data/runtime/reasoning_traces.json")), "traces"),
         ]
     for path, key in sources:
         if not path.exists():
@@ -190,7 +191,7 @@ class NonParametricIngestor:
     def __init__(self, memory: Any, *, dedup_path: str | Path | None = None) -> None:
         self._mem = memory
         self._dedup_path = Path(
-            dedup_path or os.path.expanduser("~/.aura/data/runtime/nonparametric_ingested.json")
+            dedup_path or str(state_root() / "data/runtime/nonparametric_ingested.json")
         )
         # Guards the check-add-receipt sequence. Concurrent ingest workers could
         # both observe a hash absent, both commit the same pair, and race the

@@ -22,6 +22,7 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.state_ownership import state_root
 
 JobFn = Callable[[], Awaitable[dict[str, Any]] | dict[str, Any]]
 logger = logging.getLogger("core.runtime.autonomy_conductor")
@@ -117,7 +118,7 @@ class AutonomyConductor:
 
     def __init__(self, ledger_path: str | Path | None = None) -> None:
         self.ledger_path = Path(
-            ledger_path or Path.home() / ".aura" / "data" / "runtime" / "autonomy_conductor.jsonl"
+            ledger_path or state_root() / "data" / "runtime" / "autonomy_conductor.jsonl"
         )
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         self.jobs: dict[str, ConductedJob] = {}
@@ -426,7 +427,7 @@ class AutonomyConductor:
     async def _job_proof_bundle(self) -> dict[str, Any]:
         from tools.proof_bundle import build_proof_bundle
 
-        output = Path.home() / ".aura" / "data" / "proof_bundle" / "latest"
+        output = state_root() / "data" / "proof_bundle" / "latest"
         return build_proof_bundle(output_dir=output)
 
     async def _job_self_test_synthesis(self) -> dict[str, Any]:

@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("core.runtime.diagnostics_bundle")
 
@@ -424,7 +425,7 @@ def collect_logs(dest_dir: Path, max_total_bytes: int = 512 * 1024) -> dict[str,
     candidates = [
         Path.home() / ".aura_runtime" / "logs",
         Path.cwd() / "logs",
-        Path.home() / ".aura" / "logs",
+        state_root() / "logs",
     ]
     src = next((p for p in candidates if p.exists() and p.is_dir()), None)
     if src is None:
@@ -520,7 +521,7 @@ def build_bundle(
     output_path = (
         Path(output_path)
         if output_path is not None
-        else Path.home() / ".aura" / "diagnostics" / f"aura-bundle-{ts}.tar.gz"
+        else state_root() / "diagnostics" / f"aura-bundle-{ts}.tar.gz"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
