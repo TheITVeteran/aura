@@ -272,17 +272,42 @@ def test_a_silent_timeout_is_classified_by_its_action():
 
 
 def test_the_scan_still_requires_a_backpressure_word():
-    """Reading the action must not turn every action into backpressure."""
-    import inspect
+    """Reading the action must not turn every action into backpressure.
 
-    from core.runtime.errors import record_degradation
-
-    src = inspect.getsource(record_degradation)
-    # The demotion is still gated on the marker tuple, not on any action text.
-    assert "_BACKPRESSURE_MARKERS" in src
-    assert 'severity in ("degraded", "critical")' in src, (
-        "only degraded/critical are demoted; nothing is silently upgraded"
+    Asserted through BEHAVIOUR rather than by scanning the sink's source
+    for an identifier. The previous version searched for the literal name
+    `_BACKPRESSURE_MARKERS`, so a rename to a local broke the test while
+    the rule it protects was working perfectly — a test that fails when
+    nothing is wrong teaches people to ignore it.
+    """
+    ordinary = record_degradation(
+        "inference_gate",
+        RuntimeError("database file is corrupted"),
+        severity="degraded",
+        action="rebuilt the index and carried on",
     )
+    assert ordinary.severity == "degraded", (
+        "an action with no backpressure word must not be demoted"
+    )
+
+    backpressure = record_degradation(
+        "inference_gate",
+        RuntimeError("boom"),
+        severity="degraded",
+        action="warmup_deferred while the foreground held the lane",
+    )
+    assert backpressure.severity == "warning"
+
+
+def test_nothing_is_ever_silently_upgraded():
+    """Only degraded/critical are demoted; a warning stays a warning."""
+    record = record_degradation(
+        "inference_gate",
+        RuntimeError("warmup_deferred"),
+        severity="warning",
+        action="descended the escalation ladder",
+    )
+    assert record.severity == "warning"
 
 
 class TestDegradedButHandled:
@@ -300,38 +325,57 @@ class TestDegradedButHandled:
     fallback trains an operator to ignore incidents.
     """
 
-    def _markers(self):
-        import inspect
-
-        from core.runtime.errors import record_degradation
-
-        return inspect.getsource(record_degradation)
+    #: The live action line, verbatim from the 2026-07-25 incident.
+    LIVE_ACTION = "skipped cold primary attempt or fell back after foreground warmup failure"
 
     def test_the_live_action_is_recognised_as_handled(self):
-        src = self._markers()
-        assert "_HANDLED_FALLBACK_MARKERS" in src
-        assert '"fell back"' in src, "the live action line says 'fell back'"
+        """The exact record that opened an incident for a served turn."""
+        record = record_degradation(
+            "inference_gate",
+            TimeoutError(),
+            severity="degraded",
+            action=self.LIVE_ACTION,
+        )
+        assert record.severity == "warning", (
+            "a bare timeout whose action says the ladder served the turn is "
+            "not incident-worthy; an incident for a handled fallback trains "
+            "an operator to ignore incidents"
+        )
 
     def test_only_degraded_is_demoted_never_critical(self):
-        src = self._markers()
-        block = src[src.index("_HANDLED_FALLBACK_MARKERS = (") :]
-        demotion = block[block.index('elif severity == "degraded"') :][:400]
-        assert '"critical"' not in demotion, (
-            "a caller that says critical must reach the operator however "
-            "gracefully the failure was handled"
+        """A caller that says critical reaches the operator regardless."""
+        record = record_degradation(
+            "inference_gate",
+            TimeoutError(),
+            severity="critical",
+            action=self.LIVE_ACTION,
+        )
+        assert record.severity == "critical", (
+            "however gracefully a failure was handled, a caller that declared "
+            "it critical must not be demoted"
         )
 
     def test_only_timeout_class_errors_are_demoted(self):
         """Graceful handling does not make a cause benign.
 
-        The existing corrupted-database regression — a ValueError handled with
-        "fell back to empty recall" — is what caught the first, looser version
-        of this rule. A timeout that was handled is the one shape where the
+        The corrupted-database regression — a ValueError handled with "fell
+        back to empty recall" — is what caught the first, looser version of
+        this rule. A timeout that was handled is the one shape where the
         error itself carries no finding.
         """
-        src = self._markers()
-        block = src[src.index("_HANDLED_FALLBACK_MARKERS = (") :]
-        demotion = block[block.index('elif (') :][:400]
-        assert "_is_timeout" in demotion, (
+        handled_timeout = record_degradation(
+            "inference_gate",
+            TimeoutError(),
+            severity="degraded",
+            action="fell back to the next lane",
+        )
+        handled_corruption = record_degradation(
+            "memory_facade",
+            ValueError("database file is corrupted"),
+            severity="degraded",
+            action="fell back to empty recall",
+        )
+        assert handled_timeout.severity == "warning"
+        assert handled_corruption.severity == "degraded", (
             "a corrupted database handled by falling back is still damage"
         )

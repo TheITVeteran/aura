@@ -147,25 +147,63 @@ def test_the_turn_contract_carries_the_engagement() -> None:
 
 # ── Voice inherits it rather than reimplementing it ───────────────────────
 
+def _function_body(name: str) -> str:
+    """The source of exactly one function, bounded by the AST.
+
+    These assertions used to take a 4000-CHARACTER window from the start of
+    the function name. That window silently spanned whatever followed, so
+    the tests passed on code belonging to other functions — and when the
+    voice turn was refactored into a 590-char wrapper the window stopped
+    reaching the properties it was supposed to check, failing while
+    everything it protects was intact. A test scoped by character count is
+    a test about formatting.
+    """
+    import ast
+
+    src = SOURCE.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    node = next(
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, (ast.AsyncFunctionDef, ast.FunctionDef)) and item.name == name
+    )
+    return ast.get_source_segment(src, node) or ""
+
+
+#: Voice does not implement a turn; it delegates to the one shared surface
+#: handler. That IS the property — a second implementation is what would
+#: drift.
+_SHARED_SURFACE_HANDLER = "run_governed_surface_chat_turn"
+
+
 def test_voice_replays_the_real_chat_handler() -> None:
     """Voice is a presentation surface, not a second cognition lane.
 
-    If it built its own request path it would drift, and the contract asserted
-    above would cover only half the ways she speaks.
+    If it built its own request path it would drift, and the contract
+    asserted above would cover only half the ways she speaks.
     """
-    src = SOURCE.read_text(encoding="utf-8")
-    turn = src[src.index("async def run_governed_voice_chat_turn") :]
-    turn = turn[:4000]
-    assert '"path": "/api/chat"' in turn
-    assert "validate_runtime_security_request(request)" in turn
-    assert "_require_internal(request)" in turn
+    voice = _function_body("run_governed_voice_chat_turn")
+    assert _SHARED_SURFACE_HANDLER in voice, (
+        "the voice turn no longer delegates to the shared surface handler; a "
+        "second request path is exactly the drift this guards against"
+    )
+
+    shared = _function_body(_SHARED_SURFACE_HANDLER)
+    assert '"path": "/api/chat"' in shared
+    assert "validate_runtime_security_request(request)" in shared
+    assert "_require_internal(request)" in shared
 
 
 def test_the_voice_surface_is_declared_not_disguised() -> None:
-    src = SOURCE.read_text(encoding="utf-8")
-    turn = src[src.index("async def run_governed_voice_chat_turn") :][:4000]
-    assert b"x-aura-surface" in turn.encode() or "x-aura-surface" in turn
-    assert "x-aura-require-cognitiveengine" in turn
+    shared = _function_body(_SHARED_SURFACE_HANDLER)
+    assert "x-aura-surface" in shared
+    assert "x-aura-require-cognitiveengine" in shared
+
+
+def test_the_voice_wrapper_names_its_surface() -> None:
+    """Delegating must not lose WHICH surface is speaking."""
+    voice = _function_body("run_governed_voice_chat_turn")
+    assert 'surface="voice"' in voice
 
 
 # ── A gap that persists is a different fact from a gap on one turn ─────────
