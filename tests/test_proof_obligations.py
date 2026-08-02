@@ -433,18 +433,57 @@ class TestSCMDoCalculus(unittest.TestCase):
     """Prove the CausalWorldModel performs structural interventions (do-calculus)."""
 
     def test_intervention_upgrades_correlation_to_causation(self):
-        from core.brain.causal_world_model import CausalWorldModel
+        """A causal claim has to be earned: a control, and a replication.
+
+        This test used to call the intervention API with three arguments and
+        expect "causes" back. The model deliberately refuses that, for two
+        reasons it is right about:
+
+        * a single outcome LEVEL is a correlation however it was produced —
+          without a control outcome there is no treatment effect to estimate;
+        * one intervention is an anecdote, so MIN_INTERVENTIONS_FOR_CAUSAL
+          replications are required before the edge is stated as causal.
+
+        Asserting the weaker contract meant the suite would have accepted a
+        model that minted causation from one reading. It now proves the
+        stronger one, and pins both refusals.
+        """
+        from core.brain.causal_world_model import (
+            MIN_INTERVENTIONS_FOR_CAUSAL,
+            CausalWorldModel,
+        )
         scm = CausalWorldModel()
         scm.data_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Initial passive correlation
         scm.add_observation("weather", "mood", 0.5)
         edge = next(e for e in scm.edges if e.source == "weather" and e.target == "mood")
         self.assertEqual(edge.relationship, "correlates_with")
-        
-        # Active intervention do-calculus
+
+        # An intervention with NO control outcome must not mint causation.
         scm.discover_causality_via_intervention("do_weather", "mood", 1.0, 0.8)
-        edge_do = next(e for e in scm.edges if e.source == "do_weather" and e.target == "mood")
+        edge_no_control = next(
+            e for e in scm.edges if e.source == "do_weather" and e.target == "mood"
+        )
+        self.assertEqual(edge_no_control.relationship, "correlates_with")
+
+        # A single controlled intervention is still only one datum.
+        scm.discover_causality_via_intervention(
+            "do_weather", "mood", 1.0, 0.8, control_val=0.1
+        )
+        edge_once = next(
+            e for e in scm.edges if e.source == "do_weather" and e.target == "mood"
+        )
+        self.assertEqual(edge_once.relationship, "correlates_with")
+
+        # Replicated, controlled interventions earn the causal claim.
+        for _ in range(MIN_INTERVENTIONS_FOR_CAUSAL):
+            scm.discover_causality_via_intervention(
+                "do_weather", "mood", 1.0, 0.8, control_val=0.1
+            )
+        edge_do = next(
+            e for e in scm.edges if e.source == "do_weather" and e.target == "mood"
+        )
         self.assertEqual(edge_do.relationship, "causes")
         self.assertGreater(edge_do.confidence, 0.2)
 
@@ -452,9 +491,14 @@ class TestSCMDoCalculus(unittest.TestCase):
         from core.brain.causal_world_model import CausalWorldModel
         scm = CausalWorldModel()
         
-        # Chain: a -> b -> c
-        scm.discover_causality_via_intervention("a", "b", 1.0, 1.0)
-        scm.discover_causality_via_intervention("b", "c", 1.0, 1.0)
+        # Chain: a -> b -> c, built with controlled and REPLICATED
+        # interventions, because the model will not state a causal edge on
+        # less — and graph surgery is only meaningful over causal edges.
+        from core.brain.causal_world_model import MIN_INTERVENTIONS_FOR_CAUSAL
+
+        for _ in range(MIN_INTERVENTIONS_FOR_CAUSAL):
+            scm.discover_causality_via_intervention("a", "b", 1.0, 1.0, control_val=0.0)
+            scm.discover_causality_via_intervention("b", "c", 1.0, 1.0, control_val=0.0)
         
         scm.nodes["a"].activation = 1.0
         scm.nodes["b"].activation = 0.0
@@ -465,7 +509,11 @@ class TestSCMDoCalculus(unittest.TestCase):
         self.assertEqual(final_state["b"], 0.0)
         self.assertEqual(final_state["c"], 0.0)
         
-        # Without intervention, B would be driven to 1.0 by A, and C would become 1.0.
+        # Without intervention, A drives B and B drives C. Activations are
+        # re-seeded because simulate_counterfactual reads live node state and
+        # the do-run above consumed it.
+        scm.nodes["a"].activation = 1.0
+        scm.nodes["b"].activation = 0.0
         final_state_passive = scm.simulate_counterfactual(do_interventions={}, steps=2)
         self.assertGreater(final_state_passive["b"], 0.0)
         self.assertGreater(final_state_passive["c"], 0.0)
@@ -486,8 +534,13 @@ class TestEmbodiedSimulator(unittest.TestCase):
         
         sim.scene.add_or_update_entity("box_1", "block", np.array([0., 0., 0.]))
         
-        # Perform physical intervention: pushing the block
-        outcome = sim.physical_intervention("box_1", "push", intensity=1.0)
+        # Perform the physical intervention twice: the SCM requires
+        # replication before stating causation, and a simulator that can push
+        # a block can push it again. One push is an anecdote there too.
+        from core.brain.causal_world_model import MIN_INTERVENTIONS_FOR_CAUSAL
+
+        for _ in range(MIN_INTERVENTIONS_FOR_CAUSAL):
+            outcome = sim.physical_intervention("box_1", "push", intensity=1.0)
         
         # Physics updated
         ent = sim.scene.entities["box_1"]

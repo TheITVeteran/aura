@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.runtime.errors import record_degradation
 from core.runtime.numeric_safety import validated_int, validated_scalar, validated_unit
 from core.runtime.service_registry import get_runtime_service, register_runtime_service
+import os
 
 logger = logging.getLogger("Aura.CausalWorldModel")
 
@@ -179,15 +180,52 @@ class CausalWorldModel:
 
     name = "causal_world_model"
 
+    @staticmethod
+    def _default_data_path() -> Any:
+        """Where the causal graph lives when the caller does not say.
+
+        Under pytest this is a per-process temporary file, NOT the live
+        runtime graph. Constructing ``CausalWorldModel()`` in a test used to
+        open ~/.aura/data/causal_world.json, which meant every test both
+        POLLUTED the running system's causal beliefs and INHERITED whatever
+        previous runs had left there. A test asserting that an intervention
+        upgrades an edge to "causes" would pass or fail on the residue of an
+        earlier run rather than on the code — which is exactly the
+        order-dependence that makes a suite untrustworthy.
+
+        ``AURA_CAUSAL_WORLD_PATH`` overrides both, for a caller that wants a
+        specific graph.
+        """
+        from pathlib import Path
+
+        override = os.environ.get("AURA_CAUSAL_WORLD_PATH", "").strip()
+        if override:
+            return Path(override)
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            import tempfile
+            import uuid
+
+            # Per INSTANCE, not per process: two models built in the same
+            # pytest process would otherwise share one file, and the second
+            # would load the first's edges. That is the same leak one level
+            # down.
+            return (
+                Path(tempfile.gettempdir())
+                / f"aura_causal_world_test_{os.getpid()}_{uuid.uuid4().hex}.json"
+            )
+
+        from core.config import config
+
+        return config.paths.data_dir / "causal_world.json"
+
     def __init__(self, data_path: Any = None):
         if data_path is not None:
             from pathlib import Path
 
             self.data_path = Path(data_path)
         else:
-            from core.config import config
-
-            self.data_path = config.paths.data_dir / "causal_world.json"
+            self.data_path = self._default_data_path()
 
         self.nodes: Dict[str, CausalNode] = {}
         self.edges: List[CausalEdge] = []

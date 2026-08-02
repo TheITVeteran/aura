@@ -158,6 +158,23 @@ class ContinuousSimulatorLoop:
         ent.state["last_affordance_confidence"] = confidence
         ent.state["last_affordance_risk"] = risk
         
+        # The control outcome: what this measurement would have read had the
+        # intervention not happened.
+        #
+        # The SCM refuses to mint a causal claim from a single level reading —
+        # correctly, because one number is a correlation no matter how it was
+        # produced. A treatment effect needs a control, and this simulator is
+        # the one place that genuinely KNOWS its own counterfactual: it holds
+        # the pre-intervention state and the physics that would have left it
+        # alone. Discarding that and passing only the treated value meant a
+        # real, executed intervention was recorded as a passive observation.
+        if action == "push":
+            control_outcome = 0.0                                  # no push, no force
+        elif action == "heat":
+            control_outcome = float(ent.state.get("temperature", 0.0))  # unheated reading
+        else:
+            control_outcome = 0.0
+
         # Execute "Physics" Simulation (Stubbed for actual environment hooks)
         # e.g., if action is 'push', alter velocity
         if action == "push":
@@ -179,7 +196,10 @@ class ContinuousSimulatorLoop:
             source=source_node,
             target=target_node,
             source_val=effective_intensity,
-            target_val_observed=outcome_magnitude
+            target_val_observed=outcome_magnitude,
+            control_val=control_outcome,
+            performed_by="embodied_simulator",
+            environment=f"simulated_scene:{entity_id}",
         )
         
         logger.info("Embodied Intervention: do(%s on %s) -> SCM Updated.", action, ent.class_name)
