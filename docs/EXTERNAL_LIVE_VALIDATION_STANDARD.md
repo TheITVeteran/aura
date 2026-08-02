@@ -2,7 +2,12 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the requirements and empirical protocols for verifying the Aura cognitive agent runtime against external, real-world task domains.
+How Aura gets verified against the real world instead of against fixtures.
+
+The distinction this standard protects: a cognitive architecture can look
+excellent on mocks and do nothing useful on a real filesystem, a real repo,
+or a real shell. Passing a test you also wrote the environment for proves
+less than it feels like it proves.
 
 ## 1. Scope of External Validation
 

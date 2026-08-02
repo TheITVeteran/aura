@@ -2,7 +2,12 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the requirements for structural audit and governance receipts for all consequential runtime actions executed by the Aura cognitive agent runtime.
+What has to leave a receipt, and what a receipt has to contain.
+
+The rule underneath this document is short: an action nobody can reconstruct
+afterward did not happen under governance, whatever the code path looked
+like. A receipt is how a consequential action proves it went through the
+Will rather than around it.
 
 ## 1. Consequential Actions Require Receipts
 

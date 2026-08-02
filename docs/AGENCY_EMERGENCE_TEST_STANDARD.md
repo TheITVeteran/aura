@@ -2,7 +2,12 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the behavioral and empirical evaluation standard for **emergent intelligence** and **long-horizon autonomous agency** in the Aura Cognitive Engine. Claims only count when backed by replayable traces, receipts, and baseline comparisons.
+The bar for **emergent intelligence** and **long-horizon autonomous agency**.
+
+Both of those phrases are easy to claim and hard to earn, which is why the
+rule here is narrow: a claim counts when it has replayable traces, receipts,
+and a baseline to compare against. Impressive behavior with no baseline is an
+anecdote. Impressive behavior nobody can replay is a story.
 
 ## Operational Definitions
 

@@ -2,7 +2,11 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the strict, static design contracts for production files in the Aura runtime. Bypassing these gates is prohibited and will cause the static validation linter to fail closed.
+The static design contracts every production file has to satisfy.
+
+These fail closed. Bypassing a gate does not produce a warning to triage
+later — the linter refuses the build, on purpose, because a gate you can
+route around is documentation rather than a gate.
 
 ## 1. Gateway Isolation Contracts
 

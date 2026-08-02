@@ -2,7 +2,14 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This is the acceptance standard for moving Aura from impressive research code to an enterprise-grade, indefinitely runnable autonomous cognitive system.
+The acceptance standard for getting from impressive research code to
+something that runs indefinitely without someone watching it.
+
+Those are different achievements, and the gap between them is mostly
+unglamorous: fallbacks that hide failures, exceptions swallowed on the way
+past, and paths nobody exercises until the night they matter. "Zero notes"
+means a reviewer finishes with nothing left to raise — not that the notes
+were argued down.
 
 ## Non-Negotiable Release Gates
 

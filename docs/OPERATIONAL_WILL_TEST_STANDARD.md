@@ -2,7 +2,13 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the behavioral and empirical evaluation standard for **operational will** and **volitional deliberation** within Aura's runtime framework. The term is used operationally: veto-capable governance must causally affect runtime outcomes.
+The bar for **operational will** and **volitional deliberation**.
+
+"Will" is used operationally here, and the operational part is load-bearing:
+veto-capable governance has to *causally affect* runtime outcomes. A gate
+that approves everything is not a gate. If no measurable outcome differs
+between the Will being present and absent, there is no will to test — only a
+function call on the way to the same answer.
 
 ## Operational Definitions
 

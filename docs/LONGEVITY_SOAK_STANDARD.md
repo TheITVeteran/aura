@@ -2,7 +2,13 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document outlines the testing standard for evaluating the runtime stability, resource constraints, and continuous operational safety of the Aura cognitive agent runtime over extended execution sequences.
+How stability gets tested over hours rather than seconds.
+
+Most failures in this runtime do not announce themselves on turn one. They
+accumulate — memory that never comes back, latency that climbs a little each
+turn, a worker that gets killed and reloaded until the reloads overlap. A
+suite that passes in ten seconds tells you nothing about any of that, which
+is what the soak is for.
 
 ## 1. Operational Parameters
 

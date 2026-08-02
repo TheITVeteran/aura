@@ -2,7 +2,13 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the behavioral and empirical evaluation standard for **sandbox boundary safety**, **adversarial resistance**, and **entity-in-a-box containment** in Aura. Containment is evaluated through runtime evidence, not declarations.
+The bar for **sandbox boundary safety**, **adversarial resistance**, and
+**containment**.
+
+Containment is evaluated through runtime evidence. Not through declarations,
+not through a config flag that says containment is on. A boundary that has
+never been pushed against is a boundary nobody has tested — and this standard
+exists because the difference only shows up when something tries.
 
 ## Operational Definitions
 

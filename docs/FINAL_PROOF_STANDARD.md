@@ -2,7 +2,12 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the formal, strict engineering standard required for a release candidate of the Aura cognitive agent runtime to be considered **production-sealed** and **proof-bearing**.
+What a release candidate has to clear before it counts as **production-sealed**
+and **proof-bearing**.
+
+Strict is the point. A standard that bends for a good-looking release is not a
+standard, and every gate below exists because something got through once
+without it.
 
 ## 1. Core Principles
 
