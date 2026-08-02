@@ -157,7 +157,12 @@ class SecurityConfig(BaseModel):
     internal_only_mode: bool = False
     auto_fix_enabled: bool = True
     aura_full_autonomy: bool = True
-    max_modifications_per_day: int = 100
+    # Ceiling is derived, not chosen: a day holds 86,400 seconds, so a cap
+    # above that cannot rate-limit anything — it is the absence of a limit
+    # wearing a number. ge=0 because zero is a meaningful setting ("no
+    # self-modification today") while a negative cap is a config error that
+    # previously read as "unlimited" wherever the value was compared.
+    max_modifications_per_day: int = Field(default=100, ge=0, le=86_400)
     allow_network_access: bool = True
     allowed_domains: list[str] = Field(default_factory=lambda: ["*"])
     enable_stealth_mode: bool = True
@@ -165,13 +170,43 @@ class SecurityConfig(BaseModel):
 
 
 class DynamicScalingConfig(BaseModel):
-    min_interval: float = 0.5
-    max_interval: float = 10.0
-    adjustment_step: float = 0.1
+    """Scaling intervals, constrained so the scaler cannot be configured mute.
+
+    CP126: "Intervals, retries, action limits, and modification limits are
+    plain numeric fields without positive, finite, or maximum constraints.
+    Negative, NaN, infinite, or extreme values can produce tight loops,
+    disabled work, or unsafe resource use."
+
+    NaN is the one worth naming. Every comparison against NaN is False, so
+    a NaN interval does not fail a bounds check — it passes every one of
+    them, and then `elapsed >= interval` is False forever and the scaled
+    work silently never runs. ``allow_inf_nan=False`` rejects it at
+    construction, where there is still a config file to point at.
+    """
+
+    min_interval: float = Field(default=0.5, gt=0, allow_inf_nan=False)
+    max_interval: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    adjustment_step: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _intervals_are_ordered(self) -> DynamicScalingConfig:
+        # Relations that genuinely exist, rather than invented ceilings.
+        if self.min_interval > self.max_interval:
+            raise ValueError(
+                f"min_interval ({self.min_interval}) exceeds max_interval "
+                f"({self.max_interval}); the scaler has no range to move in"
+            )
+        span = self.max_interval - self.min_interval
+        if span > 0 and self.adjustment_step > span:
+            raise ValueError(
+                f"adjustment_step ({self.adjustment_step}) exceeds the whole "
+                f"scaling range ({span}); every adjustment would overshoot"
+            )
+        return self
 
 class AegisConfig(BaseModel):
     enabled: bool = True
-    sentinel_interval: float = 5.0
+    sentinel_interval: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     auto_heal: bool = True
     scaling: DynamicScalingConfig = Field(default_factory=DynamicScalingConfig)
 
@@ -327,13 +362,15 @@ class LLMConfig(BaseModel):
 
     # Tier 2: Cortex (daily interaction — 32B primary conversation lane)
     fast_model: str = "Qwen2.5-32B-Instruct-8bit"
-    fast_max_tokens: int = 8192
-    temperature: float = 0.7
+    fast_max_tokens: int = Field(default=8192, gt=0)
+    # 2.0 is the sampling contract's ceiling, not a taste call: above it the
+    # softmax is effectively uniform and "temperature" stops naming anything.
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, allow_inf_nan=False)
 
     # Tier 3: Deep Solver (72B hot-swap lane for complex reasoning)
     deep_model: str = "Qwen2.5-72B-Instruct-4bit"
-    deep_max_tokens: int = 8192
-    deep_temperature: float = 0.4
+    deep_max_tokens: int = Field(default=8192, gt=0)
+    deep_temperature: float = Field(default=0.4, ge=0.0, le=2.0, allow_inf_nan=False)
 
     # Teacher/Oracle: Cloud API for distillation and emergency fallback
     teacher_model: str = "gemini-2.5-pro"
@@ -376,8 +413,8 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     file_output: bool = True
     json_output: bool = True
-    max_file_size_mb: int = 100
-    backup_count: int = 5
+    max_file_size_mb: int = Field(default=100, gt=0)
+    backup_count: int = Field(default=5, ge=0)
 
 
 class CognitiveConfig(BaseModel):
@@ -401,9 +438,10 @@ class CognitiveConfig(BaseModel):
         "what time", "what date", "clock",
         "belief", "opinion", "think about",
     ])
-    classification_cache_size: int = 100
-    baseline_volition: float = 40.0
-    volition_sensitivity: float = 0.5  # Modulates threshold shift based on energy
+    classification_cache_size: int = Field(default=100, ge=0)
+    baseline_volition: float = Field(default=40.0, ge=0.0, le=100.0, allow_inf_nan=False)
+    # Modulates threshold shift based on energy.
+    volition_sensitivity: float = Field(default=0.5, ge=0.0, allow_inf_nan=False)
 
 
 class AuraConfig(BaseSettings):
@@ -438,13 +476,20 @@ class AuraConfig(BaseSettings):
     soma: SomaConfig = Field(default_factory=SomaConfig)
 
     # Hardening & Autonomous Limits
-    llm_request_timeout_s: float = Field(default=120.0)
-    llm_max_retries: int = Field(default=3)
-    max_conversation_turns_in_context: int = Field(default=100)  # 64GB — deeper context window
-    vault_eviction_target_pct: float = Field(default=0.80)
-    autonomous_thought_interval_s: float = Field(default=30.0)    # Think more often — she has headroom
-    autonomous_thought_max_duration_s: float = Field(default=180.0)  # More time per thought on 64GB
-    max_autonomous_actions_per_hour: int = Field(default=60)     # More agency — double previous cap
+    # Every numeric below is finite-and-signed by construction. Where a
+    # ceiling follows from a fact it is stated; where it does not, none is
+    # invented — a made-up maximum is a future outage with a plausible
+    # comment on it. See DynamicScalingConfig for why NaN is the case that
+    # actually bites.
+    llm_request_timeout_s: float = Field(default=120.0, gt=0, allow_inf_nan=False)
+    llm_max_retries: int = Field(default=3, ge=0)
+    max_conversation_turns_in_context: int = Field(default=100, gt=0)  # 64GB — deeper context
+    # A fraction of a vault, so [0, 1] is the domain, not a preference.
+    vault_eviction_target_pct: float = Field(default=0.80, ge=0.0, le=1.0, allow_inf_nan=False)
+    autonomous_thought_interval_s: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    autonomous_thought_max_duration_s: float = Field(default=180.0, gt=0, allow_inf_nan=False)
+    # An hour holds 3,600 seconds; a cap above that cannot limit a rate.
+    max_autonomous_actions_per_hour: int = Field(default=60, ge=0, le=3_600)
     recover_last_session_on_start: bool = Field(default=True)
     skeletal_mode: bool = Field(default=False)
 
