@@ -1125,6 +1125,47 @@ def _runtime_integrity_block() -> dict[str, Any]:
     attaches the caveat the verdict cannot express on its own.
     """
     block: dict[str, Any] = {}
+
+    # Who this runtime is, and where its state lives. Every persistent record
+    # is stamped with this, so a store found in the wrong place can be traced
+    # to the process that wrote it.
+    try:
+        from core.runtime.state_ownership import runtime_identity
+
+        block["runtime_identity"] = runtime_identity()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["runtime_identity_error"] = repr(exc)
+
+    # What Aura has been ALLOWED to learn permanently, and on whose evidence.
+    # Without this the durable-learning gate could be doing anything and the
+    # health surface would look identical — the gate's own report existed and
+    # had no caller, which is the residue shape this codebase keeps finding.
+    try:
+        from core.governance.durable_learning import get_durable_learning_gate
+
+        block["durable_learning"] = get_durable_learning_gate().report()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["durable_learning_error"] = repr(exc)
+
+    # Whether admission is predicting from measurement or still guessing.
+    #
+    # Read through the runtime service registry rather than by importing the
+    # estimator: core/runtime may not depend on core.brain, and that rule is
+    # the reason the foundation can come up and report on a mind that failed
+    # to start. The estimator registers itself; health only reads.
+    try:
+        estimator = get_runtime_service("admission_throughput_estimator", default=None)
+        if estimator is not None:
+            throughput = estimator.report()
+            block["admission_throughput"] = {
+                "shapes_measured": throughput["shapes_measured"],
+                "total_samples": throughput["total_samples"],
+            }
+        else:
+            block["admission_throughput"] = {"registered": False}
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["admission_throughput_error"] = repr(exc)
+
     try:
         from core.runtime.taint import credibility_caveat, taint_compact, taint_report
 

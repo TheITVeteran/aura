@@ -310,7 +310,37 @@ def get_throughput_estimator() -> ThroughputEstimator:
     with _ESTIMATOR_LOCK:
         if _ESTIMATOR is None:
             _ESTIMATOR = ThroughputEstimator()
+            _publish_to_runtime_registry(_ESTIMATOR)
         return _ESTIMATOR
+
+
+def _publish_to_runtime_registry(estimator: ThroughputEstimator) -> None:
+    """Make the estimator readable from the runtime layer.
+
+    core/runtime may not import core.brain — that rule is why the
+    foundation can boot and report on a mind that failed to start. So the
+    health surface cannot reach in here; the estimator reaches out.
+    """
+    try:
+        from core.runtime.service_registry import register_runtime_service
+
+        register_runtime_service(
+            "admission_throughput_estimator",
+            estimator,
+            required=False,
+            owner="core/brain/llm/measured_admission.py",
+            registered_by="get_throughput_estimator",
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "measured_admission",
+            exc,
+            severity="debug",
+            action=(
+                "admission throughput will not appear on the health surface; "
+                "admission itself is unaffected"
+            ),
+        )
 
 
 def record_generation(

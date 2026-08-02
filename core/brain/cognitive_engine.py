@@ -3834,8 +3834,46 @@ class CognitiveEngine:
                 logger.debug("CognitiveEngine.record_interaction learning path failed: %s", exc)
 
     async def think_stream(self, objective: str, **kwargs):
-        """Streaming thought generator via modular router."""
+        """Streaming thought generator via modular router.
+
+        Under the same turn ledger and the same single finalizer as
+        ``think``. This is not symmetry for its own sake: chat_stream
+        prefers this path (``hasattr(engine, "think_stream")`` is checked
+        first), so it is THE live user turn on the desktop — and it does
+        not route through ``think`` at all. A ledger bound only there
+        would have covered the fallback and missed the real path, while
+        looking wired.
+
+        A stream's outcome is what the person actually received, so the
+        turn is finalized on the accumulated text: an empty stream is a
+        turn that served nothing, and it now says so instead of ending
+        with no record at all.
+        """
         self._refuse_if_stopped("think_stream")
+        outcome = TurnOutcome(origin=str(kwargs.get("origin") or "stream"))
+        served: list[str] = []
+        try:
+            with bind_turn(outcome):
+                async for token in self._think_stream_within_turn(objective, **kwargs):
+                    served.append(token)
+                    yield token
+        except BaseException as exc:
+            outcome.record_error(
+                f"{type(exc).__name__}: {exc}",
+                retryable=not isinstance(
+                    exc, (MemoryError, SystemExit, KeyboardInterrupt)
+                ),
+            )
+            finalize_turn(outcome, subsystem="cognitive_engine")
+            raise
+        text = "".join(served).strip()
+        if text:
+            outcome.mark_served(text)
+        else:
+            outcome.mark_served("", state=UserVisibleState.NOTHING_SERVED)
+        finalize_turn(outcome, subsystem="cognitive_engine")
+
+    async def _think_stream_within_turn(self, objective: str, **kwargs):
         container = get_container()
         router = container.get("llm_router")
         state = await self.state_repository.get_current()
