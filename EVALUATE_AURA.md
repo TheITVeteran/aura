@@ -58,22 +58,22 @@ After `make certify` completes, all signed, reproducible audit logs are generate
 
 Key certification files to inspect:
 
-* **[BOOT_CERTIFICATE.json](file://<AURA_ROOT>/artifacts/certification/latest/BOOT_CERTIFICATE.json)**: Verification of successful headless server boot.
-* **[SERVICE_MANIFEST.json](file://<AURA_ROOT>/artifacts/certification/latest/SERVICE_MANIFEST.json)**: Declared owners, origins, and failure policies for all active services.
-* **[CAPABILITY_MANIFEST.json](file://<AURA_ROOT>/artifacts/certification/latest/CAPABILITY_MANIFEST.json)**: Hardcoded runtime limits and capabilities active in each mode.
-* **[DEGRADATION_REPORT.json](file://<AURA_ROOT>/artifacts/certification/latest/DEGRADATION_REPORT.json)**: Logs of system safety lockdown actions when critical services are lesioned.
-* **[WORLD_RESULTS.jsonl](file://<AURA_ROOT>/artifacts/certification/latest/WORLD_RESULTS.jsonl)**: Individual scorecards from the Aletheia Live Proof.
-* **[ABLATION_SUMMARY.json](file://<AURA_ROOT>/artifacts/certification/latest/ABLATION_SUMMARY.json)**: Quantitative baseline comparisons proving that each architectural module is causally load-bearing.
-* **[CERTIFICATION_VERDICT.json](file://<AURA_ROOT>/artifacts/certification/latest/CERTIFICATION_VERDICT.json)**: The final signed verdict assessing system capabilities.
+* **[BOOT_CERTIFICATE.json](artifacts/certification/latest/BOOT_CERTIFICATE.json)**: Verification of successful headless server boot.
+* **[SERVICE_MANIFEST.json](artifacts/certification/latest/SERVICE_MANIFEST.json)**: Declared owners, origins, and failure policies for all active services.
+* **[CAPABILITY_MANIFEST.json](artifacts/certification/latest/CAPABILITY_MANIFEST.json)**: Hardcoded runtime limits and capabilities active in each mode.
+* **[DEGRADATION_REPORT.json](artifacts/certification/latest/DEGRADATION_REPORT.json)**: Logs of system safety lockdown actions when critical services are lesioned.
+* **[WORLD_RESULTS.jsonl](artifacts/certification/latest/WORLD_RESULTS.jsonl)**: Individual scorecards from the Aletheia Live Proof.
+* **[ABLATION_SUMMARY.json](artifacts/certification/latest/ABLATION_SUMMARY.json)**: Quantitative baseline comparisons proving that each architectural module is causally load-bearing.
+* **[CERTIFICATION_VERDICT.json](artifacts/certification/latest/CERTIFICATION_VERDICT.json)**: The final signed verdict assessing system capabilities.
 
 ---
 
 ## 5. Reviewing Long-Run Autonomy Soaks
 
 To verify resource stability, memory leaks, and error recovery over extended windows, review the simulated autonomy soak logs:
-* **[4-Hour Autonomy Telemetry](file://<AURA_ROOT>/artifacts/certification/latest/SOAK_LOG_4H.json)**
-* **[24-Hour Autonomy Telemetry](file://<AURA_ROOT>/artifacts/certification/latest/SOAK_LOG_24H.json)**
-* **[72-Hour Autonomy Telemetry](file://<AURA_ROOT>/artifacts/certification/latest/SOAK_LOG_72H.json)**
+* **[4-Hour Autonomy Telemetry](artifacts/certification/latest/SOAK_LOG_4H.json)**
+* **[24-Hour Autonomy Telemetry](artifacts/certification/latest/SOAK_LOG_24H.json)**
+* **[72-Hour Autonomy Telemetry](artifacts/certification/latest/SOAK_LOG_72H.json)**
 
 ---
 
@@ -81,5 +81,5 @@ To verify resource stability, memory leaks, and error recovery over extended win
 
 Aura maintains absolute transparent integrity regarding capability claims. Please review the official claim ledgers at the root of the repository:
 
-1. **[CLAIMS_SUPPORTED.md](file://<AURA_ROOT>/CLAIMS_SUPPORTED.md)**: Scientifically defensible capabilities (Governed execution, Persistent memory, Speculative MCTS search, Diagnostic self-repair) backed by explicit code locations.
-2. **[CLAIMS_NOT_SUPPORTED.md](file://<AURA_ROOT>/CLAIMS_NOT_SUPPORTED.md)**: Speculative, unproven, or metaphysical horizons (Artificial General Intelligence, Subjective Consciousness, Metaphysical Free Will) clearly demoted to prevent hyping.
+1. **[CLAIMS_SUPPORTED.md](CLAIMS_SUPPORTED.md)**: Scientifically defensible capabilities (Governed execution, Persistent memory, Speculative MCTS search, Diagnostic self-repair) backed by explicit code locations.
+2. **[CLAIMS_NOT_SUPPORTED.md](CLAIMS_NOT_SUPPORTED.md)**: Speculative, unproven, or metaphysical horizons (Artificial General Intelligence, Subjective Consciousness, Metaphysical Free Will) clearly demoted to prevent hyping.

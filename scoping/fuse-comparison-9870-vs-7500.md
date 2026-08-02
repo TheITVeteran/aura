@@ -1,5 +1,9 @@
 # Fuse comparison: iter-9870 vs iter-7500
 
+> **Historical record — 2026-04-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-04-27
 **Question:** Was the val-loss-best checkpoint (7500) actually a better fuse than the final (9870)?
 **Answer:** No. Ship 9870. Val loss was misleading.

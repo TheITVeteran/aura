@@ -1,5 +1,10 @@
 # Aura Model Card
 
+*Lane defaults below are `core/config.py:LLMConfig` (verified 2026-08-01).
+Override any of them with `AURA_MODEL`, `AURA_DEEP_MODEL`,
+`AURA_BRAINSTEM_MODEL`, `AURA_FALLBACK_MODEL`, or the nested
+`AURA_LLM__*` form.*
+
 ## Primary Model (Cortex)
 
 | Field | Value |
@@ -93,26 +98,54 @@ model. Never used for substantive full-mind replies.
 | Field | Value |
 |-------|-------|
 | **Role** | Fallback when local models unavailable |
-| **Provider** | Configurable (OpenAI, Anthropic, etc.) |
+| **Provider** | Google Gemini (`llm.teacher_model`, default `gemini-2.5-pro`) via `core/brain/llm/gemini_adapter.py` |
+| **Credential** | `GEMINI_API_KEY` / `llm.gemini_api_key` — absent by default |
 | **Activation** | Opt-in only; requires explicit configuration |
 | **Privacy** | Prompts classified before transmission |
 
 ### Intended Use
 Emergency fallback only. Activated when local models are unavailable and
-user has explicitly opted in.
+the user has explicitly opted in. With no API key configured — the default
+state — this lane cannot activate at all.
 
 ### Privacy Controls
-- `AURA_CLOUD_FALLBACK_POLICY`: `disabled` (default), `opt-in`, `auto`
-- Prompts classified as `public`, `internal`, `sensitive`, `restricted`
-- `sensitive` and `restricted` prompts never sent to cloud
-- Cloud usage logged in Will receipt trail
+- Cloud use is a governed action domain
+  (`ActionDomain.CLOUD_FALLBACK` in `core/governance/will.py`), so it passes
+  the Unified Will and leaves a receipt like any other consequential action.
+- Prompts are classified before transmission; sensitive and restricted
+  content is not sent.
+- Cloud usage is logged in the Will receipt trail and is visible in the
+  audit chain export.
 
 ---
 
 ## Model Verification
 
-All models are verified at load time:
-- SHA-256 checksum against `MODEL_MANIFEST.json`
-- File integrity check
-- Architecture compatibility validation
-- Memory footprint validation against hardware profile
+Model identity is **measured from the artifact**, not inferred from its path.
+`core/brain/llm/model_artifact_profile.py` exists because footprint,
+minimum-headroom, deadline, cache-residency, and identity decisions used to be
+derived from spoofable path substrings (`"72b"`, `"cortex"`, `"zenith"`) — a
+renamed heavy checkpoint inherited light-model budgets, and an unrelated path
+containing `"32b"` inherited a 20 GB reservation.
+
+At load time the runtime reads:
+
+- `model.safetensors.index.json` → `metadata.total_parameters` and
+  `metadata.total_size` (exact weight bytes),
+- `config.json` → architecture shape (parameter count is estimated from this
+  when index metadata is absent),
+- the safetensors file listing (names + sizes).
+
+From those it derives a cached `ModelArtifactProfile` carrying a SHA-256
+**fingerprint over config bytes, index metadata, and the weight-file
+listing**. This is an identity binding, *not* a weight hash — hashing 20 GB on
+every admission check is not viable, and the card should not imply otherwise.
+The fingerprint changes whenever the artifact's declared shape changes.
+
+The profile records *which* evidence produced it, so a receipt can distinguish
+measured truth from a naming-convention fallback (used only when the artifact
+is absent, as in tests and pre-download paths).
+
+Memory footprint is then validated against the hardware profile before the
+load is admitted; `AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB` sets the floor below
+which a 32B load is refused outright.

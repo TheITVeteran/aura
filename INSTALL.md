@@ -14,11 +14,26 @@
 git clone https://github.com/youngbryan97/aura.git
 cd aura
 
+make setup        # creates .venv, installs requirements/core.txt + requirements/dev.txt
+```
+
+`make setup-prod` is the fail-closed variant: no fallback installs, so a
+missing dependency fails the install rather than degrading it silently. Prefer
+it for anything you intend to run unattended.
+
+Manual equivalent:
+
+```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-
-pip install -r requirements.txt
+pip install -r requirements/core.txt
+pip install -r requirements/dev.txt      # test + lint tooling
 ```
+
+Requirements are split by concern: `requirements/core.txt` (runtime),
+`dev.txt` (tests, lint), `ml.txt` (training lanes), `senses.txt` (camera,
+screen, audio capture), and `voice.txt` / `voice-high-fidelity.txt`. Install
+only the lanes you intend to use.
 
 For reproducible, supply-chain-pinned installs use the hashed lock
 (regenerate with `pip-compile --allow-unsafe --generate-hashes
@@ -42,6 +57,41 @@ python aura_main.py --philosophy
 ```
 
 Once the server is up, the UI lives at `http://localhost:8000`.
+
+### All boot modes
+
+| Flag | Mode |
+|------|------|
+| `--desktop` | Desktop GUI (the normal way to run Aura) |
+| `--headless` | API server only, background cognition, no GUI |
+| `--server` | API server mode |
+| `--cli` | Interactive console |
+| `--gui-window` | Open a GUI window against an already-running server |
+| `--watchdog` | Watchdog / keep-alive supervisor |
+| `--philosophy` | Stream substrate/phi/affect/Will receipts as JSONL |
+| `--skeletal` | Bypass heavy subsystems (fast boot for triage) |
+| `--profile minimal` | Named boot profile |
+| `--stop` | Stop a running instance |
+| `--reboot` | Force cleanup and restart |
+| `--host` / `--port` | Bind address (default `127.0.0.1:8000`) |
+
+### Operational subcommands
+
+Installing the package exposes the `aura` console script (`aura = aura_main:main`),
+which carries the maintenance verbs:
+
+```bash
+aura doctor                  # pre-boot self-check: python, sqlite, mlx, data dir,
+                             # atomic-writer round-trip
+aura doctor --bundle         # redacted diagnostics tarball for incident triage
+aura conformance             # schema + integrity sweep
+aura verify-state            # cross-subsystem state coherence
+aura verify-memory           # memory facade integrity
+aura rebuild-index           # vector index rebuild
+aura backup / restore / migrate
+aura chaos                   # fault-injection smoke
+aura plugin                  # plugin management
+```
 
 ## First boot
 
@@ -77,10 +127,23 @@ boot picks it up automatically.
 
 ## Environment variables (optional)
 
+Configuration is a `pydantic-settings` model (`core/config.py:AuraConfig`)
+with `env_prefix="AURA_"` and `env_nested_delimiter="__"`. Any field on a
+sub-config is therefore reachable from the environment — for example
+`AURA_LLM__MLX_DEEP_MODEL_PATH` sets `llm.mlx_deep_model_path`. A `.env` file
+in the project root is read the same way. Unknown `AURA_*` variables are
+ignored, so a typo fails silently — check `aura doctor` output if a setting
+does not seem to take.
+
+There is no `AURA_HOST`: the bind address comes from the `--host` flag
+(default `127.0.0.1`). Set `AURA_INTERNAL_ONLY=1` to reject non-localhost
+requests outright.
+
 | Variable | Default | What it does |
 |----------|---------|--------------|
-| `AURA_HOST` | `127.0.0.1` | Bind address |
 | `AURA_PORT` | `8000` | Port |
+| `AURA_INTERNAL_ONLY` | from security profile | `1` rejects non-localhost requests |
+| `AURA_API_TOKEN` | unset | Bearer token for the local API |
 | `AURA_LORA_PATH` | auto-detected | Path to the LoRA adapter directory |
 | `AURA_MODEL` | `Qwen2.5-32B-Instruct-8bit` | Primary Cortex model |
 | `AURA_DEEP_MODEL` | auto-detected (72B) | Solver model for deep reasoning |
@@ -93,6 +156,21 @@ boot picks it up automatically.
 | `AURA_ROOT` | auto-detected | Project root |
 | `AURA_SAFE_BOOT_DESKTOP` | `0` | Set to `1` for a lightweight boot |
 | `AURA_ENV` | `development` | Use `production` inside Docker |
+| `AURA_LOG_DIR` | `~/.aura/logs` | Log sink. **Set this for anything test-like** so you never write into the live instance's logs. |
+| `AURA_LATENT_CORTEX` | off | Enable the recursive latent-cortex lane |
+| `AURA_STRICT_RUNTIME` | `0` | Fail closed on degradations that would otherwise be recorded and survived |
+| `AURA_GOVERNANCE_MODE` | profile default | Governance posture for consequential actions |
+| `AURA_PROCESS_RSS_LIMIT_GB` | derived | Hard RSS ceiling for the main process |
+| `AURA_MLX_MEMORY_LIMIT_GB` | derived | MLX allocator ceiling |
+| `AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB` | derived | Refuse a 32B load below this free memory |
+
+### Debugging entry points
+
+| Variable | What it does |
+|----------|--------------|
+| `AURA_PASS_BISECT_LIMIT=N` | Run only the first N cognitive phases — binary-search N to find which phase ruined an answer |
+| `AURA_PASS_TRACE=1` | Announce each cognitive phase as it runs |
+| `AURA_TEST_MODE` / `AURA_TESTING` | Test posture: no live side effects |
 
 ## Docker
 
@@ -116,7 +194,10 @@ checks hit `/api/health`.
 - **Model won't load.** Make sure `mlx-lm` is installed
   (`pip install mlx-lm`). Normal desktop/runtime operation uses the
   internal MLX Cortex so Aura's substrate can steer the live model path.
-- **Port in use.** Kill stray Aura processes: `pkill -f aura_main`.
+- **Port in use.** Stop the running instance cleanly with
+  `python aura_main.py --stop`, which drains receipts and revokes capability
+  tokens. Avoid a blanket `pkill -f aura_main` — on a machine that is already
+  running Aura, that kills the live instance mid-tick along with the stray one.
 - **Model load hangs.** Only one model loads at a time through the GPU
   semaphore. If it's stuck, check for zombie MLX worker processes.
 - **Backend choice.** Keep `AURA_LOCAL_BACKEND=mlx` for live Aura. The desktop

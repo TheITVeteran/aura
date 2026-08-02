@@ -1,5 +1,9 @@
 # Aura Capability Gauntlet Results
 
+> **Historical record — 2026-06-03.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-05-05 11:30:30
 **Status:** Execution Complete
 

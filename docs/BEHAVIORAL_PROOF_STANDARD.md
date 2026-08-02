@@ -1,5 +1,7 @@
 # Behavioral proof standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document answers a narrower question than the architecture docs:
 
 > How do we know Aura will behave like a mind at superhuman scale with

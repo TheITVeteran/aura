@@ -1,5 +1,7 @@
 # Aura Flagship Platform Polish Research
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 Date: 2026-04-28
 
 This document captures what "Chrome-level", flagship-grade Aura polish should mean in practice. The goal is not to make Aura generic. The goal is to keep the original dark glass, violet/cyan, neural cockpit identity and raise the execution quality until it feels deliberate at every pixel and code path.

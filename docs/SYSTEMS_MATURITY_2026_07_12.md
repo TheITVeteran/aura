@@ -1,5 +1,9 @@
 # Systems Maturity Pass — 2026-07-12/13
 
+> **Historical record — 2026-07-24.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 Bryan's mandate: Chrome/Kubernetes/aerospace-grade attention to detail,
 stability, and daily-user reliability — same pass until 100%, soaks last.
 Starting point: the reliability roadmap (K1-K6, A1-A5, C1-C4) had landed

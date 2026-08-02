@@ -1,5 +1,11 @@
 # Aura Architecture Specification
 
+> **Scope note (reviewed 2026-08-01).** This is a 114-line invariant summary
+> and component map. The authoritative technical spec is
+> [../ARCHITECTURE.md](../ARCHITECTURE.md) (§0–§18); where the two disagree,
+> that one wins. This file is kept for its **invariant list**, which is
+> still the compact statement of what must always hold.
+
 ## System Overview
 
 Aura is a tick-based cognitive architecture that processes every input through a linear phase pipeline, commits the resulting state to a persistent store, and maintains continuous background cognition via a 1Hz heartbeat.
@@ -35,7 +41,7 @@ aura_main.py                    Entry point (--desktop, --headless)
 │   ├── response_generation_unitary.py  LLM response with cognitive context
 │   ├── cognitive_routing_unitary.py    Intent classification
 │   └── ...                      Affect, motivation, memory consolidation
-├── core/consciousness/          60+ consciousness modules
+├── core/consciousness/          136 consciousness modules (2026-08-01)
 │   ├── affective_steering.py    Residual stream injection (CAA)
 │   ├── phi_core.py              IIT 4.0 (TPM, KL-divergence, MIP)
 │   ├── liquid_substrate.py      20Hz dynamical system

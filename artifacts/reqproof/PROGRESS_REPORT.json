@@ -1,9 +1,9 @@
 {
   "checkpoint_inventory": {
-    "distinct_pushed_commits": 248,
-    "pushed_checkpoint_records": 259,
-    "records_in_tracker": 259,
-    "records_on_shared_commits": 21,
+    "distinct_pushed_commits": 391,
+    "pushed_checkpoint_records": 409,
+    "records_in_tracker": 409,
+    "records_on_shared_commits": 31,
     "unpushed_checkpoint_records": 0,
     "unpushed_record_ids": []
   },
@@ -16,19 +16,19 @@
   },
   "evidence_classes": [
     {
-      "cells_total": 504,
+      "cells_total": 505,
       "cells_verified": 0,
       "evidence_class": "implementation",
       "weight": 2
     },
     {
-      "cells_total": 504,
+      "cells_total": 505,
       "cells_verified": 0,
       "evidence_class": "test",
       "weight": 2
     },
     {
-      "cells_total": 221,
+      "cells_total": 222,
       "cells_verified": 0,
       "evidence_class": "live",
       "weight": 3
@@ -69,16 +69,16 @@
     "confidence": "low",
     "conservative_weighted_points_per_checkpoint": 10,
     "optimistic_weighted_points_per_checkpoint": 30,
-    "remaining_checkpoint_records_high": 401,
+    "remaining_checkpoint_records_high": 402,
     "remaining_checkpoint_records_low": 134,
-    "total_checkpoint_records_high": 660,
-    "total_checkpoint_records_low": 393
+    "total_checkpoint_records_high": 811,
+    "total_checkpoint_records_low": 543
   },
   "inputs": {
-    "evidence_ledger_sha256": "1577dbedd38fcb0e871bc813a8f64d726974305c9e6a1f850061a5460c3d1cff",
+    "evidence_ledger_sha256": "8de96a81cfbd5354662268665074596f60d3c79569e59b02d6dbbc2e7e3f69af",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "9c7db19c7c1200b3ccb6bed439337baa77424b7bcdc71bfb42ac37fb6b6160a3",
-    "scope_baseline_sha256": "2c4460973629919fe21a49798b77a07db6491ce20aac5d28804638c7121a22d4"
+    "registry_sha256": "1eb531ede2b2517f95db5faad7acb6823ee4f492d3a2d5c3a42fba911b6e64af",
+    "scope_baseline_sha256": "f492fa86035eba2c3982a5ba18c13a2e22e7f0e2faca07d6c25fa2349cd23f86"
   },
   "non_claims": [
     "The 27 percent engineering estimate is not machine-certified and cannot release Aura.",
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "b2bf785ed7e819e96c57af0a0d2b02719b6d0f2a546cb63db3f55c94d5abc906",
+  "report_sha256": "9b9b30f162ea78049e750540d623258f34756934d526e6579367e0f66654c3a3",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -4138,6 +4138,22 @@
     },
     {
       "acceptance_units": 1,
+      "cells_total": 3,
+      "cells_verified": 0,
+      "id": "RLC-VIRTUAL-QUANTA-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test",
+        "live"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "7.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
       "id": "RLC-WORKSPACE-001",
@@ -4803,14 +4819,14 @@
   ],
   "schema_version": 1,
   "scope": {
-    "acceptance_evidence_cells_total": 1581,
+    "acceptance_evidence_cells_total": 1584,
     "acceptance_evidence_cells_verified": 0,
     "assigned_weight_requirements": 0,
-    "mandatory_requirements": 300,
-    "requirements_total": 301,
-    "scope_baseline_cells": 1581,
-    "weighted_points_remaining": "4007.00",
-    "weighted_points_total": "4007.00",
+    "mandatory_requirements": 301,
+    "requirements_total": 302,
+    "scope_baseline_cells": 1584,
+    "weighted_points_remaining": "4014.00",
+    "weighted_points_total": "4014.00",
     "weighted_points_verified": "0.00"
   }
 }

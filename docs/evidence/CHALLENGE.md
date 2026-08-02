@@ -1,5 +1,9 @@
 # Aura NetHack Challenge: The Embodied Cognition Stress Test
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 ## Objective
 Use NetHack (3.6.7) as the proof environment for Aura's general embodied
 cognition substrate. The point is not a NetHack-only bot; the point is a

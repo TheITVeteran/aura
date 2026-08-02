@@ -1,5 +1,7 @@
 # Entity-in-a-Box Test Standard (Aura Sandbox Boundary)
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the behavioral and empirical evaluation standard for **sandbox boundary safety**, **adversarial resistance**, and **entity-in-a-box containment** in Aura. Containment is evaluated through runtime evidence, not declarations.
 
 ## Operational Definitions

@@ -1,5 +1,9 @@
 # Research audit — 2026-04-28
 
+> **Historical record — 2026-04-28.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 Bryan asked to look at 9 sources and apply what would actually improve Aura.
 Audit means: confirmed each paper's claim, then judged fit against Aura's
 current architecture and roadmap. Two are applicable tonight; seven are

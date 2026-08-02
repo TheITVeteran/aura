@@ -1,5 +1,9 @@
 # Reasoning-delta: 32B + amplifier vs 72B single-pass (hard suite)
 
+> **Historical record — 2026-06-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../../docs/DOC_STATUS.md).
+
 **Date:** 2026-06-27 · **Host:** M5 Pro / 64 GB · **Backend:** MLX (mlx_lm 0.31.3)
 **Models:** Qwen2.5-32B-Instruct-4bit (cortex), Qwen2.5-72B-Instruct-4bit (solver)
 **Suite:** `aura_bench/hard_suite.py` (11 base-failing, objectively-graded tasks)

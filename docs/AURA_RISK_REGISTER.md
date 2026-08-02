@@ -1,5 +1,7 @@
 # Aura Risk Register
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 ## Active Risks
 
 | ID | Risk | Impact | Likelihood | Current Mitigation | Planned Action |

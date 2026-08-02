@@ -1,5 +1,7 @@
 # Receipt Coverage Standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the requirements for structural audit and governance receipts for all consequential runtime actions executed by the Aura cognitive agent runtime.
 
 ## 1. Consequential Actions Require Receipts

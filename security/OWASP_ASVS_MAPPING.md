@@ -1,5 +1,7 @@
 # OWASP Application Security Verification Standard (ASVS) v4.0 — Aura Mapping
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Scope
 
 Aura exposes local API/WebSocket surfaces and a desktop GUI. This mapping covers

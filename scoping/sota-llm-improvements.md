@@ -1,5 +1,9 @@
 # SOTA LLM improvements: what's worth absorbing into Aura
 
+> **Historical record — 2026-04-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-04-27
 **Frame:** Each item below is real, not hype. For each: what it does, what it would mean for Aura specifically, effort estimate, and whether to pursue.
 

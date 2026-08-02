@@ -1,5 +1,9 @@
 # Autonomous content-consumption pipeline — design scope
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-04-27
 **Goal:** Aura actually researches the content list Bryan has curated, doesn't just acknowledge it, and demonstrably learns from it. Failure mode to avoid: she says "yes I'll do that" and then nothing happens.
 
@@ -83,7 +87,7 @@ For each priority level:
 - **5 (creator commentary):** interviews, director's commentary tracks (audio), creator essays.
 - **6 (forum/wiki):** Wikipedia, fan wikis, Reddit discussions, critical reviews.
 
-**Implementation:** new module `core/autonomy/content_method_router.py`. Heavy use of `core/executors/browser_executor.py` (existing) plus new helpers for video/audio.
+**Implementation:** new module `core/autonomy/content_method_router.py`. Heavy use of `executors/browser_executor.py` (existing) plus new helpers for video/audio.
 
 **New external tools needed:**
 - `yt-dlp` for video/audio download
@@ -95,7 +99,7 @@ For each priority level:
 **Responsibility:** actually retrieve the bytes.
 
 **Implementation:** lives in `core/autonomy/content_fetcher.py`. Wraps:
-- `core/executors/browser_executor.py` for web fetches
+- `executors/browser_executor.py` for web fetches
 - `yt-dlp` shell wrapper for YouTube/video
 - Local Whisper for audio → text
 - A frame-sampler for video → images (sample at intervals, not every frame)

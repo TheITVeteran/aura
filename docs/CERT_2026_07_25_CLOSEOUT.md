@@ -1,5 +1,9 @@
 # Certification — 2026-07-25 closeout pass
 
+> **Historical record — 2026-07-25.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 Full 6-chunk run over ~7,400 tests at `d07e67b00`, after the twenty-commit
 closing pass. `tools/run_test_chunks.py --chunks 6 --continue-on-failure`,
 1,697s total.

@@ -12,7 +12,10 @@
 **Do not open a public issue for security vulnerabilities.**
 
 Email: security@aura-project.dev
-PGP Key: See `security/pgp-public-key.asc`
+
+(There is no published PGP key at present. Earlier revisions of this file
+pointed at `security/pgp-public-key.asc`, which has never existed in the
+tree — do not wait on it to report something.)
 
 Response SLA:
 - Acknowledgement: 48 hours
@@ -58,6 +61,45 @@ attack vectors.
 └─────────────────────────────────────────────────┘
 ```
 
+### Executing model-written code
+
+Code the model writes is treated as untrusted input, not as trusted program
+text. `core/sandbox/untrusted_python.py` runs it behind a kernel boundary —
+`sandbox-exec` (Seatbelt) on macOS, `bwrap` on Linux — deny-by-default, with
+the interpreter's own read paths and a single scratch directory re-allowed
+and network denied outright.
+
+Two defences this deliberately replaced, because both are broken in the same
+way:
+
+- **AST screening is a denylist.** `__import__` reached through
+  `().__class__.__mro__[1].__subclasses__()` never appears in the import
+  table, and a screen that reads source text cannot see what
+  `getattr(mod, name)` resolves to at runtime.
+- **`python -I` is not isolation.** It ignores `PYTHON*` environment
+  variables and drops the script directory from `sys.path`. That is import
+  hygiene. The child keeps the parent's filesystem, network, process, and
+  signal access in full — including the user's home directory, the live
+  runtime's sockets, and the machine's keychain.
+
+The load-bearing property is the refusal: **when no boundary is available,
+the code does not run.** `AURA_SANDBOX_ALLOW_UNCONFINED=1` exists for
+platforms with no boundary and is deliberately awkward — the outcome carries
+`boundary="none"` and `sandboxed=False` permanently, so a caller that records
+results cannot later claim they were confined. Live escape attempts against
+this boundary are covered by tests.
+
+### Physical actuation
+
+Reaching a physical device is a governed path, not a direct call. Registered
+hardware dispatches through `HardwareManager` and
+`BaseHardwareDevice.safe_execute`; `core/reality_reach/` proves reachability
+against declared channels before execution and keeps dispatch, execution, and
+`EFFECT_VERIFIED` as separate `ActuationState` values so a successful send is
+never recorded as a verified effect. See
+[docs/REALITY_REACH.md](docs/REALITY_REACH.md) for the invariants and the
+open items.
+
 ### Security Controls Summary
 
 | Control | Status | Implementation |
@@ -89,11 +131,20 @@ Aura ships with these defaults in production mode (`AURA_MODE=production`):
 
 ## Dependency Management
 
-- Production dependencies are pinned with hashes in `requirements/core.txt`
-- Lock file: `requirements_lock.txt`
+- Hash-pinned installs come from `requirements_lock.txt` (3,625 `--hash`
+  entries), used with `pip install --require-hashes -r requirements_lock.txt`.
+  `requirements/core.txt` is the human-edited runtime list and is **not**
+  hash-pinned — install from the lock file when supply-chain integrity
+  matters. Regenerate the lock with
+  `pip-compile --allow-unsafe --generate-hashes --output-file=requirements_lock.txt requirements.txt`.
+- `requirements_hardened.txt` is the additional hardened pin set.
 - Automated vulnerability scanning via `pip-audit` and OSV
 - SBOM generated per release via `make provenance`
-- No fallback dependency installation in production mode
+  (writes `artifacts/provenance/{sbom,provenance}.json`)
+- `make setup-prod` is the fail-closed install path: no fallback dependency
+  installation, so a missing dependency fails the install rather than
+  silently degrading it. Plain `make setup` does fall back and is for
+  development only.
 
 ## Incident Response
 

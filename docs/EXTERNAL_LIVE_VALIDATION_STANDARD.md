@@ -1,5 +1,7 @@
 # External Live Validation Standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the requirements and empirical protocols for verifying the Aura cognitive agent runtime against external, real-world task domains.
 
 ## 1. Scope of External Validation

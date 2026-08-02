@@ -1,5 +1,7 @@
 # NIST Secure Software Development Framework (SSDF) v1.1 — Aura Mapping
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Framework Reference
 
 NIST SP 800-218: Secure Software Development Framework (SSDF) Version 1.1

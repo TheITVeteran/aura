@@ -1,6 +1,10 @@
 
 # Aura Deep QA Session - 2026-04-10 21:16:51.118377
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 ## Startup Logs
 ```
 2026-04-10 21:14:21,246 - Aura.Core - INFO - Webhook alerting disabled (AURA_ALERTS_WEBHOOK not configured).

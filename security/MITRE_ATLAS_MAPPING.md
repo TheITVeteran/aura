@@ -1,5 +1,7 @@
 # MITRE ATLAS Mapping — Aura Cognitive Runtime
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Framework
 
 MITRE ATLAS (Adversarial Threat Landscape for AI Systems) catalogs adversary

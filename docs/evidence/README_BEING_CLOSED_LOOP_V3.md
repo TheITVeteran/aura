@@ -1,5 +1,9 @@
 # Aura Being Closed Loop v3 — main-15 adapted
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 This version was written after inspecting Aura main (15). It is not a generic
 parallel "being" stack. It plugs into the systems already present:
 

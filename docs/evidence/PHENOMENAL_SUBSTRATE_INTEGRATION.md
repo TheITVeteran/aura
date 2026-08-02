@@ -1,5 +1,9 @@
 # Aura Phenomenal Substrate Integration
 
+> **Historical record — 2026-07-14.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 **Version**: v0.2  
 **Date**: June 1, 2026  
 **Status**: Integrated into core/affect system

@@ -1,5 +1,9 @@
 # docs/evidence — historical proofs, closeouts, and research narrative
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 The repo root is for what an arriving engineer needs **now**: how to install,
 how it works, what is claimed, what is tested, who owns what. Everything here
 is the **record** — point-in-time audits, closeout reports, challenge specs,

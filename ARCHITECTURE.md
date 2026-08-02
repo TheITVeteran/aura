@@ -11,6 +11,18 @@ IIT-style integration measure over tractable complexes; full-system IIT remains
 intractable. Steering claims now require black-box prompt hygiene plus a rich
 adversarial prompt baseline before they are credited.
 
+**Currency.** This document was last reconciled against the tree on
+2026-08-01. Sections 1–17 describe the system through late July 2026;
+[§18](#18-the-reality-boundary-physical-claims-self-knowledge-and-untrusted-code)
+covers the late-July/August wave (Reality Reach, the faculty self-model,
+associative entity memory, structural screen perception, kernel-boundary
+sandboxing). Generated companions —
+[docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md),
+[docs/RUNTIME_CONTRACT.md](docs/RUNTIME_CONTRACT.md), and
+[docs/FMEA.md](docs/FMEA.md) — are rendered from code by `make
+architecture-map`, `make contract-doc`, and `make fmea-doc`; regenerate
+them rather than hand-editing.
+
 **Recent hardening (July 2026).** The system has grown a full reasoning,
 self-model, and resilience layer since the original spec: verifier-gated
 reasoning with a measured verifier foundry, a frontier discovery engine with
@@ -54,6 +66,7 @@ architecture alone.
 15. [The reasoning, self-model, and resilience layer (June–July 2026)](#15-the-reasoning-self-model-and-resilience-layer)
 16. [The triad fusions: kernel-checked proof, economic knowledge, declared runtime](#16-the-triad-fusions-kernel-checked-proof-economic-knowledge-declared-runtime)
 17. [The engineering spine: ten adoptions](#17-the-engineering-spine-ten-adoptions)
+18. [The reality boundary: physical claims, self-knowledge, and untrusted code](#18-the-reality-boundary-physical-claims-self-knowledge-and-untrusted-code)
 
 ---
 
@@ -1710,7 +1723,7 @@ trying to apply IIT to real neural data.
 
 ### 13.6 Cross-timescale stability analysis
 
-**File**: `research/timescale_stability.py`
+**File**: `core/consciousness/timescale_stability.py`
 
 The unsolved control-theory question: how do you formally guarantee that
 bidirectional coupling between 5 temporal layers (20 Hz to
@@ -2259,3 +2272,175 @@ failures visible, attributable, and survivable; they do not make Aura more
 capable at any task. Where a discipline asserts something about the
 runtime, that assertion is registered as a claim with a test attached, and
 the suite reports which claims are currently unsupported.
+
+---
+
+## 18. The reality boundary: physical claims, self-knowledge, and untrusted code
+
+**Files**: `core/reality_reach/{contracts,reachability,actuation,transactions,live,observation_router,body_projection,attachments}.py`,
+`core/embodiment/{hardware_manager,reality_adapter,world_bridge,iot_bridge}.py`,
+`core/metacognition/{faculty_model,default_faculties}.py`,
+`core/memory/associative_entity_memory.py`, `core/sandbox/`,
+`core/runtime/` numeric guard, `core/security/` redaction primitive.
+
+The layer before this one made the runtime honest about *itself*. This one
+makes it honest about the boundary between Aura and the machine she runs
+on — what she can perceive, what she can cause, and what she is entitled to
+say about either.
+
+### Reality Reach: a physical request is a typed contract
+
+A requested observable compiles to a schema-versioned `RealityIR` carrying
+canonical units, target, tolerance, domain, horizon, allowed channels,
+constraints, required evidence, and a declared reality layer. Reachability
+is proven *before* execution against the host's declared sensor and
+actuator channels; a request that cannot be met returns a
+content-addressed limitation certificate carrying a typed `FailureCode`
+— `NO_CHANNEL`, `BELOW_SENSOR_FLOOR`, `SHARED_REFERENCE`,
+`ORDINARY_MODEL`, `NOT_REPRODUCIBLE`, `NOT_CONTROLLABLE`,
+`SEARCH_INCOMPLETE`, `AMBIENT_IDENTITY_UNRESOLVED`,
+`TARGET_OUT_OF_RANGE`, `CONSTRAINT_UNSATISFIED`,
+`INSUFFICIENT_EVIDENCE` — rather than an optimistic simulation or a
+verbal success claim. The verdict is one of three `ReachabilityStatus`
+values: `reachable`, `partial`, `unreachable`.
+
+Four evidence layers are kept strictly separate: `internal` (state inside
+Aura or an explicitly simulated world), `effective` (a declared host output
+changed), `direct` (an independently referenced instrument observed it),
+and `ambient` (physical coupling beyond the controlled device path that
+survives independent metrology). **No code path may promote a claim across
+those boundaries from intent, simulation, transport success,
+shared-reference telemetry, or model language alone.** Operational
+equivalence is not literal identity.
+
+Two invariants carry most of the weight:
+
+**Transport success is never effect verification.** Command acceptance,
+transport completion, actuator execution, observed local effect, and
+observed effect are separate states in one durable transaction coordinator
+(`transactions.py`). `ActuationState` enumerates fourteen of them —
+`planned`, `prepared`, `admitted`, `dispatched`, `executed`,
+`effect_verified`, `cancelled`, `safe_state`, `compensated`,
+`rolled_back`, `timed_out`, `indeterminate`, `failed`,
+`manually_reconciled` — and the coordinator does not repeat side effects
+after a restart. Because `dispatched`/`executed` and `effect_verified` are
+different states, a successful send can never be read as a verified
+effect. Post-action measurement must come from the declared observation
+route and meet the contract tolerance.
+
+Reachability computes the declared channels' `evidence_ceiling` and fails
+with `INSUFFICIENT_EVIDENCE` when it cannot reach the contract's
+`minimum_evidence` (`reachability.py`). Note the boundary honestly: the
+P0–P6 evidence *promotion* state machine is ledger item RR-07 and is **not
+implemented** — `EvidenceLevel` is a declared type and ceiling, not a
+running promotion pipeline.
+
+**Declaring an actuator incurs obligations.** The `RealityAdapter` contract
+is bidirectional: `declarations()` and `read()` alone can never make an
+actuator executable. An adapter that declares one must implement typed
+command admission, idempotent actuation, independent effect verification,
+cancellation, safe-state transition, and either rollback or an explicit
+non-reversibility certificate, and must declare its rate and magnitude
+limits, exclusivity, warmup/cooldown, watchdog behavior, and failure modes.
+Registered hardware dispatches through `HardwareManager` and
+`BaseHardwareDevice.safe_execute`, so a robotics or environment action
+cannot fall through to an unrelated AppleScript handler.
+
+Simulators and digital twins emit predictions and uncertainty; they never
+issue physical-effect receipts for their own outputs. The full invariant
+list, runtime ownership, and the open implementation ledger — including a
+frank "Current Evidence" section stating that **no Aura physical actuation,
+weakpoint, or ambient-law result is claimed** — are in
+[docs/REALITY_REACH.md](docs/REALITY_REACH.md).
+
+### A standing model of her own faculties
+
+`RecursiveSelfImprovementLoop.record_signal(...)` waits to be told where
+the problem is; `core/consciousness/metacognition.py` judges one episode at
+a time. Between them sat the gap: which faculties exist, what better means
+for each, and which one is holding the rest back.
+
+`core/metacognition/faculty_model.py` closes it on four rules. *Improvement
+is a declared contract* — a faculty declares metrics, and a metric declares
+its unit, direction, floor, target, and ceiling, so "better memory" becomes
+recall@k against a stated ceiling. *Unmeasured is never fine* — a probe
+that cannot run returns `None`, recorded as `measured=False` with a reason
+and excluded from scores rather than defaulted; a faculty nothing can
+measure is not healthy but *invisible*, and `blind_spots()` reports that as
+a first-class improvement target. *Holistic means leverage, not deficit* —
+faculties gate one another, so priority is headroom weighted by how much of
+the rest of the stack a faculty limits, computed over the transitive
+closure of the `gates` graph. *It closes causally* —
+`emit_improvement_signals()` pushes the binding constraint into the
+existing RSI loop as a signal it can plan against, so the improvement
+machinery keeps one owner and stops being blind.
+
+### Associative entity memory
+
+Episodic memory recorded what happened; the knowledge graph held untyped
+propositions; attachment modelled bonds, but only to people. What was
+missing was a place where a single *entity* accumulates everything known
+about it together with what it has come to mean to her.
+`core/memory/associative_entity_memory.py` covers six `EntityKind`s —
+`person`, `place`, `thing`, `organization`, `concept`, `other` — with
+content-addressed ids in which kind participates in identity:
+`entity_id_for()` hashes `f"{kind}|{normalized_name}"`, so the PLACE
+"Workshop" is not the THING "Workshop", and two processes that meet the
+same person independently agree on who it is. Around each entity sit
+aliases and four `AssociationKind`s: `trait`, `fact`, `event` (links into
+episodic memory), and `relation`. Kind is not decoration — it selects how
+stance is computed, with people delegating bonding to the attachment
+system.
+
+### Structural screen perception
+
+OS control previously aimed by inference: a screenshot plus OCR gave a wall
+of text with no idea what owned it, and a window-title list gave a flat set
+with no geometry or order. Perception now reads window ownership, geometry,
+and z-order, and asks an application what it is rather than recognising a
+fixed handful — which is what made native action reliable rather than
+hopeful.
+
+### An actual OS boundary for model-written code
+
+Two benchmark harnesses independently executed Aura-generated modules with
+`importlib` inside the privileged runner process. Both reached for defences
+that are broken in the same way. AST screening is a denylist: `__import__`
+reached through `().__class__.__mro__[1].__subclasses__()` never appears in
+the import table, and a screen reading source text cannot see what
+`getattr(mod, name)` resolves to at runtime. And `python -I` is import
+hygiene, not isolation — the child keeps the parent's filesystem, network,
+process, and signal access in full, including the user's home directory,
+the live runtime's sockets, and the machine's keychain.
+
+`core/sandbox/untrusted_python.py` replaces both with a kernel boundary:
+`sandbox-exec` (Seatbelt) on macOS, `bwrap` on Linux — deny by default,
+re-allow the interpreter's own read paths and one scratch directory,
+network denied outright so egress is not a policy question. The property
+that makes it worth having is the refusal: **when no boundary is
+available, it does not run the code.** Running it anyway and reporting a
+normal result is what turns a benchmark into an execution service.
+`AURA_SANDBOX_ALLOW_UNCONFINED=1` exists for platforms with no boundary and
+is deliberately awkward — the outcome carries `boundary="none"` and
+`sandboxed=False` permanently, so a caller recording results cannot later
+claim they were confined.
+
+### One guard for values from outside
+
+Numeric inputs accepted from outside the process previously carried type
+annotations that nothing enforced, and each call site invented its own
+bounds. A single bounded numeric guard now sits in front of them, and one
+structural redaction primitive replaced per-site scrubbing that leaked
+nested credentials without bound. Both are shared rather than copied,
+because the recurring defect was not a missing check but eleven slightly
+different ones.
+
+### Evidence boundary
+
+Reality Reach is contract and proof infrastructure, not a result. The
+foundation and the initial host-inventory slice are implemented and
+covered by contract tests; the acceptance battery (RR-10) is open, and no
+physical actuation, effect, weakpoint, or ambient-constant claim is made
+from the foundation existing. The faculty model measures what its probes
+can measure and reports the rest as blind spots — a low blind-spot count is
+a claim about instrumentation coverage, not about capability.

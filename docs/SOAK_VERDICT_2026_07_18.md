@@ -1,5 +1,9 @@
 # Soak verdict — 2026-07-18 (headless :8001, tip c8d4ef5c + lease-P0 fix)
 
+> **Historical record — 2026-07-18.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 The grow-up arc's final endurance run, on the tree carrying the
 2026-07-15 P0 fix (admission leases now die with their holders). Headless,
 daemonized (double-fork + setsid), tracemalloc off — every lesson from the

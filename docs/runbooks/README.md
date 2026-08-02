@@ -23,4 +23,23 @@ safe mitigation, unsafe mitigation, rollback, and verification.
 | Camera unavailable | [camera-unavailable.md](camera-unavailable.md) |
 | Microphone unavailable | [microphone-unavailable.md](microphone-unavailable.md) |
 | Movie mode broken | [movie-mode-broken.md](movie-mode-broken.md) |
+| Worker crash | [worker-crash.md](worker-crash.md) |
+| Shutdown hangs | [shutdown-hang.md](shutdown-hang.md) |
+| Orphaned background tasks | [orphaned-tasks.md](orphaned-tasks.md) |
+| Resource exhaustion (RAM/GPU) | [resource-exhaustion.md](resource-exhaustion.md) |
+| Prompt injection | [prompt-injection.md](prompt-injection.md) |
+| Excessive agency | [excessive-agency.md](excessive-agency.md) |
+| Cloud provider failure | [cloud-provider.md](cloud-provider.md) |
+| Research core stalled | [research-core-stalled.md](research-core-stalled.md) |
+| Disaster recovery | [disaster-recovery.md](disaster-recovery.md) |
 | Pass F maturity risks | [pass-f-maturity-risks.md](pass-f-maturity-risks.md) |
+
+Every runbook is written against fields that `aura doctor --bundle` emits, so
+produce the bundle first:
+
+```bash
+aura doctor --bundle
+```
+
+The failure-mode catalogue that these runbooks resolve is
+[KNOWN_FAILURE_MODES.md](../../KNOWN_FAILURE_MODES.md) (F01–F19).

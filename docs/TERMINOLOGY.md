@@ -56,6 +56,20 @@ language is doing the persuading.
 | backpressure               | expected-timeout yield (not a degradation) under load   |
 | reasoning amplifier        | mandatory verifier-gated hard-task cognition layer      |
 | whole-system phi           | exact-MIP Gaussian integrated information over real channels |
+| reality reach              | typed causal contract + reachability proof for a physical request |
+| reality layer              | evidence scope: internal / effective / direct / ambient |
+| limitation certificate     | typed machine-verifiable no-go verdict for an unreachable request |
+| effect receipt             | independent post-action measurement (never transport success) |
+| coupling class             | declared physical relation between a channel and an observable |
+| faculty                    | a named cognitive capability with declared improvement metrics |
+| binding constraint         | the faculty whose headroom most limits the rest of the stack |
+| blind spot                 | a faculty no probe can currently measure (a self-knowledge gap) |
+| stance                     | accumulated affective orientation toward a known entity |
+| entity                     | content-addressed person/place/thing/org/concept record |
+| taint register             | persistent record that the process is not the one its green verdict describes |
+| lockdep                    | lock-order dependency tracking (ABBA detection without the deadlock) |
+| shed ladder                | ordered load-shedding sequence under memory pressure    |
+| telemetry dictionary       | declared channel ids with units and limits              |
 
 This document is the machine-readable source of truth at
 ``docs/TERMINOLOGY.md``. The dashboard's "Skeptic mode" toggles labels

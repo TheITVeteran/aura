@@ -1,5 +1,9 @@
 # Non-parametric memory probe — does it inject knowledge the weights lack?
 
+> **Historical record — 2026-06-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../../docs/DOC_STATUS.md).
+
 **Date:** 2026-06-27 · **Model:** Qwen2.5-7B-Instruct-4bit (MLX) · **Datastore:** 8 fictional facts
 **Method:** facts the base model CANNOT know (invented entities), so any correct recall is purely
 from the datastore. Real hidden states (`model.model(ids)[0,-1]`, dim 3584) as keys; next-token

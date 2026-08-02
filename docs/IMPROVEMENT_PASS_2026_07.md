@@ -1,5 +1,9 @@
 # Improvement Pass — July 1–2, 2026
 
+> **Historical record — 2026-07-05.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 Whole-codebase fix-and-improve pass. Method: live-instance forensics first
 (crash artifacts, logs, health pulses), then fix the proven defects and
 ratchet each fix class so it cannot recur. Every change gated (lint, smoke,

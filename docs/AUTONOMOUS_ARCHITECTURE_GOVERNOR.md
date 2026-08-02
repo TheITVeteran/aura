@@ -1,5 +1,7 @@
 # Autonomous Architecture Governor
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 Aura's Autonomous Architecture Governor (ASA) is an audit-first software
 architect subsystem. It builds a live architecture graph, detects structural
 and governance smells, creates staged refactor plans, runs candidates in a

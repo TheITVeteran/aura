@@ -1,5 +1,7 @@
 # Aura — Research Guide
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document is for researchers reproducing Aura's claims and for
 external reviewers running their own evaluation.
 

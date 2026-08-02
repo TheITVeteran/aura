@@ -6,6 +6,10 @@ Run: 2026-04-17 00:20:24 UTC
 
 ## C1: Continuous Endogenous Activity
 
+> **Historical record — 2026-06-03.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
   [PASS] 1.1 Substrate idle drift (100 ticks, no input)
          L2_drift=5.1540
   [PASS] 1.2 Neurochemical drift without stimulus

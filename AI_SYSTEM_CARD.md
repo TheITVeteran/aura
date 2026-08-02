@@ -5,7 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **System Name** | Aura Cognitive Runtime |
-| **Version** | 1.0 |
+| **Version** | Calendar-versioned; the authoritative value is `version` in `pyproject.toml` |
+| **Card reviewed** | 2026-08-01 |
 | **Developer** | Bryan Young |
 | **System Type** | Autonomous AI cognitive agent |
 | **Deployment** | Local (on-device), optional cloud fallback |
@@ -54,7 +55,7 @@ receive an AuthorityGateway receipt. No silent side paths.
 | Solver (deep) | 72B parameter LLM (4-bit) | Local (MLX) | Deep-reasoning hot-swap for hard problems |
 | Reflex (fast lane) | 1.5B parameter LLM | Local (MLX) | Low-latency replies and routing |
 | Brainstem (background) | 7B parameter LLM | Local (MLX) | Background / maintenance tasks |
-| Cloud Fallback | Gemini 3.5 (API) | Remote (opt-in) | Fallback for the reasoning lanes when local is unavailable |
+| Cloud Fallback | Gemini (`gemini-2.5-pro` by default) | Remote (opt-in, no key by default) | Fallback for the reasoning lanes when local is unavailable |
 
 See `MODEL_CARD.md` for detailed model information.
 
@@ -64,7 +65,7 @@ See `MODEL_CARD.md` for detailed model information.
 
 | Control | Implementation |
 |---------|----------------|
-| AI governance policy | `docs/AUTONOMY_BOUNDARIES.md`, `TOOL_USE_POLICY.md` |
+| AI governance policy | `AUTONOMY_BOUNDARIES.md`, `TOOL_USE_POLICY.md` |
 | Roles and responsibilities | `OWNERSHIP.md`, permission matrix |
 | Risk management process | `docs/AURA_RISK_REGISTER.md`, threat model |
 
@@ -77,6 +78,9 @@ See `MODEL_CARD.md` for detailed model information.
 | Privacy violation | Sensitive data sent to cloud | Low | High |
 | Prompt injection | Adversary overrides instructions | Medium | Medium |
 | Resource exhaustion | Model consumes all system resources | Low | Medium |
+| Unsafe physical actuation | An action reaches a device without verified effect or rollback | Low | High |
+| Overstated physical claim | A simulated or transport-level result is reported as a physical one | Medium | High |
+| Untrusted code execution | Model-written Python escapes its boundary into the privileged process | Low | High |
 
 ### Measure
 
@@ -87,6 +91,15 @@ See `MODEL_CARD.md` for detailed model information.
 | Cloud fallback privacy | Classification audit (target: 100% classified) |
 | Action receipt coverage | Governance lint (target: 100%) |
 | Graceful degradation honesty | `record_degradation()` audit |
+| Physical claim boundary | A contract declares its `RealityLayer` (`internal`/`effective`/`direct`/`ambient`); reachability computes the declared channels' `evidence_ceiling` and returns `INSUFFICIENT_EVIDENCE` when it cannot reach the contract's `minimum_evidence` (`core/reality_reach/reachability.py`) |
+| Actuation state separation | `ActuationState` keeps dispatch, execution, and `EFFECT_VERIFIED` as distinct states, so transport success cannot stand in for a verified effect (`core/reality_reach/actuation.py`) |
+| Sandbox confinement | Model-written Python refuses to run when no kernel boundary is available; unconfined runs are permanently marked `boundary="none"` (`core/sandbox/untrusted_python.py`) |
+
+**Not yet a control.** The P0–P6 evidence *promotion* state machine (ledger
+item RR-07) is **not implemented** — `EvidenceLevel` exists as a declared
+type and ceiling, but there is no promotion module in
+`core/reality_reach/`. Do not cite evidence promotion as an operating
+safeguard. The open ledger is in [docs/REALITY_REACH.md](docs/REALITY_REACH.md).
 
 ### Manage
 

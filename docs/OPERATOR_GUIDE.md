@@ -2,6 +2,8 @@
 
 This document is the runbook for running Aura on your own hardware.
 
+*Last reviewed against the tree: 2026-08-01.*
+
 ## Requirements
 - macOS Apple Silicon recommended; Bryan's tracked target is M5-class.
 - 64 GB+ RAM is the reference target for the 32B Cortex and sustained background loops.
@@ -12,12 +14,30 @@ This document is the runbook for running Aura on your own hardware.
 ```bash
 git clone https://github.com/youngbryan97/aura
 cd aura
-make setup        # creates .venv, installs runtime requirements
-make quality      # compile + lint + governance-lint + typecheck + smoke
+make setup-prod   # fail-closed install: no fallbacks, a missing dep fails the install
+make quality      # the full scrutiny sweep (see below)
 make production-gate
 make provenance   # writes artifacts/provenance/{sbom,provenance}.json
 make run          # foreground launch
 ```
+
+`make quality` is the aggregate gate. It runs, in order: `source-hygiene`,
+`enterprise-gate`, `enterprise-collect`, `production-gate`,
+`frontend-contract`, `cognitive-gate-audit`, `skill-catalog-audit`,
+`model-load-audit`, `resource-observation-audit`, `integration-liveness`,
+`architecture-map`, `compile`, `lint`, `governance-lint`, `security`,
+`typecheck`, `smoke`.
+
+Two gates worth knowing separately:
+
+- `make layering` — the DEPS include-rule gate. `core/runtime` and
+  `core/observability` carry `DEPS` files and may not import cognition or
+  agency. The grandfathered baseline in `config/layering_baseline.json` only
+  ever shrinks.
+- `make test` — the full offline suite, run as 6 bounded process chunks via
+  `tools/run_test_chunks.py`. As of 2026-08-01 the tree collects **24,931
+  tests across 1,771 files**. A single pytest process over the whole suite
+  gets OOM-killed around 83%; always use the chunk runner.
 
 ## Backup & restore
 - Backup: `tar czf aura-backup.tar.gz ~/.aura/data ~/.aura/live-source`.
@@ -165,8 +185,15 @@ and full-mind route.
 ## Performance tuning
 - Settings → Performance: cap on warm models (1, 2, or 3 concurrent
   heavy lanes), tick interval, dashboard refresh rate.
-- Memory monitor lowers max_tokens at >85% RAM and triggers VRAM purge
-  at >90% RAM (configurable via env: AURA_MEM_THRESHOLDS).
+- Memory monitor lowers max_tokens under RAM pressure and triggers a VRAM
+  purge as pressure climbs. The ceilings are set by
+  `AURA_PROCESS_RSS_LIMIT_GB` (main process), `AURA_MLX_MEMORY_LIMIT_GB`
+  (MLX allocator), `AURA_MLX_WORKER_RSS_LIMIT_GB` (inference worker), and
+  `AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB` (refuse a 32B load below this much
+  free memory). There is no `AURA_MEM_THRESHOLDS` variable.
+- Under sustained pressure the OOM shed ladder drops load bottom-up
+  starting with the prompt KV cache; the current shed order is reported in
+  `runtime_health_report()["integrity"]`.
 
 ## Security settings
 - Conscience: hard-line rules at `~/.aura/data/conscience/rules.sha256`
@@ -180,3 +207,52 @@ and full-mind route.
 `make governance-lint` fails the build if any code outside the allow-list
 makes a direct consequential call. The allow-list is defined in
 `tools/lint_governance.py:ALLOW_LIST`.
+
+## Physical actuation and Reality Reach
+
+Physical requests do not go straight to a device. `core/reality_reach/`
+compiles a requested observable into a typed contract, proves reachability
+against the host's declared sensor/actuator channels, and returns a
+limitation certificate when the request cannot be met — rather than an
+optimistic simulation or a verbal success claim. Evidence is layered
+`internal` / `effective` / `direct` / `ambient`, and transport success is
+never treated as effect verification.
+
+Operationally that means:
+
+- Registered hardware is dispatched through `HardwareManager` and
+  `BaseHardwareDevice.safe_execute`; a robotics or environment action cannot
+  fall through to an unrelated AppleScript handler.
+- Command acceptance, transport completion, actuator execution, observed
+  local effect, and promoted evidence are separate monotonic receipt states.
+  No earlier state stands in for a later one.
+- Boot registers the Reality Reach service during cognitive/sensory
+  initialization and refreshes the host inventory off the event loop.
+  Readiness means at least one currently usable declared channel plus a
+  healthy refresh loop.
+
+Invariants, runtime ownership, the open implementation ledger, and an
+explicit statement of what is *not* claimed are in
+[`docs/REALITY_REACH.md`](REALITY_REACH.md). Read the "Current Evidence"
+section before repeating any physical claim from this system.
+
+## Debugging entry points
+
+- `AURA_PASS_BISECT_LIMIT=N` runs only the first N cognitive phases — binary
+  search N to find which phase ruined an answer. `AURA_PASS_TRACE=1`
+  announces each phase as it runs.
+- `runtime_health_report()["integrity"]` carries taint, lockdep splats, PSI,
+  the OOM shed order, sanitizer findings, the last verifier report, telemetry
+  limit violations, and unsupported claims.
+- `get_bus_recorder().dump()` writes the event-bus ring for replay;
+  `get_tracer().write()` writes a Perfetto-loadable trace;
+  `get_memory_infra().diff(a, b).narrative()` names what grew.
+- Crash forensics when the runtime dies: `data/error_logs/crash/`
+  (faulthandler, loop-wedge and memory-spike stacks),
+  `data/error_logs/stalls/`, `data/error_logs/memory/` (sentinel ring,
+  tombstones, death syslogs), and `~/.aura/logs/desktop-launch.log` for the
+  live stdout stream.
+- Set `AURA_LOG_DIR` for anything test-like so you never write into the live
+  instance's logs.
+
+The full map is [docs/ENGINEERING_ADOPTION.md](ENGINEERING_ADOPTION.md).

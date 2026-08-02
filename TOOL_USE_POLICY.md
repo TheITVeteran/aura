@@ -1,5 +1,7 @@
 # Aura Tool Use Policy
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](docs/DOC_STATUS.md) for how to read this file.*
+
 ## Scope
 
 This policy governs all tool and skill execution within the Aura cognitive

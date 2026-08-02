@@ -1,5 +1,7 @@
 # Aura Platform Posture
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document declares the deliberate platform decisions Aura runs
 under today.  Every entry below is a load-bearing choice — operators
 can change them, but they should know what they are choosing.

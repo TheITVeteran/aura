@@ -9,7 +9,7 @@
 
 ## Diagnosis
 - Confirm AURA_STRICT_RUNTIME mode (env: AURA_STRICT_RUNTIME)
-- Confirm release channel (`aura status` once available)
+- Confirm the deployed revision and last rollback point: `make release-status`
 - Run `python -m pytest tests/test_server_runtime_hardening.py -q -k "<scenario>"`
 - Check ServiceManifest results in boot logs (`_enforce_service_manifest`)
 

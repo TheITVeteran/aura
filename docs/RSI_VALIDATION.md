@@ -1,5 +1,7 @@
 # Aura RSI Validation
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 Aura now has a bounded, identity-preserving RSI validation path. It does not
 remove governance, bypass the Constitution, acquire external compute, or edit
 hidden evals. It proves the parts that are safe and useful:

@@ -23,11 +23,23 @@ perception → shared state → attention → goals → planning → Unified Wil
 
 ### Production Defaults
 
-| Mode | Default Autonomy Level |
+Set with `AURA_MODE`. The ceiling for each mode is
+`MODE_MANIFESTS[mode]["max_autonomy_level"]` in `core/runtime/mode.py`, read
+at runtime via `max_autonomy_level()`. An unrecognised `AURA_MODE` logs a
+warning and falls back to `production` — it does not fail open.
+
+| `AURA_MODE` | Max autonomy level |
 |------|----------------------|
-| `production` | Level 2 (Maintenance) |
+| `production` (default) | Level 2 (Maintenance) |
+| `live` | Level 2 (Maintenance) |
+| `test` | Level 1 (Passive) |
+| `simulated` | Level 3 (Proactive) |
 | `research` | Level 4 (Self-repair) |
 | `dev` | Level 5 (Self-modification, sandboxed) |
+| `safe` | Level 0 (Disabled) |
+
+*Verified against `core/runtime/mode.py` on 2026-08-01 by reading
+`MODE_MANIFESTS` directly.*
 | `safe` | Level 0 (Disabled) |
 | `simulation` | Level 3 (Proactive, sandboxed) |
 

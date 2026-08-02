@@ -1,5 +1,7 @@
 # Aura Permission Matrix
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Overview
 
 This document defines the Role-Based Access Control (RBAC) model for Aura.

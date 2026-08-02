@@ -1,5 +1,7 @@
 # Aura Morphogenesis Patch
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This patch adds a bounded morphogenetic runtime:
 
 - `core/morphogenesis/types.py` — schemas for signals, cells, manifests, lifecycle states and config.

@@ -1,5 +1,9 @@
 # Third-Party Validation Run - 2026-05-05
 
+> **Historical record — 2026-05-05.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 This document records the local validation pass for the independent Aura proof
 suite request. It separates what was actually run locally from long-horizon,
 hardware, sealed-eval, and human-judged tests that cannot honestly be completed

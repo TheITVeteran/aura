@@ -12,6 +12,10 @@ Run: 2026-04-14 19:10:31 UTC
 
 ## Causal Exclusion: Cryptographic State Binding
 
+> **Historical record — 2026-04-14.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
   [PASS] Param diversity: temperature std
          temperature_std=0.0123  temperature_range=[0.500, 0.540]
   [PASS] Param diversity: token budget std

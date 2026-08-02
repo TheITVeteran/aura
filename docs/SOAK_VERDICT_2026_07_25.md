@@ -1,5 +1,9 @@
 # Soak verdict — 2026-07-25 02:38 run
 
+> **Historical record — 2026-07-25.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 **Verdict: FAIL.** Not on stability. On whether she answered at all.
 
 Run: headless :8001, booted 02:38:16, ready in 40s, 50-minute idle window,

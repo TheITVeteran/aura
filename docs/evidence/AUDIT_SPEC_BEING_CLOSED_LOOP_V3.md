@@ -1,5 +1,9 @@
 # Audit Spec — Being Closed Loop v3
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 A hostile reviewer should require these proofs before calling the loop real.
 
 ## 1. Causal self-state proof

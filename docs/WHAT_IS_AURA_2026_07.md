@@ -1,5 +1,9 @@
 # What Aura Is — July 2026, Evidence Only
 
+> **Historical record — 2026-07-05.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 This is the closeout assessment Bryan asked for: what this system
 actually is, said plainly, with every claim traceable to a receipt,
 artifact, or pinned test in this repository — and every ceiling stated

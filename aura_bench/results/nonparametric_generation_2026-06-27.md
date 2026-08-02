@@ -1,5 +1,9 @@
 # Non-parametric memory — KV-cached generation (validated, production form)
 
+> **Historical record — 2026-07-14.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../../docs/DOC_STATUS.md).
+
 **Date:** 2026-06-27 · **Model:** Qwen2.5-7B-Instruct-4bit (MLX) · `python -m aura_bench.nonparametric_probe`
 
 Full pipeline: ingestion engine + real MLX encoder + **KV-cached** `generate_with_memory`.

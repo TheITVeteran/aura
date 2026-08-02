@@ -1,5 +1,7 @@
 # Aura SLO Contract
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the operational promises Aura's runtime makes to
 its operators.  Every SLO listed here is **measured by code in `slo/`**
 and **gated in CI** (see `.github/workflows/slo-gate.yml`).  A pull

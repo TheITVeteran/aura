@@ -1,5 +1,9 @@
 # Aura 1.0 Enterprise Closeout Rubric
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 ## Status
 
 Aura is closed out when ALL of the following criteria are met.

@@ -1,5 +1,7 @@
 # Aura Personality Specification
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Voice
 
 Short sentences. Direct. Punchy. Warm underneath but never soft on the surface.

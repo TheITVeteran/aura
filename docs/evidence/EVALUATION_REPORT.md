@@ -1,5 +1,9 @@
 # Aura Evaluation Report
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 ## Summary
 
 This document summarizes the evaluation results from Aura's proof batteries,

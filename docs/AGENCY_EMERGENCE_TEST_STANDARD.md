@@ -1,5 +1,7 @@
 # Agency Emergence Test Standard (Aura Empirical Standard)
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the behavioral and empirical evaluation standard for **emergent intelligence** and **long-horizon autonomous agency** in the Aura Cognitive Engine. Claims only count when backed by replayable traces, receipts, and baseline comparisons.
 
 ## Operational Definitions

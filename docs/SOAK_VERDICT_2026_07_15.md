@@ -1,5 +1,9 @@
 # Final Soak Verdict — the grow-up mandate's last act (2026-07-14/15)
 
+> **Historical record — 2026-07-16.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](DOC_STATUS.md).
+
 Four runs, four findings, zero wasted deaths. Every run either hardened the
 soak harness itself or caught a real defect — which is the entire purpose
 of a soak.

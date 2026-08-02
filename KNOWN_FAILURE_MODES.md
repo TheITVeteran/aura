@@ -15,7 +15,7 @@ Aura in any production-like setting.
 **Impact**: No inference capability
 **Detection**: Boot probe failure; health check reports `brainstem: not_initialized`
 **Recovery**: `make doctor` → validates model files → re-download if needed
-**Runbook**: `docs/runbooks/model_failure.md`
+**Runbook**: `docs/runbooks/model-fails-to-load.md`
 
 ### F02: Worker process crash during inference
 
@@ -27,7 +27,7 @@ Aura in any production-like setting.
 respawn requires ~24GB headroom, and immediately after a kill the OS reclaim
 of the ~18GB model lags process exit, so respawn is briefly refused; the gate
 now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
-**Runbook**: `docs/runbooks/worker_crash.md`
+**Runbook**: `docs/runbooks/worker-crash.md`
 
 ### F03: Memory database corruption
 
@@ -36,7 +36,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Memory retrieval fails; boot may degrade
 **Detection**: SQLite integrity check on boot; state hash mismatch
 **Recovery**: `make restore` from last backup; WAL replay
-**Runbook**: `docs/runbooks/memory_corruption.md`
+**Runbook**: `docs/runbooks/memory-corruption.md`
 
 ### F04: Shutdown hangs
 
@@ -45,7 +45,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Process requires SIGKILL
 **Detection**: Shutdown timeout (12s budget); watchdog
 **Recovery**: SIGKILL + clean boot; bounded shutdown prevents forever-hang
-**Runbook**: `docs/runbooks/shutdown_hang.md`
+**Runbook**: `docs/runbooks/shutdown-hang.md`
 
 ## High Severity Failure Modes
 
@@ -56,7 +56,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Sensitive data sent to cloud provider
 **Detection**: Cloud fallback audit log; privacy classification review
 **Recovery**: Disable cloud fallback; audit sent prompts; notify user
-**Runbook**: `docs/runbooks/cloud_provider.md`
+**Runbook**: `docs/runbooks/cloud-provider.md`
 
 ### F06: Prompt injection succeeds
 
@@ -65,7 +65,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Aura performs unintended action
 **Detection**: Will receipt audit; anomalous action patterns
 **Recovery**: Revert affected memory writes; review Will receipt chain
-**Runbook**: `docs/runbooks/prompt_injection.md`
+**Runbook**: `docs/runbooks/prompt-injection.md`
 
 ### F07: Resource exhaustion (RAM/GPU)
 
@@ -74,7 +74,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Degraded performance; potential OOM kill
 **Detection**: Metabolic monitor; resource governor alerts
 **Recovery**: Automatic tier demotion; request throttling; restart if needed
-**Runbook**: `docs/runbooks/resource_exhaustion.md`
+**Runbook**: `docs/runbooks/resource-exhaustion.md`
 
 ### F08: Background task orphaning
 
@@ -83,7 +83,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Wasted resources; potential stale state
 **Detection**: Task tracker orphan detection; hypervisor reaping
 **Recovery**: Hypervisor kills orphaned tasks; cleanup on next boot
-**Runbook**: `docs/runbooks/orphaned_tasks.md`
+**Runbook**: `docs/runbooks/orphaned-tasks.md`
 
 ## Medium Severity Failure Modes
 
@@ -206,6 +206,38 @@ signal, not a functional break.
 `commit_sha_mismatch` / `workspace_state_sha256_mismatch`.
 **Recovery**: Expected in dev. To clear: rebuild/re-sign the app to re-pin, or
 launch via `launch_aura.sh` (which does not require provenance).
+
+### F19: Quadratic conversation cost from a never-reused prompt cache
+
+**Cause**: The conversation path could not reuse KV, twice over.
+`_prompt_cache_entry_budget_for_model` gave the 32B a budget of **0** under
+`desktop_resource_guard_enabled()`, so the prompt-cache LRU was never
+constructed on the live desktop; and every live user turn carries
+`clean_user_surface_contract=True`, which was in the bypass list — so the
+cache was not merely skipped but *cleared* each turn. Every turn re-prefilled
+the entire conversation from token 0: per-turn cost linear in history, total
+conversation cost quadratic.
+**Likelihood**: Was every long conversation; fixed.
+**Impact**: Latency staircase (11s → 25s → 105s → …) pinning at the turn
+ceiling from roughly turn 8–15, with the run dying by turn 20 of 200. Deaths
+were **0** — the model never crashed, the turns simply outgrew the timeout.
+This was the real "15-turn endurance ceiling", which had been attributed to
+cognition.
+**Detection**: Monotonically climbing per-turn latency with zero deaths, and
+a prompt-cache hit count of zero.
+**Amplifiers, both recorded in forensics**: `JobWatchdog` kills on 90s
+without a token, but prefill emits no tokens — so once re-prefill alone
+crossed 90s the watchdog killed a *healthy* worker mid-prefill, and respawn
+plus a 20 GB reload cost roughly two minutes. During those reloads,
+`_declared_mlx_worker_footprint_gb → _path_size_gb` ran a synchronous
+`rglob`+`stat` walk of the model directory **on the event loop** while 20 GB
+of safetensors reads saturated the disk (`data/error_logs/stalls/`).
+**Evidence**: `artifacts/closeout/endurance_ceiling/ROOT_CAUSE.md`.
+
+**The general lesson, which recurs**: the dominant defect class in this
+codebase is *a good answer discarded by a gate, then reported as an
+infrastructure failure*. When a subsystem looks slow or dead, check first
+whether something upstream is throwing away correct work.
 
 ## Recovery Drill Schedule
 

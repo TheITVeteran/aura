@@ -32,11 +32,11 @@ result decides it. Original map below for the record.
 | component | module | live seam |
 |---|---|---|
 | 1 recurrent depth | `core/learning/intrinsic_recurrence.py` | **none** |
-| 2 writable slots | `latent_cortex/engine.py` | live |
-| 3 schedule search | `latent_cortex/schedules.py` (`ScheduleSearch`) | **ALREADY LIVE** via `_resolve_schedule` -> `ScheduleLibrary`. CP235 added held-out separation, generalization gap and a compute cap to it. |
+| 2 writable slots | `core/brain/llm/latent_cortex/engine.py` | live |
+| 3 schedule search | `core/brain/llm/latent_cortex/schedules.py` (`ScheduleSearch`) | **ALREADY LIVE** via `_resolve_schedule` -> `ScheduleLibrary`. CP235 added held-out separation, generalization gap and a compute cap to it. |
 | 4 virtual width | `core/consciousness/parallel_branches.py` | live |
-| 5 latent optimization | `latent_cortex/latent_opt.py` | **ALREADY LIVE** — engine.py:1372, with matched-random control AND manifold drift. `core/learning/latent_optimization.py` (CP231) DUPLICATES this; prefer the live one. |
-| 6 fast weights | `latent_cortex/fast_weights.py` | live |
+| 5 latent optimization | `core/brain/llm/latent_cortex/latent_opt.py` | **ALREADY LIVE** — engine.py:1372, with matched-random control AND manifold drift. `core/learning/latent_optimization.py` (CP231) duplicated this and has since been removed; the path above is the live one. |
+| 6 fast weights | `core/brain/llm/latent_cortex/fast_weights.py` | live |
 | 7 adaptive halting | `core/learning/adaptive_halting.py` | **LIVE** — `HaltingController.halting_head` (recurrence.py); None = old policy |
 | RLVR | `core/learning/grpo.py` + `tools/train_grpo.py` | n/a (training) |
 | verifiable tasks | `core/learning/verifiable_tasks.py` | n/a (data) |
@@ -61,23 +61,23 @@ ensemble check is `engine.py:1236` (`ensemble.all_halted()`).
 
 ## Component 5 needs NO wiring — it was already live
 
-`latent_cortex/latent_opt.py` is wired at `engine.py:1372` and already has
+`core/brain/llm/latent_cortex/latent_opt.py` is wired at `engine.py:1372` and already has
 both honesty controls: `control_mode` applies matched-magnitude random
 perturbations sized from the true gradient step, and the objective carries
 a manifold term (RMS + cosine drift from the post-prelude seed).
 
 `core/learning/latent_optimization.py` (CP231) was written without finding
-this and duplicates it. It is not wrong, but it is redundant — an audit
-that searched `latent_optim` missed a module named `latent_opt`. Prefer the
-live one; treat CP231 as a standalone reference implementation or delete
-it. **Search by capability, not by guessed filename.**
+this and duplicated it — an audit that searched `latent_optim` missed a
+module named `latent_opt`. It has since been **deleted**, with its unique
+properties ported into the live module (see "the audit searched guessed
+filenames" below). **Search by capability, not by guessed filename.**
 
 `spec.latent_opt_mode` is validated to `"disabled"` for v2 TRAINING only;
 that is a training constraint, not the live default.
 
 ## Component 3 needed no new module either
 
-`ScheduleSearch` already existed in `latent_cortex/schedules.py`, and
+`ScheduleSearch` already existed in `core/brain/llm/latent_cortex/schedules.py`, and
 `engine._resolve_schedule(domain)` already consults `ScheduleLibrary`.
 CP235 ported the missing safety properties INTO it rather than keeping a
 parallel implementation:

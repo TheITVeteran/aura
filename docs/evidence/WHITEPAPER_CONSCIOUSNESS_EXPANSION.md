@@ -1,5 +1,9 @@
 # Consciousness Expansion — April 2026
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 *A white paper on eight new load-bearing subsystems added to Aura's
 consciousness stack.*
 
@@ -11,7 +15,7 @@ The consciousness stack already held a 4,096-neuron cortical mesh, a
 16-node IIT-4.0 φ computation, a closed causal self-prediction loop,
 multiple drafts, narrative gravity, an attention schema, a global
 workspace, a somatic marker gate, and more than seventy other modules
-(see [ARCHITECTURE.md](ARCHITECTURE.md) §9). The question we asked
+(see [ARCHITECTURE.md](../../ARCHITECTURE.md) §9). The question we asked
 ourselves — prompted by Kurzgesagt's four-part consciousness series
 (*Are you your body?*, *You are two*, *Intelligence*, *The Origin of
 Consciousness*, *The Most Secret Place*) and the ~80 cited papers in

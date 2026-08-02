@@ -1,5 +1,9 @@
 # Critique Closure Matrix
 
+> **Historical record — 2026-07-09.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../DOC_STATUS.md).
+
 This document converts the hard feedback into engineering obligations. It is not
 a declaration that Aura is conscious. It is the opposite: a map of what is now
 implemented, what remains empirical, and what cannot be closed by code alone.

@@ -1,5 +1,7 @@
 # Aura Enterprise Zero-Notes Standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This is the acceptance standard for moving Aura from impressive research code to an enterprise-grade, indefinitely runnable autonomous cognitive system.
 
 ## Non-Negotiable Release Gates

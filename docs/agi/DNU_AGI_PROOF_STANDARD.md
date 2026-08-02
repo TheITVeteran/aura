@@ -1,5 +1,7 @@
 # DNU AGI Proof Standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../DOC_STATUS.md) for how to read this file.*
+
 > **Version:** 1.0.0  
 > **Status:** Active  
 > **Last Updated:** 2026-05-21  

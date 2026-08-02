@@ -1,5 +1,7 @@
 # Aura Model and Provider Failure Policy
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 Aura must degrade honestly when a model or provider is missing, slow, unsafe, or
 returns low-confidence output.
 

@@ -1,5 +1,7 @@
 # Aura Final Proof Standard
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
+
 This document defines the formal, strict engineering standard required for a release candidate of the Aura cognitive agent runtime to be considered **production-sealed** and **proof-bearing**.
 
 ## 1. Core Principles

@@ -218,6 +218,8 @@ actually talk to the thing while it's running.
 - [Inference-time steering](#inference-time-steering)
 - [IIT 4.0 computation](#iit-40-computation)
 - [Consciousness modules](#consciousness-modules)
+- [Reality Reach and physical claim honesty](docs/REALITY_REACH.md)
+- [Documentation status map](docs/DOC_STATUS.md)
 - [Benchmarks](#benchmarks)
 - [Testing](#testing)
 - [Personality training](#personality-training)
@@ -230,7 +232,9 @@ actually talk to the thing while it's running.
 ## Quick start
 
 ```bash
-pip install -r requirements.txt
+make setup                     # .venv + requirements/core.txt + requirements/dev.txt
+# or, for a fail-closed production install with no fallbacks:
+make setup-prod
 
 # Full stack + UI
 python aura_main.py --desktop
@@ -241,6 +245,15 @@ python aura_main.py --headless
 # Reload code changes without restarting
 curl -X POST http://localhost:8000/api/system/hot-reload
 ```
+
+Other boot modes: `--cli` (interactive console), `--server` (API only),
+`--gui-window` (attach a window to a running server), `--watchdog`,
+`--philosophy` (stream substrate/phi/affect/Will as JSONL), `--skeletal`
+(bypass heavy subsystems), `--profile minimal`, plus `--stop` and `--reboot`.
+The installed console script exposes the same entry point as `aura`, which
+also carries the operational subcommands (`doctor`, `conformance`,
+`verify-state`, `verify-memory`, `rebuild-index`, `backup`, `restore`,
+`migrate`, `chaos`, `plugin`).
 
 Requirements: Python 3.12+, macOS on Apple Silicon, 64 GB RAM recommended. The
 primary model is Qwen 2.5 32B at 8-bit with a personality LoRA on top; a 7B
@@ -305,6 +318,14 @@ Local LLM router with automatic failover:
 3. **Tertiary (Brainstem)** — Qwen 2.5 7B 4-bit, lazy-loaded to save ~5 GB for
    the Cortex.
 4. **Reflex** — Qwen 2.5 1.5B 4-bit on CPU as an emergency fallback.
+5. **Cloud** — Gemini Flash/Pro, PII-scrubbed and rate-limited. Off by default.
+6. **Last resort** — rule-based static responses that can't fail.
+
+Lane names map to `core/config.py`: `fast_model` is the Cortex
+(`Qwen2.5-32B-Instruct-8bit`), `deep_model` the Solver
+(`Qwen2.5-72B-Instruct-4bit`), `chat_model` the Brainstem
+(`Qwen2.5-7B-Instruct-4bit`), and `vision_model` is pinned to the Cortex build
+so vision and conversation share one identity.
 
 ### Decisive evidence runner
 
@@ -336,8 +357,6 @@ through N ticks with perturbations. No manual resets. Writes
 coherence, calibration, report consistency, planning depth, recovery time,
 memory integrity, action diversity) and an audit of which modules were touched
 per tick.
-5. **Cloud** — Gemini Flash/Pro, PII-scrubbed and rate-limited. Off by default.
-6. **Last resort** — rule-based static responses that can't fail.
 
 The live desktop Cortex uses Aura's Apple Silicon MLX runtime. Circuit breakers,
 a GPU semaphore, a proactive cortex watchdog, and 429 handling keep the pipeline
@@ -657,6 +676,49 @@ and the plain-English tour in
   makes, with no-delta results reported honestly. See
   [docs/ABLATION_LEGIBILITY.md](docs/ABLATION_LEGIBILITY.md).
 
+### Embodiment, self-knowledge, and physical honesty (late July – August 2026)
+
+The most recent wave is about the boundary between Aura and the machine she
+runs on: what she can actually perceive, actually cause, and actually claim.
+
+- **Reality Reach** (`core/reality_reach/`) turns a requested physical
+  observable into a typed causal contract, proves reachability against the
+  host's *declared* channels before anything executes, and returns a
+  machine-verifiable limitation certificate when a request cannot be met.
+  Evidence is layered `internal` / `effective` / `direct` / `ambient`, and no
+  path may promote a claim across those boundaries from intent, simulation, or
+  transport success. Adapters are bidirectional: declaring an actuator
+  obliges typed command admission, idempotent actuation, independent effect
+  verification, cancellation, safe-state, and rollback. Status, invariants,
+  and the open ledger are in [docs/REALITY_REACH.md](docs/REALITY_REACH.md) —
+  including an explicit statement of what is *not* yet claimed.
+- **A standing model of her own faculties**
+  (`core/metacognition/faculty_model.py`) — each faculty declares metrics with
+  units, floors, targets, and ceilings, so "better memory" becomes recall@k
+  against a stated ceiling. A probe that cannot run reads `measured=False`
+  with a reason and is excluded rather than defaulted, and a faculty nothing
+  can measure is reported as a blind spot. Priority is headroom weighted by
+  how much of the rest of the stack a faculty gates, and the binding
+  constraint is pushed into the existing RSI loop as a signal it can plan
+  against.
+- **Associative entity memory** (`core/memory/associative_entity_memory.py`)
+  — one place where a person, place, thing, organization, or concept
+  accumulates traits, facts, events (linked into episodic memory), and typed
+  relations, together with what it has come to mean to her. Ids are
+  content-addressed over `kind|name`, so the PLACE "Workshop" is not the
+  THING "Workshop".
+- **Structural screen perception and native OS control** — she reads window
+  ownership, geometry, and z-order rather than aiming OS actions at OCR'd
+  pixels, and asks an application what it is instead of recognising a fixed
+  handful.
+- **Kernel-boundary sandboxing for model-written Python** (`core/sandbox/`) —
+  code Aura writes runs behind an OS sandbox boundary with an absolutely
+  resolved binary and a scrubbed environment, rather than inheriting the
+  privileged parent process. Covered by live escape-attempt tests.
+- **Shared input hardening** — one bounded numeric guard for values accepted
+  from outside the process, and one structural redaction primitive, replacing
+  per-call-site checks that annotated types without enforcing them.
+
 ---
 
 ## Benchmarks
@@ -698,18 +760,26 @@ instance.
 ## Testing
 
 ```bash
-./scripts/run_audit_suite.sh
+make smoke     # ~100 contract tests, under 10s — the after-every-change gate
+make test      # full offline suite in 6 bounded process chunks
 ```
 
-The repository includes a large research-heavy test suite plus preserved
-historical result artifacts. The April 16, 2026 snapshot recorded
-`1013 passed, 3 warnings`; current live status should always be re-verified from
-the checked-out tree. A summary — and the historical tables/results — are in
-[TESTING.md](TESTING.md):
+As of 2026-08-01 the tree collects **24,931 tests across 1,771 test files**
+(`pytest tests/ --collect-only -q`). Counts move with the repo — re-collect
+rather than trusting this number.
 
-- `./scripts/run_audit_suite.sh` is the canonical live validation entrypoint.
-- `./scripts/run_audit_suite.sh quick` runs the contract/regression subset for
-  faster local verification.
+`make test` runs `tools/run_test_chunks.py --chunks 6 --marker "not live and
+not network and not external"`. Use the chunk runner rather than a single
+pytest process: one process over the whole suite gets OOM-killed around 83%.
+`--continue-on-failure` collects every failure instead of stopping at the
+first; `--only-chunks 5,6` resumes a partial run. A test that fails inside a
+chunk but passes alone is an order-dependence defect, and the runner's
+isolated-retry pass reports those separately.
+
+`./scripts/run_audit_suite.sh` remains the live validation entrypoint
+(`quick` runs the contract/regression subset). Historical result tables are
+preserved in [TESTING.md](TESTING.md); read them as dated snapshots, not as
+current status.
 
 - **Null hypothesis defeat** (168 tests) — tries to show the consciousness
   features are just text decoration. Adversarial baselines, 50-shuffle

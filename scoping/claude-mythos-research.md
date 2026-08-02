@@ -1,5 +1,9 @@
 # Claude Mythos: what's public, what's worth porting
 
+> **Historical record — 2026-04-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-04-27
 **Status:** Synthesis of public reporting + Anthropic preview material. Some content is reporter speculation around a leak; flagged inline.
 
@@ -52,7 +56,7 @@ Sources:
 **Constraint:** RAM. 32B at 8bit with 1M context would not fit on a 64GB Mac. Wait until a smaller flagship-class model (or until you have more hardware) before chasing the full 1M.
 
 ### 3. Better tool / agent loops
-**Why:** Aura's `core/executors/browser_executor.py` exists but isn't getting heavy use. The autonomy pipeline scoping (separate doc) needs solid tool-use to drive the content-consumption hierarchy. Mythos-level tool reliability is what makes "fetch a transcript, then a creator interview, then a Wikipedia page" actually work without dropping the thread.
+**Why:** Aura's `executors/browser_executor.py` exists but isn't getting heavy use. The autonomy pipeline scoping (separate doc) needs solid tool-use to drive the content-consumption hierarchy. Mythos-level tool reliability is what makes "fetch a transcript, then a creator interview, then a Wikipedia page" actually work without dropping the thread.
 **Effort:** Medium. Doesn't need new model weights — just better orchestration code, prompt scaffolding, and maybe some fine-tuning on tool-use traces.
 
 ### 4. (Don't port) Cybersecurity capabilities

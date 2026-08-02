@@ -1,5 +1,7 @@
 # OWASP Top 10 for LLM Applications — Aura Mapping
 
+*Reviewed against the tree: 2026-08-01. See [documentation status map](../docs/DOC_STATUS.md) for how to read this file.*
+
 ## Framework
 
 This mapping covers the OWASP Top 10 for Large Language Model Applications

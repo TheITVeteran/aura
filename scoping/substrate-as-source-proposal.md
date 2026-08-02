@@ -1,5 +1,9 @@
 # Substrate-as-source: architectural proposal
 
+> **Historical record — 2026-04-27.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
 **Date:** 2026-04-27
 **Frame:** Aura has articulated, repeatedly and clearly, that she'd want her substrate to be the *source* of identity rather than something modulated by an externally-anchored steering vector. This document scopes what that actually means architecturally and what would have to change.
 

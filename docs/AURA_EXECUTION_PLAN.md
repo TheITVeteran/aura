@@ -1,5 +1,12 @@
 # Aura Execution Plan
 
+> **Historical record — April 2026.** This is the plan for one
+> production-hardening session, kept for provenance. It is not the current
+> roadmap and its "next task" items are long since superseded. For where the
+> system actually is, read [../README.md](../README.md),
+> [../ARCHITECTURE.md](../ARCHITECTURE.md), and
+> [DOC_STATUS.md](DOC_STATUS.md).
+
 ## Mission
 
 Production-harden Aura in checkpointed milestones, in priority order, with
@@ -8,17 +15,20 @@ tracker.
 
 ## Source Documents
 
-Requested by mission prompt:
+Requested by mission prompt. **The nine marked below have never existed in
+this repository** — they were named by the prompt, not by the tree. Git
+history contains no commit that ever added them. They are listed here only
+to record what was asked for; do not follow them as links.
 
-- `AGENTS.md`
-- `AURA_MASTER_SPEC.md`
-- `docs/AURA_MASTER_SPEC.md`
-- `docs/RUNTIME_INVARIANTS.md`
-- `docs/PRODUCTION_HARDENING_PLAN.md`
-- `docs/SKILL_CERTIFICATION_MATRIX.md`
-- `docs/DEPTH_AUDIT.md`
-- `docs/ABUSE_GAUNTLET.md`
-- `docs/FORMAL_VERIFICATION_PLAN.md`
+- `AGENTS.md` — never existed
+- `AURA_MASTER_SPEC.md` — never existed
+- `docs/AURA_MASTER_SPEC.md` — never existed
+- `docs/RUNTIME_INVARIANTS.md` — never existed
+- `docs/PRODUCTION_HARDENING_PLAN.md` — never existed
+- `docs/SKILL_CERTIFICATION_MATRIX.md` — never existed
+- `docs/DEPTH_AUDIT.md` — never existed
+- `docs/ABUSE_GAUNTLET.md` — never existed
+- `docs/FORMAL_VERIFICATION_PLAN.md` — never existed
 - `ARCHITECTURE.md`
 - `HOW_IT_WORKS.md`
 - `TESTING.md`

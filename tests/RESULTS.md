@@ -9,6 +9,10 @@ Run: 2026-04-14 19:06:19 UTC
 
 ## Test 2: Contradictory State (chemicals drive mood, not text)
 
+> **Historical record — 2026-06-03.** A dated snapshot, kept as written for
+> provenance. It is not a statement about the system today and is
+> deliberately not updated. Current status: [DOC_STATUS.md](../docs/DOC_STATUS.md).
+
   [PASS] 2.1 Cortisol → negative valence
          baseline_valence=0.17  stressed_valence=-0.08380000293254852  delta=-0.25380000472068787
   [PASS] 2.2 Cortisol → high stress
