@@ -4,6 +4,7 @@ import logging
 import secrets
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,11 @@ from core.runtime.organism_status import get_organism_status
 from core.runtime.service_access import optional_service
 
 logger = logging.getLogger("Aura.AuthorityGateway")
+
+#: How many unreconciled authority lifecycles are retained. Each one is a
+#: live grant nobody closed, so this is a queue that should be empty; a
+#: depth anywhere near this bound is itself the incident.
+UNRECONCILED_QUEUE_LIMIT = 256
 
 _USER_FACING_MEMORY_ORIGINS = frozenset(
     {
@@ -138,6 +144,25 @@ class AuthorityGateway:
         self._capabilities = get_capability_manager()
         self._standing_authority = get_standing_authority_manager()
         self._standing_lease_lock = threading.RLock()
+        # CP126: "The leaked token or open executive intent is reduced to
+        # degradation telemetry with no reconciliation" / "The caller cannot
+        # distinguish a closed operation from one that requires authority
+        # reconciliation."
+        #
+        # finalize_tool_execution already builds a receipt saying exactly
+        # which of intent / token / standing lease failed to close — and
+        # every call site discarded it. A capability token that was never
+        # revoked is a live grant with nothing tracking it; recording the
+        # failure as a log line and moving on means nobody can ever close it
+        # because nobody knows it is open.
+        #
+        # Queued here rather than persisted: this process holds the tokens,
+        # so a queue that outlives it would describe grants that no longer
+        # exist. Bounded, because an unbounded list of failures during a
+        # sustained outage is its own incident.
+        self._unreconciled_lock = threading.RLock()
+        self._unreconciled: deque[dict[str, Any]] = deque(maxlen=UNRECONCILED_QUEUE_LIMIT)
+        self._unreconciled_total = 0
         self._standing_leases_by_intent: dict[str, str] = {}
         self._standing_leases_by_capability: dict[str, str] = {}
         self._current_posture = "defensive_sandboxed"
@@ -1940,7 +1965,7 @@ class AuthorityGateway:
                 record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Standing-authority lease closure failed: %s", exc, exc_info=True)
                 errors.append(f"standing_authority:{type(exc).__name__}:{exc}")
-        return {
+        receipt = {
             "closed": intent_closed and token_revoked and standing_authority_closed,
             "mode": "authority_gateway",
             "success": bool(success),
@@ -1949,6 +1974,71 @@ class AuthorityGateway:
             "standing_authority_closed": standing_authority_closed,
             "errors": errors,
         }
+        if not receipt["closed"]:
+            # Recorded here rather than at each call site, so a caller that
+            # forgets to read the receipt still cannot make the leak vanish.
+            self.record_unreconciled_authority(
+                executive_intent_id=executive_intent_id,
+                capability_token_id=capability_token_id,
+                standing_authority_token=correlated_standing_token,
+                receipt=receipt,
+            )
+        return receipt
+
+    def record_unreconciled_authority(
+        self,
+        *,
+        executive_intent_id: str | None = None,
+        capability_token_id: str | None = None,
+        standing_authority_token: str | None = None,
+        receipt: dict[str, Any] | None = None,
+        reason: str = "",
+    ) -> None:
+        """Note an authority lifecycle that did not close.
+
+        Also reachable by callers whose finalize call RAISED, where there is
+        no receipt to inspect at all.
+        """
+        entry = {
+            "at": time.time(),
+            "executive_intent_id": executive_intent_id,
+            # Token identifiers only — never the token material.
+            "capability_token_id": capability_token_id,
+            "standing_authority_token_present": bool(standing_authority_token),
+            "reason": reason or "finalize_incomplete",
+            "receipt": dict(receipt or {}),
+        }
+        with self._unreconciled_lock:
+            if len(self._unreconciled) == self._unreconciled.maxlen:
+                logger.error(
+                    "Unreconciled-authority queue is full (%d); dropping the "
+                    "oldest. %d recorded since boot.",
+                    UNRECONCILED_QUEUE_LIMIT,
+                    self._unreconciled_total,
+                )
+            self._unreconciled.append(entry)
+            self._unreconciled_total += 1
+        record_degradation(
+            'authority_gateway',
+            RuntimeError(
+                "authority lifecycle did not close "
+                f"(intent={executive_intent_id!r} token={capability_token_id!r} "
+                f"reason={entry['reason']})"
+            ),
+            severity="critical",
+            action="queued an unreconciled capability grant for reconciliation",
+            enforce_failure_policy=False,
+        )
+
+    def unreconciled_authority(self) -> dict[str, Any]:
+        """Authority lifecycles known to be open, for health and diagnostics."""
+        with self._unreconciled_lock:
+            return {
+                "open": len(self._unreconciled),
+                "total_since_boot": self._unreconciled_total,
+                "limit": UNRECONCILED_QUEUE_LIMIT,
+                "entries": [dict(entry) for entry in self._unreconciled],
+            }
 
     def _complete_intent_safely(self, intent_id: str | None, *, success: bool = True) -> None:
         if not intent_id:

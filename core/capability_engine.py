@@ -261,6 +261,35 @@ _CRITICAL_ACTION_SKILLS = frozenset(
 )
 
 
+def _record_unreconciled_authority(auth: Any, *, reason: str) -> None:
+    """Queue an authority grant whose finalization never completed.
+
+    Used where finalize_tool_execution RAISED, so there is no receipt to
+    inspect. When it merely returns closed=False the gateway queues the
+    entry itself, so a caller cannot make the leak vanish by ignoring the
+    return value.
+    """
+    try:
+        from core.executive.authority_gateway import get_authority_gateway
+
+        get_authority_gateway().record_unreconciled_authority(
+            executive_intent_id=getattr(auth, "executive_intent_id", None),
+            capability_token_id=getattr(auth, "capability_token_id", None),
+            standing_authority_token=getattr(auth, "standing_authority_token", None),
+            reason=reason,
+        )
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        # The gateway itself is unreachable. This is the one place left where
+        # the record can only be a log line, and it says so.
+        logging.getLogger(__name__).critical(
+            "UNRECONCILED AUTHORITY (unrecordable): reason=%s intent=%s token=%s (%s)",
+            reason,
+            getattr(auth, "executive_intent_id", None),
+            getattr(auth, "capability_token_id", None),
+            exc,
+        )
+
+
 def _record_capability_degradation(
     exc: BaseException,
     *,
@@ -807,6 +836,18 @@ class Shell:
                 capture_output=True,
                 source="capability_engine.shell",
             )
+            # CP126 (critical): "The subprocess effect can occur,
+            # finalization can fail, and the helper still returns the process
+            # result as its authoritative outcome. The leaked token or open
+            # executive intent is reduced to degradation telemetry with no
+            # reconciliation."
+            #
+            # The command has already run — reporting its real result is
+            # correct, and inventing a failure would be worse. What was
+            # missing is that the authority leak became invisible: the
+            # receipt naming exactly which of intent/token/lease stayed open
+            # was discarded, and a raise left nothing recorded at all. Both
+            # now reach the gateway's reconciliation queue.
             try:
                 from core.executive.authority_gateway import get_authority_gateway
 
@@ -824,9 +865,14 @@ class Shell:
                 TypeError,
                 ValueError,
             ) as finalize_error:
+                _record_unreconciled_authority(
+                    auth,
+                    reason=f"shell_finalize_raised:{type(finalize_error).__name__}",
+                )
                 _record_capability_degradation(
                     finalize_error,
                     action="returned shell result after authority finalization failed",
+                    severity="critical",
                 )
             return result.returncode == 0, (result.stdout + "\n" + result.stderr).strip()
         except (subprocess.TimeoutExpired, OSError, ValueError) as e:
@@ -926,9 +972,17 @@ class WebClient:
                 TypeError,
                 ValueError,
             ) as finalize_error:
+                # Same shape as the shell path: the request already went out,
+                # so the response is the honest answer — but an unrevoked
+                # capability token must not disappear into a log line.
+                _record_unreconciled_authority(
+                    auth,
+                    reason=f"network_finalize_raised:{type(finalize_error).__name__}",
+                )
                 _record_capability_degradation(
                     finalize_error,
                     action="returned network response after authority finalization failed",
+                    severity="critical",
                 )
             if not ok:
                 return False, str(response.get("error") or "network request failed")
