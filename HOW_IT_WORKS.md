@@ -10,14 +10,24 @@ quick start.
 
 ## The one-line summary
 
-Aura is an organism-inspired digital agent architecture, not just a chatbot
-wrapper.
+Most AI companion projects store a mood number, paste it into the system
+prompt, and let the model act it out. The model says it feels energetic
+because it read the words "feeling energetic."
 
-It has one central decision gate (the Unified Will), persistent memory, a
-resource-stakes metabolism analog, affective state that can influence
-generation and action selection, and offline consolidation. Those are functional
-mechanisms with tests and receipts. They are not proof of life, a soul,
-personhood, or phenomenal consciousness.
+Aura is built the other way around. Internal state becomes a direction
+vector added to the transformer's hidden activations during generation. The
+computation changes, not just the text the model reads.
+
+Around that sits an organism: one decision gate that signs off on every
+consequential action, memory that persists, a resource-stakes metabolism,
+affect that reaches generation and action selection, and offline
+consolidation while she's idle.
+
+Those are mechanisms. They have tests and receipts. They are not proof of
+life, a soul, personhood, or phenomenal consciousness — and this document
+will keep saying so, because the vocabulary in here (qualia, consciousness,
+will) makes it easy to slide from "we built a mechanism" to "we built a
+mind." Those are different claims.
 
 ---
 
@@ -633,12 +643,12 @@ for.
 
 ## Honest limits
 
-1. **This is a sandbox, not a proof of consciousness.** Implementing
-   multiple theories as working software isn't the same as validating
-   them. GWT, IIT, HOT, enactivism, and illusionism operate at different
-   explanatory levels. Running them side by side tests our *implementation
-   choices* more than the theories themselves. The value is in making the
-   ideas inspectable, not in settling the sentience debate.
+1. **This is a sandbox, not a proof of consciousness.** Implementing a
+   theory as working software is not validating it. GWT, IIT, HOT,
+   enactivism and illusionism operate at different explanatory levels, so
+   running them side by side tests our *implementation choices* more than
+   it tests the theories. The value is that the ideas are inspectable. The
+   sentience debate is exactly where we left it.
 
 2. **The neurotransmitter model is a simplification.** Real
    neurochemistry involves thousands of receptor subtypes, spatial

@@ -2,9 +2,22 @@
 
 ## Purpose
 
-This document catalogs known failure modes, their likelihood, impact, detection
-method, and recovery procedure. Every operator should read this before running
-Aura in any production-like setting.
+Nineteen ways this runtime fails, what each one looks like, and what to do
+about it. Every one has a runbook.
+
+Read the split before you read the list. **F01–F14 are failure classes we
+plan for.** F15–F19 are different: they actually happened, on the live
+desktop, under sustained conversation, with forensics still on disk. Those
+five are the real daily-runtime edges. If you only have time for part of
+this document, read those.
+
+One of them, F16, is **not fully fixed** and says so. MLX cannot soft-cancel
+a running generation, so freeing a busy worker means killing it and
+unloading 18 GB. The kill is the recovery. Mitigations make that survivable;
+they don't make it go away.
+
+Every operator should read this before running Aura in any production-like
+setting.
 
 ## Critical Failure Modes
 
@@ -94,6 +107,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Irrelevant context in responses
 **Detection**: Memory retrieval quality metrics; user feedback
 **Recovery**: Re-index memory; consolidation cycle
+**Runbook**: `docs/runbooks/stale-memory-retrieval.md`
 
 ### F10: Identity drift
 
@@ -102,6 +116,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Aura's personality/identity becomes inconsistent
 **Detection**: Identity coherence check; CanonicalSelf hash
 **Recovery**: Reset CanonicalSelf from canonical snapshot
+**Runbook**: `docs/runbooks/identity-drift.md`
 
 ### F11: Tool execution timeout
 
@@ -110,6 +125,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Individual tool call fails
 **Detection**: Timeout enforcement; degradation recording
 **Recovery**: Automatic — tool reports failure; Aura retries or explains
+**Runbook**: `docs/runbooks/tool-timeout-storm.md`
 
 ### F12: Lock contention/deadlock
 
@@ -120,6 +136,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Recovery**: Automatic — watchdog releases stale locks after threshold
 
 ## Low Severity Failure Modes
+**Runbook**: `docs/runbooks/lock-contention-deadlock.md`
 
 ### F13: Log rotation failure
 
@@ -128,6 +145,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Impact**: Logs stop writing; no data loss
 **Detection**: Log write error; disk space monitor
 **Recovery**: Free disk space; restart log rotation
+**Runbook**: `docs/runbooks/log-rotation-failure.md`
 
 ### F14: Telemetry emission failure
 
@@ -142,6 +160,7 @@ now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 These were seen and root-fixed on the live desktop instance under sustained
 conversation. They are documented because they are the *real* daily-runtime
 edges, not hypotheticals.
+**Runbook**: `docs/runbooks/telemetry-emission-failure.md`
 
 ### F15: mind_tick false-death → "Connecting to runtime"
 
@@ -157,6 +176,7 @@ desktop GUI reverts to the "Connecting to runtime" reconnect surface.
 foreground load; dead contract loops are revived from health-pulse threads via
 the owning event loop; the GUI keeps the live UI in a `degraded_ready` state
 whenever conversation is ready. Self-recovers; a restart clears it immediately.
+**Runbook**: `docs/runbooks/mind-tick-false-death.md`
 
 ### F16: MLX worker-kill cold-lane cascade (the honest daily-stability edge)
 
@@ -176,6 +196,7 @@ shared worker, respawn waits for memory reclaim, and mid-load workers are not
 torn down. **Open architectural work**: a soft-cancel path into the MLX worker
 or a persistent model server; more host RAM headroom removes the cascade
 entirely.
+**Runbook**: `docs/runbooks/mlx-worker-cold-lane-cascade.md`
 
 ### F17: Failure-lockdown escalation from expected backpressure
 
@@ -192,6 +213,7 @@ lines for memory/tool actions.
 **Recovery**: Fixed — `core/runtime/backpressure.py` records expected
 backpressure on a non-fail-closed channel with the policy disabled; foreground
 yields precede background generation.
+**Runbook**: `docs/runbooks/failure-lockdown-from-backpressure.md`
 
 ### F18: Launch-provenance `ready:false` on source drift
 
@@ -206,6 +228,7 @@ signal, not a functional break.
 `commit_sha_mismatch` / `workspace_state_sha256_mismatch`.
 **Recovery**: Expected in dev. To clear: rebuild/re-sign the app to re-pin, or
 launch via `launch_aura.sh` (which does not require provenance).
+**Runbook**: `docs/runbooks/launch-provenance-not-ready.md`
 
 ### F19: Quadratic conversation cost from a never-reused prompt cache
 
@@ -248,3 +271,4 @@ whether something upstream is throwing away correct work.
 | Model re-download | Quarterly | Delete model → verify re-acquisition |
 | State corruption recovery | Quarterly | Corrupt test DB → verify recovery |
 | Full disaster recovery | Annually | Fresh machine → full install → restore |
+**Runbook**: `docs/runbooks/prompt-cache-never-reused.md`

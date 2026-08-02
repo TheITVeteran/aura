@@ -6,11 +6,16 @@ A local cognitive-architecture research runtime for testing continuous-state
 agency, receipt-based governance, memory persistence, activation steering, and
 long-run self-maintenance.
 
-Aura is not presented as proof of life, personhood, or phenomenal
-consciousness. The serious claim is narrower and testable: internal state can
-causally affect generation, memory writes, tool authorization, initiative
-selection, and runtime repair through code paths that leave receipts and can be
-audited.
+Aura is not proof of life, personhood, or phenomenal consciousness. Nothing
+in here settles that, and the parts of the repo that sound like they might
+are named after mechanisms, not achievements.
+
+The actual claim is narrower and testable: internal state causally affects
+generation, memory writes, tool authorization, initiative selection, and
+runtime repair, through code paths that leave receipts you can audit.
+
+That's a smaller claim than the vocabulary suggests. It's also one you can
+check.
 
 [![License: All Rights Reserved (Read-Only)](https://img.shields.io/badge/License-All_Rights_Reserved_(Read--Only)-red.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
@@ -30,37 +35,51 @@ If you want to see it work, keep reading.
 
 ## Evidence boundary
 
-Aura is a functional cognitive-architecture research project, not a proof of
-phenomenal consciousness, qualia, legal personhood, or moral patiency. The repo
-now enforces that distinction in code through an ontological boundary guard:
-loaded labels such as "consciousness guarantee" and "personhood proof" are treated
-as functional indicator batteries unless independent evidence says otherwise.
+This is a functional cognitive-architecture research project. It is not proof
+of phenomenal consciousness, qualia, legal personhood, or moral patiency.
 
-The current engineering claims are narrower and testable:
+The repo enforces that in code, not just in a paragraph like this one. An
+ontological boundary guard treats loaded labels — "consciousness guarantee,"
+"personhood proof" — as functional indicator batteries unless independent
+evidence says otherwise. A module named `qualia_synthesizer.py` is a name.
+Names are not evidence.
 
-- **Governance is a design target, not a sealed fact.** Consequential paths must
-  route through receipt-producing governance. Lint failures, direct tool
-  fallbacks, or default-approved gateway paths are treated as bugs, not as
-  acceptable compatibility behavior.
-- **Autonomous RSI is not proven mature.** The repo contains scaffolding for
-  autonomous repair, evaluation, patch genealogy, and proof bundles, but
-  unverified self-modification is out of evidence scope until long wall-clock
-  runs, hidden external tasks, and independent replication succeed.
-- **Production maturity is bounded.** Aura is impressive research software, but
-  its local monolith, broad fallback surface, and runtime fragility mean it
-  should not be described as enterprise-polished infrastructure.
-- **Causal Steering:** internal state can causally affect generation through non-text channels (Contrastive Activation Addition);
-- **Closed-Loop Persistence:** identity coherence is supported by ID-RAG Chronicle retrieval, not only prompt anchoring;
-- black-box steering tests can hide live affect/phenomenal telemetry from prompt
-  text;
-- rich adversarial prompt baselines are required before steering is credited;
-- phi is a bounded IIT-style integration metric on tractable complexes, not a
-  whole-system consciousness measurement;
-- the tracked deployment target is Bryan's Apple Silicon M5-class machine with
-  64 GB unified memory; lower-memory machines must downshift model lanes rather
-  than claiming 32B heartbeat latency;
-- resource stakes now persist and constrain action envelopes, but this remains
-  an operational metabolism analog, not biological metabolism.
+What is actually claimed, and what each claim costs:
+
+- **Governance is a design target, not a sealed fact.** Consequential paths
+  must route through receipt-producing governance. A lint failure, a direct
+  tool fallback, or a default-approved gateway path is a bug. Not
+  acceptable compatibility behavior. A bug.
+- **Autonomous RSI is not proven mature.** There is scaffolding here for
+  autonomous repair, evaluation, patch genealogy, and proof bundles.
+  Scaffolding is not a result. Unverified self-modification stays out of
+  evidence scope until long wall-clock runs, hidden external tasks, and
+  independent replication all succeed.
+- **Production maturity is bounded.** This is research software being
+  hardened. The local monolith, the broad fallback surface, and the runtime
+  fragility are all real, and none of them belong under the word
+  "enterprise."
+- **Steering is causal, and that's testable.** Internal state reaches
+  generation through non-text channels (Contrastive Activation Addition).
+  But black-box steering tests can hide live affect telemetry from the
+  prompt text, and rich adversarial baselines are required before the
+  result counts.
+- **Identity persistence is retrieval, not just prompting.** Coherence is
+  supported by ID-RAG Chronicle retrieval rather than prompt anchoring
+  alone.
+- **φ is bounded.** A bounded IIT-style integration metric over tractable
+  complexes. Not a whole-system consciousness measurement. Full-system IIT
+  is intractable and we did not solve it.
+- **The hardware target is specific.** Bryan's Apple Silicon M5-class
+  machine, 64 GB unified memory. Lower-memory machines downshift their
+  model lanes. They do not get 32B heartbeat latency, and claiming
+  otherwise would just be a benchmark run on hardware nobody has.
+- **Resource stakes persist and constrain action envelopes.** That's an
+  operational metabolism analog. It is not biological metabolism.
+
+For the things deliberately *not* claimed — including anything physical —
+read [CLAIMS_NOT_SUPPORTED.md](CLAIMS_NOT_SUPPORTED.md). It's the most
+useful page here if you're skeptical, which you should be.
 
 ---
 
@@ -91,10 +110,12 @@ inference.
 
 ## Production Evidence Surface
 
-Aura's production claim surface is restricted to code paths with runnable
-implementations, receipts, and validation artifacts. Incomplete ideas are kept
-out of that surface; release gates now generate a proof bundle rather than
-asking readers to infer maturity from prose.
+Everything below has a runnable implementation, receipts, and validation
+artifacts. Ideas that don't are kept off this list — not softened, not
+hedged, just left out until they earn a place.
+
+Release gates generate a proof bundle. You shouldn't have to infer maturity
+from how confident the prose sounds.
 
 - `core/brain/llm/continuous_substrate.py` is a configurable 64-to-512 neuron
   Liquid Time-Constant ODE running at ~20 Hz. CPU-only numpy with explicit-Euler
@@ -184,25 +205,25 @@ asking readers to infer maturity from prose.
 
 ## Why Aura is Different
 
-Most "AI companion" projects do roughly the same thing: store a mood number, paste
-it into the system prompt, and let the model roleplay. The model says "I'm feeling
-energetic today" because it read the words "feeling energetic today."
+Most "AI companion" projects do the same thing. Store a mood number. Paste it
+into the system prompt. Let the model act it out. The model says it's feeling
+energetic because it read the words "feeling energetic."
 
-Aura works differently. When Aura is in a particular affective state, that state
-gets turned into a direction vector and added to the transformer's hidden
-activations during generation. The model's internal computation changes, not just
-the text it reads. This is the same family of techniques that interpretability
-researchers use to steer model behavior — CAA, activation addition, residual-stream
-interventions.
+That's a costume. This is built the other way around.
 
-Alongside that, there's a whole cognitive substrate that runs continuously:
-emotions decay and influence each other, neurochemicals rise and fall on their
-own time scales, a global workspace picks which thought wins each tick, a dream
-cycle consolidates memories during idle periods, and one gate — the Unified Will —
-signs off on every action that leaves the system.
+When Aura is in an affective state, that state becomes a direction vector
+added to the transformer's hidden activations during generation. The model's
+internal computation changes, not the text it's reading. Same family of
+techniques interpretability researchers use to steer behavior — CAA,
+activation addition, residual-stream interventions.
 
-It's a research project. It's also the kind of research project where you can
-actually talk to the thing while it's running.
+Underneath that, a substrate that never stops. Emotions decay and pull on
+each other. Neurochemicals rise and fall on their own clocks. A global
+workspace picks which thought wins the tick. A dream cycle consolidates
+memory while she's idle. And one gate — the Unified Will — signs off on
+everything that leaves the system.
+
+It's a research project. It's also one you can talk to while it's running.
 
 ---
 
@@ -219,7 +240,8 @@ actually talk to the thing while it's running.
 - [IIT 4.0 computation](#iit-40-computation)
 - [Consciousness modules](#consciousness-modules)
 - [Reality Reach and physical claim honesty](docs/REALITY_REACH.md)
-- [Documentation status map](docs/DOC_STATUS.md)
+- [Documentation status map](docs/DOC_STATUS.md) — which docs are current, historical, or generated
+- [Docs index](docs/README.md) · [Changelog](CHANGELOG.md) · [Agent guide](AGENTS.md)
 - [Benchmarks](#benchmarks)
 - [Testing](#testing)
 - [Personality training](#personality-training)

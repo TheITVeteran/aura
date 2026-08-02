@@ -56,6 +56,25 @@ make lint
 | `@pytest.mark.integration` | Full pipeline | Before merge |
 | `@pytest.mark.stress` | Load / fault injection | Weekly |
 
+## CP checkpoints
+
+Two commit formats coexist here, both legitimate.
+
+Conventional commits cover ordinary work: `fix(scope):`, `feat(scope):`,
+`chore(scope):`, `docs(scope):`, `test(scope):`, `perf(scope):`.
+
+**CP-numbered checkpoints** cover tracked units of a long-running programme:
+
+    CP799 <subject>
+
+A CP is a numbered checkpoint. The sequence is monotonic and currently near
+800. The number is referenced from closeout artifacts under
+`artifacts/closeout/` and from the programme ledgers in `docs/`, so it works
+as a key — don't invent one out of sequence, and never reuse one. Both
+formats appear together when a checkpoint is also a fix:
+
+    fix(inference_gate): CP126 — a viability block that later modifiers undid
+
 ## Commits
 
 ```
