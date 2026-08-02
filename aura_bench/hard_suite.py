@@ -16,13 +16,10 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.sandbox.untrusted_python import run_untrusted_script
 
 _NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 # Imports a grader-run script must never contain (defense-in-depth; tasks are pure).
@@ -153,23 +150,45 @@ def _ast_is_safe(code: str) -> bool:
 
 
 def _grade_code(answer: str, task: HardTask, *, timeout: float = 10.0) -> float:
+    """Grade model-written code by running it — under a kernel boundary.
+
+    CP126 (critical): "AST screening and Python isolation do not sandbox
+    model code. The denylist is bypassable through allowed modules, object
+    traversal, or indirect builtins, and -I only isolates import
+    configuration rather than filesystem, process, network, or resource
+    access."
+
+    Both halves were true. ``_ast_is_safe`` is a source-text denylist, and
+    ``().__class__.__mro__[1].__subclasses__()`` reaches ``os`` without an
+    import statement for it to see. ``python -I`` ignores PYTHON* variables
+    and drops the script directory from sys.path — import hygiene, not
+    isolation: the child kept this machine's filesystem, network and exec
+    access in full while grading whatever the model happened to write.
+
+    The AST screen is kept, deliberately. It is a cheap first filter that
+    catches honest mistakes and keeps obviously-wrong submissions out of a
+    subprocess, and it is now backed by something that holds when it is
+    fooled.
+    """
     code = _extract_code_block(answer)
     if task.entrypoint and task.entrypoint not in code:
         return 0.0
     if not _ast_is_safe(code):
         return 0.0
     script = code + "\n\n" + "\n".join(task.tests) + "\nprint('ALL_TESTS_PASSED')\n"
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "grade.py"
-        atomic_write_text(path, script, encoding="utf-8")
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-I", "-B", str(path)],
-                capture_output=True, text=True, timeout=timeout, cwd=d,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            return 0.0
-    return 1.0 if proc.returncode == 0 and "ALL_TESTS_PASSED" in proc.stdout else 0.0
+    outcome = run_untrusted_script(
+        script,
+        timeout_s=timeout,
+        source="hard_suite.grade_code",
+    )
+    if outcome.status == "no_boundary":
+        # Refusing to grade is the correct outcome, but it must not be
+        # silently scored as a failed submission — that would read as "the
+        # model got it wrong" when the truth is "we declined to find out".
+        raise RuntimeError(
+            f"cannot grade code safely: {outcome.error}"
+        )
+    return 1.0 if outcome.status == "ok" and "ALL_TESTS_PASSED" in outcome.stdout else 0.0
 
 
 def _grade_numeric(answer: str, gold: str) -> float:
