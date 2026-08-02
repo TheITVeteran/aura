@@ -5188,32 +5188,69 @@ class CapabilityEngine(AuraBaseModule):
                         if bool(isinstance(result, dict) and result.get("ok", False))
                         else str((result or {}).get("error", "")),
                     )
-                    if skill_name == "os_automation" and isinstance(result, dict):
+                    # CP126 (critical): "finish_tool_execution runs for every
+                    # approved tool, but a false or exceptional closure receipt
+                    # downgrades only os_automation. File writes, shell
+                    # actions, email, browser work, and other external effects
+                    # can return ok after their tool authority failed to
+                    # close."
+                    #
+                    # The os_automation branch had the right shape and the
+                    # wrong scope: one skill name, hardcoded. Every effectful
+                    # skill now gets the same treatment, keyed on the declared
+                    # effect scope rather than a name — and `unknown` counts as
+                    # effectful, because an unclassified skill is not a safe
+                    # one. Non-effectful skills still carry the receipt so the
+                    # failure is visible, but their result is not invalidated:
+                    # a read-only call did not leave anything to reconcile.
+                    if isinstance(result, dict):
+                        # A MISSING receipt and a receipt that REPORTS FAILURE
+                        # are different facts. os_automation has always
+                        # treated "no receipt" as a failed closure and that
+                        # contract is preserved; for every other skill, a
+                        # constitution that returned nothing has told us
+                        # nothing, so it is recorded rather than used to
+                        # invalidate the caller's result.
                         if not isinstance(closure_receipt, dict):
                             closure_receipt = {
-                                "closed": False,
+                                "closed": skill_name != "os_automation",
                                 "mode": "constitutional_closure",
+                                "receipt_present": False,
                                 "errors": ["constitutional core returned no closure receipt"],
                             }
                         result["authority_closure"] = closure_receipt
                         if not bool(closure_receipt.get("closed")):
-                            original_status = str(result.get("status") or "")
-                            attempt_rows = result.get("attempts")
-                            if not isinstance(attempt_rows, list):
-                                attempt_rows = []
-                            action_may_have_occurred = bool(result.get("effect_verified")) or any(
-                                bool(attempt.get("transport_success"))
-                                for attempt in attempt_rows
-                                if isinstance(attempt, dict)
+                            closure_scope = self._declared_effect_scope(skill_name)
+                            _record_unreconciled_authority(
+                                tool_handle,
+                                reason=f"closure_receipt_not_closed:{skill_name}",
                             )
-                            result["ok"] = False
-                            result["status"] = "authority_closure_failed"
-                            result["authority_closure_original_status"] = original_status
-                            result["manual_reconciliation_required"] = action_may_have_occurred
-                            result["error"] = (
-                                "OS automation authority did not close cleanly after execution. "
-                                "Do not retry automatically until capability-token state is reconciled."
-                            )
+                            if closure_scope in _PRE_RUNTIME_UNGATED_EFFECT_SCOPES:
+                                result["authority_closure_effect_scope"] = closure_scope
+                            else:
+                                original_status = str(result.get("status") or "")
+                                attempt_rows = result.get("attempts")
+                                if not isinstance(attempt_rows, list):
+                                    attempt_rows = []
+                                action_may_have_occurred = bool(
+                                    result.get("effect_verified")
+                                ) or any(
+                                    bool(attempt.get("transport_success"))
+                                    for attempt in attempt_rows
+                                    if isinstance(attempt, dict)
+                                )
+                                result["ok"] = False
+                                result["status"] = "authority_closure_failed"
+                                result["authority_closure_original_status"] = original_status
+                                result["authority_closure_effect_scope"] = closure_scope
+                                result["manual_reconciliation_required"] = (
+                                    action_may_have_occurred
+                                )
+                                result["error"] = (
+                                    f"{skill_name} authority did not close cleanly after "
+                                    "execution. Do not retry automatically until "
+                                    "capability-token state is reconciled."
+                                )
             except (
                 OSError,
                 ConnectionError,
@@ -5229,21 +5266,35 @@ class CapabilityEngine(AuraBaseModule):
                     severity="degraded",
                 )
                 self.logger.debug("Suppressed Exception: %s", _exc)
-                if skill_name == "os_automation" and isinstance(result, dict):
-                    result["ok"] = False
-                    result["status"] = "authority_closure_failed"
-                    result["manual_reconciliation_required"] = bool(
-                        result.get("effect_verified")
-                    )
+                # Same generalisation on the raise path: a closure that threw
+                # closed nothing, whichever skill it was for.
+                if isinstance(result, dict):
+                    # A raise is a real closure failure — unlike a missing
+                    # receipt, it is positive evidence that closure did not
+                    # complete — so this path does invalidate effectful
+                    # results.
+                    closure_scope = self._declared_effect_scope(skill_name)
                     result["authority_closure"] = {
                         "closed": False,
                         "mode": "constitutional_closure",
+                        "receipt_present": False,
                         "errors": [f"{type(_exc).__name__}:{_exc}"],
                     }
-                    result["error"] = (
-                        "OS automation authority closure raised an error; "
-                        "capability-token state requires reconciliation."
+                    result["authority_closure_effect_scope"] = closure_scope
+                    _record_unreconciled_authority(
+                        tool_handle,
+                        reason=f"closure_receipt_raised:{type(_exc).__name__}",
                     )
+                    if closure_scope not in _PRE_RUNTIME_UNGATED_EFFECT_SCOPES:
+                        result["ok"] = False
+                        result["status"] = "authority_closure_failed"
+                        result["manual_reconciliation_required"] = bool(
+                            result.get("effect_verified")
+                        )
+                        result["error"] = (
+                            f"{skill_name} authority closure raised an error; "
+                            "capability-token state requires reconciliation."
+                        )
 
     def _apply_security(
         self, skill_name: str, params: dict[str, Any]
