@@ -262,7 +262,7 @@ def _escape(path: str) -> str:
 
 def _bubblewrap_argv(*, scratch: Path, read_paths: Sequence[str]) -> list[str]:
     argv = [
-        "bwrap",
+        _which("bwrap"),
         "--unshare-all",          # no network, no pids, no ipc
         "--die-with-parent",
         "--new-session",
@@ -550,10 +550,21 @@ def _wrap_with_boundary(
     if boundary == "seatbelt":
         profile_path = scratch / "profile.sb"
         atomic_write_text(profile_path, _seatbelt_profile(scratch=scratch, read_paths=read_paths))
-        return ["sandbox-exec", "-f", str(profile_path), *command]
+        # Absolute path, because the child environment carries an empty
+        # PATH by design. Naming the bare binary makes the boundary itself
+        # unresolvable, and the whole run fails to spawn.
+        return [_which("sandbox-exec"), "-f", str(profile_path), *command]
     if boundary == "bubblewrap":
         return [*_bubblewrap_argv(scratch=scratch, read_paths=read_paths), *command]
     return list(command)
+
+
+def _which(binary: str) -> str:
+    """Absolute path to a boundary binary, resolved against the real PATH."""
+    resolved = shutil.which(binary)
+    if not resolved:
+        raise UntrustedExecutionError(f"{binary} disappeared between discovery and use")
+    return resolved
 
 
 def _spawn(
