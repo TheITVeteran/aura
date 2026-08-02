@@ -1344,20 +1344,44 @@ class ConstitutionalCore:
         payload: dict[str, Any] | None = None,
         state: Any = None,
     ) -> ConstitutionalDecision:
+        # CP126 (critical): "External callers can record approved
+        # constitutional decisions. record_external_decision maps
+        # caller-provided outcome strings to APPROVED and records the
+        # caller-provided source without signed authority, verifier identity,
+        # or proof that any adjudication occurred."
+        #
+        # This method exists to LOG a decision made elsewhere. Mapping
+        # "approved"/"released"/"queued" onto ProposalOutcome.APPROVED let a
+        # caller mint a verdict this core never reached, indistinguishable in
+        # the history from one it did — an approval by assertion.
+        #
+        # An externally reported outcome is now RECORDED (which is precisely
+        # what happened: something was recorded) with the caller's claim
+        # preserved verbatim. Nothing is lost from the audit trail, and
+        # nothing in it claims this core approved anything it did not.
+        # REJECTED and DEGRADED are kept as-is: a caller reporting a refusal
+        # or a degradation against itself is not claiming authority.
+        claimed = str(outcome).lower()
         decision_outcome = {
-            "approved": ProposalOutcome.APPROVED,
-            "released": ProposalOutcome.APPROVED,
-            "queued": ProposalOutcome.APPROVED,
             "recorded": ProposalOutcome.RECORDED,
             "suppressed": ProposalOutcome.REJECTED,
             "rejected": ProposalOutcome.REJECTED,
             "degraded": ProposalOutcome.DEGRADED,
-        }.get(str(outcome).lower(), ProposalOutcome.RECORDED)
+        }.get(claimed, ProposalOutcome.RECORDED)
+        externally_claimed_approval = claimed in {"approved", "released", "queued"}
+        if externally_claimed_approval:
+            reason = f"{reason}|externally_claimed:{claimed}(not_adjudicated_here)"
         proposal = ConstitutionalProposal(
             kind=kind,
             source=source,
             summary=summary,
-            payload=dict(payload or {}),
+            payload={
+                **dict(payload or {}),
+                # Provenance, so a reader can tell a reported decision from
+                # an adjudicated one without parsing the reason string.
+                "adjudicated_by": "external_caller",
+                "externally_claimed_outcome": claimed,
+            },
         )
         return self._record_decision(
             ConstitutionalDecision(
