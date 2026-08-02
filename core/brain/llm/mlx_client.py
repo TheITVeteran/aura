@@ -3024,8 +3024,19 @@ class MLXLocalClient:
         goes through here, so a privileged contract cannot reach the worker
         without the authority of the lane that owns it. Jobs selecting
         nothing privileged are returned untouched.
+
+        This is also where the causal trace crosses the process boundary. The
+        machinery for that (core/runtime/causal_trace.inject_trace_carrier) had
+        existed for a while with ZERO call sites, so a turn's trace stopped at
+        the IPC edge and worker-side events could not be correlated back to the
+        conversation that caused them. Injecting here rather than at each job
+        construction site means every job type is covered by one wiring, and no
+        future job path can forget.
         """
-        if not isinstance(job, dict) or not self._contract_key:
+        if not isinstance(job, dict):
+            return job
+        job = self._inject_causal_trace(job)
+        if not self._contract_key:
             return job
         try:
             from core.brain.llm.contract_authority import sign_job
@@ -3037,6 +3048,28 @@ class MLXLocalClient:
                 action="could not sign a privileged contract selection",
                 severity="error",
             )
+            return job
+
+    @staticmethod
+    def _inject_causal_trace(job: dict[str, Any]) -> dict[str, Any]:
+        """Attach the active trace context to an outbound job.
+
+        Added AFTER any request digest is computed by callers and under keys no
+        digest covers, so propagation cannot invalidate a signed contract. If no
+        trace is active the job is returned untouched — this must never
+        fabricate a correlation that does not exist.
+        """
+        try:
+            from core.runtime.causal_trace import current_span, inject_trace_carrier
+
+            if current_span() is None:
+                return job
+            return inject_trace_carrier(job)
+        except Exception:  # noqa: BLE001
+            # Total on purpose. This is observability decorating a job that is
+            # about to do real work; a tracing fault must never be able to take
+            # down inference. The job proceeds untraced, which loses a
+            # correlation but not the answer.
             return job
 
     def _record_latent_progress(self, response: dict[str, Any]) -> None:

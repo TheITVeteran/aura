@@ -9,21 +9,23 @@ at runtime.  Exporters can consume the JSONL ledger later.
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger("core.runtime.causal_trace")
+import asyncio
 import contextvars
 import json
 import os
 import time
 import uuid
-import asyncio
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Optional
+from typing import Any
+
 from core.runtime.state_ownership import state_root
 
-
-_active_span: contextvars.ContextVar[Optional["TraceSpanContext"]] = contextvars.ContextVar(
+_active_span: contextvars.ContextVar[TraceSpanContext | None] = contextvars.ContextVar(
     "aura_active_causal_span",
     default=None,
 )
@@ -39,7 +41,7 @@ class TraceSpanContext:
     started_at: float = field(default_factory=time.time)
     attrs: dict[str, Any] = field(default_factory=dict)
 
-    def child(self, name: str, **attrs: Any) -> "TraceSpanContext":
+    def child(self, name: str, **attrs: Any) -> TraceSpanContext:
         merged = dict(self.attrs)
         merged.update(attrs)
         return TraceSpanContext(
@@ -58,7 +60,42 @@ class TraceSpanContext:
             "parent_span_id": self.parent_span_id,
             "trace_name": self.name,
             "trace_origin": self.origin,
+            # W3C Trace Context, so a carrier that leaves Aura is readable by
+            # any standard tool without a translation layer. Aura's own ids are
+            # the authority; this is a rendering of them, not a second identity.
+            "traceparent": self.traceparent(),
         }
+
+    def traceparent(self) -> str:
+        """Render this span as a W3C ``traceparent`` header value.
+
+        Format: version-trace_id-parent_id-flags, with trace_id 32 hex chars
+        and span_id 16. Aura's ids are already hex but not always those exact
+        widths, so they are normalised here rather than emitting a header that
+        a conformant parser would reject.
+        """
+        trace = _as_hex(self.trace_id, 32)
+        span = _as_hex(self.span_id, 16)
+        # 01 = sampled. Aura records every span locally, so every one is.
+        return f"00-{trace}-{span}-01"
+
+
+def _as_hex(value: str, width: int) -> str:
+    """Normalise an id to exactly ``width`` lowercase hex characters.
+
+    Truncating or padding keeps the value stable and collision-resistant while
+    satisfying parsers that reject the wrong length. A non-hex id is hashed
+    rather than mangled, so an unusual id still yields a valid, stable header.
+    """
+    text = str(value or "").lower()
+    cleaned = "".join(ch for ch in text if ch in "0123456789abcdef")
+    if len(cleaned) < width:
+        import hashlib
+
+        cleaned = hashlib.blake2b(
+            str(value or "").encode("utf-8", "ignore"), digest_size=width
+        ).hexdigest()
+    return cleaned[:width]
 
 
 def new_trace(name: str, *, origin: str = "runtime", **attrs: Any) -> TraceSpanContext:
@@ -71,7 +108,7 @@ def new_trace(name: str, *, origin: str = "runtime", **attrs: Any) -> TraceSpanC
     )
 
 
-def current_span() -> Optional[TraceSpanContext]:
+def current_span() -> TraceSpanContext | None:
     return _active_span.get()
 
 
@@ -111,7 +148,7 @@ def inject_trace_carrier(payload: Mapping[str, Any] | None = None) -> dict[str, 
     return out
 
 
-def extract_trace_carrier(payload: Mapping[str, Any] | None, *, fallback_name: str = "extracted") -> Optional[TraceSpanContext]:
+def extract_trace_carrier(payload: Mapping[str, Any] | None, *, fallback_name: str = "extracted") -> TraceSpanContext | None:
     data = dict(payload or {})
     carrier = data.get("_causal_trace")
     if not isinstance(carrier, Mapping):
@@ -138,7 +175,7 @@ def _ledger_path() -> Path:
     return root / "causal_trace.jsonl"
 
 
-def record_trace_event(event: str, *, span: Optional[TraceSpanContext] = None, **payload: Any) -> None:
+def record_trace_event(event: str, *, span: TraceSpanContext | None = None, **payload: Any) -> None:
     span = span or current_span()
     body = {
         "timestamp": time.time(),
