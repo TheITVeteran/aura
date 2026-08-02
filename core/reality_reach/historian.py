@@ -17,7 +17,6 @@ import re
 import secrets
 import shutil
 import sqlite3
-import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -26,15 +25,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from core.reality_reach.contracts import ChannelDeclaration, ChannelKind
-from core.reality_reach.live import ChannelReading, ReadingStatus
+from core.reality_reach.live import AdapterInventoryEntry, ChannelReading, ReadingStatus
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.lockdep import checked_lock
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+_LEGACY_SCHEMA_VERSION = 1
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,159}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-_DELIVERY_STATES = frozenset(
-    {"queued", "delivering", "delivered", "superseded", "quarantined"}
-)
+_DELIVERY_STATES = frozenset({"queued", "delivering", "delivered", "superseded", "quarantined"})
 _MAX_DELIVERY_PAYLOAD_BYTES = 128 * 1024
 _MAX_EVIDENCE_PAYLOAD_BYTES = 128 * 1024
 _SQLITE_INT_MAX = (1 << 63) - 1
@@ -53,13 +52,27 @@ _HISTORIAN_EVIDENCE_KEYS = frozenset(
         "schema",
     }
 )
+_OBSERVATION_SCHEMAS = frozenset({"aura.reality-observation.v1", "aura.reality-observation.v2"})
+_TWIN_BINDING_KEYS = frozenset(
+    {
+        "attachment_bound_at_ns",
+        "attachment_generation",
+        "binding_sha256",
+        "topology_revision",
+        "twin_id",
+    }
+)
 _DELIVERY_SELECT = (
     "SELECT d.*, o.adapter_id AS evidence_adapter_id, "
     "o.declaration_sha256 AS evidence_declaration_sha256, "
     "o.reading_sha256 AS evidence_reading_sha256, "
     "o.status AS evidence_status, o.quality AS evidence_quality, "
     "o.order_basis AS evidence_order_basis, "
-    "o.order_gap AS evidence_order_gap "
+    "o.order_gap AS evidence_order_gap, "
+    "o.twin_id AS evidence_twin_id, "
+    "o.attachment_generation AS evidence_attachment_generation, "
+    "o.attachment_bound_at_ns AS evidence_attachment_bound_at_ns, "
+    "o.topology_revision AS evidence_topology_revision "
     "FROM reality_deliveries AS d LEFT JOIN reality_observations AS o "
     "ON o.record_id=d.record_id"
 )
@@ -70,6 +83,31 @@ _META_COUNTERS = (
     "quarantine_pruned_total",
     "recovered_inflight_total",
     "terminal_deliveries_pruned_total",
+)
+_LEGACY_OBSERVATION_COLUMNS = (
+    "record_id",
+    "adapter_id",
+    "channel_id",
+    "declaration_sha256",
+    "reading_sha256",
+    "event_sha256",
+    "captured_at_ns",
+    "ingested_at_ns",
+    "ingested_monotonic_ns",
+    "session_id",
+    "sequence",
+    "status",
+    "quality",
+    "order_basis",
+    "order_gap",
+    "value",
+    "unit",
+    "source",
+    "uncertainty",
+    "error_code",
+    "declaration_json",
+    "reading_json",
+    "recorded_at",
 )
 _SCHEMA_COLUMNS: dict[str, tuple[str, ...]] = {
     "reality_historian_meta": ("key", "value"),
@@ -97,6 +135,10 @@ _SCHEMA_COLUMNS: dict[str, tuple[str, ...]] = {
         "declaration_json",
         "reading_json",
         "recorded_at",
+        "twin_id",
+        "attachment_generation",
+        "attachment_bound_at_ns",
+        "topology_revision",
     ),
     "reality_channel_heads": (
         "channel_id",
@@ -164,6 +206,18 @@ _SCHEMA_COLUMNS: dict[str, tuple[str, ...]] = {
         "created_at",
         "updated_at",
     ),
+    "reality_backfill_receipts": (
+        "backfill_id",
+        "sink",
+        "record_id",
+        "channel_id",
+        "source_sha256",
+        "target_binding_sha256",
+        "sink_receipt_id",
+        "receipt_id",
+        "completed_at",
+        "row_sha256",
+    ),
 }
 _SCHEMA_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "reality_observations_channel_time": (
@@ -183,6 +237,9 @@ _SCHEMA_SQL_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "reality_observations": (
         "CHECK (captured_at_ns > 0 AND captured_at_ns <= 9223372036854775807)",
         "CHECK (sequence >= 0 AND sequence <= 9223372036854775807)",
+        "CHECK (attachment_generation >= 0 AND attachment_generation <= 9223372036854775807)",
+        "CHECK (attachment_bound_at_ns >= 0 AND attachment_bound_at_ns <= 9223372036854775807)",
+        "CHECK (topology_revision >= 0 AND topology_revision <= 9223372036854775807)",
     ),
     "reality_channel_heads": (
         "CHECK (last_seen_sequence >= 0 AND last_seen_sequence <= 9223372036854775807)",
@@ -191,6 +248,9 @@ _SCHEMA_SQL_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "reality_deliveries": (
         "FOREIGN KEY(record_id) REFERENCES reality_observations(record_id)",
         "CHECK (salience >= 0.0 AND salience <= 1.0)",
+    ),
+    "reality_backfill_receipts": (
+        "UNIQUE(sink, record_id, target_binding_sha256)",
     ),
 }
 
@@ -271,6 +331,36 @@ class HistorianDelivery:
 
 
 @dataclass(frozen=True, slots=True)
+class HistorianHeadSnapshot:
+    """One authoritative current channel head eligible for projection repair."""
+
+    record_id: str
+    adapter_id: str
+    adapter_identity_sha256: str
+    adapter_registration_generation: int
+    adapter_identity_stable: bool
+    channel_id: str
+    declaration: dict[str, Any]
+    reading: dict[str, Any]
+    quality: str
+    order_basis: str
+    order_gap: bool
+    alarm_codes: tuple[str, ...]
+    recorded_at: float
+    source_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistorianHeadPage:
+    """One stable page of unreceipted current heads for live adapters."""
+
+    snapshots: tuple[HistorianHeadSnapshot, ...]
+    next_channel_id: str
+    exhausted: bool
+    scanned: int
+
+
+@dataclass(frozen=True, slots=True)
 class _DeliveryAdmission:
     accepted: bool
     reason: str
@@ -306,6 +396,49 @@ def _identifier(value: Any, *, name: str) -> str:
     return normalized
 
 
+def _authoritative_twin_binding(
+    payload: Mapping[str, Any] | None,
+    *,
+    observation_id: str,
+) -> tuple[str, int, int, int]:
+    if payload is None or str(payload.get("schema") or "") != "aura.reality-observation.v2":
+        return "", 0, 0, 0
+    raw_binding = payload.get("twin_binding")
+    if not isinstance(raw_binding, Mapping) or set(raw_binding) != _TWIN_BINDING_KEYS:
+        raise HistorianCorruptionError("Reality delivery twin binding manifest differs")
+    binding = dict(raw_binding)
+    supplied_digest = str(binding.pop("binding_sha256", ""))
+    twin_id = str(binding.get("twin_id") or "")
+    if twin_id:
+        _identifier(twin_id, name="twin_id")
+    values: list[int] = []
+    for field in (
+        "attachment_generation",
+        "attachment_bound_at_ns",
+        "topology_revision",
+    ):
+        value = binding.get(field)
+        minimum = 1 if twin_id else 0
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not (minimum <= value <= _SQLITE_INT_MAX)
+        ):
+            raise HistorianCorruptionError(f"Reality delivery twin {field} is invalid")
+        if not twin_id and value != 0:
+            raise HistorianCorruptionError("Reality delivery carries a partial twin attachment fence")
+        values.append(int(value))
+    expected_digest = _digest({"observation_id": observation_id, "binding": binding})
+    if not secrets.compare_digest(supplied_digest, expected_digest):
+        raise HistorianCorruptionError("Reality delivery twin binding digest differs")
+    return twin_id, values[0], values[1], values[2]
+
+
+def _backfill_row_sha256(values: Mapping[str, Any]) -> str:
+    evidence = {key: value for key, value in values.items() if key != "row_sha256"}
+    return _digest({"schema": "aura.reality-head-backfill-receipt.v1", **evidence})
+
+
 def _validated_sink_states(value: Any) -> dict[str, dict[str, str]]:
     if not isinstance(value, dict):
         raise HistorianCorruptionError("Reality delivery sink state is invalid")
@@ -316,9 +449,7 @@ def _validated_sink_states(value: Any) -> dict[str, dict[str, str]]:
             "receipt_id",
             "state",
         }:
-            raise HistorianCorruptionError(
-                "Reality delivery sink receipt is invalid"
-            )
+            raise HistorianCorruptionError("Reality delivery sink receipt is invalid")
         state = str(raw_state.get("state") or "")
         receipt_id = str(raw_state.get("receipt_id") or "")
         if state not in _DELIVERY_SINK_STATES or len(receipt_id) > 256:
@@ -326,13 +457,9 @@ def _validated_sink_states(value: Any) -> dict[str, dict[str, str]]:
                 "Reality delivery sink receipt differs from its contract"
             )
         if state == "pending" and receipt_id:
-            raise HistorianCorruptionError(
-                "Pending Reality delivery sink carries a receipt"
-            )
+            raise HistorianCorruptionError("Pending Reality delivery sink carries a receipt")
         if state == "delivered" and not receipt_id:
-            raise HistorianCorruptionError(
-                "Delivered Reality delivery sink has no receipt"
-            )
+            raise HistorianCorruptionError("Delivered Reality delivery sink has no receipt")
         sink_states[sink] = {"state": state, "receipt_id": receipt_id}
     return sink_states
 
@@ -369,9 +496,7 @@ def _decode_sink_state_envelope(
         str(value.get("payload_sha256") or ""),
         expected_digest,
     ):
-        raise HistorianCorruptionError(
-            "Reality delivery payload integrity binding differs"
-        )
+        raise HistorianCorruptionError("Reality delivery payload integrity binding differs")
     return _validated_sink_states(value.get("sinks"))
 
 
@@ -382,38 +507,29 @@ def _validate_observation_delivery_binding(
     observation_id = _identifier(row["observation_id"], name="observation_id")
     record_id = _identifier(row["record_id"], name="record_id")
     if payload.get("observation_id") not in {None, observation_id}:
-        raise HistorianCorruptionError(
-            "Reality delivery observation identity differs from its row"
-        )
-    if payload.get("schema") != "aura.reality-observation.v1":
+        raise HistorianCorruptionError("Reality delivery observation identity differs from its row")
+    observation_schema = str(payload.get("schema") or "")
+    if observation_schema not in _OBSERVATION_SCHEMAS:
         return observation_id, record_id
     historian = payload.get("historian")
     if not isinstance(historian, dict) or set(historian) != _HISTORIAN_EVIDENCE_KEYS:
-        raise HistorianCorruptionError(
-            "Reality delivery historian evidence manifest differs"
-        )
+        raise HistorianCorruptionError("Reality delivery historian evidence manifest differs")
     if historian.get("schema") != _HISTORIAN_EVIDENCE_SCHEMA:
-        raise HistorianCorruptionError(
-            "Reality delivery historian evidence schema differs"
-        )
+        raise HistorianCorruptionError("Reality delivery historian evidence schema differs")
     order_gap = historian.get("order_gap")
     if not isinstance(order_gap, bool):
-        raise HistorianCorruptionError(
-            "Reality delivery historian order-gap evidence is invalid"
-        )
+        raise HistorianCorruptionError("Reality delivery historian order-gap evidence is invalid")
     alarm_codes = historian.get("alarm_codes")
-    if not isinstance(alarm_codes, list) or len(alarm_codes) > 8 or any(
-        not _IDENTIFIER.fullmatch(str(item)) for item in alarm_codes
+    if (
+        not isinstance(alarm_codes, list)
+        or len(alarm_codes) > 8
+        or any(not _IDENTIFIER.fullmatch(str(item)) for item in alarm_codes)
     ):
-        raise HistorianCorruptionError(
-            "Reality delivery historian alarm evidence is invalid"
-        )
+        raise HistorianCorruptionError("Reality delivery historian alarm evidence is invalid")
     quality = str(historian.get("quality") or "")
     try:
         authoritative_status = ReadingStatus(str(row["evidence_status"] or ""))
-        authoritative_quality = ObservationQuality(
-            str(row["evidence_quality"] or "")
-        )
+        authoritative_quality = ObservationQuality(str(row["evidence_quality"] or ""))
     except ValueError as exc:
         raise HistorianCorruptionError(
             "Reality delivery authoritative alarm evidence is invalid"
@@ -423,9 +539,7 @@ def _validate_observation_delivery_binding(
         authoritative_quality,
         order_gap=bool(row["evidence_order_gap"]),
     )
-    authoritative_alarm_codes = (
-        [authoritative_alarm_code] if authoritative_alarm_code else []
-    )
+    authoritative_alarm_codes = [authoritative_alarm_code] if authoritative_alarm_code else []
     expected_reason = "accepted_with_source_gap" if order_gap else "accepted"
     expected = {
         "record_id": record_id,
@@ -454,13 +568,24 @@ def _validate_observation_delivery_binding(
     base_payload.pop("historian", None)
     binding_evidence = dict(historian)
     supplied_binding = str(binding_evidence.pop("binding_sha256", ""))
-    expected_binding = _digest(
-        {"observation": base_payload, "historian": binding_evidence}
-    )
+    expected_binding = _digest({"observation": base_payload, "historian": binding_evidence})
     if not secrets.compare_digest(supplied_binding, expected_binding):
-        raise HistorianCorruptionError(
-            "Reality delivery historian evidence binding differs"
+        raise HistorianCorruptionError("Reality delivery historian evidence binding differs")
+    if observation_schema == "aura.reality-observation.v2":
+        twin_id, generation, bound_at_ns, revision = _authoritative_twin_binding(
+            payload,
+            observation_id=observation_id,
         )
+        authoritative = (
+            str(row["evidence_twin_id"] or ""),
+            int(row["evidence_attachment_generation"] or 0),
+            int(row["evidence_attachment_bound_at_ns"] or 0),
+            int(row["evidence_topology_revision"] or 0),
+        )
+        if (twin_id, generation, bound_at_ns, revision) != authoritative:
+            raise HistorianCorruptionError(
+                "Reality delivery twin binding differs from its authoritative record"
+            )
     return observation_id, record_id
 
 
@@ -562,12 +687,10 @@ class RealityHistorian:
             0,
             min(int(min_free_bytes), 1024 * 1024 * 1024 * 1024),
         )
-        self._disk_free_bytes = disk_free_bytes or (
-            lambda path: int(shutil.disk_usage(path).free)
-        )
+        self._disk_free_bytes = disk_free_bytes or (lambda path: int(shutil.disk_usage(path).free))
         self._consumer_id = f"reality.historian.{os.getpid()}.{secrets.token_hex(8)}"
-        self._write_lock = threading.RLock()
-        self._health_lock = threading.RLock()
+        self._write_lock = checked_lock("reality_historian.write", reentrant=True)
+        self._health_lock = checked_lock("reality_historian.health", reentrant=True)
         self._healthy = False
         self._last_error = "not_initialized"
         self._consecutive_failures = 0
@@ -680,9 +803,7 @@ class RealityHistorian:
                 pass
         stat = self.db_path.stat()
         if stat.st_uid != os.getuid() or stat.st_mode & 0o077:
-            raise HistorianCorruptionError(
-                "Reality historian ownership or permissions are unsafe"
-            )
+            raise HistorianCorruptionError("Reality historian ownership or permissions are unsafe")
         connection = self._connect()
         try:
             quick_check = connection.execute("PRAGMA quick_check(1)").fetchone()
@@ -696,13 +817,10 @@ class RealityHistorian:
                 if not str(row[0]).startswith("sqlite_")
             }
             if existed and tables and "reality_historian_meta" not in tables:
-                raise HistorianCorruptionError(
-                    "Existing Reality historian has no schema identity"
-                )
+                raise HistorianCorruptionError("Existing Reality historian has no schema identity")
             if existed and "reality_historian_meta" in tables:
                 version = connection.execute(
-                    "SELECT value FROM reality_historian_meta "
-                    "WHERE key='schema_version'"
+                    "SELECT value FROM reality_historian_meta WHERE key='schema_version'"
                 ).fetchone()
                 if version is None:
                     raise HistorianCorruptionError(
@@ -716,6 +834,7 @@ class RealityHistorian:
                 raise HistorianError("Reality historian could not enable WAL durability")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA secure_delete=ON")
+            self._migrate_schema(connection)
             self._create_schema(connection)
             self._verify_schema(connection)
             connection.execute("BEGIN IMMEDIATE")
@@ -749,6 +868,83 @@ class RealityHistorian:
             connection.close()
 
     @staticmethod
+    def _migrate_schema(connection: sqlite3.Connection) -> None:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if not str(row[0]).startswith("sqlite_")
+        }
+        if "reality_historian_meta" not in tables:
+            return
+        version_row = connection.execute(
+            "SELECT value FROM reality_historian_meta WHERE key='schema_version'"
+        ).fetchone()
+        if version_row is None:
+            raise HistorianCorruptionError("Existing Reality historian has no schema version")
+        try:
+            version = int(version_row[0])
+        except (TypeError, ValueError) as exc:
+            raise HistorianCorruptionError("Reality historian schema version is invalid") from exc
+        if version == _SCHEMA_VERSION:
+            return
+        if version != _LEGACY_SCHEMA_VERSION:
+            raise HistorianCorruptionError("Unsupported Reality historian schema")
+        expected_legacy_tables = set(_SCHEMA_COLUMNS) - {"reality_backfill_receipts"}
+        if tables != expected_legacy_tables:
+            raise HistorianCorruptionError(
+                "Legacy Reality historian table manifest differs from schema identity"
+            )
+        legacy_columns = tuple(
+            str(row[1])
+            for row in connection.execute(
+                'PRAGMA table_info("reality_observations")'
+            ).fetchall()
+        )
+        if legacy_columns != _LEGACY_OBSERVATION_COLUMNS:
+            raise HistorianCorruptionError(
+                "Legacy Reality historian observation contract differs"
+            )
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                "ALTER TABLE reality_observations "
+                "ADD COLUMN twin_id TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute(
+                "ALTER TABLE reality_observations ADD COLUMN attachment_generation "
+                "INTEGER NOT NULL DEFAULT 0 CHECK (attachment_generation >= 0 "
+                "AND attachment_generation <= 9223372036854775807)"
+            )
+            connection.execute(
+                "ALTER TABLE reality_observations ADD COLUMN attachment_bound_at_ns "
+                "INTEGER NOT NULL DEFAULT 0 CHECK (attachment_bound_at_ns >= 0 "
+                "AND attachment_bound_at_ns <= 9223372036854775807)"
+            )
+            connection.execute(
+                "ALTER TABLE reality_observations ADD COLUMN topology_revision "
+                "INTEGER NOT NULL DEFAULT 0 CHECK (topology_revision >= 0 "
+                "AND topology_revision <= 9223372036854775807)"
+            )
+            updated = connection.execute(
+                "UPDATE reality_historian_meta SET value=? "
+                "WHERE key='schema_version' AND value=?",
+                (str(_SCHEMA_VERSION), str(_LEGACY_SCHEMA_VERSION)),
+            )
+            if updated.rowcount != 1:
+                raise HistorianCorruptionError(
+                    "Reality historian schema migration lost its compare-and-swap"
+                )
+            connection.execute("COMMIT")
+        except Exception:
+            try:
+                connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+
+    @staticmethod
     def _migrate_delivery_sink_envelopes(connection: sqlite3.Connection) -> None:
         rows = connection.execute(_DELIVERY_SELECT).fetchall()
         for row in rows:
@@ -756,18 +952,13 @@ class RealityHistorian:
                 payload = json.loads(str(row["payload_json"]))
                 raw_sink_state = json.loads(str(row["sink_states_json"]))
             except (TypeError, ValueError) as exc:
-                raise HistorianCorruptionError(
-                    "Reality delivery durable JSON is invalid"
-                ) from exc
+                raise HistorianCorruptionError("Reality delivery durable JSON is invalid") from exc
             if not isinstance(payload, dict):
-                raise HistorianCorruptionError(
-                    "Reality delivery payload is not an object"
-                )
+                raise HistorianCorruptionError("Reality delivery payload is not an object")
             _validate_observation_delivery_binding(row, payload)
             if (
                 isinstance(raw_sink_state, dict)
-                and raw_sink_state.get("schema")
-                == _DELIVERY_SINK_ENVELOPE_SCHEMA
+                and raw_sink_state.get("schema") == _DELIVERY_SINK_ENVELOPE_SCHEMA
             ):
                 _decode_sink_state_envelope(raw_sink_state, payload=payload)
                 continue
@@ -783,9 +974,7 @@ class RealityHistorian:
                 ),
             )
             if updated.rowcount != 1:
-                raise HistorianCorruptionError(
-                    "Reality delivery sink-state migration lost its row"
-                )
+                raise HistorianCorruptionError("Reality delivery sink-state migration lost its row")
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
@@ -806,8 +995,7 @@ class RealityHistorian:
             if schema_version != _SCHEMA_VERSION:
                 raise HistorianCorruptionError("Unsupported Reality historian schema")
         connection.execute(
-            "INSERT OR IGNORE INTO reality_historian_meta(key, value) "
-            "VALUES('schema_version', ?)",
+            "INSERT OR IGNORE INTO reality_historian_meta(key, value) VALUES('schema_version', ?)",
             (str(_SCHEMA_VERSION),),
         )
         connection.executemany(
@@ -847,7 +1035,20 @@ class RealityHistorian:
                 error_code TEXT NOT NULL,
                 declaration_json TEXT NOT NULL,
                 reading_json TEXT NOT NULL,
-                recorded_at REAL NOT NULL
+                recorded_at REAL NOT NULL,
+                twin_id TEXT NOT NULL DEFAULT '',
+                attachment_generation INTEGER NOT NULL DEFAULT 0 CHECK (
+                    attachment_generation >= 0
+                    AND attachment_generation <= 9223372036854775807
+                ),
+                attachment_bound_at_ns INTEGER NOT NULL DEFAULT 0 CHECK (
+                    attachment_bound_at_ns >= 0
+                    AND attachment_bound_at_ns <= 9223372036854775807
+                ),
+                topology_revision INTEGER NOT NULL DEFAULT 0 CHECK (
+                    topology_revision >= 0
+                    AND topology_revision <= 9223372036854775807
+                )
             )
             """
         )
@@ -961,14 +1162,29 @@ class RealityHistorian:
             "CREATE INDEX IF NOT EXISTS reality_deliveries_channel_state "
             "ON reality_deliveries(channel_id, state, created_at)"
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reality_backfill_receipts (
+                backfill_id TEXT PRIMARY KEY,
+                sink TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                target_binding_sha256 TEXT NOT NULL,
+                sink_receipt_id TEXT NOT NULL,
+                receipt_id TEXT NOT NULL UNIQUE,
+                completed_at REAL NOT NULL,
+                row_sha256 TEXT NOT NULL,
+                UNIQUE(sink, record_id, target_binding_sha256)
+            )
+            """
+        )
 
     @staticmethod
     def _verify_schema(connection: sqlite3.Connection) -> None:
         auto_vacuum = connection.execute("PRAGMA auto_vacuum").fetchone()
         if auto_vacuum is None or int(auto_vacuum[0]) != 2:
-            raise HistorianCorruptionError(
-                "Reality historian incremental-vacuum contract differs"
-            )
+            raise HistorianCorruptionError("Reality historian incremental-vacuum contract differs")
         tables = {
             str(row[0])
             for row in connection.execute(
@@ -995,9 +1211,7 @@ class RealityHistorian:
                         row[4],
                         int(row[5]),
                     )
-                    for row in connection.execute(
-                        f'PRAGMA table_info("{table}")'
-                    ).fetchall()
+                    for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()
                 )
                 expected_info = tuple(
                     (
@@ -1008,9 +1222,7 @@ class RealityHistorian:
                         row[4],
                         int(row[5]),
                     )
-                    for row in reference.execute(
-                        f'PRAGMA table_info("{table}")'
-                    ).fetchall()
+                    for row in reference.execute(f'PRAGMA table_info("{table}")').fetchall()
                 )
                 columns = tuple(item[1] for item in actual_info)
                 if columns != expected_columns or actual_info != expected_info:
@@ -1019,15 +1231,11 @@ class RealityHistorian:
                     )
                 actual_foreign_keys = tuple(
                     tuple(row)
-                    for row in connection.execute(
-                        f'PRAGMA foreign_key_list("{table}")'
-                    ).fetchall()
+                    for row in connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchall()
                 )
                 expected_foreign_keys = tuple(
                     tuple(row)
-                    for row in reference.execute(
-                        f'PRAGMA foreign_key_list("{table}")'
-                    ).fetchall()
+                    for row in reference.execute(f'PRAGMA foreign_key_list("{table}")').fetchall()
                 )
                 if actual_foreign_keys != expected_foreign_keys:
                     raise HistorianCorruptionError(
@@ -1049,14 +1257,11 @@ class RealityHistorian:
         }
         for table in expected_tables:
             if schema_sql.get(table, "") != expected_schema_sql.get(table, ""):
-                raise HistorianCorruptionError(
-                    f"Reality historian canonical DDL differs: {table}"
-                )
+                raise HistorianCorruptionError(f"Reality historian canonical DDL differs: {table}")
         for table, required_fragments in _SCHEMA_SQL_REQUIREMENTS.items():
             table_sql = schema_sql.get(table, "")
             if any(
-                _normalized_schema_sql(fragment) not in table_sql
-                for fragment in required_fragments
+                _normalized_schema_sql(fragment) not in table_sql for fragment in required_fragments
             ):
                 raise HistorianCorruptionError(
                     f"Reality historian constraint contract differs: {table}"
@@ -1079,9 +1284,7 @@ class RealityHistorian:
                 )
             columns = tuple(
                 str(row[2])
-                for row in connection.execute(
-                    f'PRAGMA index_info("{index_name}")'
-                ).fetchall()
+                for row in connection.execute(f'PRAGMA index_info("{index_name}")').fetchall()
             )
             if columns != expected_columns:
                 raise HistorianCorruptionError(
@@ -1089,9 +1292,17 @@ class RealityHistorian:
                 )
         foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_key_errors:
-            raise HistorianCorruptionError(
-                "Reality historian foreign-key integrity check failed"
-            )
+            raise HistorianCorruptionError("Reality historian foreign-key integrity check failed")
+        for row in connection.execute("SELECT * FROM reality_backfill_receipts").fetchall():
+            values = dict(row)
+            supplied = str(values.get("row_sha256") or "")
+            if not _DIGEST.fullmatch(supplied) or not secrets.compare_digest(
+                supplied,
+                _backfill_row_sha256(values),
+            ):
+                raise HistorianCorruptionError(
+                    "Reality historian backfill receipt integrity differs"
+                )
         counter_rows = {
             str(row[0]): row[1]
             for row in connection.execute(
@@ -1113,9 +1324,7 @@ class RealityHistorian:
                     f"Reality historian counter is invalid: {key}"
                 ) from exc
             if value < 0:
-                raise HistorianCorruptionError(
-                    f"Reality historian counter is invalid: {key}"
-                )
+                raise HistorianCorruptionError(f"Reality historian counter is invalid: {key}")
 
     async def admit(
         self,
@@ -1169,9 +1378,11 @@ class RealityHistorian:
         reading_sha256 = reading.sha256
         event_sha256 = reading.event_sha256
         declaration_sha256 = declaration.sha256
-        if not _DIGEST.fullmatch(reading_sha256) or not _DIGEST.fullmatch(
-            declaration_sha256
-        ) or not _DIGEST.fullmatch(event_sha256):
+        if (
+            not _DIGEST.fullmatch(reading_sha256)
+            or not _DIGEST.fullmatch(declaration_sha256)
+            or not _DIGEST.fullmatch(event_sha256)
+        ):
             raise ValueError("Reality historian requires canonical evidence digests")
         declaration_json = canonical_json(declaration.to_dict())
         reading_json = canonical_json(reading.to_dict())
@@ -1182,6 +1393,7 @@ class RealityHistorian:
             raise ValueError("Reality historian evidence exceeds its bounded contract")
         delivery_id = ""
         delivery_payload_dict: dict[str, Any] | None = None
+        authoritative_twin = ("", 0, 0, 0)
         queue_limit = max(1, min(int(delivery_queue_limit), 8192))
         salience = float(delivery_salience)
         if not math.isfinite(salience) or not 0.0 <= salience <= 1.0:
@@ -1198,14 +1410,18 @@ class RealityHistorian:
             raise ValueError("Reality delivery sink manifest exceeds its bound")
         if delivery_observation_id or delivery_payload is not None:
             if not delivery_observation_id or delivery_payload is None:
-                raise ValueError(
-                    "Reality delivery identity and payload must be supplied together"
-                )
+                raise ValueError("Reality delivery identity and payload must be supplied together")
             delivery_id = _identifier(
                 delivery_observation_id,
                 name="delivery_observation_id",
             )
             delivery_payload_dict = dict(delivery_payload)
+            if delivery_payload_dict.get("observation_id") not in {None, delivery_id}:
+                raise ValueError("Reality delivery observation identity differs")
+            authoritative_twin = _authoritative_twin_binding(
+                delivery_payload_dict,
+                observation_id=delivery_id,
+            )
             encoded_delivery = canonical_json(delivery_payload_dict)
             if not encoded_delivery or len(encoded_delivery) > _MAX_DELIVERY_PAYLOAD_BYTES:
                 raise ValueError("Reality delivery payload exceeds its bounded contract")
@@ -1223,16 +1439,19 @@ class RealityHistorian:
             now=float(self._clock()),
             estimated_bytes=estimated_bytes,
         )
-        record_id = "reality.hist." + _digest(
-            {
-                "adapter_id": owner,
-                "captured_at_ns": reading.captured_at_ns,
-                "channel_id": reading.channel_id,
-                "reading_sha256": reading_sha256,
-                "sequence": reading.sequence,
-                "session_id": reading.session_id,
-            }
-        ).removeprefix("sha256:")[:40]
+        record_id = (
+            "reality.hist."
+            + _digest(
+                {
+                    "adapter_id": owner,
+                    "captured_at_ns": reading.captured_at_ns,
+                    "channel_id": reading.channel_id,
+                    "reading_sha256": reading_sha256,
+                    "sequence": reading.sequence,
+                    "session_id": reading.session_id,
+                }
+            ).removeprefix("sha256:")[:40]
+        )
         now = float(self._clock())
         connection = self._connect()
         try:
@@ -1326,8 +1545,10 @@ class RealityHistorian:
                 "captured_at_ns, ingested_at_ns, ingested_monotonic_ns, session_id, "
                 "sequence, status, quality, order_basis, order_gap, value, unit, source, "
                 "uncertainty, error_code, "
-                "declaration_json, reading_json, recorded_at) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "declaration_json, reading_json, recorded_at, twin_id, "
+                "attachment_generation, attachment_bound_at_ns, topology_revision) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?)",
                 (
                     record_id,
                     owner,
@@ -1352,6 +1573,10 @@ class RealityHistorian:
                     declaration_json.decode("utf-8"),
                     reading_json.decode("utf-8"),
                     now,
+                    authoritative_twin[0],
+                    authoritative_twin[1],
+                    authoritative_twin[2],
+                    authoritative_twin[3],
                 ),
             )
             self._upsert_head(
@@ -1376,8 +1601,7 @@ class RealityHistorian:
                 now=now,
             )
             alarm_row = connection.execute(
-                "SELECT alarm_code FROM reality_alarm_heads "
-                "WHERE channel_id=? AND active=1",
+                "SELECT alarm_code FROM reality_alarm_heads WHERE channel_id=? AND active=1",
                 (reading.channel_id,),
             ).fetchone()
             alarm_codes = (str(alarm_row[0]),) if alarm_row is not None else ()
@@ -1401,9 +1625,7 @@ class RealityHistorian:
                     "order_basis": order_basis,
                     "order_gap": bool(order_gap),
                     "alarm_codes": list(alarm_codes),
-                    "reason": (
-                        "accepted_with_source_gap" if order_gap else "accepted"
-                    ),
+                    "reason": ("accepted_with_source_gap" if order_gap else "accepted"),
                 }
                 historian_evidence["binding_sha256"] = _digest(
                     {
@@ -1415,9 +1637,7 @@ class RealityHistorian:
                 bound_payload["historian"] = historian_evidence
                 encoded_delivery = canonical_json(bound_payload)
                 if len(encoded_delivery) > _MAX_DELIVERY_PAYLOAD_BYTES:
-                    raise ValueError(
-                        "Historian-bound delivery payload exceeds its contract"
-                    )
+                    raise ValueError("Historian-bound delivery payload exceeds its contract")
                 delivery_admission = self._insert_delivery_row(
                     connection,
                     observation_id=delivery_id,
@@ -1479,9 +1699,7 @@ class RealityHistorian:
                 alarm_codes=alarm_codes,
                 order_basis=order_basis,
                 order_gap=order_gap,
-                delivery_observation_id=(
-                    delivery_id if delivery_admission.accepted else ""
-                ),
+                delivery_observation_id=(delivery_id if delivery_admission.accepted else ""),
                 delivery_accepted=delivery_admission.accepted,
                 delivery_reason=delivery_admission.reason,
                 delivery_queue_depth=delivery_admission.queue_depth,
@@ -1568,10 +1786,14 @@ class RealityHistorian:
                 return "ingest_sequence_regressed", False, "ingest_sequence"
             if reading.sequence == prior_sequence:
                 return (
-                    "duplicate"
-                    if prior_event_sha256 == event_sha256
-                    else "ingest_sequence_conflict"
-                ), False, "ingest_sequence"
+                    (
+                        "duplicate"
+                        if prior_event_sha256 == event_sha256
+                        else "ingest_sequence_conflict"
+                    ),
+                    False,
+                    "ingest_sequence",
+                )
         if same_session and reading.sequence == 0 and prior_sequence == 0:
             prior_capture = int(head["last_seen_captured_at_ns"])
             if reading.captured_at_ns < prior_capture:
@@ -1681,9 +1903,10 @@ class RealityHistorian:
             "reading": reading.to_dict(),
             "reason": reason,
         }
-        quarantine_id = "reality.quarantine." + _digest(
-            {"payload": payload, "created_at": now}
-        ).removeprefix("sha256:")[:36]
+        quarantine_id = (
+            "reality.quarantine."
+            + _digest({"payload": payload, "created_at": now}).removeprefix("sha256:")[:36]
+        )
         connection.execute(
             "INSERT INTO reality_quarantine("
             "quarantine_id, adapter_id, channel_id, reason, reading_sha256, "
@@ -1768,8 +1991,7 @@ class RealityHistorian:
             )
         else:
             connection.execute(
-                "UPDATE reality_alarm_heads SET last_record_id=?, updated_at=? "
-                "WHERE channel_id=?",
+                "UPDATE reality_alarm_heads SET last_record_id=?, updated_at=? WHERE channel_id=?",
                 (record_id, now, reading.channel_id),
             )
         return tuple(event_ids)
@@ -1786,16 +2008,19 @@ class RealityHistorian:
         actor: str,
         now: float,
     ) -> str:
-        event_id = "reality.alarm." + _digest(
-            {
-                "actor": actor,
-                "alarm_code": alarm_code,
-                "channel_id": channel_id,
-                "record_id": record_id,
-                "state": state,
-                "time": now,
-            }
-        ).removeprefix("sha256:")[:40]
+        event_id = (
+            "reality.alarm."
+            + _digest(
+                {
+                    "actor": actor,
+                    "alarm_code": alarm_code,
+                    "channel_id": channel_id,
+                    "record_id": record_id,
+                    "state": state,
+                    "time": now,
+                }
+            ).removeprefix("sha256:")[:40]
+        )
         connection.execute(
             "INSERT INTO reality_alarm_events("
             "event_id, channel_id, alarm_code, severity, state, record_id, actor, created_at) "
@@ -1931,9 +2156,7 @@ class RealityHistorian:
         )
         pruned = int(
             connection.execute(
-                "DELETE FROM reality_observations WHERE record_id IN ("
-                + placeholders
-                + ")",
+                "DELETE FROM reality_observations WHERE record_id IN (" + placeholders + ")",
                 tuple(record_ids),
             ).rowcount
         )
@@ -2017,19 +2240,13 @@ class RealityHistorian:
             (key,),
         ).fetchone()
         if row is None:
-            raise HistorianCorruptionError(
-                f"Reality historian counter is missing: {key}"
-            )
+            raise HistorianCorruptionError(f"Reality historian counter is missing: {key}")
         try:
             current = int(row[0])
         except (TypeError, ValueError) as exc:
-            raise HistorianCorruptionError(
-                f"Reality historian counter is invalid: {key}"
-            ) from exc
+            raise HistorianCorruptionError(f"Reality historian counter is invalid: {key}") from exc
         if current < 0:
-            raise HistorianCorruptionError(
-                f"Reality historian counter is invalid: {key}"
-            )
+            raise HistorianCorruptionError(f"Reality historian counter is invalid: {key}")
         connection.execute(
             "UPDATE reality_historian_meta SET value=? WHERE key=?",
             (str(current + increment), key),
@@ -2064,8 +2281,7 @@ class RealityHistorian:
         now: float,
     ) -> _DeliveryAdmission:
         existing = connection.execute(
-            "SELECT record_id, payload_json, state FROM reality_deliveries "
-            "WHERE observation_id=?",
+            "SELECT record_id, payload_json, state FROM reality_deliveries WHERE observation_id=?",
             (observation_id,),
         ).fetchone()
         if existing is not None:
@@ -2133,10 +2349,7 @@ class RealityHistorian:
                     "Reality delivery queue eviction lost its transaction"
                 )
             superseded.append(least_id)
-        sink_states = {
-            sink: {"state": "pending", "receipt_id": ""}
-            for sink in required_sinks
-        }
+        sink_states = {sink: {"state": "pending", "receipt_id": ""} for sink in required_sinks}
         try:
             payload = json.loads(payload_json)
         except (TypeError, ValueError) as exc:
@@ -2181,8 +2394,7 @@ class RealityHistorian:
     def _active_delivery_count(connection: sqlite3.Connection) -> int:
         return int(
             connection.execute(
-                "SELECT COUNT(*) FROM reality_deliveries "
-                "WHERE state IN ('queued','delivering')"
+                "SELECT COUNT(*) FROM reality_deliveries WHERE state IN ('queued','delivering')"
             ).fetchone()[0]
         )
 
@@ -2287,8 +2499,7 @@ class RealityHistorian:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_expired_leases(connection, now=now)
             row = connection.execute(
-                _DELIVERY_SELECT
-                + " WHERE d.observation_id=? AND d.state='queued' "
+                _DELIVERY_SELECT + " WHERE d.observation_id=? AND d.state='queued' "
                 "AND d.available_at<=?",
                 (observation, now),
             ).fetchone()
@@ -2325,9 +2536,7 @@ class RealityHistorian:
                 (observation,),
             ).fetchone()
             if row is None or updated.rowcount != 1:
-                raise HistorianCorruptionError(
-                    "Reality delivery claim lost its durable row"
-                )
+                raise HistorianCorruptionError("Reality delivery claim lost its durable row")
             delivery = self._delivery_from_row(row)
             connection.execute("COMMIT")
             return delivery
@@ -2355,8 +2564,7 @@ class RealityHistorian:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_expired_leases(connection, now=now)
             candidate_rows = connection.execute(
-                _DELIVERY_SELECT
-                + " WHERE d.state='queued' AND d.available_at<=? "
+                _DELIVERY_SELECT + " WHERE d.state='queued' AND d.available_at<=? "
                 "ORDER BY d.available_at ASC, d.created_at ASC LIMIT ?",
                 (now, bounded),
             ).fetchall()
@@ -2393,9 +2601,7 @@ class RealityHistorian:
                     (observation_id,),
                 ).fetchone()
                 if row is None:
-                    raise HistorianCorruptionError(
-                        "Reality delivery claim lost its durable row"
-                    )
+                    raise HistorianCorruptionError("Reality delivery claim lost its durable row")
                 deliveries.append(self._delivery_from_row(row))
             connection.execute("COMMIT")
             return tuple(deliveries)
@@ -2424,9 +2630,7 @@ class RealityHistorian:
             (now, now, observation_id),
         )
         if updated.rowcount != 1:
-            raise HistorianCorruptionError(
-                "Reality corrupt-delivery quarantine lost its row"
-            )
+            raise HistorianCorruptionError("Reality corrupt-delivery quarantine lost its row")
 
     @staticmethod
     def _recover_expired_leases(
@@ -2500,26 +2704,18 @@ class RealityHistorian:
                 payload = json.loads(str(row["payload_json"]))
                 sink_envelope = json.loads(str(row["sink_states_json"]))
             except (TypeError, ValueError) as exc:
-                raise HistorianCorruptionError(
-                    "Reality delivery durable JSON is invalid"
-                ) from exc
+                raise HistorianCorruptionError("Reality delivery durable JSON is invalid") from exc
             if not isinstance(payload, dict):
-                raise HistorianCorruptionError(
-                    "Reality delivery payload is not an object"
-                )
+                raise HistorianCorruptionError("Reality delivery payload is not an object")
             sink_states = _decode_sink_state_envelope(
                 sink_envelope,
                 payload=payload,
             )
             if sink_id not in sink_states:
-                raise HistorianCorruptionError(
-                    f"Reality delivery sink is not required: {sink_id}"
-                )
+                raise HistorianCorruptionError(f"Reality delivery sink is not required: {sink_id}")
             prior = sink_states[sink_id]
             if not isinstance(prior, dict):
-                raise HistorianCorruptionError(
-                    "Reality delivery sink receipt is invalid"
-                )
+                raise HistorianCorruptionError("Reality delivery sink receipt is invalid")
             if str(prior.get("state") or "") == "delivered":
                 if not secrets.compare_digest(
                     str(prior.get("receipt_id") or ""),
@@ -2538,18 +2734,16 @@ class RealityHistorian:
                 "UPDATE reality_deliveries SET sink_states_json=?, updated_at=? "
                 "WHERE observation_id=? AND state='delivering' AND lease_token=?",
                 (
-                    canonical_json(
-                        _sink_state_envelope(sink_states, payload=payload)
-                    ).decode("utf-8"),
+                    canonical_json(_sink_state_envelope(sink_states, payload=payload)).decode(
+                        "utf-8"
+                    ),
                     float(self._clock()),
                     observation,
                     lease_token,
                 ),
             )
             if updated.rowcount != 1:
-                raise HistorianCorruptionError(
-                    "Reality delivery sink receipt lost its lease"
-                )
+                raise HistorianCorruptionError("Reality delivery sink receipt lost its lease")
             connection.execute("COMMIT")
             return True
         except Exception:
@@ -2637,9 +2831,7 @@ class RealityHistorian:
             if lease_token:
                 token = str(row["lease_token"])
                 if not secrets.compare_digest(token, str(lease_token)):
-                    raise HistorianCorruptionError(
-                        "Reality delivery lease token differs"
-                    )
+                    raise HistorianCorruptionError("Reality delivery lease token differs")
             if state == "delivered":
                 sink_row = connection.execute(
                     "SELECT payload_json, sink_states_json FROM reality_deliveries "
@@ -2647,31 +2839,22 @@ class RealityHistorian:
                     (observation,),
                 ).fetchone()
                 try:
-                    payload = (
-                        json.loads(str(sink_row["payload_json"]))
-                        if sink_row
-                        else None
-                    )
+                    payload = json.loads(str(sink_row["payload_json"])) if sink_row else None
                     sink_envelope = (
-                        json.loads(str(sink_row["sink_states_json"]))
-                        if sink_row
-                        else None
+                        json.loads(str(sink_row["sink_states_json"])) if sink_row else None
                     )
                 except (TypeError, ValueError) as exc:
                     raise HistorianCorruptionError(
                         "Reality delivery durable JSON is invalid"
                     ) from exc
                 if not isinstance(payload, dict):
-                    raise HistorianCorruptionError(
-                        "Reality delivery payload is not an object"
-                    )
+                    raise HistorianCorruptionError("Reality delivery payload is not an object")
                 sink_states = _decode_sink_state_envelope(
                     sink_envelope,
                     payload=payload,
                 )
                 if any(
-                    not isinstance(item, dict)
-                    or str(item.get("state") or "") != "delivered"
+                    not isinstance(item, dict) or str(item.get("state") or "") != "delivered"
                     for item in sink_states.values()
                 ):
                     raise HistorianCorruptionError(
@@ -2739,9 +2922,7 @@ class RealityHistorian:
             if row is None:
                 raise HistorianCorruptionError("Reality delivery receipt is missing")
             if str(row["state"]) != "delivering":
-                raise HistorianCorruptionError(
-                    "only a claimed Reality delivery may be failed"
-                )
+                raise HistorianCorruptionError("only a claimed Reality delivery may be failed")
             if not secrets.compare_digest(
                 str(row["lease_token"]),
                 str(lease_token),
@@ -2798,6 +2979,433 @@ class RealityHistorian:
             lease_token=str(row["lease_token"]),
             lease_expires_at=float(row["lease_expires_at"]),
         )
+
+    async def legacy_twin_head_snapshots(
+        self,
+        *,
+        limit: int = 512,
+    ) -> tuple[HistorianHeadSnapshot, ...]:
+        """Return real current heads that predate an authoritative twin fence."""
+
+        page = await self.legacy_twin_head_page(limit=limit)
+        return page.snapshots
+
+    async def legacy_twin_head_page(
+        self,
+        *,
+        adapter_inventory: Mapping[str, AdapterInventoryEntry] | None = None,
+        after_channel_id: str = "",
+        limit: int = 512,
+        sink: str = "digital_twin",
+    ) -> HistorianHeadPage:
+        """Page unreceipted legacy heads in stable channel order.
+
+        When ``adapter_inventory`` is supplied, only heads whose adapter,
+        channel, and authoritative physical or registration identity still
+        match the live Reality Reach inventory are eligible. Historical
+        adapters and a replacement device reusing an adapter ID are excluded.
+        """
+
+        return await asyncio.to_thread(
+            self._run_serialized,
+            self._legacy_twin_head_page_sync,
+            adapter_inventory,
+            after_channel_id,
+            limit,
+            sink,
+        )
+
+    def _legacy_twin_head_page_sync(
+        self,
+        adapter_inventory: Mapping[str, AdapterInventoryEntry] | None,
+        after_channel_id: str,
+        limit: int,
+        sink: str,
+    ) -> HistorianHeadPage:
+        bounded = max(1, min(int(limit), 4096))
+        cursor = (
+            ""
+            if not str(after_channel_id or "")
+            else _identifier(after_channel_id, name="after_channel_id")
+        )
+        target_sink = _identifier(sink, name="sink")
+        inventory = self._normalize_adapter_inventory(adapter_inventory)
+        connection = self._connect()
+        try:
+            connection.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS active_reality_inventory ("
+                "adapter_id TEXT NOT NULL, channel_id TEXT NOT NULL, "
+                "adapter_identity_sha256 TEXT NOT NULL, "
+                "registration_generation INTEGER NOT NULL, "
+                "stable_identity INTEGER NOT NULL, "
+                "PRIMARY KEY(adapter_id, channel_id)) WITHOUT ROWID"
+            )
+            connection.execute("DELETE FROM active_reality_inventory")
+            if inventory is not None:
+                connection.executemany(
+                    "INSERT INTO active_reality_inventory("
+                    "adapter_id, channel_id, adapter_identity_sha256, "
+                    "registration_generation, stable_identity) VALUES(?, ?, ?, ?, ?)",
+                    inventory,
+                )
+            inventory_join = (
+                "JOIN active_reality_inventory AS i "
+                "ON i.adapter_id=o.adapter_id AND i.channel_id=o.channel_id "
+                "AND i.adapter_identity_sha256="
+                "json_extract(o.reading_json, '$.adapter_identity_sha256') "
+                "AND ((i.stable_identity=1 AND "
+                "json_extract(o.reading_json, '$.adapter_identity_stable')=1) "
+                "OR (i.stable_identity=0 AND "
+                "json_extract(o.reading_json, '$.adapter_identity_stable')=0 "
+                "AND i.registration_generation="
+                "json_extract(o.reading_json, '$.adapter_registration_generation'))) "
+                if inventory is not None
+                else ""
+            )
+            receipt_rows = connection.execute(
+                "SELECT b.* FROM reality_backfill_receipts AS b "
+                "JOIN reality_observations AS o ON o.record_id=b.record_id "
+                + inventory_join
+                + "WHERE b.sink=? AND o.twin_id='' "
+                "AND o.attachment_generation=0 AND o.attachment_bound_at_ns=0 "
+                "AND o.topology_revision=0",
+                (target_sink,),
+            ).fetchall()
+            for receipt_row in receipt_rows:
+                self._verify_backfill_receipt_row(receipt_row)
+            query = (
+                "SELECT o.*, a.alarm_code AS active_alarm_code "
+                "FROM reality_channel_heads AS h "
+                "JOIN reality_observations AS o "
+                "ON o.record_id=h.last_stored_record_id "
+                + inventory_join
+                +
+                "LEFT JOIN reality_alarm_heads AS a "
+                "ON a.channel_id=o.channel_id AND a.active=1 "
+                "WHERE o.twin_id='' AND o.attachment_generation=0 "
+                "AND o.attachment_bound_at_ns=0 AND o.topology_revision=0 "
+                "AND o.channel_id>? "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM reality_backfill_receipts AS b "
+                "WHERE b.sink=? AND b.record_id=o.record_id) "
+                "ORDER BY o.channel_id ASC LIMIT ?"
+            )
+            rows = connection.execute(
+                query,
+                (cursor, target_sink, bounded),
+            ).fetchall()
+            snapshots = tuple(self._head_snapshot_from_row(row) for row in rows)
+            next_channel_id = str(rows[-1]["channel_id"]) if rows else cursor
+            return HistorianHeadPage(
+                snapshots=snapshots,
+                next_channel_id=next_channel_id,
+                exhausted=len(rows) < bounded,
+                scanned=len(rows),
+            )
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _normalize_adapter_inventory(
+        adapter_inventory: Mapping[str, AdapterInventoryEntry] | None,
+    ) -> tuple[tuple[str, str, str, int, int], ...] | None:
+        if adapter_inventory is None:
+            return None
+        pairs: set[tuple[str, str, str, int, int]] = set()
+        for raw_adapter_id, raw_entry in adapter_inventory.items():
+            adapter_id = _identifier(raw_adapter_id, name="adapter_id")
+            if not isinstance(raw_entry, AdapterInventoryEntry):
+                raise TypeError("adapter inventory must contain AdapterInventoryEntry values")
+            if raw_entry.adapter_id != adapter_id:
+                raise ValueError("adapter inventory key differs from entry identity")
+            for raw_channel_id in raw_entry.channel_ids:
+                channel_id = _identifier(raw_channel_id, name="channel_id")
+                pairs.add(
+                    (
+                        adapter_id,
+                        channel_id,
+                        raw_entry.identity_sha256,
+                        raw_entry.registration_generation,
+                        int(raw_entry.stable_identity),
+                    )
+                )
+        if len(pairs) > 65_536:
+            raise ValueError("adapter channel inventory exceeds bounded backfill contract")
+        return tuple(sorted(pairs))
+
+    @staticmethod
+    def _verify_backfill_receipt_row(row: Mapping[str, Any]) -> None:
+        values = dict(row)
+        supplied = str(values.get("row_sha256") or "")
+        if not _DIGEST.fullmatch(supplied) or not secrets.compare_digest(
+            supplied,
+            _backfill_row_sha256(values),
+        ):
+            raise HistorianCorruptionError(
+                "Reality historian backfill receipt integrity differs"
+            )
+
+    @staticmethod
+    def _head_snapshot_from_row(row: sqlite3.Row) -> HistorianHeadSnapshot:
+        try:
+            declaration = json.loads(str(row["declaration_json"]))
+            reading = json.loads(str(row["reading_json"]))
+        except (TypeError, ValueError) as exc:
+            raise HistorianCorruptionError(
+                "Reality historian head contains invalid evidence JSON"
+            ) from exc
+        if not isinstance(declaration, dict) or not isinstance(reading, dict):
+            raise HistorianCorruptionError(
+                "Reality historian head evidence is not an object"
+            )
+        declaration_sha256 = str(row["declaration_sha256"] or "")
+        reading_sha256 = str(row["reading_sha256"] or "")
+        if not secrets.compare_digest(_digest(declaration), declaration_sha256):
+            raise HistorianCorruptionError(
+                "Reality historian head declaration evidence differs"
+            )
+        if not secrets.compare_digest(_digest(reading), reading_sha256):
+            raise HistorianCorruptionError("Reality historian head reading evidence differs")
+        record_id = _identifier(row["record_id"], name="record_id")
+        adapter_id = _identifier(row["adapter_id"], name="adapter_id")
+        adapter_identity_sha256 = str(
+            reading.get("adapter_identity_sha256") or ""
+        )
+        adapter_registration_generation = int(
+            reading.get("adapter_registration_generation") or 0
+        )
+        adapter_identity_stable = reading.get("adapter_identity_stable", False)
+        if (
+            not _DIGEST.fullmatch(adapter_identity_sha256)
+            or adapter_registration_generation <= 0
+            or not isinstance(adapter_identity_stable, bool)
+        ):
+            raise HistorianCorruptionError(
+                "Reality historian head lacks authoritative adapter identity"
+            )
+        channel_id = _identifier(row["channel_id"], name="channel_id")
+        if (
+            str(declaration.get("channel_id") or "") != channel_id
+            or str(reading.get("channel_id") or "") != channel_id
+            or str(reading.get("unit") or "") != str(row["unit"] or "")
+            or int(reading.get("captured_at_ns") or 0) != int(row["captured_at_ns"])
+            or int(reading.get("sequence") or 0) != int(row["sequence"])
+            or str(reading.get("status") or "") != str(row["status"] or "")
+        ):
+            raise HistorianCorruptionError(
+                "Reality historian head scalar evidence differs from its record"
+            )
+        try:
+            quality = ObservationQuality(str(row["quality"] or "")).value
+        except ValueError as exc:
+            raise HistorianCorruptionError("Reality historian head quality is invalid") from exc
+        order_basis = str(row["order_basis"] or "")
+        if not order_basis or len(order_basis) > 128:
+            raise HistorianCorruptionError("Reality historian head order basis is invalid")
+        alarm_code = str(row["active_alarm_code"] or "")
+        alarm_codes = () if not alarm_code else (_identifier(alarm_code, name="alarm_code"),)
+        evidence = {
+            "record_id": record_id,
+            "adapter_id": adapter_id,
+            "adapter_identity_sha256": adapter_identity_sha256,
+            "adapter_registration_generation": adapter_registration_generation,
+            "adapter_identity_stable": adapter_identity_stable,
+            "channel_id": channel_id,
+            "declaration_sha256": declaration_sha256,
+            "reading_sha256": reading_sha256,
+            "event_sha256": str(row["event_sha256"] or ""),
+            "quality": quality,
+            "order_basis": order_basis,
+            "order_gap": bool(row["order_gap"]),
+            "alarm_codes": list(alarm_codes),
+            "recorded_at": float(row["recorded_at"]),
+        }
+        return HistorianHeadSnapshot(
+            record_id=record_id,
+            adapter_id=adapter_id,
+            adapter_identity_sha256=adapter_identity_sha256,
+            adapter_registration_generation=adapter_registration_generation,
+            adapter_identity_stable=adapter_identity_stable,
+            channel_id=channel_id,
+            declaration=declaration,
+            reading=reading,
+            quality=quality,
+            order_basis=order_basis,
+            order_gap=bool(row["order_gap"]),
+            alarm_codes=alarm_codes,
+            recorded_at=float(row["recorded_at"]),
+            source_sha256=_digest(
+                {"schema": "aura.reality-authoritative-head.v1", **evidence}
+            ),
+        )
+
+    async def backfill_receipt(self, backfill_id: str) -> str:
+        return await asyncio.to_thread(
+            self._run_serialized,
+            self._backfill_receipt_sync,
+            backfill_id,
+        )
+
+    def _backfill_receipt_sync(self, backfill_id: str) -> str:
+        canonical = _identifier(backfill_id, name="backfill_id")
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM reality_backfill_receipts WHERE backfill_id=?",
+                (canonical,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return ""
+        values = dict(row)
+        supplied = str(values.get("row_sha256") or "")
+        if not secrets.compare_digest(supplied, _backfill_row_sha256(values)):
+            raise HistorianCorruptionError(
+                "Reality historian backfill receipt integrity differs"
+            )
+        return str(row["receipt_id"])
+
+    async def record_backfill_receipt(
+        self,
+        *,
+        backfill_id: str,
+        record_id: str,
+        channel_id: str,
+        source_sha256: str,
+        target_binding_sha256: str,
+        sink_receipt_id: str,
+        sink: str = "digital_twin",
+    ) -> str:
+        return await asyncio.to_thread(
+            self._run_serialized,
+            self._record_backfill_receipt_sync,
+            backfill_id,
+            record_id,
+            channel_id,
+            source_sha256,
+            target_binding_sha256,
+            sink_receipt_id,
+            sink,
+        )
+
+    def _record_backfill_receipt_sync(
+        self,
+        backfill_id: str,
+        record_id: str,
+        channel_id: str,
+        source_sha256: str,
+        target_binding_sha256: str,
+        sink_receipt_id: str,
+        sink: str,
+    ) -> str:
+        backfill = _identifier(backfill_id, name="backfill_id")
+        record = _identifier(record_id, name="record_id")
+        channel = _identifier(channel_id, name="channel_id")
+        target = _identifier(sink, name="sink")
+        source_digest = str(source_sha256 or "")
+        binding_digest = str(target_binding_sha256 or "")
+        if not _DIGEST.fullmatch(source_digest) or not _DIGEST.fullmatch(binding_digest):
+            raise ValueError("Reality backfill source and target require canonical digests")
+        sink_receipt = _identifier(sink_receipt_id, name="sink_receipt_id")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM reality_backfill_receipts WHERE backfill_id=? "
+                "OR (sink=? AND record_id=? AND target_binding_sha256=?)",
+                (backfill, target, record, binding_digest),
+            ).fetchone()
+            if existing is not None:
+                values = dict(existing)
+                if (
+                    str(existing["backfill_id"]) != backfill
+                    or str(existing["channel_id"]) != channel
+                    or str(existing["source_sha256"]) != source_digest
+                    or str(existing["sink_receipt_id"]) != sink_receipt
+                    or not secrets.compare_digest(
+                        str(existing["row_sha256"] or ""),
+                        _backfill_row_sha256(values),
+                    )
+                ):
+                    raise HistorianCorruptionError(
+                        "Reality historian backfill idempotency evidence conflicts"
+                    )
+                connection.execute("COMMIT")
+                return str(existing["receipt_id"])
+            current = connection.execute(
+                "SELECT o.*, a.alarm_code AS active_alarm_code "
+                "FROM reality_channel_heads AS h "
+                "JOIN reality_observations AS o "
+                "ON o.record_id=h.last_stored_record_id "
+                "LEFT JOIN reality_alarm_heads AS a "
+                "ON a.channel_id=o.channel_id AND a.active=1 "
+                "WHERE h.channel_id=? AND o.record_id=? AND o.twin_id='' "
+                "AND o.attachment_generation=0 AND o.attachment_bound_at_ns=0 "
+                "AND o.topology_revision=0",
+                (channel, record),
+            ).fetchone()
+            if current is None:
+                raise HistorianCorruptionError(
+                    "Reality historian backfill source is no longer the authoritative head"
+                )
+            snapshot = self._head_snapshot_from_row(current)
+            if not secrets.compare_digest(snapshot.source_sha256, source_digest):
+                raise HistorianCorruptionError(
+                    "Reality historian backfill source changed before receipt"
+                )
+            completed_at = float(self._clock())
+            receipt_id = (
+                "reality.backfill.receipt."
+                + _digest(
+                    {
+                        "backfill_id": backfill,
+                        "sink_receipt_id": sink_receipt,
+                        "source_sha256": source_digest,
+                        "target_binding_sha256": binding_digest,
+                    }
+                ).removeprefix("sha256:")[:32]
+            )
+            values = {
+                "backfill_id": backfill,
+                "sink": target,
+                "record_id": record,
+                "channel_id": channel,
+                "source_sha256": source_digest,
+                "target_binding_sha256": binding_digest,
+                "sink_receipt_id": sink_receipt,
+                "receipt_id": receipt_id,
+                "completed_at": completed_at,
+            }
+            row_sha256 = _backfill_row_sha256(values)
+            connection.execute(
+                "INSERT INTO reality_backfill_receipts("
+                "backfill_id, sink, record_id, channel_id, source_sha256, "
+                "target_binding_sha256, sink_receipt_id, receipt_id, completed_at, "
+                "row_sha256) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    backfill,
+                    target,
+                    record,
+                    channel,
+                    source_digest,
+                    binding_digest,
+                    sink_receipt,
+                    receipt_id,
+                    completed_at,
+                    row_sha256,
+                ),
+            )
+            connection.execute("COMMIT")
+            return receipt_id
+        except Exception:
+            try:
+                connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            connection.close()
 
     async def replay_history(
         self,
@@ -2866,6 +3474,10 @@ class RealityHistorian:
                 "order_basis": str(row["order_basis"]),
                 "order_gap": bool(row["order_gap"]),
                 "error_code": str(row["error_code"]),
+                "twin_id": str(row["twin_id"]),
+                "attachment_generation": int(row["attachment_generation"]),
+                "attachment_bound_at_ns": int(row["attachment_bound_at_ns"]),
+                "topology_revision": int(row["topology_revision"]),
             }
             for row in reversed(rows)
         ]
@@ -3007,9 +3619,7 @@ class RealityHistorian:
             ).fetchall()
         finally:
             connection.close()
-        combined = [
-            {"kind": "source_evidence", **dict(row)} for row in sensor_rows
-        ] + [
+        combined = [{"kind": "source_evidence", **dict(row)} for row in sensor_rows] + [
             {
                 "kind": "cognitive_delivery",
                 "quarantine_id": str(row["observation_id"]),
@@ -3038,12 +3648,54 @@ class RealityHistorian:
                     "SELECT COUNT(*) FROM reality_alarm_heads WHERE active=1"
                 ).fetchone()[0]
             )
+            backfill_receipt_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM reality_backfill_receipts"
+                ).fetchone()[0]
+            )
             delivery_counts = {
                 str(row["state"]): int(row["count"])
                 for row in connection.execute(
                     "SELECT state, COUNT(*) AS count FROM reality_deliveries GROUP BY state"
                 ).fetchall()
             }
+            sink_status: dict[str, dict[str, float | int]] = {}
+            now = time.time()
+            for delivery in connection.execute(
+                """
+                SELECT payload_json, sink_states_json, state, created_at
+                FROM reality_deliveries
+                WHERE state IN ('queued', 'delivering', 'delivered')
+                """
+            ):
+                try:
+                    payload = json.loads(str(delivery["payload_json"]))
+                    envelope = json.loads(str(delivery["sink_states_json"]))
+                except (TypeError, ValueError) as exc:
+                    raise HistorianCorruptionError(
+                        "Reality delivery status found malformed sink evidence"
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise HistorianCorruptionError(
+                        "Reality delivery status payload is not an object"
+                    )
+                states = _decode_sink_state_envelope(envelope, payload=payload)
+                for sink, state in states.items():
+                    sink_counters = sink_status.setdefault(
+                        sink,
+                        {
+                            "pending": 0,
+                            "delivered": 0,
+                            "oldest_pending_age_s": 0.0,
+                        },
+                    )
+                    sink_state = str(state.get("state") or "")
+                    sink_counters[sink_state] = int(sink_counters.get(sink_state, 0)) + 1
+                    if sink_state == "pending":
+                        age = max(0.0, now - float(delivery["created_at"]))
+                        sink_counters["oldest_pending_age_s"] = max(
+                            float(sink_counters["oldest_pending_age_s"]), age
+                        )
             counters: dict[str, int] = {}
             for key in _META_COUNTERS:
                 row = connection.execute(
@@ -3051,9 +3703,7 @@ class RealityHistorian:
                     (key,),
                 ).fetchone()
                 if row is None:
-                    raise HistorianCorruptionError(
-                        f"Reality historian counter is missing: {key}"
-                    )
+                    raise HistorianCorruptionError(f"Reality historian counter is missing: {key}")
                 try:
                     value = int(row[0])
                 except (TypeError, ValueError) as exc:
@@ -3061,15 +3711,11 @@ class RealityHistorian:
                         f"Reality historian counter is invalid: {key}"
                     ) from exc
                 if value < 0:
-                    raise HistorianCorruptionError(
-                        f"Reality historian counter is invalid: {key}"
-                    )
+                    raise HistorianCorruptionError(f"Reality historian counter is invalid: {key}")
                 counters[key] = value
             page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
             page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
-            freelist_count = int(
-                connection.execute("PRAGMA freelist_count").fetchone()[0]
-            )
+            freelist_count = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
         finally:
             connection.close()
         storage_files = self._storage_file_bytes()
@@ -3081,7 +3727,9 @@ class RealityHistorian:
             "quarantine_count": quarantine_count,
             "max_quarantine": self._max_quarantine,
             "active_alarm_count": active_alarm_count,
+            "backfill_receipt_count": backfill_receipt_count,
             "delivery_counts": delivery_counts,
+            "delivery_sink_status": sink_status,
             **counters,
             "db_mode": "private_sqlite_wal_full",
             "storage_bytes": sum(storage_files.values()),
@@ -3165,9 +3813,7 @@ class RealityHistorian:
                 raise HistorianCorruptionError(
                     "Reality historian health probe found a schema mismatch"
                 )
-            connection.execute(
-                "SELECT record_id FROM reality_observations LIMIT 1"
-            ).fetchone()
+            connection.execute("SELECT record_id FROM reality_observations LIMIT 1").fetchone()
         finally:
             connection.close()
 

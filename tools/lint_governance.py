@@ -138,6 +138,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # reads, and actual component-file rehashing; callers cannot
             # choose blob names or mutate production paths.
             "core/learning/verified_transition_episode.py",
+            # The canonical physical twin owns one fixed SQLite sibling archive.
+            # It accepts no payload path or filename from callers and requires
+            # no-follow, owner-only, fsync-backed two-phase segment rotation to
+            # preserve lifecycle evidence across database compaction and crash.
+            "core/reality_reach/digital_twin.py",
             # Verified-replay SFT publication owns one fixed, owner-private
             # candidate/evaluator namespace. Its sole raw mutation is a
             # no-follow, single-link, inode-bound pair-publication lock; all
@@ -204,6 +209,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/ontogeny/experience.py",
             "core/ontogeny/service.py",
             "core/ontogeny/state.py",
+            # The physical historian owns one fixed SQLite evidence store and
+            # its initialization probe. It accepts no caller-selected path or
+            # payload; all mutation still traverses named FileWriteGateway
+            # scopes before SQLite opens the owner-private database.
+            "core/reality_reach/historian.py",
             # The learned world model owns one fixed, schema-bound VRNN
             # checkpoint under Aura's data root. It accepts no caller path,
             # and every publication executes in its named state-mutation

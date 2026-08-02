@@ -4257,6 +4257,22 @@
       "scope": "<module>.TaskGraph.persist"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/historian.py",
+      "scope": "<module>.RealityHistorian._initialize"
+    },
+    {
+      "callee": "<file_write_gateway>.open_owned_binary",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/historian.py",
+      "scope": "<module>.RealityHistorian._initialize"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15474,6 +15490,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "ff8e26fbddab9954d88a53169809ce658992ff8d84d466e9664cec3af78be638",
+  "inventory_sha256": "bed1392ae5b30733d835929280bbd367b4bd2446fb67c0f34a1707950c0d0dfe",
   "schema_version": 1
 }

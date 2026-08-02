@@ -10,6 +10,7 @@ import pytest
 
 from core.container import ServiceContainer
 from core.perception.multimodal_sync import Modality
+from core.reality_reach import digital_twin as digital_twin_module
 from core.reality_reach.contracts import (
     ChannelDeclaration,
     ChannelKind,
@@ -18,15 +19,51 @@ from core.reality_reach.contracts import (
     NumericDomain,
     RealityLayer,
 )
-from core.reality_reach.digital_twin import RealityDigitalTwinGraph
-from core.reality_reach.historian import HistorianCorruptionError, RealityHistorian
-from core.reality_reach.live import ChannelReading, ReadingStatus, RealityReachService
+from core.reality_reach.digital_twin import (
+    RealityDigitalTwinGraph,
+    TwinDisposition,
+    TwinReceipt,
+)
+from core.reality_reach.historian import (
+    HistorianCorruptionError,
+    HistorianHeadPage,
+    HistorianHeadSnapshot,
+    RealityHistorian,
+)
+from core.reality_reach.live import (
+    AdapterInventoryEntry,
+    ChannelReading,
+    ReadingStatus,
+    RealityReachService,
+)
 from core.reality_reach.observation_router import (
     ObservationSubscription,
     RealityObservation,
     RealityObservationRouter,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+
+
+class _MemoryKeychainBackend:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.values.get((service, account))
+
+    def set_password(self, service: str, account: str, password: str) -> bool:
+        self.values[(service, account)] = password
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _isolated_digital_twin_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = _MemoryKeychainBackend()
+    monkeypatch.setattr(
+        digital_twin_module,
+        "require_keychain_backend",
+        lambda: backend,
+    )
 
 
 def _declaration(
@@ -87,8 +124,10 @@ class AsyncAdapter:
         *,
         value: float = 1.0,
         delay_s: float = 0.0,
+        physical_identity_sha256: str = "",
     ) -> None:
         self.adapter_id = adapter_id
+        self.physical_identity_sha256 = physical_identity_sha256
         self.declaration = declaration
         self.value = value
         self.delay_s = delay_s
@@ -122,7 +161,18 @@ def _accepting_synchronizer(events: list) -> SimpleNamespace:
             reason="accepted",
         )
 
-    return SimpleNamespace(ingest=_ingest)
+    return SimpleNamespace(
+        ingest=_ingest,
+        get_status=lambda: {
+            "accepted_events": len(events),
+            "rejected_events": 0,
+            "queue_overflow_drops": 0,
+            "late_events": 0,
+            "fusions": 0,
+            "queue_depths": {"proprioception": 0},
+            "queue_limit": 64,
+        },
+    )
 
 
 def _accepting_cognition(cognitive: list[tuple[tuple, dict]]) -> SimpleNamespace:
@@ -130,7 +180,10 @@ def _accepting_cognition(cognitive: list[tuple[tuple, dict]]) -> SimpleNamespace
         cognitive.append((args, kwargs))
         return {"receipt_id": f"advanced.receipt.{len(cognitive)}"}
 
-    return SimpleNamespace(observe_state=_observe)
+    return SimpleNamespace(
+        observe_state=_observe,
+        health_report=lambda: {"ok": True},
+    )
 
 
 def _digital_twin(tmp_path, *, name: str = "twin.sqlite3") -> RealityDigitalTwinGraph:
@@ -558,7 +611,10 @@ async def test_failed_cognitive_delivery_retries_durably_after_restart(
 
     services = {
         "multimodal_synchronizer": _accepting_synchronizer(events),
-        "advanced_cognition": SimpleNamespace(observe_state=_observe_state),
+        "advanced_cognition": SimpleNamespace(
+            observe_state=_observe_state,
+            health_report=lambda: {"ok": True},
+        ),
     }
     monkeypatch.setattr(
         ServiceContainer,
@@ -682,7 +738,18 @@ async def test_rejected_sink_receipt_prevents_false_delivery_completion(
         )
 
     services = {
-        "multimodal_synchronizer": SimpleNamespace(ingest=_reject),
+        "multimodal_synchronizer": SimpleNamespace(
+            ingest=_reject,
+            get_status=lambda: {
+                "accepted_events": 0,
+                "rejected_events": 1,
+                "queue_overflow_drops": 0,
+                "late_events": 0,
+                "fusions": 0,
+                "queue_depths": {"proprioception": 0},
+                "queue_limit": 64,
+            },
+        ),
         "advanced_cognition": _accepting_cognition(advanced_calls),
     }
     monkeypatch.setattr(
@@ -897,6 +964,8 @@ async def test_required_sink_registry_keeps_boot_degradation_unready_and_durable
         assert status["required_sink_registry"]["digital_twin"] == {
             "dependency_key": "reality_digital_twin",
             "callable_attribute": "observe_observation",
+            "health_attribute": "health_snapshot",
+            "health_contract": "ready_flag",
             "configured": False,
             "ready": False,
             "reason": "dependency_unavailable",
@@ -937,6 +1006,20 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
     legacy = RealityHistorian(history_path)
     declaration = _declaration("test.legacy_head")
     reading = _reading("test.legacy_head", 63.0, captured_at_ns=12_345)
+    physical_identity = "sha256:" + "a" * 64
+    source_service = RealityReachService()
+    source_service.register_adapter(
+        AsyncAdapter(
+            "test.legacy_head_adapter",
+            declaration,
+            value=63.0,
+            physical_identity_sha256=physical_identity,
+        )
+    )
+    reading = source_service.ingest_sensor_readings(
+        "test.legacy_head_adapter",
+        (reading,),
+    )[declaration.channel_id]
     admitted = await legacy.admit(
         declaration,
         reading,
@@ -966,6 +1049,15 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
     historian = RealityHistorian(history_path)
     assert historian.status()["schema_version"] == 2
     digital_twin = _digital_twin(tmp_path)
+    live_service = RealityReachService()
+    live_service.register_adapter(
+        AsyncAdapter(
+            "test.legacy_head_adapter",
+            declaration,
+            value=63.0,
+            physical_identity_sha256=physical_identity,
+        )
+    )
     original_record_receipt = historian.record_backfill_receipt
 
     async def _fail_receipt_once(**_kwargs):
@@ -973,7 +1065,7 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
 
     monkeypatch.setattr(historian, "record_backfill_receipt", _fail_receipt_once)
     interrupted = RealityObservationRouter(
-        RealityReachService(),
+        live_service,
         historian=historian,
         digital_twin=digital_twin,
         poll_interval_s=60.0,
@@ -992,7 +1084,7 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
         original_record_receipt,
     )
     resumed = RealityObservationRouter(
-        RealityReachService(),
+        live_service,
         historian=historian,
         digital_twin=digital_twin,
         poll_interval_s=60.0,
@@ -1007,7 +1099,7 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
 
     restarted_historian = RealityHistorian(history_path)
     restarted = RealityObservationRouter(
-        RealityReachService(),
+        live_service,
         historian=restarted_historian,
         digital_twin=digital_twin,
         poll_interval_s=60.0,
@@ -1030,6 +1122,268 @@ async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
     finally:
         twin_connection.close()
     assert projected == (admitted.record_id, 12_345, "63.0")
+
+
+@pytest.mark.asyncio
+async def test_legacy_head_backfill_pages_beyond_prior_4096_ceiling(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    total = 4_100
+    channel_ids = tuple(f"test.page.{index:04d}" for index in range(total))
+    snapshots = tuple(
+        HistorianHeadSnapshot(
+            record_id=f"record.page.{index:04d}",
+            adapter_id="test.paged_adapter",
+            adapter_identity_sha256="sha256:" + "5" * 64,
+            adapter_registration_generation=7,
+            adapter_identity_stable=False,
+            channel_id=channel_id,
+            declaration={},
+            reading={},
+            quality="measured",
+            order_basis="captured_at_ns",
+            order_gap=False,
+            alarm_codes=(),
+            recorded_at=1.0,
+            source_sha256="sha256:" + "1" * 64,
+        )
+        for index, channel_id in enumerate(channel_ids)
+    )
+    recorded: set[str] = set()
+    page_calls = 0
+    historian = RealityHistorian(tmp_path / "paged-history.sqlite3")
+
+    async def _page(*, after_channel_id="", limit=512, **_kwargs):
+        nonlocal page_calls
+        page_calls += 1
+        remaining = tuple(item for item in snapshots if item.record_id not in recorded)
+        if after_channel_id:
+            remaining = tuple(
+                item for item in remaining if item.channel_id > after_channel_id
+            )
+        selected = remaining[:limit]
+        return HistorianHeadPage(
+            snapshots=selected,
+            next_channel_id=(selected[-1].channel_id if selected else after_channel_id),
+            exhausted=len(remaining) <= limit,
+            scanned=len(selected),
+        )
+
+    async def _record_receipt(**kwargs):
+        recorded.add(str(kwargs["record_id"]))
+        return "receipt.backfill"
+
+    monkeypatch.setattr(historian, "legacy_twin_head_page", _page)
+    monkeypatch.setattr(historian, "record_backfill_receipt", _record_receipt)
+    service = RealityReachService()
+    monkeypatch.setattr(
+        service,
+        "adapter_inventory",
+        lambda: {
+            "test.paged_adapter": AdapterInventoryEntry(
+                adapter_id="test.paged_adapter",
+                channel_ids=channel_ids,
+                identity_sha256="sha256:" + "5" * 64,
+                registration_generation=7,
+                stable_identity=False,
+            )
+        },
+    )
+    digital_twin = _digital_twin(tmp_path, name="paged-twin.sqlite3")
+    monkeypatch.setattr(digital_twin, "is_ready", lambda: True)
+    monkeypatch.setattr(
+        digital_twin,
+        "binding_context",
+        lambda *_args: {
+            "twin_id": "twin.virtual",
+            "attachment_generation": 1,
+            "attachment_bound_at_ns": 1,
+            "topology_revision": 1,
+            "binding_sha256": "sha256:" + "2" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        RealityObservationRouter,
+        "_declaration_from_snapshot",
+        staticmethod(lambda snapshot: _declaration(snapshot.channel_id)),
+    )
+    monkeypatch.setattr(
+        RealityObservationRouter,
+        "_backfill_observation",
+        staticmethod(
+            lambda snapshot, _binding: (
+                SimpleNamespace(
+                    observation_id=snapshot.record_id,
+                    twin_id="twin.virtual",
+                ),
+                "sha256:" + "3" * 64,
+            )
+        ),
+    )
+
+    def _observe(observation):
+        return TwinReceipt(
+            receipt_id=f"receipt.{observation.observation_id}",
+            twin_id=observation.twin_id,
+            event_id=f"event.{observation.observation_id}",
+            disposition=TwinDisposition.ACCEPTED,
+            accepted=True,
+            graph_version=1,
+            state_sha256="sha256:" + "4" * 64,
+        )
+
+    monkeypatch.setattr(digital_twin, "observe_observation", _observe)
+    router = RealityObservationRouter(
+        service,
+        historian=historian,
+        digital_twin=digital_twin,
+    )
+
+    assert await router._backfill_legacy_twin_heads() == total
+    assert len(recorded) == total
+    assert page_calls == 10
+    assert router.status()["twin_backfill_ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_backfill_never_binds_retired_adapter(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    historian = RealityHistorian(tmp_path / "retired-history.sqlite3")
+    declaration = _declaration("test.retired")
+    admitted = await historian.admit(
+        declaration,
+        _reading("test.retired", 9.0),
+        adapter_id="test.retired_adapter",
+    )
+    assert admitted.accepted is True
+    digital_twin = _digital_twin(tmp_path, name="retired-twin.sqlite3")
+    binding_calls = 0
+
+    def _unexpected_binding(*_args):
+        nonlocal binding_calls
+        binding_calls += 1
+        raise AssertionError("retired adapter reached twin binding")
+
+    monkeypatch.setattr(digital_twin, "binding_context", _unexpected_binding)
+    router = RealityObservationRouter(
+        RealityReachService(),
+        historian=historian,
+        digital_twin=digital_twin,
+    )
+
+    assert await router._backfill_legacy_twin_heads() == 0
+    assert binding_calls == 0
+    assert router.status()["twin_backfill_ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_backfill_rejects_adapter_id_reused_by_different_device(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    historian = RealityHistorian(tmp_path / "identity-reuse-history.sqlite3")
+    declaration = _declaration("test.identity_reuse")
+    device_a = RealityReachService()
+    device_a.register_adapter(
+        AsyncAdapter(
+            "test.reused_adapter",
+            declaration,
+            value=17.0,
+            physical_identity_sha256="sha256:" + "a" * 64,
+        )
+    )
+    reading_a = device_a.ingest_sensor_readings(
+        "test.reused_adapter",
+        (_reading(declaration.channel_id, 17.0),),
+    )[declaration.channel_id]
+    admitted = await historian.admit(
+        declaration,
+        reading_a,
+        adapter_id="test.reused_adapter",
+    )
+    assert admitted.accepted is True
+
+    replacement_service = RealityReachService()
+    replacement_service.register_adapter(
+        AsyncAdapter(
+            "test.reused_adapter",
+            declaration,
+            value=29.0,
+            physical_identity_sha256="sha256:" + "b" * 64,
+        )
+    )
+    binding_calls = 0
+
+    def _unexpected_binding(*_args):
+        nonlocal binding_calls
+        binding_calls += 1
+        raise AssertionError("device A history reached device B twin binding")
+
+    class _BackfillTwin(RealityDigitalTwinGraph):
+        def __init__(self) -> None:
+            pass
+
+        def is_ready(self) -> bool:
+            return True
+
+        def binding_context(self, *_args):
+            return _unexpected_binding(*_args)
+
+    digital_twin = _BackfillTwin()
+    router = RealityObservationRouter(
+        replacement_service,
+        historian=historian,
+        digital_twin=digital_twin,
+    )
+
+    assert await router._backfill_legacy_twin_heads() == 0
+    assert binding_calls == 0
+    assert router._twin_backfill_ready is True
+
+
+def test_required_sink_health_rejects_callable_but_unhealthy_dependencies(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    multimodal = _accepting_synchronizer([])
+    multimodal.get_status = lambda: {
+        "accepted_events": 0,
+        "rejected_events": 0,
+        "queue_overflow_drops": 0,
+        "late_events": 0,
+        "fusions": 0,
+        "queue_depths": {"device": 65},
+        "queue_limit": 64,
+    }
+    advanced = _accepting_cognition([])
+    advanced.health_report = lambda: {"ok": False, "reason": "degraded"}
+    services = {
+        "multimodal_synchronizer": multimodal,
+        "advanced_cognition": advanced,
+    }
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+        raising=False,
+    )
+    router = RealityObservationRouter(
+        RealityReachService(),
+        digital_twin=_digital_twin(tmp_path, name="sink-health-twin.sqlite3"),
+    )
+
+    status = router.status()["required_sink_registry"]
+    assert status["digital_twin"]["ready"] is True
+    assert status["multimodal"]["configured"] is True
+    assert status["multimodal"]["ready"] is False
+    assert status["multimodal"]["reason"] == "health_report_unready"
+    assert status["advanced_cognition"]["configured"] is True
+    assert status["advanced_cognition"]["ready"] is False
+    assert status["advanced_cognition"]["reason"] == "health_report_unready"
+    assert router.is_ready() is False
 
 
 @pytest.mark.asyncio

@@ -368,6 +368,37 @@ async def test_historian_failure_keeps_live_sensing_and_actuation_registered(
 
 
 @pytest.mark.asyncio
+async def test_missing_digital_twin_fails_canonical_sensory_fabric_closed(
+    monkeypatch,
+) -> None:
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    class BrokenDigitalTwin:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic digital twin corruption")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.digital_twin",
+        RealityDigitalTwinGraph=BrokenDigitalTwin,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert report["degraded"]["reality_digital_twin"]["severity"] == "critical"
+    assert report["degraded"]["reality_sensory_fabric"]["severity"] == "critical"
+    assert "reality_sensory_fabric" not in report["completed"]
+    assert orchestrator.reality_digital_twin is None
+    assert "reality_digital_twin" not in registered
+    assert "reality_observation_router" not in registered
+
+
+@pytest.mark.asyncio
 async def test_native_sqlite_historian_failure_degrades_only_durable_history(
     monkeypatch,
 ):

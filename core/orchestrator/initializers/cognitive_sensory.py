@@ -194,6 +194,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
     async def _reality_reach() -> None:
         from core.environment.runtime_workspace import environment_runtime_file
+        from core.reality_reach.digital_twin import RealityDigitalTwinGraph
         from core.reality_reach.historian import RealityHistorian
         from core.reality_reach.live import get_reality_reach_service
         from core.reality_reach.transactions import get_reality_actuation_coordinator
@@ -227,6 +228,31 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 severity="warning",
             )
         orchestrator.reality_historian = historian
+        digital_twin = None
+        try:
+            twin_path = environment_runtime_file(
+                "shared",
+                "reality_digital_twin.sqlite3",
+                purpose="state",
+            )
+            digital_twin = await asyncio.to_thread(
+                RealityDigitalTwinGraph,
+                twin_path,
+                session_id=service.session_id,
+            )
+            await asyncio.to_thread(digital_twin.reconcile_service, service)
+        except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+            _record_cognitive_sensory_degradation(
+                orchestrator,
+                exc,
+                phase="reality_digital_twin",
+                action=(
+                    "Kept raw physical inventory available but failed the canonical "
+                    "sensory-fabric boot contract until topology and state projection recover"
+                ),
+                severity="critical",
+            )
+        orchestrator.reality_digital_twin = digital_twin
         ServiceContainer.register_instance(
             "reality_reach",
             service,
@@ -258,10 +284,22 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 ),
                 failure_policy="degrade_with_receipt",
             )
+        if digital_twin is not None:
+            ServiceContainer.register_instance(
+                "reality_digital_twin",
+                digital_twin,
+                required=True,
+                owner="core/reality_reach/digital_twin.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=("stable physical identity, topology, state, and migration receipts"),
+                failure_policy="fail-closed",
+            )
         report["registered"]["reality_reach"] = service.__class__.__name__
         report["registered"]["reality_actuation"] = coordinator.__class__.__name__
         if historian is not None:
             report["registered"]["reality_historian"] = historian.__class__.__name__
+        if digital_twin is not None:
+            report["registered"]["reality_digital_twin"] = digital_twin.__class__.__name__
 
     await _run_phase(
         orchestrator,
@@ -281,7 +319,16 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         if reality_reach is None:
             raise RuntimeError("Reality Reach must be initialized before its sensory fabric")
         historian = getattr(orchestrator, "reality_historian", None)
-        router = RealityObservationRouter(reality_reach, historian=historian)
+        digital_twin = getattr(orchestrator, "reality_digital_twin", None)
+        if digital_twin is None:
+            raise RuntimeError(
+                "Reality digital twin is required for the canonical sensory fabric"
+            )
+        router = RealityObservationRouter(
+            reality_reach,
+            historian=historian,
+            digital_twin=digital_twin,
+        )
         await router.start()
         try:
             trust_store = None
@@ -312,6 +359,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             broker = DeviceAttachmentBroker(
                 reality_reach,
                 router,
+                digital_twin=digital_twin,
                 state_path=trust_state_path,
                 trust_store=trust_store,
                 trust_store_error=trust_store_error,
@@ -325,11 +373,11 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         ServiceContainer.register_instance(
             "reality_observation_router",
             router,
-            required=False,
+            required=True,
             owner="core/reality_reach/observation_router.py",
             registered_by="init_cognitive_sensory_layer",
             required_for="bounded physical exteroception and cognitive grounding",
-            failure_policy="degrade_with_receipt",
+            failure_policy="fail-closed",
         )
         ServiceContainer.register_instance(
             "reality_attachment_broker",
@@ -348,7 +396,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         "reality_sensory_fabric",
         "Physical channels remain inventoried but are not routed into cognition or portable attachment",
         _reality_sensory_fabric,
-        severity="warning",
+        severity="critical",
     )
 
     async def _hardware_manager() -> None:
@@ -556,11 +604,20 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         "homeostatic_rl": ("core.cognitive.homeostatic_rl", "get_homeostatic_rl"),
         "topology_evolution": ("core.cognitive.topology_evolution", "TopologyEvolution"),
         "autopoiesis": ("core.cognitive.autopoiesis", "get_autopoiesis_engine"),
-        "adaptive_immune_system": ("core.adaptation.adaptive_immunity", "get_adaptive_immune_system"),
-        "autonomous_resilience_mesh": ("core.adaptation.autonomous_resilience", "get_autonomous_resilience_mesh"),
+        "adaptive_immune_system": (
+            "core.adaptation.adaptive_immunity",
+            "get_adaptive_immune_system",
+        ),
+        "autonomous_resilience_mesh": (
+            "core.adaptation.autonomous_resilience",
+            "get_autonomous_resilience_mesh",
+        ),
     }
     alife_services = {
-        "criticality_regulator": ("core.consciousness.criticality_regulator", "get_criticality_regulator"),
+        "criticality_regulator": (
+            "core.consciousness.criticality_regulator",
+            "get_criticality_regulator",
+        ),
         "alife_dynamics": ("core.consciousness.alife_dynamics", "ALifeDynamics"),
         "alife_extensions": ("core.consciousness.alife_extensions", "ALifeExtensions"),
         "endogenous_fitness": ("core.consciousness.endogenous_fitness", "get_endogenous_fitness"),

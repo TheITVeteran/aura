@@ -29,13 +29,13 @@ Design principles:
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import logging
 import math
 import os
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -252,6 +252,8 @@ class WillDecision:
     executive_intent_id: str = ""
     signature: str = ""
     signature_scheme: str = ""
+    signature_key_id: str = ""
+    signature_root_durable: bool = False
 
     def is_approved(self) -> bool:
         return self.outcome in (WillOutcome.PROCEED, WillOutcome.CONSTRAIN,
@@ -2247,7 +2249,12 @@ class UnifiedWill:
     def _record(self, decision: WillDecision) -> None:
         """Record decision in audit trail."""
         if not decision.signature:
-            decision.signature, decision.signature_scheme = self._sign_decision(decision)
+            (
+                decision.signature,
+                decision.signature_scheme,
+                decision.signature_key_id,
+                decision.signature_root_durable,
+            ) = self._sign_decision(decision)
         self._audit_trail.append(decision)
 
         # Also publish to event bus for system-wide observability
@@ -2263,6 +2270,7 @@ class UnifiedWill:
                 "aura_now_tick": decision.aura_now_tick,
                 "aura_now_policy": decision.aura_now_policy,
                 "signature_scheme": decision.signature_scheme,
+                "signature_key_id": decision.signature_key_id,
                 "timestamp": decision.timestamp,
             })
         except (ImportError, AttributeError, RuntimeError) as exc:
@@ -2274,17 +2282,21 @@ class UnifiedWill:
         raw = f"{ts:.6f}:{source}:{content[:50]}"
         return "will_" + hashlib.sha256(raw.encode()).hexdigest()[:12]
 
-    def _sign_decision(self, decision: WillDecision) -> tuple[str, str]:
+    def _sign_decision(self, decision: WillDecision) -> tuple[str, str, str, bool]:
         payload = self._signature_payload(decision)
         try:
-            from core.tools.runtime_tools import CRYPTO_AVAILABLE, _sign_payload
+            from core.governance.capability_chain import sign_will_receipt_payload
 
-            signature = _sign_payload(payload)
-            scheme = "ed25519" if CRYPTO_AVAILABLE else "hmac-sha256"
-            return signature, scheme
+            signed = sign_will_receipt_payload(payload)
+            return (
+                str(signed["signature"]),
+                str(signed["signature_scheme"]),
+                str(signed["signature_key_id"]),
+                bool(signed["trust_root_durable"]),
+            )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation('will', exc)
-            return hashlib.sha256(payload).hexdigest(), "sha256-fallback"
+            return hashlib.sha256(payload).hexdigest(), "sha256-fallback", "", False
 
     @staticmethod
     def _signature_payload(decision: WillDecision) -> bytes:
@@ -2368,6 +2380,8 @@ class UnifiedWill:
                 "aura_now_constraints": list(d.aura_now_constraints),
                 "aura_now_evidence": dict(d.aura_now_evidence),
                 "signature_scheme": d.signature_scheme,
+                "signature_key_id": d.signature_key_id,
+                "signature_root_durable": d.signature_root_durable,
                 "signature": d.signature,
                 "timestamp": d.timestamp,
                 "latency_ms": round(d.latency_ms, 3),
@@ -2400,16 +2414,67 @@ class UnifiedWill:
         """Verify that the receipt exists and its signature matches the payload."""
         for decision in self._audit_trail:
             if getattr(decision, "receipt_id", None) == receipt_id:
-                signature = getattr(decision, "signature", None)
-                scheme = getattr(decision, "signature_scheme", None)
-                if not signature or not scheme:
-                    return False
-                expected_signature, expected_scheme = self._sign_decision(decision)
-                return (
-                    str(scheme) == str(expected_scheme)
-                    and hmac.compare_digest(str(signature), str(expected_signature))
+                return self.verify_persisted_receipt_material(
+                    {
+                        "receipt_id": decision.receipt_id,
+                        "payload": self._signature_payload(decision).decode("utf-8"),
+                        "signature": decision.signature,
+                        "signature_scheme": decision.signature_scheme,
+                        "signature_key_id": decision.signature_key_id,
+                        "trust_root_durable": decision.signature_root_durable,
+                    }
                 )
         return False
+
+    @staticmethod
+    def verify_persisted_receipt_material(material: Mapping[str, Any]) -> bool:
+        """Verify embedded receipt material without live audit membership."""
+
+        expected_fields = {
+            "receipt_id",
+            "payload",
+            "signature",
+            "signature_scheme",
+            "signature_key_id",
+            "trust_root_durable",
+        }
+        if not isinstance(material, Mapping):
+            return False
+        value = dict(material)
+        actual_fields = set(value)
+        if actual_fields != expected_fields and actual_fields != expected_fields | {
+            "material_sha256"
+        }:
+            return False
+        receipt_id = value.get("receipt_id")
+        payload_text = value.get("payload")
+        durable = value.get("trust_root_durable")
+        if (
+            not isinstance(receipt_id, str)
+            or not receipt_id
+            or not isinstance(payload_text, str)
+            or not payload_text
+            or not isinstance(durable, bool)
+        ):
+            return False
+        try:
+            payload = json.loads(payload_text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict) or payload.get("receipt_id") != receipt_id:
+            return False
+        try:
+            from core.governance.capability_chain import verify_will_receipt_payload
+
+            return verify_will_receipt_payload(
+                payload_text.encode("utf-8"),
+                signature=str(value.get("signature") or ""),
+                signature_scheme=str(value.get("signature_scheme") or ""),
+                signature_key_id=str(value.get("signature_key_id") or ""),
+                require_durable=durable,
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return False
 
     def get_receipt_verification_material(self, receipt_id: str) -> dict[str, Any]:
         """Return payload/signature material for external receipt verification."""
@@ -2420,6 +2485,8 @@ class UnifiedWill:
                     "payload": self._signature_payload(decision).decode("utf-8"),
                     "signature": decision.signature,
                     "signature_scheme": decision.signature_scheme,
+                    "signature_key_id": decision.signature_key_id,
+                    "trust_root_durable": decision.signature_root_durable,
                 }
         return {}
 

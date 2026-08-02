@@ -111,6 +111,7 @@ CAPABILITY_SCHEMA_VERSION = 1
 # signature minted for some other Aura structure can never be replayed as a
 # capability, and vice versa.
 _SIGNING_TAG = b"aura.governance.capability.v1\x00"
+_WILL_RECEIPT_SIGNING_TAG = b"aura.governance.will-receipt.v1\x00"
 
 # Outcomes the Will considers authorizing. Anything else must never mint, and a
 # forged capability carrying a non-approving outcome is rejected at verify time
@@ -722,6 +723,57 @@ def _verify_signature(payload: bytes, signature: str, key_id: str) -> bool:
             return False
     expected = hmac.new(keys["private"], payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+def sign_will_receipt_payload(payload: bytes) -> dict[str, Any]:
+    """Sign canonical Will receipt bytes under the durable governance root.
+
+    The distinct domain tag prevents a receipt signature from being replayed
+    as a capability signature.  The returned key identity lets a persisted
+    receipt remain independently verifiable after the Will audit deque has
+    been evicted or the process has restarted.
+    """
+
+    if not isinstance(payload, bytes) or not payload:
+        raise ValueError("Will receipt payload must be non-empty bytes")
+    keys = _KeyMaterial.load()
+    return {
+        "signature": _sign(_WILL_RECEIPT_SIGNING_TAG + payload),
+        "signature_scheme": str(keys["algorithm"]),
+        "signature_key_id": str(keys["key_id"]),
+        "trust_root_durable": bool(keys["asymmetric"] and keys["persisted"]),
+    }
+
+
+def verify_will_receipt_payload(
+    payload: bytes,
+    *,
+    signature: str,
+    signature_scheme: str,
+    signature_key_id: str,
+    require_durable: bool = False,
+) -> bool:
+    """Verify persisted Will receipt bytes without consulting live history."""
+
+    if not isinstance(payload, bytes) or not payload:
+        return False
+    if not all(
+        isinstance(value, str) and bool(value)
+        for value in (signature, signature_scheme, signature_key_id)
+    ):
+        return False
+    keys = _KeyMaterial.load()
+    if signature_scheme != str(keys["algorithm"]):
+        return False
+    if require_durable and not bool(keys["asymmetric"] and keys["persisted"]):
+        return False
+    if require_durable and signature_scheme != "ed25519":
+        return False
+    return _verify_signature(
+        _WILL_RECEIPT_SIGNING_TAG + payload,
+        signature,
+        signature_key_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1342,6 +1394,8 @@ __all__ = [
     "get_nonce_ledger",
     "issuer_is_asymmetric",
     "reset_capability_chain",
+    "sign_will_receipt_payload",
+    "verify_will_receipt_payload",
 ]
 """
     core.governance.capability_chain — end of module

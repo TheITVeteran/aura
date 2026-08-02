@@ -11,7 +11,10 @@ from core.container import ServiceContainer
 from core.embodiment.world_bridge import Channel, get_world_bridge
 from core.governance.capability_chain import CapabilityViolation, get_capability_issuer
 from core.governance.will import ActionDomain, get_will
-from core.reality_reach.attachment_authority import ATTACHMENT_AUTHORITY_ACTION
+from core.reality_reach.attachment_authority import (
+    ATTACHMENT_AUTHORITY_ACTION,
+    MANIFEST_MIGRATION_AUTHORITY_ACTION,
+)
 from core.reality_reach.attachments import AttachmentAccess
 from core.runtime.audit_chain import canonical_json
 from core.runtime.errors import record_degradation
@@ -434,9 +437,45 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 payload=intent,
                 scope=str(intent["scope"]),
             )
+            migration_intent = broker.manifest_migration_intent(request_id)
+            migration_capability = None
+            if migration_intent is not None:
+                migration_context = dict(decision_context)
+                migration_context.update(
+                    {
+                        "physical_manifest_migration": True,
+                        "physical_manifest_expected": migration_intent[
+                            "expected_manifest_sha256"
+                        ],
+                        "physical_manifest_replacement": migration_intent[
+                            "new_manifest_sha256"
+                        ],
+                    }
+                )
+                migration_decision = get_will().decide(
+                    content=(
+                        "Authorize this exact physical manifest compare-and-swap: "
+                        + canonical_json(migration_intent).decode("utf-8")
+                    ),
+                    source="embodiment_skill",
+                    domain=ActionDomain.ENVIRONMENT_ACTION,
+                    priority=0.8,
+                    context=migration_context,
+                )
+                migration_capability = get_capability_issuer().issue_from_decision(
+                    migration_decision,
+                    action=MANIFEST_MIGRATION_AUTHORITY_ACTION,
+                    payload=migration_intent,
+                    scope=str(migration_intent["scope"]),
+                )
             attached = await broker.authorize_and_attach(
                 request_id,
                 authority_capability=capability.to_dict(),
+                manifest_migration_capability=(
+                    migration_capability.to_dict()
+                    if migration_capability is not None
+                    else None
+                ),
                 persistent=persistent,
                 grant_ttl_s=grant_ttl_s,
             )
@@ -446,6 +485,7 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 "authority_receipt_id": attached.authority_receipt_id,
                 "grant_ttl_s": int(intent["grant_ttl_s"]),
                 "persistent": persistent,
+                "manifest_migration_authorized": migration_capability is not None,
                 "summary": (
                     "The declared physical relationship is attached under bounded trust."
                     if attached.state.value == "attached"

@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,10 @@ from core.governance.capability_chain import (
     get_capability_issuer,
     get_capability_verifier,
     reset_capability_chain,
+    sign_will_receipt_payload,
+    verify_will_receipt_payload,
 )
+from core.governance.will import ActionDomain, UnifiedWill, WillDecision, WillOutcome
 from core.reality_reach import attachment_authority as authority_module
 from core.reality_reach.attachment_authority import (
     ATTACHMENT_AUTHORITY_ACTION,
@@ -39,7 +43,7 @@ class Decision:
 
 class ReceiptSource:
     def __init__(self) -> None:
-        self.material: dict[str, dict[str, str]] = {}
+        self.material: dict[str, dict[str, Any]] = {}
         self.valid: set[str] = set()
 
     def add(self, receipt_id: str) -> None:
@@ -52,19 +56,36 @@ class ReceiptSource:
             sort_keys=True,
             separators=(",", ":"),
         )
+        signed = sign_will_receipt_payload(payload.encode("utf-8"))
         self.valid.add(receipt_id)
         self.material[receipt_id] = {
             "receipt_id": receipt_id,
             "payload": payload,
-            "signature": "ab" * 64,
-            "signature_scheme": "ed25519",
+            "signature": str(signed["signature"]),
+            "signature_scheme": str(signed["signature_scheme"]),
+            "signature_key_id": str(signed["signature_key_id"]),
+            "trust_root_durable": bool(signed["trust_root_durable"]),
         }
 
     def verify_receipt_signature(self, receipt_id: str) -> bool:
-        return receipt_id in self.valid
+        return receipt_id in self.valid and self.verify_persisted_receipt_material(
+            self.material.get(receipt_id, {})
+        )
 
-    def get_receipt_verification_material(self, receipt_id: str) -> dict[str, str]:
+    def get_receipt_verification_material(self, receipt_id: str) -> dict[str, Any]:
         return dict(self.material.get(receipt_id, {}))
+
+    @staticmethod
+    def verify_persisted_receipt_material(material: object) -> bool:
+        if not isinstance(material, dict):
+            return False
+        return verify_will_receipt_payload(
+            str(material.get("payload") or "").encode("utf-8"),
+            signature=str(material.get("signature") or ""),
+            signature_scheme=str(material.get("signature_scheme") or ""),
+            signature_key_id=str(material.get("signature_key_id") or ""),
+            require_durable=material.get("trust_root_durable") is True,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -225,14 +246,29 @@ def test_tampered_persisted_evidence_is_refused() -> None:
 
 
 def test_persisted_authority_revalidates_current_will_material_after_restart() -> None:
-    receipts = ReceiptSource()
     intent = _intent()
-    verifier = AttachmentCapabilityAuthorityVerifier(will_receipts=receipts)
-    evidence = dict(
-        verifier.verify(_issue(intent, receipts), intent=intent, persistent=True)
+    original_will = UnifiedWill()
+    decision = WillDecision(
+        receipt_id="will_restart_1",
+        outcome=WillOutcome.PROCEED,
+        domain=ActionDomain.ENVIRONMENT_ACTION,
+        reason="authorize exact persistent attachment",
     )
+    original_will._record(decision)
+    capability = get_capability_issuer().issue_from_decision(
+        decision,
+        action=ATTACHMENT_AUTHORITY_ACTION,
+        payload=intent,
+        scope=str(intent["scope"]),
+    )
+    verifier = AttachmentCapabilityAuthorityVerifier(will_receipts=original_will)
+    evidence = dict(verifier.verify(capability, intent=intent, persistent=True))
 
-    restarted_verifier = AttachmentCapabilityAuthorityVerifier(will_receipts=receipts)
+    restarted_will = UnifiedWill()
+    assert restarted_will.verify_receipt(decision.receipt_id) is False
+    restarted_verifier = AttachmentCapabilityAuthorityVerifier(
+        will_receipts=restarted_will
+    )
 
     assert restarted_verifier.validate_persisted(
         copy.deepcopy(evidence),
@@ -241,17 +277,47 @@ def test_persisted_authority_revalidates_current_will_material_after_restart() -
     ) == evidence
 
 
-def test_persisted_authority_rejects_rehashed_will_material_substitution() -> None:
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("signature", "ff" * 64),
+        ("signature_key_id", "ed25519-attacker000000"),
+        ("trust_root_durable", False),
+        (
+            "payload",
+            json.dumps(
+                {
+                    "receipt_id": "will_test_1",
+                    "outcome": "proceed",
+                    "domain": "tool_execution",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ),
+    ],
+)
+def test_persisted_authority_rejects_rehashed_will_material_substitution(
+    field: str,
+    replacement: object,
+) -> None:
     receipts = ReceiptSource()
     intent = _intent()
     verifier = AttachmentCapabilityAuthorityVerifier(will_receipts=receipts)
     evidence = copy.deepcopy(
         dict(verifier.verify(_issue(intent, receipts), intent=intent, persistent=True))
     )
-    evidence["will_receipt"]["signature"] = "ff" * 64
+    evidence["will_receipt"][field] = replacement
     material_body = {
         key: evidence["will_receipt"][key]
-        for key in ("receipt_id", "payload", "signature", "signature_scheme")
+        for key in (
+            "receipt_id",
+            "payload",
+            "signature",
+            "signature_scheme",
+            "signature_key_id",
+            "trust_root_durable",
+        )
     }
     evidence["will_receipt"]["material_sha256"] = _digest(material_body)
     _rehash_evidence(evidence)

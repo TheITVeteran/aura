@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
@@ -35,9 +34,11 @@ from core.reality_reach.contracts import (
     NumericDomain,
     RealityLayer,
 )
+from core.reality_reach.digital_twin import RealityDigitalTwinGraph, TwinReceipt
 from core.reality_reach.historian import (
     HistorianDisposition,
     HistorianError,
+    HistorianHeadSnapshot,
     RealityHistorian,
 )
 from core.reality_reach.live import (
@@ -47,12 +48,14 @@ from core.reality_reach.live import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 from core.utils.task_tracker import get_task_tracker
 
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _SELECTOR = re.compile(r"^(?:\*|[a-z0-9][a-z0-9_.:-]{0,127}\*?)$")
 _AVAILABLE = frozenset({ReadingStatus.AVAILABLE, ReadingStatus.SIMULATED})
-_OBSERVATION_SCHEMA = "aura.reality-observation.v1"
+_OBSERVATION_SCHEMA = "aura.reality-observation.v2"
+_LEGACY_OBSERVATION_SCHEMA = "aura.reality-observation.v1"
 _HISTORIAN_EVIDENCE_SCHEMA = "aura.reality-historian-evidence.v1"
 _HISTORIAN_EVIDENCE_KEYS = frozenset(
     {
@@ -67,6 +70,43 @@ _HISTORIAN_EVIDENCE_KEYS = frozenset(
     }
 )
 _SQLITE_INT_MAX = (1 << 63) - 1
+_BACKFILL_SUBSCRIPTION_ID = "reality.backfill.current_head"
+_BACKFILL_PAGE_SIZE = 512
+_BACKFILL_MAX_PAGES = 256
+
+
+@dataclass(frozen=True, slots=True)
+class _RequiredSink:
+    sink_id: str
+    dependency_key: str
+    callable_attribute: str
+    health_attribute: str
+    health_contract: str
+
+
+_REQUIRED_SINK_REGISTRY = (
+    _RequiredSink(
+        sink_id="digital_twin",
+        dependency_key="reality_digital_twin",
+        callable_attribute="observe_observation",
+        health_attribute="health_snapshot",
+        health_contract="ready_flag",
+    ),
+    _RequiredSink(
+        sink_id="multimodal",
+        dependency_key="multimodal_synchronizer",
+        callable_attribute="ingest",
+        health_attribute="get_status",
+        health_contract="bounded_multimodal_status",
+    ),
+    _RequiredSink(
+        sink_id="advanced_cognition",
+        dependency_key="advanced_cognition",
+        callable_attribute="observe_state",
+        health_attribute="health_report",
+        health_contract="ok_flag",
+    ),
+)
 
 
 def _finite(value: float, *, name: str) -> float:
@@ -128,6 +168,22 @@ def _observation_identifier(
         }
     )
     return f"reality.obs.{digest.removeprefix('sha256:')[:32]}"
+
+
+def _backfill_received_monotonic_ns(
+    *,
+    record_id: str,
+    source_sha256: str,
+    target_binding_sha256: str,
+) -> int:
+    digest = _digest(
+        {
+            "record_id": record_id,
+            "source_sha256": source_sha256,
+            "target_binding_sha256": target_binding_sha256,
+        }
+    )
+    return max(1, int(digest.removeprefix("sha256:")[:15], 16))
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +273,10 @@ class RealityObservation:
     historian_order_basis: str = "ephemeral"
     historian_order_gap: bool = False
     historian_alarm_codes: tuple[str, ...] = ()
+    twin_id: str = ""
+    attachment_generation: int = 0
+    attachment_bound_at_ns: int = 0
+    topology_revision: int = 0
 
     def __post_init__(self) -> None:
         if not _IDENTIFIER.fullmatch(self.observation_id):
@@ -233,9 +293,7 @@ class RealityObservation:
             raise ValueError("observation receipt clocks must be positive")
         if not _IDENTIFIER.fullmatch(self.subscription_id):
             raise ValueError("subscription_id must be a canonical identifier")
-        if self.historian_record_id and not _IDENTIFIER.fullmatch(
-            self.historian_record_id
-        ):
+        if self.historian_record_id and not _IDENTIFIER.fullmatch(self.historian_record_id):
             raise ValueError("historian_record_id must be a canonical identifier")
         if self.historian_quality not in {
             "ephemeral",
@@ -254,6 +312,25 @@ class RealityObservation:
             not _IDENTIFIER.fullmatch(item) for item in self.historian_alarm_codes
         ):
             raise ValueError("historian_alarm_codes differ from their bounded contract")
+        fenced = bool(self.twin_id)
+        if fenced:
+            if not _IDENTIFIER.fullmatch(self.twin_id):
+                raise ValueError("twin_id must be a canonical identifier")
+            for name, value in (
+                ("attachment_generation", self.attachment_generation),
+                ("attachment_bound_at_ns", self.attachment_bound_at_ns),
+                ("topology_revision", self.topology_revision),
+            ):
+                _stored_int(value, name=name, minimum=1)
+        elif any(
+            value
+            for value in (
+                self.attachment_generation,
+                self.attachment_bound_at_ns,
+                self.topology_revision,
+            )
+        ):
+            raise ValueError("partial digital-twin attachment fence is invalid")
         expected_id = _observation_identifier(
             adapter_id=self.adapter_id,
             channel_id=self.declaration.channel_id,
@@ -281,6 +358,16 @@ class RealityObservation:
             "received_monotonic_ns": self.received_monotonic_ns,
             "subscription_id": self.subscription_id,
         }
+        twin_binding: dict[str, Any] = {
+            "twin_id": self.twin_id,
+            "attachment_generation": self.attachment_generation,
+            "attachment_bound_at_ns": self.attachment_bound_at_ns,
+            "topology_revision": self.topology_revision,
+        }
+        twin_binding["binding_sha256"] = _digest(
+            {"observation_id": self.observation_id, "binding": twin_binding}
+        )
+        payload["twin_binding"] = twin_binding
         historian: dict[str, Any] = {
             "schema": _HISTORIAN_EVIDENCE_SCHEMA,
             "record_id": self.historian_record_id,
@@ -296,9 +383,7 @@ class RealityObservation:
                 else "accepted"
             ),
         }
-        historian["binding_sha256"] = _digest(
-            {"observation": payload, "historian": historian}
-        )
+        historian["binding_sha256"] = _digest({"observation": payload, "historian": historian})
         payload["historian"] = historian
         return payload
 
@@ -309,7 +394,7 @@ class RealityObservation:
         if not isinstance(payload, Mapping):
             raise TypeError("Reality observation payload must be a mapping")
         schema = str(payload.get("schema") or "")
-        if schema != _OBSERVATION_SCHEMA:
+        if schema not in {_OBSERVATION_SCHEMA, _LEGACY_OBSERVATION_SCHEMA}:
             raise ValueError("unsupported Reality observation schema")
         raw_declaration = payload.get("declaration")
         raw_reading = payload.get("reading")
@@ -338,9 +423,7 @@ class RealityObservation:
                     name="declaration.reality_layers",
                 )
             ),
-            evidence_level=EvidenceLevel(
-                str(raw_declaration.get("evidence_level") or "")
-            ),
+            evidence_level=EvidenceLevel(str(raw_declaration.get("evidence_level") or "")),
             owner=str(raw_declaration.get("owner") or ""),
             resolution=raw_declaration.get("resolution", 0.0),
             sample_rate_hz=raw_declaration.get("sample_rate_hz", 0.0),
@@ -348,9 +431,7 @@ class RealityObservation:
             stale_after_s=raw_declaration.get("stale_after_s", 30.0),
             reference_id=str(raw_declaration.get("reference_id") or ""),
             calibration_id=str(raw_declaration.get("calibration_id") or ""),
-            calibration_valid_until_ns=raw_declaration.get(
-                "calibration_valid_until_ns"
-            ),
+            calibration_valid_until_ns=raw_declaration.get("calibration_valid_until_ns"),
             compliance_tags=tuple(
                 str(value)
                 for value in _stored_sequence(
@@ -398,9 +479,7 @@ class RealityObservation:
                 raw_reading.get("sequence", 0),
                 name="reading.sequence",
             ),
-            wall_clock_source=str(
-                raw_reading.get("wall_clock_source") or "system.time_ns"
-            ),
+            wall_clock_source=str(raw_reading.get("wall_clock_source") or "system.time_ns"),
             source_epoch=str(raw_reading.get("source_epoch") or ""),
             source_sequence=_stored_int(
                 raw_reading.get("source_sequence", 0),
@@ -408,6 +487,17 @@ class RealityObservation:
             ),
             source_event_id=str(raw_reading.get("source_event_id") or ""),
             source_quality=str(raw_reading.get("source_quality") or ""),
+            adapter_identity_sha256=str(
+                raw_reading.get("adapter_identity_sha256") or ""
+            ),
+            adapter_registration_generation=_stored_int(
+                raw_reading.get("adapter_registration_generation", 0),
+                name="reading.adapter_registration_generation",
+            ),
+            adapter_identity_stable=_stored_bool(
+                raw_reading.get("adapter_identity_stable", False),
+                name="reading.adapter_identity_stable",
+            ),
         )
         if payload.get("channel_id") not in {None, declaration.channel_id}:
             raise ValueError("Reality observation channel summary conflicts with evidence")
@@ -471,11 +561,51 @@ class RealityObservation:
         binding_payload.pop("historian", None)
         binding_evidence = dict(raw_historian)
         supplied_binding = str(binding_evidence.pop("binding_sha256", ""))
-        expected_binding = _digest(
-            {"observation": binding_payload, "historian": binding_evidence}
-        )
+        expected_binding = _digest({"observation": binding_payload, "historian": binding_evidence})
         if supplied_binding != expected_binding:
             raise ValueError("Reality observation historian evidence binding differs")
+        twin_id = ""
+        attachment_generation = 0
+        attachment_bound_at_ns = 0
+        topology_revision = 0
+        if schema == _OBSERVATION_SCHEMA:
+            raw_twin_binding = payload.get("twin_binding")
+            if not isinstance(raw_twin_binding, Mapping):
+                raise ValueError("Reality observation twin binding is missing")
+            expected_keys = {
+                "attachment_bound_at_ns",
+                "attachment_generation",
+                "binding_sha256",
+                "topology_revision",
+                "twin_id",
+            }
+            if set(raw_twin_binding) != expected_keys:
+                raise ValueError("Reality observation twin binding manifest differs")
+            twin_binding = dict(raw_twin_binding)
+            supplied_twin_digest = str(twin_binding.pop("binding_sha256", ""))
+            if supplied_twin_digest != _digest(
+                {
+                    "observation_id": str(payload.get("observation_id") or ""),
+                    "binding": twin_binding,
+                }
+            ):
+                raise ValueError("Reality observation twin binding digest differs")
+            twin_id = str(twin_binding.get("twin_id") or "")
+            attachment_generation = _stored_int(
+                twin_binding.get("attachment_generation", 0),
+                name="twin_binding.attachment_generation",
+                minimum=1 if twin_id else 0,
+            )
+            attachment_bound_at_ns = _stored_int(
+                twin_binding.get("attachment_bound_at_ns", 0),
+                name="twin_binding.attachment_bound_at_ns",
+                minimum=1 if twin_id else 0,
+            )
+            topology_revision = _stored_int(
+                twin_binding.get("topology_revision", 0),
+                name="twin_binding.topology_revision",
+                minimum=1 if twin_id else 0,
+            )
         return cls(
             observation_id=str(payload.get("observation_id") or ""),
             adapter_id=str(payload.get("adapter_id") or ""),
@@ -490,6 +620,10 @@ class RealityObservation:
             historian_order_basis=historian_order_basis,
             historian_order_gap=historian_order_gap,
             historian_alarm_codes=historian_alarm_codes,
+            twin_id=twin_id,
+            attachment_generation=attachment_generation,
+            attachment_bound_at_ns=attachment_bound_at_ns,
+            topology_revision=topology_revision,
         )
 
 
@@ -534,6 +668,7 @@ class RealityObservationRouter:
         service: RealityReachService,
         *,
         historian: RealityHistorian | None = None,
+        digital_twin: RealityDigitalTwinGraph | None = None,
         queue_limit: int = 256,
         poll_interval_s: float = 2.0,
         sampler_timeout_s: float = 8.5,
@@ -547,6 +682,10 @@ class RealityObservationRouter:
         if historian is not None and not isinstance(historian, RealityHistorian):
             raise TypeError("historian must be a RealityHistorian")
         self._historian = historian
+        if digital_twin is not None and not isinstance(digital_twin, RealityDigitalTwinGraph):
+            raise TypeError("digital_twin must be a RealityDigitalTwinGraph")
+        self._digital_twin = digital_twin
+        self._required_sinks = tuple(item.sink_id for item in _REQUIRED_SINK_REGISTRY)
         self._queue_limit = int(queue_limit)
         self._poll_interval_s = max(0.1, min(float(poll_interval_s), 60.0))
         self._sampler_timeout_s = max(0.1, min(float(sampler_timeout_s), 30.0))
@@ -568,7 +707,7 @@ class RealityObservationRouter:
             )
         }
         self._samplers: dict[str, _Sampler] = {}
-        self._lock = threading.RLock()
+        self._lock = checked_lock("reality_observation_router.state", reentrant=True)
         self._wake = asyncio.Event()
         self._worker_task: asyncio.Task[Any] | None = None
         self._poll_task: asyncio.Task[Any] | None = None
@@ -592,6 +731,11 @@ class RealityObservationRouter:
         self._durable_queue_depth = 0
         self._last_historian_probe_monotonic = 0.0
         self._last_historian_maintenance_monotonic = 0.0
+        self._last_twin_probe_monotonic = 0.0
+        self._last_backfill_probe_monotonic = 0.0
+        self._twin_backfill_ready = historian is None
+        self._twin_backfill_receipts = 0
+        self._twin_backfill_failures = 0
         self._attention_paused = False
         self._acquisition_paused = False
 
@@ -700,9 +844,7 @@ class RealityObservationRouter:
         with self._lock:
             acquisition_paused = self._acquisition_paused
             queue_depth = (
-                self._durable_queue_depth
-                if self._historian is not None
-                else len(self._queue)
+                self._durable_queue_depth if self._historian is not None else len(self._queue)
             )
         if acquisition_paused:
             return ObservationReceipt(
@@ -754,15 +896,18 @@ class RealityObservationRouter:
             ):
                 self._deduplicated += 1
                 attention_reason = "below_min_delta"
-        if (
-            policy is not None
-            and not attention_reason
-            and salience < policy.min_salience
-        ):
+        if policy is not None and not attention_reason and salience < policy.min_salience:
             self._below_salience += 1
             attention_reason = "below_salience"
         observation: RealityObservation | None = None
         if not attention_reason and policy is not None:
+            twin_binding: Mapping[str, Any] = {}
+            if self._digital_twin is not None:
+                twin_binding = await asyncio.to_thread(
+                    self._digital_twin.binding_context,
+                    adapter_id,
+                    declaration,
+                )
             received_at_ns = max(1, time.time_ns())
             received_monotonic_ns = max(1, time.monotonic_ns())
             self._sequence += 1
@@ -780,6 +925,10 @@ class RealityObservationRouter:
                 received_at_ns=received_at_ns,
                 received_monotonic_ns=received_monotonic_ns,
                 subscription_id=policy.subscription_id,
+                twin_id=str(twin_binding.get("twin_id") or ""),
+                attachment_generation=int(twin_binding.get("attachment_generation") or 0),
+                attachment_bound_at_ns=int(twin_binding.get("attachment_bound_at_ns") or 0),
+                topology_revision=int(twin_binding.get("topology_revision") or 0),
             )
         if self._historian is not None:
             admission = await self._historian.admit(
@@ -789,15 +938,10 @@ class RealityObservationRouter:
                 delivery_observation_id=(
                     observation.observation_id if observation is not None else ""
                 ),
-                delivery_payload=(
-                    observation.to_dict() if observation is not None else None
-                ),
+                delivery_payload=(observation.to_dict() if observation is not None else None),
                 delivery_queue_limit=self._queue_limit,
                 delivery_salience=salience,
-                delivery_required_sinks=(
-                    "advanced_cognition",
-                    "multimodal",
-                ),
+                delivery_required_sinks=self._required_sinks,
             )
             if admission.disposition in {
                 HistorianDisposition.ACCEPTED,
@@ -823,11 +967,7 @@ class RealityObservationRouter:
                 "",
                 False,
                 attention_reason,
-                (
-                    self._durable_queue_depth
-                    if self._historian is not None
-                    else len(self._queue)
-                ),
+                (self._durable_queue_depth if self._historian is not None else len(self._queue)),
                 salience,
             )
         if observation is None:
@@ -964,9 +1104,7 @@ class RealityObservationRouter:
         now = time.monotonic()
         with self._lock:
             due = [
-                sampler
-                for sampler in self._samplers.values()
-                if now >= sampler.next_due_monotonic
+                sampler for sampler in self._samplers.values() if now >= sampler.next_due_monotonic
             ]
             for sampler in due:
                 sampler.next_due_monotonic = now + (1.0 / sampler.sample_rate_hz)
@@ -1014,9 +1152,300 @@ class RealityObservationRouter:
 
         return sum(await asyncio.gather(*(_sample(item) for item in due)))
 
+    def _resolve_sink_dependency(self, requirement: _RequiredSink) -> Any:
+        if requirement.sink_id == "digital_twin":
+            return self._digital_twin
+        from core.container import ServiceContainer
+
+        return ServiceContainer.get(requirement.dependency_key, default=None)
+
+    @staticmethod
+    def _sink_health_ready(
+        requirement: _RequiredSink,
+        payload: Any,
+    ) -> tuple[bool, str]:
+        if not isinstance(payload, Mapping):
+            return False, "health_payload_invalid"
+        if requirement.health_contract == "ready_flag":
+            ready = payload.get("ready") is True
+            return ready, "ready" if ready else "health_report_unready"
+        if requirement.health_contract == "ok_flag":
+            ready = payload.get("ok") is True
+            return ready, "ready" if ready else "health_report_unready"
+        if requirement.health_contract == "bounded_multimodal_status":
+            queue_limit = payload.get("queue_limit")
+            queue_depths = payload.get("queue_depths")
+            counters = (
+                payload.get("accepted_events"),
+                payload.get("rejected_events"),
+                payload.get("queue_overflow_drops"),
+                payload.get("late_events"),
+                payload.get("fusions"),
+            )
+            bounded_queue_limit = (
+                queue_limit
+                if isinstance(queue_limit, int)
+                and not isinstance(queue_limit, bool)
+                and 1 <= queue_limit <= 1_000_000
+                else None
+            )
+            valid_depths = (
+                isinstance(queue_depths, Mapping)
+                and bool(queue_depths)
+                and bounded_queue_limit is not None
+                and all(
+                    isinstance(depth, int)
+                    and not isinstance(depth, bool)
+                    and 0 <= depth <= bounded_queue_limit
+                    for depth in queue_depths.values()
+                )
+            )
+            valid_counters = all(
+                isinstance(counter, int)
+                and not isinstance(counter, bool)
+                and counter >= 0
+                for counter in counters
+            )
+            ready = bool(valid_depths and valid_counters)
+            return ready, "ready" if ready else "health_report_unready"
+        return False, "health_contract_unknown"
+
+    def _required_sink_status(self) -> dict[str, dict[str, Any]]:
+        status: dict[str, dict[str, Any]] = {}
+        for requirement in _REQUIRED_SINK_REGISTRY:
+            try:
+                dependency = self._resolve_sink_dependency(requirement)
+                callback = getattr(dependency, requirement.callable_attribute, None)
+                configured = dependency is not None and callable(callback)
+                ready = False
+                reason = "dependency_unavailable"
+                health_probe = getattr(dependency, requirement.health_attribute, None)
+                if configured and callable(health_probe):
+                    ready, reason = self._sink_health_ready(
+                        requirement,
+                        health_probe(),
+                    )
+                elif configured:
+                    ready = False
+                    reason = "health_probe_unavailable"
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                configured = False
+                ready = False
+                reason = f"probe_failed:{type(exc).__name__}"
+            status[requirement.sink_id] = {
+                "dependency_key": requirement.dependency_key,
+                "callable_attribute": requirement.callable_attribute,
+                "health_attribute": requirement.health_attribute,
+                "health_contract": requirement.health_contract,
+                "configured": configured,
+                "ready": ready,
+                "reason": reason,
+            }
+        return status
+
+    @staticmethod
+    def _backfill_observation(
+        snapshot: HistorianHeadSnapshot,
+        binding: Mapping[str, Any],
+    ) -> tuple[RealityObservation, str]:
+        binding_evidence = {
+            "twin_id": str(binding.get("twin_id") or ""),
+            "attachment_generation": int(binding.get("attachment_generation") or 0),
+            "attachment_bound_at_ns": int(binding.get("attachment_bound_at_ns") or 0),
+            "topology_revision": int(binding.get("topology_revision") or 0),
+        }
+        target_binding_sha256 = _digest(binding_evidence)
+        received_monotonic_ns = _backfill_received_monotonic_ns(
+            record_id=snapshot.record_id,
+            source_sha256=snapshot.source_sha256,
+            target_binding_sha256=target_binding_sha256,
+        )
+        observation_id = _observation_identifier(
+            adapter_id=snapshot.adapter_id,
+            channel_id=snapshot.channel_id,
+            reading_sha256=_digest(snapshot.reading),
+            received_monotonic_ns=received_monotonic_ns,
+        )
+        twin_binding = dict(binding_evidence)
+        twin_binding["binding_sha256"] = _digest(
+            {"observation_id": observation_id, "binding": binding_evidence}
+        )
+        captured_at_ns = _stored_int(
+            snapshot.reading.get("captured_at_ns"),
+            name="backfill.reading.captured_at_ns",
+            minimum=1,
+        )
+        payload: dict[str, Any] = {
+            "schema": _OBSERVATION_SCHEMA,
+            "observation_id": observation_id,
+            "adapter_id": snapshot.adapter_id,
+            "declaration": dict(snapshot.declaration),
+            "declaration_sha256": _digest(snapshot.declaration),
+            "channel_id": snapshot.channel_id,
+            "observable": str(snapshot.declaration.get("observable") or ""),
+            "unit": str(snapshot.declaration.get("unit") or ""),
+            "reading": dict(snapshot.reading),
+            "reading_sha256": _digest(snapshot.reading),
+            "salience": 0.0,
+            "received_at_ns": max(
+                1,
+                int(snapshot.reading.get("ingested_at_ns") or captured_at_ns),
+            ),
+            "received_monotonic_ns": received_monotonic_ns,
+            "subscription_id": _BACKFILL_SUBSCRIPTION_ID,
+            "twin_binding": twin_binding,
+        }
+        historian = {
+            "schema": _HISTORIAN_EVIDENCE_SCHEMA,
+            "record_id": snapshot.record_id,
+            "quality": snapshot.quality,
+            "order_basis": snapshot.order_basis,
+            "order_gap": snapshot.order_gap,
+            "alarm_codes": list(snapshot.alarm_codes),
+            "reason": "accepted_with_source_gap" if snapshot.order_gap else "accepted",
+        }
+        historian["binding_sha256"] = _digest(
+            {"observation": payload, "historian": historian}
+        )
+        payload["historian"] = historian
+        return RealityObservation.from_dict(payload), target_binding_sha256
+
+    async def _backfill_legacy_twin_heads(self) -> int:
+        if self._historian is None:
+            self._twin_backfill_ready = True
+            return 0
+        if self._digital_twin is None or not self._digital_twin.is_ready():
+            self._twin_backfill_ready = False
+            return 0
+        inventory = self._service.adapter_inventory()
+        cursor = ""
+        completed = 0
+        exhausted = False
+        for _page_number in range(_BACKFILL_MAX_PAGES):
+            page = await self._historian.legacy_twin_head_page(
+                adapter_inventory=inventory,
+                after_channel_id=cursor,
+                limit=_BACKFILL_PAGE_SIZE,
+            )
+            for snapshot in page.snapshots:
+                current_inventory = self._service.adapter_inventory()
+                current_entry = current_inventory.get(snapshot.adapter_id)
+                if (
+                    current_entry is None
+                    or snapshot.channel_id not in current_entry.channel_ids
+                    or snapshot.adapter_identity_sha256 != current_entry.identity_sha256
+                    or snapshot.adapter_identity_stable != current_entry.stable_identity
+                    or (
+                        not current_entry.stable_identity
+                        and snapshot.adapter_registration_generation
+                        != current_entry.registration_generation
+                    )
+                ):
+                    self._twin_backfill_ready = False
+                    return completed
+                binding = await asyncio.to_thread(
+                    self._digital_twin.binding_context,
+                    snapshot.adapter_id,
+                    RealityObservationRouter._declaration_from_snapshot(snapshot),
+                )
+                observation, binding_sha256 = self._backfill_observation(snapshot, binding)
+                twin_receipt = await asyncio.to_thread(
+                    self._digital_twin.observe_observation,
+                    observation,
+                )
+                if (
+                    not isinstance(twin_receipt, TwinReceipt)
+                    or not twin_receipt.accepted
+                    or twin_receipt.twin_id != observation.twin_id
+                ):
+                    raise RuntimeError("reality_digital_twin_backfill_rejected")
+                await self._historian.record_backfill_receipt(
+                    backfill_id=observation.observation_id,
+                    record_id=snapshot.record_id,
+                    channel_id=snapshot.channel_id,
+                    source_sha256=snapshot.source_sha256,
+                    target_binding_sha256=binding_sha256,
+                    sink_receipt_id=twin_receipt.receipt_id,
+                )
+                completed += 1
+            cursor = page.next_channel_id
+            if page.exhausted:
+                exhausted = True
+                break
+        if not exhausted:
+            self._twin_backfill_ready = False
+            self._twin_backfill_receipts += completed
+            return completed
+        if self._service.adapter_inventory() != inventory:
+            self._twin_backfill_ready = False
+            self._twin_backfill_receipts += completed
+            return completed
+        remaining = await self._historian.legacy_twin_head_page(
+            adapter_inventory=inventory,
+            limit=1,
+        )
+        self._twin_backfill_receipts += completed
+        self._twin_backfill_ready = not remaining.snapshots and remaining.exhausted
+        return completed
+
+    @staticmethod
+    def _declaration_from_snapshot(snapshot: HistorianHeadSnapshot) -> ChannelDeclaration:
+        received_monotonic_ns = max(
+            1,
+            int(snapshot.reading.get("ingested_monotonic_ns") or 1),
+        )
+        probe_payload = {
+            "schema": _LEGACY_OBSERVATION_SCHEMA,
+            "observation_id": _observation_identifier(
+                adapter_id=snapshot.adapter_id,
+                channel_id=snapshot.channel_id,
+                reading_sha256=_digest(snapshot.reading),
+                received_monotonic_ns=received_monotonic_ns,
+            ),
+            "adapter_id": snapshot.adapter_id,
+            "declaration": dict(snapshot.declaration),
+            "declaration_sha256": _digest(snapshot.declaration),
+            "reading": dict(snapshot.reading),
+            "reading_sha256": _digest(snapshot.reading),
+            "channel_id": snapshot.channel_id,
+            "unit": str(snapshot.declaration.get("unit") or ""),
+            "salience": 0.0,
+            "received_at_ns": max(
+                1,
+                int(snapshot.reading.get("ingested_at_ns") or snapshot.reading["captured_at_ns"]),
+            ),
+            "received_monotonic_ns": received_monotonic_ns,
+            "subscription_id": _BACKFILL_SUBSCRIPTION_ID,
+        }
+        historian = {
+            "schema": _HISTORIAN_EVIDENCE_SCHEMA,
+            "record_id": snapshot.record_id,
+            "quality": snapshot.quality,
+            "order_basis": snapshot.order_basis,
+            "order_gap": snapshot.order_gap,
+            "alarm_codes": list(snapshot.alarm_codes),
+            "reason": "accepted_with_source_gap" if snapshot.order_gap else "accepted",
+        }
+        historian["binding_sha256"] = _digest(
+            {"observation": probe_payload, "historian": historian}
+        )
+        probe_payload["historian"] = historian
+        return RealityObservation.from_dict(probe_payload).declaration
+
     async def start(self) -> None:
         if self._running:
             return
+        if self._digital_twin is not None:
+            twin_ready = await asyncio.to_thread(self._digital_twin.probe_health)
+            if not twin_ready:
+                record_degradation(
+                    "reality_observation_router.digital_twin_start",
+                    RuntimeError("Reality digital twin health probe failed"),
+                    action=(
+                        "Started router supervision in an explicitly unready state; "
+                        "durable twin delivery will retry without losing observations"
+                    ),
+                )
         if self._historian is not None:
             try:
                 self._historian_replays += await self._historian.recover_inflight()
@@ -1035,6 +1464,29 @@ class RealityObservationRouter:
                     action=(
                         "Started live sensing in an explicitly unready state; "
                         "the supervised durable worker will retry with backoff"
+                    ),
+                )
+        try:
+            await self._backfill_legacy_twin_heads()
+        except (HistorianError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._twin_backfill_ready = False
+            self._twin_backfill_failures += 1
+            record_degradation(
+                "reality_observation_router.digital_twin_backfill_start",
+                exc,
+                action=(
+                    "Kept authoritative historian heads intact and left router readiness "
+                    "closed until the idempotent twin backfill can be receipted"
+                ),
+            )
+        for sink_id, sink_status in self._required_sink_status().items():
+            if not bool(sink_status["ready"]):
+                record_degradation(
+                    f"reality_observation_router.required_sink.{sink_id}",
+                    RuntimeError(str(sink_status["reason"])),
+                    action=(
+                        "Started supervised store-and-forward with the required sink "
+                        "visible as unready; no sink was removed from admission"
                     ),
                 )
         self._running = True
@@ -1084,14 +1536,31 @@ class RealityObservationRouter:
                         if prior_ready:
                             record_degradation(
                                 "reality_observation_router.historian_probe",
-                                HistorianError(
-                                    "Reality historian periodic probe failed"
-                                ),
+                                HistorianError("Reality historian periodic probe failed"),
                                 action=(
                                     "Kept live router supervision active and "
                                     "backed off durable delivery pending recovery"
                                 ),
                             )
+                if self._digital_twin is not None and now - self._last_twin_probe_monotonic >= 30.0:
+                    prior_ready = self._digital_twin.is_ready()
+                    twin_ready = await asyncio.to_thread(self._digital_twin.probe_health)
+                    self._last_twin_probe_monotonic = now
+                    if prior_ready and not twin_ready:
+                        record_degradation(
+                            "reality_observation_router.digital_twin_probe",
+                            RuntimeError("Reality digital twin periodic probe failed"),
+                            action=(
+                                "Retained durable observations for retry while the "
+                                "canonical physical graph recovers"
+                            ),
+                        )
+                if (
+                    not self._twin_backfill_ready
+                    and now - self._last_backfill_probe_monotonic >= 30.0
+                ):
+                    await self._backfill_legacy_twin_heads()
+                    self._last_backfill_probe_monotonic = now
             except asyncio.CancelledError:
                 raise
             except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
@@ -1214,9 +1683,7 @@ class RealityObservationRouter:
             if observation is not None:
                 if self._historian is None:
                     return observation, "", "", {}
-                delivery = await self._historian.claim_delivery(
-                    observation.observation_id
-                )
+                delivery = await self._historian.claim_delivery(observation.observation_id)
                 if delivery is None:
                     continue
                 try:
@@ -1266,13 +1733,41 @@ class RealityObservationRouter:
         lease_token: str,
         sink_states: Mapping[str, Mapping[str, str]],
     ) -> None:
-        from core.container import ServiceContainer
+        twin_required = "digital_twin" in sink_states
+        twin_delivered = str(sink_states.get("digital_twin", {}).get("state") or "") == "delivered"
+        twin_requirement = _REQUIRED_SINK_REGISTRY[0]
+        digital_twin = self._resolve_sink_dependency(twin_requirement)
+        if twin_required and digital_twin is None:
+            raise RuntimeError("reality_digital_twin_unavailable")
+        if digital_twin is not None and not twin_delivered:
+            if not observation.twin_id:
+                if twin_required:
+                    raise RuntimeError("reality_observation_attachment_fence_missing")
+            else:
+                twin_receipt = await asyncio.to_thread(
+                    digital_twin.observe_observation,
+                    observation,
+                )
+                if not isinstance(twin_receipt, TwinReceipt):
+                    raise RuntimeError("reality_digital_twin_missing_receipt")
+                if not twin_receipt.accepted:
+                    raise RuntimeError(
+                        f"reality_digital_twin_rejected:{twin_receipt.disposition.value}"
+                    )
+                if twin_receipt.twin_id != observation.twin_id:
+                    raise RuntimeError("reality_digital_twin_receipt_identity_mismatch")
+                if twin_required and self._historian is not None:
+                    await self._historian.mark_sink_delivered(
+                        claimed_id,
+                        sink="digital_twin",
+                        receipt_id=twin_receipt.receipt_id,
+                        lease_token=lease_token,
+                    )
 
-        synchronizer = ServiceContainer.get("multimodal_synchronizer", default=None)
+        synchronizer = self._resolve_sink_dependency(_REQUIRED_SINK_REGISTRY[1])
         multimodal_required = "multimodal" in sink_states
         multimodal_delivered = (
-            str(sink_states.get("multimodal", {}).get("state") or "")
-            == "delivered"
+            str(sink_states.get("multimodal", {}).get("state") or "") == "delivered"
         )
         ingest = getattr(synchronizer, "ingest", None)
         if multimodal_required and not callable(ingest):
@@ -1315,11 +1810,7 @@ class RealityObservationRouter:
                 claims=tuple(claims),
                 calibration=Calibration(
                     calibration_id=calibration_id,
-                    status=(
-                        "valid"
-                        if observation.declaration.coupling_validated
-                        else "unknown"
-                    ),
+                    status=("valid" if observation.declaration.coupling_validated else "unknown"),
                     reliability=self._confidence(observation),
                 ),
                 provenance=(
@@ -1330,9 +1821,7 @@ class RealityObservationRouter:
                 privacy=PrivacyPolicy(
                     classification=PrivacyClass.PRIVATE,
                     retention=(
-                        "bounded_private_historian"
-                        if self._historian is not None
-                        else "ephemeral"
+                        "bounded_private_historian" if self._historian is not None else "ephemeral"
                     ),
                     consent_scope="reality_reach.sensor_summary",
                     redacted=True,
@@ -1344,10 +1833,7 @@ class RealityObservationRouter:
                     f"historian_quality:{observation.historian_quality}",
                     f"historian_order:{observation.historian_order_basis}",
                     f"historian_gap:{str(observation.historian_order_gap).lower()}",
-                    *tuple(
-                        f"historian_alarm:{code}"
-                        for code in observation.historian_alarm_codes
-                    ),
+                    *tuple(f"historian_alarm:{code}" for code in observation.historian_alarm_codes),
                 ),
             )
             receipt = ingest(event)
@@ -1355,9 +1841,7 @@ class RealityObservationRouter:
             reason = str(getattr(receipt, "reason", "") or "")
             event_id = str(getattr(receipt, "event_id", "") or "")
             if not accepted and reason != "duplicate_event":
-                raise RuntimeError(
-                    f"multimodal_ingest_rejected:{reason or 'missing_receipt'}"
-                )
+                raise RuntimeError(f"multimodal_ingest_rejected:{reason or 'missing_receipt'}")
             if event_id != observation.observation_id:
                 raise RuntimeError("multimodal_ingest_receipt_identity_mismatch")
             if multimodal_required and self._historian is not None:
@@ -1368,18 +1852,11 @@ class RealityObservationRouter:
                     lease_token=lease_token,
                 )
 
-        advanced = ServiceContainer.get("advanced_cognition", default=None)
-        if advanced is None:
-            from core.advanced_cognition.integration import (
-                get_advanced_cognition_runtime,
-            )
-
-            advanced = get_advanced_cognition_runtime()
+        advanced = self._resolve_sink_dependency(_REQUIRED_SINK_REGISTRY[2])
         observe_state = getattr(advanced, "observe_state", None)
         advanced_required = "advanced_cognition" in sink_states
         advanced_delivered = (
-            str(sink_states.get("advanced_cognition", {}).get("state") or "")
-            == "delivered"
+            str(sink_states.get("advanced_cognition", {}).get("state") or "") == "delivered"
         )
         if advanced_required and not callable(observe_state):
             raise RuntimeError("advanced_cognition_observer_unavailable")
@@ -1412,16 +1889,12 @@ class RealityObservationRouter:
                 },
                 source=f"reality:{observation.adapter_id}",
                 confidence=self._confidence(observation),
-                observed_at=(
-                    observation.reading.captured_at_ns / 1_000_000_000
-                ),
+                observed_at=(observation.reading.captured_at_ns / 1_000_000_000),
                 idempotency_key=observation.observation_id,
             )
             if not isinstance(advanced_receipt, Mapping):
                 raise RuntimeError("advanced_cognition_missing_receipt")
-            advanced_receipt_id = str(
-                advanced_receipt.get("receipt_id") or ""
-            )
+            advanced_receipt_id = str(advanced_receipt.get("receipt_id") or "")
             if not advanced_receipt_id:
                 raise RuntimeError("advanced_cognition_missing_receipt_id")
             if advanced_required and self._historian is not None:
@@ -1455,10 +1928,12 @@ class RealityObservationRouter:
 
     def status(self) -> dict[str, Any]:
         historian_status = (
-            self._historian.health_snapshot()
-            if self._historian is not None
-            else None
+            self._historian.health_snapshot() if self._historian is not None else None
         )
+        twin_status = (
+            self._digital_twin.health_snapshot() if self._digital_twin is not None else None
+        )
+        sink_registry = self._required_sink_status()
         with self._lock:
             ready = self.is_ready()
             return {
@@ -1466,9 +1941,7 @@ class RealityObservationRouter:
                 "alive": self.is_alive(),
                 "ready": ready,
                 "queue_depth": (
-                    self._durable_queue_depth
-                    if self._historian is not None
-                    else len(self._queue)
+                    self._durable_queue_depth if self._historian is not None else len(self._queue)
                 ),
                 "queue_limit": self._queue_limit,
                 "latest_channels": len(self._latest),
@@ -1490,6 +1963,12 @@ class RealityObservationRouter:
                 "historian_replays": self._historian_replays,
                 "historian_failures": self._historian_failures,
                 "historian": historian_status,
+                "digital_twin": twin_status,
+                "required_sinks": list(self._required_sinks),
+                "required_sink_registry": sink_registry,
+                "twin_backfill_ready": self._twin_backfill_ready,
+                "twin_backfill_receipts": self._twin_backfill_receipts,
+                "twin_backfill_failures": self._twin_backfill_failures,
                 "attention_paused": self._attention_paused,
                 "acquisition_paused": self._acquisition_paused,
             }
@@ -1507,12 +1986,15 @@ class RealityObservationRouter:
         )
 
     def is_ready(self) -> bool:
-        historian_ready = (
-            self._historian is None or self._historian.is_ready()
+        historian_ready = self._historian is None or self._historian.is_ready()
+        required_sinks_ready = all(
+            bool(item["ready"]) for item in self._required_sink_status().values()
         )
         return bool(
             self.is_alive()
             and historian_ready
+            and required_sinks_ready
+            and self._twin_backfill_ready
             and any(item.enabled for item in self.subscriptions())
         )
 
@@ -1526,9 +2008,7 @@ class RealityObservationRouter:
             if self._attention_paused:
                 return None
             matches = [
-                item
-                for item in self._subscriptions.values()
-                if item.matches(channel_id, now=now)
+                item for item in self._subscriptions.values() if item.matches(channel_id, now=now)
             ]
         if not matches:
             return None
@@ -1541,8 +2021,7 @@ class RealityObservationRouter:
             return 0.0
         domain_width = max(
             1e-12,
-            observation.declaration.domain.maximum
-            - observation.declaration.domain.minimum,
+            observation.declaration.domain.maximum - observation.declaration.domain.minimum,
         )
         uncertainty = max(0.0, float(reading.uncertainty or 0.0))
         uncertainty_penalty = min(0.75, uncertainty / domain_width)
@@ -1559,9 +2038,7 @@ class RealityObservationRouter:
         }[observation.historian_quality]
         if observation.historian_order_gap:
             quality_factor *= 0.55
-        return _clamp01(
-            evidence * (1.0 - uncertainty_penalty) * quality_factor
-        )
+        return _clamp01(evidence * (1.0 - uncertainty_penalty) * quality_factor)
 
     @staticmethod
     def _salience(

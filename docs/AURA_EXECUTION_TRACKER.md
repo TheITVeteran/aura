@@ -34773,17 +34773,17 @@ longer sees a device marks it lost and detaches its topology, while a connector
 timeout or exception retains the last unexpired attachment and reports the
 connector degradation instead of fabricating physical disappearance.
 
-Twenty-three adversarial digital-twin tests cover privacy, schema and permission
+Twenty-nine adversarial digital-twin tests cover privacy, schema and permission
 failure, stable/transient restart identity, topology replacement, manifest
 migration, forged bindings, stale ordering, same-adapter and A-B-A epoch reuse,
 candidate rediscovery, bounded heartbeat pruning, event mutation and deletion,
 live corruption laundering, bounded lifecycle segmentation and restart,
 archived-segment mutation and deletion, required durable sinks, vanished
 devices, and transient connector failure. The complete physical-runtime family
-passes 218/218, and
+passes 243/243, and
 the repository smoke suite passes 103/103. Ruff, Python compilation, strict
 targeted MyPy, architectural layering, and diff integrity pass. Repository-wide
-governance lint remains red on 122 unrelated regressions and 11 stale baseline
+governance lint remains red on 120 unrelated regressions and 11 stale baseline
 buckets. The digital twin's twelve fixed-path, owner-private archive operations
 were reviewed, registered as the canonical lifecycle-archive owner, and added
 to the ratchet without accepting any of those unrelated drifts.
@@ -34793,7 +34793,7 @@ failures outside the CP803 diff and three separately identified order-dependent
 failures; the deterministic set is the inherited governance-lint baseline plus
 current voice-route and degradation-marker source-contract tests. No full-suite
 green claim is made, and those failures remain named follow-on work rather than
-being attributed to or hidden inside the 218-test physical-runtime result.
+being attributed to or hidden inside the 243-test physical-runtime result.
 
 Two post-implementation adversarial passes close twenty-one cross-owner gaps:
 attach cancellation completes shielded rollback; local adapter, sampler, body,
@@ -34813,6 +34813,25 @@ database or filesystem capacity ceiling. Combined testing then exposed and
 closed two further integration defects: session-only detach no longer requires
 persistent custody to finish immediate fencing, and privacy assertions always
 exercise the one-use verifier rather than ambient global state.
+
+A second eleven-finding adversarial pass then exercised the crash boundaries,
+not merely the happy path. Persistent grants now use two-phase activation so a
+cancelled save cannot resurrect authority after restart; teardown retains
+ownership until sampler, service, body, connector, and twin effects are all
+fenced; valid detach/revoke intents survive an unrelated corrupt grant while
+readiness remains false; and persisted Will evidence is independently verified
+under the durable, domain-separated governance signing root after audit-deque
+eviction or a genuine process restart. Historian backfill binds physical
+identity and adapter registration generation, preventing an old device from
+crossing an adapter-ID reuse boundary. Privacy classification is monotonic.
+Twin rows, archive checkpoints, pending recovery intents, and migration
+evidence are authenticated under a Keychain-backed MAC root, so recomputing an
+unkeyed digest cannot forge state. A post-commit archive-finalization failure
+leaves the graph explicitly unready with a restart-replayable intent, and SQL
+rollback restores the in-memory graph-version cache from the committed head.
+The final bounded review found no remaining scoped P0/P1 issue once the new
+digital-twin module is included in the exact staged checkpoint. The associated
+capability-chain and Unified Will contract suite passes 136/136.
 
 This closes the canonical digital-twin obligation formerly labelled CP802 in
 the additive Reality Reach sequence. The historian and Messages work were

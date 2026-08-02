@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.reality_reach.digital_twin as digital_twin_module
 from core.container import ServiceContainer
 from core.reality_reach.attachments import (
     AttachmentAccess,
@@ -39,6 +40,28 @@ from core.reality_reach.observation_router import (
     _digest,
     _observation_identifier,
 )
+
+
+class _MemoryKeychainBackend:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.values.get((service, account))
+
+    def set_password(self, service: str, account: str, password: str) -> bool:
+        self.values[(service, account)] = password
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _isolated_digital_twin_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = _MemoryKeychainBackend()
+    monkeypatch.setattr(
+        digital_twin_module,
+        "require_keychain_backend",
+        lambda: backend,
+    )
 
 
 class _OneUsePrivateVerifier:
@@ -113,8 +136,10 @@ def _private_snapshot(
     capability_id: str,
     *,
     include_values: bool = False,
+    twin_id: str | None = None,
 ) -> dict:
     return graph.snapshot(
+        twin_id,
         include_property_values=include_values,
         include_private_topology=True,
         authority_capability=_private_capability(capability_id),
@@ -278,12 +303,17 @@ def test_entity_component_topology_is_stable_bounded_and_private(tmp_path: Path)
         body_projection=PhysicalBodyProjection(adapter.adapter_id, ("test_limb",)),
     )
     private = _private_snapshot(graph, "private.topology")
+    private_twin_id = private["twins"][0]["twin_id"]
+    public_by_private_id = graph.snapshot(private_twin_id)
 
     assert duplicate.disposition == TwinDisposition.DUPLICATE
-    assert len(snapshot["twins"]) == 1
+    assert snapshot["twins"] == []
     assert snapshot["nodes"] == []
     assert snapshot["relationships"] == []
-    assert "manifest_sha256" not in snapshot["twins"][0]
+    assert snapshot["properties"] == []
+    assert private["twins"]
+    assert public_by_private_id["twins"] == []
+    assert public_by_private_id["nodes"] == []
     assert {node["node_kind"] for node in private["nodes"]} == {
         "entity",
         "adapter",
@@ -296,6 +326,8 @@ def test_entity_component_topology_is_stable_bounded_and_private(tmp_path: Path)
         "projects_to",
     }
     serialized = str(snapshot)
+    assert private_twin_id not in serialized
+    assert str(candidate.discovered_at_ns) not in serialized
     assert candidate.display_name not in serialized
     assert candidate.device_id not in serialized
     assert "never-persist-this" not in serialized
@@ -310,7 +342,7 @@ def test_private_neighborhood_requires_fresh_one_use_authority(tmp_path: Path) -
         node["node_id"] for node in private["nodes"] if node["node_kind"] == "entity"
     )
 
-    with pytest.raises(PermissionError, match="one-use signed capability"):
+    with pytest.raises(LookupError, match="unknown active twin node"):
         graph.neighbors(entity_node_id)
 
     capability = _private_capability("private.neighborhood.read")
@@ -327,6 +359,24 @@ def test_private_neighborhood_requires_fresh_one_use_authority(tmp_path: Path) -
             include_private_topology=True,
             authority_capability=capability,
         )
+
+
+def test_sensitive_classification_cannot_be_downgraded_by_discovery(
+    tmp_path: Path,
+) -> None:
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "twin.sqlite3",
+        session_id="test.twin.privacy.monotonic",
+        private_read_capability_verifier=_OneUsePrivateVerifier(),
+    )
+    candidate = _candidate()
+    graph.observe_candidate(candidate)
+
+    graph.observe_candidate(replace(candidate, privacy_sensitive=False))
+
+    assert graph.snapshot()["twins"] == []
+    private = _private_snapshot(graph, "private.privacy.monotonic")
+    assert private["twins"][0]["privacy_sensitive"] is True
 
 
 def test_manifest_drift_requires_explicit_authorized_migration(tmp_path: Path) -> None:
@@ -364,6 +414,53 @@ def test_manifest_drift_requires_explicit_authorized_migration(tmp_path: Path) -
     private = _private_snapshot(graph, "private.manifest")
     assert private["twins"][0]["generation"] == 2
     assert private["twins"][0]["manifest_sha256"] == changed.manifest_sha256
+
+
+def test_manifest_migration_cannot_be_reforged_with_unkeyed_row_hash(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "twin.sqlite3"
+    verifier = _MigrationVerifier()
+    graph = RealityDigitalTwinGraph(
+        path,
+        session_id="test.twin.migration.forgery",
+        migration_authority_verifier=verifier,
+    )
+    original = _candidate(manifest="b")
+    changed = replace(original, manifest_sha256="sha256:" + "c" * 64)
+    graph.observe_candidate(original)
+    intent = graph.manifest_migration_intent(
+        changed,
+        request_id="reality.connect.manifest.forgery",
+    )
+    assert intent is not None
+    graph.attach_adapter(
+        changed,
+        _Adapter(),
+        migration_request_id=intent["request_id"],
+        migration_authority_evidence=verifier.evidence(intent),
+    )
+    graph.close()
+
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute("SELECT * FROM twins").fetchone()
+        assert row is not None
+        values = dict(row)
+        values["manifest_sha256"] = original.manifest_sha256
+        values.pop("row_sha256")
+        forged = digital_twin_module._digest({"table": "twins", "values": values})
+        connection.execute(
+            "UPDATE twins SET manifest_sha256=?, row_sha256=? WHERE twin_id=?",
+            (original.manifest_sha256, forged, str(row["twin_id"])),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication"):
+        RealityDigitalTwinGraph(path, session_id="test.twin.migration.forgery.reopen")
 
 
 def test_observation_order_and_attachment_epoch_prevent_state_resurrection(
@@ -419,7 +516,10 @@ def test_adapter_id_reuse_fences_delayed_observation_to_prior_twin(tmp_path: Pat
     receipt = graph.observe_observation(delayed)
 
     assert receipt.disposition == TwinDisposition.STALE_IGNORED
-    lifecycles = {item["twin_id"]: item["lifecycle"] for item in graph.snapshot()["twins"]}
+    lifecycles = {
+        item["twin_id"]: item["lifecycle"]
+        for item in _private_snapshot(graph, "private.reuse.lifecycle")["twins"]
+    }
     assert lifecycles[str(old_fence["twin_id"])] == "lost"
 
     rebound = graph.attach_adapter(first_candidate, _Adapter(adapter.adapter_id))
@@ -442,7 +542,12 @@ def test_same_adapter_reattach_advances_epoch_and_remains_idempotent(tmp_path: P
     )
     rediscovery = graph.observe_candidate(rediscovered)
     assert rediscovery.disposition == TwinDisposition.ACCEPTED
-    assert graph.snapshot()["twins"][0]["lifecycle"] == "discovered"
+    assert (
+        _private_snapshot(graph, "private.reattach.discovered")["twins"][0][
+            "lifecycle"
+        ]
+        == "discovered"
+    )
 
     reattached = graph.attach_adapter(rediscovered, adapter)
     current_fence = graph.binding_context(adapter.adapter_id, adapter.declaration)
@@ -499,17 +604,32 @@ def test_discovery_heartbeats_are_prunable_but_lifecycle_events_survive(tmp_path
 def test_restart_fences_process_bound_adapter_and_preserves_identity(tmp_path: Path) -> None:
     path = tmp_path / "twin.sqlite3"
     graph, candidate, adapter = _attached_graph(tmp_path)
-    twin_id = graph.snapshot()["twins"][0]["twin_id"]
+    twin_id = _private_snapshot(graph, "private.restart.before")["twins"][0]["twin_id"]
     graph.close()
 
-    restored = RealityDigitalTwinGraph(path, session_id="test.twin.new_session")
-    snapshot = restored.snapshot(twin_id)
+    restored = RealityDigitalTwinGraph(
+        path,
+        session_id="test.twin.new_session",
+        private_read_capability_verifier=_OneUsePrivateVerifier(),
+    )
+    snapshot = _private_snapshot(
+        restored,
+        "private.restart.after",
+        twin_id=twin_id,
+    )
     assert snapshot["twins"][0]["lifecycle"] == "lost"
     assert restored.status()["active_bindings"] == 0
     assert restored.observe_candidate(candidate).twin_id == twin_id
     rebound = _Adapter("test.device_adapter.after_restart")
     restored.attach_adapter(candidate, rebound)
-    assert restored.snapshot(twin_id)["twins"][0]["lifecycle"] == "attached"
+    assert (
+        _private_snapshot(
+            restored,
+            "private.restart.reattached",
+            twin_id=twin_id,
+        )["twins"][0]["lifecycle"]
+        == "attached"
+    )
 
 
 def test_row_digest_corruption_fails_health_and_queries(tmp_path: Path) -> None:
@@ -522,8 +642,35 @@ def test_row_digest_corruption_fails_health_and_queries(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    with pytest.raises(DigitalTwinCorruptionError, match="row digest"):
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication"):
         RealityDigitalTwinGraph(tmp_path / "twin.sqlite3", session_id="test.twin.reopen")
+
+
+def test_row_tamper_cannot_be_laundered_with_recomputed_unkeyed_hash(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "twin.sqlite3"
+    graph, _candidate_value, _adapter = _attached_graph(tmp_path)
+    graph.close()
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute("SELECT * FROM twins").fetchone()
+        assert row is not None
+        values = dict(row)
+        values["privacy_sensitive"] = 0
+        values.pop("row_sha256")
+        forged = digital_twin_module._digest({"table": "twins", "values": values})
+        connection.execute(
+            "UPDATE twins SET privacy_sensitive=0, row_sha256=? WHERE twin_id=?",
+            (forged, str(row["twin_id"])),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication"):
+        RealityDigitalTwinGraph(path, session_id="test.twin.row.reforged")
 
 
 def test_live_row_corruption_cannot_be_laundered_by_later_upsert(tmp_path: Path) -> None:
@@ -537,22 +684,77 @@ def test_live_row_corruption_cannot_be_laundered_by_later_upsert(tmp_path: Path)
     finally:
         connection.close()
 
-    with pytest.raises(DigitalTwinCorruptionError, match="row digest"):
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication"):
         graph.attach_adapter(candidate, adapter)
     assert graph.probe_health(full=True) is False
 
 
-def _roll_lifecycle_archive(path: Path, *, session_id: str) -> None:
+def test_corrupt_binding_is_verified_before_attachment_fence_stale_path(
+    tmp_path: Path,
+) -> None:
+    graph, _candidate_value, adapter = _attached_graph(tmp_path)
+    fence = graph.binding_context(adapter.adapter_id, adapter.declaration)
+    delayed = _observation(graph, adapter, value=18.0, sequence=1, binding=fence)
+    connection = sqlite3.connect(graph.db_path)
+    try:
+        connection.execute(
+            "UPDATE twin_adapter_bindings SET topology_revision=topology_revision+1 "
+            "WHERE adapter_id=?",
+            (adapter.adapter_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication differs"):
+        graph.observe_observation(delayed)
+
+
+def test_corrupt_property_is_verified_before_observation_stale_path(tmp_path: Path) -> None:
+    graph, _candidate_value, adapter = _attached_graph(tmp_path)
+    fence = graph.binding_context(adapter.adapter_id, adapter.declaration)
+    current = _observation(graph, adapter, value=24.0, sequence=2, binding=fence)
+    delayed = _observation(
+        graph,
+        adapter,
+        value=12.0,
+        sequence=1,
+        captured_at_ns=current.reading.captured_at_ns - 1,
+        binding=fence,
+    )
+    assert graph.observe_observation(current).disposition == TwinDisposition.ACCEPTED
+    connection = sqlite3.connect(graph.db_path)
+    try:
+        connection.execute(
+            "UPDATE twin_properties SET source_sequence=999 WHERE node_id=("
+            "SELECT node_id FROM twin_properties LIMIT 1)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication differs"):
+        graph.observe_observation(delayed)
+
+
+def _roll_lifecycle_archive(
+    path: Path,
+    *,
+    session_id: str,
+    cycles: int = 140,
+    max_archive_segments: int = 64,
+) -> None:
     graph = RealityDigitalTwinGraph(
         path,
         session_id=session_id,
         max_events=256,
+        max_archive_segments=max_archive_segments,
         private_read_capability_verifier=_OneUsePrivateVerifier(),
     )
     candidate = _candidate()
     adapter = _Adapter()
     graph.observe_candidate(candidate)
-    for cycle in range(140):
+    for cycle in range(cycles):
         graph.attach_adapter(candidate, adapter)
         graph.detach_adapter(adapter.adapter_id, reason=f"bounded rollover {cycle}")
     assert graph.status()["counts"]["event_segments"] >= 1
@@ -576,15 +778,10 @@ def test_lifecycle_archive_rollover_is_restart_safe_and_tamper_evident(
     assert restored.probe_health(full=True) is True
     restored.close()
 
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute(
-            "UPDATE twin_event_segments SET events_json='[]' WHERE segment_sequence=1"
-        )
-        connection.commit()
-    finally:
-        connection.close()
-    with pytest.raises(DigitalTwinCorruptionError, match="row digest"):
+    archive_dir = path.with_name(f"{path.name}.lifecycle-archive")
+    segment = next(archive_dir.glob("segment-*.json"))
+    segment.write_text("{}", encoding="utf-8")
+    with pytest.raises(DigitalTwinCorruptionError, match="file digest differs"):
         RealityDigitalTwinGraph(
             path,
             session_id="test.twin.rollover.tampered",
@@ -595,19 +792,170 @@ def test_lifecycle_archive_rollover_is_restart_safe_and_tamper_evident(
 def test_lifecycle_archive_segment_deletion_is_detected(tmp_path: Path) -> None:
     path = tmp_path / "rollover-deletion.sqlite3"
     _roll_lifecycle_archive(path, session_id="test.twin.rollover.deletion")
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("DELETE FROM twin_event_segments WHERE segment_sequence=1")
-        connection.commit()
-    finally:
-        connection.close()
+    archive_dir = path.with_name(f"{path.name}.lifecycle-archive")
+    next(archive_dir.glob("segment-*.json")).unlink()
 
-    with pytest.raises(DigitalTwinCorruptionError, match="archive head differs"):
+    with pytest.raises(DigitalTwinCorruptionError, match="segment is missing"):
         RealityDigitalTwinGraph(
             path,
             session_id="test.twin.rollover.deletion.reopen",
             max_events=256,
         )
+
+
+def test_lifecycle_archive_rotation_is_bounded_and_retains_independent_roots(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bounded-rollover.sqlite3"
+    _roll_lifecycle_archive(
+        path,
+        session_id="test.twin.rollover.bounded",
+        cycles=260,
+        max_archive_segments=2,
+    )
+    archive_dir = path.with_name(f"{path.name}.lifecycle-archive")
+    segment_files = tuple(archive_dir.glob("segment-*.json"))
+    assert 1 <= len(segment_files) <= 2
+    connection = sqlite3.connect(path)
+    try:
+        retained = int(
+            connection.execute("SELECT COUNT(*) FROM twin_event_segments").fetchone()[0]
+        )
+        retired = int(
+            connection.execute(
+                "SELECT value FROM twin_meta "
+                "WHERE key='lifecycle_archive_retired_segment_count'"
+            ).fetchone()[0]
+        )
+        checkpoint_hmac = str(
+            connection.execute(
+                "SELECT value FROM twin_meta "
+                "WHERE key='lifecycle_archive_checkpoint_hmac_sha256'"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert retained <= 2
+    assert retired >= 1
+    checkpoint = (archive_dir / "checkpoint.json").read_text(encoding="utf-8")
+    assert checkpoint_hmac in checkpoint
+
+    restored = RealityDigitalTwinGraph(
+        path,
+        session_id="test.twin.rollover.bounded.restart",
+        max_events=256,
+        max_archive_segments=2,
+    )
+    assert restored.probe_health(full=True) is True
+    restored.close()
+
+    (archive_dir / "checkpoint.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(
+        DigitalTwinCorruptionError,
+        match="independent archive checkpoint differs",
+    ):
+        RealityDigitalTwinGraph(
+            path,
+            session_id="test.twin.rollover.bounded.tampered",
+            max_events=256,
+            max_archive_segments=2,
+        )
+
+
+def test_archive_checkpoint_cannot_be_reforged_with_unkeyed_hash(tmp_path: Path) -> None:
+    path = tmp_path / "archive-reforged.sqlite3"
+    _roll_lifecycle_archive(path, session_id="test.twin.archive.reforged")
+    checkpoint_path = path.with_name(f"{path.name}.lifecycle-archive") / "checkpoint.json"
+    checkpoint = digital_twin_module.json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint.pop("checkpoint_hmac_sha256")
+    checkpoint["checkpoint_hmac_sha256"] = digital_twin_module._digest(checkpoint)
+    checkpoint_path.write_text(
+        digital_twin_module.json.dumps(checkpoint, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DigitalTwinCorruptionError,
+        match="independent archive checkpoint differs",
+    ):
+        RealityDigitalTwinGraph(
+            path,
+            session_id="test.twin.archive.reforged.reopen",
+            max_events=256,
+        )
+
+
+def test_post_commit_archive_failure_stays_unready_until_reconciled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "archive-recovery.sqlite3"
+    graph = RealityDigitalTwinGraph(
+        path,
+        session_id="test.twin.archive.recovery",
+        max_events=256,
+    )
+    candidate = _candidate()
+    adapter = _Adapter()
+    graph.observe_candidate(candidate)
+    original_write = graph._write_archive_json
+    failed = False
+
+    def _fail_checkpoint(path_value, value, *, name):
+        nonlocal failed
+        if (
+            not failed
+            and path_value == graph._archive_checkpoint_path
+            and graph._pending_archive is not None
+        ):
+            failed = True
+            raise OSError("injected checkpoint finalization failure")
+        return original_write(path_value, value, name=name)
+
+    monkeypatch.setattr(graph, "_write_archive_json", _fail_checkpoint)
+    with pytest.raises(OSError, match="injected checkpoint"):
+        for cycle in range(200):
+            graph.attach_adapter(candidate, adapter)
+            graph.detach_adapter(adapter.adapter_id, reason=f"recovery {cycle}")
+    assert failed is True
+    assert graph.is_ready() is False
+    assert graph._pending_archive is not None
+    assert graph._archive_pending_path.exists()
+
+    monkeypatch.setattr(graph, "_write_archive_json", original_write)
+    assert graph.probe_health(full=True) is True
+    assert graph.is_ready() is True
+    assert graph._pending_archive is None
+    assert not graph._archive_pending_path.exists()
+
+
+def test_rollback_restores_graph_version_cache_from_committed_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "rollback.sqlite3",
+        session_id="test.twin.rollback.cache",
+    )
+
+    def _fail_event(*_args, **_kwargs):
+        raise RuntimeError("injected event write failure")
+
+    monkeypatch.setattr(graph, "_record_event", _fail_event)
+    with pytest.raises(RuntimeError, match="injected event"):
+        graph.observe_candidate(_candidate())
+
+    assert graph.health_snapshot()["graph_version"] == 0
+    connection = sqlite3.connect(graph.db_path)
+    try:
+        durable = int(
+            connection.execute(
+                "SELECT value FROM twin_meta WHERE key='graph_version'"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    assert durable == 0
 
 
 def test_lifecycle_event_mutation_and_deletion_are_detected(tmp_path: Path) -> None:
@@ -627,7 +975,7 @@ def test_lifecycle_event_mutation_and_deletion_are_detected(tmp_path: Path) -> N
         connection.commit()
     finally:
         connection.close()
-    with pytest.raises(DigitalTwinCorruptionError, match="row digest"):
+    with pytest.raises(DigitalTwinCorruptionError, match="row authentication"):
         RealityDigitalTwinGraph(
             mutation_path,
             session_id="test.twin.event.mutation.reopen",
@@ -882,7 +1230,11 @@ async def test_disappeared_candidate_is_detached_and_transitions_lost(
     )
     monkeypatch.setattr(attachment_module, "remove_body_projection", lambda _item: None)
     service = RealityReachService(session_id="test.broker.twin")
-    graph = RealityDigitalTwinGraph(tmp_path / "twin.sqlite3", session_id=service.session_id)
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "twin.sqlite3",
+        session_id=service.session_id,
+        private_read_capability_verifier=_OneUsePrivateVerifier(),
+    )
     router = RealityObservationRouter(service, digital_twin=graph)
     broker = DeviceAttachmentBroker(
         service,
@@ -913,7 +1265,12 @@ async def test_disappeared_candidate_is_detached_and_transitions_lost(
     assert connector.detach_count == 1
     assert broker.requests()[0].state == ConnectionState.LOST
     assert service.status()["adapter_count"] == 0
-    assert graph.snapshot()["twins"][0]["lifecycle"] == "lost"
+    assert (
+        _private_snapshot(graph, "private.disappearance.lost")["twins"][0][
+            "lifecycle"
+        ]
+        == "lost"
+    )
 
 
 @pytest.mark.asyncio
@@ -930,7 +1287,11 @@ async def test_transient_discovery_failure_does_not_claim_attached_device_is_los
     )
     monkeypatch.setattr(attachment_module, "remove_body_projection", lambda _item: None)
     service = RealityReachService(session_id="test.broker.transient")
-    graph = RealityDigitalTwinGraph(tmp_path / "twin.sqlite3", session_id=service.session_id)
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "twin.sqlite3",
+        session_id=service.session_id,
+        private_read_capability_verifier=_OneUsePrivateVerifier(),
+    )
     router = RealityObservationRouter(service, digital_twin=graph)
     broker = DeviceAttachmentBroker(
         service,
@@ -957,5 +1318,10 @@ async def test_transient_discovery_failure_does_not_claim_attached_device_is_los
     assert connector.detach_count == 0
     assert broker.requests()[0].state == ConnectionState.ATTACHED
     assert service.status()["adapter_count"] == 1
-    assert graph.snapshot()["twins"][0]["lifecycle"] == "attached"
+    assert (
+        _private_snapshot(graph, "private.transient.attached")["twins"][0][
+            "lifecycle"
+        ]
+        == "attached"
+    )
     assert broker.status()["connector_failure_streaks"] == {"test.connector": 1}

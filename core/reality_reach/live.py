@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import math
+import re
 import threading
 import time
 import uuid
@@ -29,6 +30,7 @@ from core.runtime.resource_observation import ObservationSource, get_resource_ob
 from core.runtime.service_registry import register_runtime_service
 
 _SQLITE_INT_MAX = (1 << 63) - 1
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class ReadingStatus(StrEnum):
@@ -61,6 +63,9 @@ class ChannelReading:
     source_sequence: int = 0
     source_event_id: str = ""
     source_quality: str = ""
+    adapter_identity_sha256: str = ""
+    adapter_registration_generation: int = 0
+    adapter_identity_stable: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.channel_id, str) or not self.channel_id:
@@ -72,9 +77,7 @@ class ChannelReading:
             or not isinstance(self.captured_at_ns, int)
             or not 0 < self.captured_at_ns <= _SQLITE_INT_MAX
         ):
-            raise ValueError(
-                "captured_at_ns must be a positive signed 64-bit integer"
-            )
+            raise ValueError("captured_at_ns must be a positive signed 64-bit integer")
         if not isinstance(self.status, ReadingStatus):
             raise TypeError("status must be a ReadingStatus")
         if not isinstance(self.source, str) or not self.source:
@@ -84,15 +87,27 @@ class ChannelReading:
             ("ingested_monotonic_ns", self.ingested_monotonic_ns),
             ("sequence", self.sequence),
             ("source_sequence", self.source_sequence),
+            ("adapter_registration_generation", self.adapter_registration_generation),
         ):
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
                 or not 0 <= value <= _SQLITE_INT_MAX
             ):
+                raise ValueError(f"{name} must be a non-negative signed 64-bit integer")
+        if self.adapter_identity_sha256:
+            if not _DIGEST.fullmatch(self.adapter_identity_sha256):
+                raise ValueError("adapter_identity_sha256 must be a sha256 digest")
+            if self.adapter_registration_generation <= 0:
                 raise ValueError(
-                    f"{name} must be a non-negative signed 64-bit integer"
+                    "identified readings require a positive adapter registration generation"
                 )
+        elif self.adapter_registration_generation != 0:
+            raise ValueError("adapter registration generation requires adapter identity")
+        elif self.adapter_identity_stable:
+            raise ValueError("stable adapter identity requires adapter identity evidence")
+        if not isinstance(self.adapter_identity_stable, bool):
+            raise TypeError("adapter_identity_stable must be a bool")
         if not isinstance(self.session_id, str):
             raise TypeError("session_id must be a string")
         if not isinstance(self.wall_clock_source, str) or not self.wall_clock_source:
@@ -139,6 +154,9 @@ class ChannelReading:
             "source_sequence": self.source_sequence,
             "source_event_id": self.source_event_id,
             "source_quality": self.source_quality,
+            "adapter_identity_sha256": self.adapter_identity_sha256,
+            "adapter_registration_generation": self.adapter_registration_generation,
+            "adapter_identity_stable": self.adapter_identity_stable,
         }
 
     @property
@@ -167,6 +185,11 @@ class ChannelReading:
                         "source_sequence": self.source_sequence,
                         "source_event_id": self.source_event_id,
                         "source_quality": self.source_quality,
+                        "adapter_identity_sha256": self.adapter_identity_sha256,
+                        "adapter_registration_generation": (
+                            self.adapter_registration_generation
+                        ),
+                        "adapter_identity_stable": self.adapter_identity_stable,
                     }
                 )
             )
@@ -181,6 +204,27 @@ class LiveChannelAdapter(Protocol):
     def declarations(self) -> tuple[ChannelDeclaration, ...]: ...
 
     def read(self) -> tuple[ChannelReading, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterInventoryEntry:
+    """Authoritative live ownership and physical-identity fence."""
+
+    adapter_id: str
+    channel_ids: tuple[str, ...]
+    identity_sha256: str
+    registration_generation: int
+    stable_identity: bool
+
+    def __post_init__(self) -> None:
+        if not self.adapter_id:
+            raise ValueError("adapter_id must be non-empty")
+        if not self.channel_ids or len(self.channel_ids) != len(set(self.channel_ids)):
+            raise ValueError("adapter inventory channels must be non-empty and unique")
+        if not _DIGEST.fullmatch(self.identity_sha256):
+            raise ValueError("adapter inventory identity must be a sha256 digest")
+        if not 0 < self.registration_generation <= _SQLITE_INT_MAX:
+            raise ValueError("adapter registration generation must be positive")
 
 
 class HostResourceAdapter:
@@ -340,6 +384,8 @@ class RealityReachService:
         self._registry = ChannelRegistry()
         self._adapters: dict[str, LiveChannelAdapter] = {}
         self._adapter_channels: dict[str, tuple[str, ...]] = {}
+        self._adapter_inventory: dict[str, AdapterInventoryEntry] = {}
+        self._adapter_registration_generation = 0
         self._adapter_capabilities: dict[str, tuple[ActuatorCapability, ...]] = {}
         self._actuator_adapters: dict[str, RealityAdapter] = {}
         self._readings: dict[str, ChannelReading] = {}
@@ -349,6 +395,12 @@ class RealityReachService:
         self._last_refresh_monotonic_ns = 0
         for adapter in adapters:
             self.register_adapter(adapter)
+
+    @property
+    def session_id(self) -> str:
+        """Opaque process-session identity for attachment fencing."""
+
+        return self._session_id
 
     def register_adapter(self, adapter: LiveChannelAdapter) -> None:
         if not isinstance(adapter, LiveChannelAdapter):
@@ -379,9 +431,7 @@ class RealityReachService:
                 "rollback",
             ):
                 if not inspect.iscoroutinefunction(getattr(adapter, method_name, None)):
-                    raise TypeError(
-                        f"actuator adapter method {method_name} must be asynchronous"
-                    )
+                    raise TypeError(f"actuator adapter method {method_name} must be asynchronous")
             capabilities = tuple(adapter.actuator_capabilities())
             capability_by_channel: dict[str, ActuatorCapability] = {}
             for capability in capabilities:
@@ -416,6 +466,39 @@ class RealityReachService:
                 raise
             self._adapters[adapter_id] = adapter
             self._adapter_channels[adapter_id] = tuple(registered)
+            self._adapter_registration_generation += 1
+            registration_generation = self._adapter_registration_generation
+            claimed_identity = str(
+                getattr(adapter, "physical_identity_sha256", "") or ""
+            ).strip()
+            if claimed_identity and not _DIGEST.fullmatch(claimed_identity):
+                for channel_id in registered:
+                    self._registry.unregister(channel_id)
+                self._adapters.pop(adapter_id, None)
+                self._adapter_channels.pop(adapter_id, None)
+                raise ValueError("adapter physical identity must be a sha256 digest")
+            identity_sha256 = claimed_identity or str(
+                sha256_hex(
+                    canonical_json(
+                        {
+                            "adapter_id": adapter_id,
+                            "adapter_type": (
+                                f"{type(adapter).__module__}.{type(adapter).__qualname__}"
+                            ),
+                            "channel_declarations": [item.sha256 for item in declarations],
+                            "registration_generation": registration_generation,
+                            "service_session_id": self._session_id,
+                        }
+                    )
+                )
+            )
+            self._adapter_inventory[adapter_id] = AdapterInventoryEntry(
+                adapter_id=adapter_id,
+                channel_ids=tuple(registered),
+                identity_sha256=identity_sha256,
+                registration_generation=registration_generation,
+                stable_identity=bool(claimed_identity),
+            )
             self._adapter_capabilities[adapter_id] = capabilities
             if isinstance(adapter, RealityAdapter):
                 for capability in capabilities:
@@ -438,6 +521,7 @@ class RealityReachService:
                 self._readings.pop(channel_id, None)
                 self._registry.unregister(channel_id)
             self._adapter_capabilities.pop(adapter_id, None)
+            self._adapter_inventory.pop(adapter_id, None)
             self._adapter_channels.pop(adapter_id, None)
             self._adapters.pop(adapter_id, None)
 
@@ -459,6 +543,21 @@ class RealityReachService:
 
         with self._lock:
             return dict(self._adapter_channels)
+
+    def adapter_inventory(self) -> dict[str, AdapterInventoryEntry]:
+        """Return immutable live ownership fenced by device or registration identity."""
+
+        with self._lock:
+            return dict(self._adapter_inventory)
+
+    def adapter_identity_for_channel(self, channel_id: str) -> AdapterInventoryEntry | None:
+        """Resolve the authoritative current identity that owns one channel."""
+
+        with self._lock:
+            for entry in self._adapter_inventory.values():
+                if channel_id in entry.channel_ids:
+                    return entry
+        return None
 
     def adapter_id_for_channel(self, channel_id: str) -> str | None:
         """Resolve channel ownership without exposing executable adapters."""
@@ -522,6 +621,7 @@ class RealityReachService:
             last_monotonic_ns = int(self._monotonic_clock_ns())
             for adapter_id, adapter in adapters:
                 expected = self._adapter_channels[adapter_id]
+                identity = self._adapter_inventory[adapter_id]
                 with self._lock:
                     self._ingest_generation += 1
                     sequence = self._ingest_generation
@@ -536,6 +636,7 @@ class RealityReachService:
                         now_ns=last_wall_ns,
                         monotonic_now_ns=last_monotonic_ns,
                         sequence=sequence,
+                        adapter_identity=identity,
                     )
                 except (
                     AttributeError,
@@ -553,6 +654,7 @@ class RealityReachService:
                             captured_at_ns=last_wall_ns,
                             ingested_monotonic_ns=last_monotonic_ns,
                             sequence=sequence,
+                            adapter_identity=identity,
                             error=f"{type(exc).__name__}:{exc}",
                         )
                         for channel_id in expected
@@ -590,6 +692,7 @@ class RealityReachService:
                         and declaration.kind == ChannelKind.SENSOR
                     )
                 )
+                identity = self._adapter_inventory[adapter_id]
                 self._ingest_generation += 1
                 sequence = self._ingest_generation
             if not expected:
@@ -603,6 +706,7 @@ class RealityReachService:
                 now_ns=now_ns,
                 monotonic_now_ns=monotonic_now_ns,
                 sequence=sequence,
+                adapter_identity=identity,
             )
             with self._lock:
                 self._readings.update(normalized)
@@ -618,9 +722,7 @@ class RealityReachService:
     ) -> dict[str, ChannelReading]:
         current_ns = int(self._clock_ns() if now_ns is None else now_ns)
         current_monotonic_ns = int(
-            self._monotonic_clock_ns()
-            if monotonic_now_ns is None
-            else monotonic_now_ns
+            self._monotonic_clock_ns() if monotonic_now_ns is None else monotonic_now_ns
         )
         with self._lock:
             items = tuple(self._readings.items())
@@ -646,9 +748,7 @@ class RealityReachService:
             return None
         current_ns = int(self._clock_ns() if now_ns is None else now_ns)
         current_monotonic_ns = int(
-            self._monotonic_clock_ns()
-            if monotonic_now_ns is None
-            else monotonic_now_ns
+            self._monotonic_clock_ns() if monotonic_now_ns is None else monotonic_now_ns
         )
         return self._with_freshness(
             reading,
@@ -703,8 +803,7 @@ class RealityReachService:
 
     def is_ready(self) -> bool:
         return any(
-            reading.status == ReadingStatus.AVAILABLE
-            for reading in self.readings().values()
+            reading.status == ReadingStatus.AVAILABLE for reading in self.readings().values()
         )
 
     def _validate_adapter_readings(
@@ -716,6 +815,7 @@ class RealityReachService:
         now_ns: int,
         monotonic_now_ns: int,
         sequence: int,
+        adapter_identity: AdapterInventoryEntry,
     ) -> dict[str, ChannelReading]:
         by_channel: dict[str, ChannelReading] = {}
         expected_set = set(expected)
@@ -739,6 +839,11 @@ class RealityReachService:
                 ingested_monotonic_ns=monotonic_now_ns,
                 session_id=self._session_id,
                 sequence=sequence,
+                adapter_identity_sha256=adapter_identity.identity_sha256,
+                adapter_registration_generation=(
+                    adapter_identity.registration_generation
+                ),
+                adapter_identity_stable=adapter_identity.stable_identity,
             )
             if reading.session_id and reading.session_id != self._session_id:
                 normalized = replace(
@@ -781,6 +886,7 @@ class RealityReachService:
                     captured_at_ns=now_ns,
                     ingested_monotonic_ns=monotonic_now_ns,
                     sequence=sequence,
+                    adapter_identity=adapter_identity,
                     error=f"adapter_missing_reading:{adapter_id}",
                 )
         return by_channel
@@ -793,6 +899,7 @@ class RealityReachService:
         ingested_monotonic_ns: int,
         sequence: int,
         error: str,
+        adapter_identity: AdapterInventoryEntry,
     ) -> ChannelReading:
         declaration = self._registry.get(channel_id)
         if declaration is None:
@@ -809,6 +916,9 @@ class RealityReachService:
             ingested_monotonic_ns=max(1, ingested_monotonic_ns),
             session_id=self._session_id,
             sequence=sequence,
+            adapter_identity_sha256=adapter_identity.identity_sha256,
+            adapter_registration_generation=adapter_identity.registration_generation,
+            adapter_identity_stable=adapter_identity.stable_identity,
         )
 
     def _with_freshness(
@@ -880,6 +990,7 @@ def register_reality_reach_service() -> RealityReachService:
 
 
 __all__ = [
+    "AdapterInventoryEntry",
     "ChannelReading",
     "HostResourceAdapter",
     "LiveChannelAdapter",

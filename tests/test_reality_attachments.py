@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import threading
 import time
 from dataclasses import replace
@@ -206,6 +207,63 @@ class FakeKeychain:
         if self.accept_writes:
             self.values[(service, account)] = password
         return self.accept_writes
+
+
+class BlockingTrustStore:
+    identity = {"identity_sha256": "sha256:" + "e" * 64}
+
+    def __init__(self, *, fail_save_numbers: set[int] | None = None) -> None:
+        self.first_save_entered = threading.Event()
+        self.release_first_save = threading.Event()
+        self.second_save_entered = threading.Event()
+        self.release_second_save = threading.Event()
+        self.saved_bodies: list[dict] = []
+        self.save_count = 0
+        self.fail_save_numbers = set(fail_save_numbers or ())
+
+    def load(self):
+        return None
+
+    def save(self, body):
+        self.save_count += 1
+        if self.save_count == 1:
+            self.first_save_entered.set()
+            if not self.release_first_save.wait(timeout=5.0):
+                raise TimeoutError("test did not release blocked trust save")
+        elif self.save_count == 2:
+            self.second_save_entered.set()
+            if not self.release_second_save.wait(timeout=5.0):
+                raise TimeoutError("test did not release rollback trust save")
+        if self.save_count in self.fail_save_numbers:
+            raise RuntimeError(f"simulated trust save failure {self.save_count}")
+        self.saved_bodies.append(copy.deepcopy(dict(body)))
+        return {"sequence": self.save_count}
+
+    def rotate_and_save(self, body):
+        return self.save(body)
+
+    def status(self):
+        return {"healthy": True, "error": ""}
+
+
+class StaticTrustStore:
+    identity = {"identity_sha256": "sha256:" + "f" * 64}
+
+    def __init__(self, body: dict) -> None:
+        self.body = copy.deepcopy(body)
+
+    def load(self):
+        return copy.deepcopy(self.body)
+
+    def save(self, body):
+        self.body = copy.deepcopy(dict(body))
+        return {"sequence": 1}
+
+    def rotate_and_save(self, body):
+        return self.save(body)
+
+    def status(self):
+        return {"healthy": True, "error": ""}
 
 
 class FakeAuthorityVerifier:
@@ -481,6 +539,258 @@ async def test_cancelled_attach_completes_shielded_rollback_before_reraising(
 
 
 @pytest.mark.asyncio
+async def test_cancellation_during_persistent_save_waits_for_durable_rollback(
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    store = BlockingTrustStore()
+    service = RealityReachService(session_id="test.cancelled-persistence")
+    broker = DeviceAttachmentBroker(
+        service,
+        RealityObservationRouter(service),
+        trust_store=store,
+        authority_verifier=FakeAuthorityVerifier(),
+    )
+    connector = Connector(_candidate())
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+
+    attaching = asyncio.create_task(
+        broker.authorize_and_attach(
+            request_id,
+            authority_capability=_authority("authority.test.cancelled.persistence"),
+            persistent=True,
+        )
+    )
+    assert await asyncio.to_thread(store.first_save_entered.wait, 2.0)
+    attaching.cancel()
+    await asyncio.sleep(0)
+    assert not attaching.done()
+    store.release_first_save.set()
+    assert await asyncio.to_thread(store.second_save_entered.wait, 2.0)
+    await asyncio.sleep(0)
+    assert not attaching.done()
+    store.release_second_save.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await attaching
+
+    assert store.save_count == 2
+    assert len(store.saved_bodies[0]["grants"]) == 1
+    assert store.saved_bodies[0]["grants"][0]["lifecycle"] == "pending_activation"
+    assert store.saved_bodies[-1]["grants"] == []
+    assert broker.status()["trust_grants"] == 0
+    assert broker.status()["attached"] == 0
+    request = next(item for item in broker.requests() if item.request_id == request_id)
+    assert request.state == ConnectionState.ERROR
+    assert request.error == "attachment_cancelled"
+    assert connector.attach_count == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_cancellation_rollback_cannot_resurrect_authority_after_restart(
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    store = BlockingTrustStore(fail_save_numbers={2})
+    service = RealityReachService(session_id="test.cancelled-persistence.failure")
+    broker = DeviceAttachmentBroker(
+        service,
+        RealityObservationRouter(service),
+        trust_store=store,
+        authority_verifier=FakeAuthorityVerifier(),
+    )
+    connector = Connector(_candidate())
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+
+    attaching = asyncio.create_task(
+        broker.authorize_and_attach(
+            request_id,
+            authority_capability=_authority("authority.test.cancelled.rollback-failure"),
+            persistent=True,
+        )
+    )
+    assert await asyncio.to_thread(store.first_save_entered.wait, 2.0)
+    attaching.cancel()
+    store.release_first_save.set()
+    assert await asyncio.to_thread(store.second_save_entered.wait, 2.0)
+    store.release_second_save.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await attaching
+
+    assert len(store.saved_bodies) == 1
+    assert store.saved_bodies[0]["grants"][0]["lifecycle"] == "pending_activation"
+    assert broker.status()["persistent_trust_ready"] is False
+    assert broker.status()["trust_grants"] == 0
+
+    restarted_store = StaticTrustStore(store.saved_bodies[0])
+    restarted_service = RealityReachService(
+        session_id="test.cancelled-persistence.restart"
+    )
+    restarted = DeviceAttachmentBroker(
+        restarted_service,
+        RealityObservationRouter(restarted_service),
+        trust_store=restarted_store,
+        authority_verifier=FakeAuthorityVerifier(),
+    )
+    restarted_connector = Connector(_candidate())
+    restarted.register_connector(restarted_connector)
+    await restarted.discover()
+
+    assert restarted_connector.attach_count == 0
+    assert restarted_service.status()["adapter_count"] == 0
+    assert restarted.status()["trust_grants"] == 0
+    assert restarted.requests()[0].state == ConnectionState.PENDING_TRUST
+    assert restarted_store.body["grants"] == []
+
+
+@pytest.mark.asyncio
+async def test_partial_attach_rollback_retains_owner_when_local_unregister_fails(
+    tmp_path: Path,
+    no_body_projection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del no_body_projection
+    broker, service = _broker(tmp_path / "partial-rollback.json")
+    connector = Connector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+    original_unregister = service.unregister_adapter
+    unregister_attempts = 0
+
+    def fail_first_unregister(adapter_id: str) -> None:
+        nonlocal unregister_attempts
+        unregister_attempts += 1
+        if unregister_attempts == 1:
+            raise RuntimeError("simulated local registry outage")
+        original_unregister(adapter_id)
+
+    monkeypatch.setattr(service, "unregister_adapter", fail_first_unregister)
+    monkeypatch.setattr(
+        attachment_module,
+        "project_adapter_to_body",
+        lambda _adapter, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("simulated projection failure")
+        ),
+    )
+
+    failed = await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.partial.rollback"),
+        persistent=False,
+    )
+
+    assert failed.state == ConnectionState.ERROR
+    assert service.status()["adapter_count"] == 1
+    assert broker.status()["attached"] == 1
+    assert broker.status()["teardown_pending"] == 1
+    assert connector.detach_count == 1
+
+    monkeypatch.setattr(service, "unregister_adapter", original_unregister)
+    await broker.discover()
+
+    assert unregister_attempts == 1
+    assert service.status()["adapter_count"] == 0
+    assert broker.status()["attached"] == 0
+    assert broker.status()["teardown_pending"] == 0
+    # Remote detach succeeded in the first rollback and is not repeated.
+    assert connector.detach_count == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_rollback_retains_sampler_body_and_twin_until_all_are_fenced(
+    tmp_path: Path,
+    no_body_projection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del no_body_projection
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "local-fencing-twin" / "graph.sqlite3",
+        session_id="test.attachments.local-fencing",
+        integrity_key_backend=FakeKeychain(),
+    )
+    broker, service = _broker(
+        tmp_path / "local-fencing.json",
+        digital_twin=graph,
+    )
+    connector = Connector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+
+    original_refresh = service.refresh
+    refresh_calls = 0
+
+    def fail_post_attach_refresh() -> None:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        if refresh_calls == 1:
+            raise RuntimeError("simulated post-attach refresh failure")
+        original_refresh()
+
+    original_unregister_sampler = broker._router.unregister_sampler
+    sampler_removals = 0
+
+    def fail_first_sampler_removal(adapter_id: str) -> None:
+        nonlocal sampler_removals
+        sampler_removals += 1
+        if sampler_removals == 1:
+            raise RuntimeError("simulated sampler removal failure")
+        original_unregister_sampler(adapter_id)
+
+    original_remove_body = attachment_module.remove_body_projection
+    body_removals = 0
+
+    def fail_first_body_removal(projection: PhysicalBodyProjection) -> None:
+        nonlocal body_removals
+        body_removals += 1
+        if body_removals == 1:
+            raise RuntimeError("simulated body projection removal failure")
+        original_remove_body(projection)
+
+    monkeypatch.setattr(service, "refresh", fail_post_attach_refresh)
+    monkeypatch.setattr(
+        broker._router,
+        "unregister_sampler",
+        fail_first_sampler_removal,
+    )
+    monkeypatch.setattr(
+        attachment_module,
+        "remove_body_projection",
+        fail_first_body_removal,
+    )
+
+    failed = await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.local-fencing"),
+        persistent=False,
+    )
+
+    assert failed.state == ConnectionState.ERROR
+    assert service.status()["adapter_count"] == 0
+    assert broker._router.status()["samplers"] == 1
+    assert Adapter.adapter_id in broker._body_projections
+    assert broker.status()["attached"] == 1
+    assert broker.status()["teardown_pending"] == 1
+    assert graph.snapshot()["twins"][0]["lifecycle"] == "attached"
+    assert connector.detach_count == 1
+
+    monkeypatch.setattr(service, "refresh", original_refresh)
+    await broker._reconcile_pending_teardowns()
+
+    assert broker._router.status()["samplers"] == 0
+    assert Adapter.adapter_id not in broker._body_projections
+    assert broker.status()["attached"] == 0
+    assert broker.status()["teardown_pending"] == 0
+    assert graph.snapshot()["twins"][0]["lifecycle"] == "detached"
+    assert connector.detach_count == 1
+
+@pytest.mark.asyncio
 async def test_manifest_migration_preflight_is_retryable_and_end_to_end_bound(
     tmp_path: Path,
     no_body_projection: None,
@@ -489,6 +799,7 @@ async def test_manifest_migration_preflight_is_retryable_and_end_to_end_bound(
     graph = RealityDigitalTwinGraph(
         tmp_path / "migration" / "graph.sqlite3",
         session_id="test.attachments.migration",
+        integrity_key_backend=FakeKeychain(),
     )
     authority = FakeMigrationAuthorityVerifier()
     broker, _service = _broker(
@@ -602,6 +913,7 @@ async def test_twin_detach_failure_never_blocks_local_fencing_and_reconciles(
     graph = RealityDigitalTwinGraph(
         tmp_path / "twin" / "graph.sqlite3",
         session_id="test.attachments",
+        integrity_key_backend=FakeKeychain(),
     )
     connector = MutableDiscoveryConnector((_candidate(persistent=False),))
     broker, service = _broker(
@@ -648,6 +960,164 @@ async def test_twin_detach_failure_never_blocks_local_fencing_and_reconciles(
     assert detach_attempts == 2
     assert broker.status()["twin_reconciliation"]["healthy"] is True
     assert graph.snapshot()["twins"][0]["lifecycle"] == "lost"
+
+
+@pytest.mark.asyncio
+async def test_twin_reconciliation_replays_durable_intents_after_restart(
+    tmp_path: Path,
+    no_body_projection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del no_body_projection
+    state_path = tmp_path / "restart-reconciliation.json"
+    graph_path = tmp_path / "restart-twin" / "graph.sqlite3"
+    backend = FakeKeychain()
+    integrity_backend = FakeKeychain()
+    first_graph = RealityDigitalTwinGraph(
+        graph_path,
+        session_id="test.attachments.restart.first",
+        integrity_key_backend=integrity_backend,
+    )
+    first, first_service = _broker(
+        state_path,
+        backend=backend,
+        digital_twin=first_graph,
+    )
+    connector = Connector(_candidate())
+    first.register_connector(connector)
+    await first.discover()
+    await first.authorize_and_attach(
+        first.requests()[0].request_id,
+        authority_capability=_authority("authority.test.restart.reconciliation"),
+        persistent=True,
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise OSError("simulated twin store outage")
+
+    monkeypatch.setattr(first_graph, "detach_adapter", unavailable)
+    monkeypatch.setattr(first_graph, "revoke_identity", unavailable)
+    await first.revoke(_candidate().identity_fingerprint, reason="restart test revoke")
+
+    assert first_service.status()["adapter_count"] == 0
+    assert first.status()["twin_reconciliation"] == {
+        "healthy": False,
+        "pending": 2,
+        "pending_detaches": 1,
+        "pending_revocations": 1,
+    }
+
+    second_graph = RealityDigitalTwinGraph(
+        graph_path,
+        session_id="test.attachments.restart.second",
+        integrity_key_backend=integrity_backend,
+    )
+    second, _second_service = _broker(
+        state_path,
+        backend=backend,
+        digital_twin=second_graph,
+    )
+    await second.start()
+
+    assert second.status()["twin_reconciliation"] == {
+        "healthy": True,
+        "pending": 0,
+        "pending_detaches": 0,
+        "pending_revocations": 0,
+    }
+    assert second_graph.snapshot()["twins"][0]["lifecycle"] == "revoked"
+    await second.stop()
+
+    third, _third_service = _broker(
+        state_path,
+        backend=backend,
+        digital_twin=second_graph,
+    )
+    await third.start()
+    assert third.status()["twin_reconciliation"]["pending"] == 0
+    await third.stop()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_twin_reconciliation_state_is_rejected_as_a_unit() -> None:
+    store = StaticTrustStore(
+        {
+            "grants": [],
+            "twin_reconciliation": {
+                "schema": "aura.reality_reach.twin_reconciliation.v1",
+                "detaches": [
+                    {
+                        "adapter_id": "test.adapter",
+                        "reason": "lost\nforged",
+                        "lost": True,
+                    }
+                ],
+                "revocations": [],
+            },
+        }
+    )
+    service = RealityReachService(session_id="test.corrupt-reconciliation")
+    broker = DeviceAttachmentBroker(
+        service,
+        RealityObservationRouter(service),
+        trust_store=store,
+        authority_verifier=FakeAuthorityVerifier(),
+    )
+
+    await broker.start()
+
+    status = broker.status()
+    assert status["persistent_trust_ready"] is False
+    assert "reconciliation intent is invalid" in status["trust_custody"]["error"]
+    assert status["twin_reconciliation"]["pending"] == 0
+    await broker.stop()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_grant_preserves_valid_reconciliation_and_blocks_readiness() -> None:
+    store = StaticTrustStore(
+        {
+            "grants": [{"identity_fingerprint": "corrupt"}],
+            "twin_reconciliation": {
+                "schema": "aura.reality_reach.twin_reconciliation.v1",
+                "detaches": [
+                    {
+                        "adapter_id": "test.device_adapter",
+                        "reason": "durable detach",
+                        "lost": False,
+                    }
+                ],
+                "revocations": [
+                    {
+                        "identity_fingerprint": "sha256:" + "a" * 64,
+                        "reason": "durable revoke",
+                    }
+                ],
+            },
+        }
+    )
+    service = RealityReachService(session_id="test.corrupt-grant-reconciliation")
+    broker = DeviceAttachmentBroker(
+        service,
+        RealityObservationRouter(service),
+        trust_store=store,
+        authority_verifier=FakeAuthorityVerifier(),
+    )
+
+    await broker.start()
+
+    status = broker.status()
+    assert status["ready"] is False
+    assert status["persistent_trust_ready"] is False
+    assert status["trust_grants"] == 0
+    assert status["twin_reconciliation"] == {
+        "healthy": False,
+        "pending": 2,
+        "pending_detaches": 1,
+        "pending_revocations": 1,
+    }
+    assert "grant private evidence is invalid" in status["trust_custody"]["error"]
+    await broker.stop()
 
 
 @pytest.mark.asyncio
