@@ -3246,6 +3246,61 @@ class LatentCortexService:
             "uncertainty": round(depth_signal, 3),
         }
 
+    @staticmethod
+    def _attestation_disclosure(receipt: Any) -> dict[str, Any]:
+        """What this episode's evidence actually establishes.
+
+        The honest floor for four findings that share one root: the facade has
+        no trust domain separate from the worker it is checking.
+
+        * ``e1c09324`` — identity fields (booleans, counts, hashes, git ids,
+          schedule hashes) are checked for FORMAT and internal consistency,
+          never recomputed from trusted local files or a signed attestation.
+        * ``9b110bc5`` — ``params_unchanged`` cannot prove which effective
+          model answered: active adapter/LoRA ids, hashes, ordering, scale,
+          load generation and tokenizer identity are not bound.
+        * ``fc19e25e`` — the "independent" verifier replay recomputes
+          decisions from scores and trails supplied in the SAME receipt. It
+          reruns no task verifier and inspects no candidate output.
+        * ``265b0fae`` — a successful episode ran no same-model vanilla
+          control, no frontier baseline, no held-out correctness test and no
+          calibration, so it establishes accepted EXECUTION, not superior
+          reasoning.
+
+        Closing these properly needs a signed worker attestation and an
+        out-of-band verifier — a subsystem, not a patch. Until that exists the
+        claims are stated at their true strength instead of being implied at a
+        higher one.
+        """
+        receipt_map = receipt if isinstance(receipt, dict) else {}
+        return {
+            "schema": "aura.latent_cortex.attestation_disclosure.v1",
+            "trust_domain": "worker_self_reported",
+            "independently_verified": False,
+            "proves": [
+                "the receipt is well-formed and internally consistent",
+                "the client bound the receipt to the request payload it sent",
+                "the declared compute stayed within the facade's allocation",
+            ],
+            "does_not_prove": [
+                "identity fields were recomputed from trusted local state",
+                "which effective model (adapter/LoRA/tokenizer) produced the answer",
+                "the verifier replay used evidence from a separate trust domain",
+                "the answer is better than a vanilla or frontier baseline",
+            ],
+            "model_identity_complete": bool(
+                receipt_map.get("active_adapters") is not None
+                and receipt_map.get("tokenizer_sha256")
+            ),
+            "verifier_replay_independent": False,
+            "reasoning_gain_established": False,
+            "required_for_independence": [
+                "signed worker attestation verified against an authority registry",
+                "out-of-band verifier rerun on the candidate output",
+                "same-model vanilla control on a held-out set",
+            ],
+        }
+
     def _record_failure(self, reason: str) -> dict[str, Any]:
         self._failure_streak += 1
         self._last_refusal = str(reason or "unknown")
@@ -4870,6 +4925,18 @@ class LatentCortexService:
                 output_quality=quality_receipt,
             )
             result["receipt"] = result_receipt
+            # CP126 e1c09324 / 9b110bc5 / fc19e25e / 265b0fae. Everything this
+            # facade verifies about the episode comes from the worker's own
+            # receipt. The format checks are real and the internal-consistency
+            # checks are real, but a dishonest or corrupted worker can submit a
+            # self-consistent receipt and nothing here would know: the facade
+            # and the worker are not separate trust domains.
+            #
+            # Rather than let "ok" imply more than it earns, every episode says
+            # exactly what it proved and what it did not. A consumer promoting
+            # an adapter, citing a reasoning gain, or trusting an answer's
+            # provenance must read this block, not the boolean.
+            result["attestation"] = self._attestation_disclosure(result_receipt)
             self._ok_episodes += 1
             self._failure_streak = 0
             self._last_refusal = ""
