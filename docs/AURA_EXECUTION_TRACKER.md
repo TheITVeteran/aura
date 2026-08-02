@@ -34829,3 +34829,70 @@ bootstrap-complete, reasoning-gain, frontier, release, or `WOW Signal` claim is
 made. This is total checkpoint 799 of the current 920-checkpoint completion
 envelope, approximately 86.8% by count. The immutable CP796 resident campaign
 continues separately; long soaks remain deferred.
+
+### 2026-08-01 - CP800 authenticated physical trust custody and authority
+
+Physical attachment trust is no longer a digest-protected JSON assertion.
+`KeychainAttachmentTrustStore` encrypts the complete durable grant body with
+AES-256-GCM under a versioned keyring held in macOS Keychain. The filesystem
+contains ciphertext plus bounded commit metadata only; stable identities,
+display names, locations, connector metadata, authority evidence, and other
+private device details remain inside the authenticated ciphertext. Reads reject
+symlinks, non-regular files, foreign ownership, group/world permissions,
+oversized input, malformed UTF-8, duplicate JSON keys, unknown schemas,
+non-canonical keyrings, and altered AEAD context.
+
+A separate Keychain commit anchor binds sequence, envelope digest, key version,
+and custody identity. Older valid envelopes are rejected as rollback/replay;
+same-sequence forks and multi-step-ahead files are rejected. The only automatic
+recovery is the authenticated single-step file-ahead-of-anchor state produced
+by a process death between atomic file replacement and anchor commit. A
+synchronous anchor failure restores the previous file before returning failure,
+so callers cannot mistake an unanchored grant for committed trust. Key rotation
+retains the key needed by the current committed head, re-encrypts immediately,
+and preserves rollback rejection across versions.
+
+Bare receipt strings can no longer create a trust grant. Aura now builds a
+deterministic authority intent bound to request, candidate snapshot, persistent
+identity, connector, manifest, exact observe/control access, persistence class,
+and policy-bounded lifetime. The sink independently verifies an asymmetric,
+durable, signed Will capability against that exact action digest and domain,
+checks the originating Will receipt and physical scope, then durably consumes
+the capability nonce only after both checks pass. The encrypted grant retains
+the independently checked evidence for restart validation. Replayed,
+substituted, expired, malformed, non-durable, or tampered authority is refused.
+Persistent observe grants are capped at 90 days and persistent control grants
+at 30 days, with shorter defaults; session grants are capped at eight hours.
+Expired grants cannot reattach and are compacted out of durable state.
+Revocation commits grant removal before connector teardown, so a failed
+Keychain write cannot resurrect a relationship on restart.
+
+This boundary is live through Aura rather than operator-only plumbing. The
+embodiment skill can take a pending request, ask Aura's own Will about the exact
+relationship, mint the one-use sink capability on approval, attach it, report
+the authority receipt and lifetime, or rotate custody. It does not add a human
+approval switch. Keychain provisioning runs off the event loop during boot; a
+locked Keychain keeps persistent trust fail-closed but does not discard device
+discovery or bounded session observation.
+
+The focused custody, authority, capability-chain, broker, skill, and boot gate
+passes 95/95. The combined CP799/CP800 physical runtime family passes 80/80.
+Ruff, compilation, strict targeted MyPy, degradation auditing, and diff
+integrity pass. A live acceptance against this Mac's real Keychain provisioned
+custody identity
+`sha256:c109640525f16266dab1715e889972263453f44ef875aba996247f1f3ece1faf`,
+committed and reloaded encrypted sequence 1, rotated and reloaded key version 2
+at sequence 2, confirmed file mode `0600`, and confirmed that the envelope
+contains no `grants` plaintext.
+
+No configured third-party device was actuated in CP800, so this does not claim
+a live household effect. CP801-CP807 remain additive and mandatory: historian
+and store-and-forward, canonical digital twins, ROS-shaped telemetry/action
+lifecycle, declarative event flows, metrology/HIL, concrete protocol
+connectors, and the Keychain-backed Messages/SMS conversation transport. The
+texting checkpoint will use a stable Keychain contact alias; no phone number is
+permitted in source, prompts, logs, receipts, tests, or tracker prose. No
+physical-effect, bootstrap-complete, reasoning-gain, frontier, release, or
+`WOW Signal` claim is made. This is total checkpoint 800 of the current
+920-checkpoint completion envelope, approximately 87.0% by count. The immutable
+CP796 resident campaign continues separately; long soaks remain deferred.

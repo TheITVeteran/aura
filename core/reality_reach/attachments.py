@@ -20,14 +20,19 @@ import math
 import re
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
-from core.environment.runtime_workspace import environment_runtime_file
+from core.reality_reach.attachment_authority import (
+    AttachmentAuthorityError,
+    AttachmentCapabilityAuthorityVerifier,
+    PhysicalAuthorityVerifier,
+    build_attachment_authority_intent,
+)
 from core.reality_reach.body_projection import (
     PhysicalBodyProjection,
     project_adapter_to_body,
@@ -35,15 +40,22 @@ from core.reality_reach.body_projection import (
 )
 from core.reality_reach.live import LiveChannelAdapter, RealityReachService
 from core.reality_reach.observation_router import RealityObservationRouter
-from core.runtime.atomic_writer import atomic_write_text
+from core.reality_reach.trust_custody import (
+    AttachmentTrustStore,
+    AttachmentTrustStoreError,
+)
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
-_SCHEMA = "aura.reality-attachments.v1"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_METADATA_BYTES = 16 * 1024
+_SESSION_GRANT_MAX_S = 8 * 60 * 60
+_PERSISTENT_OBSERVE_MAX_S = 90 * 24 * 60 * 60
+_PERSISTENT_CONTROL_MAX_S = 30 * 24 * 60 * 60
+_DEFAULT_PERSISTENT_OBSERVE_S = 30 * 24 * 60 * 60
+_DEFAULT_PERSISTENT_CONTROL_S = 7 * 24 * 60 * 60
 
 
 def _digest(value: Any) -> str:
@@ -74,6 +86,31 @@ def _frozen_metadata(value: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(decoded, dict):
         raise ValueError("device metadata must be a mapping")
     return MappingProxyType(decoded)
+
+
+def _bounded_grant_ttl_s(
+    access: tuple[AttachmentAccess, ...],
+    *,
+    persistent: bool,
+    requested_ttl_s: int | None,
+) -> int:
+    includes_control = AttachmentAccess.CONTROL in access
+    if not persistent:
+        maximum = _SESSION_GRANT_MAX_S
+        default = _SESSION_GRANT_MAX_S
+    elif includes_control:
+        maximum = _PERSISTENT_CONTROL_MAX_S
+        default = _DEFAULT_PERSISTENT_CONTROL_S
+    else:
+        maximum = _PERSISTENT_OBSERVE_MAX_S
+        default = _DEFAULT_PERSISTENT_OBSERVE_S
+    if requested_ttl_s is None:
+        return default
+    if isinstance(requested_ttl_s, bool) or not isinstance(requested_ttl_s, int):
+        raise TypeError("grant_ttl_s must be an integer number of seconds")
+    if requested_ttl_s <= 0 or requested_ttl_s > maximum:
+        raise ValueError(f"grant_ttl_s must lie inside [1, {maximum}]")
+    return requested_ttl_s
 
 
 class AttachmentAccess(StrEnum):
@@ -207,7 +244,11 @@ class TrustGrant:
     manifest_sha256: str
     allowed_access: tuple[AttachmentAccess, ...]
     authority_receipt_id: str
+    authority_intent: Mapping[str, Any]
+    authority_evidence: Mapping[str, Any]
+    private_device_metadata: Mapping[str, Any]
     issued_at_ns: int
+    expires_at_ns: int
     persistent: bool
 
     def __post_init__(self) -> None:
@@ -220,8 +261,26 @@ class TrustGrant:
             raise ValueError("allowed_access must be non-empty and unique")
         if not str(self.authority_receipt_id or "").strip():
             raise ValueError("authority_receipt_id must be present")
-        if self.issued_at_ns <= 0:
-            raise ValueError("issued_at_ns must be positive")
+        if self.issued_at_ns <= 0 or self.expires_at_ns <= self.issued_at_ns:
+            raise ValueError("trust grant lifetime is invalid")
+        object.__setattr__(
+            self,
+            "authority_intent",
+            _frozen_metadata(self.authority_intent),
+        )
+        object.__setattr__(
+            self,
+            "authority_evidence",
+            _frozen_metadata(self.authority_evidence),
+        )
+        object.__setattr__(
+            self,
+            "private_device_metadata",
+            _frozen_metadata(self.private_device_metadata),
+        )
+
+    def is_valid_at(self, now_ns: int) -> bool:
+        return self.issued_at_ns <= now_ns < self.expires_at_ns
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -230,7 +289,11 @@ class TrustGrant:
             "manifest_sha256": self.manifest_sha256,
             "allowed_access": [item.value for item in self.allowed_access],
             "authority_receipt_id": self.authority_receipt_id,
+            "authority_intent": dict(self.authority_intent),
+            "authority_evidence": dict(self.authority_evidence),
+            "private_device_metadata": dict(self.private_device_metadata),
             "issued_at_ns": self.issued_at_ns,
+            "expires_at_ns": self.expires_at_ns,
             "persistent": self.persistent,
         }
 
@@ -260,6 +323,10 @@ class DeviceAttachmentBroker:
         observation_router: RealityObservationRouter,
         *,
         state_path: Path | None = None,
+        trust_store: AttachmentTrustStore | None = None,
+        trust_store_error: str = "",
+        authority_verifier: PhysicalAuthorityVerifier | None = None,
+        clock_ns: Callable[[], int] = time.time_ns,
         discovery_interval_s: float = 60.0,
         connector_timeout_s: float = 12.0,
         max_candidates: int = 2048,
@@ -269,13 +336,25 @@ class DeviceAttachmentBroker:
             raise TypeError("service must be a RealityReachService")
         if not isinstance(observation_router, RealityObservationRouter):
             raise TypeError("observation_router must be a RealityObservationRouter")
+        if not callable(clock_ns):
+            raise TypeError("clock_ns must be callable")
         self._service = service
         self._router = observation_router
-        self._state_path = state_path or environment_runtime_file(
-            "shared",
-            "reality_attachment_trust.json",
-            purpose="identity",
+        self._trust_store: AttachmentTrustStore | None = trust_store
+        self._custody_error = str(trust_store_error or "")[:320]
+        if self._trust_store is None and not self._custody_error:
+            self._custody_error = "attachment_trust_custody_not_provisioned"
+        if self._trust_store is not None and not isinstance(
+            self._trust_store,
+            AttachmentTrustStore,
+        ):
+            raise TypeError("trust_store must satisfy AttachmentTrustStore")
+        self._authority_verifier = (
+            authority_verifier or AttachmentCapabilityAuthorityVerifier()
         )
+        if not isinstance(self._authority_verifier, PhysicalAuthorityVerifier):
+            raise TypeError("authority_verifier must satisfy PhysicalAuthorityVerifier")
+        self._clock_ns = clock_ns
         self._discovery_interval_s = max(5.0, min(float(discovery_interval_s), 3600.0))
         self._connector_timeout_s = max(1.0, min(float(connector_timeout_s), 60.0))
         self._max_candidates = max(1, min(int(max_candidates), 10_000))
@@ -287,12 +366,15 @@ class DeviceAttachmentBroker:
         self._attached: dict[str, tuple[str, LiveChannelAdapter]] = {}
         self._body_projections: dict[str, PhysicalBodyProjection] = {}
         self._lock = threading.RLock()
+        self._state_load_lock = asyncio.Lock()
+        self._state_loaded = False
         self._wake = asyncio.Event()
         self._task: asyncio.Task[Any] | None = None
         self._running = False
         self._discoveries = 0
         self._attachment_failures = 0
-        self._load_state()
+        self._expired_grants = 0
+        self._state_needs_compaction = False
 
     def register_connector(self, connector: DeviceConnector) -> None:
         if not isinstance(connector, DeviceConnector):
@@ -315,6 +397,7 @@ class DeviceAttachmentBroker:
             self._wake.set()
 
     async def discover(self) -> tuple[DeviceCandidate, ...]:
+        await self._ensure_state_loaded()
         with self._lock:
             connectors = tuple(self._connectors.values())
         semaphore = asyncio.Semaphore(8)
@@ -340,7 +423,7 @@ class DeviceAttachmentBroker:
                     return ()
 
         batches = await asyncio.gather(*(_one(item) for item in connectors))
-        now_ns = time.time_ns()
+        now_ns = self._clock_ns()
         merged = sorted(
             (candidate for batch in batches for candidate in batch),
             key=lambda item: (-item.proposal_salience, item.candidate_id),
@@ -369,10 +452,11 @@ class DeviceAttachmentBroker:
         initiated_by: str = "aura",
         reason: str = "new physical capability discovered",
     ) -> ConnectionRequest:
+        await self._ensure_state_loaded()
         canonical = _identifier(candidate_id, name="candidate_id")
         with self._lock:
             candidate = self._candidates.get(canonical)
-        if candidate is None or candidate.expires_at_ns <= time.time_ns():
+        if candidate is None or candidate.expires_at_ns <= self._clock_ns():
             raise LookupError(f"candidate is not currently discoverable: {canonical}")
         requested = tuple(dict.fromkeys(requested_access))
         if not requested or not set(requested).issubset(set(candidate.access)):
@@ -396,13 +480,19 @@ class DeviceAttachmentBroker:
             }:
                 return existing
             grant = self._grants.get(candidate.identity_fingerprint)
+            current_time_ns = self._clock_ns()
+            if grant is not None and not grant.is_valid_at(current_time_ns):
+                self._grants.pop(candidate.identity_fingerprint, None)
+                self._expired_grants += 1
+                grant = None
         trusted = bool(
             grant is not None
+            and grant.is_valid_at(current_time_ns)
             and grant.connector_id == candidate.connector_id
             and grant.manifest_sha256 == candidate.manifest_sha256
             and set(requested).issubset(set(grant.allowed_access))
         )
-        now_ns = max(1, time.time_ns())
+        now_ns = max(1, current_time_ns)
         request = ConnectionRequest(
             request_id=request_id,
             candidate_id=candidate.candidate_id,
@@ -420,16 +510,17 @@ class DeviceAttachmentBroker:
         if trusted:
             return await self._attach(request)
         await self._announce_request(candidate, request)
-        await self._persist_state()
         return request
 
-    async def authorize_and_attach(
+    def authority_intent(
         self,
         request_id: str,
         *,
-        authority_receipt_id: str,
-        persistent: bool = True,
-    ) -> ConnectionRequest:
+        persistent: bool,
+        grant_ttl_s: int | None = None,
+    ) -> dict[str, Any]:
+        """Return the deterministic payload the Will must authorize."""
+
         canonical = _identifier(request_id, name="request_id")
         with self._lock:
             request = self._requests.get(canonical)
@@ -440,32 +531,114 @@ class DeviceAttachmentBroker:
             raise RuntimeError(f"connection request is not pending trust: {request.state.value}")
         if persistent and not candidate.persistent_identity:
             raise PermissionError("candidate identity is not stable enough for persistent trust")
+        ttl_s = _bounded_grant_ttl_s(
+            request.requested_access,
+            persistent=persistent,
+            requested_ttl_s=grant_ttl_s,
+        )
+        return build_attachment_authority_intent(
+            request_id=request.request_id,
+            candidate_sha256=request.candidate_sha256,
+            identity_fingerprint=candidate.identity_fingerprint,
+            connector_id=candidate.connector_id,
+            manifest_sha256=candidate.manifest_sha256,
+            requested_access=tuple(item.value for item in request.requested_access),
+            persistent=persistent,
+            grant_ttl_s=ttl_s,
+        )
+
+    async def authorize_and_attach(
+        self,
+        request_id: str,
+        *,
+        authority_capability: Mapping[str, Any],
+        persistent: bool = True,
+        grant_ttl_s: int | None = None,
+    ) -> ConnectionRequest:
+        await self._ensure_state_loaded()
+        canonical = _identifier(request_id, name="request_id")
+        with self._lock:
+            request = self._requests.get(canonical)
+            candidate = self._candidates.get(request.candidate_id) if request else None
+        if request is None or candidate is None:
+            raise LookupError("connection request or candidate is unavailable")
+        if request.state != ConnectionState.PENDING_TRUST:
+            raise RuntimeError(f"connection request is not pending trust: {request.state.value}")
+        if persistent and not candidate.persistent_identity:
+            raise PermissionError("candidate identity is not stable enough for persistent trust")
+        if persistent and (self._trust_store is None or self._custody_error):
+            raise AttachmentTrustStoreError(
+                "attachment_trust_custody_unhealthy_for_persistent_grant"
+            )
+        intent = self.authority_intent(
+            request.request_id,
+            persistent=persistent,
+            grant_ttl_s=grant_ttl_s,
+        )
+        authority_evidence = self._authority_verifier.verify(
+            authority_capability,
+            intent=intent,
+            persistent=persistent,
+        )
+        capability = authority_evidence.get("capability")
+        authority_receipt_id = (
+            str(capability.get("receipt_id") or "")
+            if isinstance(capability, Mapping)
+            else ""
+        )
+        if not authority_receipt_id:
+            raise AttachmentAuthorityError("attachment_authority_receipt_missing")
+        issued_at_ns = max(1, self._clock_ns())
+        ttl_s = int(intent["grant_ttl_s"])
         grant = TrustGrant(
             identity_fingerprint=candidate.identity_fingerprint,
             connector_id=candidate.connector_id,
             manifest_sha256=candidate.manifest_sha256,
             allowed_access=request.requested_access,
-            authority_receipt_id=str(authority_receipt_id or "")[:192],
-            issued_at_ns=max(1, time.time_ns()),
+            authority_receipt_id=authority_receipt_id[:192],
+            authority_intent=intent,
+            authority_evidence=authority_evidence,
+            private_device_metadata={
+                "device_id": candidate.device_id,
+                "display_name": candidate.display_name,
+                "transport": candidate.transport,
+                "privacy_sensitive": candidate.privacy_sensitive,
+                "metadata": dict(candidate.metadata),
+            },
+            issued_at_ns=issued_at_ns,
+            expires_at_ns=issued_at_ns + ttl_s * 1_000_000_000,
             persistent=bool(persistent),
         )
         with self._lock:
+            previous_grant = self._grants.get(grant.identity_fingerprint)
+            previous_request = self._requests[request.request_id]
             self._grants[grant.identity_fingerprint] = grant
             self._requests[request.request_id] = replace(
                 request,
                 state=ConnectionState.ATTACHING,
                 authority_receipt_id=grant.authority_receipt_id,
-                updated_at_ns=max(request.created_at_ns, time.time_ns()),
+                updated_at_ns=max(request.created_at_ns, self._clock_ns()),
             )
             attaching = self._requests[request.request_id]
-        await self._persist_state()
+        try:
+            if persistent:
+                await self._persist_state()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            with self._lock:
+                if previous_grant is None:
+                    self._grants.pop(grant.identity_fingerprint, None)
+                else:
+                    self._grants[grant.identity_fingerprint] = previous_grant
+                self._requests[request.request_id] = previous_request
+            raise
         return await self._attach(attaching)
 
     async def revoke(self, identity_fingerprint: str, *, reason: str) -> None:
+        await self._ensure_state_loaded()
         if not _DIGEST.fullmatch(identity_fingerprint):
             raise ValueError("identity_fingerprint must be a sha256 digest")
         with self._lock:
-            self._grants.pop(identity_fingerprint, None)
+            previous_grant = self._grants.pop(identity_fingerprint, None)
             attached = [
                 (request_id, adapter_id, adapter)
                 for request_id, (adapter_id, adapter) in self._attached.items()
@@ -477,33 +650,54 @@ class DeviceAttachmentBroker:
                 ].identity_fingerprint
                 == identity_fingerprint
             ]
+        try:
+            if previous_grant is not None and previous_grant.persistent:
+                await self._persist_state()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            if previous_grant is not None:
+                with self._lock:
+                    self._grants[identity_fingerprint] = previous_grant
+            raise
         for request_id, adapter_id, adapter in attached:
             connector = self._connectors.get(
                 self._candidates[self._requests[request_id].candidate_id].connector_id
             )
             if connector is not None:
-                await connector.detach(adapter)
+                try:
+                    await connector.detach(adapter)
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "reality_attachment.revoke_detach",
+                        exc,
+                        action=(
+                            "continued local authority and adapter revocation after "
+                            "remote connector teardown failed"
+                        ),
+                    )
             try:
                 self._router.unregister_sampler(adapter_id)
             except LookupError:
                 pass
-            await asyncio.to_thread(self._service.unregister_adapter, adapter_id)
+            try:
+                await asyncio.to_thread(self._service.unregister_adapter, adapter_id)
+            except LookupError:
+                pass
             self._remove_body_projection(adapter_id)
             with self._lock:
                 request = self._requests[request_id]
                 self._requests[request_id] = replace(
                     request,
                     state=ConnectionState.REVOKED,
-                    updated_at_ns=max(request.created_at_ns, time.time_ns()),
+                    updated_at_ns=max(request.created_at_ns, self._clock_ns()),
                     error=str(reason or "revoked")[:320],
                 )
                 self._attached.pop(request_id, None)
         await asyncio.to_thread(self._service.refresh)
-        await self._persist_state()
 
     async def start(self) -> None:
         if self._running:
             return
+        await self._ensure_state_loaded()
         self._running = True
         self._task = get_task_tracker().create_task(
             self._discovery_loop(),
@@ -566,7 +760,16 @@ class DeviceAttachmentBroker:
                 pass
 
     async def _restore_trusted_connections(self) -> None:
+        now_ns = self._clock_ns()
         with self._lock:
+            expired = [
+                identity
+                for identity, grant in self._grants.items()
+                if not grant.is_valid_at(now_ns)
+            ]
+            for identity in expired:
+                self._grants.pop(identity, None)
+            self._expired_grants += len(expired)
             candidates = tuple(self._candidates.values())
             active_candidates = {
                 self._requests[request_id].candidate_id
@@ -579,6 +782,7 @@ class DeviceAttachmentBroker:
                 continue
             if (
                 not grant.persistent
+                or not grant.is_valid_at(now_ns)
                 or grant.connector_id != candidate.connector_id
                 or grant.manifest_sha256 != candidate.manifest_sha256
             ):
@@ -589,6 +793,14 @@ class DeviceAttachmentBroker:
                 initiated_by="aura.migration",
                 reason="reattach trusted physical capability after runtime discovery",
             )
+        if expired or self._state_needs_compaction:
+            try:
+                await self._persist_state()
+            except (OSError, RuntimeError, TypeError, ValueError):
+                # The expired grant has already been removed from the live
+                # authority set.  Persistence stays visibly unhealthy, but a
+                # Keychain outage must not blind bounded physical sensing.
+                pass
 
     async def _propose_new_connections(
         self,
@@ -648,7 +860,7 @@ class DeviceAttachmentBroker:
             )
             body_projected = True
             await asyncio.to_thread(self._service.refresh)
-            now_ns = max(request.created_at_ns, time.time_ns())
+            now_ns = max(request.created_at_ns, self._clock_ns())
             attached = replace(
                 request,
                 state=ConnectionState.ATTACHED,
@@ -659,7 +871,6 @@ class DeviceAttachmentBroker:
             with self._lock:
                 self._requests[request.request_id] = attached
                 self._attached[request.request_id] = (str(adapter.adapter_id), adapter)
-            await self._persist_state()
             return attached
         except asyncio.CancelledError:
             raise
@@ -712,12 +923,11 @@ class DeviceAttachmentBroker:
         failed = replace(
             request,
             state=ConnectionState.ERROR,
-            updated_at_ns=max(request.created_at_ns, time.time_ns()),
+            updated_at_ns=max(request.created_at_ns, self._clock_ns()),
             error=error[:320],
         )
         with self._lock:
             self._requests[request.request_id] = failed
-        await self._persist_state()
         return failed
 
     async def _announce_request(
@@ -778,6 +988,17 @@ class DeviceAttachmentBroker:
             state_counts: dict[str, int] = {}
             for request in self._requests.values():
                 state_counts[request.state.value] = state_counts.get(request.state.value, 0) + 1
+            custody = (
+                dict(self._trust_store.status())
+                if self._trust_store is not None
+                else {
+                    "healthy": False,
+                    "error": "attachment_trust_custody_unavailable",
+                }
+            )
+            if self._custody_error:
+                custody["healthy"] = False
+                custody["error"] = self._custody_error
             return {
                 "alive": self.is_alive(),
                 "ready": self.is_ready(),
@@ -787,7 +1008,13 @@ class DeviceAttachmentBroker:
                 "attached": len(self._attached),
                 "discoveries": self._discoveries,
                 "attachment_failures": self._attachment_failures,
+                "expired_grants": self._expired_grants,
                 "request_states": state_counts,
+                "persistent_trust_ready": self._state_loaded
+                and self._trust_store is not None
+                and not self._custody_error,
+                "trust_state_loaded": self._state_loaded,
+                "trust_custody": custody,
             }
 
     def get_status(self) -> dict[str, Any]:
@@ -800,21 +1027,29 @@ class DeviceAttachmentBroker:
         return self.is_alive()
 
     def _load_state(self) -> None:
+        if self._trust_store is None:
+            return
         try:
-            if not self._state_path.exists():
+            payload = self._trust_store.load()
+            if payload is None:
                 return
-            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or payload.get("schema") != _SCHEMA:
-                raise ValueError("unsupported attachment trust state schema")
-            body = payload.get("body")
-            if not isinstance(body, dict) or payload.get("body_sha256") != _digest(body):
-                raise ValueError("attachment trust state digest mismatch")
-            grants = body.get("grants", [])
+            grants = payload.get("grants", [])
             if not isinstance(grants, list):
                 raise ValueError("attachment grants must be a list")
+            loaded: dict[str, TrustGrant] = {}
+            now_ns = self._clock_ns()
             for raw in grants:
                 if not isinstance(raw, dict):
                     raise ValueError("attachment grant must be a mapping")
+                authority_intent = raw.get("authority_intent")
+                authority_evidence = raw.get("authority_evidence")
+                private_device_metadata = raw.get("private_device_metadata")
+                if (
+                    not isinstance(authority_intent, dict)
+                    or not isinstance(authority_evidence, dict)
+                    or not isinstance(private_device_metadata, dict)
+                ):
+                    raise ValueError("attachment grant private evidence is invalid")
                 grant = TrustGrant(
                     identity_fingerprint=str(raw.get("identity_fingerprint") or ""),
                     connector_id=str(raw.get("connector_id") or ""),
@@ -824,22 +1059,85 @@ class DeviceAttachmentBroker:
                         for item in raw.get("allowed_access", [])
                     ),
                     authority_receipt_id=str(raw.get("authority_receipt_id") or ""),
+                    authority_intent=authority_intent,
+                    authority_evidence=authority_evidence,
+                    private_device_metadata=private_device_metadata,
                     issued_at_ns=int(raw.get("issued_at_ns") or 0),
+                    expires_at_ns=int(raw.get("expires_at_ns") or 0),
                     persistent=bool(raw.get("persistent")),
                 )
-                if grant.persistent:
-                    self._grants[grant.identity_fingerprint] = grant
-        except (OSError, json.JSONDecodeError, RuntimeError, TypeError, ValueError) as exc:
+                if not grant.persistent:
+                    raise ValueError("session trust must not be present in durable state")
+                self._validate_loaded_grant(grant)
+                if grant.is_valid_at(now_ns):
+                    loaded[grant.identity_fingerprint] = grant
+                else:
+                    self._expired_grants += 1
+                    self._state_needs_compaction = True
+            self._grants = loaded
+            self._custody_error = ""
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._custody_error = f"{type(exc).__name__}:{exc}"[:320]
             record_degradation(
                 "reality_attachment.load",
                 exc,
-                action="ignored invalid physical trust state instead of granting attachment authority",
+                action=(
+                    "refused invalid physical trust state while retaining discovery "
+                    "without attachment authority"
+                ),
             )
             self._grants.clear()
 
-    async def _persist_state(self) -> None:
+    async def _ensure_state_loaded(self) -> None:
+        if self._state_loaded:
+            return
+        async with self._state_load_lock:
+            if self._state_loaded:
+                return
+            await asyncio.to_thread(self._load_state)
+            self._state_loaded = True
+
+    def _validate_loaded_grant(self, grant: TrustGrant) -> None:
+        intent = dict(grant.authority_intent)
+        expected_access = sorted(item.value for item in grant.allowed_access)
+        lifetime_ns = grant.expires_at_ns - grant.issued_at_ns
+        if (
+            intent.get("identity_fingerprint") != grant.identity_fingerprint
+            or intent.get("connector_id") != grant.connector_id
+            or intent.get("manifest_sha256") != grant.manifest_sha256
+            or intent.get("requested_access") != expected_access
+            or intent.get("persistent") is not True
+            or not isinstance(intent.get("grant_ttl_s"), int)
+            or isinstance(intent.get("grant_ttl_s"), bool)
+            or lifetime_ns != int(intent["grant_ttl_s"]) * 1_000_000_000
+        ):
+            raise AttachmentAuthorityError("attachment_authority_grant_binding_invalid")
+        evidence = self._authority_verifier.validate_persisted(
+            grant.authority_evidence,
+            intent=intent,
+            persistent=True,
+        )
+        capability = evidence.get("capability")
+        if (
+            not isinstance(capability, Mapping)
+            or capability.get("receipt_id") != grant.authority_receipt_id
+            or int(evidence.get("verified_at_ns") or 0)
+            > grant.issued_at_ns + 5_000_000_000
+        ):
+            raise AttachmentAuthorityError("attachment_authority_grant_evidence_invalid")
+
+    def _persistent_body(self) -> dict[str, Any]:
+        now_ns = self._clock_ns()
         with self._lock:
-            body = {
+            expired = [
+                identity
+                for identity, grant in self._grants.items()
+                if grant.persistent and not grant.is_valid_at(now_ns)
+            ]
+            for identity in expired:
+                self._grants.pop(identity, None)
+            self._expired_grants += len(expired)
+            return {
                 "grants": [
                     item.to_dict()
                     for item in sorted(
@@ -849,16 +1147,50 @@ class DeviceAttachmentBroker:
                     if item.persistent
                 ]
             }
-        payload = {
-            "schema": _SCHEMA,
-            "body": body,
-            "body_sha256": _digest(body),
-        }
-        await asyncio.to_thread(
-            atomic_write_text,
-            self._state_path,
-            json.dumps(payload, sort_keys=True, separators=(",", ":")),
-        )
+
+    async def _persist_state(self) -> None:
+        body = self._persistent_body()
+        if self._trust_store is None:
+            if body["grants"]:
+                raise AttachmentTrustStoreError(
+                    "attachment_trust_custody_unavailable_for_persistence"
+                )
+            return
+        try:
+            await asyncio.to_thread(self._trust_store.save, body)
+            self._custody_error = ""
+            self._state_needs_compaction = False
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._custody_error = f"{type(exc).__name__}:{exc}"[:320]
+            record_degradation(
+                "reality_attachment.persist",
+                exc,
+                action="refused to acknowledge uncommitted physical trust",
+            )
+            raise
+
+    async def rotate_trust_custody(self) -> Mapping[str, Any]:
+        """Rotate the Keychain root and atomically re-encrypt the trust head."""
+
+        await self._ensure_state_loaded()
+        if self._trust_store is None:
+            raise AttachmentTrustStoreError("attachment_trust_custody_unavailable")
+        body = self._persistent_body()
+        try:
+            receipt = await asyncio.to_thread(
+                self._trust_store.rotate_and_save,
+                body,
+            )
+            self._custody_error = ""
+            return receipt
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._custody_error = f"{type(exc).__name__}:{exc}"[:320]
+            record_degradation(
+                "reality_attachment.rotate_custody",
+                exc,
+                action="retained the prior authenticated trust head",
+            )
+            raise
 
 
 __all__ = [

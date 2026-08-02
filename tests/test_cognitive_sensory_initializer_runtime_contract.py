@@ -128,6 +128,15 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.trust_custody",
+        KeychainAttachmentTrustStore=type(
+            "KeychainAttachmentTrustStore",
+            (),
+            {"provision_system": staticmethod(lambda path: {"path": path})},
+        ),
+    )
+    _install_module(
+        monkeypatch,
         "core.embodiment.hardware_manager",
         get_hardware_manager=lambda: Service(),
     )
@@ -198,6 +207,10 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_observation_router"].started is True
     assert registered["reality_attachment_broker"] is orchestrator.reality_attachment_broker
     assert registered["reality_attachment_broker"].started is True
+    assert registered["reality_attachment_broker"].kwargs["trust_store"]["path"].name == (
+        "reality_attachment_trust.json"
+    )
+    assert registered["reality_attachment_broker"].kwargs["trust_store_error"] == ""
     assert registered["hardware_manager"] is orchestrator.hardware_manager
     assert registered["hardware_manager"].started is True
     assert registered["hardware_manager"].configured_devices_registered is True
@@ -250,3 +263,33 @@ async def test_cognitive_sensory_initializer_continues_after_will_engine_failure
     assert "cellular_substrate" in report["completed"]
     assert "cellular_substrate" in registered
     assert "will_engine" not in registered
+
+
+@pytest.mark.asyncio
+async def test_keychain_failure_keeps_physical_discovery_but_closes_durable_trust(
+    monkeypatch,
+):
+    from core.orchestrator.initializers.cognitive_sensory import init_cognitive_sensory_layer
+
+    class BrokenTrustStore:
+        @staticmethod
+        def provision_system(_path):
+            raise RuntimeError("Keychain locked")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.trust_custody",
+        KeychainAttachmentTrustStore=BrokenTrustStore,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert "reality_attachment_trust_custody" in report["degraded"]
+    assert "reality_sensory_fabric" in report["completed"]
+    broker = registered["reality_attachment_broker"]
+    assert broker.started is True
+    assert broker.kwargs["trust_store"] is None
+    assert "Keychain locked" in broker.kwargs["trust_store_error"]

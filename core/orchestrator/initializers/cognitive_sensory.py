@@ -232,8 +232,10 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
     )
 
     async def _reality_sensory_fabric() -> None:
+        from core.environment.runtime_workspace import environment_runtime_file
         from core.reality_reach.attachments import DeviceAttachmentBroker
         from core.reality_reach.observation_router import RealityObservationRouter
+        from core.reality_reach.trust_custody import KeychainAttachmentTrustStore
 
         reality_reach = getattr(orchestrator, "reality_reach", None)
         if reality_reach is None:
@@ -241,7 +243,38 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         router = RealityObservationRouter(reality_reach)
         await router.start()
         try:
-            broker = DeviceAttachmentBroker(reality_reach, router)
+            trust_store = None
+            trust_store_error = ""
+            trust_state_path = environment_runtime_file(
+                "shared",
+                "reality_attachment_trust.json",
+                purpose="identity",
+            )
+            try:
+                trust_store = await asyncio.to_thread(
+                    KeychainAttachmentTrustStore.provision_system,
+                    trust_state_path,
+                )
+            except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+                trust_store_error = _error_summary(exc)
+                _record_cognitive_sensory_degradation(
+                    orchestrator,
+                    exc,
+                    phase="reality_attachment_trust_custody",
+                    action=(
+                        "Kept physical discovery and session observation active; "
+                        "persistent attachment trust remains fail-closed until "
+                        "macOS Keychain custody recovers"
+                    ),
+                    severity="warning",
+                )
+            broker = DeviceAttachmentBroker(
+                reality_reach,
+                router,
+                state_path=trust_state_path,
+                trust_store=trust_store,
+                trust_store_error=trust_store_error,
+            )
             await broker.start()
         except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS:
             await router.stop()

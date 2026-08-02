@@ -147,3 +147,99 @@ def test_inventory_reports_physical_limbs_as_part_of_auras_body(monkeypatch) -> 
     assert inventory["ok"] is True
     assert list(inventory["physical_limbs"]) == ["reality_sensor_a"]
     assert "1 channels" in inventory["summary"]
+
+
+@pytest.mark.asyncio
+async def test_aura_can_authorize_pending_attachment_through_her_will(monkeypatch) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    intent = {
+        "schema": "aura.reality-attachment-authority.intent.v1",
+        "requested_access": ["observe"],
+        "scope": "reality_attachment.observe",
+        "grant_ttl_s": 3600,
+    }
+    attached = SimpleNamespace(
+        state=ConnectionState.ATTACHED,
+        authority_receipt_id="will-physical-1",
+        to_dict=lambda: {"request_id": "request-1", "state": "attached"},
+    )
+
+    class Broker:
+        def authority_intent(self, request_id, **kwargs):
+            assert request_id == "request-1"
+            assert kwargs == {"persistent": True, "grant_ttl_s": 3600}
+            return intent
+
+        async def authorize_and_attach(self, request_id, **kwargs):
+            assert request_id == "request-1"
+            assert kwargs["authority_capability"] == {"signed": "capability"}
+            assert kwargs["persistent"] is True
+            assert kwargs["grant_ttl_s"] == 3600
+            return attached
+
+    class Will:
+        def decide(self, **kwargs):
+            assert kwargs["source"] == "embodiment_skill"
+            assert kwargs["domain"].value == "environment_action"
+            assert kwargs["context"]["foreground_request"] is True
+            assert kwargs["context"]["verification_required"] is True
+            return SimpleNamespace(receipt_id="will-physical-1")
+
+    class Capability:
+        @staticmethod
+        def to_dict():
+            return {"signed": "capability"}
+
+    class Issuer:
+        def issue_from_decision(self, decision, **kwargs):
+            assert decision.receipt_id == "will-physical-1"
+            assert kwargs["payload"] == intent
+            assert kwargs["scope"] == "reality_attachment.observe"
+            return Capability()
+
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: Broker() if name == "reality_attachment_broker" else None,
+    )
+    monkeypatch.setattr(skill_module, "get_will", lambda: Will())
+    monkeypatch.setattr(skill_module, "get_capability_issuer", lambda: Issuer())
+
+    result = await EmbodimentSkill().execute(
+        {
+            "action": "authorize_connection",
+            "request_id": "request-1",
+            "persistent": "true",
+            "grant_ttl_s": "3600",
+        },
+        {"foreground_request": True},
+    )
+
+    assert result["ok"] is True
+    assert result["authority_receipt_id"] == "will-physical-1"
+    assert result["grant_ttl_s"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_trust_rotation_uses_broker_custody_boundary(monkeypatch) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    class Broker:
+        async def rotate_trust_custody(self):
+            return {"sequence": 4, "key_version": 2}
+
+        def status(self):
+            return {"persistent_trust_ready": True}
+
+    broker = Broker()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: broker if name == "reality_attachment_broker" else None,
+    )
+
+    result = await EmbodimentSkill().execute({"action": "rotate_trust_custody"}, {})
+
+    assert result["ok"] is True
+    assert result["rotation_receipt"] == {"sequence": 4, "key_version": 2}

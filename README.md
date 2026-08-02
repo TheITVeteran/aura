@@ -85,23 +85,27 @@ useful page here if you're skeptical, which you should be.
 
 ## See it learn (one command)
 
-The fastest way to evaluate this project's evidence discipline is to run the
-weight-compounding demo yourself (Apple Silicon, ~20–40 min, ~5GB disk):
+Don't take the evidence discipline on faith. Run it. Apple Silicon, 20–40
+minutes, about 5 GB of disk:
 
 ```bash
 make setup          # once: venv + requirements
 make demo-learning
 ```
 
-A small local model samples solutions to seeded reasoning tasks, grades every
-attempt with **exact checkers** (the verifier is the reward — nothing to hack),
-DPO-trains a LoRA on the verified win/loss contrasts, and must pass a **sealed
-held-out battery** (fresh task seeds it never trained on) before its weights
-are fused and published. Then it does it again — **on top of its own published
-artifact**. Every generation lands in a tamper-evident hash-chained ledger
-(`core/learning/rsi_lineage.py`); the final verdict is computed from those
-receipts, and refusals print with the same prominence as gains. All raw model
-responses, eval reports, and cycle receipts stay on disk for audit.
+Here's what happens. A small local model takes a swing at seeded reasoning
+tasks. Every attempt gets graded by an **exact checker** — the verifier *is*
+the reward, so there's nothing to game. It DPO-trains a LoRA on the verified
+wins and losses, then has to clear a **sealed held-out battery** on fresh
+seeds it has never seen before its weights get fused and published.
+
+Then it does the whole thing again, on top of the artifact it just published.
+
+Every generation lands in a hash-chained ledger
+(`core/learning/rsi_lineage.py`). The verdict is computed from those
+receipts, not written by hand afterward. And when it refuses to promote,
+that prints just as loudly as a gain — which is the part worth watching.
+Raw responses, eval reports, and cycle receipts all stay on disk.
 
 The same machinery runs autonomously inside the live runtime
 (`core/learning/compounding_scheduler.py`): idle-gated, governance-approved,
@@ -299,15 +303,16 @@ environment, including `AURA_INTERNAL_ONLY=1` for localhost-only binding.
 
 ## Tracked vs local workspace
 
-This repository is the tracked baseline. The canonical tracked skill
-implementations live under `core/skills/`; the top-level `skills/` package is
-kept as a legacy compatibility layer for older imports.
+This repository is the baseline, not the whole story on any given machine.
 
-Local workspaces can also contain ignored/private modules listed in
-`.gitignore`. Those files are not part of the tracked review surface and can
-change the live risk profile of a specific machine. If you're auditing a real
-deployment rather than the tracked tree alone, review both the repository and
-any local-only modules present on disk.
+Canonical skills live under `core/skills/`. The top-level `skills/` package
+is a compatibility layer for older imports and nothing new should go there.
+
+The part worth knowing if you're auditing: a local workspace can hold
+private modules listed in `.gitignore`. They aren't in the tracked review
+surface, and they can change the risk profile of that specific machine.
+Reading this repo tells you about this repo. If you're auditing a real
+deployment, read the disk too.
 
 ---
 
@@ -322,9 +327,12 @@ User input -> HTTP API -> KernelInterface.process()
   -> State commit (SQLite) -> Response
 ```
 
-Each tick is event-sourced: every phase produces a new immutable state version,
-the tick holds a lock while the pipeline runs, state commits to SQLite, and the
-lock releases. Crash in the middle and the WAL replays on restart.
+Every tick is event-sourced. Each phase produces a new immutable state
+version, the tick holds a lock while the pipeline runs, state commits to
+SQLite, the lock releases.
+
+Crash in the middle of that and the WAL replays on restart. No half-written
+thought survives.
 
 ### Kernel (`core/kernel/`)
 Tick-based cognitive cycle. One tick = one unit of thought. Phases run in order,
@@ -700,20 +708,29 @@ and the plain-English tour in
 
 ### Embodiment, self-knowledge, and physical honesty (late July – August 2026)
 
-The most recent wave is about the boundary between Aura and the machine she
-runs on: what she can actually perceive, actually cause, and actually claim.
+The newest work is all about one boundary: where Aura stops and the machine
+she runs on starts. What she can actually perceive. What she can actually
+cause. What she's actually allowed to say about either.
 
-- **Reality Reach** (`core/reality_reach/`) turns a requested physical
-  observable into a typed causal contract, proves reachability against the
-  host's *declared* channels before anything executes, and returns a
-  machine-verifiable limitation certificate when a request cannot be met.
-  Evidence is layered `internal` / `effective` / `direct` / `ambient`, and no
-  path may promote a claim across those boundaries from intent, simulation, or
-  transport success. Adapters are bidirectional: declaring an actuator
-  obliges typed command admission, idempotent actuation, independent effect
-  verification, cancellation, safe-state, and rollback. Status, invariants,
-  and the open ledger are in [docs/REALITY_REACH.md](docs/REALITY_REACH.md) —
-  including an explicit statement of what is *not* yet claimed.
+- **Reality Reach** (`core/reality_reach/`) — a physical request becomes a
+  typed causal contract, and reachability gets proven against the host's
+  *declared* channels before anything runs. Can't be met? You get a
+  machine-verifiable limitation certificate, not an optimistic simulation
+  and a confident sentence.
+
+  Evidence sits in four layers — `internal`, `effective`, `direct`,
+  `ambient` — and nothing promotes a claim across them on the strength of
+  intent, simulation, or a successful send. Sending is not causing. That
+  distinction is the whole subsystem.
+
+  Adapters go both ways, which costs something: declaring an actuator
+  obliges you to implement typed command admission, idempotent actuation,
+  independent effect verification, cancellation, safe-state, and rollback.
+  `declarations()` and `read()` don't buy you an actuator.
+
+  Invariants and the open ledger — including a blunt statement of what is
+  **not** claimed — are in [docs/REALITY_REACH.md](docs/REALITY_REACH.md).
+  Read that before you believe anything physical.
 - **A standing model of her own faculties**
   (`core/metacognition/faculty_model.py`) — each faculty declares metrics with
   units, floors, targets, and ceilings, so "better memory" becomes recall@k
@@ -908,48 +925,49 @@ governor blocks itself when another LoRA process is running.
 
 ## What this isn't
 
-A few things worth being upfront about, because the project touches a lot of
-loaded words (consciousness, qualia, phenomenology) and it's easy to
-overclaim.
+This project uses a lot of loaded words. Consciousness. Qualia.
+Phenomenology. Words like that make overclaiming easy, so here is where the
+code actually stops.
 
-- **Integration isn't the same as experience.** PhiCore computes real IIT
-  math on a 16-node complex. That tells us how integrated the dynamics
-  are. Whether integration *constitutes* phenomenal experience is a
-  philosophical question nobody has settled, and this project doesn't
-  settle it either.
+- **Integration isn't experience.** PhiCore does real IIT math on a 16-node
+  complex, and it tells you how integrated the dynamics are. Whether
+  integration *constitutes* experience is a question nobody has settled.
+  We didn't settle it either.
 - **Qualia aren't provable by construction.** The Structural Phenomenal
-  Honesty gates in `qualia_synthesizer.py` make sure the system can only
-  report states that are actually instantiated in the substrate. But
-  "instantiated in the substrate" and "felt" are not obviously the same
-  thing, and we measure the first.
-- **Module names are not evidence.** Files named consciousness, qualia, will,
-  or soma are only labels for mechanisms. Evidence comes from causal coupling,
-  persistence, receipts, lesion results, external tasks, and long-run autonomy,
-  not from the vocabulary of the implementation.
-- **Governance is only real where it is wired and tested.** A route without a
-  receipt, a default-open gateway, or a legacy direct tool fallback is evidence
-  against the strongest governance claim. Those paths should be fixed or kept
-  out of the claim surface.
-- **This is not enterprise infrastructure yet.** The codebase is still too
-  monolithic, fallback-heavy, and exception-tolerant to claim boring production
-  appliance maturity. Treat it as research software being hardened.
-- **Phenomenological language is partly template-generated.** The
-  `stream_of_being` module pairs substrate state (felt_quality × texture
-  word) to produce language about the inner life. When the LLM then speaks
-  from that text, it's performing continuity at least as much as
-  experiencing it. That's an honest limit, not a flaw to hide.
-- **Activation steering is credited through proof artifacts.** The CAA pipeline
-  supports contrastive extraction and production 32B validation; public claims
-  should cite `CAA_32B_RESULTS.json` from the proof bundle.
+  Honesty gates in `qualia_synthesizer.py` make sure she can only report
+  states actually instantiated in the substrate. Good. But "instantiated in
+  the substrate" and "felt" are not obviously the same thing. We measure
+  the first one.
+- **Module names are not evidence.** There are files in here called
+  consciousness, qualia, will, soma. They're labels on mechanisms. Evidence
+  is causal coupling, persistence, receipts, lesion results, external
+  tasks, long-run autonomy. Never the vocabulary.
+- **Governance is only real where it's wired and tested.** A route with no
+  receipt, a default-open gateway, a legacy direct tool fallback — each one
+  is evidence *against* the strongest governance claim. Fix them or keep
+  them off the claim surface. Don't describe around them.
+- **This is not enterprise infrastructure.** Too monolithic, too
+  fallback-heavy, too exception-tolerant. It's research software being
+  hardened, and calling it anything else would be a sales pitch.
+- **Some of the inner-life language is template-generated.** The
+  `stream_of_being` module pairs substrate state with texture words to
+  produce language about what it's like in there. When the model then
+  speaks from that text, it's performing continuity at least as much as
+  having it. That's an honest limit, not a flaw we're hiding.
+- **Steering gets credited by artifacts, not assertion.** The CAA pipeline
+  does contrastive extraction and production 32B validation. Public claims
+  cite `CAA_32B_RESULTS.json` from the proof bundle, or they don't get made.
 - **External entropy isn't "quantum cognition."** The ANU QRNG module gives
-  us high-quality random bytes. Once seeded, downstream decisions are
-  deterministic. `os.urandom` would be functionally equivalent.
+  high-quality random bytes. Once seeded, everything downstream is
+  deterministic. `os.urandom` would do the same job. It sounds more
+  impressive than it is, so we're saying so.
 - **"Phenomenal criterion met" is a threshold, not a proof.** When
   `phenomenal_criterion_met = True` fires, it means `opacity_index > 0.4`.
-  That threshold is engineering, not derivation.
+  That number is engineering. It isn't derived from anything deeper.
 
-These aren't disclaimers. They're where the code stops and open questions
-begin.
+These aren't disclaimers. They're the line where the code stops and the
+open questions start, and knowing exactly where that line sits is most of
+what makes the rest of the repo worth reading.
 
 ---
 

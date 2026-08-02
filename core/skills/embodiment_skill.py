@@ -8,13 +8,30 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.embodiment.world_bridge import Channel, get_world_bridge
+from core.governance.capability_chain import CapabilityViolation, get_capability_issuer
+from core.governance.will import ActionDomain, get_will
+from core.reality_reach.attachment_authority import ATTACHMENT_AUTHORITY_ACTION
 from core.reality_reach.attachments import AttachmentAccess
+from core.runtime.audit_chain import canonical_json
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 
 _HOME_ASSISTANT_CONTROL_DOMAINS = frozenset(
     {"climate", "fan", "input_boolean", "light", "switch"}
 )
+
+
+def _boolean_parameter(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("boolean parameter must be true or false")
 
 
 def _service(name: str) -> Any | None:
@@ -61,13 +78,17 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
     inputs = {
         "action": (
             "inventory | discover | candidates | connection_requests | "
-            "request_connection | focus_sensor | pause_sensors | resume_sensors | "
-            "latest_observations | query_device | command_device"
+            "request_connection | authorize_connection | rotate_trust_custody | "
+            "focus_sensor | pause_sensors | resume_sensors | latest_observations | "
+            "query_device | command_device"
         ),
         "device_id": "Hardware device id for query or command.",
         "candidate_id": "Discovered candidate id for request_connection.",
+        "request_id": "Pending request id for authorize_connection.",
         "channel_id": "Reality Reach channel or prefix for query/focus.",
         "access": "observe, or observe+control when proposing a connection.",
+        "persistent": "Whether bounded trust may survive a runtime migration.",
+        "grant_ttl_s": "Requested trust lifetime within the enforced policy ceiling.",
         "command": "Declared hardware command or Home Assistant operation.",
         "parameters": "Bounded command/effect parameters.",
     }
@@ -77,7 +98,6 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         goal: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        del context
         params = goal.get("params", goal)
         if not isinstance(params, Mapping):
             return {"ok": False, "error": "embodiment parameters must be a mapping"}
@@ -109,6 +129,18 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             return {"ok": True, "connection_requests": [item.to_dict() for item in requests]}
         if action == "request_connection":
             return await self._request_connection(params)
+        if action == "authorize_connection":
+            return await self._authorize_connection(params, context)
+        if action == "rotate_trust_custody":
+            broker = _service("reality_attachment_broker")
+            if broker is None:
+                return {"ok": False, "error": "physical attachment broker is offline"}
+            receipt = await broker.rotate_trust_custody()
+            return {
+                "ok": True,
+                "rotation_receipt": dict(receipt),
+                "attachments": broker.status(),
+            }
         if action == "focus_sensor":
             router = _service("reality_observation_router")
             selector = str(params.get("channel_id") or params.get("selector") or "").strip()
@@ -210,6 +242,90 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 else "I proposed the connection; trust has not been invented or assumed."
             ),
         }
+
+    @staticmethod
+    async def _authorize_connection(
+        params: Mapping[str, Any],
+        context: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        broker = _service("reality_attachment_broker")
+        request_id = str(params.get("request_id") or "").strip()
+        if broker is None or not request_id:
+            return {"ok": False, "error": "request_id and attachment broker are required"}
+        try:
+            persistent = _boolean_parameter(params.get("persistent"), default=True)
+            raw_ttl = params.get("grant_ttl_s")
+            if raw_ttl is None:
+                grant_ttl_s = None
+            elif isinstance(raw_ttl, bool):
+                raise ValueError("grant_ttl_s must be an integer")
+            elif isinstance(raw_ttl, int):
+                grant_ttl_s = raw_ttl
+            elif isinstance(raw_ttl, str) and raw_ttl.strip().isdigit():
+                grant_ttl_s = int(raw_ttl.strip())
+            else:
+                raise ValueError("grant_ttl_s must be an integer")
+            intent = broker.authority_intent(
+                request_id,
+                persistent=persistent,
+                grant_ttl_s=grant_ttl_s,
+            )
+            decision_context = dict(context)
+            decision_context.update(
+                {
+                    "physical_attachment_request_id": request_id,
+                    "physical_attachment_scope": intent["scope"],
+                    "persistent_physical_trust": persistent,
+                    "verification_required": True,
+                }
+            )
+            decision = get_will().decide(
+                content=(
+                    "Authorize this exact bounded physical attachment relationship: "
+                    + canonical_json(intent).decode("utf-8")
+                ),
+                source="embodiment_skill",
+                domain=ActionDomain.ENVIRONMENT_ACTION,
+                priority=0.7 if "control" in intent["requested_access"] else 0.5,
+                context=decision_context,
+            )
+            capability = get_capability_issuer().issue_from_decision(
+                decision,
+                action=ATTACHMENT_AUTHORITY_ACTION,
+                payload=intent,
+                scope=str(intent["scope"]),
+            )
+            attached = await broker.authorize_and_attach(
+                request_id,
+                authority_capability=capability.to_dict(),
+                persistent=persistent,
+                grant_ttl_s=grant_ttl_s,
+            )
+            return {
+                "ok": attached.state.value == "attached",
+                "connection_request": attached.to_dict(),
+                "authority_receipt_id": attached.authority_receipt_id,
+                "grant_ttl_s": int(intent["grant_ttl_s"]),
+                "persistent": persistent,
+                "summary": (
+                    "The declared physical relationship is attached under bounded trust."
+                    if attached.state.value == "attached"
+                    else "Authority was valid, but the physical attachment did not complete."
+                ),
+            }
+        except (
+            CapabilityViolation,
+            LookupError,
+            PermissionError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            return {
+                "ok": False,
+                "error": f"{type(exc).__name__}:{exc}"[:320],
+                "request_id": request_id,
+            }
 
     @staticmethod
     async def _query(params: Mapping[str, Any]) -> dict[str, Any]:
