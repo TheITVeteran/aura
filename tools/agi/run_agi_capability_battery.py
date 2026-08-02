@@ -210,20 +210,49 @@ async def main():
     try:
         volition = ServiceContainer.get("volition", default=None) or ServiceContainer.get("unified_volition", default=None) or ServiceContainer.get("volition_engine", default=None)
         if volition:
+            # This probe used to select the same goal twice and require the
+            # second call to be filtered. That was the old contract. Cooldown
+            # recording was deliberately moved OUT of selection and into
+            # _commit_goal_effects, because committing timers at selection
+            # time made a persistently failing action look like completed
+            # work while simultaneously suppressing its own retry — a broken
+            # initiative path went silently dormant.
+            #
+            # So the probe was asserting a behaviour that no longer exists and
+            # reporting a healthy subsystem as broken. It now exercises the
+            # real contract: select, commit, and only then expect the repeat
+            # to be filtered.
             test_goals = [{"objective": "explore_neural_mesh_anomaly", "origin": "boredom", "priority": 0.5}]
             first_selection = volition._select_and_parse_goal(test_goals)
-            second_selection = volition._select_and_parse_goal(test_goals)
-            
-            # First selection must succeed, second must be filtered out due to active cooldown!
-            cooldown_dedup_pass = (first_selection is not None) and (second_selection is None)
-            
+            selection_ok = first_selection is not None
+
+            # Selection alone must NOT deduplicate — that is the property the
+            # refactor bought, and losing it is a real regression.
+            repeat_before_commit = volition._select_and_parse_goal(test_goals)
+            no_premature_cooldown = repeat_before_commit is not None
+
+            if first_selection is not None:
+                volition._commit_goal_effects(first_selection)
+            after_commit = volition._select_and_parse_goal(test_goals)
+            cooldown_dedup_pass = after_commit is None
+
             # Verify that different goals do NOT block each other (Aura's free volition must not be constrained)
             different_goals = [{"objective": "different_objective_01", "origin": "boredom", "priority": 0.5}]
             different_selection = volition._select_and_parse_goal(different_goals)
             different_ok = different_selection is not None
-            
-            dedup_ok = cooldown_dedup_pass and different_ok
-            print(f"    → Volition Probe: Cooldown Filter Deduplication is {'PASS' if dedup_ok else 'FAIL'} (cooldown_pass={cooldown_dedup_pass}, different_pass={different_ok})")
+
+            dedup_ok = (
+                selection_ok
+                and no_premature_cooldown
+                and cooldown_dedup_pass
+                and different_ok
+            )
+            print(
+                f"    → Volition Probe: Commit-scoped deduplication is "
+                f"{'PASS' if dedup_ok else 'FAIL'} "
+                f"(selected={selection_ok}, no_premature_cooldown={no_premature_cooldown}, "
+                f"cooldown_after_commit={cooldown_dedup_pass}, different_pass={different_ok})"
+            )
         else:
             print("    → Volition service not available. Status: SKIPPED")
     except PROBE_RECOVERABLE_ERRORS as e:
