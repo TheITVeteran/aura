@@ -300,6 +300,31 @@ _PRE_RUNTIME_UNGATED_EFFECT_SCOPES: frozenset[str] = frozenset({
 })
 
 
+def _proof_run_environment_active() -> bool:
+    """Is this process actually running as a proof/benchmark run?
+
+    CP126: "User authorization accepts context booleans and source-like
+    labels, including proof_evaluation_contract, rather than requiring a
+    verified principal and signed request provenance. Internal callers can
+    mint user-equivalent execution."
+
+    proof_evaluation_contract is a POLICY flag describing what kind of run
+    this is. It was being read as though it were a user standing behind the
+    request. Anything that can put a key in a context dict — including a
+    model-authored tool call — could therefore mint user-equivalent
+    authority by claiming to be a benchmark.
+
+    A real proof run is started by the operator with AURA_PROOF_RUN in the
+    environment, which a request payload cannot reach. Pairing the two keeps
+    genuine proof runs working and makes the bare flag worthless on its own.
+    """
+    return str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def _record_unreconciled_authority(auth: Any, *, reason: str) -> None:
     """Queue an authority grant whose finalization never completed.
 
@@ -3036,11 +3061,16 @@ class CapabilityEngine(AuraBaseModule):
 
     @staticmethod
     def _context_user_authorized(ctx: dict[str, Any], exec_source: str) -> bool:
+        # sealed_validation is gone: nothing in core/ or interface/ has ever
+        # set it, so its only possible source was an external payload. A key
+        # that only an attacker can populate is not an authorization signal.
         if bool(
             ctx.get("user_requested_action")
             or ctx.get("user_explicitly_authorized")
-            or ctx.get("proof_evaluation_contract")
-            or ctx.get("sealed_validation")
+            or (
+                ctx.get("proof_evaluation_contract")
+                and _proof_run_environment_active()
+            )
         ):
             return True
         if exec_source in _USER_FACING_CONTEXT_ORIGINS:
@@ -3145,7 +3175,10 @@ class CapabilityEngine(AuraBaseModule):
                 or ctx.get("user_requested_action")
                 or ctx.get("foreground_request")
                 or str(ctx.get("route") or "").startswith(("chat.", "voice."))
-                or ctx.get("proof_evaluation_contract")
+                or (
+                    ctx.get("proof_evaluation_contract")
+                    and _proof_run_environment_active()
+                )
             )
         if skill_name == "os_automation":
             return bool(
@@ -3165,7 +3198,10 @@ class CapabilityEngine(AuraBaseModule):
             or ctx.get("local_desktop_action")
             or ctx.get("desktop_task_owned_by")
             or str(ctx.get("route") or "").startswith(("chat.", "voice."))
-            or ctx.get("proof_evaluation_contract")
+            or (
+                ctx.get("proof_evaluation_contract")
+                and _proof_run_environment_active()
+            )
         )
 
     @classmethod
@@ -3186,12 +3222,38 @@ class CapabilityEngine(AuraBaseModule):
         # callers, so raw context fields never manufacture this decision.
         if ctx.get("_standing_authority_verified") is _VERIFIED_STANDING_AUTHORITY:
             return True
-        explicitly_confirmed = bool(
+        # CP126: "Confirmation and foreground classification rely on
+        # parameters/context such as confirmed, user_confirmed, priority, and
+        # foreground_request. These values are not bound to a UI event,
+        # authenticated session, nonce, or constitutional receipt."
+        #
+        # `params` is the MODEL's output — it writes the tool call. Reading a
+        # confirmation out of it let a model confirm its own high-risk action
+        # by emitting {"confirmed": true}. Nothing in core/ or interface/
+        # has ever set these four keys, so there is no legitimate producer to
+        # preserve: every occurrence came from outside.
+        #
+        # The unforgeable path above (_VERIFIED_STANDING_AUTHORITY, placed by
+        # the gateway after matching a signed lease) remains the way a real
+        # confirmation is expressed, and is the pattern any future UI
+        # confirmation event should follow.
+        self_asserted = bool(
             params.get("confirmed")
             or params.get("user_confirmed")
             or ctx.get("confirmed")
             or ctx.get("user_confirmed")
         )
+        if self_asserted:
+            _record_capability_degradation(
+                PermissionError(
+                    f"{skill_name}: ignored a self-asserted confirmation flag; "
+                    "confirmation must come from a verified standing authority"
+                ),
+                action="refused to treat a caller-supplied confirmed flag as user confirmation",
+                severity="warning",
+                enforce_failure_policy=False,
+            )
+        explicitly_confirmed = False
         if skill_name == "os_automation":
             return bool(
                 explicitly_confirmed
