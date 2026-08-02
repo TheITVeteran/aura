@@ -63,6 +63,11 @@ class _ControlCharacterProbeTokenizer(_ExactEvidenceTokenizer):
         return super().decode(rendered)
 
 
+class _ControlCharacterFinalTokenizer(_ExactEvidenceTokenizer):
+    def decode(self, ids):
+        return super().decode(ids) + "\x7f"
+
+
 def _exact_evidence_verifier() -> EpisodeTaskVerifier:
     return EpisodeTaskVerifier("")
 
@@ -934,7 +939,7 @@ def test_verifier_selects_branch_and_scores_land_in_receipt(tiny_model):
     assert len(result.receipt.branch_scores) == 2
 
 
-def test_malformed_branch_probe_is_negative_diagnostic_evidence_not_episode_failure(
+def test_malformed_branch_probe_is_normalized_before_diagnostic_evidence(
     tiny_model,
     monkeypatch,
 ):
@@ -957,16 +962,42 @@ def test_malformed_branch_probe_is_negative_diagnostic_evidence_not_episode_fail
     )
 
     assert result.ok
-    assert "branch_candidate_decomposition_invalid:ValueError" in (
+    assert "decoded_text_control_characters_normalized" in (
         result.receipt.honest_flags
     )
     assert not any(
         flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags
     )
     assert result.receipt.disagreement_graph["candidate_evidence_status"] == (
-        "decoded_candidates_unavailable"
+        "worker_source_reconstructed_hash_bound_for_service_validation"
     )
-    assert result.receipt.disagreement_graph["candidate_decompositions"] == {}
+    assert len(result.receipt.disagreement_graph["candidate_decompositions"]) == 2
+
+
+def test_malformed_final_decode_is_normalized_before_answer_replacement_and_return(
+    tiny_model,
+):
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ControlCharacterFinalTokenizer(),
+        config=_config(local_repair_enabled=False),
+    )
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
+
+    assert result.ok
+    assert "\x7f" not in result.text
+    assert "\ufffd" in result.text
+    assert "decoded_text_control_characters_normalized" in (
+        result.receipt.honest_flags
+    )
+    assert not any(
+        flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags
+    )
+    assert result.receipt.answer_replacement["decision"] == "retain"
 
 
 def test_latent_opt_episode_records_trace(tiny_model):

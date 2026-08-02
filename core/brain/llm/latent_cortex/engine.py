@@ -115,6 +115,18 @@ _NEWLINE_RESAMPLE_ATTEMPTS = 4
 _SENTENCE_GRACE_TOKENS = 48
 _SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
 
+
+def _normalize_decoded_text(value: Any) -> tuple[str, bool]:
+    """Render unsafe decoder controls visibly before text leaves the model boundary."""
+
+    raw = str(value)
+    normalized = "".join(
+        "\ufffd" if (ord(character) < 32 and character not in "\n\r\t") or ord(character) == 127
+        else character
+        for character in raw
+    )
+    return normalized, normalized != raw
+
 _ACTION_CONTROL_TEXT: dict[OperationKind, str] = {
     OperationKind.BLIND_RESOLVE: "Derive a candidate directly from the original problem without peer answers.",
     OperationKind.BRANCH: "Advance the private branch strategy without importing another branch state.",
@@ -500,6 +512,21 @@ class LatentCortexEngine:
             return False
         stripped = str(piece).rstrip()
         return stripped.endswith(_SENTENCE_TERMINALS) if stripped else False
+
+    def _decode_public_text(
+        self,
+        tokens,
+        *,
+        receipt: EpisodeReceipt | None = None,
+    ) -> str:
+        """Decode model tokens through the auditable public-text boundary."""
+
+        if self.tokenizer is None:
+            return ""
+        rendered, normalized = _normalize_decoded_text(self.tokenizer.decode(list(tokens)))
+        if normalized and receipt is not None:
+            receipt.flag("decoded_text_control_characters_normalized")
+        return rendered
 
     def _is_pure_newline_token(self, token: int) -> bool:
         """True when the token renders to newline-only whitespace."""
@@ -2574,8 +2601,8 @@ class LatentCortexEngine:
             retain_policy_trace = failure_reason.startswith("decode_incomplete:")
             failure_tokens = out_tokens if retain_policy_trace else []
             failure_text = (
-                self.tokenizer.decode(failure_tokens)
-                if self.tokenizer is not None and failure_tokens
+                self._decode_public_text(failure_tokens, receipt=receipt)
+                if failure_tokens
                 else ""
             )
             return LatentReasoningResult(
@@ -2588,9 +2615,7 @@ class LatentCortexEngine:
                 answer_replacement_private=answer_replacement_private,
             )
 
-        text = (
-            self.tokenizer.decode(out_tokens) if self.tokenizer is not None and out_tokens else ""
-        )
+        text = self._decode_public_text(out_tokens, receipt=receipt) if out_tokens else ""
         return LatentReasoningResult(
             ok=True,
             text=text,
@@ -4668,7 +4693,7 @@ class LatentCortexEngine:
                     budget,
                     bridge_tokens=bridge_tokens,
                 )
-                text = self.tokenizer.decode(probe)
+                text = self._decode_public_text(probe, receipt=receipt)
                 branch_probe_texts[branch.index] = text
             from core.brain.llm.latent_cortex.blind_review import (
                 run_decoy_balanced_review,
@@ -6197,8 +6222,8 @@ class LatentCortexEngine:
                 )
 
                 baseline_text = (
-                    self.tokenizer.decode(out_tokens)
-                    if self.tokenizer is not None and out_tokens
+                    self._decode_public_text(out_tokens, receipt=receipt)
+                    if out_tokens
                     else ""
                 )
 
@@ -6242,8 +6267,9 @@ class LatentCortexEngine:
                     baseline_text=baseline_text,
                     baseline_tokens=out_tokens,
                     encode=encode_replacement,
-                    decode=lambda values: (
-                        self.tokenizer.decode(list(values)) if self.tokenizer is not None else ""
+                    decode=lambda values: self._decode_public_text(
+                        values,
+                        receipt=receipt,
                     ),
                     enabled=self.config.answer_replacement_enabled,
                     margin=self.config.answer_replacement_margin,
@@ -6267,7 +6293,7 @@ class LatentCortexEngine:
                         )
 
                         receipt.decode_contract_satisfied = is_contract_complete(
-                            self.tokenizer.decode(out_tokens)
+                            self._decode_public_text(out_tokens, receipt=receipt)
                         )
                 elif decision == "abstain":
                     out_tokens = []
@@ -6301,11 +6327,7 @@ class LatentCortexEngine:
                 )
 
         if fast_weight_learning_state is not None:
-            final_text = (
-                self.tokenizer.decode(out_tokens)
-                if self.tokenizer is not None
-                else ""
-            )
+            final_text = self._decode_public_text(out_tokens, receipt=receipt)
             fast_weight_learning_state["final_answer"] = {
                 "decoded_under_adaptation": fast_weight_decode_active,
                 "tokens_sha256": token_sequence_sha256(out_tokens),
@@ -6378,7 +6400,7 @@ class LatentCortexEngine:
             finalize_terminal_disposition_receipt,
         )
 
-        output_text = self.tokenizer.decode(out_tokens) if self.tokenizer is not None else ""
+        output_text = self._decode_public_text(out_tokens, receipt=receipt)
         receipt.terminal_disposition = finalize_terminal_disposition_receipt(
             terminal_decision,
             instruction_tokens=terminal_instruction_tokens,
