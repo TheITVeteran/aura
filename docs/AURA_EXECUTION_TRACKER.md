@@ -34721,3 +34721,111 @@ evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 `WOW Signal` claim is made. This is total checkpoint 798 of the current
 920-checkpoint completion envelope, approximately 86.7% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
+
+### 2026-08-01 - CP799 universal physical sensory fabric and portable attachment
+
+Reality Reach now has a bounded exteroceptive route instead of treating every
+transport payload as cognitive input. `RealityObservationRouter` admits only
+declared scalar sensor readings, preserves metrology and provenance, coalesces
+per-channel updates, applies deduplication, deadbands, per-channel rate limits,
+salience thresholds, a global delivery budget, bounded priority eviction, and
+isolated sampler deadlines. Aura can temporarily focus attention on a channel,
+pause or resume the physical stream, and inspect the latest bounded state. A
+sampled adapter's fresh asynchronous readback is authoritative over its cached
+registry reading, preventing stale data from consuming the rate window before
+the real sample arrives. Accepted observations enter both the synchronized
+`DEVICE` modality and advanced cognition's `physical_environment` state; raw
+Home Assistant payloads do not cross that boundary.
+
+Device discovery, connection intent, trust, and attachment are now separate
+events. `DeviceAttachmentBroker` discovers through bounded connector scans,
+lets Aura propose an observe or observe-plus-control relationship, never treats
+discovery as authority, binds trust to connector, stable identity, manifest,
+access class, and authority receipt, and automatically reattaches only a
+previously trusted persistent identity whose manifest still matches. Session-
+only endpoint identities cannot acquire persistent trust. Connector failure,
+manifest drift, sampler failure, and teardown failure are isolated and
+receipted. Connector registration wakes discovery immediately without a hot
+poll loop. Attached declarations become explicit sensor or actuator limbs in
+Aura's canonical body schema and are removed transactionally on detach,
+revocation, or shutdown.
+
+Home Assistant is the first production-shaped connector. Numeric sensors,
+binary sensors, climate setpoints, lights, switches, fans, and input booleans
+receive typed Reality Reach declarations. Units are canonicalized, known
+device classes use bounded standard domains, explicit device ranges remain
+authoritative, and unknown numeric sensors use stable magnitude buckets rather
+than changing their manifest with every reading. Credentials remain private to
+the transport; the public surface exposes only the non-secret origin. Periodic
+readback receives a narrow internal `environment_action` governance context
+that is read-only and target-digest-bound, so passive sensing remains live
+without minting actuation authority. Discovery still enters WorldBridge, while
+all effects enter the durable Reality Reach transaction and require independent
+readback.
+
+Aura can now select this fabric rather than merely hosting it. The embodiment
+skill and intent map expose inventory, discovery, candidates, connection
+proposals, sensor focus, pause/resume, latest observations, typed channel
+queries, and governed physical commands. Its inventory reports the same live
+physical limbs used by planners. Hardware and Home Assistant commands enter
+WorldBridge and the Reality Reach coordinator; the former direct
+`BaseHardwareDevice.safe_execute` skill bypass is removed. Boot constructs and
+registers the router and broker before hardware and IoT, then binds all four
+services into one lifecycle.
+
+The focused physical fabric, trust, Home Assistant, hardware, boot, skill,
+WorldBridge, and Reality Reach family passes 53/53. Ruff, compilation, strict
+targeted MyPy, and diff integrity pass. Tests cover bounded overload,
+high-salience eviction, deadband/focus, multimodal and cognitive delivery,
+sampler timeout isolation, fresh-over-cached precedence, discovery without
+attachment, unstable-identity refusal, durable migration reattachment,
+manifest drift, revocation, body projection, canonical sensor units, stable
+unknown-sensor manifests, narrow read governance, boot registration, and proof
+that the skill cannot directly execute a device.
+
+No configured physical installation was available for hardware-in-loop
+acceptance, so CP799 does not claim a live household effect. Durable attachment
+state still needs key-custodied authentication and independent authority-
+receipt verification before it can be called tamper-resistant. The additive
+Reality Reach sequence remains:
+
+- CP800: Keychain-backed authenticated trust custody, authority-receipt
+  verification, expiry/rotation, replay refusal, and encrypted private device
+  metadata.
+- CP801: historian, alarm journal, quality/order semantics, deadbands at source,
+  durable store-and-forward, quarantine, bounded replay, and restoration tests,
+  adapting the operational patterns documented by Ignition SCADA.
+- CP802: a canonical digital-twin graph with stable physical identity,
+  components, properties, relationships, topology, health, and migration,
+  adapting the graph/component contracts of AWS IoT TwinMaker and Azure Digital
+  Twins.
+- CP803: distinct continuous-telemetry, bounded request/response, and long-
+  running cancellable/preemptible action contracts; configured/inactive/active/
+  error lifecycles; deadlines, progress, feedback, QoS, and restart semantics,
+  adapting ROS 2 topics, services, actions, and managed lifecycle nodes.
+- CP804: a declarative event-flow runtime with typed ports, backpressure,
+  isolation, idempotency, checkpoints, replay, visualizable receipts, and
+  deterministic tests, adapting Node-RED's useful orchestration model without
+  introducing a second authority plane.
+- CP805: calibration identity, acquisition tasks/channels, uncertainty
+  propagation, synchronized sampling, hardware-in-loop/simulation switching,
+  and restoration controls, adapting LabVIEW/NI measurement discipline.
+- CP806: concrete openHAB, ROS 2, MQTT, SCADA/OPC-UA, laboratory-instrument, and
+  cloud-twin connectors behind the same declaration, trust, observation, and
+  actuation contracts; no connector may bypass Reality Reach or WorldBridge.
+- CP807: a Keychain-backed Messages/SMS conversation transport using a stable
+  contact alias rather than a phone number in source, prompts, logs, or
+  receipts. Inbound and outbound text must share Aura's normal identity,
+  memory, Will, conversation, rate-limit, idempotency, delivery-verification,
+  allowlist, loop-prevention, and continuity paths, with live Messages.app and
+  restart acceptance on this Mac.
+
+The architecture references for these additive checkpoints are the official
+ROS 2, Home Assistant, openHAB, AWS IoT TwinMaker, Azure Digital Twins,
+Ignition, and NI/LabVIEW contracts already recorded in the Reality Reach
+research ledger. They are engineering inputs, not copied authority planes and
+not substitutes for live acceptance. No physical-effect, evidence-promotion,
+bootstrap-complete, reasoning-gain, frontier, release, or `WOW Signal` claim is
+made. This is total checkpoint 799 of the current 920-checkpoint completion
+envelope, approximately 86.8% by count. The immutable CP796 resident campaign
+continues separately; long soaks remain deferred.

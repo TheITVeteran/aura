@@ -66,17 +66,17 @@ from core.runtime.service_access import (  # noqa: E402
     resolve_homeostatic_coupling,
     resolve_metabolic_monitor,
 )
-from core.skills.base_skill import (  # noqa: E402
-    SKILL_TIMEOUT_CONTEXT_KEY as _SKILL_TIMEOUT_CONTEXT_KEY,
-)
-from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
-from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
-from core.security.structural_redaction import (
+from core.security.structural_redaction import (  # noqa: E402
     redact_mapping,
     redact_structure,
     redact_text,
     redaction_marker,
 )
+from core.skills.base_skill import (  # noqa: E402
+    SKILL_TIMEOUT_CONTEXT_KEY as _SKILL_TIMEOUT_CONTEXT_KEY,
+)
+from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
+from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
 
 #: How much longer the engine waits than the budget it handed the skill, so a
 #: skill that runs out of time reports its own structured failure instead of
@@ -1335,6 +1335,13 @@ class CapabilityEngine(AuraBaseModule):
                 r"voice (?:input|recognition)",
                 r"transcribe (?:what I say|my voice)",
                 r"speech to text",
+            ],
+            "embodiment": [
+                r"(?:discover|find|list|show|inspect) (?:my )?(?:physical )?(?:devices|sensors|actuators|hardware)",
+                r"(?:connect|attach) (?:to )?(?:this |the |a )?(?:device|sensor|actuator|hardware)",
+                r"(?:read|query|focus on|pay attention to) (?:this |the |my )?(?:sensor|physical channel|device)",
+                r"(?:turn on|turn off|set|control|command) (?:this |the |my )?(?:light|thermostat|fan|switch|relay|physical device)",
+                r"what (?:physical )?(?:devices|sensors|actuators|hardware) (?:can you|do you) (?:see|use|control|have)",
             ],
             # ── Self / Identity ───────────────────────────────────────
             "self_repair": [

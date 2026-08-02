@@ -231,6 +231,52 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         severity="warning",
     )
 
+    async def _reality_sensory_fabric() -> None:
+        from core.reality_reach.attachments import DeviceAttachmentBroker
+        from core.reality_reach.observation_router import RealityObservationRouter
+
+        reality_reach = getattr(orchestrator, "reality_reach", None)
+        if reality_reach is None:
+            raise RuntimeError("Reality Reach must be initialized before its sensory fabric")
+        router = RealityObservationRouter(reality_reach)
+        await router.start()
+        try:
+            broker = DeviceAttachmentBroker(reality_reach, router)
+            await broker.start()
+        except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS:
+            await router.stop()
+            raise
+        orchestrator.reality_observation_router = router
+        orchestrator.reality_attachment_broker = broker
+        ServiceContainer.register_instance(
+            "reality_observation_router",
+            router,
+            required=False,
+            owner="core/reality_reach/observation_router.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="bounded physical exteroception and cognitive grounding",
+            failure_policy="degrade_with_receipt",
+        )
+        ServiceContainer.register_instance(
+            "reality_attachment_broker",
+            broker,
+            required=False,
+            owner="core/reality_reach/attachments.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="portable device discovery, trust, and attachment",
+            failure_policy="degrade_with_receipt",
+        )
+        report["registered"]["reality_observation_router"] = router.__class__.__name__
+        report["registered"]["reality_attachment_broker"] = broker.__class__.__name__
+
+    await _run_phase(
+        orchestrator,
+        "reality_sensory_fabric",
+        "Physical channels remain inventoried but are not routed into cognition or portable attachment",
+        _reality_sensory_fabric,
+        severity="warning",
+    )
+
     async def _hardware_manager() -> None:
         from core.embodiment.hardware_manager import get_hardware_manager
 
@@ -239,6 +285,10 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         if reality_reach is None:
             raise RuntimeError("Reality Reach must be initialized before hardware")
         manager.bind_reality_reach(reality_reach)
+        observation_router = getattr(orchestrator, "reality_observation_router", None)
+        if observation_router is None:
+            raise RuntimeError("Reality observation routing must be initialized before hardware")
+        manager.bind_observation_router(observation_router)
         manager.register_configured_devices()
         await manager.start()
         orchestrator.hardware_manager = manager
@@ -258,6 +308,41 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         "hardware_manager",
         "Registered no physical hardware manager; device actuation remains unavailable",
         _hardware_manager,
+        severity="warning",
+    )
+
+    async def _iot_bridge() -> None:
+        from core.embodiment.iot_bridge import get_iot_bridge
+
+        reality_reach = getattr(orchestrator, "reality_reach", None)
+        reality_actuation = getattr(orchestrator, "reality_actuation", None)
+        if reality_reach is None or reality_actuation is None:
+            raise RuntimeError("Reality Reach must be initialized before the IoT bridge")
+        observation_router = getattr(orchestrator, "reality_observation_router", None)
+        attachment_broker = getattr(orchestrator, "reality_attachment_broker", None)
+        if observation_router is None or attachment_broker is None:
+            raise RuntimeError("Reality sensory fabric must be initialized before the IoT bridge")
+        bridge = get_iot_bridge()
+        bridge.bind_reality_reach(reality_reach, reality_actuation)
+        bridge.bind_sensory_fabric(observation_router, attachment_broker)
+        await bridge.start()
+        orchestrator.iot_bridge = bridge
+        ServiceContainer.register_instance(
+            "iot_bridge",
+            bridge,
+            required=False,
+            owner="core/embodiment/iot_bridge.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="causal environmental sensing and governed physical effects",
+            failure_policy="degrade_with_receipt",
+        )
+        report["registered"]["iot_bridge"] = bridge.__class__.__name__
+
+    await _run_phase(
+        orchestrator,
+        "iot_bridge",
+        "Environmental coupling remained offline; physical IoT effects stay unavailable",
+        _iot_bridge,
         severity="warning",
     )
 

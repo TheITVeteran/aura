@@ -38,8 +38,16 @@ class Service:
         self.refreshed = True
         return {}
 
-    def bind_reality_reach(self, service):
+    def bind_reality_reach(self, service, coordinator=None):
         self.reality_reach = service
+        self.reality_actuation = coordinator
+
+    def bind_observation_router(self, router):
+        self.observation_router = router
+
+    def bind_sensory_fabric(self, router, broker):
+        self.observation_router = router
+        self.attachment_broker = broker
 
     def register_configured_devices(self):
         self.configured_devices_registered = True
@@ -110,8 +118,23 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.observation_router",
+        RealityObservationRouter=Service,
+    )
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.attachments",
+        DeviceAttachmentBroker=Service,
+    )
+    _install_module(
+        monkeypatch,
         "core.embodiment.hardware_manager",
         get_hardware_manager=lambda: Service(),
+    )
+    _install_module(
+        monkeypatch,
+        "core.embodiment.iot_bridge",
+        get_iot_bridge=lambda: Service(),
     )
     _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
@@ -171,9 +194,20 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_reach"].refreshed is True
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
+    assert registered["reality_observation_router"] is orchestrator.reality_observation_router
+    assert registered["reality_observation_router"].started is True
+    assert registered["reality_attachment_broker"] is orchestrator.reality_attachment_broker
+    assert registered["reality_attachment_broker"].started is True
     assert registered["hardware_manager"] is orchestrator.hardware_manager
     assert registered["hardware_manager"].started is True
     assert registered["hardware_manager"].configured_devices_registered is True
+    assert registered["hardware_manager"].observation_router is orchestrator.reality_observation_router
+    assert registered["iot_bridge"] is orchestrator.iot_bridge
+    assert registered["iot_bridge"].started is True
+    assert registered["iot_bridge"].reality_reach is orchestrator.reality_reach
+    assert registered["iot_bridge"].reality_actuation is orchestrator.reality_actuation
+    assert registered["iot_bridge"].observation_router is orchestrator.reality_observation_router
+    assert registered["iot_bridge"].attachment_broker is orchestrator.reality_attachment_broker
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
 
 

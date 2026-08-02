@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from core.reality_reach.actuation import ActuatorCapability, RealityAdapter
 from core.reality_reach.contracts import (
@@ -380,6 +380,34 @@ class RealityReachService:
             self._adapter_capabilities.pop(adapter_id, None)
             self._adapter_channels.pop(adapter_id, None)
             self._adapters.pop(adapter_id, None)
+
+    def declarations(self) -> tuple[ChannelDeclaration, ...]:
+        """Return the immutable public channel inventory.
+
+        Consumers such as the sensory router must not reach into the registry
+        or adapter maps.  The registry snapshot is already deterministic and
+        immutable, so exposing it here preserves the ownership boundary while
+        letting cognition reason over the same declarations used by the
+        reachability and actuation engines.
+        """
+
+        with self._lock:
+            return cast(tuple[ChannelDeclaration, ...], self._registry.snapshot())
+
+    def adapter_channels(self) -> dict[str, tuple[str, ...]]:
+        """Return a copy of adapter-to-channel ownership for provenance."""
+
+        with self._lock:
+            return dict(self._adapter_channels)
+
+    def adapter_id_for_channel(self, channel_id: str) -> str | None:
+        """Resolve channel ownership without exposing executable adapters."""
+
+        with self._lock:
+            for adapter_id, channel_ids in self._adapter_channels.items():
+                if channel_id in channel_ids:
+                    return adapter_id
+        return None
 
     def actuator_adapter(self, channel_id: str) -> RealityAdapter | None:
         """Return an executable adapter only when its observation route is live."""

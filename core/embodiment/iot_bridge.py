@@ -17,32 +17,40 @@ environment. Examples:
 The bridge is transport-agnostic; concrete transports register through
 ``register_transport()``. Stock support is provided for:
 
-  * Home Assistant REST (``HassTransport``)
-  * MQTT (``MQTTTransport``) — only constructed when paho-mqtt is present
-  * a "noop" transport for development and tests
+  * Home Assistant REST through typed per-entity Reality Reach adapters
+  * sensor-only custom transports registered by the embedding runtime
+  * a non-production "noop" transport for deterministic tests
 
 Every effect goes through ``WorldBridge.call(Channel.ENVIRONMENTAL_CHANGE,
-...)`` so it inherits permission, conscience, and capability-token gates.
+...)`` and then a durable Reality Reach transaction. Network acceptance and
+fresh state readback remain separate receipts.
 
-The reverse direction — env → substrate — uses ``observe()`` to inject an
-event into the prediction-error stream tagged with provenance so it never
-gets confused with internal state.
+The reverse direction uses declared read-only adapters and the bounded Reality
+Observation Router. Arbitrary transport dictionaries never enter cognition;
+only typed scalar readings with metrology, freshness, and provenance do.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 import time
-import urllib.parse
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-from core.runtime.action_executor import ActionExecutor
+from core.embodiment.home_assistant_connector import HomeAssistantConnector
+from core.embodiment.home_assistant_reality import (
+    HomeAssistantEffect,
+    HomeAssistantRealityAdapter,
+    HomeAssistantTransport,
+)
+from core.reality_reach.body_projection import (
+    PhysicalBodyProjection,
+    project_adapter_to_body,
+    remove_body_projection,
+)
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -52,12 +60,8 @@ logger = logging.getLogger("Aura.IoTBridge")
 # ─── transports ─────────────────────────────────────────────────────────────
 
 
-@dataclass
-class IoTEffect:
-    target: str  # e.g. "thermostat.living_room", "light.studio"
-    op: str  # set, increment, scene, etc.
-    payload: dict[str, Any] = field(default_factory=dict)
-    reason: str = ""  # human-readable rationale (logged, never user-visible)
+IoTEffect = HomeAssistantEffect
+HassTransport = HomeAssistantTransport
 
 
 class IoTTransport(ABC):
@@ -96,209 +100,6 @@ class NoopTransport(IoTTransport):
         if not self.events:
             return None
         return self.events.pop(0)
-
-
-def _hass_values_match(expected: Any, observed: Any) -> bool:
-    if isinstance(expected, bool):
-        return observed is expected
-    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
-        try:
-            return abs(float(observed) - float(expected)) <= 2.0
-        except (TypeError, ValueError):
-            return False
-    if isinstance(expected, (list, tuple)):
-        return list(observed or []) == list(expected)
-    return str(observed) == str(expected)
-
-
-def _hass_expected_attributes(effect: IoTEffect) -> dict[str, Any]:
-    expected: dict[str, Any] = {}
-    for key, value in effect.payload.items():
-        if key == "transition":
-            continue
-        if key == "brightness_pct":
-            try:
-                expected["brightness"] = round(
-                    max(0.0, min(100.0, float(value))) * 255.0 / 100.0
-                )
-            except (TypeError, ValueError):
-                expected["brightness"] = value
-            continue
-        expected[key] = value
-    return expected
-
-
-def _hass_state_matches_effect(state: dict[str, Any], effect: IoTEffect) -> bool:
-    if str(state.get("entity_id") or "") != effect.target:
-        return False
-    state_value = str(state.get("state") or "").lower()
-    if effect.op == "turn_on" and state_value != "on":
-        return False
-    if effect.op == "turn_off" and state_value != "off":
-        return False
-    attributes = state.get("attributes")
-    if not isinstance(attributes, dict):
-        attributes = {}
-    return all(
-        _hass_values_match(expected, attributes.get(key))
-        for key, expected in _hass_expected_attributes(effect).items()
-    )
-
-
-def _bounded_hass_state(
-    state: dict[str, Any] | None,
-    effect: IoTEffect,
-) -> dict[str, Any]:
-    if not isinstance(state, dict):
-        return {}
-    attributes = state.get("attributes")
-    if not isinstance(attributes, dict):
-        attributes = {}
-    expected_attributes = _hass_expected_attributes(effect)
-    return {
-        "entity_id": str(state.get("entity_id") or "")[:160],
-        "state": str(state.get("state") or "")[:80],
-        "attributes": {
-            key: attributes.get(key)
-            for key in expected_attributes
-            if key in attributes
-        },
-        "last_changed": str(state.get("last_changed") or "")[:80],
-    }
-
-
-class HassTransport(IoTTransport):
-    """Home Assistant REST transport.
-
-    Configured by environment variables:
-      AURA_HASS_URL    — e.g. "http://homeassistant.local:8123"
-      AURA_HASS_TOKEN  — long-lived access token
-
-    Refuses to operate without both.
-    """
-
-    name = "home_assistant"
-
-    def __init__(self) -> None:
-        self.token = str(
-            os.getenv("AURA_HASS_TOKEN") or os.getenv("HASS_TOKEN") or ""
-        ).strip()
-        self.base = str(
-            os.getenv("AURA_HASS_URL")
-            or os.getenv("HASS_URL")
-            or ("https://homeassistant.local:8123" if self.token else "")
-        ).strip().rstrip("/")
-        if not self.base or not self.token:
-            raise RuntimeError("hass_credentials_missing")
-        parsed = urllib.parse.urlparse(self.base)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-            or parsed.path not in {"", "/"}
-        ):
-            raise RuntimeError("hass_url_must_be_origin_only_http_or_https")
-        if parsed.scheme == "http" and str(
-            __import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
-                "AURA_HASS_ALLOW_HTTP",
-                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.STRING,
-                default="",
-                description="Permit plain-http Home Assistant URLs",
-                owner="core.embodiment.iot_bridge",
-            ).value()
-        ).strip().lower() not in {"1", "true", "yes", "on"}:
-            raise RuntimeError("hass_insecure_http_requires_explicit_opt_in")
-
-    async def apply(self, effect: IoTEffect) -> dict[str, Any]:
-        domain, _, entity = effect.target.partition(".")
-        if (
-            not re.fullmatch(r"[a-z0-9_]+", domain)
-            or not re.fullmatch(r"[a-z0-9_]+", entity)
-            or not re.fullmatch(r"[a-z0-9_]+", effect.op)
-        ):
-            raise ValueError("invalid_home_assistant_effect")
-        url = f"{self.base}/api/services/{domain}/{effect.op}"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
-        body = {"entity_id": effect.target, **effect.payload}
-        response = await ActionExecutor.request_network_transport(
-            method="POST",
-            url=url,
-            headers=headers,
-            data=json.dumps(body, separators=(",", ":")),
-            timeout_s=8.0,
-            source="world_bridge:iot.home_assistant.apply",
-            read_only=False,
-        )
-        status = int(response.get("status_code") or 0)
-        content = response.get("content") or b""
-        if isinstance(content, bytes):
-            content = content.decode("utf-8", errors="replace")
-        accepted = bool(response.get("ok") and 200 <= status < 300)
-        observed_state: dict[str, Any] | None = None
-        effect_verified = False
-        if accepted:
-            for attempt in range(3):
-                state_response = await ActionExecutor.request_network_transport(
-                    method="GET",
-                    url=f"{self.base}/api/states/{effect.target}",
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    timeout_s=8.0,
-                    source="world_bridge:iot.home_assistant.verify",
-                    read_only=True,
-                )
-                state_content = state_response.get("content") or b"{}"
-                if isinstance(state_content, bytes):
-                    state_content = state_content.decode("utf-8", errors="replace")
-                try:
-                    candidate = json.loads(str(state_content))
-                except json.JSONDecodeError:
-                    candidate = None
-                if isinstance(candidate, dict):
-                    observed_state = candidate
-                    if _hass_state_matches_effect(candidate, effect):
-                        effect_verified = True
-                        break
-                if attempt < 2:
-                    await asyncio.sleep(0.2)
-        return {
-            "applied": accepted,
-            "effect_verified": effect_verified,
-            "status": status,
-            "body": str(content)[:1024],
-            "target": effect.target,
-            "op": effect.op,
-            "observed_state": _bounded_hass_state(observed_state, effect),
-        }
-
-    async def observe(self) -> dict[str, Any] | None:
-        # Polling-style observation. A push variant would subscribe via
-        # WebSocket; this minimal version exposes the structure.
-        return None
-
-    async def discover(self) -> list[dict[str, Any]]:
-        response = await ActionExecutor.request_network_transport(
-            method="GET",
-            url=f"{self.base}/api/states",
-            headers={"Authorization": f"Bearer {self.token}"},
-            timeout_s=8.0,
-            source="world_bridge:iot.home_assistant.discover",
-            read_only=False,
-        )
-        if not bool(response.get("ok")):
-            raise RuntimeError(str(response.get("error") or "hass_discovery_failed"))
-        content = response.get("content") or b"[]"
-        if isinstance(content, bytes):
-            content = content.decode("utf-8", errors="replace")
-        decoded = json.loads(str(content))
-        if not isinstance(decoded, list):
-            raise ValueError("hass_discovery_response_not_list")
-        return [item for item in decoded if isinstance(item, dict)][:5000]
 
 
 # ─── policy: substrate → effect ────────────────────────────────────────────
@@ -380,12 +181,19 @@ _DEFAULT_POLICY: list[PolicyRule] = [
 
 class IoTBridge:
     def __init__(self) -> None:
-        self._transports: dict[str, IoTTransport] = {}
+        self._transports: dict[str, IoTTransport | HomeAssistantTransport] = {}
         self._policy: list[PolicyRule] = list(_DEFAULT_POLICY)
         self._last_fired: dict[str, float] = {}
         self._last_attempted: dict[str, float] = {}
+        self._reality_service: Any | None = None
+        self._reality_coordinator: Any | None = None
+        self._reality_adapters: dict[str, HomeAssistantRealityAdapter] = {}
+        self._body_projections: dict[str, PhysicalBodyProjection] = {}
+        self._observation_router: Any | None = None
+        self._attachment_broker: Any | None = None
+        self._home_assistant_connector: HomeAssistantConnector | None = None
+        self._adapter_lock = asyncio.Lock()
         self._task: asyncio.Task[Any] | None = None
-        self._observe_task: asyncio.Task[Any] | None = None
         self._running = False
         try:
             self.register_transport("home_assistant", HassTransport())
@@ -393,8 +201,61 @@ class IoTBridge:
         except RuntimeError as exc:
             logger.info("Home Assistant IoT transport disabled: %s", exc)
 
-    def register_transport(self, name: str, transport: IoTTransport) -> None:
-        self._transports[name] = transport
+    def bind_reality_reach(self, service: Any, coordinator: Any) -> None:
+        if service is None or not callable(getattr(service, "register_adapter", None)):
+            raise TypeError("reality reach service must support adapter registration")
+        if coordinator is None or not callable(getattr(coordinator, "execute", None)):
+            raise TypeError("reality actuation coordinator must support execution")
+        if self._reality_service is not None and self._reality_service is not service:
+            raise RuntimeError("IoT bridge is already bound to another reality service")
+        if (
+            self._reality_coordinator is not None
+            and self._reality_coordinator is not coordinator
+        ):
+            raise RuntimeError("IoT bridge is already bound to another coordinator")
+        self._reality_service = service
+        self._reality_coordinator = coordinator
+
+    def bind_sensory_fabric(self, observation_router: Any, attachment_broker: Any) -> None:
+        if observation_router is None or not callable(
+            getattr(observation_router, "register_sampler", None)
+        ):
+            raise TypeError("IoT bridge requires a Reality Reach observation router")
+        if attachment_broker is None or not callable(
+            getattr(attachment_broker, "register_connector", None)
+        ):
+            raise TypeError("IoT bridge requires a physical attachment broker")
+        if self._observation_router is not None and self._observation_router is not observation_router:
+            raise RuntimeError("IoT bridge is already bound to another observation router")
+        if self._attachment_broker is not None and self._attachment_broker is not attachment_broker:
+            raise RuntimeError("IoT bridge is already bound to another attachment broker")
+        self._observation_router = observation_router
+        self._attachment_broker = attachment_broker
+
+    def _ensure_runtime_binding(self) -> tuple[Any, Any]:
+        if self._reality_service is None or self._reality_coordinator is None:
+            from core.container import ServiceContainer
+
+            service = ServiceContainer.get("reality_reach", default=None)
+            coordinator = ServiceContainer.get("reality_actuation", default=None)
+            self.bind_reality_reach(service, coordinator)
+        return self._reality_service, self._reality_coordinator
+
+    def register_transport(
+        self,
+        name: str,
+        transport: IoTTransport | HomeAssistantTransport,
+    ) -> None:
+        canonical_name = str(name or "").strip().lower()
+        if not canonical_name or not canonical_name.replace("_", "").isalnum():
+            raise ValueError("iot_transport_name_invalid")
+        if self._running and canonical_name in self._transports:
+            raise RuntimeError("cannot replace a running IoT transport")
+        if not callable(getattr(transport, "observe", None)) or not callable(
+            getattr(transport, "discover", None)
+        ):
+            raise TypeError("IoT transports must implement observe and discover")
+        self._transports[canonical_name] = transport
 
     def replace_policy(self, rules: list[PolicyRule]) -> None:
         self._policy = list(rules)
@@ -407,54 +268,107 @@ class IoTBridge:
         effect: IoTEffect,
         *,
         capability_token: str,
+        transport_name: str = "",
+        idempotency_key: str = "",
+        source: str = "iot_bridge",
     ) -> dict[str, Any]:
-        """Apply one already-authorized effect to configured physical transports."""
+        """Compile one authorized effect into the canonical physical transaction."""
         if not str(capability_token or "").strip():
             raise PermissionError("iot_capability_token_required")
         if not self._transports:
             raise RuntimeError("iot_transport_unavailable")
+        requested_transport = str(transport_name or "").strip().lower()
+        executable = {
+            name: transport
+            for name, transport in self._transports.items()
+            if isinstance(transport, HomeAssistantTransport)
+        }
+        if requested_transport:
+            transport = executable.get(requested_transport)
+            if transport is None:
+                raise RuntimeError("iot_transport_not_reality_reach_executable")
+        elif len(executable) == 1:
+            requested_transport, transport = next(iter(executable.items()))
+        elif not executable:
+            raise RuntimeError("iot_transport_not_reality_reach_executable")
+        else:
+            raise RuntimeError("iot_transport_selection_ambiguous")
 
-        results: list[dict[str, Any]] = []
-        failures: list[str] = []
-        for transport_name, transport in self._transports.items():
-            try:
-                output = await transport.apply(effect)
-                if output.get("applied") is not True:
-                    failures.append(
-                        f"{transport_name}:{output.get('status') or output.get('error') or 'not_applied'}"
+        service, coordinator = self._ensure_runtime_binding()
+        adapter_key = f"{requested_transport}:{effect.target}"
+        async with self._adapter_lock:
+            adapter = self._reality_adapters.get(adapter_key)
+            if adapter is None:
+                adapter = await transport.create_adapter(effect.target)
+                service.register_adapter(adapter)
+                try:
+                    if self._observation_router is not None:
+                        self._observation_router.register_sampler(adapter)
+                    self._body_projections[adapter.adapter_id] = project_adapter_to_body(
+                        adapter,
+                        device_id=f"hass.{effect.target}",
+                        display_name=effect.target,
+                        transport="home_assistant.rest",
+                        persistent_identity=bool(
+                            str(os.getenv("AURA_HASS_INSTALLATION_ID") or "").strip()
+                        ),
                     )
-                elif output.get("effect_verified") is not True:
-                    failures.append(f"{transport_name}:effect_unverified")
-                results.append(
-                    {
-                        "transport": transport_name,
-                        "target": effect.target,
-                        "op": effect.op,
-                        "output": output,
-                    }
-                )
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                record_degradation("iot_bridge", exc)
-                failures.append(f"{transport_name}:{type(exc).__name__}:{exc}")
-        transport_succeeded = any(
-            isinstance(item.get("output"), dict)
-            and item["output"].get("applied") is True
-            for item in results
-        )
-        effect_verified = bool(
-            results
-            and not failures
-            and all(
-                isinstance(item.get("output"), dict)
-                and item["output"].get("effect_verified") is True
-                for item in results
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                    if self._observation_router is not None:
+                        try:
+                            self._observation_router.unregister_sampler(adapter.adapter_id)
+                        except LookupError:
+                            pass
+                    service.unregister_adapter(adapter.adapter_id)
+                    raise
+                self._reality_adapters[adapter_key] = adapter
+                await asyncio.to_thread(service.refresh)
+        inventory_sha256 = str(service.status().get("registry_sha256") or "")
+        stable_idempotency = str(idempotency_key or "").strip()
+        if not stable_idempotency:
+            stable_idempotency = (
+                "hass.auth."
+                + str(capability_token).replace("\x00", "")[-32:]
+                + "."
+                + effect.sha256.removeprefix("sha256:")[:24]
             )
+        command = await adapter.compile_effect(
+            effect,
+            inventory_sha256=inventory_sha256,
+            deadline_s=30.0,
+            idempotency_key=stable_idempotency,
+            source=source,
         )
+        try:
+            output = await coordinator.execute(command)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            record_degradation("iot_bridge", exc)
+            raise
+        if not isinstance(output, dict):
+            raise RuntimeError("reality_actuation_result_not_mapping")
+        transport_succeeded = bool(
+            output.get("transport_succeeded") is True
+            or output.get("executed") is True
+        )
+        effect_verified = output.get("effect_verified") is True
+        failures = [] if effect_verified else [
+            str(output.get("error") or output.get("reason") or "effect_unverified")[:300]
+        ]
         return {
-            "effects": results,
+            "effects": [
+                {
+                    "transport": requested_transport,
+                    "target": effect.target,
+                    "op": effect.op,
+                    "adapter_id": adapter.adapter_id,
+                    "command_sha256": command.sha256,
+                    "output": output,
+                }
+            ],
             "transport_succeeded": transport_succeeded,
             "effect_verified": effect_verified,
             "failures": failures,
+            "reality_reach_transaction": output.get("reality_reach_transaction"),
         }
 
     async def discover_authorized(
@@ -482,7 +396,27 @@ class IoTBridge:
             "configured": bool(self._transports),
             "transports": sorted(self._transports),
             "policy_rules": len(self._policy),
+            "reality_reach_bound": self._reality_service is not None,
+            "reality_adapter_count": len(self._reality_adapters),
+            "observation_router_bound": self._observation_router is not None,
+            "attachment_broker_bound": self._attachment_broker is not None,
+            "home_assistant_connector": self._home_assistant_connector is not None,
         }
+
+    def is_alive(self) -> bool:
+        return self._running and self._task is not None and not self._task.done()
+
+    def is_ready(self) -> bool:
+        return self.is_alive() and (
+            not self._transports
+            or (
+                self._reality_service is not None
+                and self._reality_coordinator is not None
+            )
+        )
+
+    def status(self) -> dict[str, Any]:
+        return self.get_status()
 
     async def tick(self) -> list[dict[str, Any]]:
         snapshot = _read_substrate()
@@ -517,10 +451,14 @@ class IoTBridge:
                 intent=effect.reason or rule.name,
                 payload={
                     "operation": "apply",
+                    "transport": "home_assistant",
                     "target": effect.target,
                     "op": effect.op,
                     "effect": dict(effect.payload),
                     "reason": effect.reason or rule.name,
+                    "idempotency_key": (
+                        f"iot.policy.{rule.name}.{int(now // rule.cooldown_s)}"
+                    ),
                 },
             )
             results.append(
@@ -542,39 +480,29 @@ class IoTBridge:
                 self._last_fired[rule.name] = now
         return results
 
-    async def observe_loop(self) -> None:
-        """Drain observations from all transports into the substrate's
-        prediction-error stream. Each observation is tagged with
-        ``source="iot:<transport>"`` so it never gets confused with
-        internal-only signals.
-        """
-        while self._running:
-            for tname, transport in self._transports.items():
-                try:
-                    obs = await transport.observe()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    record_degradation('iot_bridge', exc)
-                    logger.debug("iot observe failed (%s): %s", tname, exc)
-                    obs = None
-                if obs is None:
-                    continue
-                self._inject_to_substrate(tname, obs)
-            await asyncio.sleep(2.0)
-
-    @staticmethod
-    def _inject_to_substrate(transport_name: str, observation: dict[str, Any]) -> None:
-        try:
-            from core.container import ServiceContainer
-            sg = ServiceContainer.get("sensory_gate", default=None)
-            if sg is not None and hasattr(sg, "ingest"):
-                sg.ingest({"source": f"iot:{transport_name}", "observation": observation, "when": time.time()})
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('iot_bridge', exc)
-            logger.debug("iot substrate inject failed: %s", exc)
-
     async def start(self, *, interval: float = 5.0) -> None:
         if self._running:
             return
+        if any(
+            isinstance(transport, HomeAssistantTransport)
+            for transport in self._transports.values()
+        ):
+            self._ensure_runtime_binding()
+            if self._observation_router is None or self._attachment_broker is None:
+                raise RuntimeError("iot_reality_sensory_fabric_unbound")
+            if self._home_assistant_connector is None:
+                home_assistant = next(
+                    transport
+                    for transport in self._transports.values()
+                    if isinstance(transport, HomeAssistantTransport)
+                )
+                self._home_assistant_connector = HomeAssistantConnector(
+                    home_assistant,
+                    discover_callback=self._discover_home_assistant_governed,
+                )
+                self._attachment_broker.register_connector(
+                    self._home_assistant_connector
+                )
         self._running = True
 
         async def _loop() -> None:
@@ -587,10 +515,27 @@ class IoTBridge:
                 await asyncio.sleep(interval)
 
         self._task = get_task_tracker().create_task(_loop(), name="IoTBridge")
-        self._observe_task = get_task_tracker().create_task(
-            self.observe_loop(),
-            name="IoTBridgeObserve",
+
+    async def _discover_home_assistant_governed(self) -> list[dict[str, Any]]:
+        from core.embodiment.world_bridge import Channel, get_world_bridge
+
+        result = await get_world_bridge().call(
+            Channel.ENVIRONMENTAL_CHANGE,
+            action="iot:discover:home_assistant",
+            intent="discover bounded physical sensors and actuators I may connect to",
+            payload={"operation": "discover"},
         )
+        if not result.ok:
+            raise RuntimeError(str(result.error or "home_assistant_discovery_refused")[:300])
+        data = result.data if isinstance(result.data, dict) else {}
+        devices = data.get("devices", [])
+        if not isinstance(devices, list):
+            raise RuntimeError("home_assistant_discovery_result_invalid")
+        return [
+            {key: value for key, value in item.items() if key != "transport"}
+            for item in devices
+            if isinstance(item, dict) and item.get("transport") == "home_assistant"
+        ][:5000]
 
     async def stop(self) -> None:
         self._running = False
@@ -601,13 +546,48 @@ class IoTBridge:
             except asyncio.CancelledError:
                 pass  # no-op: intentional
             self._task = None
-        if self._observe_task is not None:
-            self._observe_task.cancel()
-            try:
-                await self._observe_task
-            except asyncio.CancelledError:
-                pass
-            self._observe_task = None
+        if self._reality_service is not None:
+            for adapter_key, adapter in list(self._reality_adapters.items()):
+                removed = False
+                try:
+                    await asyncio.to_thread(
+                        self._reality_service.unregister_adapter,
+                        adapter.adapter_id,
+                    )
+                    removed = True
+                except LookupError:
+                    removed = True
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation("iot_bridge", exc)
+                    logger.warning(
+                        "Could not revoke Home Assistant adapter %s during shutdown: %s",
+                        adapter.adapter_id,
+                        exc,
+                    )
+                if removed:
+                    if self._observation_router is not None:
+                        try:
+                            self._observation_router.unregister_sampler(adapter.adapter_id)
+                        except LookupError:
+                            pass
+                    projection = self._body_projections.pop(adapter.adapter_id, None)
+                    if projection is not None:
+                        try:
+                            remove_body_projection(projection)
+                        except (
+                            ImportError,
+                            AttributeError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ) as exc:
+                            record_degradation(
+                                "iot_bridge.body_schema",
+                                exc,
+                                action="removed IoT adapter while recording stale body projection",
+                            )
+                    self._reality_adapters.pop(adapter_key, None)
+            await asyncio.to_thread(self._reality_service.refresh)
 
 
 async def _environmental_change_handler(
@@ -625,7 +605,32 @@ async def _environmental_change_handler(
             "transport_succeeded": True,
             "effect_verified": True,
         }
-    if operation != "apply":
+    if operation == "hardware_apply":
+        from core.actuation.robotics_actuator import RoboticsActuator
+
+        target = str(payload.get("target") or "").strip()
+        command = str(payload.get("op") or "").strip()
+        parameters = payload.get("parameters")
+        if not target or not command or not isinstance(parameters, dict):
+            raise ValueError("hardware_target_command_parameters_required")
+        outcome = await RoboticsActuator.command_device(
+            target,
+            command,
+            dict(parameters),
+            source=str(payload.get("source") or "world_bridge.environmental_change"),
+            idempotency_key=str(payload.get("idempotency_key") or "") or None,
+        )
+        verified = outcome.get("effect_verified") is True
+        return {
+            **outcome,
+            "transport_succeeded": bool(
+                outcome.get("transport_succeeded") is True
+                or outcome.get("executed") is True
+                or verified
+            ),
+            "effect_verified": verified,
+        }
+    if operation not in {"apply", "home_assistant_apply"}:
         raise ValueError(f"unknown_iot_operation:{operation}")
     target = str(payload.get("target") or "").strip().lower()
     action = str(payload.get("op") or "").strip().lower()
@@ -641,6 +646,9 @@ async def _environmental_change_handler(
     outcome = await bridge.apply_authorized(
         effect,
         capability_token=capability_token,
+        transport_name=str(payload.get("transport") or ""),
+        idempotency_key=str(payload.get("idempotency_key") or ""),
+        source=str(payload.get("source") or "world_bridge.environmental_change"),
     )
     return outcome
 

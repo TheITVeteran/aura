@@ -76,6 +76,21 @@ async def test_rest_smart_plug_runs_through_reality_reach_and_fresh_readback(
     service = RealityReachService()
     manager = HardwareManager()
     manager.bind_reality_reach(service)
+    sampled: list[str] = []
+
+    class Router:
+        @staticmethod
+        def register_sampler(adapter) -> None:
+            if adapter.adapter_id not in sampled:
+                sampled.append(adapter.adapter_id)
+
+        @staticmethod
+        def unregister_sampler(adapter_id: str) -> None:
+            if adapter_id not in sampled:
+                raise LookupError(adapter_id)
+            sampled.remove(adapter_id)
+
+    manager.bind_observation_router(Router())
     device = RestSmartPlug("relay-1")
     manager.register_device(device)
     await manager.start()
@@ -101,10 +116,16 @@ async def test_rest_smart_plug_runs_through_reality_reach_and_fresh_readback(
     assert "test-secret" not in command_calls[0]["data"]
     assert len(gateway.calls) >= 4  # connect, compile, prepare, and effect readback
     assert all(call["read_only"] is True for call in gateway.calls)
+    adapter = manager.get_reality_adapter("relay-1")
+    assert adapter is not None
+    assert sampled == [adapter.adapter_id]
+    assert manager.status()["body_projection_count"] == 1
 
     with pytest.raises(RuntimeError, match="active physical adapter"):
         manager.unregister_device("relay-1")
     await manager.stop()
+    assert sampled == []
+    assert manager.status()["body_projection_count"] == 0
     manager.unregister_device("relay-1")
     assert manager.get_device("relay-1") is None
     assert service.status()["channel_count"] == 0

@@ -194,6 +194,11 @@ def test_iot_bridge_without_credentials_has_no_fake_noop_transport(
         "configured": False,
         "transports": [],
         "policy_rules": 3,
+        "reality_reach_bound": False,
+        "reality_adapter_count": 0,
+        "observation_router_bound": False,
+        "attachment_broker_bound": False,
+        "home_assistant_connector": False,
     }
     assert "Home Assistant IoT transport disabled" in caplog.text
     assert not any(record.levelno >= logging.WARNING for record in caplog.records)
@@ -203,6 +208,7 @@ def test_home_assistant_transport_rejects_implicit_plaintext_and_maps_percent_br
     monkeypatch,
 ) -> None:
     from core.embodiment import iot_bridge as iot_module
+    from core.embodiment.home_assistant_reality import state_matches_effect
 
     _clear_hass_environment(monkeypatch)
     monkeypatch.setenv("AURA_HASS_URL", "http://hass.example.test:8123")
@@ -215,7 +221,7 @@ def test_home_assistant_transport_rejects_implicit_plaintext_and_maps_percent_br
         op="turn_on",
         payload={"brightness_pct": 80},
     )
-    assert iot_module._hass_state_matches_effect(
+    assert state_matches_effect(
         {
             "entity_id": "light.office",
             "state": "on",
@@ -229,6 +235,7 @@ def test_home_assistant_transport_rejects_implicit_plaintext_and_maps_percent_br
 async def test_home_assistant_transport_uses_canonical_network_gateway(
     monkeypatch,
 ) -> None:
+    from core.embodiment import home_assistant_reality as hass_module
     from core.embodiment import iot_bridge as iot_module
 
     _clear_hass_environment(monkeypatch)
@@ -238,8 +245,6 @@ async def test_home_assistant_transport_uses_canonical_network_gateway(
 
     async def _network_request(**kwargs):
         calls.append(kwargs)
-        if kwargs["method"] == "POST":
-            return {"ok": True, "status_code": 200, "content": b"[]"}
         return {
             "ok": True,
             "status_code": 200,
@@ -250,34 +255,32 @@ async def test_home_assistant_transport_uses_canonical_network_gateway(
         }
 
     monkeypatch.setattr(
-        iot_module.ActionExecutor,
+        hass_module.ActionExecutor,
         "request_network_transport",
         staticmethod(_network_request),
     )
     transport = iot_module.HassTransport()
 
-    result = await transport.apply(
-        iot_module.IoTEffect(
-            target="light.office",
-            op="turn_on",
-            payload={"brightness": 120},
-            reason="test",
-        )
-    )
+    result = await transport.read_state("light.office")
 
-    assert result["applied"] is True
-    assert result["effect_verified"] is True
+    assert result["state"] == "on"
     request = calls[0]
-    assert request["method"] == "POST"
-    assert request["url"] == "https://hass.example.test:8123/api/services/light/turn_on"
-    assert request["source"] == "world_bridge:iot.home_assistant.apply"
-    assert request["read_only"] is False
+    assert request["method"] == "GET"
+    assert request["url"] == "https://hass.example.test:8123/api/states/light.office"
+    assert request["source"] == "world_bridge:iot.home_assistant.readback"
+    assert request["read_only"] is True
     assert request["timeout_s"] == 8.0
-    assert "secret-token" not in request["data"]
-    assert '"entity_id":"light.office"' in request["data"]
-    assert calls[1]["method"] == "GET"
-    assert calls[1]["url"].endswith("/api/states/light.office")
-    assert calls[1]["read_only"] is True
+
+    with pytest.raises(RuntimeError, match="requires_reality_reach_transaction"):
+        await transport.apply(
+            iot_module.IoTEffect(
+                target="light.office",
+                op="turn_on",
+                payload={"brightness": 120},
+                reason="test",
+            )
+        )
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -336,9 +339,10 @@ async def test_action_executor_network_transport_requires_world_governance(
 
 
 @pytest.mark.asyncio
-async def test_home_assistant_acceptance_without_state_match_is_unverified(
+async def test_home_assistant_discovery_is_read_only(
     monkeypatch,
 ) -> None:
+    from core.embodiment import home_assistant_reality as hass_module
     from core.embodiment import iot_bridge as iot_module
 
     _clear_hass_environment(monkeypatch)
@@ -346,39 +350,38 @@ async def test_home_assistant_acceptance_without_state_match_is_unverified(
     monkeypatch.setenv("AURA_HASS_TOKEN", "secret-token")
 
     async def _network_request(**kwargs):
-        if kwargs["method"] == "POST":
-            return {"ok": True, "status_code": 200, "content": b"[]"}
         return {
             "ok": True,
             "status_code": 200,
-            "content": (
-                b'{"entity_id":"light.office","state":"on","attributes":'
-                b'{"brightness":10}}'
-            ),
+            "content": b'[{"entity_id":"light.office","state":"on"}]',
         }
 
-    async def _no_sleep(_seconds):
-        return None
+    calls: list[dict] = []
+
+    async def _recording_network_request(**kwargs):
+        calls.append(kwargs)
+        return await _network_request(**kwargs)
 
     monkeypatch.setattr(
-        iot_module.ActionExecutor,
+        hass_module.ActionExecutor,
         "request_network_transport",
-        staticmethod(_network_request),
+        staticmethod(_recording_network_request),
     )
-    monkeypatch.setattr(iot_module.asyncio, "sleep", _no_sleep)
     transport = iot_module.HassTransport()
 
-    result = await transport.apply(
-        iot_module.IoTEffect(
-            target="light.office",
-            op="turn_on",
-            payload={"brightness": 120},
-        )
-    )
+    result = await transport.discover()
 
-    assert result["applied"] is True
-    assert result["effect_verified"] is False
-    assert result["observed_state"]["attributes"] == {"brightness": 10}
+    assert result[0]["entity_id"] == "light.office"
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "https://hass.example.test:8123/api/states",
+            "headers": {"Authorization": "Bearer secret-token"},
+            "timeout_s": 8.0,
+            "source": "world_bridge:iot.home_assistant.discover",
+            "read_only": True,
+        }
+    ]
 
 
 @pytest.mark.asyncio

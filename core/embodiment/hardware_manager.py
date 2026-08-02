@@ -6,6 +6,11 @@ import os
 import threading
 from typing import Any
 
+from core.reality_reach.body_projection import (
+    PhysicalBodyProjection,
+    project_adapter_to_body,
+    remove_body_projection,
+)
 from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
@@ -77,6 +82,8 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
         self.connection_failures: dict[str, str] = {}
         self.reality_adapters: dict[str, HardwareRealityAdapter] = {}
         self._reality_service: Any | None = None
+        self._observation_router: Any | None = None
+        self._body_projections: dict[str, PhysicalBodyProjection] = {}
         self._started = False
 
     def bind_reality_reach(self, service: Any) -> None:
@@ -87,6 +94,15 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
         if self._reality_service is not None and self._reality_service is not service:
             raise RuntimeError("hardware manager is already bound to another reality service")
         self._reality_service = service
+
+    def bind_observation_router(self, router: Any) -> None:
+        """Bind the bounded sensory route used by connected readback adapters."""
+
+        if router is None or not callable(getattr(router, "register_sampler", None)):
+            raise TypeError("observation router must support sampler registration")
+        if self._observation_router is not None and self._observation_router is not router:
+            raise RuntimeError("hardware manager is already bound to another observation router")
+        self._observation_router = router
 
     def register_configured_devices(self) -> tuple[str, ...]:
         """Materialize only explicitly configured production hardware."""
@@ -141,6 +157,18 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                 )
                 self.logger.error("Exception connecting %s: %s", device_name, e)
 
+        if self._observation_router is not None:
+            for adapter in self.reality_adapters.values():
+                try:
+                    self._observation_router.register_sampler(adapter)
+                except (TypeError, ValueError) as exc:
+                    _record_hardware_degradation(
+                        exc,
+                        action="kept device attached while marking its sensory sampler unavailable",
+                        severity="warning",
+                        extra={"adapter_id": str(adapter.adapter_id)},
+                    )
+
     async def stop(self) -> None:
         """Gracefully disconnect all hardware during shutdown."""
         self.logger.info("Safely decoupling from physical hardware...")
@@ -158,6 +186,24 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                     severity="warning",
                     extra={"device_id": device_id, "device_name": str(device_name)[:128]},
                 )
+        if self._observation_router is not None:
+            for adapter in self.reality_adapters.values():
+                try:
+                    self._observation_router.unregister_sampler(adapter.adapter_id)
+                except LookupError:
+                    pass
+        for adapter_id, projection in list(self._body_projections.items()):
+            try:
+                remove_body_projection(projection)
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _record_hardware_degradation(
+                    exc,
+                    action="completed hardware shutdown while recording stale body projection",
+                    severity="warning",
+                    extra={"adapter_id": adapter_id},
+                )
+            finally:
+                self._body_projections.pop(adapter_id, None)
         if self._reality_service is not None:
             await asyncio.to_thread(self._reality_service.refresh)
         self._started = False
@@ -191,6 +237,9 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
         existing = self.reality_adapters.get(device.device_id)
         if existing is not None:
             await existing.refresh_readback()
+            if self._observation_router is not None:
+                self._observation_router.register_sampler(existing)
+            self._project_device_adapter(device, existing)
             if self._reality_service is not None:
                 await asyncio.to_thread(self._reality_service.refresh)
             return existing
@@ -201,9 +250,37 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
         if reading.value is None:
             raise RuntimeError("device readback is unavailable; adapter not registered")
         self._reality_service.register_adapter(adapter)
+        try:
+            if self._observation_router is not None:
+                self._observation_router.register_sampler(adapter)
+            self._project_device_adapter(device, adapter)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            if self._observation_router is not None:
+                try:
+                    self._observation_router.unregister_sampler(adapter.adapter_id)
+                except LookupError:
+                    pass
+            self._reality_service.unregister_adapter(adapter.adapter_id)
+            raise
         self.reality_adapters[device.device_id] = adapter
         await asyncio.to_thread(self._reality_service.refresh)
         return adapter
+
+    def _project_device_adapter(
+        self,
+        device: BaseHardwareDevice,
+        adapter: HardwareRealityAdapter,
+    ) -> None:
+        existing = self._body_projections.get(adapter.adapter_id)
+        if existing is not None:
+            return
+        self._body_projections[adapter.adapter_id] = project_adapter_to_body(
+            adapter,
+            device_id=str(device.device_id),
+            display_name=str(device.device_name),
+            transport=f"hardware.{getattr(device, 'device_type', 'device')}",
+            persistent_identity=True,
+        )
 
     def is_alive(self) -> bool:
         """The manager is alive once its lifecycle has started."""
@@ -248,7 +325,23 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
             ):
                 raise RuntimeError("reality service cannot remove the device adapter")
             self._reality_service.unregister_adapter(adapter.adapter_id)
+            if self._observation_router is not None:
+                try:
+                    self._observation_router.unregister_sampler(adapter.adapter_id)
+                except LookupError:
+                    pass
             self.reality_adapters.pop(device_id, None)
+            projection = self._body_projections.pop(adapter.adapter_id, None)
+            if projection is not None:
+                try:
+                    remove_body_projection(projection)
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_hardware_degradation(
+                        exc,
+                        action="removed hardware registry entry while recording stale body projection",
+                        severity="warning",
+                        extra={"adapter_id": adapter.adapter_id},
+                    )
         if device_id in self.devices:
             del self.devices[device_id]
         self.connection_failures.pop(device_id, None)
@@ -300,6 +393,8 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                 "connected_devices": connected,
                 "reality_adapter_count": len(self.reality_adapters),
                 "reality_reach_bound": self._reality_service is not None,
+                "observation_router_bound": self._observation_router is not None,
+                "body_projection_count": len(self._body_projections),
                 "connection_failures": dict(self.connection_failures),
                 "status": "degraded" if self.connection_failures else base["status"],
             }
