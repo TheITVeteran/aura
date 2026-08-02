@@ -110,6 +110,9 @@ from core.runtime.detached_subprocess_broker import (  # noqa: E402
 from core.runtime.detached_worker_origin_channel import (  # noqa: E402
     DetachedWorkerOriginChannelClient,
 )
+from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
+    absent_personality_identity,
+)
 
 PLAN_FILE = "plan.json"
 JOURNAL_FILE = "campaign.jsonl"
@@ -676,13 +679,19 @@ def _validate_resident_recurrent_sft_adapter_dir(
     if not isinstance(adapter_binding, dict):
         raise CampaignProducerError("resident recurrent-SFT adapter binding is invalid")
     adapter_path = _contained_adapter_artifact(adapter_dir, adapter_binding.get("path"))
+    expected_absent = personality_bundle_identity(None)
+    if dict(personality_identity) != expected_absent:
+        raise CampaignProducerError(
+            "resident recurrent-SFT personality selection must remain absent"
+        )
+    sft_personality_identity = absent_personality_identity()
     receipt = (
         resident_recurrent_sft_adapter_identity.validate_resident_recurrent_sft_adapter_identity(
             manifest_bytes,
             adapter_id=adapter_id,
             actual_base_checkpoint=base_checkpoint,
             actual_model_behavior_bundle=model_behavior_bundle,
-            actual_personality_adapter=personality_identity,
+            actual_personality_adapter=sft_personality_identity,
             actual_runtime_environment=runtime_environment,
             artifacts=artifacts,
             tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),

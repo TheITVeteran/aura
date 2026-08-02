@@ -40,6 +40,24 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 from tools import run_latent_cortex_paired_campaign as runner
 
 
+def test_resident_sft_absent_personality_identity_is_semantically_bound() -> None:
+    plain_absence = runner.personality_bundle_identity(None)
+    semantic_absence = runner.absent_personality_identity()
+
+    assert plain_absence == {
+        "present": False,
+        "bundle_sha256": "",
+        "file_count": 0,
+        "files": [],
+    }
+    assert semantic_absence == {
+        **plain_absence,
+        "identity_sha256": runner.resident_recurrent_sft_adapter_identity.sha256_json(
+            plain_absence
+        ),
+    }
+
+
 def _synthetic_claim_plan_for_nonstatistical_contract(
     unsigned: CampaignPlan,
     *,
@@ -54,19 +72,14 @@ def _synthetic_claim_plan_for_nonstatistical_contract(
     metadata["campaign_trust"] = campaign_trust
     return CampaignPlan.build(
         document["campaign_name"],
-        [
-            unsigned.cell_definition(cell_id)
-            for cell_id in unsigned.cell_ids
-        ],
+        [unsigned.cell_definition(cell_id) for cell_id in unsigned.cell_ids],
         metadata=metadata,
     )
 
 
 def _external_policy_fixture(campaign_name: str, now: int):
     root = Ed25519PrivateKey.generate()
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     roles = {}
     for role, key in role_keys.items():
         raw = key.public_key().public_bytes(
@@ -81,9 +94,7 @@ def _external_policy_fixture(campaign_name: str, now: int):
             "implementation_sha256": hashlib.sha256(f"{role}:impl".encode()).hexdigest(),
             "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
             "custody_class": "remote_hsm",
-            "custody_evidence_sha256": hashlib.sha256(
-                f"{role}:custody".encode()
-            ).hexdigest(),
+            "custody_evidence_sha256": hashlib.sha256(f"{role}:custody".encode()).hexdigest(),
         }
     body = {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
@@ -234,10 +245,7 @@ def test_outputs_are_sealed_before_answer_reveal_and_scoring(tmp_path: Path):
         assert journal.resume().committed_cell_ids == ()
         assert journal.resume().sealed_cell_ids == plan.cell_ids
 
-    assert all(
-        runner._arm_outputs_sealed(campaign_dir, plan, arm)
-        for arm in runner.FULL_ARMS
-    )
+    assert all(runner._arm_outputs_sealed(campaign_dir, plan, arm) for arm in runner.FULL_ARMS)
     sealed = runner._seal_output_manifest(campaign_dir, plan)
     reveal = runner._admit_answer_reveal(
         SimpleNamespace(
@@ -259,8 +267,7 @@ def test_outputs_are_sealed_before_answer_reveal_and_scoring(tmp_path: Path):
     with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
         assert journal.resume().committed_cell_ids == plan.cell_ids
         assert all(
-            record["verification"]["correct"] is True
-            for record in journal.committed_records()
+            record["verification"]["correct"] is True for record in journal.committed_records()
         )
 
 
@@ -293,9 +300,7 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         "signature": {
             "algorithm": "ed25519",
             "key_id": audit_sha,
-            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode(
-                "ascii"
-            ),
+            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(audit_bytes).hexdigest(),
             "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
             "trust_root_sha256": audit_sha,
@@ -362,18 +367,14 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         plan,
         worker_execution=worker_execution,
     )
-    monkeypatch.setattr(
-        runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy
-    )
+    monkeypatch.setattr(runner, "_load_campaign_trust_policy", lambda *_args, **_kwargs: policy)
     args = SimpleNamespace(
         campaign_dir=str(campaign_dir),
         answer_reveal_attestation="",
     )
 
     assert runner._admit_answer_reveal(args, plan, tasks, sealed) is None
-    request = json.loads(
-        (campaign_dir / runner.ANSWER_REVEAL_REQUEST_FILE).read_bytes()
-    )
+    request = json.loads((campaign_dir / runner.ANSWER_REVEAL_REQUEST_FILE).read_bytes())
     attestation = build_role_attestation(
         policy,
         role=TASK_ISSUER,
@@ -407,13 +408,9 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         )
         is None
     )
-    final_request = json.loads(
-        (campaign_dir / runner.FINAL_RUN_REQUEST_FILE).read_bytes()
-    )
+    final_request = json.loads((campaign_dir / runner.FINAL_RUN_REQUEST_FILE).read_bytes())
     assert (
-        final_request["signed_payload"]["payload"][
-            "worker_execution_manifest_sha256"
-        ]
+        final_request["signed_payload"]["payload"]["worker_execution_manifest_sha256"]
         == worker_execution["manifest_sha256"]
     )
     final_attestation = build_role_attestation(
@@ -424,9 +421,7 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         private_key=role_keys[CAMPAIGN_RUNNER],
     )
     final_attestation_path = tmp_path / "final-run-attestation.json"
-    final_attestation_path.write_bytes(
-        canonical_json_bytes(final_attestation) + b"\n"
-    )
+    final_attestation_path.write_bytes(canonical_json_bytes(final_attestation) + b"\n")
     args.final_run_attestation = str(final_attestation_path)
 
     final_envelope = runner._admit_final_run_envelope(
@@ -501,9 +496,7 @@ def test_atomic_artifact_rejects_concurrent_symlink_substitution(
 def test_implementation_identity_covers_complete_latent_cortex_source():
     observed = runner._implementation_sha256()
     latent_root = runner.REPO_ROOT / "core/brain/llm/latent_cortex"
-    expected = {
-        str(path.relative_to(runner.REPO_ROOT)) for path in latent_root.glob("*.py")
-    }
+    expected = {str(path.relative_to(runner.REPO_ROOT)) for path in latent_root.glob("*.py")}
 
     assert expected.issubset(observed)
     assert "core/brain/llm/latent_cortex/fast_weights.py" in observed
@@ -598,9 +591,7 @@ def test_claim_broker_policy_covers_every_exact_worker_attempt_command(
     for entry in policy:
         contract = entry["worker_origin"]
         arm = entry["command"][entry["command"].index("--worker-arm") + 1]
-        slot = int(
-            entry["command"][entry["command"].index("--worker-attempt-slot") + 1]
-        )
+        slot = int(entry["command"][entry["command"].index("--worker-attempt-slot") + 1])
         assert contract["arm"] == arm
         assert contract["worker_attempt_slot"] == slot
         assert contract["allowed_cells"] == [
@@ -691,9 +682,7 @@ def _worker_origin_claim_fixture(tmp_path: Path):
         "signature": {
             "algorithm": "ed25519",
             "key_id": hashlib.sha256(auditor_der).hexdigest(),
-            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode(
-                "ascii"
-            ),
+            "signature_b64": base64.b64encode(auditor.sign(audit_bytes)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(audit_bytes).hexdigest(),
             "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
             "trust_root_sha256": hashlib.sha256(auditor_der).hexdigest(),
@@ -773,9 +762,7 @@ def _worker_origin_claim_fixture(tmp_path: Path):
         runner_attestation="/external/runner.json",
         worker_arm="",
     )
-    Path(args.campaign_trust_policy).write_bytes(
-        canonical_json_bytes(policy.document) + b"\n"
-    )
+    Path(args.campaign_trust_policy).write_bytes(canonical_json_bytes(policy.document) + b"\n")
     Path(args.campaign_trust_root).write_bytes(root_pem)
     Path(args.campaign_trust_policy).chmod(0o600)
     Path(args.campaign_trust_root).chmod(0o600)
@@ -845,11 +832,14 @@ def test_claim_worker_waits_for_external_authorization_without_consuming_slot(
 
     assert outcome is accepted
     assert attempts == 3
-    assert runner._next_worker_attempt_slot(
-        Path(args.campaign_dir),
-        runner.PRIMARY_ARMS[0],
-        maximum=args.max_infra_attempts,
-    ) == 1
+    assert (
+        runner._next_worker_attempt_slot(
+            Path(args.campaign_dir),
+            runner.PRIMARY_ARMS[0],
+            maximum=args.max_infra_attempts,
+        )
+        == 1
+    )
 
 
 def test_worker_attempt_slot_reuses_pending_authorization_and_skips_terminal_work(
@@ -1007,9 +997,7 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
     with runner.CampaignJournal(campaign_dir / runner.JOURNAL_FILE, plan) as journal:
         for arm_index, arm in enumerate(runner.PRIMARY_ARMS, start=1):
             cell_ids = [
-                cell_id
-                for cell_id in plan.cell_ids
-                if plan.cell_definition(cell_id)["arm"] == arm
+                cell_id for cell_id in plan.cell_ids if plan.cell_definition(cell_id)["arm"] == arm
             ]
             assert len(cell_ids) == 1
             cell_id = cell_ids[0]
@@ -1054,9 +1042,7 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
                     "manifest_sha256": hashlib.sha256(
                         f"manifest:{result_index}".encode()
                     ).hexdigest(),
-                    "stage_sha256": hashlib.sha256(
-                        f"stage:{result_index}".encode()
-                    ).hexdigest(),
+                    "stage_sha256": hashlib.sha256(f"stage:{result_index}".encode()).hexdigest(),
                     "stage_journal_head_sha256": hashlib.sha256(
                         f"journal:{result_index}".encode()
                     ).hexdigest(),
@@ -1067,14 +1053,10 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
                     "detached_plan_sha256": detached_plan_sha256,
                 }
                 import_intent = {
-                    "intent_sha256": hashlib.sha256(
-                        f"intent:{result_index}".encode()
-                    ).hexdigest()
+                    "intent_sha256": hashlib.sha256(f"intent:{result_index}".encode()).hexdigest()
                 }
                 import_receipt = {
-                    "receipt_sha256": hashlib.sha256(
-                        f"import:{result_index}".encode()
-                    ).hexdigest(),
+                    "receipt_sha256": hashlib.sha256(f"import:{result_index}".encode()).hexdigest(),
                     "imported": [{"result_origin_sha256": origin_sha256}],
                 }
                 for path, document in (
@@ -1140,15 +1122,13 @@ def test_worker_execution_manifest_binds_imports_exclusions_and_detached_snapsho
     assert manifest["detached_run_dir"] == str(detached_run_dir)
     assert manifest["detached_plan_path"] == str(detached_plan_path)
     assert manifest["detached_attempts_path"] == str(detached_attempts_path)
-    assert manifest["detached_plan_artifact_sha256"] == hashlib.sha256(
-        detached_plan_path.read_bytes()
-    ).hexdigest()
+    assert (
+        manifest["detached_plan_artifact_sha256"]
+        == hashlib.sha256(detached_plan_path.read_bytes()).hexdigest()
+    )
     assert manifest["detached_classification_head_sha256"] == "c" * 64
     assert manifest["detached_classifications"]["terminal_count"] == len(results)
-    assert (
-        manifest["excluded_attempts"][0]["classification"]
-        == "terminal_excluded"
-    )
+    assert manifest["excluded_attempts"][0]["classification"] == "terminal_excluded"
 
 
 def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
@@ -1158,13 +1138,9 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
         profile="full",
         domain_values=runner.FRONTIER_DOMAINS,
     )
-    minimum_observations = runner._statistical_power_plan(args)[
-        "minimum_observations"
-    ]
+    minimum_observations = runner._statistical_power_plan(args)["minimum_observations"]
     assert minimum_observations == 411
-    args.seed_values = tuple(
-        (1 << 60) + value for value in range(minimum_observations)
-    )
+    args.seed_values = tuple((1 << 60) + value for value in range(minimum_observations))
     model_identity = {
         "runtime_bundle": {
             "model_type": "qwen2",
@@ -1172,57 +1148,21 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
             "logical_parameter_count_basis": "architecture_config_logical",
         }
     }
-    adapter_identity = {
-        "manifest": {"dataset_manifest": {"sha256": "d" * 64}}
-    }
+    adapter_identity = {"manifest": {"dataset_manifest": {"sha256": "d" * 64}}}
     audit = {"status": "passed_zero_overlap", "signature": {"verified": True}}
     trust = {"prelaunch_verified": True, "externally_custodied": True}
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, audit, trust
-        )
-        is True
-    )
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is True
 
     args.domain_values = ("mathematics", "coding")
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, audit, trust
-        )
-        is False
-    )
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is False
     args.domain_values = runner.FRONTIER_DOMAINS
-    args.seed_values = tuple(
-        (1 << 60) + value for value in range(minimum_observations - 1)
-    )
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, audit, trust
-        )
-        is False
-    )
-    args.seed_values = tuple(
-        (1 << 60) + value for value in range(minimum_observations)
-    )
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, {}, trust
-        )
-        is False
-    )
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, audit, None
-        )
-        is False
-    )
+    args.seed_values = tuple((1 << 60) + value for value in range(minimum_observations - 1))
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is False
+    args.seed_values = tuple((1 << 60) + value for value in range(minimum_observations))
+    assert runner._claim_eligible(args, model_identity, adapter_identity, {}, trust) is False
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, None) is False
     args.seed_values = tuple(range(minimum_observations))
-    assert (
-        runner._claim_eligible(
-            args, model_identity, adapter_identity, audit, trust
-        )
-        is False
-    )
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is False
 
 
 def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path):
@@ -1249,9 +1189,9 @@ def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path
         "signature": {
             "algorithm": "ed25519",
             "key_id": key_id,
-            "signature_b64": base64.b64encode(
-                private_key.sign(canonical_json_bytes(body))
-            ).decode("ascii"),
+            "signature_b64": base64.b64encode(private_key.sign(canonical_json_bytes(body))).decode(
+                "ascii"
+            ),
         },
     }
     audit_path = tmp_path / "audit.json"
@@ -1272,9 +1212,10 @@ def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path
 
     assert verified["signature"]["verified"] is True
     assert verified["signature"]["trust_root_sha256"] == key_id
-    assert verified["signature"]["signed_payload_sha256"] == hashlib.sha256(
-        canonical_json_bytes(body)
-    ).hexdigest()
+    assert (
+        verified["signature"]["signed_payload_sha256"]
+        == hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+    )
 
     audit["overlap_count"] = 1
     audit_path.write_text(json.dumps(audit))
@@ -1307,9 +1248,9 @@ def test_contamination_audit_must_cover_bound_adapter_training_corpus(
         "signature": {
             "algorithm": "ed25519",
             "key_id": hashlib.sha256(public_der).hexdigest(),
-            "signature_b64": base64.b64encode(
-                private_key.sign(canonical_json_bytes(body))
-            ).decode("ascii"),
+            "signature_b64": base64.b64encode(private_key.sign(canonical_json_bytes(body))).decode(
+                "ascii"
+            ),
         },
     }
     audit_path = tmp_path / "audit.json"
@@ -1342,14 +1283,16 @@ def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
 ):
     now = int(time.time())
     root_key = Ed25519PrivateKey.generate()
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
 
     def role_pin(role: str) -> dict[str, str]:
-        raw = role_keys[role].public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
+        raw = (
+            role_keys[role]
+            .public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
         )
         implementation_sha256 = (
             runner._prelaunch_role_implementation_sha256(role)
@@ -1364,9 +1307,7 @@ def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
             "implementation_sha256": implementation_sha256,
             "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
             "custody_class": "remote_hsm",
-            "custody_evidence_sha256": hashlib.sha256(
-                f"{role}:custody".encode()
-            ).hexdigest(),
+            "custody_evidence_sha256": hashlib.sha256(f"{role}:custody".encode()).hexdigest(),
         }
 
     policy_body = {
@@ -1392,9 +1333,7 @@ def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
         "root_signature": {
             "algorithm": "Ed25519",
             "key_id": hashlib.sha256(root_raw).hexdigest(),
-            "signature_b64": base64.b64encode(
-                root_key.sign(root_payload)
-            ).decode("ascii"),
+            "signature_b64": base64.b64encode(root_key.sign(root_payload)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(root_payload).hexdigest(),
         },
     }
@@ -1432,9 +1371,7 @@ def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
         "signature": {
             "algorithm": "ed25519",
             "key_id": hashlib.sha256(auditor_der).hexdigest(),
-            "signature_b64": base64.b64encode(
-                auditor_key.sign(audit_payload)
-            ).decode("ascii"),
+            "signature_b64": base64.b64encode(auditor_key.sign(audit_payload)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(audit_payload).hexdigest(),
             "public_key_der_b64": base64.b64encode(auditor_der).decode("ascii"),
             "trust_root_sha256": hashlib.sha256(auditor_der).hexdigest(),
@@ -1589,9 +1526,7 @@ def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
 
 
 def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
-    task = generate_task_battery(
-        [7], domains=("mathematics",), difficulty=1
-    )[0].public
+    task = generate_task_battery([7], domains=("mathematics",), difficulty=1)[0].public
     generated = 'work\nFINAL_ANSWER: {"answer":7}TRAILING'
     consumed: list[str] = []
     observed: dict = {}
@@ -1677,9 +1612,7 @@ def test_rlc_campaign_verifier_receives_public_response_contract():
         LatentReasoningResult,
     )
 
-    task = generate_task_battery(
-        [7], domains=("mathematics",), difficulty=1
-    )[0].public
+    task = generate_task_battery([7], domains=("mathematics",), difficulty=1)[0].public
     captured: dict = {}
     profile = ModelComputeProfile(
         model_type="runner-fixture",
@@ -1748,9 +1681,7 @@ def test_projection_resolution_is_exact_and_rejects_missing_owner():
         )
     )
 
-    parent, leaf, observed = runner._resolve_projection(
-        model, "model.layers.0.self_attn.o_proj"
-    )
+    parent, leaf, observed = runner._resolve_projection(model, "model.layers.0.self_attn.o_proj")
     assert parent is model.model.layers[0].self_attn
     assert leaf == "o_proj"
     assert observed is projection
