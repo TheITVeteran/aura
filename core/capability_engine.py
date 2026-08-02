@@ -18,7 +18,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -1234,6 +1233,20 @@ class Sandbox2:
             )
             self.logger.error("Sandbox Violation or Error: %s", e)
             raise
+
+
+def _maturity_enforcement_enabled() -> bool:
+    """Whether the capability-maturity gate REFUSES or merely observes.
+
+    Off by default. See _maturity_gate for why: enforcing onto an ungraded
+    surface refuses most autonomous work immediately, which gets a safety
+    mechanism disabled rather than adopted.
+    """
+    import os
+
+    return str(
+        os.getenv("AURA_ENFORCE_CAPABILITY_MATURITY", "") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class CapabilityEngine(AuraBaseModule):
@@ -3886,6 +3899,158 @@ class CapabilityEngine(AuraBaseModule):
         tokens = {token for token in normalized.split("_") if token}
         return bool(tokens & _USER_FACING_CONTEXT_ORIGINS)
 
+    def _note_maturity_observation(self, skill_name: str, decision: Any) -> None:
+        """Record a refusal the gate WOULD have made, without making it.
+
+        This is the grading backlog: every entry names a capability that is
+        being reached autonomously without the engineering that use implies.
+        """
+        try:
+            observations = self._maturity_observations
+        except AttributeError:
+            observations = self._maturity_observations = {}
+        entry = observations.setdefault(
+            skill_name, {"count": 0, "decision": None}
+        )
+        entry["count"] += 1
+        entry["decision"] = decision.to_dict()
+        if entry["count"] == 1:
+            # Once per skill per process — this is a backlog item, not an alarm.
+            self.logger.info(
+                "📋 [MATURITY] %s would be refused for %s use (%s). "
+                "Observing only; declare its properties to clear this.",
+                skill_name, decision.context.name.lower(), decision.reason,
+            )
+
+    def maturity_backlog(self) -> dict[str, Any]:
+        """Capabilities being used beyond their proven maturity.
+
+        Surfaced so the gap is visible in health rather than living only in
+        logs — an ungraded surface is the reason this gate is not enforcing.
+        """
+        observations = getattr(self, "_maturity_observations", {}) or {}
+        return {
+            "enforcing": _maturity_enforcement_enabled(),
+            "capabilities": {
+                name: dict(entry) for name, entry in observations.items()
+            },
+            "count": len(observations),
+        }
+
+    def capability_maturity(self, skill_name: str) -> Any:
+        """Grade a skill from the metadata it ALREADY declares.
+
+        Deliberately derived rather than separately declared: a parallel
+        maturity manifest would be a second source of truth, and the one nobody
+        updates would be the one gating autonomous action.
+        """
+        try:
+            from core.runtime.capability_maturity import (
+                derive_properties,
+                grade_capability,
+            )
+        except ImportError:
+            return None
+
+        meta = self.skills.get(skill_name)
+        if meta is None:
+            return grade_capability(skill_name)
+
+        declared = getattr(meta, "maturity_properties", None)
+        properties = derive_properties(
+            input_model=getattr(meta, "input_model", None),
+            schema_override=getattr(meta, "schema_override", None),
+            effect_scope=getattr(meta, "effect_scope", "unknown"),
+            authority_class=getattr(meta, "authority_class", "unclassified"),
+            declared=declared,
+        )
+        return grade_capability(
+            skill_name,
+            properties,
+            claimed_tier=getattr(meta, "claimed_maturity_tier", None),
+            exemptions=getattr(meta, "maturity_exemptions", None),
+        )
+
+    def _maturity_use_context(self, ctx: dict[str, Any], exec_source: Any) -> Any:
+        """Classify who is asking and whether anyone is watching."""
+        from core.runtime.capability_maturity import UseContext
+
+        if self._is_user_facing_origin(exec_source):
+            return UseContext.ATTENDED
+
+        # Not user-facing: Aura is acting on her own. Whether the effect can be
+        # undone decides how much maturity that requires.
+        meta = self.skills.get(str(ctx.get("skill_name") or "")) if ctx else None
+        scope = str(getattr(meta, "effect_scope", "") or "").lower()
+        irreversible = bool(ctx.get("irreversible")) or scope in {
+            "external_io", "model_weight_mutation",
+        }
+        return (
+            UseContext.AUTONOMOUS_IRREVERSIBLE if irreversible
+            else UseContext.AUTONOMOUS
+        )
+
+    def _maturity_gate(
+        self, skill_name: str, ctx: dict[str, Any], exec_source: Any
+    ) -> dict[str, Any] | None:
+        """Refuse a skill whose maturity does not support this kind of use.
+
+        Returns a structured refusal, or None to proceed. Never raises: a gate
+        that cannot evaluate must not become an outage, so any failure here
+        allows execution and records the gap.
+        """
+        try:
+            from core.runtime.capability_maturity import UseContext, admission_for
+
+            maturity = self.capability_maturity(skill_name)
+            if maturity is None:
+                return None
+            context = self._maturity_use_context(
+                {**(ctx or {}), "skill_name": skill_name}, exec_source
+            )
+            if context is UseContext.ATTENDED:
+                return None  # a person is watching; nothing to gate
+            decision = admission_for(maturity, context)
+            if decision.allowed:
+                return None
+
+            # OBSERVE MODE IS THE DEFAULT, and that is a deliberate rollout
+            # decision rather than a half-finished one. Aura's skill surface is
+            # large and almost entirely ungraded: shipping this gate enforcing
+            # would refuse most autonomous work on day one, which is how a
+            # safety mechanism gets switched off permanently instead of adopted.
+            #
+            # So the gate runs live from the start and RECORDS every refusal it
+            # would have made. Those records are the grading backlog. Once the
+            # capabilities that matter carry their properties, enforcement is a
+            # single flag.
+            if not _maturity_enforcement_enabled():
+                self._note_maturity_observation(skill_name, decision)
+                return None
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="allowed skill execution because the maturity gate could not evaluate",
+                severity="warning",
+                enforce_failure_policy=False,
+            )
+            return None
+
+        self.logger.warning(
+            "🛑 [MATURITY] %s refused for %s use: %s",
+            skill_name, decision.context.name.lower(), decision.reason,
+        )
+        return {
+            "ok": False,
+            "status": "refused",
+            "reason": "capability_maturity",
+            "message": (
+                f"{skill_name} is not mature enough for unattended use "
+                f"({decision.reason}). Ask again and I will run it while you watch."
+            ),
+            "maturity": decision.to_dict(),
+        }
+
     @staticmethod
     def _looks_like_search_capability_question(text: str) -> bool:
         raw = str(text or "").strip()
@@ -4253,6 +4418,17 @@ class CapabilityEngine(AuraBaseModule):
             start_time = time.monotonic()
             ctx = self._augment_execution_context(context)
             exec_source = self._resolve_execution_source(ctx)
+
+            # MATURITY GATE. Registration means the import succeeded; it does
+            # not mean this skill validates inputs, bounds its timeout, is safe
+            # to retry, or reports a usable error. Autonomous use reaches the
+            # least-exercised connector in the registry with nobody watching,
+            # so the reach a skill gets is bounded by the engineering behind it.
+            # Attended use is unrestricted — this narrows REACH, not capability.
+            maturity_refusal = self._maturity_gate(skill_name, ctx, exec_source)
+            if maturity_refusal is not None:
+                return maturity_refusal
+
             if (
                 skill_name in _FOREGROUND_EXCLUSIVE_BACKGROUND_SKILLS
                 and not self._is_user_facing_origin(exec_source)
