@@ -114,7 +114,7 @@ def _fixture(tmp_path: Path, *, resident_sft: bool = False) -> tuple[Path, Path,
         "arm_timeout_s": 10800.0,
         "campaign_timeout_s": 43200.0,
         "equal_compute_max_samples": 8,
-        "max_infra_attempts": 3,
+        "worker_origin_attempt_slots": 3,
         "generation_seed_count": 2,
         "generation_seed_min_entropy_bits": 63,
         "effective_rlc_config": {"allow_vanilla_fallback": False},
@@ -208,6 +208,7 @@ def test_builds_v3_contract_from_identity_bound_resident_sft_spec(
     assert contract["campaign"]["n_slots"] == 16
     assert contract["campaign"]["branches"] == 2
     assert contract["campaign"]["rlc_steps"] == 2
+    assert contract["campaign"]["max_infra_attempts"] == 3
     assert contract["campaign"]["adapter_execution_spec_sha256"] == RLCExecutionSpec().sha256
 
     contract_path = tmp_path / "contract.json"

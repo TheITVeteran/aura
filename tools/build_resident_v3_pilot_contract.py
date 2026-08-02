@@ -217,6 +217,12 @@ def build_contract(
         "generation_seed_count": 2,
         "generation_seed_min_entropy_bits": 63,
     }
+    plan_requested = {key: value for key, value in requested.items() if key != "max_infra_attempts"}
+    # The campaign plan binds the number of pre-authorized, detached worker
+    # slots. The CLI calls the same limit max_infra_attempts; translate the
+    # public launch term to the persisted plan schema instead of requiring a
+    # field the runner never emits.
+    plan_requested["worker_origin_attempt_slots"] = requested["max_infra_attempts"]
     if (
         not contract_id
         or not created_at
@@ -228,7 +234,7 @@ def build_contract(
         or metadata.get("claim_eligible") is not False
         or task_manifest.get("task_count") != 14
         or sorted(task_manifest.get("domains", [])) != sorted(DOMAINS)
-        or any(execution.get(key) != value for key, value in requested.items())
+        or any(execution.get(key) != value for key, value in plan_requested.items())
         or execution.get("effective_rlc_config", {}).get("allow_vanilla_fallback") is not False
         or len(plan.cell_ids) != 56
         or adapter.get("adapter_dir") is None

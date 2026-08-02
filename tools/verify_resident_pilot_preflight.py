@@ -294,7 +294,7 @@ def _verify_plan(contract: Mapping[str, Any], plan_path: Path) -> CampaignPlan:
         "arm_timeout_s": campaign.get("arm_timeout_s"),
         "campaign_timeout_s": campaign.get("campaign_timeout_s"),
         "equal_compute_max_samples": campaign.get("equal_compute_max_samples"),
-        "max_infra_attempts": campaign.get("max_infra_attempts"),
+        "worker_origin_attempt_slots": campaign.get("max_infra_attempts"),
         "generation_seed_count": 2,
         "generation_seed_min_entropy_bits": 63,
     }
