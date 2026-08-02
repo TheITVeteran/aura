@@ -551,11 +551,18 @@ class TestFrictionlessCapabilityAccess:
         """CapabilityEngine must maintain a registry of all known skills."""
         from core.capability_engine import CapabilityEngine
 
-        # CapabilityEngine uses self.skills (instance attribute set in __init__)
-        # Verify it is defined in __init__ via source inspection
-        source = inspect.getsource(CapabilityEngine.__init__)
-        assert "self.skills" in source, \
-            "CapabilityEngine must have a self.skills registry"
+        # Asserted behaviourally, not by grepping __init__ for the literal
+        # "self.skills". The registry moved to a lazily-loaded property so
+        # that constructing the engine no longer runs a multi-second catalog
+        # scan on whatever thread (or event loop) built the service — and the
+        # source-text assertion failed on that change while the registry it
+        # was checking for worked perfectly. What matters here is that every
+        # skill is reachable without the caller hunting for it.
+        engine = CapabilityEngine()
+        registry = engine.skills
+        assert isinstance(registry, dict), "the skill registry must be a mapping"
+        assert registry, "the skill registry must not be empty"
+        assert all(isinstance(name, str) for name in registry)
         assert _class_has_method(CapabilityEngine, "get_available_skills"), \
             "CapabilityEngine must expose get_available_skills()"
 

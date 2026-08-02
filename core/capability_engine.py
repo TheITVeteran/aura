@@ -1227,8 +1227,10 @@ class CapabilityEngine(AuraBaseModule):
         self.orchestrator = orchestrator
         self._catalog_lock = threading.RLock()
         self._catalog_mutation_lock = threading.RLock()
-        self.skills: dict[str, SkillMetadata] = {}
-        self.instances: dict[str, Any] = {}
+        self._skills: dict[str, SkillMetadata] = {}
+        self._instances: dict[str, Any] = {}
+        self._catalog_loaded = False
+        self._catalog_load_lock = threading.RLock()
         self.quarantined_skills: dict[str, dict[str, Any]] = {}
         self.catalog_exclusions: list[dict[str, Any]] = []
         self.catalog_health: dict[str, Any] = {
@@ -1328,13 +1330,59 @@ class CapabilityEngine(AuraBaseModule):
         self.sandbox = Sandbox2(self.logger)
         self._load_dependencies()
 
-        self.reload_skills()
-        self._initialize_skill_states()
-        self._load_default_trigger_patterns()
+        # CP126: "CapabilityEngine initialization calls reload_skills
+        # directly. Discovery, imports, source verification, dependency
+        # probes, and trigger compilation can therefore block whichever
+        # thread or event-loop path first constructs the service."
+        #
+        # That is a multi-second scan of ~130 source files, with imports and
+        # dry runs, executed by whoever happened to construct the service —
+        # including an async boot path, where it stalls the event loop for
+        # the duration. CLAUDE.md carries the scar from the last time
+        # something blocking ran on that loop.
+        #
+        # Construction no longer does it. The catalog loads on first access
+        # through the skills/instances properties, so every existing caller
+        # still sees a populated catalog the moment it looks, and the work
+        # lands on the code path that actually wanted skills rather than on
+        # whatever thread built the container.
         self.logger.info(
-            "✓ CapabilityEngine online with %d registered skills (Intent Mapping enabled)",
-            len(self.skills),
+            "✓ CapabilityEngine online (catalog loads on first access)"
         )
+
+    def _ensure_catalog_loaded(self) -> None:
+        """Load the skill catalog once, on whoever asks for it first."""
+        if self._catalog_loaded:
+            return
+        with self._catalog_load_lock:
+            if self._catalog_loaded:
+                return
+            self.reload_skills()
+            self._initialize_skill_states()
+            self._load_default_trigger_patterns()
+            self.logger.info(
+                "✓ CapabilityEngine catalog loaded with %d registered skills",
+                len(self._skills),
+            )
+
+    @property
+    def skills(self) -> dict[str, SkillMetadata]:
+        self._ensure_catalog_loaded()
+        return self._skills
+
+    @skills.setter
+    def skills(self, value: dict[str, SkillMetadata]) -> None:
+        self._skills = value
+        self._catalog_loaded = True
+
+    @property
+    def instances(self) -> dict[str, Any]:
+        self._ensure_catalog_loaded()
+        return self._instances
+
+    @instances.setter
+    def instances(self, value: dict[str, Any]) -> None:
+        self._instances = value
 
     def _catalog_guard(self) -> RLockType:
         lock = getattr(self, "_catalog_lock", None)
@@ -2323,11 +2371,12 @@ class CapabilityEngine(AuraBaseModule):
         with self._catalog_guard():
             superseded_instances = [
                 (name, instance)
-                for name, instance in (self.instances or {}).items()
+                for name, instance in (self._instances or {}).items()
                 if next_instances.get(name) is not instance
             ]
-            self.skills = next_skills
-            self.instances = next_instances
+            self._skills = next_skills
+            self._instances = next_instances
+            self._catalog_loaded = True
             self.quarantined_skills = next_quarantined
             self.catalog_exclusions = next_exclusions
             self.skill_states = {name: "READY" for name in next_skills}
