@@ -38,6 +38,22 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from core.runtime.errors import record_degradation
+
+#: Stage failures are reported to the caller as a failed StageResult, which
+#: is the loop's contract. They were NOT reaching the degradation ledger, so
+#: a plugged-in organ that threw on every cycle was invisible to health and
+#: incident tooling — the loop honestly reported "failed" to whoever asked,
+#: and nobody was asking. CLAUDE.md states the rule: never a silent swallow.
+def _record_stage_degradation(stage: str, exc: BaseException) -> None:
+    record_degradation(
+        "cognitive_loop",
+        exc,
+        severity="warning",
+        action=f"reported {stage} stage failure and continued the loop",
+        enforce_failure_policy=False,
+    )
+
 COGNITIVE_LOOP_SCHEMA = "aura.cognitive_loop.v1"
 
 
@@ -136,6 +152,7 @@ class CognitiveLoop:
         try:
             gap = bool(self.gap_detector.has_gap(query))
         except Exception as exc:
+            _record_stage_degradation("identify_gap", exc)
             return True, StageResult(
                 "identify_gap",
                 "failed",
@@ -151,6 +168,7 @@ class CognitiveLoop:
         try:
             block = self.composer.compose(query)
         except Exception as exc:
+            _record_stage_degradation("acquire", exc)
             return [], StageResult(
                 "acquire", "failed", {"error": type(exc).__name__}
             )
@@ -174,6 +192,7 @@ class CognitiveLoop:
         try:
             answer = self.deliberator.deliberate(query, material)
         except Exception as exc:
+            _record_stage_degradation("deliberate", exc)
             return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
         answer_text = str(answer or "").strip()
         return answer_text, StageResult(
@@ -193,6 +212,7 @@ class CognitiveLoop:
         try:
             verdict = self.verifier.check(query, candidate)
         except Exception as exc:
+            _record_stage_degradation("verify", exc)
             return False, StageResult(
                 "verify", "failed", {"verified": False, "error": type(exc).__name__}
             )
@@ -218,6 +238,7 @@ class CognitiveLoop:
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
+            _record_stage_degradation("deliberate", exc)
             return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
         answer_text = str(result or "").strip()
         return answer_text, StageResult(
@@ -240,6 +261,7 @@ class CognitiveLoop:
             if inspect.isawaitable(verdict):
                 verdict = await verdict
         except Exception as exc:
+            _record_stage_degradation("verify", exc)
             return False, StageResult(
                 "verify", "failed", {"verified": False, "error": type(exc).__name__}
             )
