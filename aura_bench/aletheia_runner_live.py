@@ -16,7 +16,6 @@ import argparse
 import ast
 import csv
 import hashlib
-import importlib.util
 import io
 import json
 import logging
@@ -39,6 +38,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import httpx
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.sandbox.untrusted_python import call_untrusted_function
 
 logging.basicConfig(
     level=logging.INFO,
@@ -401,34 +401,50 @@ def validate_device_model_from_visible_observations(code: str, wdir: Path) -> No
     if not rows:
         return
 
+    # CP126 (critical): "Rulescript and device handlers import and execute
+    # Aura-generated modules with importlib in the privileged runner
+    # process. AST parsing and temporary paths do not provide an OS
+    # sandbox, capability boundary, or resource limit."
+    #
+    # exec_module() ran this model's code with the benchmark's own
+    # authority — this machine's filesystem, network and credentials — and
+    # ast.parse() before it proves only that the text is syntactically
+    # Python. Every call now crosses a kernel boundary instead.
     try:
         ast.parse(code, filename="<aura_device_model>")
-        with tempfile.TemporaryDirectory(prefix="aura_device_model_") as tmp:
-            module_path = Path(tmp) / "model.py"
-            atomic_write_text(module_path, code)
-            spec = importlib.util.spec_from_file_location("aura_device_model_candidate", module_path)
-            if spec is None or spec.loader is None:
-                raise ArtifactValidationError("Aura device model loader unavailable")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            predictor = getattr(module, "predict_output", None)
-    except ArtifactValidationError:
-        raise
     except _WORLD_PROCESSING_ERRORS as exc:
-        raise ArtifactValidationError(f"Aura device model failed to load: {exc}") from exc
+        raise ArtifactValidationError(f"Aura device model failed to parse: {exc}") from exc
 
-    if not callable(predictor):
-        raise ArtifactValidationError("Aura device model must define predict_output(x, y, color)")
+    calls = [(row["x"], row["y"], row["catalyst"]) for row in rows]
+    outcome = call_untrusted_function(
+        code,
+        "predict_output",
+        calls,
+        source="aletheia.device_model",
+    )
+    if outcome.status == "no_boundary":
+        raise ArtifactValidationError(
+            f"cannot validate Aura device model safely: {outcome.error}"
+        )
+    if outcome.status == "error":
+        detail = outcome.error or "unknown failure"
+        if "predict_output" in detail and "not defined" in detail:
+            raise ArtifactValidationError(
+                "Aura device model must define predict_output(x, y, color)"
+            )
+        raise ArtifactValidationError(f"Aura device model failed to run: {detail}")
+    if outcome.status != "ok":
+        raise ArtifactValidationError(
+            f"Aura device model did not complete ({outcome.status}): {outcome.error}"
+        )
+    if len(outcome.results) != len(rows):
+        raise ArtifactValidationError(
+            "Aura device model returned "
+            f"{len(outcome.results)} predictions for {len(rows)} observations"
+        )
 
     mismatches: list[str] = []
-    for row in rows:
-        try:
-            predicted = predictor(row["x"], row["y"], row["catalyst"])
-        except _WORLD_PROCESSING_ERRORS as exc:
-            raise ArtifactValidationError(
-                f"Aura device model crashed for visible observation {row!r}: {exc}"
-            ) from exc
-
+    for row, predicted in zip(rows, outcome.results):
         try:
             normalized = int(predicted)
         except (TypeError, ValueError) as exc:
@@ -1013,19 +1029,31 @@ class LiveWorldProcessor:
         # Execute the script
         derived = wdir / "data/derived"
         ensure_dir(derived)
-        try:
-            import importlib.util
-            mod_spec = importlib.util.spec_from_file_location("rs", app_dir / "rulescript.py")
-            mod = importlib.util.module_from_spec(mod_spec)
-            if mod_spec.loader is None:
-                raise ArtifactValidationError("rulescript loader unavailable")
-            mod_spec.loader.exec_module(mod)
-            state = mod.run_rules(wdir / "docs/workflow.rules")
-            if not isinstance(state, dict):
-                raise ArtifactValidationError("run_rules(path) did not return a state dictionary")
-            _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
-        except _WORLD_PROCESSING_ERRORS as e:
-            raise ArtifactValidationError(f"rulescript execution failed: {e}") from e
+        # CP126 (critical): this used importlib.exec_module to run
+        # Aura-written code inside the privileged runner process. The
+        # candidate now runs behind a kernel boundary, with read access to
+        # exactly the world directory it needs and nothing else.
+        rules_path = wdir / "docs/workflow.rules"
+        outcome = call_untrusted_function(
+            read_file(app_dir / "rulescript.py"),
+            "run_rules",
+            [(str(rules_path),)],
+            extra_read_paths=[wdir],
+            source="aletheia.rulescript",
+        )
+        if outcome.status == "no_boundary":
+            raise ArtifactValidationError(
+                f"cannot run Aura's rulescript safely: {outcome.error}"
+            )
+        if outcome.status != "ok":
+            raise ArtifactValidationError(
+                f"rulescript execution failed ({outcome.status}): "
+                f"{outcome.error or outcome.stderr}"
+            )
+        state = outcome.results[0] if outcome.results else None
+        if not isinstance(state, dict):
+            raise ArtifactValidationError("run_rules(path) did not return a state dictionary")
+        _write_text(derived / "state.json", json.dumps(state, indent=2, sort_keys=True))
 
         self.action_log.append(action_entry(
             wid, "edit", "apps/rules/rulescript.py",
