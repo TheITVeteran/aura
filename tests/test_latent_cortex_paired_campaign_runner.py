@@ -1669,6 +1669,94 @@ def test_rlc_campaign_verifier_receives_public_response_contract():
     assert observed_information == information
 
 
+@pytest.mark.parametrize(
+    ("reason", "text"),
+    [
+        ("answer_replacement_abstained", ""),
+        ("decode_incomplete:token_budget", "partial answer"),
+    ],
+)
+def test_rlc_campaign_scores_bounded_policy_failures_as_negative_evidence(reason, text):
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+
+    task = generate_task_battery([7], domains=("mathematics",), difficulty=1)[0].public
+    profile = ModelComputeProfile(
+        model_type="runner-fixture",
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        vocab_size=64,
+        head_dim=4,
+    )
+    ledger = ResourceLedger(profile)
+    ledger.charge("fixture_episode", transformer_layer_apps=1)
+    information = build_information_receipt(
+        sources=[
+            {
+                "source_id": "task",
+                "kind": "task_prompt",
+                "content_sha256": task.task_payload_sha256,
+                "byte_count": len(task.prompt.encode()),
+                "token_count": 1,
+            }
+        ],
+        policies={"fixture": "a" * 64},
+    )
+
+    class Engine:
+        @staticmethod
+        def reason(**_kwargs):
+            return LatentReasoningResult(
+                ok=False,
+                text=text,
+                reason=reason,
+                receipt=EpisodeReceipt(
+                    budget={
+                        "resource_accounting": ledger.to_receipt(),
+                        "information_accounting": information,
+                    }
+                ),
+            )
+
+    observed_text, _cost, _receipt, resource, observed_information = runner._run_rlc(
+        Engine(),
+        task,
+        SimpleNamespace(episode_timeout=10.0, decode_max_tokens=128),
+    )
+
+    assert observed_text == text
+    assert resource["accounting_complete"] is True
+    assert observed_information == information
+
+
+def test_rlc_campaign_still_rejects_non_policy_episode_failure():
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+
+    task = generate_task_battery([7], domains=("mathematics",), difficulty=1)[0].public
+
+    class Engine:
+        @staticmethod
+        def reason(**_kwargs):
+            return LatentReasoningResult(
+                ok=False,
+                text="must not escape",
+                reason="checkpoint_invariant_violated",
+                receipt=EpisodeReceipt(),
+            )
+
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="checkpoint_invariant_violated",
+    ):
+        runner._run_rlc(
+            Engine(),
+            task,
+            SimpleNamespace(episode_timeout=10.0, decode_max_tokens=128),
+        )
+
+
 def test_projection_resolution_is_exact_and_rejects_missing_owner():
     projection = object()
     model = SimpleNamespace(

@@ -2052,7 +2052,14 @@ def _run_rlc(
     )
     receipt = result.receipt.to_dict()
     receipt["verifier_guidance"] = verifier.to_receipt()
-    if not result.ok:
+    scored_policy_failure = bool(
+        not result.ok
+        and (
+            result.reason == "answer_replacement_abstained"
+            or result.reason.startswith("decode_incomplete:")
+        )
+    )
+    if not result.ok and not scored_policy_failure:
         raise CampaignProducerError(f"latent episode failed: {result.reason}")
     try:
         resource = validate_resource_receipt(receipt["budget"]["resource_accounting"])
