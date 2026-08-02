@@ -71,6 +71,12 @@ from core.skills.base_skill import (  # noqa: E402
 )
 from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
 from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
+from core.security.structural_redaction import (
+    redact_mapping,
+    redact_structure,
+    redact_text,
+    redaction_marker,
+)
 
 #: How much longer the engine waits than the budget it handed the skill, so a
 #: skill that runs out of time reports its own structured failure instead of
@@ -4941,27 +4947,49 @@ class CapabilityEngine(AuraBaseModule):
             # 5. Persistent Audit (ORM)
             if orm:
                 try:
-                    # Redact sensitive parameters for ORM logging
-                    safe_params = params.copy()
-                    sensitive_keys = {
-                        "password",
-                        "token",
-                        "api_key",
-                        "secret",
-                        "credentials",
-                        "auth",
-                    }
-                    for k in safe_params:
-                        if any(s in k.lower() for s in sensitive_keys):
-                            safe_params[k] = "[REDACTED]"
+                    # CP126: "Only top-level parameter keys containing a
+                    # small secret-word set are redacted. Nested
+                    # credentials, headers, URLs, content, files, and full
+                    # successful results can be persisted without
+                    # structural redaction or size limits."
+                    #
+                    # Both halves were true. params.copy() is shallow, so
+                    # {"request": {"headers": {"Authorization": "Bearer …"}}}
+                    # reached the database intact, and `result` was written
+                    # whole — unredacted and unbounded — for every
+                    # successful call, which is how a 40MB tool output ends
+                    # up as an audit row.
+                    safe_params, params_report = redact_mapping(params)
+                    safe_result: Any = None
+                    result_report = None
+                    if result.get("ok"):
+                        safe_result, result_report = redact_structure(result)
+                    safe_error = None
+                    if not result.get("ok"):
+                        safe_error, _ = redact_text(str(result.get("error") or ""))
+
+                    # Say when a row is partial. A truncated audit record
+                    # that does not admit it is worse than a missing one.
+                    for label, report in (
+                        ("params", params_report),
+                        ("result", result_report),
+                    ):
+                        marker = redaction_marker(report) if report else None
+                        if marker:
+                            self.logger.debug(
+                                "audit row for '%s' %s redacted/bounded: %s",
+                                skill_name,
+                                label,
+                                marker,
+                            )
 
                     orm.log_execution(
                         skill_name=skill_name,
                         params=safe_params,
                         status=final_state,
                         duration_ms=duration_ms,
-                        result=result if result.get("ok") else None,
-                        error=result.get("error") if not result.get("ok") else None,
+                        result=safe_result,
+                        error=safe_error,
                     )
                 except (OSError, ConnectionError, TimeoutError) as e:
                     _record_capability_degradation(
