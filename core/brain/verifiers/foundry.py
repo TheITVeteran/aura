@@ -805,16 +805,3 @@ def get_verifier_foundry() -> VerifierFoundry:
             if _foundry is None:
                 _foundry = VerifierFoundry()
     return _foundry
-
-
-def boot_verifier_foundry() -> VerifierFoundry:
-    foundry = get_verifier_foundry()
-    try:
-        from core.container import ServiceContainer
-
-        ServiceContainer.register_instance("verifier_foundry", foundry,
-                                           required=False)
-    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
-        record_degradation("verifier_foundry", exc, severity="warning",
-                           action="foundry built but not registered")
-    return foundry

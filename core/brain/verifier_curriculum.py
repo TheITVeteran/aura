@@ -22,6 +22,24 @@ must be explicitly enabled.
 The loop is bounded (fixed proposals per cycle), governed (a Will decision
 gates each cycle), and honest (every cycle emits a report of proposed /
 solved / verified / captured / refused).
+
+STATUS: NOT WIRED INTO THE LIVE RUNTIME.
+----------------------------------------
+``boot_verifier_curriculum()`` has no caller, ``get_verifier_curriculum()``
+has no caller outside this module, and nothing reads the
+``verifier_curriculum`` ServiceContainer key it registers. The loop below is
+implemented and covered by tests/test_verifier_curriculum.py; it is not part
+of any running path.
+
+Recorded here rather than left to be rediscovered, for the same reason it is
+recorded in core/consciousness/latent_bridge.py and
+core/being/closed_loop_controller.py: substantial, tested and uninvoked reads
+exactly like working from the outside. A capability claim needs a call site,
+not a class.
+
+Contrast with the verifier FOUNDRY next door, which is genuinely live —
+core/brain/latent_cortex_service.py calls get_verifier_foundry() directly.
+Only its unused boot_ wrapper was removed.
 """
 from __future__ import annotations
 

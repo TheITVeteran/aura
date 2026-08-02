@@ -125,3 +125,46 @@ def test_the_call_site_scanner_actually_finds_calls():
     # scanner is broken and the assertions above prove nothing.
     hits = _production_call_sites("record_degradation", "core/runtime/errors.py")
     assert len(hits) > 20, f"scanner found only {len(hits)} callers; it is broken"
+
+def test_verifier_curriculum_declares_that_it_is_not_wired():
+    """Found by the residue sweep, same shape as the two above."""
+    callers = _production_call_sites(
+        "boot_verifier_curriculum", "core/brain/verifier_curriculum.py"
+    ) + _production_call_sites(
+        "get_verifier_curriculum", "core/brain/verifier_curriculum.py"
+    )
+    module = (ROOT / "core" / "brain" / "verifier_curriculum.py").read_text(
+        encoding="utf-8"
+    )
+    if callers:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" not in module, (
+            f"verifier_curriculum now has production callers ({callers}); the "
+            "module still declares itself unwired."
+        )
+    else:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" in module, (
+            "Neither boot_verifier_curriculum() nor get_verifier_curriculum() "
+            "has a production caller and nothing reads the ServiceContainer "
+            "key it registers. The module must say so."
+        )
+
+
+def test_the_verifier_foundry_is_live_and_not_mislabelled():
+    """The contrast case: the foundry IS wired, so it must not be declared dead.
+
+    latent_cortex_service calls get_verifier_foundry() directly. Only its
+    unused boot_ wrapper was removed. This pins the distinction, because
+    'delete the uncalled thing' applied bluntly would have taken a live
+    capability with it.
+    """
+    callers = _production_call_sites(
+        "get_verifier_foundry", "core/brain/verifiers/foundry.py"
+    )
+    assert callers, "get_verifier_foundry lost its production callers"
+    module = (ROOT / "core" / "brain" / "verifiers" / "foundry.py").read_text(
+        encoding="utf-8"
+    )
+    assert "NOT WIRED" not in module
+    assert "def boot_verifier_foundry" not in module, (
+        "the dead ServiceContainer wrapper is back; nothing reads that key"
+    )
