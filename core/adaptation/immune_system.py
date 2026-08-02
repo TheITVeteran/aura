@@ -4,15 +4,14 @@ Protected Enclaves & Cognitive Rollback.
 Ensures core identity, kinship data, and lore bibles are immune to memory decay.
 Proactively scans for silent errors, dormant services, and broken interfaces.
 """
-import ast
 import asyncio
-import hashlib
 import logging
 import shutil
 import time
 from pathlib import Path
 from typing import Any
 
+from core.runtime.artifact_integrity import verify_artifact
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
@@ -208,41 +207,20 @@ class ImmuneSystem:
             # Path resolution and stat are blocking syscalls; this runs on the
             # event loop, so they are offloaded like every other filesystem
             # touch in this method.
-            base_dir = await asyncio.to_thread(self.data_dir.resolve)
-            try:
-                snapshot = await asyncio.to_thread(
-                    lambda: Path(snapshot_path).resolve(strict=True)
-                )
-            except (OSError, RuntimeError) as exc:
-                logger.error("Rollback failed: snapshot %s unresolvable: %s",
-                             snapshot_path, exc)
-                return False
-
-            # CONTAINMENT. The old check was
-            # str(snapshot).startswith(str(base_dir)), which accepts any SIBLING
-            # whose name merely begins with the base — "data/backups_evil"
-            # passes a "data/backups" prefix test. Compare resolved path
-            # components instead, which is what "inside this directory" means.
-            if snapshot != base_dir and base_dir not in snapshot.parents:
+            # CONTAINMENT + INTEGRITY, via the shared gate in
+            # core/runtime/artifact_integrity.py. This logic was written here
+            # first; it now lives in one place so every path that promotes a
+            # file into executable code gets the same checks instead of
+            # reinventing weaker ones.
+            verdict = await asyncio.to_thread(
+                verify_artifact, snapshot_path, within=self.data_dir
+            )
+            if not verdict.ok:
                 logger.error(
-                    "🛑 Security violation: rollback source %s is outside %s.",
-                    snapshot, base_dir,
+                    "🛑 Rollback refused: %s (%s)", verdict.failure, verdict.detail
                 )
                 return False
-            # resolve(strict=True) already followed links; require a regular
-            # file so a symlink swapped in afterwards cannot redirect the copy.
-            if not await asyncio.to_thread(snapshot.is_file):
-                logger.error("Rollback failed: snapshot %s is not a regular file.",
-                             snapshot)
-                return False
-
-            # INTEGRITY. The snapshot was copied into executable core code with
-            # no hash, signature, or schema check of any kind — anything that
-            # landed in the backups directory became running code. A digest
-            # manifest is required, and the content must at minimum parse as the
-            # Python module it is about to replace.
-            if not await asyncio.to_thread(self._snapshot_integrity_ok, snapshot):
-                return False
+            snapshot = verdict.path
 
             # AUTHORITY. Overwriting core code is the most consequential act
             # this module can take and it had no governance decision at all.
@@ -270,42 +248,6 @@ class ImmuneSystem:
             return False
         finally:
             self.rollback_active = False
-
-    def _snapshot_integrity_ok(self, snapshot: Path) -> bool:
-        """Verify a snapshot against its digest manifest and check it parses.
-
-        A manifest sits beside the snapshot as ``<name>.sha256``. Its absence is
-        a refusal, not a warning: unsigned content must not become running code
-        just because nobody supplied a signature.
-        """
-        manifest = snapshot.with_suffix(snapshot.suffix + ".sha256")
-        if not manifest.is_file():
-            logger.error(
-                "🛑 Rollback refused: no integrity manifest at %s. Unsigned "
-                "content cannot be copied into executable core code.", manifest,
-            )
-            return False
-        try:
-            expected = manifest.read_text(encoding="utf-8").split()[0].strip().lower()
-            actual = hashlib.sha256(snapshot.read_bytes()).hexdigest()
-        except (OSError, UnicodeDecodeError, IndexError) as exc:
-            logger.error("🛑 Rollback refused: manifest unreadable: %s", exc)
-            return False
-        if not expected or expected != actual:
-            logger.error(
-                "🛑 Rollback refused: snapshot digest mismatch (expected %s, got %s).",
-                expected or "<empty>", actual,
-            )
-            return False
-        try:
-            ast.parse(snapshot.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
-            logger.error(
-                "🛑 Rollback refused: snapshot is not valid Python (%s). "
-                "Restoring it would leave the kernel unimportable.", exc,
-            )
-            return False
-        return True
 
     async def _rollback_authorized(self, snapshot: Path) -> bool:
         """Ask the Will before overwriting executable core code.
