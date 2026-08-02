@@ -29,6 +29,7 @@ from core.runtime import resource_psutil as psutil
 if TYPE_CHECKING:
     from core.brain.lane_admission import ActiveLane
 
+from core.brain.llm.measured_admission import record_generation
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
@@ -38,6 +39,7 @@ from core.runtime.shutdown_coordinator import (
     record_shutdown_admission_event,
 )
 from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
+from core.runtime.state_ownership import state_root
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
@@ -46,8 +48,6 @@ from core.utils.task_tracker import get_task_tracker
 
 from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
-from core.runtime.state_ownership import state_root
-from core.brain.llm.measured_admission import record_generation
 
 logger = logging.getLogger("LLM.MLX")
 
@@ -4431,11 +4431,46 @@ class MLXLocalClient:
         )
         if last_activity > 0.0 and (now - last_activity) < 30.0:
             return  # Recent activity — state is legitimate
+
+        # Classify before destroying ~20GB of wired weights. The activity gate
+        # above is binary — recent or not — which cannot tell a wedged decode
+        # loop from a request that merely outlived its budget. Killing is the
+        # most expensive recovery this runtime has (cold reload, and
+        # historically a second worker stacking beside the first), so it needs
+        # a verdict rather than a timer, and the verdict is recorded so the
+        # decision is auditable after the fact.
+        verdict = self._classify_worker_liveness(now)
+        if verdict is not None and not verdict.kill_justified:
+            if verdict.should_cancel_request:
+                # The REQUEST is what is stuck, not the model. Cancel it and
+                # leave the weights loaded.
+                logger.warning(
+                    "🔧 [STABILITY] Lane '%s' stuck %.0fs but worker is %s — "
+                    "cancelling the request instead of killing the worker.",
+                    self._lane_state, stuck_duration, verdict,
+                )
+                try:
+                    self.soft_cancel_active_generation("lane_stale_worker_stalled")
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    logger.debug("soft cancel during stale-lane reset failed: %s", exc)
+            else:
+                logger.warning(
+                    "🔧 [STABILITY] Lane '%s' stuck %.0fs but worker is %s — "
+                    "resetting lane bookkeeping WITHOUT killing the worker.",
+                    self._lane_state, stuck_duration, verdict,
+                )
+            # Reset the lane bookkeeping (which is what was actually stale)
+            # and leave the process alone.
+            self._warmup_in_flight = False
+            self._set_lane_state("cold")
+            return
+
         logger.warning(
-            "🔧 [STABILITY] Lane state '%s' stuck for %.0fs with no activity. "
-            "Force-resetting to 'cold' for clean recovery.",
+            "🔧 [STABILITY] Lane state '%s' stuck for %.0fs with no activity "
+            "(%s). Force-resetting to 'cold' for clean recovery.",
             self._lane_state,
             stuck_duration,
+            verdict if verdict is not None else "unclassified",
         )
         # The reset must not orphan a live worker: declaring the lane cold
         # while the old process survives lets the next spawn stack a second
@@ -4452,6 +4487,51 @@ class MLXLocalClient:
             self._kill_and_join_blocking(process)
         self._warmup_in_flight = False
         self._set_lane_state("cold")
+
+    def _classify_worker_liveness(self, now: float | None = None) -> Any:
+        """Assemble evidence and classify this lane's worker.
+
+        Bridges the signals this client already tracks into the shared
+        vocabulary in core/runtime/worker_liveness.py, so every kill decision
+        in the runtime can answer "wedged or busy?" the same way. Returns None
+        only if the classifier itself is unavailable, which must never be a
+        reason to kill.
+        """
+        try:
+            from core.runtime.worker_liveness import WorkerEvidence, classify_worker
+        except ImportError:
+            return None
+
+        now = time.time() if now is None else now
+        process = self._process
+
+        def _age(stamp: Any) -> float | None:
+            try:
+                value = float(stamp or 0.0)
+            except (TypeError, ValueError):
+                return None
+            return max(0.0, now - value) if value > 0.0 else None
+
+        # The strongest available proof of output: the last token this lane saw.
+        progress_age = _age(getattr(self, "_last_token_progress_at", 0.0))
+        if progress_age is None:
+            progress_age = _age(getattr(self, "_last_progress_at", 0.0))
+
+        try:
+            alive = bool(process.is_alive()) if process is not None else False
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            alive = None
+
+        evidence = WorkerEvidence(
+            process_alive=alive,
+            last_heartbeat_age_s=_age(getattr(self, "_last_heartbeat", 0.0)),
+            active_job=bool(getattr(self, "_current_request_id", "") or ""),
+            job_age_s=(_age(getattr(self, "_current_request_started_at", 0.0)) or 0.0),
+            loop_stalled=bool(getattr(self, "_worker_reported_loop_stall", False)),
+            last_progress_age_s=progress_age,
+            source=f"mlx_lane:{getattr(self, '_lane_state', 'unknown')}",
+        )
+        return classify_worker(evidence)
 
     def _kill_and_join_blocking(self, p: mp.Process) -> bool:
         """Kill and join a worker, PROVING termination. Returns True when dead.
