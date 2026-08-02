@@ -66,6 +66,7 @@ from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.InferenceGate")
 _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
@@ -410,6 +411,48 @@ _REQUIRED_ADMISSION_FIELDS = (
 )
 
 
+def _deep_snapshot(value: Any) -> Any:
+    """A copy nothing else holds a reference into.
+
+    ``copy.deepcopy`` on provider metadata can meet a live client handle, a
+    lock or a coroutine — objects that either refuse to copy or are actively
+    harmful to duplicate. So this copies the containers (which is where the
+    aliasing lives) and leaves leaves alone, replacing anything uncopyable
+    with its repr rather than raising inside an evidence path.
+    """
+    return _deep_snapshot_inner(value, depth=0, seen=set())
+
+
+def _deep_snapshot_inner(value: Any, *, depth: int, seen: set[int]) -> Any:
+    if depth > 12:
+        return "<snapshot depth limit>"
+    if isinstance(value, dict):
+        if id(value) in seen:
+            return "<cycle>"
+        seen = seen | {id(value)}
+        return {
+            key: _deep_snapshot_inner(item, depth=depth + 1, seen=seen)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        if id(value) in seen:
+            return "<cycle>"
+        seen = seen | {id(value)}
+        return [
+            _deep_snapshot_inner(item, depth=depth + 1, seen=seen) for item in value
+        ]
+    if isinstance(value, (set, frozenset)):
+        return sorted(
+            (_deep_snapshot_inner(item, depth=depth + 1, seen=seen) for item in value),
+            key=repr,
+        )
+    if value is None or isinstance(value, (str, bytes, bool, int, float)):
+        return value
+    # A client handle, a lock, a coroutine — record what it was, not the
+    # object itself.
+    return repr(value)
+
+
 def snapshot_metric(snapshot: Any, key: str) -> float | None:
     """A numeric field from an admission snapshot, or None if unmeasured.
 
@@ -541,6 +584,9 @@ class InferenceGate:
         self._last_user_generation_used_fallback: bool = False
         self._last_generation_metadata: dict[str, Any] = {}
         self._last_surface_control_receipt: dict[str, Any] = {}
+        self._diagnostic_metadata_lock = checked_lock(
+            "inference_gate.diagnostic_metadata", rank=LockRank.LEAF
+        )
         self._generation_metadata_context: ContextVar[dict[str, Any] | None] = (
             ContextVar(
                 f"aura_inference_gate_generation_metadata_{id(self)}",
@@ -587,34 +633,75 @@ class InferenceGate:
         metadata: dict[str, Any],
         receipt: dict[str, Any],
     ) -> None:
-        metadata_snapshot = dict(metadata)
-        receipt_snapshot = dict(receipt)
+        """Publish request evidence that nobody can edit after the fact.
+
+        CP126: "Published generation metadata is only shallow-copied. Nested
+        fallback chains, output contracts, receipts, reasons, and mutations
+        retain shared references. Provider code or another diagnostic
+        consumer can mutate already-published request evidence, while
+        process-wide last-call fields are also written without
+        synchronization."
+
+        ``dict(metadata)`` copies one level. The interesting content is all
+        below that level — fallback_chain, requested_output_contract,
+        surface_control_receipt, mutations — so the published "evidence" and
+        the provider's live working dicts were the same objects. Evidence
+        that the subject of the evidence can still edit is not evidence, and
+        the failure is invisible: the record reads as a normal receipt.
+        """
+        metadata_snapshot = _deep_snapshot(metadata)
+        receipt_snapshot = _deep_snapshot(receipt)
         self._generation_metadata_slot().set(metadata_snapshot)
         self._surface_control_receipt_slot().set(receipt_snapshot)
-        self._last_generation_metadata = metadata_snapshot
-        self._last_surface_control_receipt = receipt_snapshot
+        # The ContextVar slots are per-task and need no lock. These two are
+        # process-wide and were written from every concurrent generation, so
+        # a diagnostic reader could see metadata from one request beside the
+        # receipt from another.
+        with self._diagnostic_metadata_lock:
+            self._last_generation_metadata = metadata_snapshot
+            self._last_surface_control_receipt = receipt_snapshot
 
     def get_last_generation_metadata(self) -> dict[str, Any]:
         task_metadata = self._generation_metadata_slot().get()
         if task_metadata is not None:
-            return dict(task_metadata)
+            return _deep_snapshot(task_metadata)
         return {}
 
     def get_diagnostic_last_generation_metadata(self) -> dict[str, Any]:
         """Return process-wide last-call telemetry, never request proof."""
 
-        return dict(getattr(self, "_last_generation_metadata", {}) or {})
+        with self._diagnostic_metadata_lock:
+            return _deep_snapshot(getattr(self, "_last_generation_metadata", {}) or {})
 
     def get_last_surface_control_receipt(self) -> dict[str, Any]:
         task_receipt = self._surface_control_receipt_slot().get()
         if task_receipt is not None:
-            return dict(task_receipt)
+            return _deep_snapshot(task_receipt)
         return {}
 
     def get_diagnostic_last_surface_control_receipt(self) -> dict[str, Any]:
         """Return process-wide last-call telemetry, never request proof."""
 
-        return dict(getattr(self, "_last_surface_control_receipt", {}) or {})
+        with self._diagnostic_metadata_lock:
+            return _deep_snapshot(
+                getattr(self, "_last_surface_control_receipt", {}) or {}
+            )
+
+    def get_diagnostic_last_call(self) -> dict[str, Any]:
+        """Metadata and receipt from the SAME last call, read together.
+
+        Reading the two diagnostics separately can straddle a concurrent
+        publish and pair one request's metadata with another's receipt.
+        """
+        with self._diagnostic_metadata_lock:
+            return {
+                "metadata": _deep_snapshot(
+                    getattr(self, "_last_generation_metadata", {}) or {}
+                ),
+                "surface_control_receipt": _deep_snapshot(
+                    getattr(self, "_last_surface_control_receipt", {}) or {}
+                ),
+            }
 
     def _clear_last_generation_metadata(self) -> None:
         self._publish_generation_metadata({}, {})
