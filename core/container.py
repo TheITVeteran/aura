@@ -26,6 +26,8 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.concurrency import RobustLock
+import hmac
+import os
 
 logger = logging.getLogger("Aura.Container")
 
@@ -1290,9 +1292,13 @@ class ServiceContainer:
         try:
             seal_path = cls._seal_path()
             seal_valid = cls.verify_sovereignty_seal()
+            seal_state = cls.sovereignty_seal_state()
             report["sovereignty_seal"] = {
                 "present": seal_path.exists(),
-                "valid": seal_valid,
+                # None, not True, when there is no seal: nothing was verified.
+                "valid": seal_valid if seal_state != "unsealed" else None,
+                "state": seal_state,
+                "covers": "registry_shape_only",
                 "hash": cls._last_seal_hash,
             }
             if not seal_valid:
@@ -1327,7 +1333,57 @@ class ServiceContainer:
         return manifest
 
     @classmethod
+    def _seal_key(cls) -> bytes | None:
+        """Local HMAC key for the sovereignty seal, created on first use.
+
+        None when unavailable, which the verifier treats as unsigned rather
+        than valid.
+        """
+        path = cls._seal_path().with_name(".sovereignty_seal.key")
+        try:
+            if path.exists():
+                key = path.read_bytes()
+                return key if len(key) == 32 else None
+            path.parent.mkdir(parents=True, exist_ok=True)
+            candidate = os.urandom(32)
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with open(fd, "wb") as handle:
+                handle.write(candidate)
+            return candidate
+        except FileExistsError:
+            try:
+                key = path.read_bytes()
+                return key if len(key) == 32 else None
+            except OSError:
+                return None
+        except (OSError, ValueError):
+            return None
+
+    @classmethod
+    def _seal_signature(cls, digest: str, service_count: int) -> str:
+        key = cls._seal_key()
+        if key is None:
+            return ""
+        body = f"{digest}:{service_count}".encode("utf-8")
+        return hmac.new(key, body, hashlib.sha256).hexdigest()
+
+    @classmethod
     def write_sovereignty_seal(cls) -> dict[str, Any]:
+        # CP126 (critical): "Sovereignty seal is an unsigned registry-name
+        # hash. The seal covers descriptor/factory names rather than source
+        # bytes, dependencies, configuration, policies, or runtime identity
+        # and is stored beside its manifest without a signature."
+        #
+        # The unsigned part is the half that can be fixed here: anything able
+        # to write the seal file could recompute the hash for a tampered
+        # registry and the seal would verify. It now carries an HMAC over the
+        # digest, so forging it needs the local key rather than a hashlib
+        # call.
+        #
+        # The other half stands as stated: this seals registry SHAPE — which
+        # service names map to which class names — not source bytes,
+        # dependencies or policy. A same-named impostor class still passes.
+        # That is a real limit and it is documented rather than implied away.
         manifest = cls._manifest_snapshot()
         digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
         payload = {
@@ -1335,6 +1391,8 @@ class ServiceContainer:
             "timestamp": time.time(),
             "service_count": len(manifest),
             "manifest": manifest,
+            "signature": cls._seal_signature(digest, len(manifest)),
+            "covers": "registry_shape_only",
         }
         seal_path = cls._seal_path()
         seal_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1353,11 +1411,39 @@ class ServiceContainer:
             record_degradation("container", exc)
             logger.debug("Sovereignty seal read failed: %s", exc)
             return False
+        manifest = cls._manifest_snapshot()
         current = hashlib.sha256(
-            json.dumps(cls._manifest_snapshot(), sort_keys=True).encode("utf-8")
+            json.dumps(manifest, sort_keys=True).encode("utf-8")
         ).hexdigest()
         cls._last_seal_hash = current
-        return str(stored.get("hash", "")) == current
+        if str(stored.get("hash", "")) != current:
+            return False
+        # A matching hash proves the registry is unchanged; the signature
+        # proves the seal itself was not rewritten to match a tampered one.
+        stored_signature = str(stored.get("signature", "") or "")
+        expected_signature = cls._seal_signature(
+            current, int(stored.get("service_count") or len(manifest))
+        )
+        if not expected_signature:
+            logger.warning("Sovereignty seal cannot be verified: no local key.")
+            return False
+        return bool(stored_signature) and hmac.compare_digest(
+            stored_signature, expected_signature
+        )
+
+    @classmethod
+    def sovereignty_seal_state(cls) -> str:
+        """'valid' | 'invalid' | 'unsealed'.
+
+        verify_sovereignty_seal() returns True when no seal exists — there is
+        nothing to contradict, and first boot must not be degraded. But the
+        health report published that as valid=True, so an absent seal read as
+        a verified one: absence of a check reported as a passed check. The
+        report now uses this instead.
+        """
+        if not cls._seal_path().exists():
+            return "unsealed"
+        return "valid" if cls.verify_sovereignty_seal() else "invalid"
 
     @classmethod
     def write_service_ownership_manifest(cls, project_root: Path) -> Path:
