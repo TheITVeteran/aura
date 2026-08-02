@@ -410,6 +410,41 @@ _REQUIRED_ADMISSION_FIELDS = (
 )
 
 
+def snapshot_metric(snapshot: Any, key: str) -> float | None:
+    """A numeric field from an admission snapshot, or None if unmeasured.
+
+    CP126: "On memory probe failure the snapshot reports pressure, available
+    memory, and total memory as numeric zeros with permissive thresholds.
+    Although reason may say memory_probe_failed, consumers cannot
+    distinguish unmeasured fields from genuine measurements."
+
+    The snapshot carries ``measured``, but every read site was written as
+    ``float(snap.get("pressure_pct", 0.0) or 0.0)``, which turns "the probe
+    failed" into "pressure is 0.0%" at the point of use — and then logs it
+    as a fact. This is the read that cannot do that.
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    if not bool(snapshot.get("measured", True)):
+        return None
+    try:
+        value = float(snapshot.get(key))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def format_metric(snapshot: Any, key: str, *, unit: str = "") -> str:
+    """Render a snapshot metric for a log line, or ``unknown``.
+
+    An operator reading "pressure=0.0% available=0.0GB" during an incident
+    reasonably concludes the machine had memory. Saying ``unknown`` is the
+    difference between a misleading log and a useful one.
+    """
+    value = snapshot_metric(snapshot, key)
+    return "unknown" if value is None else f"{value:.1f}{unit}"
+
+
 def admission_permits(
     snapshot: Any,
     *,
@@ -438,6 +473,14 @@ def admission_permits(
         return False, "admission_snapshot_unstamped"
     if age > max(1.0, float(max_age_s)):
         return False, f"admission_snapshot_stale:{age:.1f}s"
+    if not bool(snapshot.get("measured", True)):
+        # `measured` was already a required field, and nothing read it. An
+        # unmeasured snapshot only reaches here with can_admit=True via a
+        # deliberate operator override (AURA_FORCE_*_ON_PROBE_FAILURE), so
+        # it is permitted — but it is permitted *on the record*. Returning
+        # an empty reason here would put a forced, unmeasured admission and
+        # a genuine measured one in the same log line.
+        return True, "admitted_unmeasured_forced_override"
     return True, ""
 
 
@@ -6916,9 +6959,9 @@ class InferenceGate:
                     if not _primary_ok:
                         logger.warning(
                             "InferenceGate: primary lane outside safe memory envelope "
-                            "(pressure=%.1f%% available=%.1fGB). Downgrading to brainstem.",
-                            float(primary_headroom.get("pressure_pct", 0.0) or 0.0),
-                            float(primary_headroom.get("available_gb", 0.0) or 0.0),
+                            "(pressure=%s available=%s). Downgrading to brainstem.",
+                            format_metric(primary_headroom, "pressure_pct", unit="%"),
+                            format_metric(primary_headroom, "available_gb", unit="GB"),
                         )
                         requested_tier = "tertiary"
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
@@ -7149,12 +7192,12 @@ class InferenceGate:
             if not _admitted and requested_tier == "secondary":
                 logger.warning(
                     "🛡️ InferenceGate: deep local handoff exceeds safe headroom "
-                    "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB). "
+                    "(pressure=%s available=%s process=%s/%s). "
                     "Downgrading to the primary lane.",
-                    float(admission_snapshot.get("pressure_pct", 0.0) or 0.0),
-                    float(admission_snapshot.get("available_gb", 0.0) or 0.0),
-                    float(admission_snapshot.get("process_rss_gb", 0.0) or 0.0),
-                    float(admission_snapshot.get("process_rss_limit_gb", 0.0) or 0.0),
+                    format_metric(admission_snapshot, "pressure_pct", unit="%"),
+                    format_metric(admission_snapshot, "available_gb", unit="GB"),
+                    format_metric(admission_snapshot, "process_rss_gb", unit="GB"),
+                    format_metric(admission_snapshot, "process_rss_limit_gb", unit="GB"),
                 )
                 requested_tier = "primary"
                 deep_handoff = False
