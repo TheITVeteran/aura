@@ -83,6 +83,11 @@ def _finite_float(raw: object, default: float) -> tuple[float, bool]:
     return value, True
 
 
+#: A step slower than this is a blocking dependency, not a busy one. Set
+#: well above the 0.5s interval so ordinary jitter stays quiet.
+_SLOW_STEP_SECONDS = 2.0
+
+
 class ContinuousCognitionLoop:
     """The brainstem — continuous non-LLM cognition.
 
@@ -105,6 +110,7 @@ class ContinuousCognitionLoop:
 
         # Cached service references (lazy-loaded)
         self._drive_engine = None
+        self._slow_step_count = 0
         self._world_state = None
         self._liquid_substrate = None
         self._neurochemical = None
@@ -160,7 +166,24 @@ class ContinuousCognitionLoop:
             while self._running:
                 t0 = time.monotonic()
                 try:
-                    self._cognitive_step()
+                    # CP126 (critical): "Continuous cognition invokes
+                    # synchronous services on the event loop. World-state
+                    # update, resource ticks, neurochemical update, affect
+                    # drift, and synthesizer submission are direct calls
+                    # inside the async loop. Any file, lock, model, or
+                    # network operation inside them blocks it."
+                    #
+                    # The step calls out to five subsystems it does not own.
+                    # Its docstring says "pure Python, no LLM", which is a
+                    # statement about intent, not a property anything
+                    # enforces: ws.update() reads telemetry, the synthesizer
+                    # submits work, and any of them may take a lock or touch
+                    # a file. CLAUDE.md carries the scar — an on-loop fsync
+                    # once froze this event loop for 20 minutes.
+                    #
+                    # Off the loop, so a slow dependency costs a late tick
+                    # instead of a frozen runtime.
+                    await asyncio.to_thread(self._cognitive_step)
                     self._consecutive_loop_failures = 0
                 except _CONTINUOUS_COGNITION_ERRORS as exc:
                     self._consecutive_loop_failures += 1
@@ -183,6 +206,19 @@ class ContinuousCognitionLoop:
 
                 elapsed = time.monotonic() - t0
                 self._last_step_duration_s = max(0.0, elapsed)
+                # A step that overruns its own interval is a dependency
+                # blocking, and it used to be invisible: the loop simply
+                # ticked late. Say so, once it is bad enough to matter.
+                if elapsed > _SLOW_STEP_SECONDS:
+                    self._slow_step_count += 1
+                    _record_continuous_cognition_degradation(
+                        TimeoutError(
+                            f"cognitive step took {elapsed:.2f}s "
+                            f"(interval {self._INTERVAL:.2f}s)"
+                        ),
+                        action="continued the cognition loop after a slow step",
+                        severity="warning",
+                    )
                 backoff = min(
                     self._INTERVAL * max(0, self._consecutive_loop_failures),
                     _MAX_LOOP_BACKOFF_SECONDS,
