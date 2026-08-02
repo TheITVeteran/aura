@@ -32,11 +32,14 @@ Not:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
 import logging
+import math
 import random
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -50,6 +53,52 @@ from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.InitiativeSynthesis")
+
+#: Cap on how many persisted tensions are admitted in one load, so a corrupt or
+#: hostile store cannot flood synthesis context.
+_MAX_PERSISTED_TENSIONS = 500
+
+#: Structure that would let persisted tension text act as instructions once it
+#: reaches a synthesis prompt.
+_TENSION_STRUCTURE_RE = re.compile(
+    r"(?i)(?:(?:(?<=\s)|^)#{1,6}\s|```|~~~|<\|[^|]*\|>|"
+    r"\b(?:system|assistant|user|human)\s*:)"
+)
+
+
+def _tension_safe(value: object, limit: int) -> str:
+    """Bound and neutralise a persisted text field."""
+    text = " ".join(str(value or "").split())
+    text = "".join(ch for ch in text if ch == " " or ord(ch) >= 32)
+    text = _TENSION_STRUCTURE_RE.sub(" ", text)
+    return " ".join(text.split())[:limit]
+
+
+def _unit(value: object, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(0.0, min(1.0, number))
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _finite_time(value: object, default: float | None = None) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return time.time() if default is None else default
+    if not math.isfinite(number) or number < 0:
+        return time.time() if default is None else default
+    return number
 
 
 # ---------------------------------------------------------------------------
@@ -709,27 +758,46 @@ class InitiativeSynthesizer:
             if not path.exists():
                 return
             data = json.loads(path.read_text())
+            if not isinstance(data, list):
+                logger.error("Tension store is not a list; ignoring it.")
+                return
             skipped = 0
-            for item in data:
+            malformed = 0
+            # This file is read back off disk and its contents become context
+            # for future action synthesis. It carries no signature, so it is
+            # treated as untrusted input: every field is bounded and coerced,
+            # and anything unusable is dropped rather than admitted with a
+            # silent default that a caller could steer.
+            for item in data[:_MAX_PERSISTED_TENSIONS]:
                 if not isinstance(item, dict):
+                    malformed += 1
                     continue
+                content = _tension_safe(item.get("content"), 2000)
+                if not content:
+                    malformed += 1
+                    continue
+                metadata = item.get("metadata")
                 tension = UnresolvedTension(
-                    content=item.get("content", ""),
-                    source=item.get("source", "persisted"),
-                    category=item.get("category", "topic"),
-                    urgency=float(item.get("urgency", 0.3)),
-                    created_at=float(item.get("created_at", time.time())),
-                    last_surfaced=float(item.get("last_surfaced", 0.0)),
-                    surface_count=int(item.get("surface_count", 0)),
+                    content=content,
+                    source=_tension_safe(item.get("source") or "persisted", 120),
+                    category=_tension_safe(item.get("category") or "topic", 60),
+                    urgency=_unit(item.get("urgency"), 0.3),
+                    created_at=_finite_time(item.get("created_at")),
+                    last_surfaced=_finite_time(item.get("last_surfaced"), default=0.0),
+                    surface_count=max(0, min(100_000, _safe_int(item.get("surface_count")))),
                     resolved=bool(item.get("resolved", False)),
-                    metadata=item.get("metadata", {}),
+                    metadata=metadata if isinstance(metadata, dict) else {},
                 )
                 if not tension.resolved and not is_stale_or_prompt_scaffold_goal(tension.content):
                     self._unresolved_tensions.append(tension)
                 elif not tension.resolved:
                     skipped += 1
-            if skipped:
+            if skipped or malformed:
                 self._save_tensions()
+            if malformed:
+                logger.warning(
+                    "Dropped %d malformed persisted tension record(s).", malformed
+                )
             logger.info(
                 "Loaded %d persisted unresolved tensions (%d quarantined).",
                 len(self._unresolved_tensions),
@@ -742,6 +810,26 @@ class InitiativeSynthesizer:
     # ------------------------------------------------------------------
     # The main synthesis cycle
     # ------------------------------------------------------------------
+
+    def _requeue_impulses(self, impulses: list[Impulse]) -> None:
+        """Return an unadjudicated batch to the queue, newest-urgency first.
+
+        Bounded by the same per-cycle cap as normal admission, so a repeatedly
+        failing arbiter cannot grow the queue without limit — the highest-urgency
+        work survives and the rest is dropped explicitly rather than silently.
+        """
+        if not impulses:
+            return
+        combined = list(self._impulse_queue) + list(impulses)
+        combined.sort(key=lambda i: i.urgency, reverse=True)
+        kept = combined[: self._MAX_IMPULSES_PER_CYCLE]
+        dropped = len(combined) - len(kept)
+        self._impulse_queue = kept
+        logger.warning(
+            "Synth: arbitration did not adjudicate; requeued %d impulse(s)%s.",
+            len(kept),
+            f", dropped {dropped} over the cycle cap" if dropped else "",
+        )
 
     async def synthesize(self, state: Any) -> SynthesisResult:
         """Run one synthesis cycle.
@@ -774,9 +862,15 @@ class InitiativeSynthesizer:
                 },
             })
 
-        # Clear the queue for next cycle
-        impulse_count = len(self._impulse_queue)
+        # Take the queue rather than CLEARING it. It used to be emptied here,
+        # before the arbiter had returned — so an exception or timeout inside
+        # arbitration lost every candidate with no replay, discarding work the
+        # rest of the system had already done to produce it. The drained batch
+        # is held so it can be put back if arbitration never adjudicated.
+        drained = list(self._impulse_queue)
+        impulse_count = len(drained)
         self._impulse_queue.clear()
+        arbitration_completed = False
 
         # Temporarily inject into state for arbiter (it reads pending_initiatives)
         original_pending = getattr(state.cognition, "pending_initiatives", [])
@@ -791,13 +885,23 @@ class InitiativeSynthesizer:
                 ServiceContainer.register_instance("initiative_arbiter", arbiter, required=False)
 
             scored = await arbiter.arbitrate(state)
-        except (ImportError, AttributeError, RuntimeError) as e:
+            arbitration_completed = True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation('initiative_synthesis', e)
             logger.warning("Synth: arbiter failed: %s", e)
             scored = None
+        except asyncio.CancelledError:
+            # Cancellation is the ordinary shutdown path; the batch must survive
+            # it rather than being silently dropped on the way out.
+            self._requeue_impulses(drained)
+            raise
         finally:
             # Restore original
             state.cognition.pending_initiatives = original_pending
+
+        if not arbitration_completed:
+            # Nothing adjudicated these, so they are still pending work.
+            self._requeue_impulses(drained)
 
         if scored is None:
             return SynthesisResult(winner=None, impulse_count=impulse_count)
