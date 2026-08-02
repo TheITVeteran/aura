@@ -144,7 +144,12 @@ def _strict_json(raw: bytes, *, role: str) -> dict[str, Any]:
     return value
 
 
-def read_canonical_json(path: Path, *, role: str) -> dict[str, Any]:
+def read_canonical_json(
+    path: Path,
+    *,
+    role: str,
+    trailing_newline: bool | None = True,
+) -> dict[str, Any]:
     try:
         observed = path.lstat()
     except OSError:
@@ -162,7 +167,13 @@ def read_canonical_json(path: Path, *, role: str) -> dict[str, Any]:
     except (OSError, ValueError):
         _fail(f"{role}_unavailable")
     value = _strict_json(raw, role=role)
-    if raw != canonical_json_bytes(value) + b"\n":
+    if trailing_newline is None:
+        trailing_newline = value.get("schema") not in {
+            RESIDENT_SFT_MANIFEST_SCHEMA,
+            RESIDENT_SFT_COMPLETION_SCHEMA,
+        }
+    expected = canonical_json_bytes(value) + (b"\n" if trailing_newline else b"")
+    if raw != expected:
         _fail(f"{role}_noncanonical")
     return value
 
@@ -286,7 +297,11 @@ def adapter_artifact_inventory(
     ):
         _fail("adapter_root_invalid")
     manifest_path = _contained_file(resolved_root, _MANIFEST_FILE, role="adapter_manifest")
-    manifest = read_canonical_json(manifest_path, role="adapter_manifest")
+    manifest = read_canonical_json(
+        manifest_path,
+        role="adapter_manifest",
+        trailing_newline=None,
+    )
     schema = manifest.get("schema")
     if schema == MANIFEST_SCHEMA_V2:
         binding_roles = _BINDING_ROLES
@@ -333,6 +348,7 @@ def adapter_artifact_inventory(
     completion = read_canonical_json(
         _contained_file(resolved_root, _COMPLETION_FILE, role="training_completion"),
         role="training_completion",
+        trailing_newline=None,
     )
     if schema == MANIFEST_SCHEMA_V2:
         valid_completion = (
@@ -392,6 +408,7 @@ def adapter_artifact_inventory(
                 role="resident_sft_authority",
             ),
             role="resident_sft_authority",
+            trailing_newline=False,
         )
         valid_completion = (
             set(completion)

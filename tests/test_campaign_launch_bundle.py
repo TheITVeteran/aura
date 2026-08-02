@@ -41,6 +41,21 @@ def _write_json(path: Path, value: dict) -> None:
     path.write_bytes(canonical_json_bytes(value) + b"\n")
 
 
+def test_read_canonical_json_honors_schema_specific_newline_policy(
+    tmp_path: Path,
+) -> None:
+    sft = tmp_path / "sft.json"
+    sft.write_bytes(
+        canonical_json_bytes({"schema": "aura.resident_recurrent_sft_adapter_manifest.v1"})
+    )
+    assert read_canonical_json(sft, role="sft", trailing_newline=None)["schema"].endswith(".v1")
+
+    legacy = tmp_path / "legacy.json"
+    legacy.write_bytes(canonical_json_bytes({"schema": "legacy"}))
+    with pytest.raises(CampaignLaunchBundleError, match="legacy_noncanonical"):
+        read_canonical_json(legacy, role="legacy", trailing_newline=None)
+
+
 def _binding(path: str, payload: bytes) -> dict[str, object]:
     return {
         "path": path,
@@ -71,26 +86,16 @@ def _adapter_source(root: Path, *, adapter_id: str = "resident-test") -> Path:
         "adapter_alias": _binding(
             "adapter_final.safetensors", artifacts["adapter_final.safetensors"]
         ),
-        "loader_config": _binding(
-            "adapter_config.json", artifacts["adapter_config.json"]
-        ),
+        "loader_config": _binding("adapter_config.json", artifacts["adapter_config.json"]),
         "training_receipt": _binding("receipt.json", artifacts["receipt.json"]),
-        "training_config": _binding(
-            "training_config.json", artifacts["training_config.json"]
-        ),
-        "dataset_manifest": _binding(
-            "dataset_manifest.json", artifacts["dataset_manifest.json"]
-        ),
-        "execution_spec": _binding(
-            "execution_spec.json", artifacts["execution_spec.json"]
-        ),
+        "training_config": _binding("training_config.json", artifacts["training_config.json"]),
+        "dataset_manifest": _binding("dataset_manifest.json", artifacts["dataset_manifest.json"]),
+        "execution_spec": _binding("execution_spec.json", artifacts["execution_spec.json"]),
         "sources": {
             "trainer": {
                 "origin_path": "tools/trainer.py",
                 "snapshot_path": "source_snapshots/trainer.py",
-                "sha256": hashlib.sha256(
-                    artifacts["source_snapshots/trainer.py"]
-                ).hexdigest(),
+                "sha256": hashlib.sha256(artifacts["source_snapshots/trainer.py"]).hexdigest(),
                 "size_bytes": len(artifacts["source_snapshots/trainer.py"]),
             }
         },
@@ -185,9 +190,7 @@ def _policy(
             ),
             "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
             "custody_class": "external_service",
-            "custody_evidence_sha256": hashlib.sha256(
-                f"{role}:custody".encode()
-            ).hexdigest(),
+            "custody_evidence_sha256": hashlib.sha256(f"{role}:custody".encode()).hexdigest(),
         }
     body = {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
@@ -444,9 +447,7 @@ def test_adapter_snapshot_is_exact_read_only_and_tamper_evident(tmp_path: Path):
         adapter.chmod(0o600)
         adapter.write_bytes(b"changed")
         adapter.chmod(0o400)
-        with pytest.raises(
-            CampaignLaunchBundleError, match="adapter_adapter_binding_mismatch"
-        ):
+        with pytest.raises(CampaignLaunchBundleError, match="adapter_adapter_binding_mismatch"):
             verify_adapter_freeze(frozen)
     finally:
         _make_writable(frozen)
@@ -458,11 +459,7 @@ def test_adapter_snapshot_rejects_rehashed_malformed_model_identity(tmp_path: Pa
     try:
         certificate = verify_adapter_freeze(frozen)
         certificate["model_identity"]["runtime_bundle_sha256"] = "not-a-sha"
-        material = {
-            key: value
-            for key, value in certificate.items()
-            if key != "certificate_sha256"
-        }
+        material = {key: value for key, value in certificate.items() if key != "certificate_sha256"}
         certificate["certificate_sha256"] = hashlib.sha256(
             canonical_json_bytes(material)
         ).hexdigest()
@@ -587,21 +584,15 @@ def test_launch_admission_rejects_changed_dependencies_keys_or_producer(
         _write_json(issuer_path, issuer)
         _write_json(runner_path, runner)
         if attack == "dependency":
-            fixture["dependencies"]["contamination_audit"].write_text(
-                "changed\n", encoding="ascii"
-            )
+            fixture["dependencies"]["contamination_audit"].write_text("changed\n", encoding="ascii")
         elif attack == "producer":
             fixture["dependencies"]["fake_runner"].write_text(
                 "raise SystemExit(9)\n", encoding="ascii"
             )
         elif attack == "unplanned_artifact":
-            (fixture["bundle"] / "not-in-the-frozen-plan.json").write_text(
-                "{}\n", encoding="ascii"
-            )
+            (fixture["bundle"] / "not-in-the-frozen-plan.json").write_text("{}\n", encoding="ascii")
 
-        with pytest.raises(
-            (preparation.CampaignPreparationError, CampaignTrustError)
-        ):
+        with pytest.raises((preparation.CampaignPreparationError, CampaignTrustError)):
             preparation.admit_bundle(
                 Namespace(
                     bundle_dir=fixture["bundle"],
@@ -645,9 +636,7 @@ def _publish_final_request(fixture: dict, issuer_attestation: dict) -> dict:
     reveal = {
         "schema": "aura.latent_cortex.answer_reveal.v1",
         **reveal_material,
-        "reveal_sha256": hashlib.sha256(
-            canonical_json_bytes(reveal_material)
-        ).hexdigest(),
+        "reveal_sha256": hashlib.sha256(canonical_json_bytes(reveal_material)).hexdigest(),
     }
     _write_json(campaign_dir / "answer_reveal.json", reveal)
     campaign_manifest = _hashed(
@@ -688,12 +677,8 @@ def _publish_final_request(fixture: dict, issuer_attestation: dict) -> dict:
         "published_grade_sha256": grade["grade_sha256"],
         "worker_execution_manifest_sha256": worker["manifest_sha256"],
         "detached_plan_sha256": worker["detached_plan_sha256"],
-        "detached_classification_head_sha256": worker[
-            "detached_classification_head_sha256"
-        ],
-        "detached_classifications_sha256": worker[
-            "detached_classifications_sha256"
-        ],
+        "detached_classification_head_sha256": worker["detached_classification_head_sha256"],
+        "detached_classifications_sha256": worker["detached_classifications_sha256"],
         "worker_imports_sha256": worker["imports_sha256"],
         "worker_excluded_attempts_sha256": worker["excluded_attempts_sha256"],
     }
@@ -767,14 +752,13 @@ def test_post_inference_phase_packets_bind_real_reveal_and_final_signatures(
         envelope = {
             "schema": "aura.latent_cortex.final_run_envelope.v4",
             **envelope_material,
-            "envelope_sha256": hashlib.sha256(
-                canonical_json_bytes(envelope_material)
-            ).hexdigest(),
+            "envelope_sha256": hashlib.sha256(canonical_json_bytes(envelope_material)).hexdigest(),
         }
         _write_json(fixture["campaign_dir"] / "final_run_envelope.json", envelope)
-        assert advancement.status(Namespace(bundle_dir=fixture["bundle"]))[
-            "phase"
-        ] == "campaign_evidence_sealed"
+        assert (
+            advancement.status(Namespace(bundle_dir=fixture["bundle"]))["phase"]
+            == "campaign_evidence_sealed"
+        )
     finally:
         _make_writable(fixture["freeze"])
 
