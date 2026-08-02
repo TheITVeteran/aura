@@ -234,7 +234,12 @@ class TestServiceContainerLocking:
             was_locked = ServiceContainer._registration_locked
             assert was_locked is True
         finally:
-            ServiceContainer.unlock_registration()
+            # unlock_registration now requires attribution: reopening the
+            # sealed registry must name who did it, tests included.
+            ServiceContainer.unlock_registration(
+                caller="tests.test_sandbox_hardening",
+                reason="restoring registry state after a locking assertion",
+            )
             ServiceContainer.lock_registration()
 
 

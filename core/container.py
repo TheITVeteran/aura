@@ -402,7 +402,7 @@ class ServiceContainer:
             )
             logger.debug("Registered static service: %s", name)
     @classmethod
-    def unlock_registration(cls, *, caller: str = "unknown", reason: str = "") -> None:
+    def unlock_registration(cls, *, caller: str = "", reason: str = "") -> None:
         """Unlock registration to allow dynamic service updates.
 
         AUDIT: Every unlock is logged at WARNING level with the caller identity
@@ -416,7 +416,28 @@ class ServiceContainer:
             reason: Human-readable reason for the unlock (e.g., "late boot
                     service registration for affective_circumplex").
         """
+        # CP126 (critical): "Any caller can unlock service registration.
+        # unlock_registration accepts descriptive caller and reason strings
+        # but authenticates neither."
+        #
+        # This cannot be authenticated from inside the process — anything
+        # with import access can call it, and a signature check would be
+        # verified by the same code an attacker already controls. What CAN
+        # be fixed is the audit claim: the docstring calls the audit trail
+        # "the primary defense", and a defence that accepts caller="unknown"
+        # by default and emits only a log line is not one.
+        #
+        # Attribution is now required, and every unlock is recorded as a
+        # degradation so it reaches the incident ledger rather than only a
+        # log stream nobody greps.
         import traceback
+        attributed_caller = str(caller or "").strip()
+        if not attributed_caller:
+            raise ValueError(
+                "unlock_registration requires an explicit caller identity: "
+                "reopening the sealed service registry must be attributable. "
+                "Pass caller='<module or class>' and reason='<why>'."
+            )
         with cls._lock:
             cls._registration_locked = False
             # Log at WARNING to ensure visibility in production logs
@@ -427,10 +448,27 @@ class ServiceContainer:
                 frame_info = f" (from {frame.filename}:{frame.lineno})"
             logger.warning(
                 "ServiceContainer registration UNLOCKED by '%s'%s%s",
-                caller,
+                attributed_caller,
                 frame_info,
                 f" — reason: {reason}" if reason else "",
             )
+        try:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "service_container",
+                RuntimeError(
+                    f"service registry unlocked by {attributed_caller!r}"
+                    f"{frame_info} reason={reason or 'unstated'}"
+                ),
+                severity="warning",
+                action="reopened the sealed service registry",
+                enforce_failure_policy=False,
+            )
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            # The log line above is still emitted; never let audit plumbing
+            # stop an unlock a booting runtime may depend on.
+            pass
 
     @classmethod
     def lock_registration(cls) -> None:
@@ -480,9 +518,25 @@ class ServiceContainer:
             # sample caught exactly that churn lagging the event loop 8.3s
             # and failing the health contract. Swap the instance in place;
             # provenance from first registration stands.
+            # CP126 (critical): "Alias registration can bypass protected-
+            # service checks. Instance registration resolves aliases for
+            # descriptor replacement while protection decisions use the raw
+            # incoming name."
+            #
+            # `resolved_name` finds the descriptor; every protection check
+            # below used `name`. So an alias pointing at a protected service
+            # resolved to that service's descriptor while the guard compared
+            # the ALIAS against _PROTECTED_CORE_SERVICES, found no match, and
+            # took the hot-path upsert — silently swapping the instance of a
+            # service the container is meant to refuse to overwrite.
+            # Reproduced: registering under an alias replaced a protected
+            # core service after the registry was locked.
+            #
+            # Protection is a property of the service, not of the name the
+            # caller happened to use to reach it.
             if (
                 desc is not None
-                and name not in _PROTECTED_CORE_SERVICES
+                and resolved_name not in _PROTECTED_CORE_SERVICES
                 and desc.lifetime == ServiceLifetime.SINGLETON
             ):
                 desc.instance = instance
@@ -493,17 +547,21 @@ class ServiceContainer:
             logger.debug("⚠️ Late instance registration (post-lock): '%s' — allowed for pre-built instances.", name)
             if (
                 existing
-                and name in _PROTECTED_CORE_SERVICES
+                and resolved_name in _PROTECTED_CORE_SERVICES
                 and existing_instance is not instance
             ):
-                logger.error("🚫 Protected core service overwrite blocked after lock: '%s'", name)
+                logger.error(
+                    "🚫 Protected core service overwrite blocked after lock: '%s'%s",
+                    resolved_name,
+                    f" (via alias '{name}')" if resolved_name != name else "",
+                )
                 record_degraded_event(
                     "service_container",
                     "protected_service_overwrite_blocked",
-                    detail=name,
+                    detail=resolved_name,
                     severity="error",
                     classification="foreground_blocking",
-                    context={"service": name},
+                    context={"service": resolved_name, "requested_as": name},
                 )
                 return
             if not existing and name in _LATE_CAUSAL_SERVICES:
