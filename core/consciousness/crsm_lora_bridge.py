@@ -47,6 +47,19 @@ MIN_HEDONIC_DELTA   = -0.05  # allow slightly negative outcomes (learning from m
 MAX_BUFFER_SIZE     = 500    # rolling capture buffer
 MIN_QUALITY         = 0.30   # discard examples below this quality
 PERSIST_PATH        = Path.home() / ".aura" / "data" / "crsm_lora_buffer.jsonl"
+
+#: How long a captured moment may remain in the training corpus.
+#:
+#: CP126 asked for a retention policy and there was none: the buffer is
+#: size-bounded at 500, so the file cannot grow without limit, but a moment
+#: captured months ago stays in it indefinitely as long as the buffer never
+#: fills. Size is not retention.
+#:
+#: 30 days is a POLICY choice, not a derived quantity, and is written here
+#: as one — this is conversational data about a person, and "we keep it
+#: until the ring buffer happens to evict it" is not an answer anyone should
+#: have to give. Override with AURA_TRAINING_RETENTION_DAYS.
+TRAINING_RETENTION_DAYS = 30
 FLUSH_EVERY         = 20     # write to disk every N captures
 
 # Direct identifiers that must never enter the persisted training corpus.
@@ -87,6 +100,66 @@ def _redact_for_training(text: str) -> str:
     return scrubbed
 
 
+#: Topic markers that make a whole exchange unfit for a training corpus.
+#:
+#: Distinct from _TRAINING_PII_PATTERNS, which removes identifiers from text
+#: that is otherwise fine to keep. Some exchanges are not fixable by
+#: redaction: strip the account number from a conversation about someone's
+#: medical results or their bank dispute and what remains is still their
+#: medical results and their bank dispute, now with a gap in it. The unit of
+#: exclusion has to be the moment, not the substring.
+_SENSITIVE_TOPIC_MARKERS: tuple[str, ...] = (
+    "medical record", "diagnosis", "prescription", "therapist", "psychiatric",
+    "mental health", "self-harm", "suicide",
+    "bank account", "routing number", "credit card", "tax return", "social security",
+    "immigration status", "visa application", "deportation",
+    "criminal record", "arrest", "lawsuit", "attorney-client", "legal advice",
+    "sexual", "intimate", "religious belief", "political affiliation",
+    "password", "seed phrase", "private key", "two-factor", "recovery code",
+)
+
+
+def _retention_window_s() -> float:
+    """Retention window in seconds, from policy or its environment override."""
+    raw = os.environ.get("AURA_TRAINING_RETENTION_DAYS", "")
+    try:
+        days = float(raw) if str(raw).strip() else float(TRAINING_RETENTION_DAYS)
+    except (TypeError, ValueError):
+        days = float(TRAINING_RETENTION_DAYS)
+    if not (days > 0):
+        # A non-positive window would mean "keep nothing", which is far more
+        # likely a typo than an intention. Fall back to the stated policy.
+        days = float(TRAINING_RETENTION_DAYS)
+    return days * 86_400.0
+
+
+def _training_eligible(text: str) -> tuple[bool, str]:
+    """May this text enter a persisted training corpus at all?
+
+    CP126 raised this twice — once against the pre-inference prompt capture
+    and once against the response capture: "no sensitivity classification,
+    user consent, redaction, per-principal namespace, retention policy,
+    training eligibility check, or operation receipt".
+
+    Redaction (which now exists) answers only the identifier half. This
+    answers the other half: an exchange whose SUBJECT is sensitive should
+    not be retained at all, redacted or otherwise.
+
+    Deliberately conservative and deliberately dumb. A keyword screen will
+    over-exclude, and over-excluding from a training corpus costs a training
+    example; under-excluding costs someone's medical history sitting in a
+    JSONL file on disk. Those are not comparable, so the cheap check is the
+    right check.
+    """
+    if not text:
+        return True, ""
+    lowered = text.lower()
+    for marker in _SENSITIVE_TOPIC_MARKERS:
+        if marker in lowered:
+            return False, marker
+    return True, ""
+
+
 @dataclass
 class CapturedMoment:
     timestamp: float
@@ -113,6 +186,8 @@ class CRSMLoraBridge:
         self._capture_count: int = 0
         self._flush_count: int = 0
         self._total_flushed: int = 0
+        self._excluded_sensitive: int = 0
+        self._expired_by_retention: int = 0
         self._status_cache: tuple[float, dict] | None = None
         PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         logger.info("CRSMLoraBridge online — experience → substrate loop active.")
@@ -170,6 +245,21 @@ class CRSMLoraBridge:
             self._pending = None
             return
 
+        eligible, marker = _training_eligible(context_text)
+        if not eligible:
+            self._pending = None
+            self._excluded_sensitive += 1
+            # The marker, never the text. Recording what tripped the screen
+            # is how it gets tuned; recording the excerpt would recreate the
+            # thing being excluded.
+            logger.info(
+                "CRSMLoraBridge: excluded a sensitive exchange from training "
+                "capture (marker=%r; %d excluded since boot).",
+                marker,
+                self._excluded_sensitive,
+            )
+            return
+
         self._pending = CapturedMoment(
             timestamp=time.time(),
             context_summary=_redact_for_training(context_text[-800:] if context_text else ""),
@@ -195,6 +285,19 @@ class CRSMLoraBridge:
 
         moment = self._pending
         self._pending = None
+
+        eligible, marker = _training_eligible(response_text)
+        if not eligible:
+            # A benign prompt can still draw a sensitive answer, so the
+            # screen runs on both halves of the exchange.
+            self._excluded_sensitive += 1
+            logger.info(
+                "CRSMLoraBridge: excluded a sensitive response from training "
+                "capture (marker=%r; %d excluded since boot).",
+                marker,
+                self._excluded_sensitive,
+            )
+            return
 
         moment.response_summary = _redact_for_training(
             response_text[:600] if response_text else ""
@@ -259,6 +362,13 @@ class CRSMLoraBridge:
             "buffer_size": len(self._buffer),
             "capture_count": self._capture_count,
             "total_flushed": self._total_flushed,
+            # The capture receipt CP126 asked for: how much was deliberately
+            # withheld. A corpus with no exclusions is either a very tame
+            # conversation history or a screen that is not running.
+            "excluded_sensitive": self._excluded_sensitive,
+            "expired_by_retention": self._expired_by_retention,
+            "retention_days": TRAINING_RETENTION_DAYS,
+            "training_capture_enabled": _training_capture_enabled(),
             "avg_quality": (
                 sum(m.quality_score for m in self._buffer) / len(self._buffer)
                 if self._buffer else 0.0
@@ -371,9 +481,33 @@ class CRSMLoraBridge:
         # Also persist raw buffer to disk for NightlyLoRA pickup
         self._persist_buffer()
 
+    def _expire_stale_moments(self) -> None:
+        """Drop captured moments past the retention window.
+
+        Runs at persist time so the file on disk never carries a moment
+        older than the policy allows, and so the expiry is observable in the
+        same place the corpus is written.
+        """
+        cutoff = time.time() - _retention_window_s()
+        live = [m for m in self._buffer if float(m.timestamp or 0.0) >= cutoff]
+        expired = len(self._buffer) - len(live)
+        if not expired:
+            return
+        self._buffer.clear()
+        self._buffer.extend(live)
+        self._expired_by_retention += expired
+        logger.info(
+            "CRSMLoraBridge: expired %d captured moment(s) past the %s-day "
+            "retention window (%d expired since boot).",
+            expired,
+            TRAINING_RETENTION_DAYS,
+            self._expired_by_retention,
+        )
+
     def _persist_buffer(self):
         """Write buffer to JSONL for NightlyLoRATrainer."""
         try:
+            self._expire_stale_moments()
             recent = list(self._buffer)[-100:]  # last 100 moments
             lines = []
             for m in recent:
