@@ -380,15 +380,32 @@ class CuriosityEngine:
                     context=f"Curiosity insight: {topic} — {content[:200]}"
                 )
             elif meta_evo:
-                # If no queue, store as pending for next cycle
-                if not hasattr(meta_evo, '_pending_curiosity'):
-                    meta_evo._pending_curiosity = []
-                meta_evo._pending_curiosity.append({
-                    "topic": topic,
-                    "content": content[:300],
-                    "source": "curiosity_engine"
-                })
-                logger.info("📋 Queued curiosity insight for next evolution cycle")
+                # CP126: "Curiosity mutates another subsystem's private
+                # queue. When no public queue exists, the engine creates and
+                # appends to meta_evo._pending_curiosity directly. The list
+                # is unsynchronized, unbounded, undurable, and outside any
+                # governed write contract."
+                #
+                # It was also writing a schema the consumer cannot read —
+                # topic/content/source where the reader looks for
+                # context/target_area — so every insight that took this
+                # branch was dropped in silence downstream. Reaching into
+                # another subsystem's privates to enqueue work that will
+                # never be dequeued is worse than not enqueuing it: the log
+                # line said it was queued.
+                record_degradation(
+                    "curiosity_engine",
+                    AttributeError(
+                        f"{type(meta_evo).__name__} has no queue_optimization(); "
+                        "curiosity insight not delivered"
+                    ),
+                    action="dropped curiosity insight rather than writing a foreign private queue",
+                )
+                logger.warning(
+                    "MetaEvolution exposes no queue_optimization(); curiosity "
+                    "insight '%s' was NOT queued.",
+                    topic[:50],
+                )
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('curiosity_engine', e)
             logger.debug("Could not feed to MetaEvolution: %s", e)

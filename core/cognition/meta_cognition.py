@@ -6,12 +6,19 @@ patch generation, and safe application of core logic improvements.
 from core.runtime.errors import record_degradation
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional
 
 from core.runtime.base_module import AuraBaseModule
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Cognition.Meta")
+
+#: How many queued optimization requests are retained. Beyond this the
+#: oldest is dropped, loudly — the loop consumes one per cycle, so a backlog
+#: this deep is already many cycles of stale intent.
+PENDING_CURIOSITY_LIMIT = 50
 
 class MetaEvolutionEngine(AuraBaseModule):
     """The engine for recursive self-optimization and transcendence."""
@@ -20,7 +27,20 @@ class MetaEvolutionEngine(AuraBaseModule):
         super().__init__("MetaEvolution")
         self.last_optimization_time = 0
         self._is_optimizing = False
-        self._pending_curiosity: List[Dict[str, Any]] = []
+        # CP126 (core/curiosity_engine.py): "Curiosity mutates another
+        # subsystem's private queue. When no public queue exists, the engine
+        # creates and appends to meta_evo._pending_curiosity directly. The
+        # list is unsynchronized, unbounded, undurable, and outside any
+        # governed write contract."
+        #
+        # The queue is now bounded by construction (a deque drops its own
+        # oldest rather than the owner rebinding a slice, which was racy: a
+        # reader holding the old list saw a snapshot that silently stopped
+        # being the queue), guarded by a ranked lock, and reachable only
+        # through queue_optimization().
+        self._pending_curiosity: Deque[Dict[str, Any]] = deque(maxlen=PENDING_CURIOSITY_LIMIT)
+        self._pending_lock = checked_lock("meta_evolution.pending_curiosity", rank=LockRank.LEAF)
+        self._dropped_curiosity = 0
         logger.info("⚡ Meta-Evolution Engine Online (Recursive Self-Improvement Active)")
 
     async def evolve(self, target_area: str = None) -> Dict[str, Any]:
@@ -29,19 +49,44 @@ class MetaEvolutionEngine(AuraBaseModule):
 
     def queue_optimization(self, target_area: Optional[str] = None, context: Optional[str] = None):
         """Queue an optimization request for the next cycle.
-        
-        This is typically called by the Curiosity Engine or internal monitors.
+
+        The only supported way in. Called by the Curiosity Engine and
+        internal monitors; anything that reaches past this into the queue
+        itself writes a record the consumer cannot read (it looks for
+        ``context`` and ``target_area``, and a foreign schema is dropped in
+        silence).
         """
-        self._pending_curiosity.append({
+        record = {
             "target_area": target_area,
             "context": context,
-            "timestamp": time.time()
-        })
-        # Limit queue size
-        if len(self._pending_curiosity) > 50:
-            self._pending_curiosity = self._pending_curiosity[-50:]
-        
+            "timestamp": time.time(),
+        }
+        with self._pending_lock:
+            if len(self._pending_curiosity) == self._pending_curiosity.maxlen:
+                # Say when work is being discarded. A queue that silently
+                # forgets its oldest item under load looks identical to one
+                # that is keeping up.
+                self._dropped_curiosity += 1
+                logger.warning(
+                    "Pending-curiosity queue full (%d); dropping the oldest "
+                    "request. %d dropped since boot.",
+                    PENDING_CURIOSITY_LIMIT,
+                    self._dropped_curiosity,
+                )
+            self._pending_curiosity.append(record)
+
         logger.info("📋 Queued autonomous optimization: %s", (context or "No context")[:100])
+
+    def take_pending_optimization(self) -> Optional[Dict[str, Any]]:
+        """Pop the oldest queued request, or None. The only supported way out."""
+        with self._pending_lock:
+            if not self._pending_curiosity:
+                return None
+            return self._pending_curiosity.popleft()
+
+    def pending_optimization_count(self) -> int:
+        with self._pending_lock:
+            return len(self._pending_curiosity)
 
     async def run_optimization_cycle(self, target_area: Optional[str] = None) -> Dict[str, Any]:
         """Runs a complete self-optimization cycle.
@@ -133,9 +178,9 @@ class MetaEvolutionEngine(AuraBaseModule):
                     
                     # Consume pending curiosity insights if available
                     forge_context = f"Optimize based on audit: {audit_result[:200]}"
-                    if self._pending_curiosity:
-                        finding = self._pending_curiosity.pop(0)
-                        forge_context += f" | Curiosity Insight: {finding.get('context', '')[:300]}"
+                    finding = self.take_pending_optimization()
+                    if finding:
+                        forge_context += f" | Curiosity Insight: {finding.get('context', '') or ''}"[:300]
                         if finding.get("target_area"):
                             forge_target = finding["target_area"]
                     
