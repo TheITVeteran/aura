@@ -2,6 +2,7 @@ import asyncio
 import contextvars
 import functools
 import hashlib
+import importlib
 import inspect
 import json
 import logging
@@ -249,6 +250,11 @@ class ServiceContainer:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
             return cls._instance
+
+    #: Import results for check_package, keyed by module name. A failed
+    #: import is expensive to repeat and requirement validation runs across
+    #: the whole skill catalog.
+    _package_availability: dict[str, bool] = {}
 
     @classmethod
     def get_all_subsystem_statuses(cls) -> dict[str, str]:
@@ -666,6 +672,80 @@ class ServiceContainer:
         resolved_name = cls._resolve_name(name)
         with cls._lock:
             return resolved_name in cls._services
+
+    @classmethod
+    def check_package(cls, package_name: str, *, auto_install: bool = False) -> bool:
+        """Is this Python package actually importable right now?
+
+        CP126 (critical): "SkillRequirements and the engine proxy call
+        ServiceContainer.check_package, but ServiceContainer defines no such
+        method. Any skill declaring Python package requirements can fail
+        during catalog validation instead of receiving a truthful answer."
+
+        Three call sites invoked this — per-skill requirement validation,
+        the engine's async proxy, and the boot dependency check — and every
+        one of them raised AttributeError instead of getting an answer. A
+        skill that honestly declared its dependencies was punished for it.
+
+        The check performs the real import rather than ``find_spec``.
+        ``core/runtime/integration_liveness.py`` documents why at length:
+        ``find_spec`` answers "is this module present on disk", which is not
+        the question. A package whose ``__init__`` raises on a moved API or
+        a missing transitive dependency is present and unimportable — so a
+        find_spec check reports available and the feature is dead. Nineteen
+        call sites in this codebase already make that mistake; this is not
+        the twentieth.
+
+        Results are cached because requirement validation runs per skill
+        across the whole catalog, and a failed import is expensive to repeat.
+
+        ``auto_install`` is accepted and deliberately NOT honoured — see
+        below.
+        """
+        name = str(package_name or "").strip()
+        if not name:
+            return False
+
+        if auto_install:
+            # Installing into the interpreter's environment at runtime is
+            # not a dependency check, it is an unreviewed mutation of the
+            # machine — network egress, arbitrary setup code, and a venv
+            # that no longer matches any lockfile. This venv is also shared
+            # with long-running training processes, where a package
+            # changing underneath a run invalidates it silently.
+            #
+            # The parameter is kept so the existing callers keep working and
+            # so the refusal is visible at the call site rather than being a
+            # silently ignored argument.
+            logger.warning(
+                "check_package(%s, auto_install=True): refusing to install at "
+                "runtime; reporting availability only.",
+                name,
+            )
+
+        cached = cls._package_availability.get(name)
+        if cached is not None:
+            return cached
+
+        try:
+            importlib.import_module(name)
+            available = True
+        except ImportError:
+            available = False
+        except Exception as exc:  # noqa: BLE001 - a package __init__ may raise anything
+            # Installed but unimportable: the silent-decay state. It is a
+            # negative answer, and it is worth saying out loud, because
+            # "missing" and "broken" call for different fixes.
+            logger.warning(
+                "Package %r is installed but failed to import: %s: %s",
+                name,
+                type(exc).__name__,
+                exc,
+            )
+            available = False
+
+        cls._package_availability[name] = available
+        return available
 
     @classmethod
     def get(cls, name: str, default: Any = "_SENTINEL") -> Any:
