@@ -280,6 +280,18 @@ _CRITICAL_ACTION_SKILLS = frozenset(
 #: unavailable during boot. Every one of these is incapable of changing
 #: anything outside the process. Anything else — including ``unknown`` —
 #: waits for a working gate.
+#: Anything a discarded skill's teardown may plausibly raise. A reload must
+#: not fail because an instance being thrown away refused to die.
+_INSTANCE_RETIREMENT_ERRORS = (
+    OSError,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    ConnectionError,
+    TimeoutError,
+)
+
 _PRE_RUNTIME_UNGATED_EFFECT_SCOPES: frozenset[str] = frozenset({
     "pure_compute",
     "read_only",
@@ -2077,6 +2089,79 @@ class CapabilityEngine(AuraBaseModule):
 
         return bool(ServiceContainer.check_package(package_name, auto_install=auto_install))
 
+    #: Synchronous lifecycle hooks a skill may declare to release resources.
+    #: Checked in order; the first one present is used.
+    _INSTANCE_SHUTDOWN_HOOKS = ("shutdown", "close", "cleanup")
+
+    def _retire_superseded_instances(
+        self, superseded: list[tuple[str, Any]]
+    ) -> None:
+        """Release resources held by instances the reload replaced.
+
+        CP126: "Reload replaces catalog state and clears the instance cache
+        without an ownership handoff or asynchronous shutdown contract.
+        Skills holding sessions, subprocesses, file handles, or background
+        tasks can leak while stateful instances are discarded."
+
+        Only instances whose class actually declares a lifecycle hook are
+        touched. Most skills declare none and are pure garbage — calling
+        speculative teardown on them would be inventing a contract. The ones
+        that DO declare a hook are precisely the ones holding something worth
+        releasing, which is why the leak was worth closing.
+
+        Best effort by design: a reload must not fail because a discarded
+        instance refused to die. Every failure is recorded rather than
+        raised.
+
+        Honest caveat: an execution still in flight on a superseded instance
+        can observe its resources closing. That is a smaller and louder
+        problem than the previous behaviour, where the subprocess or session
+        simply outlived the object forever with nothing recording it.
+        """
+        for name, instance in superseded:
+            hook = None
+            for attribute in self._INSTANCE_SHUTDOWN_HOOKS:
+                candidate = getattr(instance, attribute, None)
+                if callable(candidate):
+                    hook = candidate
+                    break
+            if hook is None:
+                continue
+            try:
+                outcome = hook()
+                if inspect.isawaitable(outcome):
+                    # A coroutine returned from a sync reload cannot be
+                    # awaited here. Schedule it if a loop is running;
+                    # otherwise say plainly that it did not close, rather
+                    # than dropping the coroutine and reporting a clean
+                    # retirement.
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        outcome.close()
+                        _record_capability_degradation(
+                            RuntimeError(
+                                f"skill {name!r} declares an async shutdown but the "
+                                "reload ran with no event loop; resources not released"
+                            ),
+                            action="left an async skill shutdown unrun during sync catalog reload",
+                            severity="warning",
+                        )
+                    else:
+                        get_task_tracker().create_task(
+                            outcome, name=f"skill_shutdown_{name}"
+                        )
+                self.logger.debug("Retired superseded skill instance %r", name)
+            except _INSTANCE_RETIREMENT_ERRORS as exc:
+                _record_capability_degradation(
+                    exc,
+                    action=f"continued catalog reload after {name!r} shutdown failed",
+                    severity="warning",
+                )
+                self.logger.warning(
+                    "Superseded skill %r did not shut down cleanly: %s", name, exc
+                )
+
     def reload_skills(self) -> None:
         """Serialize catalog mutations while allowing readers to use the live generation."""
 
@@ -2236,6 +2321,11 @@ class CapabilityEngine(AuraBaseModule):
         }
 
         with self._catalog_guard():
+            superseded_instances = [
+                (name, instance)
+                for name, instance in (self.instances or {}).items()
+                if next_instances.get(name) is not instance
+            ]
             self.skills = next_skills
             self.instances = next_instances
             self.quarantined_skills = next_quarantined
@@ -2248,6 +2338,11 @@ class CapabilityEngine(AuraBaseModule):
             live_count = len(self.skills)
             quarantined_count = len(self.quarantined_skills)
             exclusion_count = len(self.catalog_exclusions)
+
+        # Retire what the new catalog replaced. Outside the catalog lock: a
+        # skill's shutdown may block on a socket or a subprocess, and holding
+        # the catalog guard through that would stall every reader.
+        self._retire_superseded_instances(superseded_instances)
 
         if self.orchestrator and hasattr(self.orchestrator, "status") and self.orchestrator.status:
             try:
