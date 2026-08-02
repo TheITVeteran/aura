@@ -1,0 +1,591 @@
+"""One way to run model-written Python, with an actual OS boundary.
+
+CP126 raised the same critical finding against two benchmark harnesses
+independently:
+
+* ``aura_bench/aletheia_runner_live.py`` — "Rulescript and device handlers
+  import and execute Aura-generated modules with importlib in the
+  privileged runner process. AST parsing and temporary paths do not provide
+  an OS sandbox, capability boundary, or resource limit."
+* ``aura_bench/hard_suite.py`` — "The denylist is bypassable through allowed
+  modules, object traversal, or indirect builtins, and ``-I`` only isolates
+  import configuration rather than filesystem, process, network, or resource
+  access."
+
+They are two call sites of one defect, and the two defences they reached
+for are both known-broken in the same way:
+
+*AST screening is a denylist.* ``__import__`` reachable through
+``().__class__.__mro__[1].__subclasses__()`` never appears in the import
+table, and a screen that reads source text cannot see what
+``getattr(mod, name)`` will resolve to at runtime.
+
+*``python -I`` is not isolation.* It ignores ``PYTHON*`` environment
+variables and drops the script directory from ``sys.path``. That is import
+hygiene. The child keeps the parent's filesystem, network, process and
+signal access in full — including the user's home directory, the live
+runtime's sockets, and this machine's keychain.
+
+What is actually enforceable
+----------------------------
+A kernel boundary. On macOS that is ``sandbox-exec`` (Seatbelt): deny by
+default, then re-allow the interpreter's own read paths and one scratch
+directory. Network is denied outright, so exfiltration and egress are not
+policy questions. On Linux ``bwrap`` gives the same shape.
+
+And the property that makes it worth having: **when no boundary is
+available, this refuses to run the code.** The previous behaviour — run it
+anyway, unsandboxed, and report a normal result — is what turns a benchmark
+into an execution service. A refusal is a visible, fixable failure; silent
+unsandboxed execution is neither.
+
+``AURA_SANDBOX_ALLOW_UNCONFINED=1`` exists for platforms with no boundary
+at all, and it is deliberately awkward: the returned outcome carries
+``boundary="none"`` and ``sandboxed=False`` forever after, so a caller that
+records results cannot later claim they were confined.
+
+Two entry points, because untrusted code arrives in exactly two shapes:
+
+* :func:`run_untrusted_script` — run it, keep stdout.
+* :func:`call_untrusted_function` — load it, call one named function with
+  JSON arguments, keep JSON results. This is what the benchmark harnesses
+  need, and it is the shape that previously forced ``exec_module`` into the
+  privileged process because nothing else offered it.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import sysconfig
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Sequence
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT_S = 20.0
+DEFAULT_MEM_BYTES = 512 * 1024 * 1024
+DEFAULT_OUTPUT_LIMIT = 200 * 1024
+DEFAULT_CODE_BYTES = 512 * 1024
+DEFAULT_FILE_SIZE_BYTES = 32 * 1024 * 1024
+
+#: Escape hatch for platforms with no kernel boundary. Off by default.
+UNCONFINED_ENV = "AURA_SANDBOX_ALLOW_UNCONFINED"
+
+_SANDBOX_ERRORS = (
+    OSError,
+    RuntimeError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+    json.JSONDecodeError,
+    subprocess.SubprocessError,
+)
+
+
+@dataclass(frozen=True)
+class SandboxOutcome:
+    """What happened, and — separately — whether it was actually confined.
+
+    ``sandboxed`` is not a detail. A caller that reports "we ran the model's
+    code safely" is making a claim about this field, so it is recorded
+    beside the result rather than inferred from the absence of an error.
+    """
+
+    status: str
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int | None = None
+    sandboxed: bool = False
+    boundary: str = "none"
+    results: list[Any] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "returncode": self.returncode,
+            "sandboxed": self.sandboxed,
+            "boundary": self.boundary,
+            "results": self.results,
+            "error": self.error,
+        }
+
+
+class UntrustedExecutionError(RuntimeError):
+    """Untrusted code could not be run under a boundary, or failed under one."""
+
+
+# ── Boundary discovery ────────────────────────────────────────────────────
+
+
+def available_boundary() -> str:
+    """The strongest kernel boundary this host can actually apply.
+
+    Returns ``"seatbelt"``, ``"bubblewrap"``, or ``""``. Presence of the
+    binary is checked rather than assumed from ``sys.platform``: a stripped
+    container image reports darwin and has no ``sandbox-exec``.
+    """
+    if sys.platform == "darwin" and shutil.which("sandbox-exec"):
+        return "seatbelt"
+    if sys.platform.startswith("linux") and shutil.which("bwrap"):
+        return "bubblewrap"
+    return ""
+
+
+def _unconfined_permitted() -> bool:
+    return os.environ.get(UNCONFINED_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+# ── Profile generation ────────────────────────────────────────────────────
+
+
+def _interpreter_read_paths() -> list[str]:
+    """Directories the interpreter must read to start at all.
+
+    Derived from ``sysconfig`` rather than hardcoded: a venv, a Homebrew
+    Python and a framework build put the standard library in three
+    different places, and a profile that guesses produces a sandbox that
+    cannot import ``json``.
+    """
+    paths = {
+        "/usr/lib",
+        "/usr/share",
+        "/System/Library",
+        "/Library/Frameworks",
+        "/private/var/db/dyld",
+        "/private/var/select",
+    }
+    for key in ("stdlib", "platstdlib", "purelib", "platlib", "data", "prefix", "base"):
+        value = sysconfig.get_paths().get(key) or sysconfig.get_config_var(key)
+        if isinstance(value, str) and value:
+            paths.add(value)
+    paths.add(str(Path(sys.executable).resolve().parent))
+    paths.add(str(Path(sys.prefix).resolve()))
+    if hasattr(sys, "base_prefix"):
+        paths.add(str(Path(sys.base_prefix).resolve()))
+    return sorted(p for p in paths if p and Path(p).exists())
+
+
+def _seatbelt_profile(*, scratch: Path, read_paths: Sequence[str]) -> str:
+    """Deny-by-default Seatbelt profile.
+
+    ``(deny default)`` first, then the narrowest re-allows that let CPython
+    boot. Network is denied with no re-allow: untrusted code that cannot
+    open a socket cannot exfiltrate what it reads, which makes the read
+    surface a much smaller problem than it would otherwise be.
+    """
+    lines = [
+        "(version 1)",
+        "(deny default)",
+        "(deny network*)",
+        "(deny process-exec*)",
+        "(allow process-fork)",
+        "(allow signal (target self))",
+        "(allow sysctl-read)",
+        "(allow mach-lookup)",
+        "(allow file-read-metadata)",
+    ]
+    lines.append("(allow file-read*")
+    for path in read_paths:
+        lines.append(f'    (subpath "{_escape(path)}")')
+    lines.append(f'    (subpath "{_escape(str(scratch))}")')
+    lines.append('    (literal "/dev/null")')
+    lines.append('    (literal "/dev/urandom")')
+    lines.append('    (literal "/dev/random")')
+    lines.append(")")
+    # Writes are confined to the scratch directory. Everything the code
+    # produces is therefore inspectable and disposable.
+    lines.append("(allow file-write*")
+    lines.append(f'    (subpath "{_escape(str(scratch))}")')
+    lines.append('    (literal "/dev/null")')
+    lines.append(")")
+    # The interpreter itself must be executable, and only it.
+    lines.append("(allow process-exec")
+    lines.append(f'    (literal "{_escape(str(Path(sys.executable).resolve()))}")')
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def _escape(path: str) -> str:
+    return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _bubblewrap_argv(*, scratch: Path, read_paths: Sequence[str]) -> list[str]:
+    argv = [
+        "bwrap",
+        "--unshare-all",          # no network, no pids, no ipc
+        "--die-with-parent",
+        "--new-session",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--tmpfs", "/tmp",
+    ]
+    for path in read_paths:
+        argv += ["--ro-bind-try", path, path]
+    argv += ["--bind", str(scratch), str(scratch)]
+    argv += ["--chdir", str(scratch)]
+    return argv
+
+
+# ── The child harness ─────────────────────────────────────────────────────
+
+#: Runs inside the sandbox. Applies rlimits the kernel boundary does not
+#: cover (CPU, address space, file size, subprocess count), then either
+#: executes the script or imports it and calls one function.
+_HARNESS = r'''
+import json, sys, io, contextlib, traceback, runpy
+
+try:
+    import resource
+except ImportError:
+    resource = None
+
+request = json.loads(sys.stdin.read())
+limits = request.get("limits") or {}
+warnings = []
+
+def _limit(kind_name, value):
+    if resource is None or not value:
+        return
+    kind = getattr(resource, kind_name, None)
+    if kind is None:
+        return
+    try:
+        soft, hard = resource.getrlimit(kind)
+        target = int(value)
+        new_hard = target if hard == resource.RLIM_INFINITY else min(hard, target)
+        resource.setrlimit(kind, (min(target, new_hard), new_hard))
+    except (OSError, ValueError) as exc:
+        warnings.append("%s: %r" % (kind_name, exc))
+
+_limit("RLIMIT_CPU", limits.get("cpu_seconds"))
+_limit("RLIMIT_FSIZE", limits.get("file_size_bytes"))
+_limit("RLIMIT_NPROC", limits.get("processes"))
+if sys.platform != "darwin":
+    # RLIMIT_AS on macOS breaks CPython's own allocator before user code runs.
+    _limit("RLIMIT_AS", limits.get("mem_bytes"))
+
+module_path = request["module_path"]
+mode = request.get("mode", "script")
+out = io.StringIO()
+err = io.StringIO()
+payload = {"status": "ok", "results": [], "warnings": warnings}
+
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if mode == "script":
+            runpy.run_path(module_path, run_name="__main__")
+        else:
+            namespace = runpy.run_path(module_path, run_name="aura_untrusted_candidate")
+            target = namespace.get(request["function"])
+            if not callable(target):
+                raise NameError("%s is not defined or not callable" % request["function"])
+            for call in request.get("calls", []):
+                value = target(*call.get("args", []), **call.get("kwargs", {}))
+                payload["results"].append(value)
+except BaseException as exc:  # noqa: BLE001 - the whole point is to report anything
+    payload["status"] = "error"
+    payload["error"] = repr(exc)
+    payload["traceback"] = traceback.format_exc()
+
+payload["stdout"] = out.getvalue()
+payload["stderr"] = err.getvalue()
+
+try:
+    encoded = json.dumps(payload)
+except (TypeError, ValueError):
+    # A function may legitimately return something unserialisable. Say so
+    # rather than losing the whole run to an encoder error.
+    payload["results"] = [repr(r) for r in payload["results"]]
+    payload["unserialisable_results"] = True
+    encoded = json.dumps(payload)
+
+sys.__stdout__.write("\x00AURA_SANDBOX\x00" + encoded)
+'''
+
+_SENTINEL = "\x00AURA_SANDBOX\x00"
+
+
+# ── Public API ────────────────────────────────────────────────────────────
+
+
+def run_untrusted_script(
+    code: str,
+    *,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    mem_bytes: int = DEFAULT_MEM_BYTES,
+    extra_read_paths: Sequence[str | os.PathLike[str]] = (),
+    require_boundary: bool = True,
+    source: str = "unknown",
+) -> SandboxOutcome:
+    """Execute model-written Python as a script under a kernel boundary."""
+    return _execute(
+        code,
+        mode="script",
+        function=None,
+        calls=(),
+        timeout_s=timeout_s,
+        mem_bytes=mem_bytes,
+        extra_read_paths=extra_read_paths,
+        require_boundary=require_boundary,
+        source=source,
+    )
+
+
+def call_untrusted_function(
+    code: str,
+    function: str,
+    calls: Sequence[Sequence[Any]] | Sequence[dict[str, Any]] = (),
+    *,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    mem_bytes: int = DEFAULT_MEM_BYTES,
+    extra_read_paths: Sequence[str | os.PathLike[str]] = (),
+    require_boundary: bool = True,
+    source: str = "unknown",
+) -> SandboxOutcome:
+    """Load model-written Python and call one function in it, out-of-process.
+
+    ``calls`` is a sequence of positional-argument tuples, or of
+    ``{"args": [...], "kwargs": {...}}`` mappings. Every call runs in one
+    child, in order, so a candidate that is stateful behaves the way it
+    would in-process — minus the ability to touch this machine.
+
+    Arguments and return values cross a JSON boundary. That is a real
+    constraint and a deliberate one: anything richer would hand the
+    untrusted side a live object graph, which is the thing being prevented.
+    """
+    normalised: list[dict[str, Any]] = []
+    for call in calls:
+        if isinstance(call, dict):
+            normalised.append(
+                {"args": list(call.get("args", [])), "kwargs": dict(call.get("kwargs", {}))}
+            )
+        else:
+            normalised.append({"args": list(call), "kwargs": {}})
+    return _execute(
+        code,
+        mode="call",
+        function=function,
+        calls=normalised,
+        timeout_s=timeout_s,
+        mem_bytes=mem_bytes,
+        extra_read_paths=extra_read_paths,
+        require_boundary=require_boundary,
+        source=source,
+    )
+
+
+def _execute(
+    code: str,
+    *,
+    mode: str,
+    function: str | None,
+    calls: Sequence[dict[str, Any]],
+    timeout_s: float,
+    mem_bytes: int,
+    extra_read_paths: Sequence[str | os.PathLike[str]],
+    require_boundary: bool,
+    source: str,
+) -> SandboxOutcome:
+    if not isinstance(code, str) or not code.strip():
+        return SandboxOutcome(status="rejected", error="no code supplied")
+    if len(code.encode("utf-8", errors="replace")) > DEFAULT_CODE_BYTES:
+        return SandboxOutcome(
+            status="rejected",
+            error=f"code payload exceeds {DEFAULT_CODE_BYTES} bytes",
+        )
+
+    boundary = available_boundary()
+    if not boundary:
+        if require_boundary and not _unconfined_permitted():
+            # The refusal. Running it anyway is how a benchmark becomes an
+            # execution service for whatever the model happened to write.
+            return SandboxOutcome(
+                status="no_boundary",
+                error=(
+                    "no OS sandbox available on this host "
+                    f"(platform={sys.platform}); refusing to execute untrusted "
+                    f"code. Set {UNCONFINED_ENV}=1 to run unconfined, which "
+                    "will be recorded on every result."
+                ),
+            )
+        logger.warning(
+            "executing untrusted code UNCONFINED (source=%s): no OS boundary available",
+            source,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="aura_untrusted_") as tmp:
+        scratch = Path(tmp)
+        module_path = scratch / "candidate.py"
+        harness_path = scratch / "_aura_harness.py"
+        atomic_write_text(module_path, code)
+        atomic_write_text(harness_path, _HARNESS)
+
+        read_paths = _interpreter_read_paths()
+        read_paths += [str(Path(p).resolve()) for p in extra_read_paths]
+
+        argv = _wrap_with_boundary(
+            boundary,
+            scratch=scratch,
+            read_paths=read_paths,
+            command=[sys.executable, "-I", "-B", "-S", str(harness_path)],
+        )
+        request = json.dumps(
+            {
+                "module_path": str(module_path),
+                "mode": mode,
+                "function": function,
+                "calls": list(calls),
+                "limits": {
+                    "cpu_seconds": max(1, int(timeout_s)),
+                    "mem_bytes": int(mem_bytes),
+                    "file_size_bytes": DEFAULT_FILE_SIZE_BYTES,
+                    "processes": 64,
+                },
+            }
+        )
+        return _spawn(
+            argv,
+            request,
+            timeout_s=timeout_s,
+            boundary=boundary,
+            scratch=scratch,
+            source=source,
+        )
+
+
+def _wrap_with_boundary(
+    boundary: str,
+    *,
+    scratch: Path,
+    read_paths: Sequence[str],
+    command: Sequence[str],
+) -> list[str]:
+    if boundary == "seatbelt":
+        profile_path = scratch / "profile.sb"
+        atomic_write_text(profile_path, _seatbelt_profile(scratch=scratch, read_paths=read_paths))
+        return ["sandbox-exec", "-f", str(profile_path), *command]
+    if boundary == "bubblewrap":
+        return [*_bubblewrap_argv(scratch=scratch, read_paths=read_paths), *command]
+    return list(command)
+
+
+def _spawn(
+    argv: Sequence[str],
+    request: str,
+    *,
+    timeout_s: float,
+    boundary: str,
+    scratch: Path,
+    source: str,
+) -> SandboxOutcome:
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    try:
+        completed = get_subprocess_gateway().run(
+            list(argv),
+            input=request,
+            timeout=timeout_s + 5.0,
+            capture_output=True,
+            cwd=str(scratch),
+            source=f"sandbox.untrusted_python.{source}",
+        )
+    except subprocess.TimeoutExpired:
+        return SandboxOutcome(
+            status="timeout",
+            error=f"untrusted code exceeded {timeout_s}s",
+            sandboxed=bool(boundary),
+            boundary=boundary or "none",
+        )
+    except _SANDBOX_ERRORS as exc:
+        record_degradation("untrusted_python", exc, action="untrusted execution failed to spawn")
+        return SandboxOutcome(
+            status="spawn_failed",
+            error=repr(exc),
+            sandboxed=bool(boundary),
+            boundary=boundary or "none",
+        )
+
+    stdout = _text(getattr(completed, "stdout", ""))
+    stderr = _truncate(_text(getattr(completed, "stderr", "")))
+    returncode = getattr(completed, "returncode", None)
+
+    marker = stdout.rfind(_SENTINEL)
+    if marker < 0:
+        # The harness never reported. Either the boundary refused to start
+        # the interpreter or the child was killed; both are failures, and
+        # neither may be reported as an ordinary empty result.
+        return SandboxOutcome(
+            status="no_result",
+            stdout=_truncate(stdout),
+            stderr=stderr,
+            returncode=returncode,
+            sandboxed=bool(boundary),
+            boundary=boundary or "none",
+            error="sandboxed child produced no result payload",
+        )
+
+    try:
+        payload = json.loads(stdout[marker + len(_SENTINEL):])
+    except (json.JSONDecodeError, ValueError) as exc:
+        return SandboxOutcome(
+            status="no_result",
+            stdout=_truncate(stdout),
+            stderr=stderr,
+            returncode=returncode,
+            sandboxed=bool(boundary),
+            boundary=boundary or "none",
+            error=f"unparseable result payload: {exc!r}",
+        )
+
+    return SandboxOutcome(
+        status=str(payload.get("status", "error")),
+        stdout=_truncate(str(payload.get("stdout") or "")),
+        stderr=_truncate(
+            "\n".join(p for p in (str(payload.get("stderr") or ""), stderr) if p)
+        ),
+        returncode=returncode,
+        sandboxed=bool(boundary),
+        boundary=boundary or "none",
+        results=list(payload.get("results") or []),
+        error=str(payload.get("error") or ""),
+    )
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _truncate(text: str, limit: int = DEFAULT_OUTPUT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
+
+
+__all__ = [
+    "DEFAULT_MEM_BYTES",
+    "DEFAULT_TIMEOUT_S",
+    "UNCONFINED_ENV",
+    "SandboxOutcome",
+    "UntrustedExecutionError",
+    "available_boundary",
+    "call_untrusted_function",
+    "run_untrusted_script",
+]
