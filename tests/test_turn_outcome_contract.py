@@ -240,3 +240,36 @@ def test_grades_are_ordered():
         VerificationGrade.COUNTERFACTUALLY_VERIFIED
         < VerificationGrade.EXTERNALLY_VERIFIED
     )
+
+
+def test_every_grade_comparison_uses_rank_not_the_string():
+    """A str-enum falls through to ALPHABETICAL comparison for any operator
+    left undefined, and these strings are not in rank order. With only
+    __lt__/__le__ defined, `POSTCONDITION_VERIFIED >= COUNTERFACTUALLY_
+    VERIFIED` was True because "p" sorts after "c" — silently promoting a
+    mid-tier grade past the bar meant to stop it.
+    """
+    lower = VerificationGrade.POSTCONDITION_VERIFIED
+    higher = VerificationGrade.COUNTERFACTUALLY_VERIFIED
+    assert lower < higher
+    assert lower <= higher
+    assert higher > lower
+    assert higher >= lower
+    assert not (lower >= higher)
+    assert not (lower > higher)
+
+    # Alphabetically "asserted" < "none", but by rank NONE is the weakest.
+    assert VerificationGrade.NONE < VerificationGrade.ASSERTED
+    assert not (VerificationGrade.NONE >= VerificationGrade.ASSERTED)
+
+
+def test_grades_sort_by_rank():
+    ordered = sorted(VerificationGrade)
+    assert ordered == [
+        VerificationGrade.NONE,
+        VerificationGrade.ASSERTED,
+        VerificationGrade.OBSERVED,
+        VerificationGrade.POSTCONDITION_VERIFIED,
+        VerificationGrade.COUNTERFACTUALLY_VERIFIED,
+        VerificationGrade.EXTERNALLY_VERIFIED,
+    ]

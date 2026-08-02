@@ -129,6 +129,13 @@ class LearningUpdate:
     #: Applied to reverse this update. Absent means irreversible, which is
     #: refused durably — see the class docstring.
     inverse: Mapping[str, Any] | None = None
+    #: A signed verdict from the independent evidence service. Required for
+    #: the two strongest grades: below them a caller's word is checkable
+    #: against a receipt, but "counterfactually verified" and "externally
+    #: verified" are claims about work a caller cannot have done alone, and
+    #: accepting them on assertion would put the strongest evidence tier on
+    #: the weakest footing in the system.
+    verdict: Any = None
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def fingerprint(self) -> str:
@@ -169,6 +176,42 @@ class Admission:
             "evidence_id": self.update.evidence_id,
             "record_id": self.record_id,
         }
+
+
+def _verdict_supports(update: LearningUpdate) -> tuple[bool, str]:
+    """Whether a signed, certified verdict actually backs the claimed grade.
+
+    The seam between "what evidence exists" (core.brain.verification) and
+    "what Aura is allowed to keep" (here). A caller may state any grade it
+    likes; at the top two tiers the gate goes and looks.
+    """
+    verdict = update.verdict
+    if verdict is None:
+        return False, "top_grade_claimed_without_an_independent_verdict"
+    try:
+        from core.brain.verification.independent_evidence import (
+            VerdictStatus,
+            verdict_signature_valid,
+        )
+    except ImportError as exc:
+        record_degradation(
+            "durable_learning",
+            exc,
+            severity="degraded",
+            action=(
+                "kept a top-grade update session-local because the independent "
+                "evidence service could not be loaded to check its verdict"
+            ),
+        )
+        return False, "evidence_service_unavailable"
+    if not verdict_signature_valid(verdict):
+        return False, "verdict_signature_invalid"
+    if getattr(verdict, "status", None) is not VerdictStatus.CERTIFIED:
+        return False, "verdict_did_not_certify"
+    if getattr(verdict, "grade", None) < update.grade:
+        # The verdict is real but establishes less than the caller claimed.
+        return False, "verdict_grade_below_the_claimed_grade"
+    return True, "verdict_supports_the_claimed_grade"
 
 
 class DurableLearningGate:
@@ -245,6 +288,10 @@ class DurableLearningGate:
             return LearningScope.SESSION, "durable_grade_but_no_named_verifier"
         if update.inverse is None:
             return LearningScope.SESSION, "durable_grade_but_no_inverse_to_roll_back"
+        if update.grade >= VerificationGrade.COUNTERFACTUALLY_VERIFIED:
+            supported, why = _verdict_supports(update)
+            if not supported:
+                return LearningScope.SESSION, why
         return LearningScope.DURABLE, f"grade_{update.grade.value}_meets_{floor.value}"
 
     # ------------------------------------------------------------------- rollback
@@ -491,6 +538,7 @@ def admit_learning_update(
     verifier: str | None = None,
     evidence_id: str | None = None,
     inverse: Mapping[str, Any] | None = None,
+    verdict: Any = None,
     payload: Mapping[str, Any] | None = None,
 ) -> Admission:
     """Ask the gate how far one proposed learning update may reach.
@@ -507,6 +555,7 @@ def admit_learning_update(
             verifier=verifier,
             evidence_id=evidence_id,
             inverse=inverse,
+            verdict=verdict,
             payload=dict(payload or {}),
         )
     )

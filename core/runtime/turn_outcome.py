@@ -137,6 +137,12 @@ class VerificationGrade(str, enum.Enum):
     def rank(self) -> int:
         return _GRADE_RANK[self]
 
+    # All four comparisons, not just the two that were needed at the time.
+    # This is a `str` enum, so any operator left undefined falls through to
+    # STRING comparison — and the strings are not in rank order. With only
+    # __lt__ and __le__ defined, `POSTCONDITION_VERIFIED >= COUNTERFACTUALLY_
+    # VERIFIED` evaluated True because "p" sorts after "c", which silently
+    # promoted a mid-tier grade past the bar meant to stop it.
     def __lt__(self, other: object) -> bool:  # noqa: D105 - ordering only
         if not isinstance(other, VerificationGrade):
             return NotImplemented
@@ -146,6 +152,16 @@ class VerificationGrade(str, enum.Enum):
         if not isinstance(other, VerificationGrade):
             return NotImplemented
         return self.rank <= other.rank
+
+    def __gt__(self, other: object) -> bool:  # noqa: D105
+        if not isinstance(other, VerificationGrade):
+            return NotImplemented
+        return self.rank > other.rank
+
+    def __ge__(self, other: object) -> bool:  # noqa: D105
+        if not isinstance(other, VerificationGrade):
+            return NotImplemented
+        return self.rank >= other.rank
 
 
 _GRADE_RANK: dict[VerificationGrade, int] = {
