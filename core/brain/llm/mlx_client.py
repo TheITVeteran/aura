@@ -47,6 +47,7 @@ from core.utils.task_tracker import get_task_tracker
 from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
 from core.runtime.state_ownership import state_root
+from core.brain.llm.measured_admission import record_generation
 
 logger = logging.getLogger("LLM.MLX")
 
@@ -3256,6 +3257,58 @@ class MLXLocalClient:
             raise
         finally:
             self._pending_generations.pop(req_id, None)
+
+    def _record_throughput_sample(
+        self,
+        response: dict[str, Any],
+        *,
+        prompt: Any = None,
+        foreground_request: bool = True,
+    ) -> None:
+        """Feed one real generation into the admission estimator.
+
+        This is what makes admission MEASURED rather than a formula: the
+        allocator's coefficients were hand-chosen with no model-specific
+        calibration, so it could only ask "is this number allowable", never
+        "can this finish on this machine as it is right now".
+
+        Deliberately cheap and total. It runs on the completion path of
+        every generation, so it does its own arithmetic, catches its own
+        mistakes, and never lets a bad sample reach the caller — a
+        telemetry write must not be able to fail a turn that worked.
+        """
+        try:
+            started = float(getattr(self, "_current_request_started_at", 0.0) or 0.0)
+            if started <= 0.0:
+                return
+            elapsed = max(0.0, time.time() - started)
+            generated = max(0, int(response.get("tokens_used") or 0))
+            if generated <= 0 or elapsed <= 0.0:
+                return
+            prompt_tokens = max(1, len(str(prompt or "")) // 4)
+            # The worker reports prompt-cache retention, so a generation that
+            # kept a cache is a WARM sample. Mixing warm and cold makes both
+            # predictions wrong, which is why the shape carries it.
+            cache_warm = bool(int(response.get("prompt_cache_bytes") or 0) > 0)
+            # Prefill is not reported separately; attribute a bounded share of
+            # the elapsed time to it rather than inventing a number, and let
+            # the estimator's percentiles absorb the split.
+            prefill = min(elapsed * 0.25, prompt_tokens * 1.0e-3)
+            record_generation(
+                model=os.path.basename(self.model_path or "unknown"),
+                prompt_tokens=prompt_tokens,
+                generated_tokens=generated,
+                prefill_seconds=prefill,
+                decode_seconds=max(1e-6, elapsed - prefill),
+                cache_warm=cache_warm,
+                foreground=bool(foreground_request),
+            )
+        except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="skipped one admission throughput sample",
+                severity="debug",
+            )
 
     def _record_surface_control_receipt_from_response(self, response: dict[str, Any]) -> None:
         if isinstance(response, dict) and "prompt_cache_bytes" in response:
@@ -9160,6 +9213,11 @@ class MLXLocalClient:
                 return None
             if res.get("status") == "ok":
                 self._record_surface_control_receipt_from_response(res)
+                self._record_throughput_sample(
+                    res,
+                    prompt=prompt,
+                    foreground_request=foreground_request,
+                )
                 self._record_interoception_from_response(
                     res,
                     foreground_request=foreground_request,
