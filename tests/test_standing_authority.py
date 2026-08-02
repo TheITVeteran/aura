@@ -8,6 +8,7 @@ import pytest
 from core.agency.capability_token import CapabilityTokenStore
 from core.executive.bounded_sandbox_policy import idle_sandbox_probe_arguments
 from core.executive.execution_policy import (
+    canonical_authority_arguments,
     classify_execution_risk,
     resolve_execution_effect_scope,
 )
@@ -482,6 +483,80 @@ async def test_autonomous_internal_reasoning_is_bounded_receipted_and_origin_bou
     assert all(lease.approved for lease in leases[:6])
     assert leases[6].approved is False
     assert leases[6].reason == "standing_authority_budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_autonomous_owner_private_message_is_alias_bound_and_budgeted():
+    manager = _manager()
+    arguments = canonical_authority_arguments(
+        "messages",
+        {
+            "action": "send",
+            "alias": "primary_operator",
+            "body": "I wanted to share a thought with you.",
+            "idempotency_key": "proactive-proof-1",
+        },
+    )
+
+    decision = await manager.issue_child_lease(
+        "messages",
+        arguments,
+        origin="proactive_presence",
+    )
+
+    assert decision.approved is True
+    assert decision.grant_id == "aura.autonomous-owner-private-message"
+    assert decision.budget_remaining == 11
+    valid, reason, record = manager.validate_context(
+        decision.context,
+        tool_name="messages",
+        arguments=arguments,
+        origin="proactive_presence",
+        effect_scope="external_io",
+        risk_level="medium",
+    )
+    assert (valid, reason) == (True, "standing_authority_lease_valid")
+    assert record is not None
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "action": "send",
+            "alias": "someone_else",
+            "body": "hello",
+            "idempotency_key": "private-1",
+        },
+        {
+            "action": "send",
+            "alias": "primary_operator",
+            "body": "hello",
+            "idempotency_key": "private-2",
+            "destination": "+15550001111",
+        },
+        {
+            "action": "send",
+            "alias": "primary_operator",
+            "body": "",
+            "idempotency_key": "private-3",
+        },
+        {
+            "action": "send",
+            "alias": "primary_operator",
+            "body": "hello",
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_autonomous_owner_private_message_rejects_scope_expansion(arguments):
+    arguments = canonical_authority_arguments("messages", arguments)
+    decision = await _manager().issue_child_lease(
+        "messages",
+        arguments,
+        origin="proactive_presence",
+    )
+    assert decision.approved is False
 
 
 @pytest.mark.asyncio

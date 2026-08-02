@@ -45,6 +45,8 @@ from core.config import config  # noqa: E402
 from core.container import ServiceContainer  # noqa: E402
 from core.exceptions import ContainerError  # noqa: E402
 from core.executive.execution_policy import (  # noqa: E402
+    canonical_authority_arguments,
+    canonical_authority_context,
     classify_execution_risk,
     resolve_execution_effect_scope,
 )
@@ -97,6 +99,7 @@ _USER_FACING_CONTEXT_ORIGINS = frozenset(
         "desktop",
         "desktop-ui",
         "desktop_ui",
+        "messages",
         "native-shell",
         "tauri",
     }
@@ -2610,7 +2613,7 @@ class CapabilityEngine(AuraBaseModule):
                 # normalizes enum and str identically.
                 domain="tool_execution",
                 action=skill_name,
-                payload=params,
+                payload=canonical_authority_arguments(skill_name, params),
             )
             return None
         except CapabilityViolation as exc:
@@ -2934,6 +2937,15 @@ class CapabilityEngine(AuraBaseModule):
             if query:
                 return f"read-only {skill_name} information retrieval for query {query!r}"
             return f"read-only {skill_name} information retrieval"
+        if skill_name == "messages":
+            arguments = canonical_authority_arguments(skill_name, params)
+            action = str(arguments.get("action") or "status")
+            if action == "send":
+                return (
+                    "send a private message to the configured symbolic contact "
+                    f"({int(arguments.get('body_chars') or 0)} characters; content hidden)"
+                )
+            return f"{action} Aura's private Messages channel"
         return f"{skill_name} {str(params)[:200]}"
 
     @staticmethod
@@ -4141,7 +4153,7 @@ class CapabilityEngine(AuraBaseModule):
             try:
                 pm = ServiceContainer.get("permission_model", default=None)
                 if pm:
-                    target_str = str(params)
+                    target_str = str(canonical_authority_arguments(skill_name, params))
                     pm_decision = pm.check_permission(skill_name, target_str, ctx)
                     if not pm_decision.approved:
                         self.logger.warning(
@@ -4179,7 +4191,8 @@ class CapabilityEngine(AuraBaseModule):
                 from core.executive.authority_gateway import get_authority_gateway
 
                 constitution = get_constitutional_core(self.orchestrator)
-                constitutional_args = dict(params or {})
+                constitutional_args = canonical_authority_arguments(skill_name, params)
+                constitutional_context = canonical_authority_context(skill_name, ctx)
 
                 # Tell governance what this invocation actually does, before
                 # it decides whether to allow it.
@@ -4220,8 +4233,12 @@ class CapabilityEngine(AuraBaseModule):
                     skill_name,
                     constitutional_args,
                     source=exec_source,
-                    objective=str(ctx.get("objective") or ctx.get("message") or ""),
-                    context=ctx,
+                    objective=(
+                        "Use Aura's private Messages channel"
+                        if skill_name == "messages"
+                        else str(ctx.get("objective") or ctx.get("message") or "")
+                    ),
+                    context=constitutional_context,
                 )
                 if not tool_handle.approved:
                     reason = str(getattr(tool_handle.decision, "reason", "blocked"))
@@ -4966,7 +4983,8 @@ class CapabilityEngine(AuraBaseModule):
                     # whole — unredacted and unbounded — for every
                     # successful call, which is how a 40MB tool output ends
                     # up as an audit row.
-                    safe_params, params_report = redact_mapping(params)
+                    audit_params = canonical_authority_arguments(skill_name, params)
+                    safe_params, params_report = redact_mapping(audit_params)
                     safe_result: Any = None
                     result_report = None
                     if result.get("ok"):
@@ -5794,8 +5812,8 @@ class CapabilityEngine(AuraBaseModule):
         try:
             await temporal.record_outcome(
                 action=action,
-                context=str(context)[:200],
-                intended_outcome=str(params)[:200],
+                context=str(canonical_authority_context(action, context))[:200],
+                intended_outcome=str(canonical_authority_arguments(action, params))[:200],
                 actual_outcome=str(result)[:500],
                 success=bool(result.get("ok", False)),
             )

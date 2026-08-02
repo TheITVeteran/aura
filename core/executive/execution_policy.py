@@ -7,8 +7,10 @@ scope and one conservative risk class without treating an unknown tool as safe.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,23 @@ RISK_ORDER = {
     "high": 2,
     "critical": 3,
 }
+
+_MESSAGES_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+_MESSAGES_IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,240}$")
+_MESSAGES_PRIVATE_CONTEXT_KEYS = frozenset(
+    {
+        "body",
+        "content",
+        "message",
+        "objective",
+        "original_request",
+        "query",
+        "reply",
+        "response",
+        "text",
+        "user_objective",
+    }
+)
 
 _GENERIC_EFFECT_SCOPES = {
     "browser": "external_io",
@@ -81,6 +100,129 @@ _CRITICAL_TOOLS = frozenset(
 
 def normalize_tool_name(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def canonical_authority_arguments(
+    tool_name: Any,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the exact payload governance may persist and sign.
+
+    Private Messages text is execution data, not governance telemetry. The
+    authority chain binds its digest and byte/character bounds; the final sink
+    recomputes that envelope from plaintext before accepting the capability.
+    Unknown argument *names* remain visible so policy can reject scope
+    expansion, while their potentially sensitive values never enter receipts.
+    """
+
+    arguments = dict(params or {})
+    if normalize_tool_name(tool_name) != "messages":
+        return arguments
+
+    action = str(arguments.get("action") or "status").strip().lower()
+    safe: dict[str, Any] = {"action": action}
+
+    if arguments.get("alias_invalid") is True:
+        safe["alias_invalid"] = True
+        safe["alias_sha256"] = str(arguments.get("alias_sha256") or "")
+    else:
+        alias = str(arguments.get("alias") or "primary_operator").strip().lower()
+        if _MESSAGES_ALIAS_RE.fullmatch(alias):
+            safe["alias"] = alias
+        else:
+            safe.update(
+                {
+                    "alias_invalid": True,
+                    "alias_sha256": hashlib.sha256(alias.encode("utf-8")).hexdigest(),
+                }
+            )
+
+    if "body" in arguments and arguments.get("body") is not None:
+        body = str(arguments.get("body") or "")
+        encoded = body.encode("utf-8", errors="strict")
+        safe.update(
+            {
+                "body_bytes": len(encoded),
+                "body_chars": len(body),
+                "body_sha256": hashlib.sha256(encoded).hexdigest(),
+            }
+        )
+    elif any(key in arguments for key in ("body_bytes", "body_chars", "body_sha256")):
+        safe.update(
+            {
+                "body_bytes": arguments.get("body_bytes"),
+                "body_chars": arguments.get("body_chars"),
+                "body_sha256": str(arguments.get("body_sha256") or ""),
+            }
+        )
+
+    if arguments.get("idempotency_invalid") is True:
+        safe["idempotency_invalid"] = True
+        safe["idempotency_sha256"] = str(arguments.get("idempotency_sha256") or "")
+    else:
+        idempotency = str(arguments.get("idempotency_key") or "").strip()
+        if idempotency:
+            if _MESSAGES_IDEMPOTENCY_RE.fullmatch(idempotency):
+                safe["idempotency_key"] = idempotency
+            else:
+                safe.update(
+                    {
+                        "idempotency_invalid": True,
+                        "idempotency_sha256": hashlib.sha256(
+                            idempotency.encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+
+    canonical_keys = {
+        "action",
+        "alias",
+        "alias_invalid",
+        "alias_sha256",
+        "body",
+        "body_bytes",
+        "body_chars",
+        "body_sha256",
+        "idempotency_invalid",
+        "idempotency_key",
+        "idempotency_sha256",
+        "unexpected_argument_names",
+    }
+    prior_unexpected = arguments.get("unexpected_argument_names")
+    if isinstance(prior_unexpected, (list, tuple, set, frozenset)):
+        prior_names = tuple(str(key) for key in prior_unexpected)
+    elif prior_unexpected:
+        prior_names = (str(prior_unexpected),)
+    else:
+        prior_names = ()
+    unexpected = sorted(
+        {
+            *(str(key) for key in set(arguments) - canonical_keys),
+            *prior_names,
+        }
+    )
+    if unexpected:
+        safe["unexpected_argument_names"] = unexpected
+    return safe
+
+
+def canonical_authority_context(
+    tool_name: Any,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Hide private message prose while preserving authority provenance."""
+
+    safe = dict(context or {})
+    if normalize_tool_name(tool_name) != "messages":
+        return safe
+    for key in _MESSAGES_PRIVATE_CONTEXT_KEYS:
+        if key not in safe or safe.get(key) is None:
+            continue
+        value = str(safe.pop(key))
+        encoded = value.encode("utf-8", errors="strict")
+        safe[f"{key}_chars"] = len(value)
+        safe[f"{key}_sha256"] = hashlib.sha256(encoded).hexdigest()
+    return safe
 
 
 def normalize_risk(value: Any, *, default: str = "critical") -> str:
@@ -295,6 +437,12 @@ def resolve_execution_effect_scope(
         mode = str(arguments.get("mode") or "check").strip().lower()
         if mode in {"check", "read", "search"}:
             return "read_only"
+    elif name == "messages":
+        action = str(arguments.get("action") or "status").strip().lower()
+        if action == "status":
+            return "status"
+        if action in {"pause", "resume"}:
+            return "state_mutation"
     elif name == "reddit_adapter":
         mode = str(arguments.get("mode") or "browse").strip().lower()
         if mode in {
@@ -367,6 +515,8 @@ def classify_execution_risk(
 
 __all__ = [
     "RISK_ORDER",
+    "canonical_authority_arguments",
+    "canonical_authority_context",
     "classify_execution_risk",
     "normalize_risk",
     "normalize_tool_name",

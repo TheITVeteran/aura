@@ -14,6 +14,8 @@ from core.consciousness.substrate_authority import (
 )
 from core.container import ServiceContainer
 from core.executive.execution_policy import (
+    canonical_authority_arguments,
+    canonical_authority_context,
     classify_execution_risk,
     resolve_execution_effect_scope,
 )
@@ -49,6 +51,7 @@ _USER_FACING_MEMORY_ORIGINS = frozenset(
         "gui",
         "interface",
         "live_chat",
+        "messages",
         "session_memory_pin",
         "ui",
         "user",
@@ -916,7 +919,8 @@ class AuthorityGateway:
         if social_block is not None:
             return social_block
 
-        runtime_context = dict(context or {})
+        args = canonical_authority_arguments(tool_name, args)
+        runtime_context = canonical_authority_context(tool_name, context)
         effect_scope = resolve_execution_effect_scope(tool_name, args)
         risk_level = classify_execution_risk(
             tool_name,

@@ -30,7 +30,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from core.self.inner_language import say_focus
 from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
@@ -75,6 +74,7 @@ from core.runtime.shutdown_coordinator import (
 )
 from core.runtime.structured_input import analyze_prompt_shape
 from core.runtime.version import version_string
+from core.self.inner_language import say_focus
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.task_tracker import get_task_tracker
 from interface.auth import (
@@ -158,22 +158,30 @@ class CheatCodeRequest(BaseModel):
     silent: bool = False
 
 
-async def run_governed_voice_chat_turn(
+async def run_governed_surface_chat_turn(
     message: str,
     *,
+    surface: str,
     surface_context: str,
     session_id: str,
     timeout_s: float,
+    idempotency_key: str | None = None,
     source_headers: Sequence[tuple[bytes, bytes]] = (),
     client_host: str = "127.0.0.1",
 ) -> str | None:
-    """Run voice through the complete authenticated HTTP chat contract.
+    """Run a presentation surface through the authenticated HTTP chat contract.
 
-    Voice is a presentation surface, not a second cognition lane. Reusing the
-    public chat handler preserves ingress inspection, memory-pressure and
-    foreground admission, durable delivery fencing, response stabilization,
-    and the same governed action path as the desktop.
+    Voice and private Messages are presentation surfaces, not second cognition
+    lanes. Reusing the public handler preserves ingress inspection, memory and
+    principal binding, foreground admission, durable delivery fencing,
+    response stabilization, and the same governed action path as the desktop.
     """
+    normalized_surface = str(surface or "").strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}", normalized_surface):
+        raise ValueError("invalid governed chat surface")
+    normalized_key = str(idempotency_key or f"{normalized_surface}-{uuid.uuid4().hex}").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,240}", normalized_key):
+        raise ValueError("invalid governed chat idempotency key")
     allowed_headers = {
         b"authorization",
         b"cookie",
@@ -193,10 +201,10 @@ async def run_governed_voice_chat_turn(
         headers.append((b"host", b"127.0.0.1:8000"))
     headers.extend(
         (
-            (b"x-aura-response-surface", b"voice"),
+            (b"x-aura-response-surface", normalized_surface.encode("ascii")),
             (b"x-aura-require-cognitiveengine", b"true"),
-            (b"x-aura-surface", b"voice"),
-            (b"x-idempotency-key", f"voice-{uuid.uuid4().hex}".encode("ascii")),
+            (b"x-aura-surface", normalized_surface.encode("ascii")),
+            (b"x-idempotency-key", normalized_key.encode("ascii")),
         )
     )
     scope = {
@@ -232,6 +240,28 @@ async def run_governed_voice_chat_turn(
         return str(payload.get("response") or "").strip() or None
     finally:
         _INTERNAL_SURFACE_CONTEXT.reset(context_token)
+
+
+async def run_governed_voice_chat_turn(
+    message: str,
+    *,
+    surface_context: str,
+    session_id: str,
+    timeout_s: float,
+    source_headers: Sequence[tuple[bytes, bytes]] = (),
+    client_host: str = "127.0.0.1",
+) -> str | None:
+    """Compatibility wrapper for the governed voice presentation surface."""
+
+    return await run_governed_surface_chat_turn(
+        message,
+        surface="voice",
+        surface_context=surface_context,
+        session_id=session_id,
+        timeout_s=timeout_s,
+        source_headers=source_headers,
+        client_host=client_host,
+    )
 
 
 _PAIRED_CHAT_RESPONSE_KEYS = frozenset(
@@ -10178,7 +10208,8 @@ def _request_requires_cognitive_engine(request: Request, *, is_benchmark: bool =
     requires = (
         not is_benchmark
         and (
-            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri", "voice"}
+            request_surface
+            in {"desktop", "desktop-ui", "messages", "native-shell", "tauri", "voice"}
             or require_cognitive_header in {"1", "true", "yes", "required"}
             or desktop_runtime_request
         )

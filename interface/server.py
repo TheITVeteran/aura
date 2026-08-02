@@ -317,6 +317,7 @@ async def lifespan(app: FastAPI):
     global _PredictiveSelf, _FastMouth, _LocalVision, _voice_engine_fn
 
     main_loop = asyncio.get_running_loop()
+    messages_transport = None
     logger.info("Aura Server %s starting… (Lifespan Enter)", version_string("short"))
 
     # Initialize EventBus loop for threadsafe publication from background tasks
@@ -457,6 +458,44 @@ async def lifespan(app: FastAPI):
         replace=True,
     )
     system_routes.start_health_read_model()
+
+    # Private Messages is another presentation surface over the canonical chat
+    # lane. Its Keychain and SQLite work stays off the event loop, and missing
+    # TCC permissions degrade only this transport rather than runtime boot.
+    if not is_gui_proxy:
+        try:
+            from core.communication.messages_journal import MessagesDeliveryJournal
+            from core.communication.messages_transport import MessagesTransport
+            from interface.routes.chat import run_governed_surface_chat_turn
+
+            messages_journal = await asyncio.to_thread(MessagesDeliveryJournal)
+            messages_transport = MessagesTransport(
+                chat_turn=run_governed_surface_chat_turn,
+                journal=messages_journal,
+            )
+            ServiceContainer.register_instance(
+                "messages_transport",
+                messages_transport,
+                required=False,
+                owner="interface.server",
+                registered_by="interface.server.lifespan",
+                required_for="private_messages_surface",
+                failure_policy="degrade",
+            )
+            await messages_transport.start(task_factory=_spawn_server_task)
+            logger.info("Private Messages transport initialized on the canonical chat lane.")
+        except _SERVER_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                "server.messages_transport",
+                exc,
+                severity="warning",
+                action="kept Aura online while private Messages remains explicitly unavailable",
+                enforce_failure_policy=False,
+            )
+            logger.warning(
+                "Private Messages transport unavailable: %s",
+                type(exc).__name__,
+            )
     logger.info("Aura Server online — %s", version_string("full"))
     try:
         yield  # ← app is live here
@@ -464,6 +503,17 @@ async def lifespan(app: FastAPI):
         # ── Shutdown ──
         logger.info("Aura Server shutting down…")
         system_routes.stop_health_read_model()
+        if messages_transport is not None:
+            try:
+                await messages_transport.stop()
+            except _SERVER_BOUNDARY_ERRORS as exc:
+                record_degradation(
+                    "server.messages_transport",
+                    exc,
+                    severity="warning",
+                    action="continued bounded server shutdown after Messages transport stop failed",
+                    enforce_failure_policy=False,
+                )
         await _server_task_tracker.shutdown(timeout=2.0)
         _event_bridge_task = None
         main_loop = None

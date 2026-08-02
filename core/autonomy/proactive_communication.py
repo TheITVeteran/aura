@@ -2,6 +2,7 @@
 Aura decides WHEN to interrupt the user based on emotional state and context.
 """
 import asyncio
+import hashlib
 import logging
 import time
 from collections import deque
@@ -373,7 +374,13 @@ class ProactiveCommunicationManager:
         # Sanitize content for Aura's professional voice
         clean_content = self._clean_content(msg.content)
         
-        logger.info("PROACTIVE: (%s) %s", msg.urgency.name, clean_content)
+        content_sha256 = hashlib.sha256(clean_content.encode("utf-8")).hexdigest()
+        logger.info(
+            "PROACTIVE: urgency=%s content_sha256=%s chars=%d",
+            msg.urgency.name,
+            content_sha256,
+            len(clean_content),
+        )
 
         def _constitutional_runtime_live() -> bool:
             try:
@@ -415,6 +422,33 @@ class ProactiveCommunicationManager:
                 },
             )
             delivered = bool(decision.get("ok"))
+
+            # A configured private channel lets Aura reach the owner while the
+            # desktop is unattended. This is an additional governed delivery
+            # surface, not a separate response generator or a raw-number API.
+            messages_transport = ServiceContainer.get("messages_transport", default=None)
+            messages_status = (
+                messages_transport.status() if messages_transport is not None else {}
+            )
+            if messages_transport is not None and bool(messages_status.get("outbound_ready")):
+                messages_result = await messages_transport.send_authorized(
+                    alias="primary_operator",
+                    body=clean_content,
+                    idempotency_key=(
+                        "proactive-"
+                        + hashlib.sha256(
+                            f"{msg.timestamp:.6f}\0{content_sha256}".encode("ascii")
+                        ).hexdigest()[:48]
+                    ),
+                    source="proactive_presence",
+                    context={
+                        "autonomous_initiative": True,
+                        "private_owner_channel": True,
+                        "proactive_emotion": msg.emotion.name,
+                        "proactive_urgency": msg.urgency.name,
+                    },
+                )
+                delivered = delivered or bool(messages_result.get("accepted"))
         except _PROACTIVE_COMMUNICATION_ERRORS as exc:
             _record_proactive_degradation(
                 exc,
@@ -431,7 +465,9 @@ class ProactiveCommunicationManager:
                 record_degraded_event(
                     "proactive_communication",
                     "autonomous_expression_suppressed_without_authority",
-                    detail=clean_content[:120],
+                    detail=(
+                        f"content_sha256={content_sha256};chars={len(clean_content)}"
+                    ),
                     severity="warning",
                     classification="background_degraded",
                     context={

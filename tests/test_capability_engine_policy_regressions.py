@@ -481,7 +481,9 @@ def test_capability_engine_keeps_authority_out_of_tool_arguments():
         encoding="utf-8"
     )
 
-    gate_start = source.index("constitutional_args = dict(params or {})")
+    gate_start = source.index(
+        "constitutional_args = canonical_authority_arguments(skill_name, params)"
+    )
     gate_end = source.index("tool_handle = await constitution.begin_tool_execution", gate_start)
     argument_bridge = source[gate_start:gate_end]
 

@@ -61,6 +61,7 @@ USER_FACING_AUTHORITY_ORIGINS = frozenset(
         "interface",
         "live_chat",
         "live_skill_api",
+        "messages",
         "native_shell",
         "tauri",
         "ui",
@@ -92,6 +93,7 @@ AUTONOMOUS_AUTHORITY_ORIGINS = frozenset(
         "intention_loop",
         "overt_action_loop",
         "proactive_presence",
+        "proactive_comm",
         "react_loop",
         "research_cycle",
         "subconscious_loop",
@@ -139,6 +141,7 @@ READ_ONLY_MAINTENANCE_TOOLS = frozenset({"auto_refactor", "self_evolution"})
 BOUNDED_MAINTENANCE_TEST_TOOLS = frozenset({"test_generator"})
 BOUNDED_SANDBOX_TOOLS = frozenset({"subconscious_sandbox_probe"})
 BACKGROUND_REFLECTION_TOOLS = frozenset({"swarm_debate"})
+OWNER_PRIVATE_MESSAGE_TOOLS = frozenset({"messages"})
 BACKGROUND_REFLECTION_ROLES = frozenset({"architect", "critic", "philosopher"})
 BACKGROUND_REFLECTION_MAX_ACTIONS = 6
 BACKGROUND_REFLECTION_WINDOW_SECONDS = 3600.0
@@ -175,6 +178,7 @@ _SUPPORTED_ARGUMENT_POLICIES = frozenset(
         "connected_account_read",
         "foreground_user_request",
         "local_introspection",
+        "owner_private_message",
         "public_research",
         "read_only_maintenance",
     }
@@ -503,6 +507,23 @@ def _builtin_grants() -> tuple[StandingAuthorityGrant, ...]:
             argument_policy="bounded_background_reflection",
             built_in=True,
         ),
+        StandingAuthorityGrant(
+            grant_id="aura.autonomous-owner-private-message",
+            issuer="owner_policy",
+            description=(
+                "Aura may privately message her configured primary operator under a "
+                "bounded cadence without exposing or selecting a raw destination."
+            ),
+            allowed_origins=autonomous_origins,
+            allowed_tools=tuple(sorted(OWNER_PRIVATE_MESSAGE_TOOLS)),
+            allowed_effect_scopes=("external_io", "state_mutation", "status"),
+            max_risk="medium",
+            max_actions=12,
+            window_seconds=3600.0,
+            lease_ttl_seconds=120.0,
+            argument_policy="owner_private_message",
+            built_in=True,
+        ),
     )
 
 
@@ -798,6 +819,54 @@ class StandingAuthorityManager:
             if mode not in allowed_modes.get(tool_name, set()):
                 return False, "connected_account_operation_is_not_read_only"
             return True, "connected_account_read_only"
+        if policy == "owner_private_message":
+            if tool_name not in OWNER_PRIVATE_MESSAGE_TOOLS:
+                return False, "owner_private_message_tool_mismatch"
+            allowed_keys = {
+                "action",
+                "alias",
+                "body_bytes",
+                "body_chars",
+                "body_sha256",
+                "idempotency_key",
+            }
+            if set(arguments) - allowed_keys:
+                return False, "owner_private_message_arguments_unsupported"
+            action = str(arguments.get("action") or "status").strip().lower()
+            alias = str(arguments.get("alias") or "primary_operator").strip().lower()
+            if alias != "primary_operator":
+                return False, "owner_private_message_alias_out_of_scope"
+            if action == "status":
+                return True, "owner_private_message_status"
+            if action in {"pause", "resume"}:
+                if any(
+                    arguments.get(key)
+                    for key in ("body_bytes", "body_chars", "body_sha256", "idempotency_key")
+                ):
+                    return False, "owner_private_message_control_arguments_unsupported"
+                return True, "owner_private_message_control"
+            if action != "send":
+                return False, "owner_private_message_action_unsupported"
+            body_sha256 = str(arguments.get("body_sha256") or "").strip().lower()
+            try:
+                body_chars = int(arguments.get("body_chars"))
+                body_bytes = int(arguments.get("body_bytes"))
+            except (TypeError, ValueError):
+                return False, "owner_private_message_body_invalid"
+            if (
+                len(body_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in body_sha256)
+                or not 1 <= body_chars <= 8_000
+                or not 1 <= body_bytes <= 24_000
+            ):
+                return False, "owner_private_message_body_invalid"
+            key = str(arguments.get("idempotency_key") or "").strip()
+            if not key or len(key) > 240 or any(
+                not (character.isalnum() or character in "._:-")
+                for character in key
+            ):
+                return False, "owner_private_message_idempotency_invalid"
+            return True, "bounded_owner_private_message"
         if policy == "read_only_maintenance":
             mode = str(arguments.get("mode") or arguments.get("action") or "scan").strip().lower()
             mutating = bool(

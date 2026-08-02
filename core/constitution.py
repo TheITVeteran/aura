@@ -430,16 +430,33 @@ class ConstitutionalCore:
         context: dict[str, Any] | None = None,
     ) -> ToolExecutionHandle:
         async with self._lock:
-            self._emit_tool_event("requested", tool_name, source=source, args=args)
+            from core.executive.execution_policy import (
+                canonical_authority_arguments,
+                canonical_authority_context,
+            )
+
+            authority_args = canonical_authority_arguments(tool_name, args)
+            authority_context = canonical_authority_context(tool_name, context)
+            authority_objective = (
+                "Use Aura's private Messages channel"
+                if str(tool_name or "").strip().lower() == "messages"
+                else objective
+            )
+            self._emit_tool_event(
+                "requested",
+                tool_name,
+                source=source,
+                args=authority_args,
+            )
             proposal = ConstitutionalProposal(
                 kind=ProposalKind.TOOL,
                 source=source,
                 summary=f"execute_tool:{tool_name}",
                 payload={
                     "tool_name": tool_name,
-                    "args": dict(args or {}),
-                    "objective": objective,
-                    "context": dict(context or {}),
+                    "args": authority_args,
+                    "objective": authority_objective,
+                    "context": authority_context,
                 },
                 urgency=0.9 if source in {"user", "voice", "api", "admin"} else 0.5,
             )
@@ -460,7 +477,7 @@ class ConstitutionalCore:
                     approved=False,
                     constraints={"blocked": True},
                 )
-                self._emit_tool_event("rejected", tool_name, source=source, args=args, decision=decision, handle=handle)
+                self._emit_tool_event("rejected", tool_name, source=source, args=authority_args, decision=decision, handle=handle)
                 return handle
             gateway = self._get_authority_gateway()
             if gateway is None:
@@ -481,7 +498,7 @@ class ConstitutionalCore:
                         approved=False,
                         constraints={"blocked": True},
                     )
-                    self._emit_tool_event("rejected", tool_name, source=source, args=args, decision=decision, handle=handle)
+                    self._emit_tool_event("rejected", tool_name, source=source, args=authority_args, decision=decision, handle=handle)
                     return handle
                 decision = self._record_decision(
                     ConstitutionalDecision(
@@ -499,15 +516,15 @@ class ConstitutionalCore:
                     approved=True,
                     constraints={},
                 )
-                self._emit_tool_event("degraded", tool_name, source=source, args=args, decision=decision, handle=handle)
+                self._emit_tool_event("degraded", tool_name, source=source, args=authority_args, decision=decision, handle=handle)
                 return handle
 
             authority_decision = await gateway.authorize_tool_execution(
                 tool_name,
-                dict(args or {}),
+                authority_args,
                 source=source,
                 priority=proposal.urgency,
-                context=context,
+                context=authority_context,
             )
             approved = authority_decision.approved
 
@@ -517,7 +534,7 @@ class ConstitutionalCore:
                 if intention_loop is not None:
                     try:
                         intention_id = intention_loop.intend(
-                            intention=objective or f"Use tool '{tool_name}'",
+                            intention=authority_objective or f"Use tool '{tool_name}'",
                             drive=source or "system",
                             expected_outcome=f"Successful execution of {tool_name}",
                             plan=[f"Invoke {tool_name}", "Observe result", "Revise if needed"],
@@ -562,12 +579,12 @@ class ConstitutionalCore:
                 "approved" if approved else "rejected",
                 tool_name,
                 source=source,
-                args=args,
+                args=authority_args,
                 decision=decision,
                 handle=handle,
             )
             if approved:
-                self._emit_tool_event("started", tool_name, source=source, args=args, decision=decision, handle=handle)
+                self._emit_tool_event("started", tool_name, source=source, args=authority_args, decision=decision, handle=handle)
             return handle
 
     async def finish_tool_execution(

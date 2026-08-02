@@ -34728,6 +34728,93 @@ evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 920-checkpoint completion envelope, approximately 86.7% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
 
+### 2026-08-01 - Total checkpoint 801: private Messages conversation transport
+
+The planned CP807 owner-text capability was pulled forward without removing or
+renumbering the six earlier Reality Reach obligations. Aura now has a private,
+two-way macOS Messages transport that is another presentation surface over the
+canonical `/api/chat` conversation lane. Inbound text therefore receives the
+same identity, memory, ingress inspection, CognitiveEngine requirement,
+delivery fencing, response stabilization, action routing, and continuity
+contract as desktop and voice. It does not have a second response generator or
+a channel-specific scripted voice.
+
+The configured destination exists only in macOS Keychain under the symbolic
+alias `primary_operator`. Provisioning accepts the destination through a
+non-echoing prompt, never through argv or a source/configuration file. A random
+per-install Keychain key authenticates the contact record and derives a stable,
+non-enumerable endpoint reference. Public status, logs, prompts, governance
+proposals, signed authority payloads, delivery receipts, SQLite state, and
+tracker prose contain only the alias, keyed endpoint reference, content digest,
+and bounded lengths. The private destination and message body are explicitly
+excluded.
+
+Inbound polling opens the Messages history database in SQLite read-only and
+query-only modes, verifies the expected schema, selects only the exact
+allowlisted handle and direction, bounds batches and message size, and refuses
+to deserialize untrusted rich archived objects. A fresh installation primes to
+the latest row instead of replaying historical conversations. Each later
+message is claimed in a `0600`, WAL/FULL, content-hiding journal before it
+enters the canonical chat lane. Restart, duplicate delivery, and retryable chat
+failure behavior are explicit and covered by durable cursor and GUID-digest
+receipts.
+
+Outbound effects use a static JXA program. Destination and body travel over
+stdin, never process argv. The complete authority chain binds the exact alias,
+content digest, character/byte bounds, and idempotency key; the transport sink
+recomputes that envelope before accepting the signed capability. Canonical
+skill calls consume the capability already issued by CapabilityEngine rather
+than authorizing twice, while inbound replies and autonomous outreach retain a
+standalone AuthorityGateway path. This removes duplicate standing-lease budget
+consumption and false second-gate refusals without creating a bypass.
+
+The delivery journal admits and atomically claims each idempotency key before
+launch. Concurrent duplicate requests can execute the effect once. A process
+death or cancellation after effect admission becomes terminal `ambiguous` and
+is never blindly retried. Successful automation is independently searched in
+local outbound history when Full Disk Access is available; that proves local
+acceptance only. The receipt never claims carrier delivery or remote read
+status. Rate limits are eight attempts per minute and sixty per hour, and an
+existing terminal receipt is returned before applying the current rate limit.
+
+Aura can inspect, send, pause, and resume the channel through the discovered
+`messages` skill. A bounded standing grant permits Aura-originated private
+outreach to the one configured owner alias at twelve governed actions per hour;
+it does not add a human autonomy switch or permit destination selection. The
+proactive-presence organ can use the same path when the channel is configured,
+and proactive logs now persist only content digests and lengths.
+
+The complete scoped Messages, Constitution, CapabilityEngine, standing-
+authority, capability-chain, governance-bypass, and runtime-setting battery
+passes 187/187. The compatibility voice, settings, architecture, UI bootstrap,
+and pairing family previously passed 149/149. Ruff passes every new or
+substantively edited module; the one touched app-registry affordance inherits
+26 unchanged pre-existing modernization findings from its parent file. Python
+compilation passes. Strict targeted MyPy passes the contact directory, journal,
+transport, provisioning CLI, and skill boundary.
+
+This Mac's real Keychain acceptance provisioned and independently reloaded the
+`primary_operator` alias with inbound and outbound enabled, `auto` service
+selection, and opaque endpoint reference
+`msg_552d0b894231f116ab9c2cf164f86d78`. The acceptance output contained no
+private destination, and no file-backed contact configuration was created.
+
+Live Messages.app automation, TCC history readback, end-to-end send/receive,
+and restart acceptance are deliberately still open because the immutable CP796
+resident 32B campaign owns the model and desktop runtime lane. No private text
+was sent as part of this checkpoint. Those acceptance tests remain mandatory
+after training; this checkpoint does not claim carrier delivery, a live remote
+conversation, physical-effect closure, bootstrap completion, reasoning gain,
+frontier performance, release readiness, or a `WOW Signal`.
+
+This is total checkpoint 801 of the current 920-checkpoint completion envelope,
+approximately 87.1% by count. Planned Reality Reach CP801-CP806 remain open:
+historian/store-and-forward, canonical digital twins, ROS-shaped telemetry and
+action lifecycle, declarative event flows, metrology/HIL, and concrete protocol
+connectors. The implementation portion of planned CP807 is complete early;
+its live acceptance remains open. The immutable CP796 campaign continues
+separately, and long soaks remain deferred.
+
 ### 2026-08-01 - CP799 universal physical sensory fabric and portable attachment
 
 Reality Reach now has a bounded exteroceptive route instead of treating every

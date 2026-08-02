@@ -362,7 +362,7 @@ def _has_same_origin_browser_context(request: Request) -> bool:
 def _has_desktop_ui_marker(request: Request) -> bool:
     surface = _header_value(request, "X-Aura-Surface").strip().lower()
     desktop_marker = _header_value(request, "X-Aura-Desktop-Request").strip().lower()
-    return surface in {"desktop", "desktop-ui", "voice"} or desktop_marker in {"1", "true", "same-origin"}
+    return surface in {"desktop", "desktop-ui", "messages", "voice"} or desktop_marker in {"1", "true", "same-origin"}
 
 
 def _allow_local_without_token(request: Request, *, protected_route: bool) -> bool:

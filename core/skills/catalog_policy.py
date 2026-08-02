@@ -83,6 +83,7 @@ SKILL_EFFECT_SCOPES: dict[str, str] = {
     "mcp_client": "external_io",
     "memory_ops": "state_mutation",
     "memory_sync": "state_mutation",
+    "messages": "external_io",
     "native_chat": "pure_compute",
     "network_discovery": "external_io",
     "network_ops": "read_only",

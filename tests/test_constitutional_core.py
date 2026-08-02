@@ -1,3 +1,4 @@
+import json
 import time
 from types import SimpleNamespace
 
@@ -76,6 +77,54 @@ async def test_constitutional_core_tracks_tool_execution_and_closes_intent(servi
     assert intention_loop.get_open_intentions() == []
     status = core.get_status()
     assert status["recent_decisions"]
+
+
+@pytest.mark.asyncio
+async def test_messages_constitutional_path_never_records_private_body(
+    service_container,
+    tmp_path,
+    monkeypatch,
+):
+    reset_constitutional_singletons()
+    ServiceContainer.register_instance(
+        "binding_engine",
+        SimpleNamespace(get_coherence=lambda: 1.0),
+        required=False,
+    )
+    intention_loop = IntentionLoop(db_path=str(tmp_path / "intention_loop.db"))
+    ServiceContainer.register_instance("intention_loop", intention_loop, required=False)
+    private_body = "Private transport prose must stay outside governance records."
+    emitted: list[dict] = []
+    core = get_constitutional_core()
+    monkeypatch.setattr(
+        core,
+        "_emit_tool_event",
+        lambda _stage, _tool, **kwargs: emitted.append(kwargs),
+    )
+
+    handle = await core.begin_tool_execution(
+        "messages",
+        {
+            "action": "send",
+            "alias": "primary_operator",
+            "body": private_body,
+            "idempotency_key": "constitution-private-1",
+        },
+        source="user",
+        objective=private_body,
+        context={"message": private_body, "foreground_request": True},
+    )
+
+    serialized_proposal = json.dumps(handle.proposal.payload, sort_keys=True)
+    serialized_events = json.dumps(emitted, default=str, sort_keys=True)
+    assert private_body not in serialized_proposal
+    assert private_body not in serialized_events
+    assert handle.proposal.payload["args"]["body_chars"] == len(private_body)
+    assert handle.proposal.payload["objective"] == "Use Aura's private Messages channel"
+    if handle.intention_id:
+        intention = intention_loop.get_intention(handle.intention_id)
+        assert intention is not None
+        assert private_body not in intention.intention
 
 
 @pytest.mark.asyncio

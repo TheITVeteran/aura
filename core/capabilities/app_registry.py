@@ -68,6 +68,7 @@ class AppAffordance(str, Enum):
     CHANGE_SETTINGS = "change_settings"
     SET_WALLPAPER = "set_wallpaper"
     SEND_EMAIL = "send_email"
+    SEND_MESSAGE = "send_message"
     CREATE_SPREADSHEET = "create_spreadsheet"
     PRESENT_SLIDES = "present_slides"
     PLAY_MEDIA = "play_media"
@@ -209,9 +210,14 @@ KNOWN_APP_PROFILES: Dict[str, Dict[str, Any]] = {
     },
     "messages": {
         "category": AppCategory.COMMUNICATION,
-        "affordances": set(),
+        "affordances": {AppAffordance.SEND_MESSAGE},
         "bundle_id": "com.apple.MobileSMS",
-        "reliability": 0.5,
+        "reliability": 0.8,
+        "known_issues": [
+            "Inbound history requires Full Disk Access for Aura.app",
+            "Outbound automation requires macOS Automation permission for Messages",
+        ],
+        "adapter_class": "MessagesTransport",
     },
 }
 
