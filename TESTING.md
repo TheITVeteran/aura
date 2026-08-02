@@ -1,9 +1,30 @@
 # Testing
 
+As of 2026-08-01 the tree collects **24,931 tests across 1,771 files**.
+Re-collect rather than trusting that sentence:
+
+```bash
+pytest tests/ --collect-only -q     # the current number
+make smoke                          # ~100 contract tests, under 10s
+make test                           # the full suite, 6 bounded chunks
+```
+
+Use the chunk runner. A single pytest process over the whole suite gets
+OOM-killed around 83%, which is not a flake and will not resolve by
+retrying. `make test` shells out to `tools/run_test_chunks.py`;
+`--continue-on-failure` collects every failure instead of stopping at the
+first, and `--only-chunks 5,6` resumes a partial run.
+
+One rule worth internalizing: **a test that fails inside a chunk but passes
+alone is an order-dependence defect, not a flake.** The runner's
+isolated-retry pass reports those separately so they can't be waved off.
+
 ## Production Attestation (updated 2026-04-29)
 
-The test and proof surface is organized around runnable production systems and
-their evidence artifacts.
+Everything below is organized around runnable production systems and the
+evidence artifacts they produce. The status column is the point — "real"
+means there is a mechanism and a test exercising it, and anything that
+can't earn that word doesn't appear in this table.
 
 | subsystem | status | tests that exercise it |
 |---|---|---|

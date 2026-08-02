@@ -1,14 +1,22 @@
 # Aura — Operator Guide
 
-This document is the runbook for running Aura on your own hardware.
+Running Aura on your own hardware, and what to do when it goes wrong.
 
 *Last reviewed against the tree: 2026-08-01.*
 
 ## Requirements
-- macOS Apple Silicon recommended; Bryan's tracked target is M5-class.
-- 64 GB+ RAM is the reference target for the 32B Cortex and sustained background loops.
-- 50 GB+ free disk for models + data.
+- macOS on Apple Silicon. The tracked target is M5-class.
+- 64 GB+ RAM. That's the reference target for the 32B Cortex plus sustained
+  background loops — not a comfort margin.
+- 50 GB+ free disk for models and data.
 - Python 3.12.
+
+Before anything else, know where the incident docs are.
+[KNOWN_FAILURE_MODES.md](../KNOWN_FAILURE_MODES.md) catalogues 19 ways this
+runtime fails, each with a runbook in [runbooks/](runbooks/). Five of those
+— F15 through F19 — are not hypothetical. They happened on the live desktop
+and the forensics are still on disk. One of them, F16, is **not fully
+fixed**, and its runbook says so instead of implying otherwise.
 
 ## Install + boot
 ```bash

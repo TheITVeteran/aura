@@ -2,8 +2,14 @@
 
 ## Purpose
 
-This document describes how Aura's memory systems work, how memories influence
-future behavior, and how users can control their data.
+How Aura's memory works, how what she remembers changes what she does next,
+and how you get control of any of it.
+
+That middle one is the part that makes this a card and not a schema.
+Memory here is not a transcript sitting in a database — it feeds retrieval,
+it shapes affect, and it reaches generation. Something she remembers about
+you can change how she answers you a week later. You should be able to see
+that, and you should be able to delete it.
 
 ## Memory Architecture
 

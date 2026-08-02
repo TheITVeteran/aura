@@ -4,9 +4,16 @@
 
 ## Scope
 
-This policy governs all tool and skill execution within the Aura cognitive
-runtime. Every tool invocation is a consequential action that must be
-authorized, sandboxed, audited, and recoverable.
+Every tool and skill execution in the runtime.
+
+The premise is one sentence: a tool call is a consequential action. Not a
+function call that happens to touch the outside world — a consequential
+action, which means it has to be authorized, sandboxed, audited, and
+recoverable before it runs, not explained afterward.
+
+That framing is doing real work. It's why there is no "safe" tool category
+that skips the gate, and why a skill Aura writes herself goes through the
+same path a user-requested one does.
 
 ## Principles
 

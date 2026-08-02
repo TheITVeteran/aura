@@ -1,6 +1,14 @@
 # Aura Hardware & Model Profiles
 
-This document defines the supported hardware and model execution profiles for the Aura runtime, detailing what claims can be validated under each hardware constraint.
+What hardware Aura runs on, and — the part that matters — what you're
+allowed to claim from a run on each one.
+
+Those two things are usually kept apart. They shouldn't be. A benchmark on
+an 8 GB laptop with mocked models and a benchmark on a 64 GB machine with
+the resident 32B are not the same measurement, and a number carried from
+the first to the second is just a number. Each profile below lists its
+allowed claims and its disallowed ones explicitly, so a result knows what
+hardware produced it.
 
 ## 1. No-Model / Dev Profile
 * **Target Hardware**: Standard laptop (e.g. Intel/M1 MacBook Air), 8GB RAM.

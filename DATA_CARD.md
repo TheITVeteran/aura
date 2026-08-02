@@ -1,5 +1,12 @@
 # Aura Data Card
 
+Everything Aura stores, where it lives, and whether you can get it back out.
+
+Aura runs locally, so "your data" means files on your own disk rather than
+rows in someone else's database. That removes a whole category of privacy
+question and creates a smaller one: it is on your machine, so backups,
+disk encryption, and who else uses that machine are now the threat model.
+
 ## Memory Systems
 
 | Store | Type | Persistence | Encryption | Privacy |
