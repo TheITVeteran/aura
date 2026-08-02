@@ -266,6 +266,80 @@ def _validate_desktop_safe_subprocess(
         )
 
 
+def _enforce_process_privilege(
+    *,
+    env: Mapping[str, str] | None,
+    source: str,
+    operation: str,
+) -> None:
+    """Refuse to hand credentials to a process whose role may not hold them.
+
+    Chromium's rule, applied to Aura's own children: the component that parses
+    hostile input does not get the parent's secrets. A PDF decoder, a browser
+    worker, or a run of generated code has no business inheriting an API key —
+    if any of them is compromised, that key is the blast radius.
+
+    Only what is mechanically checkable is checked. An explicitly-built env is
+    inspectable, so a low-trust role receiving a secret in it is REFUSED.
+    ``env=None`` means the child inherits Aura's entire environment, which is
+    the larger exposure but not something this function can narrow without
+    breaking every spawn that legitimately relies on inheritance; it is
+    recorded as a degradation so the inheriting call sites become visible and
+    can be given explicit envs, rather than being refused blind.
+    """
+    from core.runtime.process_privilege import Privilege, ProcessRole, check_spawn, role_for_source
+
+    role = role_for_source(source)
+    # Only the roles that exist to handle untrusted input are constrained here.
+    # Constraining the coordinator would refuse the process that legitimately
+    # holds everything, and constraining unknown roles would refuse traffic the
+    # matrix has not learned yet.
+    if role is None or role > ProcessRole.UNTRUSTED_CODE:
+        return
+
+    if env is None:
+        _record_privilege_degradation(
+            source=source,
+            operation=operation,
+            detail=(
+                f"{role.name.lower()} spawn inherits the full parent environment; "
+                "pass an explicit env so credentials are not handed to it"
+            ),
+        )
+        return
+
+    try:
+        from core.security.structural_redaction import is_sensitive_key
+    except Exception:  # noqa: BLE001 — a missing redactor must not break spawning
+        return
+
+    leaked = sorted({str(key) for key in env if is_sensitive_key(key)})
+    if not leaked:
+        return
+
+    decision = check_spawn(source, {Privilege.SECRETS}, role=role)
+    if decision.allowed:
+        return
+    raise GovernanceViolation(
+        f"{operation}:{source} denied: {decision.reason}; "
+        f"environment carries {', '.join(leaked)}"
+    )
+
+
+def _record_privilege_degradation(*, source: str, operation: str, detail: str) -> None:
+    """Report an inherited-environment spawn without ever blocking on the report."""
+    try:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "subprocess_gateway",
+            RuntimeError(detail),
+            action=f"{operation}:{source} privilege_inheritance_unnarrowed",
+        )
+    except Exception:  # noqa: BLE001 — observability must not break spawning
+        logger.debug("privilege degradation record failed for %s", source, exc_info=True)
+
+
 def _open_spawn_stream(path: str | os.PathLike[str], *, text: bool) -> IO[Any]:
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -771,6 +845,7 @@ class SubprocessGateway:
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn")
+        _enforce_process_privilege(env=env, source=source, operation="spawn")
         if stdout is not None and stdout_path is not None:
             raise ValueError("stdout and stdout_path are mutually exclusive")
         if stderr is not None and stderr_path is not None:
@@ -885,6 +960,7 @@ class SubprocessGateway:
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_async")
+        _enforce_process_privilege(env=env, source=source, operation="spawn_async")
         claim = model_lane_claim or _inferred_model_lane_claim(
             command,
             source=source,

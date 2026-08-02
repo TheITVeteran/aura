@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 
+from core.runtime.constrained_exec import scrubbed_env
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -30,7 +31,12 @@ class PersistentBashSession:
         self._lock = asyncio.Lock()
 
     async def _start(self) -> None:
-        env = os.environ.copy()
+        # An allowlisted environment, NOT os.environ.copy(). This session runs
+        # arbitrary commands, so a full copy handed it every credential Aura
+        # holds — one `env` away from exfiltration. The other sandboxes in the
+        # codebase already scrub; this one had drifted, which is precisely what
+        # core/runtime/process_privilege.py exists to make visible.
+        env = scrubbed_env()
         # Start bash and immediately set it to print our delimiter after every command
         self._process = await get_subprocess_gateway().spawn_async(
             ["bash", "--noprofile", "--norc"],
