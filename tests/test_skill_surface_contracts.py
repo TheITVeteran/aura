@@ -55,6 +55,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "malware_analysis",
     "manifest_to_device",
     "memory_ops",
+    "messages",
     "memory_sync",
     "native_chat",
     "notify_user",
@@ -169,6 +170,9 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "malware_analysis": {"path": str(tmp_path / "missing.bin")},
         "manifest_to_device": {"url": "notaurl"},
         "memory_ops": {"action": "unknown"},
+        # Read-only status. Pinned rather than defaulted: this sweep calls
+        # safe_execute on an external_io skill, so the action must be stated.
+        "messages": {"action": "status"},
         "notify_user": {"message": "Skill contract sweep complete."},
         "os_automation": {
             "goal": "Open a visible app and prepare a short note.",
@@ -368,7 +372,7 @@ def test_capability_context_borrows_only_initialized_runtime_services(monkeypatc
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 75
+    assert len(skill_registry) == 76
 
 
 @pytest.mark.asyncio
