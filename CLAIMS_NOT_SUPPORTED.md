@@ -1,18 +1,28 @@
 # Aura: Unsupported Claims Ledger
 
-This ledger explicitly identifies and documents speculative, high-horizon, or fundamentally unprovable claims. In the interest of rigorous scientific transparency and academic integrity, these categories are declared **not proven** or **strictly unsupported** for the Aura runtime.
+This is the list of things Aura does not do.
 
-*Last reconciled against the tree: 2026-08-01.* The machine-checked
-counterpart is `core/organism/model_validation.py`: a claim there cannot be
-registered without a test attached ("a claim without a test is a document,
-not a fact"), and `ValidationSuite.unsupported_claims()` reports the live
-version of this ledger from actual runtime observations.
+Every project has one. Most don't write it down, which is how a demo turns
+into a claim and a claim turns into something nobody can walk back. So each
+entry below is marked **not proven** — we haven't shown it yet — or
+**strictly unsupported** — no amount of building would show it, because it
+isn't that kind of question.
+
+If you're evaluating this repo, start here rather than with the README. It's
+shorter, and it tells you more.
+
+*Last reconciled against the tree: 2026-08-01.* There's a machine-checked
+counterpart in `core/organism/model_validation.py`, where a claim cannot be
+registered without a test attached — a claim without a test is a document,
+not a fact — and `ValidationSuite.unsupported_claims()` reports the live
+version of this ledger from actual runtime observations. When the prose here
+and the runtime disagree, the runtime is right.
 
 ---
 
 ## 1. Subjective Consciousness & Qualia
 * **Status**: `strictly unsupported`
-* **Rationale**: Subjective awareness, qualitative inner experience (qualia), sentience, and phenomenological personhood are not scientifically provable nor computationally representable. Aura is a structured Python/Javascript software runtime executing on deterministic silicon, not a conscious entity. All introspective declarations or affect-steering metrics are functional feedback indicators, not qualitative feelings.
+* **Rationale**: Subjective awareness, qualia, sentience, phenomenological personhood — none of these are scientifically provable or computationally representable, and building more of Aura would not change that. She is a structured software runtime executing on deterministic silicon. Every introspective statement and affect-steering metric in here is a functional feedback indicator. Not a feeling. The vocabulary is borrowed; the referent is not.
 
 ## 2. Artificial General Intelligence (AGI)
 * **Status**: `not proven`

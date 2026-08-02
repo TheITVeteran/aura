@@ -20,23 +20,35 @@ Full install detail, boot modes, and environment variables are in
 [INSTALL.md](../INSTALL.md).
 
 ## Talk to Aura
-- Open Aura. The launch screen names every organ that's still warming
-  up: Core / Memory / Cortex / Voice / Autonomy. Once everything you
-  need is ready, the chat input becomes active.
-- Type a message and press Enter. If the answer is taking longer than
-  usual, you'll see a thinking indicator with an estimated wait —
-  Aura's local 32B can take 15–40 seconds for the first turn.
+
+Open her. The launch screen names every organ still warming up — Core,
+Memory, Cortex, Voice, Autonomy — so you can see what's not ready yet
+instead of guessing at a spinner. When the parts you need are up, the chat
+input goes live.
+
+Type and press Enter. If a reply is taking a while you'll get a thinking
+indicator with an estimate. The first turn on a local 32B runs 15–40
+seconds. That's the model loading and thinking, not something being wrong.
 
 ## Manage Memory
-- The Memory tab lists scars, narrative arcs, episodic journal, and
-  the Eternal Record. You can pin a memory (it survives reaping), drop
-  a topic (Aura will stop bringing it up), or export the whole record
-  as a tarball under Settings → Backup.
+
+The Memory tab shows scars, narrative arcs, the episodic journal, and the
+Eternal Record.
+
+Three things you can do there:
+
+- **Pin a memory** and it survives reaping. Nothing sweeps it later.
+- **Drop a topic** and she stops bringing it up.
+- **Export the whole record** as a tarball under Settings → Backup.
+
+It's her memory, but it's your data. All of it comes out in one file.
 
 ## Use Voice
-- Voice input requires explicit permission per session. Click the mic
-  icon. The first time you do this, macOS asks for microphone access.
-- Voice output is on by default. Turn it off in Settings → Voice.
+
+Voice input needs explicit permission each session — click the mic icon.
+The first time, macOS will ask for microphone access.
+
+Voice output is on by default. Settings → Voice turns it off.
 
 ## Common Issues
 | Symptom | Likely cause | Fix |
@@ -71,7 +83,17 @@ half-updated tree. `make update` is deliberately boring: it refuses to
 merge, so a diverged local tree fails loudly instead of resolving itself.
 
 ## Uninstall
-- Drag `Aura.app` to the trash. Your data stays at `~/.aura/`.
-- To remove all data too: `rm -rf ~/.aura`.
+
+Drag `Aura.app` to the trash. Your data stays at `~/.aura/` — deleting the
+app does not delete what she remembers.
+
+To remove that too:
+
+```bash
+rm -rf ~/.aura
+```
+
+That one is not reversible. Export from Settings → Backup first if there's
+any chance you want it later.
 
 For deeper docs see `docs/OPERATOR_GUIDE.md` and `docs/RESEARCH_GUIDE.md`.

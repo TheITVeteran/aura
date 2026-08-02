@@ -2,11 +2,15 @@
 
 ## Requirements
 
-- macOS with Apple Silicon. Bryan's tracked target is M5-class with 64 GB RAM.
-- Python 3.12+
-- 32 GB RAM at minimum. Bryan's tracked deployment target is an M5-class
-  Apple Silicon Mac with 64 GB unified memory, which has room for the 32B
-  Cortex plus the 7B Brainstem on demand.
+- macOS on Apple Silicon.
+- Python 3.12+.
+- 32 GB RAM to run it at all. 64 GB to run it the way it's built.
+
+That second line is the honest one. The tracked target is an M5-class Mac
+with 64 GB unified memory, which has room for the 32B Cortex plus the 7B
+Brainstem on demand. At 32 GB it works, but you're downshifting model lanes
+and you should not expect the latency numbers quoted elsewhere in this repo
+— those were measured on the 64 GB machine.
 
 ## Setup
 
@@ -96,13 +100,14 @@ aura plugin                  # plugin management
 ## First boot
 
 First boot takes 30–60 seconds while Metal compiles shaders and the local
-model initializes. If the model weights aren't on disk yet, the initial
-download can take 5–10 minutes. Subsequent boots are much faster once the
-cache is warm.
+model comes up. If the weights aren't on disk yet, add 5–10 minutes for the
+download. After that the cache is warm and boots are quick.
 
-State loads from SQLite on boot. If there's nothing saved, Aura starts
-fresh. The 7B Brainstem isn't loaded at boot — it's lazy so the 32B Cortex
-gets the memory it wants (~5 GB difference).
+State loads from SQLite. Nothing saved, and she starts fresh.
+
+The 7B Brainstem does not load at boot. That's deliberate — it's lazy so
+the 32B Cortex gets the memory it wants, and that's about 5 GB of
+difference on a machine where 5 GB decides whether the Cortex loads at all.
 
 ## Optional: fine-tune personality
 
@@ -188,12 +193,14 @@ checks hit `/api/health`.
 
 ## Troubleshooting
 
-- **Out of memory.** Close other apps, or drop to a smaller model. The
-  32B 8-bit needs ~20 GB of GPU RAM. On lower-memory machines set
-  `AURA_MODEL=Qwen2.5-7B-Instruct-4bit`.
-- **Model won't load.** Make sure `mlx-lm` is installed
-  (`pip install mlx-lm`). Normal desktop/runtime operation uses the
-  internal MLX Cortex so Aura's substrate can steer the live model path.
+- **Out of memory.** Close other apps, or drop to a smaller model. The 32B
+  8-bit wants about 20 GB of GPU RAM and will not negotiate. On a smaller
+  machine set `AURA_MODEL=Qwen2.5-7B-Instruct-4bit` and take the smaller
+  lane on purpose rather than discovering it under load.
+- **Model won't load.** Check that `mlx-lm` is installed
+  (`pip install mlx-lm`). Desktop and runtime operation both use the
+  internal MLX Cortex — that's what lets the substrate steer the live model
+  path instead of talking at it.
 - **Port in use.** Stop the running instance cleanly with
   `python aura_main.py --stop`, which drains receipts and revokes capability
   tokens. Avoid a blanket `pkill -f aura_main` — on a machine that is already

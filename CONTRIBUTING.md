@@ -22,30 +22,47 @@ make lint
 
 ## Architecture rules
 
-1. **One authority.** Every consequential action routes through
-   `UnifiedWill.decide()` in `core/will.py`. Don't add a parallel gate;
-   add an advisor to the Will.
-2. **One owner per concern.** See [OWNERSHIP.md](OWNERSHIP.md) for the
-   canonical map. If you want a new governance check, attach it to the
-   existing owner.
-3. **No monkey-patching.** Use event-bus hooks, provider registries, or
-   typed extension points — not `setattr` on live objects.
-4. **Immutable messages.** Inter-subsystem communication uses the frozen
-   dataclasses in `core/runtime/immutable_messages.py`.
-5. **Lifecycle tracking.** Subsystems report state via
+1. **One authority.** Every consequential action goes through
+   `UnifiedWill.decide()` in `core/will.py`. Don't add a parallel gate.
+   Add an advisor to the Will. This repo already lived through six gates
+   that each thought they were in charge, and the cost of that was not
+   being able to prove anything had been gated at all.
+2. **One owner per concern.** [OWNERSHIP.md](OWNERSHIP.md) is the map. A
+   new governance check attaches to the existing owner rather than
+   starting a second one.
+3. **No monkey-patching.** Event-bus hooks, provider registries, typed
+   extension points. Not `setattr` on a live object.
+4. **Immutable messages.** Subsystems talk through the frozen dataclasses
+   in `core/runtime/immutable_messages.py`.
+5. **Lifecycle tracking.** Subsystems report state through
    `core/runtime/service_state.py:ServiceState`.
+6. **Locks are checked.** Use `checked_lock` / `checked_async_lock` from
+   `core/runtime/lockdep.py`, not raw `threading.Lock` or `asyncio.Lock`.
+   Lockdep catches ABBA deadlocks without the deadlock happening — but it
+   only sees locks it wraps, so an unwrapped lock is a blind spot rather
+   than a safe one. Adopt an existing lock with `instrument(name)`.
 
 ## Adding a consciousness module
 
-1. Drop the module in `core/consciousness/your_module.py`.
+1. Drop the module in `core/consciousness/`.
 2. Register it in `core/container.py` during boot.
 3. If it needs periodic updates, wire it into the consciousness bridge
    tick cycle.
-4. Write at least one ablation test that shows what breaks when the
-   module is removed.
+4. **Write an ablation test.** At least one, showing what actually breaks
+   when the module is removed. This is the step people skip, and it's the
+   only one that distinguishes a module that does something from a module
+   that runs. If nothing measurable changes when you delete it, that is
+   the finding — report it rather than shipping around it.
 5. Add an entry to [OWNERSHIP.md](OWNERSHIP.md) under the right domain.
 6. If it makes falsifiable predictions, register it in
    `core/consciousness/theory_arbitration.py`.
+
+A note that applies past this checklist: a claim without a test is a
+document, not a fact. New invariants go next to what they protect via
+`@invariant(...)` in `core/verify/`, and claims about Aura's own runtime
+have to be registered with the test that validates them
+(`core/organism/model_validation.py`). A claim with no test cannot be
+registered at all.
 
 ## Test markers
 
