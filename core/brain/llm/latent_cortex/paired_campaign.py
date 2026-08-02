@@ -65,6 +65,8 @@ ADAPTER_EQUAL_COMPUTE = "adapter_equal_compute"
 PRIMARY_ARMS = (BASE_VANILLA, BASE_RLC, ADAPTER_VANILLA, ADAPTER_RLC)
 FULL_ARMS = (*PRIMARY_ARMS, BASE_EQUAL_COMPUTE, ADAPTER_EQUAL_COMPUTE)
 WORKER_ORIGIN_PROTOCOL = "detached_supervisor_staged_arm_import_v3"
+RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA = "aura.resident_recurrent_sft_adapter_manifest.v1"
+RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 
 _MIN_DOMAIN_TRIALS = 20
 
@@ -91,6 +93,39 @@ def _strict_json_equal(left: Any, right: Any) -> bool:
         return canonical_json_bytes(left) == canonical_json_bytes(right)
     except (TypeError, ValueError):
         return False
+
+
+def _adapter_wrapped_projection_count(
+    adapter_identity: Mapping[str, Any],
+    adapter_receipt: Mapping[str, Any],
+) -> int | None:
+    direct = adapter_receipt.get("wrapped_projection_count")
+    if type(direct) is int and direct > 0:
+        return direct
+    if adapter_receipt.get("schema") != RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA:
+        return None
+    manifest = adapter_identity.get("manifest")
+    if (
+        adapter_identity.get("format") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        or not isinstance(manifest, Mapping)
+        or manifest.get("schema") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+    ):
+        return None
+    lora = manifest.get("lora")
+    if not isinstance(lora, Mapping):
+        return None
+    wrapped = lora.get("wrapped_projections")
+    projection_paths = lora.get("projection_paths")
+    if (
+        type(wrapped) is not int
+        or wrapped <= 0
+        or not isinstance(projection_paths, list)
+        or len(projection_paths) != wrapped
+        or len(set(projection_paths)) != wrapped
+        or any(not isinstance(path, str) or not path for path in projection_paths)
+    ):
+        return None
+    return wrapped
 
 
 def _comparison_count(arms: Sequence[str]) -> int:
@@ -124,10 +159,7 @@ def _validate_claim_exact_power(
         or set(domains) != set(domain_counts)
         or type(generation_seed_count) is not int
         or generation_seed_count <= 0
-        or any(
-            count != generation_seed_count
-            for count in domain_counts.values()
-        )
+        or any(count != generation_seed_count for count in domain_counts.values())
         or not isinstance(observed_receipt, Mapping)
     ):
         _fail("campaign_exact_power_required")
@@ -141,8 +173,7 @@ def _validate_claim_exact_power(
     except ExactPairedGradeError as exc:
         raise PairedCampaignError("campaign_exact_power_required") from exc
     if (
-        canonical_json_bytes(dict(observed_receipt))
-        != canonical_json_bytes(expected_receipt)
+        canonical_json_bytes(dict(observed_receipt)) != canonical_json_bytes(expected_receipt)
         or expected_receipt["powered_for_zero_loss_noninferiority"] is not True
     ):
         _fail("campaign_exact_power_required")
@@ -202,9 +233,7 @@ def _contamination_audit_valid(
             for record in corpora
         )
         or not isinstance(methods, list)
-        or not {"exact_prompt", "normalized_prompt", "token_fivegram"}.issubset(
-            methods
-        )
+        or not {"exact_prompt", "normalized_prompt", "token_fivegram"}.issubset(methods)
         or signature.get("algorithm") != "ed25519"
         or signature.get("verified") is not True
         or any(
@@ -221,17 +250,11 @@ def _contamination_audit_valid(
         return False
     body = {key: value for key, value in audit.items() if key != "signature"}
     signed_payload = canonical_json_bytes(body)
-    if signature.get("signed_payload_sha256") != hashlib.sha256(
-        signed_payload
-    ).hexdigest():
+    if signature.get("signed_payload_sha256") != hashlib.sha256(signed_payload).hexdigest():
         return False
     try:
-        public_der = base64.b64decode(
-            cast(str, signature.get("public_key_der_b64")), validate=True
-        )
-        signature_bytes = base64.b64decode(
-            cast(str, signature.get("signature_b64")), validate=True
-        )
+        public_der = base64.b64decode(cast(str, signature.get("public_key_der_b64")), validate=True)
+        signature_bytes = base64.b64decode(cast(str, signature.get("signature_b64")), validate=True)
     except (TypeError, ValueError, binascii.Error):
         return False
     trust_sha256 = hashlib.sha256(public_der).hexdigest()
@@ -265,11 +288,7 @@ def _arm_execution_order(campaign_name: str, arms: tuple[str, ...]) -> tuple[str
     completed: set[str] = set()
     ordered: list[str] = []
     while pending:
-        ready = [
-            arm
-            for arm in pending
-            if prerequisites.get(arm, set()).issubset(completed)
-        ]
+        ready = [arm for arm in pending if prerequisites.get(arm, set()).issubset(completed)]
         if not ready:
             _fail("campaign_arm_dependencies_invalid")
         selected = min(
@@ -327,9 +346,7 @@ def build_campaign_plan(
     )
     if claim_eligible and not audit_valid:
         _fail("campaign_contamination_audit_required")
-    normalized_campaign_trust = (
-        None if campaign_trust is None else dict(campaign_trust)
-    )
+    normalized_campaign_trust = None if campaign_trust is None else dict(campaign_trust)
     if claim_eligible and (
         not isinstance(normalized_campaign_trust, dict)
         or normalized_campaign_trust.get("prelaunch_verified") is not True
@@ -340,18 +357,13 @@ def build_campaign_plan(
         _fail("campaign_prelaunch_trust_required")
     if claim_eligible and (
         "generation_seeds" in execution_config
-        or execution_config.get("worker_task_material")
-        != "public_manifest_only"
-        or execution_config.get("answer_reveal_protocol")
-        != "sealed_outputs_then_issuer_reveal_v1"
-        or execution_config.get("worker_origin_protocol")
-        != WORKER_ORIGIN_PROTOCOL
+        or execution_config.get("worker_task_material") != "public_manifest_only"
+        or execution_config.get("answer_reveal_protocol") != "sealed_outputs_then_issuer_reveal_v1"
+        or execution_config.get("worker_origin_protocol") != WORKER_ORIGIN_PROTOCOL
         or type(execution_config.get("worker_origin_attempt_slots")) is not int
         or execution_config.get("worker_origin_attempt_slots", 0) <= 0
-        or execution_config.get("generation_seed_disclosure")
-        != "post_seal_answer_reveal"
-        or execution_config.get("generation_seed_policy")
-        != "external_issuer_uniform_63bit"
+        or execution_config.get("generation_seed_disclosure") != "post_seal_answer_reveal"
+        or execution_config.get("generation_seed_policy") != "external_issuer_uniform_63bit"
         or type(execution_config.get("generation_seed_count")) is not int
         or execution_config.get("generation_seed_count", 0) <= 0
         or type(execution_config.get("generation_seed_min_entropy_bits")) is not int
@@ -376,10 +388,7 @@ def build_campaign_plan(
             ).digest(),
         )
         task_execution_ordinals.update(
-            {
-                (arm, task.task_id): ordinal
-                for ordinal, task in enumerate(arm_tasks)
-            }
+            {(arm, task.task_id): ordinal for ordinal, task in enumerate(arm_tasks)}
         )
     cells: list[dict[str, Any]] = []
     for task_ordinal, task in enumerate(ordered_tasks):
@@ -388,9 +397,7 @@ def build_campaign_plan(
                 {
                     "arm": arm,
                     "domain": task.domain,
-                    "execution_ordinal_within_arm": task_execution_ordinals[
-                        (arm, task.task_id)
-                    ],
+                    "execution_ordinal_within_arm": task_execution_ordinals[(arm, task.task_id)],
                     "task_id": task.task_id,
                     "task_ordinal": task_ordinal,
                     "task_payload_sha256": task.task_payload_sha256,
@@ -500,10 +507,8 @@ def _strict_result_row(
         )
         or runtime_identity.get("worker_model_parameter_count_basis")
         != runtime_bundle.get("logical_parameter_count_basis")
-        or runtime_identity.get("worker_weight_fingerprint")
-        != model_identity.get("fingerprint")
-        or runtime_identity.get("worker_weight_fingerprint_method")
-        != model_identity.get("method")
+        or runtime_identity.get("worker_weight_fingerprint") != model_identity.get("fingerprint")
+        or runtime_identity.get("worker_weight_fingerprint_method") != model_identity.get("method")
         or not _strict_json_equal(
             runtime_identity.get("worker_weight_file_count"),
             model_identity.get("files"),
@@ -515,26 +520,28 @@ def _strict_result_row(
         != implementation_sha256.get("tools/run_latent_cortex_paired_campaign.py")
         or (
             planned_personality is not None
-            and runtime_identity.get("worker_personality_adapter")
-            != planned_personality
+            and runtime_identity.get("worker_personality_adapter") != planned_personality
         )
         or (
             planned_effective_stack is not None
-            and runtime_identity.get("worker_effective_stack_sha256")
-            != planned_effective_stack
+            and runtime_identity.get("worker_effective_stack_sha256") != planned_effective_stack
         )
     ):
         _fail("campaign_runtime_model_identity_mismatch")
     adapter_receipt = adapter_identity.get("identity_receipt")
     if not isinstance(adapter_receipt, Mapping):
         _fail("campaign_adapter_identity_invalid")
+    expected_wrapped_projections = _adapter_wrapped_projection_count(
+        adapter_identity,
+        adapter_receipt,
+    )
     if arm.startswith("adapter_"):
         if (
             result.get("adapter_identity_sha256")
             != adapter_receipt.get("composite_identity_sha256")
             or not _strict_json_equal(
                 result.get("adapter_wrapped_projections"),
-                adapter_receipt.get("wrapped_projection_count"),
+                expected_wrapped_projections,
             )
             or not isinstance(result.get("runtime_adapter_identity"), Mapping)
             or not _strict_json_equal(
@@ -555,12 +562,8 @@ def _strict_result_row(
     if type(layer_apps) is not int or layer_apps <= 0:
         _fail("campaign_record_compute_invalid")
     try:
-        resource_accounting = validate_resource_receipt(
-            result.get("resource_accounting")
-        )
-        information_accounting = validate_information_receipt(
-            result.get("information_accounting")
-        )
+        resource_accounting = validate_resource_receipt(result.get("resource_accounting"))
+        information_accounting = validate_information_receipt(result.get("information_accounting"))
     except (TypeError, ValueError):
         _fail("campaign_record_accounting_invalid")
     if (
@@ -571,9 +574,7 @@ def _strict_result_row(
     if arm.endswith("_rlc"):
         episode_receipt = result.get("episode_receipt")
         episode_budget = (
-            episode_receipt.get("budget")
-            if isinstance(episode_receipt, Mapping)
-            else None
+            episode_receipt.get("budget") if isinstance(episode_receipt, Mapping) else None
         )
         if (
             not isinstance(episode_budget, Mapping)
@@ -596,8 +597,7 @@ def _strict_result_row(
     if (
         not _strict_json_equal(dict(score), independent_score)
         or independent_score.get("correct") is not correct
-        or verification.get("answer_commitment_sha256")
-        != task.get("answer_commitment_sha256")
+        or verification.get("answer_commitment_sha256") != task.get("answer_commitment_sha256")
     ):
         _fail("campaign_score_binding_invalid")
     if commit.get("result_sha256") != _sha256(dict(result)):
@@ -688,9 +688,7 @@ def _paired_claim(
         require_compute=require_compute,
         global_bound_family_count=global_bound_family_count,
     )
-    accounting_admitted = all(
-        certificate["admitted"] for certificate in accounting_certificates
-    )
+    accounting_admitted = all(certificate["admitted"] for certificate in accounting_certificates)
     grade["evidence"]["resource_accounting_required"] = True
     grade["evidence"]["comparison_accounting_admitted"] = accounting_admitted
     grade["evidence"]["comparison_accounting"] = accounting_certificates
@@ -762,8 +760,7 @@ def grade_campaign(
     if type(claim_eligible) is not bool:
         _fail("campaign_claim_eligibility_invalid")
     if claim_eligible and (
-        execution_config.get("worker_origin_protocol")
-        != WORKER_ORIGIN_PROTOCOL
+        execution_config.get("worker_origin_protocol") != WORKER_ORIGIN_PROTOCOL
         or type(execution_config.get("worker_origin_attempt_slots")) is not int
         or execution_config.get("worker_origin_attempt_slots", 0) <= 0
     ):
@@ -774,14 +771,11 @@ def grade_campaign(
         or campaign_trust.get("prelaunch_verified") is not True
         or campaign_trust.get("externally_custodied") is not True
         or not _is_sha256(campaign_trust.get("policy_sha256"))
-        or campaign_trust.get("policy_sha256")
-        != trusted_campaign_policy_sha256
+        or campaign_trust.get("policy_sha256") != trusted_campaign_policy_sha256
     ):
         _fail("campaign_prelaunch_trust_required")
     contamination_audit = metadata.get("contamination_audit")
-    planned_contamination_root = metadata.get(
-        "contamination_trust_root_sha256"
-    )
+    planned_contamination_root = metadata.get("contamination_trust_root_sha256")
     if claim_eligible and not _contamination_audit_valid(
         contamination_audit,
         task_manifest_sha256=task_manifest.get("manifest_sha256"),
@@ -821,11 +815,7 @@ def grade_campaign(
         domain = definition.get("domain")
         payload_sha256 = definition.get("task_payload_sha256")
         execution_ordinal = definition.get("execution_ordinal_within_arm")
-        task = (
-            tasks_by_id.get(cell_task_id)
-            if isinstance(cell_task_id, str)
-            else None
-        )
+        task = tasks_by_id.get(cell_task_id) if isinstance(cell_task_id, str) else None
         if (
             not isinstance(cell_task_id, str)
             or task is None
@@ -845,17 +835,12 @@ def grade_campaign(
         execution_ordinals[arm] != set(range(expected_task_count)) for arm in arms
     ):
         _fail("campaign_plan_coverage_invalid")
-    if claim_eligible and (
-        arms != FULL_ARMS
-        or planned_domains != set(FRONTIER_DOMAINS)
-    ):
+    if claim_eligible and (arms != FULL_ARMS or planned_domains != set(FRONTIER_DOMAINS)):
         _fail("campaign_claim_eligibility_invalid")
     if claim_eligible:
         _validate_claim_exact_power(
             cast(Mapping[str, Any], execution_config),
-            task_domains=(
-                cast(str, task["domain"]) for task in tasks_by_id.values()
-            ),
+            task_domains=(cast(str, task["domain"]) for task in tasks_by_id.values()),
             arms=arms,
         )
     rows: dict[
@@ -985,13 +970,9 @@ def grade_campaign(
     base_differences: list[int] = []
     for task_arms in rows.values():
         adapter_differences.append(
-            int(task_arms[ADAPTER_RLC][1])
-            - int(task_arms[ADAPTER_VANILLA][1])
+            int(task_arms[ADAPTER_RLC][1]) - int(task_arms[ADAPTER_VANILLA][1])
         )
-        base_differences.append(
-            int(task_arms[BASE_RLC][1])
-            - int(task_arms[BASE_VANILLA][1])
-        )
+        base_differences.append(int(task_arms[BASE_RLC][1]) - int(task_arms[BASE_VANILLA][1]))
     interaction = grade_exact_interaction(
         adapter_differences=adapter_differences,
         base_differences=base_differences,
@@ -1007,13 +988,10 @@ def grade_campaign(
         not underpowered
         and all(comparisons[name]["tier"] == PROVEN for name in required_claims)
         and exact_interaction_proven(interaction)
-        and comparisons["adapter_effect_under_vanilla"]["evidence"].get(
-            "all_families_noninferior"
-        )
+        and comparisons["adapter_effect_under_vanilla"]["evidence"].get("all_families_noninferior")
     )
-    refuted = (
-        comparisons["adapter_rlc_gain"]["tier"] == REFUTED
-        or exact_interaction_refuted(interaction)
+    refuted = comparisons["adapter_rlc_gain"]["tier"] == REFUTED or exact_interaction_refuted(
+        interaction
     )
     if statistically_proven and claim_eligible:
         verdict, tier, reasons = (

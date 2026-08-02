@@ -171,6 +171,7 @@ def read_canonical_json(
         trailing_newline = value.get("schema") not in {
             RESIDENT_SFT_MANIFEST_SCHEMA,
             RESIDENT_SFT_COMPLETION_SCHEMA,
+            "aura.resident_recurrent_sft_training_admission.v1",
         }
     expected = canonical_json_bytes(value) + (b"\n" if trailing_newline else b"")
     if raw != expected:

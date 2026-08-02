@@ -129,6 +129,52 @@ def _admission(
     return {**material, "admission_sha256": _sha(material)}
 
 
+def _sft_admission(freeze: dict[str, object]) -> dict[str, object]:
+    identity = {
+        **dict(freeze["identity_receipt"]),
+        "schema": verifier.RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
+        "complete": True,
+        "load_eligible": True,
+        "training_scope": "resident_recurrent_sft",
+        "terminal_step": 96,
+        "authority_sha256": "c" * 64,
+        "checkpoint_complete_sha256": "d" * 64,
+        "reasoning_gain_proven": False,
+        "promotion_allowed": False,
+    }
+    freeze["identity_receipt"] = {
+        key: value
+        for key, value in identity.items()
+        if key not in {"load_eligible", "training_scope"}
+    }
+    material: dict[str, object] = {
+        "schema": verifier.RESIDENT_SFT_ADMISSION_SCHEMA,
+        "decision": "admit_to_freeze_and_mechanics",
+        "claim_scope": verifier.ADMISSION_SCOPES[verifier.RESIDENT_SFT_ADMISSION_SCHEMA],
+        "training_state": {
+            "complete": True,
+            "terminal": True,
+            "halt_reason": "max_steps",
+            "step": 96,
+            "checkpoint_sequence": 97,
+            "invocation_count": 24,
+            "authority_sha256": "c" * 64,
+            "adapter_sha256": identity["adapter_sha256"],
+            "checkpoint_complete_sha256": "d" * 64,
+        },
+        "identity_receipt": identity,
+        "claim_flags": {
+            "reasoning_gain_proven": False,
+            "causal_gain_proven": False,
+            "frontier_level_proven": False,
+            "grpo_admission": False,
+            "promotion_allowed": False,
+            "wow_signal": False,
+        },
+    }
+    return {**material, "admission_sha256": _sha(material)}
+
+
 def test_bindings_accept_exact_resident_generation(tmp_path: Path) -> None:
     promotion, freeze, plan = _evidence(tmp_path)
 
@@ -189,7 +235,7 @@ def test_bindings_accept_recovery_training_admission(tmp_path: Path) -> None:
 
 def test_bindings_accept_resident_sft_training_admission(tmp_path: Path) -> None:
     _promotion, freeze, plan = _evidence(tmp_path)
-    admission = _admission(freeze, schema=verifier.RESIDENT_SFT_ADMISSION_SCHEMA)
+    admission = _sft_admission(freeze)
     metadata = plan.to_dict()["metadata"]
     metadata["adapter_identity"]["identity_receipt"] = freeze["identity_receipt"]
     rebound = CampaignPlan.build(
@@ -206,6 +252,13 @@ def test_bindings_accept_resident_sft_training_admission(tmp_path: Path) -> None
     )
 
     assert identity["training_gate_schema"] == verifier.RESIDENT_SFT_ADMISSION_SCHEMA
+
+    from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
+
+    admission_path = tmp_path / "resident-sft-admission.json"
+    admission_path.write_bytes(canonical_json_bytes(admission))
+    assert verifier._verified_admission(admission_path) == admission
+    assert verifier._verified_training_gate(admission_path) == admission
 
 
 @pytest.mark.parametrize(
@@ -304,8 +357,13 @@ def test_verify_composes_mechanics_without_gain_claim(
     campaign.mkdir()
     promotion_path.touch()
 
-    def read_document(path: Path, *, role: str) -> dict[str, object]:
-        del role
+    def read_document(
+        path: Path,
+        *,
+        role: str,
+        trailing_newline: bool | None = True,
+    ) -> dict[str, object]:
+        del role, trailing_newline
         return promotion if path == promotion_path else plan.to_dict()
 
     monkeypatch.setattr(verifier, "read_canonical_json", read_document)

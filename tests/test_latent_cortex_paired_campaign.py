@@ -8,6 +8,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from core.brain.llm.latent_cortex import paired_campaign as paired
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.exact_paired_grade import (
     exact_campaign_power_plan,
@@ -40,11 +41,13 @@ RUNNER_SHA256 = "c" * 64
 ADAPTER_SHA256 = "b" * 64
 MODEL_SHA256 = "a" * 64
 MODEL_BUNDLE_SHA256 = "d" * 64
-TEST_PUBLIC_DER = Ed25519PrivateKey.from_private_bytes(
-    bytes(range(32))
-).public_key().public_bytes(
-    encoding=serialization.Encoding.DER,
-    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+TEST_PUBLIC_DER = (
+    Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    .public_key()
+    .public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
 )
 TEST_TRUST_ROOT_SHA256 = hashlib.sha256(TEST_PUBLIC_DER).hexdigest()
 TEST_POLICY_SHA256 = "f" * 64
@@ -118,9 +121,7 @@ def _signed_contamination_audit(task_manifest_sha256: str):
         "signature": {
             "algorithm": "ed25519",
             "key_id": trust_sha256,
-            "signature_b64": base64.b64encode(
-                private_key.sign(signed_payload)
-            ).decode("ascii"),
+            "signature_b64": base64.b64encode(private_key.sign(signed_payload)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(signed_payload).hexdigest(),
             "public_key_der_b64": base64.b64encode(public_der).decode("ascii"),
             "trust_root_sha256": trust_sha256,
@@ -137,6 +138,25 @@ def _plan():
         "execution_config": {"max_steps": 8, "decode_max_tokens": 256},
     }
     return tasks, build_campaign_plan("paired-test", tasks, **kwargs)
+
+
+def test_sft_adapter_activation_count_comes_from_bound_manifest() -> None:
+    projection_paths = [f"model.layers.40.self_attn.q_proj.{index}" for index in range(24)]
+    adapter_identity = {
+        "format": paired.RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+        "manifest": {
+            "schema": paired.RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+            "lora": {
+                "wrapped_projections": 24,
+                "projection_paths": projection_paths,
+            },
+        },
+    }
+    receipt = {"schema": paired.RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA}
+
+    assert paired._adapter_wrapped_projection_count(adapter_identity, receipt) == 24
+    adapter_identity["manifest"]["lora"]["projection_paths"] = projection_paths[:-1]
+    assert paired._adapter_wrapped_projection_count(adapter_identity, receipt) is None
 
 
 def _grade_plan(*, claim_eligible: bool = False):
@@ -194,10 +214,7 @@ def _grade_plan(*, claim_eligible: bool = False):
         metadata["claim_scope"] = "resident same-checkpoint causal attribution"
         plan = type(plan).build(
             document["campaign_name"],
-            [
-                plan.cell_definition(cell_id)
-                for cell_id in plan.cell_ids
-            ],
+            [plan.cell_definition(cell_id) for cell_id in plan.cell_ids],
             metadata=metadata,
         )
     return plan, tasks
@@ -206,9 +223,7 @@ def _grade_plan(*, claim_eligible: bool = False):
 def _records(plan, tasks, *, gain: bool = True):
     rows = []
     metadata = plan.to_dict()["metadata"]
-    task_records = {
-        task["task_id"]: task for task in metadata["task_manifest"]["tasks"]
-    }
+    task_records = {task["task_id"]: task for task in metadata["task_manifest"]["tasks"]}
     issuer_tasks = {task.task_id: task for task in tasks}
     for cell_id in plan.cell_ids:
         definition = plan.cell_definition(cell_id)
@@ -233,9 +248,7 @@ def _records(plan, tasks, *, gain: bool = True):
             else "synthetic answer intentionally lacks the terminal marker"
         )
         task = task_records[definition["task_id"]]
-        resource_accounting, information_accounting = _accounting(
-            task["task_payload_sha256"]
-        )
+        resource_accounting, information_accounting = _accounting(task["task_payload_sha256"])
         episode_receipt = (
             {
                 "budget": {
@@ -251,18 +264,12 @@ def _records(plan, tasks, *, gain: bool = True):
             "text": text,
             "output_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "layer_apps": 10_000,
-            "adapter_identity_sha256": (
-                ADAPTER_SHA256 if arm.startswith("adapter_") else None
-            ),
-            "adapter_wrapped_projections": (
-                64 if arm.startswith("adapter_") else 0
-            ),
+            "adapter_identity_sha256": (ADAPTER_SHA256 if arm.startswith("adapter_") else None),
+            "adapter_wrapped_projections": (64 if arm.startswith("adapter_") else 0),
             "runtime_model_identity": {
                 "worker_model_path": MODEL_PATH,
                 "worker_model_parameter_count": 32_763_876_352,
-                "worker_model_parameter_count_basis": (
-                    "architecture_config_logical"
-                ),
+                "worker_model_parameter_count_basis": ("architecture_config_logical"),
                 "worker_source_sha256": RUNNER_SHA256,
                 "worker_weight_fingerprint": MODEL_SHA256,
                 "worker_weight_fingerprint_method": "sha256",
@@ -293,9 +300,7 @@ def _records(plan, tasks, *, gain: bool = True):
                 "result": result,
                 "verification": verification,
                 "commit": {
-                    "result_sha256": hashlib.sha256(
-                        canonical_json_bytes(result)
-                    ).hexdigest(),
+                    "result_sha256": hashlib.sha256(canonical_json_bytes(result)).hexdigest(),
                     "verification_sha256": hashlib.sha256(
                         canonical_json_bytes(verification)
                     ).hexdigest(),
@@ -347,13 +352,9 @@ def test_strong_2x2_gain_without_powered_noninferiority_stays_inconclusive():
     assert grade["interaction"]["lower"]["numerator"] > 0
     assert grade["frontier_claim_eligible"] is False
     assert grade["same_checkpoint_gain_claim_eligible"] is False
+    assert grade["interaction"]["one_sided_exact_sign_flip_p"]["numerator"] > 0
     assert (
-        grade["interaction"]["one_sided_exact_sign_flip_p"]["numerator"] > 0
-    )
-    assert (
-        grade["comparisons"]["adapter_effect_under_vanilla"]["evidence"][
-            "all_families_noninferior"
-        ]
+        grade["comparisons"]["adapter_effect_under_vanilla"]["evidence"]["all_families_noninferior"]
         is False
     )
 
@@ -472,9 +473,7 @@ def test_grader_rejects_bool_aliases_in_canonical_evidence():
     plan, tasks = _grade_plan()
     rows = _records(plan, tasks)
     ordinal_row = next(
-        row
-        for row in rows
-        if row["definition"]["execution_ordinal_within_arm"] == 1
+        row for row in rows if row["definition"]["execution_ordinal_within_arm"] == 1
     )
     ordinal_row["definition"]["execution_ordinal_within_arm"] = True
     with pytest.raises(
@@ -484,11 +483,7 @@ def test_grader_rejects_bool_aliases_in_canonical_evidence():
         grade_campaign(rows, plan=plan, issuer_tasks=tasks)
 
     rows = _records(plan, tasks)
-    base_row = next(
-        row
-        for row in rows
-        if row["definition"]["arm"] == BASE_VANILLA
-    )
+    base_row = next(row for row in rows if row["definition"]["arm"] == BASE_VANILLA)
     base_row["result"]["adapter_wrapped_projections"] = False
     base_row["commit"]["result_sha256"] = hashlib.sha256(
         canonical_json_bytes(base_row["result"])
@@ -503,9 +498,7 @@ def test_grader_rejects_bool_aliases_in_canonical_evidence():
 def test_grader_rejects_malformed_plan_coverage():
     original, tasks = _grade_plan()
     document = original.to_dict()
-    definitions = [
-        original.cell_definition(cell_id) for cell_id in original.cell_ids[:-1]
-    ]
+    definitions = [original.cell_definition(cell_id) for cell_id in original.cell_ids[:-1]]
     malformed = type(original).build(
         document["campaign_name"],
         definitions,
@@ -527,9 +520,7 @@ def test_independent_scorer_rejects_self_consistent_forged_correctness():
     rows = _records(plan, tasks)
     row = rows[0]
     row["verification"]["correct"] = not row["verification"]["correct"]
-    row["verification"]["score_receipt"]["correct"] = row["verification"][
-        "correct"
-    ]
+    row["verification"]["score_receipt"]["correct"] = row["verification"]["correct"]
     row["commit"]["verification_sha256"] = hashlib.sha256(
         canonical_json_bytes(row["verification"])
     ).hexdigest()
@@ -545,12 +536,8 @@ def test_independent_scorer_rejects_self_consistent_forged_correctness():
 
 
 def test_claim_eligible_plan_requires_bound_contamination_audit():
-    tasks = generate_task_battery(
-        range(20), domains=FRONTIER_DOMAINS, difficulty=2
-    )
-    with pytest.raises(
-        PairedCampaignError, match="campaign_contamination_audit_required"
-    ):
+    tasks = generate_task_battery(range(20), domains=FRONTIER_DOMAINS, difficulty=2)
+    with pytest.raises(PairedCampaignError, match="campaign_contamination_audit_required"):
         build_campaign_plan(
             "missing-contamination-audit",
             tasks,
@@ -562,16 +549,12 @@ def test_claim_eligible_plan_requires_bound_contamination_audit():
 
 
 def test_claim_eligible_plan_rejects_tampered_audit_signature():
-    tasks = generate_task_battery(
-        range(20), domains=FRONTIER_DOMAINS, difficulty=2
-    )
+    tasks = generate_task_battery(range(20), domains=FRONTIER_DOMAINS, difficulty=2)
     manifest = build_task_manifest(tasks)
     audit = _signed_contamination_audit(manifest.manifest_sha256)
     audit["overlap_count"] = 1
 
-    with pytest.raises(
-        PairedCampaignError, match="campaign_contamination_audit_required"
-    ):
+    with pytest.raises(PairedCampaignError, match="campaign_contamination_audit_required"):
         build_campaign_plan(
             "tampered-contamination-audit",
             tasks,
@@ -588,9 +571,7 @@ def test_claim_eligible_plan_requires_prelaunch_role_trust():
     manifest = build_task_manifest(tasks)
     audit = _signed_contamination_audit(manifest.manifest_sha256)
 
-    with pytest.raises(
-        PairedCampaignError, match="campaign_prelaunch_trust_required"
-    ):
+    with pytest.raises(PairedCampaignError, match="campaign_prelaunch_trust_required"):
         build_campaign_plan(
             "missing-role-trust",
             tasks,
@@ -631,9 +612,7 @@ def test_claim_eligible_plan_rejects_worker_visible_generation_seeds():
         "unsigned_plan_sha256": unsigned.plan_sha256,
     }
 
-    with pytest.raises(
-        PairedCampaignError, match="campaign_answer_blinding_required"
-    ):
+    with pytest.raises(PairedCampaignError, match="campaign_answer_blinding_required"):
         build_campaign_plan(
             "seed-leak",
             tasks,
@@ -693,9 +672,7 @@ def test_claim_eligible_plan_rejects_exact_but_underpowered_receipt():
 def test_claim_grade_requires_out_of_band_campaign_policy_pin():
     plan, tasks = _grade_plan(claim_eligible=True)
 
-    with pytest.raises(
-        PairedCampaignError, match="campaign_prelaunch_trust_required"
-    ):
+    with pytest.raises(PairedCampaignError, match="campaign_prelaunch_trust_required"):
         grade_campaign(
             [],
             plan=plan,
@@ -723,16 +700,12 @@ def test_grader_rejects_forged_underpowered_claim_plan():
 def test_grader_rejects_planned_adapter_identity_reported_without_loaded_receipt():
     plan, tasks = _grade_plan()
     rows = _records(plan, tasks)
-    row = next(
-        item for item in rows if item["definition"]["arm"] == ADAPTER_RLC
-    )
+    row = next(item for item in rows if item["definition"]["arm"] == ADAPTER_RLC)
     row["result"]["runtime_adapter_identity"] = {
         **row["result"]["runtime_adapter_identity"],
         "wrapped_projection_count": 63,
     }
-    row["commit"]["result_sha256"] = hashlib.sha256(
-        canonical_json_bytes(row["result"])
-    ).hexdigest()
+    row["commit"]["result_sha256"] = hashlib.sha256(canonical_json_bytes(row["result"])).hexdigest()
 
     with pytest.raises(PairedCampaignError, match="campaign_adapter_activation_mismatch"):
         grade_campaign(

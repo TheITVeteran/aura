@@ -54,6 +54,23 @@ from tools.independent_paired_campaign_scoring import (
     independent_grade_campaign,
 )
 
+
+def test_independent_sft_projection_count_is_manifest_bound() -> None:
+    paths = [f"model.layers.40.self_attn.q_proj.{index}" for index in range(24)]
+    identity = {
+        "format": independent_kernel.RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+        "manifest": {
+            "schema": independent_kernel.RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+            "lora": {"wrapped_projections": 24, "projection_paths": paths},
+        },
+    }
+    receipt = {"schema": independent_kernel.RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA}
+
+    assert independent_kernel._independent_adapter_projection_count(identity, receipt) == 24
+    identity["manifest"]["lora"]["wrapped_projections"] = 23
+    assert independent_kernel._independent_adapter_projection_count(identity, receipt) is None
+
+
 MODEL_PATH = "/sealed/resident-32b"
 MODEL_SHA256 = "a" * 64
 ADAPTER_SHA256 = "b" * 64
@@ -78,9 +95,7 @@ def _plan_and_tasks():
             "files": 4,
             "runtime_bundle": {
                 "logical_parameter_count": 32_763_876_352,
-                "logical_parameter_count_basis": (
-                    "architecture_config_logical"
-                ),
+                "logical_parameter_count_basis": ("architecture_config_logical"),
                 "bundle_sha256": MODEL_BUNDLE_SHA256,
             },
         },
@@ -105,14 +120,9 @@ def _plan_and_tasks():
 def _records(plan, tasks):
     rows = []
     metadata = plan.to_dict()["metadata"]
-    task_records = {
-        task["task_id"]: task for task in metadata["task_manifest"]["tasks"]
-    }
+    task_records = {task["task_id"]: task for task in metadata["task_manifest"]["tasks"]}
     issuer_tasks = {task.task_id: task for task in tasks}
-    task_ordinals = {
-        task_id: ordinal
-        for ordinal, task_id in enumerate(sorted(issuer_tasks))
-    }
+    task_ordinals = {task_id: ordinal for ordinal, task_id in enumerate(sorted(issuer_tasks))}
     for cell_id in plan.cell_ids:
         definition = plan.cell_definition(cell_id)
         arm = definition["arm"]
@@ -136,26 +146,18 @@ def _records(plan, tasks):
         else:
             text = "synthetic incorrect answer"
         task = task_records[definition["task_id"]]
-        resource_accounting, information_accounting = _trial_accounting(
-            task["task_payload_sha256"]
-        )
+        resource_accounting, information_accounting = _trial_accounting(task["task_payload_sha256"])
         result = {
             "arm": arm,
             "text": text,
             "output_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "layer_apps": 10_000,
-            "adapter_identity_sha256": (
-                ADAPTER_SHA256 if arm.startswith("adapter_") else None
-            ),
-            "adapter_wrapped_projections": (
-                64 if arm.startswith("adapter_") else 0
-            ),
+            "adapter_identity_sha256": (ADAPTER_SHA256 if arm.startswith("adapter_") else None),
+            "adapter_wrapped_projections": (64 if arm.startswith("adapter_") else 0),
             "runtime_model_identity": {
                 "worker_model_path": MODEL_PATH,
                 "worker_model_parameter_count": 32_763_876_352,
-                "worker_model_parameter_count_basis": (
-                    "architecture_config_logical"
-                ),
+                "worker_model_parameter_count_basis": ("architecture_config_logical"),
                 "worker_source_sha256": RUNNER_SHA256,
                 "worker_weight_fingerprint": MODEL_SHA256,
                 "worker_weight_fingerprint_method": "sha256",
@@ -185,9 +187,9 @@ def _records(plan, tasks):
         verification = {
             "correct": score["correct"],
             "score_receipt": score,
-            "answer_commitment_sha256": task_records[
-                definition["task_id"]
-            ]["answer_commitment_sha256"],
+            "answer_commitment_sha256": task_records[definition["task_id"]][
+                "answer_commitment_sha256"
+            ],
         }
         rows.append(
             {
@@ -196,9 +198,7 @@ def _records(plan, tasks):
                 "result": result,
                 "verification": verification,
                 "commit": {
-                    "result_sha256": hashlib.sha256(
-                        canonical_json_bytes(result)
-                    ).hexdigest(),
+                    "result_sha256": hashlib.sha256(canonical_json_bytes(result)).hexdigest(),
                     "verification_sha256": hashlib.sha256(
                         canonical_json_bytes(verification)
                     ).hexdigest(),
@@ -240,13 +240,9 @@ def _signed_contamination_audit(task_manifest_sha256: str):
             "signature": {
                 "algorithm": "ed25519",
                 "key_id": trust_root,
-                "signature_b64": base64.b64encode(
-                    private_key.sign(payload)
-                ).decode("ascii"),
+                "signature_b64": base64.b64encode(private_key.sign(payload)).decode("ascii"),
                 "signed_payload_sha256": hashlib.sha256(payload).hexdigest(),
-                "public_key_der_b64": base64.b64encode(public_der).decode(
-                    "ascii"
-                ),
+                "public_key_der_b64": base64.b64encode(public_der).decode("ascii"),
                 "trust_root_sha256": trust_root,
                 "verified": True,
             },
@@ -262,9 +258,7 @@ def _claim_plan_and_tasks(power_receipt):
         difficulty=2,
     )
     manifest = build_task_manifest(tasks)
-    audit, trust_root = _signed_contamination_audit(
-        manifest.manifest_sha256
-    )
+    audit, trust_root = _signed_contamination_audit(manifest.manifest_sha256)
     plan = build_campaign_plan(
         "independent-claim-eligibility",
         tasks,
@@ -275,9 +269,7 @@ def _claim_plan_and_tasks(power_receipt):
             "files": 4,
             "runtime_bundle": {
                 "logical_parameter_count": 32_763_876_352,
-                "logical_parameter_count_basis": (
-                    "architecture_config_logical"
-                ),
+                "logical_parameter_count_basis": ("architecture_config_logical"),
                 "bundle_sha256": MODEL_BUNDLE_SHA256,
             },
         },
@@ -424,9 +416,7 @@ def test_clopper_pearson_endpoint_certificate_matches_direct_builder():
 def test_twenty_tie_fixture_cannot_satisfy_strict_noninferiority_at_budget_50():
     bounds = _effect_bounds(0, 0, 20, 50)
 
-    assert _Q(**bounds["lower"]).numerator * 50 <= -(
-        _Q(**bounds["lower"]).denominator
-    )
+    assert _Q(**bounds["lower"]).numerator * 50 <= -(_Q(**bounds["lower"]).denominator)
 
 
 def test_513_no_loss_observations_can_certify_strict_noninferiority():
@@ -494,21 +484,14 @@ def test_claim_eligibility_is_independently_derived_for_incomplete_grade(
         trusted_campaign_policy_sha256=POLICY_SHA256,
     )
 
-    assert independent["semantic_grade"][
-        "same_checkpoint_gain_claim_eligible"
-    ] is True
+    assert independent["semantic_grade"]["same_checkpoint_gain_claim_eligible"] is True
     assert independent["semantic_grade"]["verdict"] == "incomplete"
 
     document = plan.to_dict()
-    document["metadata"]["execution_config"]["exact_statistical_power"][
-        "planned_total_cells"
-    ] += 1
+    document["metadata"]["execution_config"]["exact_statistical_power"]["planned_total_cells"] += 1
     drifted = type(plan).build(
         document["campaign_name"],
-        [
-            plan.cell_definition(cell_id)
-            for cell_id in plan.cell_ids
-        ],
+        [plan.cell_definition(cell_id) for cell_id in plan.cell_ids],
         metadata=document["metadata"],
     )
     with pytest.raises(
@@ -567,15 +550,17 @@ def test_independent_complete_semantic_tree_matches_production_byte_for_byte():
     )
 
     assert independent["semantic_grade"] == production
-    assert _canonical_bytes(independent["semantic_grade"]) == canonical_json_bytes(
-        production
+    assert _canonical_bytes(independent["semantic_grade"]) == canonical_json_bytes(production)
+    assert (
+        independent["implementation_sha256"]
+        == hashlib.sha256(
+            Path(independent_grade_campaign.__code__.co_filename).read_bytes()
+        ).hexdigest()
     )
-    assert independent["implementation_sha256"] == hashlib.sha256(
-        Path(independent_grade_campaign.__code__.co_filename).read_bytes()
-    ).hexdigest()
-    assert independent["semantic_grade_canonical_sha256"] == hashlib.sha256(
-        canonical_json_bytes(production)
-    ).hexdigest()
+    assert (
+        independent["semantic_grade_canonical_sha256"]
+        == hashlib.sha256(canonical_json_bytes(production)).hexdigest()
+    )
 
 
 def test_independent_kernel_reconstructs_inner_resource_ledger_after_outer_rehash():
@@ -583,9 +568,7 @@ def test_independent_kernel_reconstructs_inner_resource_ledger_after_outer_rehas
     records = _records(plan, tasks)
     result = records[0]["result"]
     result["resource_accounting"]["totals"]["transformer_layer_apps"] += 1
-    records[0]["commit"]["result_sha256"] = hashlib.sha256(
-        canonical_json_bytes(result)
-    ).hexdigest()
+    records[0]["commit"]["result_sha256"] = hashlib.sha256(canonical_json_bytes(result)).hexdigest()
 
     with pytest.raises(
         IndependentScoringError,
@@ -607,9 +590,7 @@ def test_independent_valid_incomplete_tree_matches_production_byte_for_byte():
 
     assert production["verdict"] == "incomplete"
     assert independent["semantic_grade"] == production
-    assert _canonical_bytes(independent["semantic_grade"]) == canonical_json_bytes(
-        production
-    )
+    assert _canonical_bytes(independent["semantic_grade"]) == canonical_json_bytes(production)
 
 
 def test_independent_rejects_bool_compute_in_raw_evidence():
@@ -635,9 +616,7 @@ def test_independent_rejects_bool_aliases_in_plan_and_adapter_evidence():
     plan, tasks = _plan_and_tasks()
     records = _records(plan, tasks)
     ordinal_row = next(
-        row
-        for row in records
-        if row["definition"]["execution_ordinal_within_arm"] == 1
+        row for row in records if row["definition"]["execution_ordinal_within_arm"] == 1
     )
     ordinal_row["definition"]["execution_ordinal_within_arm"] = True
     with pytest.raises(
@@ -651,11 +630,7 @@ def test_independent_rejects_bool_aliases_in_plan_and_adapter_evidence():
         )
 
     records = _records(plan, tasks)
-    base_row = next(
-        row
-        for row in records
-        if row["definition"]["arm"] == BASE_VANILLA
-    )
+    base_row = next(row for row in records if row["definition"]["arm"] == BASE_VANILLA)
     base_row["result"]["adapter_wrapped_projections"] = False
     base_row["commit"]["result_sha256"] = hashlib.sha256(
         canonical_json_bytes(base_row["result"])

@@ -6,6 +6,7 @@ statistics, response parser, or task scorer. It reconstructs raw campaign
 evidence and emits the same semantic grade with a separately implemented,
 standard-library-only exact statistics kernel.
 """
+
 from __future__ import annotations
 
 import base64
@@ -28,6 +29,8 @@ INTERACTION_SCHEMA = "aura.latent_cortex.exact_paired_interaction.v1"
 MODEL_PROFILE_SCHEMA = "aura.rlc.model_compute_profile.v1"
 RESOURCE_ACCOUNTING_SCHEMA = "aura.rlc.resource_accounting.v1"
 INFORMATION_ACCOUNTING_SCHEMA = "aura.rlc.information_accounting.v1"
+RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA = "aura.resident_recurrent_sft_adapter_manifest.v1"
+RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 COMPARISON_ACCOUNTING_SCHEMA = "aura.rlc.comparison_accounting.v1"
 RESOURCE_ESTIMATOR_VERSION = "dense_decoder_gqa_structural_flops_v1"
 RESOURCE_COUNTERS = (
@@ -61,28 +64,22 @@ NON_NEURAL_PARITY_COUNTERS = (
     "external_model_input_tokens",
     "external_model_output_tokens",
 )
-BOUND_CERTIFICATE_VERSION = (
-    "aura.latent_cortex.exact_paired_effect_bounds.v1"
-)
-NONINFERIORITY_POWER_SCHEMA = (
-    "aura.latent_cortex.exact_noninferiority_power.v1"
-)
+BOUND_CERTIFICATE_VERSION = "aura.latent_cortex.exact_paired_effect_bounds.v1"
+NONINFERIORITY_POWER_SCHEMA = "aura.latent_cortex.exact_noninferiority_power.v1"
 BOUND_METHOD = (
     "four one-sided Clopper-Pearson marginal bounds; Bonferroni over "
     "win/loss x lower/upper x declared families; dyadic outward rounding "
     "with exact binomial-tail witnesses"
 )
 GRADE_METHOD = (
-    "exact paired binomial + exact Holm + simultaneous rational "
-    "Clopper-Pearson effect bounds"
+    "exact paired binomial + exact Holm + simultaneous rational Clopper-Pearson effect bounds"
 )
 INTERACTION_METHOD = (
     "exact task-paired 2x2 difference-in-differences sign flip + "
     "simultaneous contrast-composed Clopper-Pearson bounds"
 )
 SIGN_FLIP_ASSUMPTION = (
-    "task draws are independent and arm labels are exchangeable under the "
-    "sharp no-interaction null"
+    "task draws are independent and arm labels are exchangeable under the sharp no-interaction null"
 )
 
 PROVEN = "PROVEN"
@@ -125,15 +122,9 @@ MAX_COMPUTE_UNITS = (1 << 63) - 1
 FINAL_MARKER = "FINAL_ANSWER:"
 _ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 _ED25519_FIELD = (1 << 255) - 19
-_ED25519_ORDER = (
-    (1 << 252) + 27742317777372353535851937790883648493
-)
-_ED25519_D = (
-    -121665 * pow(121666, _ED25519_FIELD - 2, _ED25519_FIELD)
-) % _ED25519_FIELD
-_ED25519_SQRT_M1 = pow(
-    2, (_ED25519_FIELD - 1) // 4, _ED25519_FIELD
-)
+_ED25519_ORDER = (1 << 252) + 27742317777372353535851937790883648493
+_ED25519_D = (-121665 * pow(121666, _ED25519_FIELD - 2, _ED25519_FIELD)) % _ED25519_FIELD
+_ED25519_SQRT_M1 = pow(2, (_ED25519_FIELD - 1) // 4, _ED25519_FIELD)
 _ED25519_IDENTITY = (0, 1, 1, 0)
 
 
@@ -185,16 +176,14 @@ def _q_payload(value: _Q) -> dict[str, int]:
 
 def _q_add(left: _Q, right: _Q) -> _Q:
     return _Q(
-        left.numerator * right.denominator
-        + right.numerator * left.denominator,
+        left.numerator * right.denominator + right.numerator * left.denominator,
         left.denominator * right.denominator,
     )
 
 
 def _q_subtract(left: _Q, right: _Q) -> _Q:
     return _Q(
-        left.numerator * right.denominator
-        - right.numerator * left.denominator,
+        left.numerator * right.denominator - right.numerator * left.denominator,
         left.denominator * right.denominator,
     )
 
@@ -204,17 +193,11 @@ def _q_scale(value: _Q, factor: int) -> _Q:
 
 
 def _q_less(left: _Q, right: _Q) -> bool:
-    return (
-        left.numerator * right.denominator
-        < right.numerator * left.denominator
-    )
+    return left.numerator * right.denominator < right.numerator * left.denominator
 
 
 def _q_less_equal(left: _Q, right: _Q) -> bool:
-    return (
-        left.numerator * right.denominator
-        <= right.numerator * left.denominator
-    )
+    return left.numerator * right.denominator <= right.numerator * left.denominator
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -227,9 +210,7 @@ def _canonical_bytes(value: Any) -> bytes:
             sort_keys=True,
         ).encode("utf-8")
     except (TypeError, ValueError, RecursionError) as exc:
-        raise IndependentScoringError(
-            "independent_noncanonical_value"
-        ) from exc
+        raise IndependentScoringError("independent_noncanonical_value") from exc
 
 
 def _sha256(value: Any) -> str:
@@ -282,9 +263,7 @@ def _strict_json_object(payload: str) -> dict[str, Any]:
     except IndependentScoringError:
         raise
     except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
-        raise IndependentScoringError(
-            "independent_answer_invalid_json"
-        ) from exc
+        raise IndependentScoringError("independent_answer_invalid_json") from exc
     if not isinstance(value, dict):
         _fail("independent_answer_not_object")
     _validate_json_tree(value)
@@ -316,11 +295,7 @@ def _validate_json_tree(
         return
     if isinstance(value, dict):
         for key, item in value.items():
-            if (
-                not isinstance(key, str)
-                or not key
-                or len(key.encode("utf-8")) > 128
-            ):
+            if not isinstance(key, str) or not key or len(key.encode("utf-8")) > 128:
                 _fail("independent_answer_key_invalid")
             _validate_json_tree(item, depth=depth + 1, nodes=nodes)
         return
@@ -354,14 +329,45 @@ def _strict_equal(left: Any, right: Any) -> bool:
     if type(left) is not type(right):
         return False
     if isinstance(left, dict):
-        return set(left) == set(right) and all(
-            _strict_equal(left[key], right[key]) for key in left
-        )
+        return set(left) == set(right) and all(_strict_equal(left[key], right[key]) for key in left)
     if isinstance(left, list):
         return len(left) == len(right) and all(
             _strict_equal(a, b) for a, b in zip(left, right, strict=True)
         )
     return bool(left == right)
+
+
+def _independent_adapter_projection_count(
+    adapter_identity: Mapping[str, Any],
+    adapter_receipt: Mapping[str, Any],
+) -> int | None:
+    count = adapter_receipt.get("wrapped_projection_count")
+    if type(count) is int and count > 0:
+        return count
+    if adapter_receipt.get("schema") != RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA:
+        return None
+    manifest = adapter_identity.get("manifest")
+    if (
+        adapter_identity.get("format") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        or not isinstance(manifest, Mapping)
+        or manifest.get("schema") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+    ):
+        return None
+    lora = manifest.get("lora")
+    if not isinstance(lora, Mapping):
+        return None
+    count = lora.get("wrapped_projections")
+    paths = lora.get("projection_paths")
+    if (
+        type(count) is not int
+        or count <= 0
+        or not isinstance(paths, list)
+        or len(paths) != count
+        or len(set(paths)) != count
+        or any(not isinstance(path, str) or not path for path in paths)
+    ):
+        return None
+    return count
 
 
 def _score_response(task: Any, response: Any) -> dict[str, Any]:
@@ -377,9 +383,7 @@ def _score_response(task: Any, response: Any) -> dict[str, Any]:
     try:
         blinded = task.reveal_for_verifier()
     except Exception as exc:  # noqa: BLE001 - independent trust boundary
-        raise IndependentScoringError(
-            "independent_answer_reveal_failed"
-        ) from exc
+        raise IndependentScoringError("independent_answer_reveal_failed") from exc
     expected = blinded.get("expected") if isinstance(blinded, Mapping) else None
     if not isinstance(expected, dict):
         _fail("independent_expected_answer_invalid")
@@ -413,8 +417,7 @@ def _ed25519_decode_point(encoded: bytes) -> tuple[int, int, int, int]:
     if denominator == 0:
         _fail("independent_ed25519_point_invalid")
     x_squared = (
-        (y_squared - 1)
-        * pow(denominator, _ED25519_FIELD - 2, _ED25519_FIELD)
+        (y_squared - 1) * pow(denominator, _ED25519_FIELD - 2, _ED25519_FIELD)
     ) % _ED25519_FIELD
     x = pow(x_squared, (_ED25519_FIELD + 3) // 8, _ED25519_FIELD)
     if (x * x - x_squared) % _ED25519_FIELD:
@@ -470,12 +473,9 @@ def _ed25519_equal(
     left: tuple[int, int, int, int],
     right: tuple[int, int, int, int],
 ) -> bool:
-    return (
-        (left[0] * right[2] - right[0] * left[2]) % _ED25519_FIELD == 0
-        and (left[1] * right[2] - right[1] * left[2])
-        % _ED25519_FIELD
-        == 0
-    )
+    return (left[0] * right[2] - right[0] * left[2]) % _ED25519_FIELD == 0 and (
+        left[1] * right[2] - right[1] * left[2]
+    ) % _ED25519_FIELD == 0
 
 
 @lru_cache(maxsize=1)
@@ -505,21 +505,21 @@ def _verify_ed25519(
         point_r = _ed25519_decode_point(encoded_r)
     except IndependentScoringError:
         return False
-    if (
-        not _ed25519_equal(
-            _ed25519_multiply(public_point, _ED25519_ORDER),
-            _ED25519_IDENTITY,
-        )
-        or not _ed25519_equal(
-            _ed25519_multiply(point_r, _ED25519_ORDER),
-            _ED25519_IDENTITY,
-        )
+    if not _ed25519_equal(
+        _ed25519_multiply(public_point, _ED25519_ORDER),
+        _ED25519_IDENTITY,
+    ) or not _ed25519_equal(
+        _ed25519_multiply(point_r, _ED25519_ORDER),
+        _ED25519_IDENTITY,
     ):
         return False
-    challenge = int.from_bytes(
-        hashlib.sha512(encoded_r + public_raw + message).digest(),
-        "little",
-    ) % _ED25519_ORDER
+    challenge = (
+        int.from_bytes(
+            hashlib.sha512(encoded_r + public_raw + message).digest(),
+            "little",
+        )
+        % _ED25519_ORDER
+    )
     left = _ed25519_multiply(_ed25519_basepoint(), scalar_s)
     right = _ed25519_add(
         point_r,
@@ -565,9 +565,7 @@ def _contamination_metadata_valid(
             for record in corpora
         )
         or not isinstance(methods, list)
-        or not {"exact_prompt", "normalized_prompt", "token_fivegram"}.issubset(
-            methods
-        )
+        or not {"exact_prompt", "normalized_prompt", "token_fivegram"}.issubset(methods)
         or not isinstance(signature, Mapping)
         or set(signature)
         != {
@@ -591,12 +589,8 @@ def _contamination_metadata_valid(
     if signature.get("signed_payload_sha256") != _sha256(body):
         return False
     try:
-        public_der = base64.b64decode(
-            cast(str, signature.get("public_key_der_b64")), validate=True
-        )
-        signature_bytes = base64.b64decode(
-            cast(str, signature.get("signature_b64")), validate=True
-        )
+        public_der = base64.b64decode(cast(str, signature.get("public_key_der_b64")), validate=True)
+        signature_bytes = base64.b64decode(cast(str, signature.get("signature_b64")), validate=True)
     except (TypeError, ValueError, binascii.Error):
         return False
     public_sha256 = hashlib.sha256(public_der).hexdigest()
@@ -618,12 +612,7 @@ def _resource_counter(value: Any) -> int:
 
 
 def _resource_name(value: Any) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > 160
-    ):
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 160:
         _fail("independent_resource_name_invalid")
     return value
 
@@ -733,17 +722,13 @@ def _validate_resource_accounting(value: Any) -> dict[str, Any]:
         counters = operations[operation]
         if not isinstance(counters, Mapping) or set(counters) != set(RESOURCE_COUNTERS):
             _fail("independent_resource_accounting_invalid")
-        row = {
-            counter: _resource_counter(counters[counter])
-            for counter in RESOURCE_COUNTERS
-        }
+        row = {counter: _resource_counter(counters[counter]) for counter in RESOURCE_COUNTERS}
         normalized_operations[name] = row
         for counter in RESOURCE_COUNTERS:
             totals[counter] = _resource_counter(totals[counter] + row[counter])
     normalized_unknown = sorted(_resource_name(item) for item in unknown)
     dense_flops = (
-        totals["transformer_layer_apps"]
-        * profile["dense_flops_per_token_layer"]
+        totals["transformer_layer_apps"] * profile["dense_flops_per_token_layer"]
         + totals["attention_query_key_pairs"] * profile["flops_per_attention_pair"]
         + totals["output_head_tokens"] * profile["flops_per_output_head_token"]
         + totals["tensor_scalar_ops"]
@@ -783,9 +768,7 @@ def _validate_information_accounting(value: Any) -> dict[str, Any]:
         or not isinstance(value.get("policies"), Mapping)
         or not isinstance(value.get("unknown_accesses"), list)
         or any(not isinstance(name, str) for name in value.get("policies", {}))
-        or any(
-            not isinstance(item, str) for item in value.get("unknown_accesses", [])
-        )
+        or any(not isinstance(item, str) for item in value.get("unknown_accesses", []))
     ):
         _fail("independent_information_accounting_invalid")
     sources: list[dict[str, Any]] = []
@@ -841,10 +824,7 @@ def _comparison_resource_match(left: int, right: int, tolerance: _Q) -> bool:
         return True
     if left == 0 or right == 0:
         return False
-    return (
-        abs(left - right) * tolerance.denominator
-        <= max(left, right) * tolerance.numerator
-    )
+    return abs(left - right) * tolerance.denominator <= max(left, right) * tolerance.numerator
 
 
 def _comparison_accounting(
@@ -869,15 +849,10 @@ def _comparison_accounting(
         reasons.append("treatment_information_accounting_incomplete")
     if not control_info["accounting_complete"]:
         reasons.append("control_information_accounting_incomplete")
-    information_matched = (
-        treatment_info["source_set_sha256"] == control_info["source_set_sha256"]
-    )
+    information_matched = treatment_info["source_set_sha256"] == control_info["source_set_sha256"]
     if not information_matched:
         reasons.append("information_or_policy_mismatch")
-    if (
-        treatment["model_profile"]["profile_sha256"]
-        != control["model_profile"]["profile_sha256"]
-    ):
+    if treatment["model_profile"]["profile_sha256"] != control["model_profile"]["profile_sha256"]:
         reasons.append("compute_estimator_profile_mismatch")
     pairs = {
         "estimated_flops": (
@@ -944,10 +919,7 @@ def _extract_rows(
     except (AttributeError, TypeError, ValueError) as exc:
         raise IndependentScoringError("independent_plan_invalid") from exc
     metadata = document.get("metadata") if isinstance(document, Mapping) else None
-    if (
-        not isinstance(metadata, Mapping)
-        or metadata.get("schema") != CAMPAIGN_SCHEMA
-    ):
+    if not isinstance(metadata, Mapping) or metadata.get("schema") != CAMPAIGN_SCHEMA:
         _fail("independent_plan_metadata_invalid")
     raw_arms = metadata.get("arms")
     task_manifest = metadata.get("task_manifest")
@@ -1018,8 +990,7 @@ def _extract_rows(
             or campaign_trust.get("prelaunch_verified") is not True
             or campaign_trust.get("externally_custodied") is not True
             or not _is_sha256(campaign_trust.get("policy_sha256"))
-            or campaign_trust.get("policy_sha256")
-            != trusted_campaign_policy_sha256
+            or campaign_trust.get("policy_sha256") != trusted_campaign_policy_sha256
             or contamination_root != trusted_contamination_root_sha256
             or not _contamination_metadata_valid(
                 audit,
@@ -1046,18 +1017,12 @@ def _extract_rows(
         if (
             not isinstance(configured_domains, list)
             or not configured_domains
-            or any(
-                not isinstance(domain, str) or not domain
-                for domain in configured_domains
-            )
+            or any(not isinstance(domain, str) or not domain for domain in configured_domains)
             or len(set(configured_domains)) != len(configured_domains)
             or set(configured_domains) != set(domain_counts)
             or type(generation_seed_count) is not int
             or generation_seed_count <= 0
-            or any(
-                count != generation_seed_count
-                for count in domain_counts.values()
-            )
+            or any(count != generation_seed_count for count in domain_counts.values())
             or not isinstance(observed_power, Mapping)
         ):
             _fail("independent_claim_power_invalid")
@@ -1070,10 +1035,8 @@ def _extract_rows(
             planned_observations_per_domain=generation_seed_count,
         )
         if (
-            _canonical_bytes(dict(observed_power))
-            != _canonical_bytes(expected_power)
-            or expected_power["powered_for_zero_loss_noninferiority"]
-            is not True
+            _canonical_bytes(dict(observed_power)) != _canonical_bytes(expected_power)
+            or expected_power["powered_for_zero_loss_noninferiority"] is not True
         ):
             _fail("independent_claim_power_invalid")
     arm_execution_order = metadata.get("arm_execution_order")
@@ -1085,9 +1048,7 @@ def _extract_rows(
     ):
         _fail("independent_plan_arm_order_invalid")
 
-    expected_pairs = {
-        (task_id, arm) for task_id in task_records for arm in arms
-    }
+    expected_pairs = {(task_id, arm) for task_id in task_records for arm in arms}
     planned_pairs: set[tuple[str, str]] = set()
     execution_ordinals: dict[str, set[int]] = defaultdict(set)
     expected_task_count = len(task_records)
@@ -1101,8 +1062,7 @@ def _extract_rows(
             task is None
             or arm not in arms
             or definition.get("domain") != task.get("domain")
-            or definition.get("task_payload_sha256")
-            != task.get("task_payload_sha256")
+            or definition.get("task_payload_sha256") != task.get("task_payload_sha256")
             or type(ordinal) is not int
             or not 0 <= ordinal < expected_task_count
         ):
@@ -1113,8 +1073,7 @@ def _extract_rows(
         planned_pairs.add(pair)
         execution_ordinals[cast(str, arm)].add(ordinal)
     if planned_pairs != expected_pairs or any(
-        execution_ordinals[arm] != set(range(expected_task_count))
-        for arm in arms
+        execution_ordinals[arm] != set(range(expected_task_count)) for arm in arms
     ):
         _fail("independent_plan_coverage_invalid")
 
@@ -1179,9 +1138,7 @@ def _extract_rows(
             _fail("independent_result_invalid")
         runtime = result.get("runtime_model_identity")
         planned_personality = model_identity.get("personality_adapter")
-        planned_effective_stack = model_identity.get(
-            "effective_stack_sha256"
-        )
+        planned_effective_stack = model_identity.get("effective_stack_sha256")
         if (
             not isinstance(runtime, Mapping)
             or runtime.get("worker_model_path") != model_identity.get("model_path")
@@ -1191,40 +1148,37 @@ def _extract_rows(
             )
             or runtime.get("worker_model_parameter_count_basis")
             != runtime_bundle.get("logical_parameter_count_basis")
-            or runtime.get("worker_weight_fingerprint")
-            != model_identity.get("fingerprint")
-            or runtime.get("worker_weight_fingerprint_method")
-            != model_identity.get("method")
+            or runtime.get("worker_weight_fingerprint") != model_identity.get("fingerprint")
+            or runtime.get("worker_weight_fingerprint_method") != model_identity.get("method")
             or not _strict_equal(
                 runtime.get("worker_weight_file_count"),
                 model_identity.get("files"),
             )
-            or runtime.get("worker_runtime_bundle_sha256")
-            != runtime_bundle.get("bundle_sha256")
+            or runtime.get("worker_runtime_bundle_sha256") != runtime_bundle.get("bundle_sha256")
             or runtime.get("worker_load_boundary_verified") is not True
             or runtime.get("worker_source_sha256")
-            != implementation_sha256.get(
-                "tools/run_latent_cortex_paired_campaign.py"
-            )
+            != implementation_sha256.get("tools/run_latent_cortex_paired_campaign.py")
             or (
                 planned_personality is not None
-                and runtime.get("worker_personality_adapter")
-                != planned_personality
+                and runtime.get("worker_personality_adapter") != planned_personality
             )
             or (
                 planned_effective_stack is not None
-                and runtime.get("worker_effective_stack_sha256")
-                != planned_effective_stack
+                and runtime.get("worker_effective_stack_sha256") != planned_effective_stack
             )
         ):
             _fail("independent_runtime_model_identity_mismatch")
         if arm.startswith("adapter_"):
+            expected_wrapped = _independent_adapter_projection_count(
+                adapter_identity,
+                adapter_receipt,
+            )
             if (
                 result.get("adapter_identity_sha256")
                 != adapter_receipt.get("composite_identity_sha256")
                 or not _strict_equal(
                     result.get("adapter_wrapped_projections"),
-                    adapter_receipt.get("wrapped_projection_count"),
+                    expected_wrapped,
                 )
                 or not isinstance(result.get("runtime_adapter_identity"), Mapping)
                 or not _strict_equal(
@@ -1240,9 +1194,7 @@ def _extract_rows(
             or result.get("runtime_adapter_identity") is not None
         ):
             _fail("independent_base_arm_adapter_contaminated")
-        resource_accounting = _validate_resource_accounting(
-            result.get("resource_accounting")
-        )
+        resource_accounting = _validate_resource_accounting(result.get("resource_accounting"))
         information_accounting = _validate_information_accounting(
             result.get("information_accounting")
         )
@@ -1254,9 +1206,7 @@ def _extract_rows(
         if arm.endswith("_rlc"):
             episode_receipt = result.get("episode_receipt")
             episode_budget = (
-                episode_receipt.get("budget")
-                if isinstance(episode_receipt, Mapping)
-                else None
+                episode_receipt.get("budget") if isinstance(episode_receipt, Mapping) else None
             )
             if (
                 not isinstance(episode_budget, Mapping)
@@ -1272,9 +1222,7 @@ def _extract_rows(
                 _fail("independent_episode_accounting_binding_invalid")
         independent = _score_response(issuer_by_id[task_id], text)
         score_receipt = verification.get("score_receipt")
-        score_reason = score_receipt.get("reason") if isinstance(
-            score_receipt, Mapping
-        ) else None
+        score_reason = score_receipt.get("reason") if isinstance(score_receipt, Mapping) else None
         if (
             type(verification.get("correct")) is not bool
             or verification.get("correct") is not independent["correct"]
@@ -1288,11 +1236,9 @@ def _extract_rows(
             != task_records[task_id].get("answer_commitment_sha256")
         ):
             _fail("independent_score_disagrees_with_receipt")
-        if (
-            commit.get("result_sha256") != _sha256(dict(result))
-            or commit.get("verification_sha256")
-            != _sha256(dict(verification))
-        ):
+        if commit.get("result_sha256") != _sha256(dict(result)) or commit.get(
+            "verification_sha256"
+        ) != _sha256(dict(verification)):
             _fail("independent_commitment_mismatch")
         if arm in rows[task_id]:
             _fail("independent_task_arm_duplicate")
@@ -1326,10 +1272,7 @@ def _paired_tail(wins: int, losses: int) -> _Q:
     if discordant == 0:
         return ONE
     return _Q(
-        sum(
-            math.comb(discordant, count)
-            for count in range(wins, discordant + 1)
-        ),
+        sum(math.comb(discordant, count) for count in range(wins, discordant + 1)),
         1 << discordant,
     )
 
@@ -1391,10 +1334,7 @@ def _within_compute(treatment: int, control: int, tolerance: _Q) -> bool:
         or control > MAX_COMPUTE_UNITS
     ):
         _fail("independent_compute_invalid")
-    return (
-        abs(treatment - control) * tolerance.denominator
-        <= control * tolerance.numerator
-    )
+    return abs(treatment - control) * tolerance.denominator <= control * tolerance.numerator
 
 
 def _binomial_counts(
@@ -1414,9 +1354,7 @@ def _binomial_counts(
     if q == 0:
         if upper_tail:
             return denominator, denominator
-        return (
-            denominator if successes == trials else 0
-        ), denominator
+        return (denominator if successes == trials else 0), denominator
     first, last = (successes, trials) if upper_tail else (0, successes)
     term = pow(q, trials)
     numerator = 0
@@ -1437,10 +1375,7 @@ def _counts_at_most(
     counts: tuple[int, int],
     threshold: _Q,
 ) -> bool:
-    return (
-        counts[0] * threshold.denominator
-        <= threshold.numerator * counts[1]
-    )
+    return counts[0] * threshold.denominator <= threshold.numerator * counts[1]
 
 
 @lru_cache(maxsize=16_384)
@@ -1502,21 +1437,14 @@ def _proportion_bound(
         else:
             lower_index = middle
     selected_index, adjacent_index = (
-        (lower_index, upper_index)
-        if bound_kind == "lower"
-        else (upper_index, lower_index)
+        (lower_index, upper_index) if bound_kind == "lower" else (upper_index, lower_index)
     )
     bound = _Q(selected_index, scale)
     adjacent = _Q(adjacent_index, scale)
-    selected_counts = _binomial_counts(
-        trials, successes, bound, upper_tail=upper_tail
-    )
-    adjacent_counts = _binomial_counts(
-        trials, successes, adjacent, upper_tail=upper_tail
-    )
-    if (
-        not _counts_at_most(selected_counts, component_alpha)
-        or _counts_at_most(adjacent_counts, component_alpha)
+    selected_counts = _binomial_counts(trials, successes, bound, upper_tail=upper_tail)
+    adjacent_counts = _binomial_counts(trials, successes, adjacent, upper_tail=upper_tail)
+    if not _counts_at_most(selected_counts, component_alpha) or _counts_at_most(
+        adjacent_counts, component_alpha
     ):
         _fail("independent_bound_witness_invalid")
     return _component_payload(
@@ -1555,18 +1483,12 @@ def _component_payload(
         "trials": trials,
         "bound": _q_payload(bound),
         "tail_probability": (
-            _q_payload(tail_probability)
-            if tail_probability is not None
-            else None
+            _q_payload(tail_probability) if tail_probability is not None else None
         ),
         "component_alpha": _q_payload(component_alpha),
-        "adjacent_bound": (
-            _q_payload(adjacent_bound) if adjacent_bound is not None else None
-        ),
+        "adjacent_bound": (_q_payload(adjacent_bound) if adjacent_bound is not None else None),
         "adjacent_tail_probability": (
-            _q_payload(adjacent_tail_probability)
-            if adjacent_tail_probability is not None
-            else None
+            _q_payload(adjacent_tail_probability) if adjacent_tail_probability is not None else None
         ),
         "precision_bits": precision_bits,
         "certified": True,
@@ -1665,10 +1587,7 @@ def _effect_bounds(
 def _minimum_zero_loss_noninferiority_observations(
     global_bound_family_count: int,
 ) -> dict[str, Any]:
-    if (
-        type(global_bound_family_count) is not int
-        or global_bound_family_count <= 0
-    ):
+    if type(global_bound_family_count) is not int or global_bound_family_count <= 0:
         _fail("independent_power_contract_invalid")
     negative_margin = _Q(-MINIMUM_EFFECT.numerator, MINIMUM_EFFECT.denominator)
 
@@ -1770,8 +1689,7 @@ def _sign_flip(values: Sequence[int]) -> tuple[_Q, dict[str, int]]:
         not materialized
         or len(materialized) > MAX_SIGN_FLIP_OBSERVATIONS
         or any(type(value) is not int for value in materialized)
-        or sum(abs(value) for value in materialized)
-        > MAX_SIGN_FLIP_TOTAL_MAGNITUDE
+        or sum(abs(value) for value in materialized) > MAX_SIGN_FLIP_TOTAL_MAGNITUDE
     ):
         _fail("independent_sign_flip_invalid")
     histogram: dict[int, int] = {0: 1}
@@ -1782,12 +1700,8 @@ def _sign_flip(values: Sequence[int]) -> tuple[_Q, dict[str, int]]:
             _fail("independent_sign_flip_resource_limit")
         updated: dict[int, int] = {}
         for total, multiplicity in histogram.items():
-            updated[total + value] = (
-                updated.get(total + value, 0) + multiplicity
-            )
-            updated[total - value] = (
-                updated.get(total - value, 0) + multiplicity
-            )
+            updated[total + value] = updated.get(total + value, 0) + multiplicity
+            updated[total - value] = updated.get(total - value, 0) + multiplicity
         if len(updated) > MAX_SIGN_FLIP_STATES:
             _fail("independent_sign_flip_resource_limit")
         histogram = updated
@@ -1796,9 +1710,7 @@ def _sign_flip(values: Sequence[int]) -> tuple[_Q, dict[str, int]]:
         _fail("independent_sign_flip_mass_invalid")
     observed_sum = sum(materialized)
     numerator = sum(
-        multiplicity
-        for total, multiplicity in histogram.items()
-        if total >= observed_sum
+        multiplicity for total, multiplicity in histogram.items() if total >= observed_sum
     )
     return _Q(numerator, assignments), {
         "threshold": observed_sum,
@@ -1820,9 +1732,7 @@ def _comparison(
     compute_tolerance: _Q,
     global_bound_family_count: int,
 ) -> dict[str, Any]:
-    by_domain: dict[str, list[tuple[str, bool, bool, int, int]]] = defaultdict(
-        list
-    )
+    by_domain: dict[str, list[tuple[str, bool, bool, int, int]]] = defaultdict(list)
     accounting_certificates: list[dict[str, Any]] = []
     for task_id in sorted(rows):
         arms = rows[task_id]
@@ -1873,14 +1783,10 @@ def _comparison(
         wins = differences.count(1)
         losses = differences.count(-1)
         ties = len(differences) - wins - losses
-        bounds = _effect_bounds(
-            wins, losses, ties, global_bound_family_count
-        )
+        bounds = _effect_bounds(wins, losses, ties, global_bound_family_count)
         pvalue = _paired_tail(wins, losses)
         mismatches = [
-            row[0]
-            for row in observations
-            if not _within_compute(row[3], row[4], compute_tolerance)
+            row[0] for row in observations if not _within_compute(row[3], row[4], compute_tolerance)
         ]
         if require_compute and mismatches:
             invalid_compute.append(domain)
@@ -1894,9 +1800,7 @@ def _comparison(
             "treatment_wins": wins,
             "control_wins": losses,
             "ties": ties,
-            "paired_effect": _q_payload(
-                _Q(sum(differences), len(differences))
-            ),
+            "paired_effect": _q_payload(_Q(sum(differences), len(differences))),
             "effect_bounds": bounds,
             "one_sided_exact_p": _q_payload(pvalue),
             "holm_adjusted_p": None,
@@ -1919,25 +1823,19 @@ def _comparison(
         for domain in sorted(by_domain)
         if domain in adjusted
         and _q_less(adjusted[domain], ALPHA)
-        and _q_less(
-            MINIMUM_EFFECT, _Q(**family_bounds[domain]["lower"])
-        )
+        and _q_less(MINIMUM_EFFECT, _Q(**family_bounds[domain]["lower"]))
         and domain not in invalid_compute
     ]
     negative_minimum = _Q(-1, 50)
     regressed = [
         domain
         for domain in sorted(by_domain)
-        if _q_less(
-            _Q(**family_bounds[domain]["upper"]), negative_minimum
-        )
+        if _q_less(_Q(**family_bounds[domain]["upper"]), negative_minimum)
     ]
     noninferior = [
         domain
         for domain in sorted(by_domain)
-        if _q_less(
-            negative_minimum, _Q(**family_bounds[domain]["lower"])
-        )
+        if _q_less(negative_minimum, _Q(**family_bounds[domain]["lower"]))
     ]
     pooled_wins = pooled.count(1)
     pooled_losses = pooled.count(-1)
@@ -1955,17 +1853,11 @@ def _comparison(
         and _q_less(MINIMUM_EFFECT, _Q(**pooled_bounds["lower"]))
     )
     required_positive = max(2, (2 * len(by_domain) + 2) // 3)
-    if (
-        len(positive) >= required_positive
-        and pooled_positive
-        and not regressed
-    ):
+    if len(positive) >= required_positive and pooled_positive and not regressed:
         tier = PROVEN
     elif positive and pooled_positive and not regressed:
         tier = SUPPORTED
-    elif regressed or _q_less_equal(
-        _Q(**pooled_bounds["upper"]), ZERO
-    ):
+    elif regressed or _q_less_equal(_Q(**pooled_bounds["upper"]), ZERO):
         tier = REFUTED
     else:
         tier = CONJECTURE
@@ -2003,9 +1895,7 @@ def _comparison(
             "one_sided_exact_p": _q_payload(pooled_p),
         },
     }
-    accounting_admitted = all(
-        certificate["admitted"] for certificate in accounting_certificates
-    )
+    accounting_admitted = all(certificate["admitted"] for certificate in accounting_certificates)
     evidence["resource_accounting_required"] = True
     evidence["comparison_accounting_admitted"] = accounting_admitted
     evidence["comparison_accounting"] = accounting_certificates
@@ -2028,8 +1918,7 @@ def _interaction(
     if not adapter or len(adapter) != len(base):
         _fail("independent_interaction_invalid")
     interaction = [
-        adapter_value - base_value
-        for adapter_value, base_value in zip(adapter, base, strict=True)
+        adapter_value - base_value for adapter_value, base_value in zip(adapter, base, strict=True)
     ]
     adapter_bounds = _effect_bounds(
         adapter.count(1),
@@ -2043,12 +1932,8 @@ def _interaction(
         base.count(0),
         global_bound_family_count,
     )
-    lower = _q_subtract(
-        _Q(**adapter_bounds["lower"]), _Q(**base_bounds["upper"])
-    )
-    upper = _q_subtract(
-        _Q(**adapter_bounds["upper"]), _Q(**base_bounds["lower"])
-    )
+    lower = _q_subtract(_Q(**adapter_bounds["lower"]), _Q(**base_bounds["upper"]))
+    upper = _q_subtract(_Q(**adapter_bounds["upper"]), _Q(**base_bounds["lower"]))
     pvalue, sign_flip = _sign_flip(interaction)
     return {
         "schema": INTERACTION_SCHEMA,
@@ -2077,10 +1962,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
     complete = (
         len(rows) == material.expected_task_count
         and observed_cells == material.expected_cell_count
-        and all(
-            set(task_arms) == set(material.arms)
-            for task_arms in rows.values()
-        )
+        and all(set(task_arms) == set(material.arms) for task_arms in rows.values())
     )
     if not complete:
         body = {
@@ -2106,9 +1988,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
         comparison_count += 1
     if ADAPTER_EQUAL_COMPUTE in material.arms:
         comparison_count += 1
-    global_bound_family_count = (
-        comparison_count * (len(domain_counts) + 1) + 2
-    )
+    global_bound_family_count = comparison_count * (len(domain_counts) + 1) + 2
     comparisons = {
         "base_rlc_gain": _comparison(
             rows,
@@ -2165,42 +2045,29 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
     base_differences: list[int] = []
     for task_arms in rows.values():
         adapter_differences.append(
-            int(task_arms[ADAPTER_RLC][1])
-            - int(task_arms[ADAPTER_VANILLA][1])
+            int(task_arms[ADAPTER_RLC][1]) - int(task_arms[ADAPTER_VANILLA][1])
         )
-        base_differences.append(
-            int(task_arms[BASE_RLC][1])
-            - int(task_arms[BASE_VANILLA][1])
-        )
+        base_differences.append(int(task_arms[BASE_RLC][1]) - int(task_arms[BASE_VANILLA][1]))
     interaction = _interaction(
         adapter_differences,
         base_differences,
         global_bound_family_count=global_bound_family_count,
     )
     underpowered = sorted(
-        domain
-        for domain, count in domain_counts.items()
-        if count < MIN_DOMAIN_TRIALS
+        domain for domain, count in domain_counts.items() if count < MIN_DOMAIN_TRIALS
     )
     required_claims = ["adapter_rlc_gain", "adapter_effect_under_rlc"]
     if ADAPTER_EQUAL_COMPUTE in material.arms:
         required_claims.append("adapter_equal_compute")
     statistically_proven = (
         not underpowered
-        and all(
-            comparisons[name]["tier"] == PROVEN for name in required_claims
-        )
+        and all(comparisons[name]["tier"] == PROVEN for name in required_claims)
         and _q_less(MINIMUM_EFFECT, _Q(**interaction["lower"]))
-        and _q_less(
-            _Q(**interaction["one_sided_exact_sign_flip_p"]), ALPHA
-        )
-        and comparisons["adapter_effect_under_vanilla"]["evidence"].get(
-            "all_families_noninferior"
-        )
+        and _q_less(_Q(**interaction["one_sided_exact_sign_flip_p"]), ALPHA)
+        and comparisons["adapter_effect_under_vanilla"]["evidence"].get("all_families_noninferior")
     )
-    refuted = (
-        comparisons["adapter_rlc_gain"]["tier"] == REFUTED
-        or _q_less_equal(_Q(**interaction["upper"]), ZERO)
+    refuted = comparisons["adapter_rlc_gain"]["tier"] == REFUTED or _q_less_equal(
+        _Q(**interaction["upper"]), ZERO
     )
     if statistically_proven and material.claim_eligible:
         verdict, tier, reasons = (
@@ -2282,9 +2149,7 @@ def independent_grade_campaign(
         "semantic_grade_canonical_sha256": hashlib.sha256(
             _canonical_bytes(semantic_grade)
         ).hexdigest(),
-        "implementation_sha256": hashlib.sha256(
-            Path(__file__).read_bytes()
-        ).hexdigest(),
+        "implementation_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
 
 

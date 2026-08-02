@@ -116,13 +116,57 @@ def _verified_promotion(path: Path) -> dict[str, Any]:
 
 
 def _verified_admission(path: Path) -> dict[str, Any]:
-    admission = read_canonical_json(path, role="training_admission")
+    admission = read_canonical_json(
+        path,
+        role="training_admission",
+        trailing_newline=None,
+    )
     claimed = admission.get("admission_sha256")
     material = dict(admission)
     material.pop("admission_sha256", None)
     state = admission.get("training_state")
     flags = admission.get("claim_flags")
     identity = admission.get("identity_receipt")
+    if admission.get("schema") == RESIDENT_SFT_ADMISSION_SCHEMA:
+        expected_flags = {
+            "reasoning_gain_proven",
+            "causal_gain_proven",
+            "frontier_level_proven",
+            "grpo_admission",
+            "promotion_allowed",
+            "wow_signal",
+        }
+        if (
+            claimed != _sha256(material)
+            or admission.get("decision") != "admit_to_freeze_and_mechanics"
+            or admission.get("claim_scope") != ADMISSION_SCOPES[RESIDENT_SFT_ADMISSION_SCHEMA]
+            or not isinstance(state, Mapping)
+            or state.get("complete") is not True
+            or state.get("terminal") is not True
+            or state.get("halt_reason") != "max_steps"
+            or type(state.get("step")) is not int
+            or state["step"] <= 0
+            or type(state.get("checkpoint_sequence")) is not int
+            or state["checkpoint_sequence"] <= state["step"]
+            or type(state.get("invocation_count")) is not int
+            or state["invocation_count"] <= 0
+            or not isinstance(flags, Mapping)
+            or set(flags) != expected_flags
+            or any(flags[name] is not False for name in expected_flags)
+            or not isinstance(identity, Mapping)
+            or identity.get("schema") != RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA
+            or identity.get("complete") is not True
+            or identity.get("load_eligible") is not True
+            or identity.get("training_scope") != "resident_recurrent_sft"
+            or identity.get("terminal_step") != state.get("step")
+            or identity.get("authority_sha256") != state.get("authority_sha256")
+            or identity.get("adapter_sha256") != state.get("adapter_sha256")
+            or identity.get("checkpoint_complete_sha256") != state.get("checkpoint_complete_sha256")
+            or identity.get("reasoning_gain_proven") is not False
+            or identity.get("promotion_allowed") is not False
+        ):
+            _fail("training_admission_invalid")
+        return admission
     if (
         admission.get("schema") not in ADMISSION_SCOPES
         or claimed != _sha256(material)
@@ -155,7 +199,11 @@ def _verified_admission(path: Path) -> dict[str, Any]:
 
 
 def _verified_training_gate(path: Path) -> dict[str, Any]:
-    document = read_canonical_json(path, role="training_gate")
+    document = read_canonical_json(
+        path,
+        role="training_gate",
+        trailing_newline=None,
+    )
     schema = document.get("schema")
     if schema == PROMOTION_SCHEMA:
         return _verified_promotion(path)
@@ -220,7 +268,16 @@ def _verify_bindings(
         != frozen_adapter
     )
     admission_binding_invalid = is_admission and (
-        training != freeze_receipt
+        (
+            {
+                key: value
+                for key, value in training.items()
+                if key not in {"load_eligible", "training_scope"}
+            }
+            if promotion.get("schema") == RESIDENT_SFT_ADMISSION_SCHEMA
+            else training
+        )
+        != freeze_receipt
         or training.get("base_checkpoint_fingerprint") != freeze_model.get("fingerprint")
     )
     if (
