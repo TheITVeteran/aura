@@ -108,3 +108,18 @@ def test_hardware_manager_lifecycle_is_idempotent_and_preserves_registry():
 
     assert manager.is_alive() is False
     assert manager.get_device("persistent") is device
+
+
+def test_hardware_manager_registers_only_explicitly_configured_hardware(monkeypatch):
+    manager = HardwareManager()
+    monkeypatch.delenv("AURA_IOT_ENDPOINT", raising=False)
+
+    assert manager.register_configured_devices() == ()
+    assert manager.list_devices() == []
+
+    monkeypatch.setenv("AURA_IOT_ENDPOINT", "https://relay.example.test/aura")
+    monkeypatch.setenv("AURA_IOT_DEVICE_ID", "studio-relay")
+    assert manager.register_configured_devices() == ("studio-relay",)
+    assert manager.register_configured_devices() == ("studio-relay",)
+    assert manager.get_device("studio-relay") is not None
+    assert len(manager.list_devices()) == 1

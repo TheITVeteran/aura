@@ -361,6 +361,26 @@ class RealityReachService:
                 for capability in capabilities:
                     self._actuator_adapters[capability.channel_id] = adapter
 
+    def unregister_adapter(self, adapter_id: str) -> None:
+        """Atomically remove one adapter and every channel it owns."""
+
+        if not isinstance(adapter_id, str) or not adapter_id:
+            raise ValueError("adapter_id must be non-empty")
+        with self._lock:
+            adapter = self._adapters.get(adapter_id)
+            if adapter is None:
+                raise LookupError(f"adapter is not registered: {adapter_id}")
+            channels = self._adapter_channels.get(adapter_id, ())
+            capabilities = self._adapter_capabilities.get(adapter_id, ())
+            for capability in capabilities:
+                self._actuator_adapters.pop(capability.channel_id, None)
+            for channel_id in channels:
+                self._readings.pop(channel_id, None)
+                self._registry.unregister(channel_id)
+            self._adapter_capabilities.pop(adapter_id, None)
+            self._adapter_channels.pop(adapter_id, None)
+            self._adapters.pop(adapter_id, None)
+
     def actuator_adapter(self, channel_id: str) -> RealityAdapter | None:
         """Return an executable adapter only when its observation route is live."""
 

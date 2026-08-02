@@ -235,6 +235,11 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         from core.embodiment.hardware_manager import get_hardware_manager
 
         manager = get_hardware_manager()
+        reality_reach = getattr(orchestrator, "reality_reach", None)
+        if reality_reach is None:
+            raise RuntimeError("Reality Reach must be initialized before hardware")
+        manager.bind_reality_reach(reality_reach)
+        manager.register_configured_devices()
         await manager.start()
         orchestrator.hardware_manager = manager
         ServiceContainer.register_instance(

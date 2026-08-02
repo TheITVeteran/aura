@@ -39,7 +39,6 @@ ALLOWED_CATEGORIES: set[str] = {
     "cloud_resources_owned",
     "databases_owned",
     "documents_owned",
-    "robotics_devices",
 }
 
 # High-risk actions requiring strict checks
@@ -80,7 +79,6 @@ _CATEGORY_DOMAIN = {
     "documents_owned": ActionDomain.FILE_WRITE,
     "browser": ActionDomain.NETWORK_CALL,
     "desktop": ActionDomain.ENVIRONMENT_ACTION,
-    "robotics_devices": ActionDomain.ENVIRONMENT_ACTION,
     "cloud_resources_owned": ActionDomain.CLOUD_CALL,
     "databases_owned": ActionDomain.CLOUD_CALL,
     # email/calendar/issue/pr drafts remain EXTERNAL_ACTION (no finer domain in
@@ -162,6 +160,17 @@ class WorldActuator:
         to EXTERNAL_ACTION.
         """
         operation_id = uuid.uuid4().hex
+        if category == "robotics_devices":
+            logger.warning(
+                "Refused legacy physical dispatch outside Reality Reach (op=%s)",
+                operation_id,
+            )
+            return {
+                "ok": False,
+                "error": "physical_category_requires_reality_reach",
+                "category": category,
+                "operation_id": operation_id,
+            }
         if not isinstance(category, str) or category not in ALLOWED_CATEGORIES:
             logger.warning("Refused actuation: unknown category %r (op=%s)", category, operation_id)
             return {"ok": False, "error": "unknown_category", "category": str(category), "operation_id": operation_id}

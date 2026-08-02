@@ -6,11 +6,9 @@ the last ones that can prevent them.
 """
 from __future__ import annotations
 
-import time
+import asyncio
 import uuid
-from typing import Any, Dict
-
-from core.actuation.world_actuator import get_world_actuator
+from typing import Any
 
 #: A physical command must complete or be abandoned within a bounded window;
 #: an un-deadlined motion command has no defined end state.
@@ -26,7 +24,7 @@ class RoboticsActuationError(ValueError):
     """A physical-device command was refused at the boundary."""
 
 
-def _registered_device(device_id: str) -> Any:
+def _registered_device(device_id: str) -> tuple[Any, Any]:
     """Resolve a device from the hardware registry, or refuse.
 
     CP126 15c5b221: a FREE-FORM identifier was forwarded with no binding to an
@@ -53,7 +51,23 @@ def _registered_device(device_id: str) -> Any:
     device = manager.get_device(name) if hasattr(manager, "get_device") else None
     if device is None:
         raise RoboticsActuationError(f"device is not registered: {name}")
-    return device
+    return manager, device
+
+
+def _actuation_coordinator() -> Any:
+    try:
+        from core.container import ServiceContainer
+
+        coordinator = ServiceContainer.get("reality_actuation", default=None)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        raise RoboticsActuationError(
+            f"Reality Reach actuation coordinator unavailable: {exc}"
+        ) from exc
+    if coordinator is None or not callable(getattr(coordinator, "execute", None)):
+        raise RoboticsActuationError(
+            "Reality Reach actuation coordinator is not running"
+        )
+    return coordinator
 
 
 def _device_state_snapshot(device: Any) -> dict[str, Any]:
@@ -96,12 +110,12 @@ class RoboticsActuator:
         cls,
         device_id: str,
         command: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         source: str = "robotics_actuator",
         *,
         deadline_s: float = DEFAULT_COMMAND_DEADLINE_S,
         idempotency_key: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Command a REGISTERED physical device under an explicit contract.
 
         CP126 67b7a5b1 / 94b4cea8 / 15c5b221 / 384bd18d — every command:
@@ -135,7 +149,7 @@ class RoboticsActuator:
         if not (0.0 < bounded_deadline <= MAX_COMMAND_DEADLINE_S):
             bounded_deadline = min(MAX_COMMAND_DEADLINE_S, DEFAULT_COMMAND_DEADLINE_S)
 
-        device = _registered_device(name)
+        manager, device = _registered_device(name)
         snapshot = _device_state_snapshot(device)
         blocked = _interlock_blocked(snapshot)
         if blocked:
@@ -143,53 +157,48 @@ class RoboticsActuator:
                 f"device state refuses physical commands: {blocked}"
             )
 
-        act_params = {
-            **caller_params,
-            # Applied LAST: the governed labels ARE the submitted values.
-            "device_id": name,
-            "command": text,
-            "device_state_before": snapshot,
-            "deadline_s": bounded_deadline,
-            "idempotency_key": str(idempotency_key or uuid.uuid4().hex),
-            "requested_at_unix": time.time(),
-            # The compensating action a supervisor must run if this command
-            # does not acknowledge within the deadline.
-            "compensating_action": {
-                "action": "emergency_stop",
-                "device_id": name,
-                "reason": "command_unacknowledged_within_deadline",
-            },
-            "requires_acknowledgement": True,
-        }
-        return await get_world_actuator().actuate(
-            category="robotics_devices",
-            action_name="command_device",
-            params=act_params,
-            source=source,
-            # Physical motion is never ordinary risk.
-            high_risk_flag=True,
-            deadline_s=bounded_deadline,
+        adapter = (
+            manager.get_reality_adapter(name)
+            if callable(getattr(manager, "get_reality_adapter", None))
+            else None
         )
+        if adapter is None and callable(getattr(manager, "activate_device", None)):
+            adapter = await manager.activate_device(name)
+        if adapter is None:
+            raise RoboticsActuationError(
+                "device has no registered explicit Reality Reach capability"
+            )
+        service = getattr(manager, "reality_service", None)
+        if service is None or not callable(getattr(service, "status", None)):
+            raise RoboticsActuationError("hardware inventory service is unavailable")
+        await adapter.refresh_readback()
+        await asyncio.to_thread(service.refresh)
+        inventory_sha256 = str(service.status().get("registry_sha256") or "")
+        try:
+            typed_command = await adapter.compile_command(
+                text,
+                caller_params,
+                inventory_sha256=inventory_sha256,
+                deadline_s=bounded_deadline,
+                idempotency_key=str(idempotency_key or uuid.uuid4().hex),
+                source=source,
+            )
+            result = await _actuation_coordinator().execute(typed_command)
+        except (LookupError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RoboticsActuationError(str(exc)) from exc
+        if not isinstance(result, dict):
+            raise RoboticsActuationError("Reality Reach returned an invalid result")
+        return result
 
     @classmethod
     async def emergency_stop(
         cls, device_id: str, source: str = "robotics_actuator", reason: str = "operator_stop"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """The compensating action referenced by every command's contract."""
-        name = str(device_id or "").strip()
-        if not name:
-            raise RoboticsActuationError("device_id is empty")
-        return await get_world_actuator().actuate(
-            category="robotics_devices",
-            action_name="command_device",
-            params={
-                "device_id": name,
-                "command": "emergency_stop",
-                "reason": str(reason or "")[:200],
-                "idempotency_key": uuid.uuid4().hex,
-                "requested_at_unix": time.time(),
-            },
+        return await cls.command_device(
+            device_id,
+            "emergency_stop",
+            {"reason": str(reason or "")[:200]},
             source=source,
-            high_risk_flag=True,
             deadline_s=DEFAULT_COMMAND_DEADLINE_S,
         )

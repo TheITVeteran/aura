@@ -38,6 +38,13 @@ class Service:
         self.refreshed = True
         return {}
 
+    def bind_reality_reach(self, service):
+        self.reality_reach = service
+
+    def register_configured_devices(self):
+        self.configured_devices_registered = True
+        return ()
+
     def setup_hooks(self, orchestrator):
         self.hooked = orchestrator
 
@@ -166,6 +173,7 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_actuation"].is_alive() is True
     assert registered["hardware_manager"] is orchestrator.hardware_manager
     assert registered["hardware_manager"].started is True
+    assert registered["hardware_manager"].configured_devices_registered is True
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
 
 

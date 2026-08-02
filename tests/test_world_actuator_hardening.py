@@ -1,7 +1,8 @@
 """CP126 hardening contracts for core/actuation/world_actuator.py.
 
-The world actuator coordinates external effects (files, cloud, email/PR drafts,
-robotics). Tests cover: terminal refusal of unknown categories, parameter-aware
+The world actuator coordinates external digital effects (files, cloud,
+email/PR drafts). Physical device effects belong to Reality Reach. Tests cover:
+terminal refusal of unknown or physical categories, parameter-aware
 risk that reaches the executor, redacted+bounded+locked audit, operation
 identity, executor-fault reconciliation, non-dict result guarding, and a
 coordinator deadline. ActionExecutor is faked — no real effects run.
@@ -45,6 +46,14 @@ async def test_unknown_category_is_refused(actuator):
     res = await actuator.actuate("not_a_real_category", "do_thing", {})
     assert res["ok"] is False and res["error"] == "unknown_category"
     assert actuator._captured == {}  # executor never reached
+
+
+@pytest.mark.asyncio
+async def test_robotics_category_cannot_fall_through_generic_executor(actuator):
+    res = await actuator.actuate("robotics_devices", "command_device", {})
+    assert res["ok"] is False
+    assert res["error"] == "physical_category_requires_reality_reach"
+    assert actuator._captured == {}
 
 
 # ── 5773a761 + 09dcc0bc: parameter-aware risk reaches the executor ─────────

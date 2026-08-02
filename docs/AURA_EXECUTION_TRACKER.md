@@ -34675,3 +34675,49 @@ bootstrap-complete, reasoning-gain, frontier, release, or `WOW Signal` claim is
 made. This is total checkpoint 797 of the current 920-checkpoint completion
 envelope, approximately 86.6% by count. The immutable CP796 resident campaign
 continues separately; long soaks remain deferred.
+
+### 2026-08-01 - CP798 manifest-bound physical device dispatch
+
+The robotics boundary no longer validates a registry label and then falls
+through the generic `WorldActuator`. `robotics_devices` is terminally refused
+by that generic dispatcher. A physical command now requires a manifest-bearing
+`BaseHardwareDevice`, a live manager-owned `HardwareRealityAdapter`, a typed
+`ActuationCommand` bound to the current Reality Reach inventory, and execution
+through the durable `RealityActuationCoordinator`. Devices that merely expose
+`execute_command`, return malformed manifests, lack fresh readback, or do not
+implement local interlocks remain inventory-only and cannot acquire an
+executable channel.
+
+The explicit device manifest binds actuator and observation declarations,
+transport-distinct readback, magnitude envelopes, permissions, failure modes,
+watchdog limits, fixed or parameter-bound command targets, preconditions,
+abort predicates, expected effects, safe state, and rollback commands. The
+adapter checks the lease and contract, takes fresh status, records a local
+interlock digest, and `BaseHardwareDevice.safe_execute` repeats the interlock
+check under its per-device lock immediately before transport. Transport
+acceptance is represented separately from independently read-back effect;
+failed or mismatched observation cannot produce an effect-verified receipt.
+Cancellation, safe-state, and rollback use the same device lock and readback
+contract.
+
+The hardware manager now binds the canonical Reality Reach service, activates
+explicit adapters after connection, refreshes them off the event loop,
+preserves them over lifecycle restart, and atomically revokes their channels
+when an inactive device is unregistered. Active adapters cannot be removed.
+The existing REST relay is now a production-shaped adapter: missing or failed
+status handshakes never claim connection, mutating transport uses the governed
+network path, command success is not optimistically copied into state, and a
+fresh status request must confirm the relay's effect.
+
+The focused physical-dispatch, REST-driver, generic-world-actuator, hardware
+manager, boot, and Reality Reach family passes 72/72. Ruff, compilation,
+strict targeted MyPy, and diff integrity pass. This closes the RR-06 physical
+dispatch-ownership item, but it does not claim that configured hardware was
+available or moved: live hardware-in-loop acceptance, typed durable plan
+compilation, cross-process device exclusivity, rate/warmup/cooldown enforcement,
+public cancellation, broader physical adapters, and removal of any remaining
+physical motor path outside the coordinator remain open. No physical-effect,
+evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
+`WOW Signal` claim is made. This is total checkpoint 798 of the current
+920-checkpoint completion envelope, approximately 86.7% by count. The immutable
+CP796 resident campaign continues separately; long soaks remain deferred.

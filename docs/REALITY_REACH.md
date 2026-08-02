@@ -209,7 +209,7 @@ language alone.
   states without repeating side effects after restart.
 - [ ] Compile reachable contracts into typed, reversible action schedules and
   observation schedules through the world bridge and `ActionExecutor`.
-- [ ] Repair physical dispatch ownership: construct and lifecycle-register
+- [x] Repair physical dispatch ownership: construct and lifecycle-register
   `HardwareManager`, route registered hardware through
   `BaseHardwareDevice.safe_execute`, and prove robotics/environment actions
   cannot fall through to an unrelated AppleScript handler.

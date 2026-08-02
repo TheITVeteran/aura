@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import threading
 from typing import Any
 
@@ -8,6 +10,7 @@ from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 from .base_device import BaseHardwareDevice
+from .reality_adapter import HardwareRealityAdapter, HardwareRealityManifest
 
 logger = logging.getLogger("Embodiment.Manager")
 
@@ -72,7 +75,32 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
         super().__init__("HardwareManager")
         self.devices: dict[str, BaseHardwareDevice] = {}
         self.connection_failures: dict[str, str] = {}
+        self.reality_adapters: dict[str, HardwareRealityAdapter] = {}
+        self._reality_service: Any | None = None
         self._started = False
+
+    def bind_reality_reach(self, service: Any) -> None:
+        """Bind the canonical live inventory before activating physical devices."""
+
+        if service is None or not callable(getattr(service, "register_adapter", None)):
+            raise TypeError("reality reach service must support adapter registration")
+        if self._reality_service is not None and self._reality_service is not service:
+            raise RuntimeError("hardware manager is already bound to another reality service")
+        self._reality_service = service
+
+    def register_configured_devices(self) -> tuple[str, ...]:
+        """Materialize only explicitly configured production hardware."""
+
+        if not str(os.environ.get("AURA_IOT_ENDPOINT") or "").strip():
+            return ()
+        from .mock_iot_plug import RestSmartPlug
+
+        device_id = str(os.environ.get("AURA_IOT_DEVICE_ID") or "generic_relay_01")
+        device_name = str(os.environ.get("AURA_IOT_DEVICE_NAME") or "REST API Relay")
+        device = RestSmartPlug(device_id=device_id, name=device_name)
+        if self.get_device(device.device_id) is None:
+            self.register_device(device)
+        return (device.device_id,)
         
     async def start(self) -> None:
         """Initialize and auto-connect to registered hardware."""
@@ -89,6 +117,7 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                     self.connection_failures.pop(device_id, None)
                     device.is_connected = True
                     self.logger.info("✓ Connected to hardware: %s (%s)", device.device_name, device_id)
+                    await self._activate_reality_adapter(device)
                 else:
                     self.connection_failures[device_id] = "connect returned false"
                     device.is_connected = False
@@ -129,7 +158,52 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                     severity="warning",
                     extra={"device_id": device_id, "device_name": str(device_name)[:128]},
                 )
+        if self._reality_service is not None:
+            await asyncio.to_thread(self._reality_service.refresh)
         self._started = False
+
+    async def activate_device(self, device_id: str) -> HardwareRealityAdapter | None:
+        """Connect and register a device added after manager startup."""
+
+        device = self.get_device(device_id)
+        if device is None:
+            raise LookupError(f"hardware device is not registered: {device_id}")
+        if not self._started:
+            raise RuntimeError("hardware manager must be started before device activation")
+        if not device.is_connected:
+            connected = await device.connect()
+            if not connected:
+                device.is_connected = False
+                self.connection_failures[device.device_id] = "connect returned false"
+                raise RuntimeError(f"hardware device failed to connect: {device.device_id}")
+            device.is_connected = True
+        return await self._activate_reality_adapter(device)
+
+    async def _activate_reality_adapter(
+        self,
+        device: BaseHardwareDevice,
+    ) -> HardwareRealityAdapter | None:
+        manifest = device.reality_manifest()
+        if manifest is None:
+            return None
+        if not isinstance(manifest, HardwareRealityManifest):
+            raise TypeError("device reality_manifest returned an invalid contract")
+        existing = self.reality_adapters.get(device.device_id)
+        if existing is not None:
+            await existing.refresh_readback()
+            if self._reality_service is not None:
+                await asyncio.to_thread(self._reality_service.refresh)
+            return existing
+        if self._reality_service is None:
+            raise RuntimeError("reality reach service is not bound")
+        adapter = HardwareRealityAdapter(device, manifest)
+        reading = await adapter.refresh_readback()
+        if reading.value is None:
+            raise RuntimeError("device readback is unavailable; adapter not registered")
+        self._reality_service.register_adapter(adapter)
+        self.reality_adapters[device.device_id] = adapter
+        await asyncio.to_thread(self._reality_service.refresh)
+        return adapter
 
     def is_alive(self) -> bool:
         """The manager is alive once its lifecycle has started."""
@@ -162,6 +236,19 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
     def unregister_device(self, device_id: str) -> None:
         """Remove a device from the physical registry."""
         device_id = _safe_device_id(device_id)
+        adapter = self.reality_adapters.get(device_id)
+        device = self.devices.get(device_id)
+        if adapter is not None:
+            if self._started or bool(getattr(device, "is_connected", False)):
+                raise RuntimeError(
+                    "cannot unregister an active physical adapter; stop the manager first"
+                )
+            if self._reality_service is None or not callable(
+                getattr(self._reality_service, "unregister_adapter", None)
+            ):
+                raise RuntimeError("reality service cannot remove the device adapter")
+            self._reality_service.unregister_adapter(adapter.adapter_id)
+            self.reality_adapters.pop(device_id, None)
         if device_id in self.devices:
             del self.devices[device_id]
         self.connection_failures.pop(device_id, None)
@@ -169,6 +256,15 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
     def get_device(self, device_id: str) -> BaseHardwareDevice | None:
         """Fetch a specific device by ID."""
         return self.devices.get(_safe_device_id(device_id))
+
+    def get_reality_adapter(self, device_id: str) -> HardwareRealityAdapter | None:
+        """Return only a fully registered, explicit physical capability adapter."""
+
+        return self.reality_adapters.get(_safe_device_id(device_id))
+
+    @property
+    def reality_service(self) -> Any | None:
+        return self._reality_service
 
     def list_devices(self) -> list[dict[str, Any]]:
         """Return a serialized list of all devices and their status."""
@@ -202,6 +298,8 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
                 "started": self._started,
                 "registered_devices": len(self.devices),
                 "connected_devices": connected,
+                "reality_adapter_count": len(self.reality_adapters),
+                "reality_reach_bound": self._reality_service is not None,
                 "connection_failures": dict(self.connection_failures),
                 "status": "degraded" if self.connection_failures else base["status"],
             }

@@ -214,6 +214,29 @@ def test_actuator_is_executable_only_with_live_observation_route() -> None:
     assert service.status()["executable_actuator_count"] == 1
 
 
+def test_adapter_removal_atomically_revokes_channels_and_execution() -> None:
+    adapter = FullAdapter()
+    service = RealityReachService(
+        (adapter,),
+        clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+        session_id="test-session",
+    )
+    service.refresh()
+    before_digest = service.status()["registry_sha256"]
+
+    service.unregister_adapter(adapter.adapter_id)
+
+    status = service.status()
+    assert status["registry_sha256"] != before_digest
+    assert status["channel_count"] == 0
+    assert status["declared_actuator_count"] == 0
+    assert service.executable_actuator_channels() == ()
+    assert service.readings() == {}
+    with pytest.raises(LookupError):
+        service.unregister_adapter(adapter.adapter_id)
+
+
 def test_command_parameters_are_frozen_and_content_addressed() -> None:
     parameters = {"duration_s": 1.5}
     command = _command(parameters)
