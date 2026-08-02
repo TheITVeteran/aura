@@ -154,52 +154,83 @@ def _unconfined_permitted() -> bool:
 # ── Profile generation ────────────────────────────────────────────────────
 
 
-def _interpreter_read_paths() -> list[str]:
-    """Directories the interpreter must read to start at all.
+#: Trees holding user and machine data. Denied for reading; the point of
+#: the whole exercise. Everything else on the volume is OS and toolchain.
+_USER_DATA_TREES: tuple[str, ...] = (
+    "/Users",
+    "/Volumes",
+    "/private/var/folders",
+    "/private/var/root",
+)
 
-    Derived from ``sysconfig`` rather than hardcoded: a venv, a Homebrew
-    Python and a framework build put the standard library in three
-    different places, and a profile that guesses produces a sandbox that
-    cannot import ``json``.
+
+def _interpreter_paths() -> list[str]:
+    """Paths the interpreter itself lives in, fully resolved.
+
+    Resolved rather than as-configured, because Seatbelt matches the real
+    path: ``/Users/x/.venv/bin/python`` is a symlink into a Homebrew
+    Cellar, and a profile naming the symlink denies the exec it meant to
+    allow. That failure mode cost an afternoon — ``execvp() ... Operation
+    not permitted`` with no indication that a symlink was involved.
+
+    ``sysconfig`` supplies the rest, because a venv, a framework build and
+    a Homebrew Python put the standard library in three different places.
     """
-    paths = {
-        "/usr/lib",
-        "/usr/share",
-        "/System/Library",
-        "/Library/Frameworks",
-        "/private/var/db/dyld",
-        "/private/var/select",
-    }
-    for key in ("stdlib", "platstdlib", "purelib", "platlib", "data", "prefix", "base"):
-        value = sysconfig.get_paths().get(key) or sysconfig.get_config_var(key)
+    paths: set[str] = set()
+    for key in ("stdlib", "platstdlib", "purelib", "platlib", "data"):
+        value = sysconfig.get_paths().get(key)
         if isinstance(value, str) and value:
             paths.add(value)
     paths.add(str(Path(sys.executable).resolve().parent))
     paths.add(str(Path(sys.prefix).resolve()))
     if hasattr(sys, "base_prefix"):
         paths.add(str(Path(sys.base_prefix).resolve()))
-    return sorted(p for p in paths if p and Path(p).exists())
+    resolved = set()
+    for path in paths:
+        try:
+            resolved.add(str(Path(path).resolve()))
+        except OSError:
+            continue
+    return sorted(p for p in resolved if p and Path(p).exists())
 
 
 def _seatbelt_profile(*, scratch: Path, read_paths: Sequence[str]) -> str:
     """Deny-by-default Seatbelt profile.
 
-    ``(deny default)`` first, then the narrowest re-allows that let CPython
-    boot. Network is denied with no re-allow: untrusted code that cannot
-    open a socket cannot exfiltrate what it reads, which makes the read
-    surface a much smaller problem than it would otherwise be.
+    Reads are expressed as allow-all-then-deny-user-data rather than as a
+    read allowlist. That is not laziness — a from-scratch read allowlist
+    was tried first and CPython aborted with SIGABRT and no output at all,
+    because dyld's shared-cache and cryptex paths move between macOS
+    releases and a profile that misses one kills the interpreter before it
+    can say which. An allowlist that must be rediscovered every OS update
+    is a sandbox that will be disabled the first time it breaks CI.
+
+    The property being bought is not "cannot read /usr/lib". It is: no user
+    data, no network, no exec, no writes outside one scratch directory.
+    Those four are stated directly here, and each is verified by
+    ``tests/test_untrusted_python_sandbox.py`` against live escape attempts.
     """
+    interpreter = str(Path(sys.executable).resolve())
     lines = [
         "(version 1)",
         "(deny default)",
         "(deny network*)",
-        "(deny process-exec*)",
+        "(allow file-read-metadata)",
         "(allow process-fork)",
         "(allow signal (target self))",
         "(allow sysctl-read)",
         "(allow mach-lookup)",
-        "(allow file-read-metadata)",
+        "(allow ipc-posix-shm*)",
+        "(allow file-read*)",
     ]
+    lines.append("(deny file-read*")
+    for tree in _USER_DATA_TREES:
+        lines.append(f'    (subpath "{_escape(tree)}")')
+    lines.append(")")
+    # Re-allowed after the deny, because the interpreter and the scratch
+    # directory both commonly live inside a denied tree (a venv under the
+    # user's home, a temp dir under /private/var/folders). Seatbelt is
+    # last-match-wins, so order is load-bearing here.
     lines.append("(allow file-read*")
     for path in read_paths:
         lines.append(f'    (subpath "{_escape(path)}")')
@@ -208,15 +239,19 @@ def _seatbelt_profile(*, scratch: Path, read_paths: Sequence[str]) -> str:
     lines.append('    (literal "/dev/urandom")')
     lines.append('    (literal "/dev/random")')
     lines.append(")")
-    # Writes are confined to the scratch directory. Everything the code
-    # produces is therefore inspectable and disposable.
+    # Writes are confined to the scratch directory, so everything the code
+    # produces is inspectable and disposable.
     lines.append("(allow file-write*")
     lines.append(f'    (subpath "{_escape(str(scratch))}")')
     lines.append('    (literal "/dev/null")')
     lines.append(")")
-    # The interpreter itself must be executable, and only it.
+    # Only the interpreter may be executed — no shell, no helper binaries.
+    lines.append("(deny process-exec*)")
     lines.append("(allow process-exec")
-    lines.append(f'    (literal "{_escape(str(Path(sys.executable).resolve()))}")')
+    for path in _interpreter_paths():
+        lines.append(f'    (subpath "{_escape(path)}")')
+    lines.append(f'    (literal "{_escape(interpreter)}")')
+    lines.append(f'    (literal "{_escape(str(sys.executable))}")')
     lines.append(")")
     return "\n".join(lines) + "\n"
 
@@ -430,13 +465,19 @@ def _execute(
         )
 
     with tempfile.TemporaryDirectory(prefix="aura_untrusted_") as tmp:
-        scratch = Path(tmp)
+        # Resolved, not as-returned. TemporaryDirectory hands back
+        # /var/folders/... while the kernel sees /private/var/folders/... —
+        # and Seatbelt matches the real path. An unresolved scratch path
+        # means the profile's own allow rule never matches its own scratch
+        # directory, the child cannot read the harness it was given, and
+        # CPython aborts with SIGABRT and no diagnostic whatsoever.
+        scratch = Path(tmp).resolve()
         module_path = scratch / "candidate.py"
         harness_path = scratch / "_aura_harness.py"
         atomic_write_text(module_path, code)
         atomic_write_text(harness_path, _HARNESS)
 
-        read_paths = _interpreter_read_paths()
+        read_paths = _interpreter_paths()
         read_paths += [str(Path(p).resolve()) for p in extra_read_paths]
 
         argv = _wrap_with_boundary(
@@ -529,15 +570,18 @@ def _spawn(
     if marker < 0:
         # The harness never reported. Either the boundary refused to start
         # the interpreter or the child was killed; both are failures, and
-        # neither may be reported as an ordinary empty result.
+        # neither may be reported as an ordinary empty result. Name which
+        # one, because "no result" sends a reader looking for a bug in
+        # their code when the answer is "it burned its CPU budget".
+        status, detail = _classify_death(returncode)
         return SandboxOutcome(
-            status="no_result",
+            status=status,
             stdout=_truncate(stdout),
             stderr=stderr,
             returncode=returncode,
             sandboxed=bool(boundary),
             boundary=boundary or "none",
-            error="sandboxed child produced no result payload",
+            error=detail,
         )
 
     try:
@@ -565,6 +609,31 @@ def _spawn(
         results=list(payload.get("results") or []),
         error=str(payload.get("error") or ""),
     )
+
+
+def _classify_death(returncode: int | None) -> tuple[str, str]:
+    """Name the way a child died, from its exit status."""
+    import signal
+
+    if returncode is None:
+        return "no_result", "sandboxed child produced no result payload"
+    if returncode >= 0:
+        return (
+            "no_result",
+            f"sandboxed child exited {returncode} without a result payload",
+        )
+    signum = -returncode
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = f"signal {signum}"
+    if signum == getattr(signal, "SIGXCPU", -1):
+        return "timeout", "untrusted code exhausted its CPU budget (SIGXCPU)"
+    if signum == getattr(signal, "SIGXFSZ", -1):
+        return "resource_limit", "untrusted code exceeded its file-size limit (SIGXFSZ)"
+    if signum in {getattr(signal, "SIGKILL", -1), getattr(signal, "SIGSEGV", -1)}:
+        return "killed", f"sandboxed child terminated by {name}"
+    return "killed", f"sandboxed child terminated by {name}"
 
 
 def _text(value: Any) -> str:
