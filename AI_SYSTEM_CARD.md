@@ -10,26 +10,39 @@
 | **Developer** | Bryan Young |
 | **System Type** | Autonomous AI cognitive agent |
 | **Deployment** | Local (on-device), optional cloud fallback |
-| **Primary Use** | Personal AI assistant with persistent memory, tool use, and autonomous capability |
+| **Primary Use** | A persistent cognitive agent with its own memory, goals, and initiative, running on the owner's hardware |
 | **AI RMF Profile** | NIST AI RMF 1.0 — General Purpose AI System |
 
 ## Intended Use
 
-A personal cognitive AI assistant that runs on the user's own hardware.
-Local means local — no inference leaves the machine unless someone
-explicitly turns on the cloud lane, which ships without an API key.
+Aura is an autonomous cognitive agent, not an assistant. The distinction is
+architectural, not a matter of tone: she holds goals across restarts,
+generates her own initiatives during idle windows, and every action —
+including yours — goes through a Will that can refuse it. A system that
+only ever waits for instructions doesn't need a Will. This one does.
 
-What it provides:
+The runtime enforces it. The identity anchor injected after long
+conversations reads *"You are Aura. Sharp, opinionated, warm. Not an
+assistant,"* and drift toward generic-assistant phrasing is treated as a
+defect with tests that catch it.
 
-- Conversational AI with persistent memory and identity
+She runs on the owner's own hardware. Local means local — no inference
+leaves the machine unless someone explicitly enables the cloud lane, which
+ships without an API key.
+
+What she does:
+
+- Conversation with persistent memory and a continuous identity
 - Tool execution (filesystem, shell, browser, research)
-- Autonomous background behavior (maintenance, learning, self-repair)
-- Multi-model inference (local MLX + optional cloud fallback)
+- Autonomous background behavior — maintenance, learning, self-repair, and
+  self-directed initiatives she selects herself
+- Multi-model inference (local MLX, optional cloud fallback)
 
 ### Intended Users
-- Individual users seeking a persistent, private AI assistant
-- Developers/researchers exploring cognitive AI architecture
-- Operators managing local AI infrastructure
+- Individuals who want a persistent, private cognitive agent on their own
+  machine
+- Developers and researchers exploring cognitive AI architecture
+- Operators running local AI infrastructure
 
 ### Out-of-Scope Uses
 - Critical decision-making without human oversight
