@@ -1279,6 +1279,15 @@ function conversationEntriesToMessages(entries) {
     return out;
 }
 
+// The placeholder the shell ships in index.html before any verified reply
+// path exists. Declared once here because two code paths test for it: a
+// prefix match in either of them would keep matching after the markup's
+// wording changed, so the pane would treat a DIFFERENT message as "still
+// just the placeholder" and clear a real transcript on top of it.
+const LANE_INITIALIZING_PLACEHOLDER =
+    'Conversation lane initializing. Waiting for verified Aura reply path...';
+
+
 function hydrateRecentConversation(entries) {
     const messages = DOM.messages || $('messages');
     if (!messages || !Array.isArray(entries) || !entries.length) return;
@@ -1287,7 +1296,7 @@ function hydrateRecentConversation(entries) {
     // meant a pane cleared to empty could never recover its own transcript.
     const text = messages.textContent || '';
     const isEmpty = messages.children.length === 0 || !text.trim();
-    const hasOnlyPlaceholder = messages.children.length === 1 && text.includes('Conversation lane initializing');
+    const hasOnlyPlaceholder = messages.children.length === 1 && text.includes(LANE_INITIALIZING_PLACEHOLDER);
     if (!hasOnlyPlaceholder && !isEmpty) return;
 
     const restored = conversationEntriesToMessages(entries.slice(-12));
@@ -5258,7 +5267,7 @@ function applyConversationLane(lane, healthStatus = '') {
         const messages = DOM.messages || $('messages');
         const hasOnlyInitializingPlaceholder = messages
             && messages.children.length === 1
-            && messages.textContent.includes('Conversation lane initializing');
+            && messages.textContent.includes(LANE_INITIALIZING_PLACEHOLDER);
         if (hasOnlyInitializingPlaceholder) {
             messages.innerHTML = '';
         }

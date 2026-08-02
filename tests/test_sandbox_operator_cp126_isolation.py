@@ -268,10 +268,10 @@ def test_grounding_without_a_substrate_is_not_a_failure(monkeypatch):
 
     class _Values:
         def on_sandbox_success(self):
-            pass
+            """Record nothing: this test asserts the call is MADE, not its effect."""
 
         def on_sandbox_failure(self, code, evidence):
-            pass
+            """Record nothing: this test asserts the call is MADE, not its effect."""
 
     monkeypatch.setattr(
         "core.affect.heartstone_values.get_heartstone_values", lambda: _Values()

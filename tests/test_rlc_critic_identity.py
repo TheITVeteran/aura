@@ -257,7 +257,7 @@ def test_powered_shared_blind_spots_causally_revoke_worker_verifier(monkeypatch)
 
     class StubEngine:
         def __init__(self, *_args, **_kwargs):
-            pass
+            """Accept and ignore construction args; this stub holds no state."""
 
         def reason(self, **kwargs):
             captured.update(kwargs)
