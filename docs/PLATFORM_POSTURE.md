@@ -2,9 +2,14 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document declares the deliberate platform decisions Aura runs
-under today.  Every entry below is a load-bearing choice — operators
-can change them, but they should know what they are choosing.
+Five platform decisions, all of them deliberate.
+
+No RBAC. No SSO. Single-tenant. Manual backups. Hash-allowlisted plugins.
+
+Read that list cold and it looks like a gap analysis. It isn't. Each one is
+a choice that fits a local-first, single-operator system, and each one names
+the code that enforces it. An operator can change any of them — but should
+know they're changing a decision, not filling a hole.
 
 | Decision area      | Posture today                       | Enforced by                                                                                       |
 |--------------------|-------------------------------------|---------------------------------------------------------------------------------------------------|

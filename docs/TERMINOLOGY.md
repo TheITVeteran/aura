@@ -1,11 +1,16 @@
 # Terminology
 
-This file is the canonical mapping between Aura's internal poetic naming
-and the sober technical labels used in user-facing documentation,
-research write-ups, and external review packets. Internal naming is kept
-because it carries meaningful design intent; external naming is added so
-a skeptical engineer can read the same structure without feeling the
-language is doing the persuading.
+Two names for every mechanism. The internal one and the one that doesn't
+sound like it's trying to convince you.
+
+Both columns stay. The internal naming carries real design intent — a scar
+is not a "record," and calling it one loses why it decays the way it does.
+But a skeptical engineer should be able to read the same structure without
+the vocabulary doing the persuading, so the sober label sits right next to
+it.
+
+If a claim only sounds impressive in the left column, it isn't a claim.
+That's what this table is for.
 
 | Internal name              | Sober label                                            |
 |----------------------------|--------------------------------------------------------|

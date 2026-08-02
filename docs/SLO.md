@@ -2,16 +2,19 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document defines the operational promises Aura's runtime makes to
-its operators.  Every SLO listed here is **measured by code in `slo/`**
-and **gated in CI** (see `.github/workflows/slo-gate.yml`).  A pull
-request that regresses a measurement past the tolerance, or violates a
-hard limit, fails the release gate.
+What the runtime promises an operator, and what happens when it stops
+keeping the promise.
 
-The SLOs are intentionally narrow: they cover the load-bearing
-infrastructure shipped under the AGI/enterprise foundations work and
-exclude anything that needs GPU/model loads (those are governed by the
-benchmark harness in `aura_bench/`, not by this gate).
+Every SLO here is **measured by code in `slo/`** and **gated in CI**
+(`.github/workflows/slo-gate.yml`). Regress a measurement past tolerance or
+break a hard limit and the release gate fails. These are not aspirations
+written down next to a number — nothing in this file is enforced by
+somebody remembering it.
+
+The list is deliberately narrow. It covers load-bearing infrastructure and
+excludes anything needing GPU or model loads, because a number that swings
+with model availability isn't a promise, it's weather. Those live in the
+benchmark harness under `aura_bench/` instead.
 
 ## Format
 

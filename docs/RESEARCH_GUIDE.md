@@ -2,15 +2,22 @@
 
 *Reviewed against the tree: 2026-08-01. See [documentation status map](DOC_STATUS.md) for how to read this file.*
 
-This document is for researchers reproducing Aura's claims and for
-external reviewers running their own evaluation.
+For researchers reproducing Aura's claims, and reviewers running their own
+evaluation and hoping to break something.
 
 ## What Aura is — and isn't
-Aura is a **functional cognitive-architecture research system**. The
-shipped code does not claim phenomenal consciousness, metaphysical
-qualia, legal personhood, or moral patiency. The terminology in
-``docs/TERMINOLOGY.md`` maps every internal poetic name to a sober
-technical label.
+
+A **functional cognitive-architecture research system**. The shipped code
+does not claim phenomenal consciousness, metaphysical qualia, legal
+personhood, or moral patiency.
+
+A warning about the vocabulary before you read any further. There are files
+in this repo named `qualia_synthesizer.py`, `consciousness/`, `will.py`,
+`soma.py`. Those are labels on mechanisms. They are not evidence, and if you
+credit the system for its naming you will overrate it — which is a real risk
+here, not a hypothetical one. `docs/TERMINOLOGY.md` maps every internal
+poetic name to its sober technical label. Read it first and the rest of the
+repo gets easier to judge.
 
 ## Architecture overview
 - ``core/agency/agency_orchestrator.py`` — canonical drive→outcome loop.

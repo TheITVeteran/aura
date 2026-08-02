@@ -1,6 +1,16 @@
 # Aura Claim Boundaries
 
-This document defines the strict, non-negotiable boundaries of the empirical and conceptual claims allowed for the Aura cognitive agent runtime. It establishes what is considered "proven," what is "not proven" due to resource bounds, and what is strictly "unsupported" by this computational paradigm.
+The hard edges of what this repository is allowed to claim.
+
+Three categories, and the difference between them matters. **Proven** means
+there is a mechanism and a test. **Not proven** means we haven't shown it
+yet, usually for resource reasons, and could. **Strictly unsupported** means
+no amount of further building would show it, because it isn't that kind of
+question — and moving something out of that category requires a different
+kind of argument than more code.
+
+Non-negotiable is meant literally. A result that needs one of these
+boundaries relaxed is a result that doesn't ship.
 
 ## 1. Absolute Scientific Boundaries
 
