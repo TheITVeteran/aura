@@ -93,6 +93,16 @@ class ToolExecutionHandle:
     signed_capability: dict[str, Any] | None = None
 
 
+#: How many DISTINCT evidence references a belief needs before repetition
+#: can carry it to "trusted". One source repeating itself is one source.
+BELIEF_MIN_SOURCES_FOR_TRUST = 2
+
+#: Ceiling for a belief with no independent corroboration. Deliberately
+#: below the 0.75 trusted threshold: an uncorroborated claim may become
+#: "active" — worth acting on provisionally — but never trusted.
+BELIEF_UNCORROBORATED_CEILING = 0.70
+
+
 @dataclass
 class BeliefMutationRecord:
     namespace: str
@@ -186,10 +196,45 @@ class BeliefAuthority:
         existing = self._beliefs.get(belief_id)
         if existing is not None:
             if existing.value == normalized_value:
-                confidence = min(0.98, float(existing.confidence or 0.35) + 0.12)
-                status = "trusted" if confidence >= 0.75 else "active"
-                reason = f"{reason}|reinforced"
+                # CP126 (critical): "Repeated unverified claims self-promote
+                # to trusted belief. Matching an existing value increments
+                # confidence by a fixed amount until trusted status, without
+                # requiring independent evidence, source diversity, or a
+                # verifier receipt."
+                #
+                # Four repetitions of the same unsupported assertion walked
+                # 0.35 -> 0.47 -> 0.59 -> 0.71 -> 0.83 and crossed the 0.75
+                # trusted line. Saying a thing again is not evidence for it,
+                # and a belief system in which it is will believe whatever it
+                # is told most often.
+                #
+                # Two changes. Reinforcement now requires evidence this
+                # belief has not already been credited with — repeating a
+                # claim with the same citation, or none, holds confidence
+                # where it is. And repetition alone cannot reach "trusted":
+                # that requires either the state authority (handled above, at
+                # 0.98) or independent corroboration, so an unsupported
+                # belief tops out at "active" no matter how often it recurs.
+                prior_evidence = set(existing.evidence or [])
+                fresh_evidence = [ref for ref in evidence_refs if ref not in prior_evidence]
+                distinct_sources = len(prior_evidence | set(evidence_refs))
                 contradictions = list(existing.contradictions or [])
+
+                if fresh_evidence:
+                    confidence = min(0.98, float(existing.confidence or 0.35) + 0.12)
+                    reason = f"{reason}|reinforced_by_new_evidence"
+                else:
+                    confidence = float(existing.confidence or 0.35)
+                    reason = f"{reason}|repeated_without_new_evidence"
+
+                if distinct_sources >= BELIEF_MIN_SOURCES_FOR_TRUST and confidence >= 0.75:
+                    status = "trusted"
+                else:
+                    # Hold below the trusted line so repetition cannot cross
+                    # it on its own.
+                    confidence = min(confidence, BELIEF_UNCORROBORATED_CEILING)
+                    status = "active"
+                evidence_refs = list(prior_evidence | set(evidence_refs))
             else:
                 contradictions = list(existing.contradictions or [])
                 contradictions.append(str(normalized_value)[:180])
