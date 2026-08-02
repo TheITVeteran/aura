@@ -30,6 +30,9 @@ Architecture:
 
 import ast
 import asyncio
+import contextlib
+import hashlib
+import hmac
 import inspect
 import json
 import logging
@@ -38,7 +41,6 @@ import os
 import re
 import threading
 import time
-import contextlib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from itertools import islice
@@ -91,6 +93,48 @@ def _compile_route_pattern(pattern: str) -> "re.Pattern[str]":
 def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
     """Search a routing regex against length-bounded input."""
     return compiled.search(str(text or "")[:_MAX_ROUTE_INPUT_LEN])
+
+
+#: Where the vault's tamper-evidence key lives. Local and same-uid: this makes
+#: an edited vault file detectable, it does NOT authenticate against an
+#: adversary who can already read the user's home directory. The distinction is
+#: carried through to the restore path, which reports what it verified rather
+#: than asserting the topology is trusted (CP126 3901c6f3).
+_VAULT_MAC_KEY_FILENAME = "mycelium_vault.key"
+_VAULT_MAC_ALGORITHM = "hmac-sha256"
+
+
+def _vault_mac_key(base_dir: Path) -> Optional[bytes]:
+    """Read or mint the vault tamper-evidence key, or None if it can't exist."""
+    key_path = base_dir / "data" / _VAULT_MAC_KEY_FILENAME
+    try:
+        if key_path.exists():
+            existing = key_path.read_bytes().strip()
+            if existing:
+                return existing
+        import secrets
+
+        raw = secrets.token_bytes(32)
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_bytes(raw)
+        os.chmod(key_path, 0o600)
+        return raw
+    except (OSError, RuntimeError, ValueError) as exc:
+        record_degradation(
+            "mycelium",
+            exc,
+            severity="warning",
+            action=(
+                "wrote or read the root vault without tamper evidence; a "
+                "restored topology will be reported as unattested"
+            ),
+            enforce_failure_policy=False,
+        )
+        return None
+
+
+def _vault_mac(key: bytes, encoded: str) -> str:
+    return hmac.new(key, encoded.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _cohesion_from_topology(
@@ -174,6 +218,33 @@ def _evidence_verifies_outcome(evidence: Any, success: bool) -> bool:
     return outcome is bool(success)
 
 
+from core.governance.durable_learning import (
+    admit_learning_update,
+    grade_from_evidence,
+)
+from core.runtime.turn_outcome import VerificationGrade
+
+
+def _evidence_identity(evidence: Any) -> Optional[str]:
+    """A stable id for the evidence behind an outcome, when it carries one.
+
+    Without an id, a durable update cannot be found again when its evidence
+    is later withdrawn, so it cannot be rolled back — and the gate refuses
+    to make it durable. Returning None here is honest, not a failure.
+    """
+    if evidence is None or isinstance(evidence, bool):
+        return None
+    for key in ("evidence_id", "receipt_id", "execution_id", "id"):
+        value = (
+            evidence.get(key)
+            if isinstance(evidence, dict)
+            else getattr(evidence, key, None)
+        )
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value)
+    return None
+
+
 def _redact_source_path(path: Any) -> Optional[str]:
     """Return a project-relative module path, never an absolute filesystem path.
 
@@ -217,6 +288,19 @@ _DEFAULT_INFRASTRUCTURE_SCAN_DIRS = (
     "utils",
 )
 _VAULT_CLOCK_SKEW_TOLERANCE_S = 1.0
+
+# CP126 944a6043: restore limits. Each is an order of magnitude above what a
+# live generation of this codebase produces (~1.5k modules, a few dozen routes),
+# so they bound a hostile or corrupt vault without constraining a real one. A
+# restore that trips one is refused; the previous generation stands.
+_VAULT_MAX_PATHWAYS = 5_000
+_VAULT_MAX_HYPHAE = 50_000
+_VAULT_MAX_MAPPED_FILES = 50_000
+_VAULT_MAX_MODULE_IMPORTS = 2_000
+#: Hypha.log() already caps the live trace at 100 entries.
+_VAULT_MAX_HYPHA_TRACE = 100
+#: Serialized bytes accepted from the vault row before any decoding.
+_VAULT_MAX_ENCODED_BYTES = 64 * 1024 * 1024
 _ALLOW_FOREGROUND_MAPPING_FLAG = declare(
     "AURA_ALLOW_FOREGROUND_INFRASTRUCTURE_MAPPING",
     kind=FlagKind.BOOL,
@@ -309,6 +393,16 @@ class HardwiredPathway(BaseModel):
                 self.verified_misses += 1
         if not verified:
             self.unverified_reinforcements += 1
+
+    def record_unverified_reinforcement(self) -> None:
+        """Tally an outcome whose evidence was too weak to persist.
+
+        The durable confidence is deliberately untouched. Only the counter
+        moves, so ``evidence_grade`` can still say how much of this
+        pathway's record rests on assertions — which is the number an
+        operator needs when a route looks reliable and is not.
+        """
+        self.unverified_reinforcements += 1
 
     @property
     def is_weak(self) -> bool:
@@ -661,6 +755,11 @@ class MycelialNetwork:
             self._absorbed_flows: List[RootedFlowHandle] = []
             self._absorbed_flow_overflow: int = 0
             self._unclaimed_absorptions: int = 0
+            #: None until a vault generation has been published into this
+            #: instance — "never restored" is not the same claim as "restored
+            #: without tamper evidence".
+            self._restored_from_vault_at: Optional[float] = None
+            self._restored_generation_attested: Optional[bool] = None
 
             # --- Props ---
             self.ui_callback: Optional[Callable[[str], Coroutine]] = None
@@ -735,6 +834,56 @@ class MycelialNetwork:
             "pathways": len(self.pathways),
             "mapping_generation": self._mapping_generation,
         }
+
+    # ------------------------------------------------------------------
+    # Session-local routing confidence.
+    #
+    # Deliberately NOT a Pathway field. Session state that lives inside the
+    # durable model gets serialized into the vault by anything that walks
+    # model_dump(), and then "this seemed to work once" is indistinguishable
+    # from "this was checked" after a restart. Keeping it on the network, in
+    # a plain dict, makes the boundary structural rather than a convention
+    # somebody has to remember.
+    # ------------------------------------------------------------------
+
+    #: Bounded so a long-running process with churning pathway ids cannot
+    #: grow this without limit.
+    _MAX_SESSION_CONFIDENCE_ENTRIES: ClassVar[int] = 4096
+
+    def _apply_session_reinforcement_locked(self, pathway_id: str, success: bool) -> None:
+        """Move this session's view of a pathway without touching the vault."""
+        deltas = getattr(self, "_session_confidence", None)
+        if deltas is None:
+            deltas = {}
+            object.__setattr__(self, "_session_confidence", deltas)
+        delta = (
+            HardwiredPathway.UNVERIFIED_REINFORCE_DELTA
+            if success
+            else -HardwiredPathway.WEAKEN_DELTA
+        )
+        current = float(deltas.get(pathway_id, 0.0))
+        deltas[pathway_id] = max(-1.0, min(1.0, current + delta))
+        if len(deltas) > self._MAX_SESSION_CONFIDENCE_ENTRIES:
+            for stale in list(deltas)[: len(deltas) - self._MAX_SESSION_CONFIDENCE_ENTRIES]:
+                deltas.pop(stale, None)
+
+    def session_confidence_delta(self, pathway_id: str) -> float:
+        """This session's unverified adjustment for a pathway. Never persisted."""
+        deltas = getattr(self, "_session_confidence", None) or {}
+        return float(deltas.get(str(pathway_id), 0.0))
+
+    def effective_confidence(self, pathway_id: str) -> float:
+        """Durable confidence plus this session's unverified evidence.
+
+        What routing should ask. ``Pathway.confidence`` alone answers "what
+        has Aura earned the right to believe", which is the right question
+        for persistence and the wrong one for choosing a route right now.
+        """
+        pathway = self.pathways.get(str(pathway_id))
+        if pathway is None:
+            return 0.0
+        combined = float(pathway.confidence) + self.session_confidence_delta(pathway_id)
+        return max(HardwiredPathway.MIN_CONFIDENCE * 0.0, min(HardwiredPathway.MAX_CONFIDENCE, combined))
 
     def _mark_topology_mutated_locked(self, *, structure_changed: bool = False) -> None:
         self._topology_revision += 1
@@ -993,8 +1142,11 @@ class MycelialNetwork:
             if original is None or pw is None:
                 continue
 
-            # Skip pathways that have decayed below minimum confidence
-            if pw.confidence < pw.MIN_CONFIDENCE:
+            # Skip pathways that have decayed below minimum confidence.
+            # EFFECTIVE, not durable: a route that failed this session on
+            # unverified evidence must be avoided now even though that
+            # evidence was too weak to change what is persisted.
+            if self.effective_confidence(pw_id) < pw.MIN_CONFIDENCE:
                 continue
 
             match = _safe_pattern_search(pw.pattern, text_clean)
@@ -1629,8 +1781,42 @@ class MycelialNetwork:
             pw = self.pathways.get(pathway_id)
             if not pw:
                 return
-            pw.reinforce(success, verified=_evidence_verifies_outcome(evidence, success))
-            self._mark_topology_mutated_locked()
+            # CP126 / durable-learning governance: the strength of the
+            # evidence decides the SCOPE of the change, not just its size.
+            #
+            # Before this, "nothing threw" moved the same persisted number
+            # that a checked outcome moved — only by less. A route could
+            # therefore become durably more trusted for producing failures,
+            # one unverified success at a time, and nothing in the topology
+            # recorded that its confidence rested on assertions.
+            #
+            # Now an unverified outcome steers THIS SESSION and dies with the
+            # process. The broken-route safety property is kept: a session
+            # weakening still lowers effective confidence immediately, so a
+            # pathway that just failed is avoided now — it simply does not
+            # rewrite what Aura believes tomorrow on the strength of a
+            # caller's say-so.
+            grade = grade_from_evidence(evidence, success=success)
+            admission = admit_learning_update(
+                "mycelium",
+                str(pathway_id),
+                operation="reinforce" if success else "weaken",
+                success=bool(success),
+                grade=grade,
+                verifier="mycelium.execution_evidence" if grade > VerificationGrade.ASSERTED else None,
+                evidence_id=_evidence_identity(evidence),
+                inverse=(
+                    {"operation": "set_confidence", "confidence": float(pw.confidence)}
+                    if grade > VerificationGrade.ASSERTED
+                    else None
+                ),
+            )
+            if admission.is_durable:
+                pw.reinforce(success, verified=True)
+                self._mark_topology_mutated_locked()
+            elif admission.applies_now:
+                self._apply_session_reinforcement_locked(str(pathway_id), success)
+                pw.record_unverified_reinforcement()
 
         # --- QUALIA-WEIGHTED REINFORCEMENT ---
         # If consciousness is "resonating" during this execution,
@@ -2719,6 +2905,12 @@ class MycelialNetwork:
                 "committed_at": self._last_vault_sync_at,
                 "lag_revisions_at_commit": self._last_vault_sync_lag_revisions,
             },
+            "vault_restore": {
+                "restored_at": self._restored_from_vault_at,
+                # None = never restored. False = restored from a generation
+                # carrying no tamper evidence, which is not the same as verified.
+                "attested": self._restored_generation_attested,
+            },
         }
 
     # ======================================================================
@@ -3473,10 +3665,90 @@ class MycelialNetwork:
             restored[key] = model(**fields)
         return restored
 
+    @staticmethod
+    def _verify_vault_attestation(
+        encoded: str, attestation_row: Any, *, base_dir: Path
+    ) -> bool:
+        """Whether this generation carries tamper evidence that checks out.
+
+        Three outcomes, and they are deliberately not two. A MAC that verifies
+        is attested. A MAC that does not verify is a refusal — the vault was
+        edited after Aura wrote it, and installing routing rules and direct
+        responses from it is exactly the attack. No MAC at all is neither: it
+        is a vault written before attestation existed, which restores but is
+        reported as unattested rather than quietly counted as verified
+        (CP126 3901c6f3).
+        """
+        algorithm = str(attestation_row[0] or "") if attestation_row else ""
+        stored_mac = str(attestation_row[1] or "") if attestation_row else ""
+        if not stored_mac:
+            logger.warning(
+                "🛡️ AEGIS: Root vault carries no tamper evidence; restoring an "
+                "UNATTESTED topology generation."
+            )
+            return False
+        if algorithm != _VAULT_MAC_ALGORITHM:
+            raise ValueError(
+                f"vault attestation uses an unsupported algorithm: {algorithm!r}"
+            )
+        key = _vault_mac_key(base_dir)
+        if key is None:
+            raise ValueError(
+                "vault carries tamper evidence but the key is unavailable; "
+                "refusing to restore rather than skipping the check"
+            )
+        if not hmac.compare_digest(_vault_mac(key, encoded), stored_mac):
+            raise ValueError(
+                "vault tamper evidence does not match its topology generation"
+            )
+        return True
+
+    @staticmethod
+    def _enforce_vault_cardinality(payload: Dict[str, Any]) -> None:
+        """Bound the vault before decoding it.
+
+        Serialized size first: the whole payload is already in memory as a
+        string by the time we get here, but rejecting it before building tens of
+        thousands of pydantic models is the difference between a refused restore
+        and a boot that dies. Then per-collection counts, then the two
+        unbounded per-element lists (imports and edge traces).
+        """
+        for field, limit in (
+            ("pathways", _VAULT_MAX_PATHWAYS),
+            ("hyphae", _VAULT_MAX_HYPHAE),
+            ("mapped_files", _VAULT_MAX_MAPPED_FILES),
+            ("centrality", _VAULT_MAX_MAPPED_FILES),
+            ("cross_links", _VAULT_MAX_MAPPED_FILES),
+            ("critical_modules", _VAULT_MAX_MAPPED_FILES),
+        ):
+            value = payload.get(field)
+            if isinstance(value, (dict, list)) and len(value) > limit:
+                raise ValueError(
+                    f"vault {field} exceeds the restore limit "
+                    f"({len(value)} > {limit})"
+                )
+        hyphae = payload.get("hyphae")
+        if isinstance(hyphae, dict):
+            for key, value in hyphae.items():
+                trace = value.get("trace") if isinstance(value, dict) else None
+                if isinstance(trace, list) and len(trace) > _VAULT_MAX_HYPHA_TRACE:
+                    raise ValueError(f"vault hypha trace exceeds its limit: {key}")
+        mapped_files = payload.get("mapped_files")
+        if isinstance(mapped_files, dict):
+            for key, value in mapped_files.items():
+                imports = value.get("imports") if isinstance(value, dict) else None
+                if isinstance(imports, list) and len(imports) > _VAULT_MAX_MODULE_IMPORTS:
+                    raise ValueError(f"vault module imports exceed their limit: {key}")
+
     @classmethod
     def _decode_vault_topology(cls, payload: Any) -> Dict[str, Any]:
         if not isinstance(payload, dict) or payload.get("schema_version") != 3:
             raise ValueError("unsupported mycelium vault schema")
+        # CP126 944a6043: every field was type-checked and none was counted, so
+        # a vault with a million pathways type-validated perfectly and then
+        # exhausted memory during boot — the one moment where there is nothing
+        # to fall back to. Bounds are checked before any element is built.
+        cls._enforce_vault_cardinality(payload)
         if set(payload) != {
             "schema_version",
             "captured_at_unix",
@@ -3746,6 +4018,8 @@ class MycelialNetwork:
                 # known-good generation.
                 self._decode_vault_topology(topology)
                 encoded = json.dumps(topology, allow_nan=False, sort_keys=True)
+                key = _vault_mac_key(config.paths.base_dir)
+                mac = _vault_mac(key, encoded) if key else ""
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 with sqlite3.connect(db_path) as conn:
                     conn.execute("PRAGMA busy_timeout=5000;")
@@ -3755,11 +4029,32 @@ class MycelialNetwork:
                         "CREATE TABLE IF NOT EXISTS aegis_vault "
                         "(key TEXT PRIMARY KEY, data TEXT, timestamp REAL)"
                     )
+                    # The MAC lives in its own row keyed to the generation it
+                    # covers, so an older schema reads the topology unchanged and
+                    # a restore can tell "no evidence was written" apart from
+                    # "the evidence does not match".
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS aegis_vault_attestation "
+                        "(key TEXT PRIMARY KEY, algorithm TEXT, mac TEXT, "
+                        "sha256 TEXT, timestamp REAL)"
+                    )
                     conn.execute("BEGIN IMMEDIATE")
                     conn.execute(
                         "REPLACE INTO aegis_vault (key, data, timestamp) "
                         "VALUES (?, ?, ?)",
                         ("topology_v3", encoded, time.time()),
+                    )
+                    conn.execute(
+                        "REPLACE INTO aegis_vault_attestation "
+                        "(key, algorithm, mac, sha256, timestamp) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            "topology_v3",
+                            _VAULT_MAC_ALGORITHM if mac else "",
+                            mac,
+                            hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+                            time.time(),
+                        ),
                     )
                     with MycelialNetwork._lock:
                         if (
@@ -3843,9 +4138,27 @@ class MycelialNetwork:
                         "SELECT data FROM aegis_vault WHERE key = ?",
                         ("topology_v3",),
                     ).fetchone()
+                    try:
+                        attestation_row = conn.execute(
+                            "SELECT algorithm, mac FROM aegis_vault_attestation "
+                            "WHERE key = ?",
+                            ("topology_v3",),
+                        ).fetchone()
+                    except sqlite3.Error:
+                        # Vault written before attestation existed.
+                        attestation_row = None
                 if not row:
                     raise ValueError("versioned topology generation is missing")
-                topology = cls._decode_vault_topology(json.loads(row[0]))
+                encoded = row[0]
+                if len(encoded) > _VAULT_MAX_ENCODED_BYTES:
+                    raise ValueError(
+                        "vault generation exceeds the restore size limit "
+                        f"({len(encoded)} > {_VAULT_MAX_ENCODED_BYTES} bytes)"
+                    )
+                attested = cls._verify_vault_attestation(
+                    encoded, attestation_row, base_dir=config.paths.base_dir
+                )
+                topology = cls._decode_vault_topology(json.loads(encoded))
 
                 with cls._lock:
                     instance = cls._instance
@@ -3901,6 +4214,8 @@ class MycelialNetwork:
                     instance._mapping_completed_at = time.time()
                     instance._mapping_last_error = None
                     instance._deferred_mapping_reason = None
+                    instance._restored_from_vault_at = time.time()
+                    instance._restored_generation_attested = attested
                     instance._publish_topology_read_models_locked()
                     object.__setattr__(instance, "_aegis_locked", True)
 
