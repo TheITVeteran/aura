@@ -6141,29 +6141,85 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS:
             return runtime_window
 
+    #: Characters and prefixes a value could use to impersonate contract
+    #: structure. Newlines create a sibling bullet; a leading "#" creates a
+    #: sibling section; a leading "-" or "*" creates a sibling constraint.
+    _CONTRACT_STRUCTURE_PREFIXES = ("-", "*", "#", ">", "•")
+
+    @staticmethod
+    def _contract_safe(value: Any, limit: int) -> str:
+        """Flatten a value so it cannot forge contract structure.
+
+        Line breaks become spaces, because a break is what turns a value into
+        a new bullet. Leading list/heading markers are stripped for the same
+        reason. Truncation happens last so the limit still holds.
+        """
+        text = str(value if value is not None else "")
+        if not text:
+            return ""
+        # Every flavour of line break, including the unicode separators a
+        # naive replace("\n", " ") leaves behind.
+        for breaker in ("\r\n", "\r", "\n", "\u2028", "\u2029", "\x0b", "\x0c", "\x85"):
+            text = text.replace(breaker, " ")
+        text = " ".join(text.split())
+        while text[:1] in InferenceGate._CONTRACT_STRUCTURE_PREFIXES:
+            text = text[1:].lstrip()
+        # Runs of '#' are heading-shaped even mid-line, and the surrounding
+        # prompt is markdown. A single '#' is left alone — "issue #12" is
+        # ordinary text, while '##' is only ever trying to be a section.
+        text = re.sub(r"#{2,}", "", text)
+        text = " ".join(text.split())
+        if not text:
+            return ""
+        return text[:limit]
+
     @staticmethod
     def _prompt_contract_block(context: dict[str, Any] | None) -> str:
-        """Render user-facing route contracts as prompt-visible constraints."""
+        """Render user-facing route contracts as prompt-visible constraints.
+
+        CP126 (critical): "Mind, runtime, style, and speech-frame values are
+        converted directly to strings and rendered under a system-level
+        response contract. Truncation does not prevent embedded newlines or
+        instructions, and no schema or trusted producer is required."
+
+        The rendering is ``- {item}`` under a ``## LIVE DESKTOP RESPONSE
+        CONTRACT`` heading, so a value carrying a newline became a NEW BULLET
+        in a system-level block — structurally indistinguishable from a
+        constraint this code wrote. Truncating at 900 characters bounds the
+        length of that forgery and nothing else.
+
+        Every interpolated value now goes through ``_contract_safe``, which
+        flattens the structure a value would need in order to impersonate
+        one. This is not a claim to have solved prompt injection: a value
+        can still say persuasive things. It can no longer say them *as a
+        system constraint*, which is the specific escalation here.
+        """
 
         if not isinstance(context, dict):
             return ""
 
         sections: list[str] = []
-        mind_contract = str(context.get("mind_context_contract") or "").strip()
+        mind_contract = InferenceGate._contract_safe(
+            context.get("mind_context_contract"), 900
+        )
         if mind_contract:
-            sections.append(f"Mind-context contract: {mind_contract[:900]}")
+            sections.append(f"Mind-context contract: {mind_contract}")
 
         live_mind_context = context.get("live_mind_context")
         if isinstance(live_mind_context, dict):
             derived = live_mind_context.get("derived_runtime_context")
             if isinstance(derived, dict):
-                prompt_block = str(derived.get("prompt_block") or "").strip()
+                prompt_block = InferenceGate._contract_safe(
+                    derived.get("prompt_block"), 1200
+                )
                 if prompt_block:
-                    sections.append(f"Derived runtime signals: {prompt_block[:1200]}")
+                    sections.append(f"Derived runtime signals: {prompt_block}")
 
-        style_contract = str(context.get("response_style_contract") or "").strip()
+        style_contract = InferenceGate._contract_safe(
+            context.get("response_style_contract"), 1400
+        )
         if style_contract:
-            sections.append(f"Response-style contract: {style_contract[:1400]}")
+            sections.append(f"Response-style contract: {style_contract}")
 
         speech_frame = context.get("live_speech_grounding_frame")
         if isinstance(speech_frame, dict):
@@ -6171,13 +6227,19 @@ class InferenceGate:
             for key, value in speech_frame.items():
                 if value in (None, "", [], {}):
                     continue
-                frame_parts.append(f"{key}={str(value)[:180]}")
+                safe_key = InferenceGate._contract_safe(key, 60)
+                safe_value = InferenceGate._contract_safe(value, 180)
+                if not safe_key or not safe_value:
+                    continue
+                frame_parts.append(f"{safe_key}={safe_value}")
                 if len(frame_parts) >= 8:
                     break
             if frame_parts:
                 sections.append("Speech grounding frame: " + " | ".join(frame_parts))
         elif speech_frame:
-            sections.append(f"Speech grounding frame: {str(speech_frame)[:900]}")
+            flattened = InferenceGate._contract_safe(speech_frame, 900)
+            if flattened:
+                sections.append(f"Speech grounding frame: {flattened}")
 
         if not sections:
             return ""
