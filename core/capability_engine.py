@@ -33,11 +33,26 @@ _VERIFIED_STANDING_AUTHORITY = object()
 
 try:
     from RestrictedPython import compile_restricted, safe_builtins, utility_builtins
+    from RestrictedPython.Guards import (
+        full_write_guard,
+        guarded_getitem,
+        safer_getattr,
+    )
     from RestrictedPython.PrintCollector import PrintCollector
 
     RESTRICTED_AVAILABLE = True
+    #: The guards RestrictedPython ships for the hooks its compiler emits.
+    #: The previous code passed raw getattr, a bare subscript lambda and an
+    #: identity write guard, which turns the rewrite into a no-op with extra
+    #: steps.
+    _RESTRICTED_GUARDS = {
+        "getattr": safer_getattr,
+        "getitem": guarded_getitem,
+        "write": full_write_guard,
+    }
 except ImportError:
     RESTRICTED_AVAILABLE = False
+    _RESTRICTED_GUARDS = {}
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
@@ -1033,43 +1048,92 @@ class WebClient:
 
 
 class Sandbox2:
-    """Secure sandbox for executing untrusted/forged code."""
+    """Kernel-boundary sandbox for executing untrusted/forged code.
+
+    CP126 (critical): "The RestrictedPython environment supplies raw getattr,
+    arbitrary item access, and an identity write guard, then invokes
+    generated code in-process with no OS isolation or resource boundary.
+    These guards defeat the claimed untrusted execution."
+
+    Every word of that was true. The three guards were::
+
+        "_getattr_": getattr,                       # raw attribute access
+        "_getitem_": lambda obj, key: obj[key],     # arbitrary items
+        "_write_": lambda obj: obj,                 # identity write guard
+
+    RestrictedPython rewrites attribute access to call ``_getattr_`` for the
+    express purpose of interposing a check. Passing the builtin means the
+    rewrite happens and then permits everything —
+    ``().__class__.__mro__[1].__subclasses__()`` reaches ``os`` with no
+    import statement. The identity ``_write_`` permits mutating any object
+    the code can name. RestrictedPython ships ``safer_getattr``,
+    ``guarded_getitem`` and ``full_write_guard`` for exactly this, and they
+    were not used.
+
+    There was also a second, larger hole. The engine built this only
+    ``if RESTRICTED_AVAILABLE``, and the call site reads
+    ``if is_forged and sandbox is not None`` — so on a host without
+    RestrictedPython installed (including this one) a forged skill ran with
+    no sandbox at all, while the log line above it said "Executing FORGED
+    skill in Sandbox 2.0". A missing sandbox library silently became no
+    sandbox.
+
+    So execution now goes through ``core.sandbox.untrusted_python``: a
+    Seatbelt/bwrap boundary with no network, no user-data reads, no exec,
+    writes confined to a scratch directory, rlimits, and — the part that
+    matters — a refusal when no boundary is available, instead of running
+    the code anyway. RestrictedPython, when installed, is kept as an
+    additional AST-level screen with its real guards.
+    """
 
     def __init__(self, logger: Any):
         self.logger = logger
+        self.restricted_available = RESTRICTED_AVAILABLE
+        self.safe_globals: dict[str, Any] = {}
+        if RESTRICTED_AVAILABLE:
+            self.builtins = safe_builtins.copy()
+            self.builtins.update(utility_builtins)
+            self.builtins["_print_"] = PrintCollector
+            self.safe_globals = {
+                "__builtins__": self.builtins,
+                "__name__": "aura_sandbox",
+                "_getattr_": _RESTRICTED_GUARDS["getattr"],
+                "_getitem_": _RESTRICTED_GUARDS["getitem"],
+                "_write_": _RESTRICTED_GUARDS["write"],
+            }
 
-        # RestrictedPython requires safe builtins to be under '__builtins__'
-        self.builtins = safe_builtins.copy()
-        self.builtins.update(utility_builtins)
-        self.builtins["_print_"] = PrintCollector
-
-        self.safe_globals = {
-            "__builtins__": self.builtins,
-            "__name__": "aura_sandbox",
-            "_getattr_": getattr,
-            "_getitem_": lambda obj, key: obj[key],
-            "_write_": lambda obj: obj,
-        }
+    def screen(self, code: str) -> None:
+        """Optional AST-level screen. Raises when the code cannot compile."""
+        if not self.restricted_available:
+            return
+        compile_restricted(code, filename="<aura_skill>", mode="exec")
 
     def execute(self, code: str, func_name: str, params: dict[str, Any]) -> Any:
-        if not RESTRICTED_AVAILABLE:
-            raise ImportError("RestrictedPython not installed. Cannot run sandbox.")
+        from core.sandbox.untrusted_python import call_untrusted_function
 
         try:
-            byte_code = compile_restricted(code, filename="<aura_skill>", mode="exec")
-            locs: dict[str, Any] = {}
-            get_dynamic_execution_gateway().execute_code_object(
-                byte_code,
-                globals_dict=self.safe_globals,
-                locals_dict=locs,
+            # Cheap first filter when available; the kernel boundary below is
+            # what actually holds when this is fooled or absent.
+            self.screen(code)
+
+            outcome = call_untrusted_function(
+                code,
+                func_name,
+                [{"args": [], "kwargs": dict(params or {})}],
                 source="capability_engine.sandbox2",
             )
-
-            if func_name not in locs:
-                raise NameError(f"Function {func_name} not found in forged code.")
-
-            return locs[func_name](**params)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            if outcome.status == "no_boundary":
+                raise RuntimeError(
+                    "refusing to execute forged code: no OS sandbox available "
+                    f"({outcome.error})"
+                )
+            if outcome.status != "ok":
+                raise RuntimeError(
+                    f"forged code did not complete ({outcome.status}): "
+                    f"{outcome.error or outcome.stderr}"
+                )
+            return outcome.results[0] if outcome.results else None
+        except (RuntimeError, AttributeError, TypeError, ValueError, SyntaxError) as e:
             _record_capability_degradation(
                 e,
                 action="blocked forged skill execution after sandbox failure",
@@ -1189,7 +1253,11 @@ class CapabilityEngine(AuraBaseModule):
         # Dependencies
         self.temporal = getattr(orchestrator, "temporal", None)
         self.rosetta_stone = None
-        self.sandbox = Sandbox2(self.logger) if RESTRICTED_AVAILABLE else None
+        # Always constructed. The call site reads "if is_forged and sandbox is
+        # not None", so gating this on RESTRICTED_AVAILABLE meant a host
+        # without that package ran forged skills with no sandbox at all while
+        # logging that it was sandboxing them.
+        self.sandbox = Sandbox2(self.logger)
         self._load_dependencies()
 
         self.reload_skills()
