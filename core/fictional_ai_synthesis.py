@@ -50,7 +50,6 @@ import logging
 import math
 import os
 import re
-import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
@@ -61,6 +60,7 @@ from typing import Any
 from core.runtime import resource_psutil as psutil
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_lock
 from core.service_names import ServiceNames
 
 logger = logging.getLogger("Aura.FictionalSynthesis")
@@ -145,6 +145,24 @@ class ProactiveAnticipationEngine:
     MAX_DAILY_INITIATIONS = 20         # Daily cap to prevent annoyance
     WATCH_DIRS: list[str] = []         # Directories to watch for file changes
 
+    # CP126: "JARVIS state is unsynchronized and unresolved topics are
+    # unbounded. Concurrent callers mutate rate and topic structures without
+    # a lock, and unresolved topics can grow without retention or size
+    # limits."
+    #
+    # Both were true. self._lock was constructed and never acquired, and a
+    # topic whose reminder had fired was never removed — so the list only
+    # grew, and _check_unresolved_topics rescanned every dead entry on every
+    # cycle for the life of the process.
+    #
+    # The retention window is derived from what the reminder actually says.
+    # It fires after 24h with the words "you mentioned something yesterday";
+    # past 48h that sentence is false, so the entry can no longer produce a
+    # truthful reminder and is dead weight rather than pending work.
+    UNRESOLVED_TOPIC_RETENTION_S = 48 * 3600
+    MAX_UNRESOLVED_TOPICS = 200
+    MAX_INTEREST_KEYWORDS = 50
+
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
         self._last_initiation_time: float = 0.0
@@ -153,15 +171,24 @@ class ProactiveAnticipationEngine:
         self._running = False
         self._pending_initiations: asyncio.Queue = None
         self._system_baseline: dict[str, float] = {}
-        self._unresolved_topics: list[dict] = []
-        self._user_interest_keywords: list[str] = []
+        self._unresolved_topics: deque = deque(maxlen=self.MAX_UNRESOLVED_TOPICS)
+        self._user_interest_keywords: deque = deque(maxlen=self.MAX_INTEREST_KEYWORDS)
         self._last_user_activity: float = time.time()
         self._conversation_patterns: deque = deque(maxlen=100)
-        self._lock = threading.Lock()
+        # Ranked so lockdep can see it. A lock this module constructs and
+        # never acquires — which is what was here — is indistinguishable
+        # from no lock at all, except that it reads as protection.
+        self._lock = checked_lock("jarvis.proactive_state", rank=LockRank.LEAF)
         self._cycle_failure_count = 0
         logger.info("🔭 ProactiveAnticipationEngine initialized (JARVIS pattern)")
 
     def _reset_daily_count_if_needed(self):
+        """Caller must hold ``self._lock``.
+
+        Read-then-write on the date and the counter: two turns landing on
+        the stroke of midnight could both see a stale date and both reset,
+        letting the day's initiation budget be spent twice.
+        """
         today = time.strftime("%Y-%m-%d")
         if today != self._daily_reset_date:
             self._daily_initiation_count = 0
@@ -169,33 +196,55 @@ class ProactiveAnticipationEngine:
 
     def record_activity(self, user_input: str = "", response: str = ""):
         """Call after every conversation turn."""
-        self._last_user_activity = time.time()
-        self._reset_daily_count_if_needed()
-
-        if user_input:
-            self._conversation_patterns.append({
-                "input": user_input[:200],
-                "timestamp": time.time(),
-                "resolved": False,
-            })
-
         unresolved_markers = [
             "later", "tomorrow", "remind me", "don't forget", "we should",
             "i'll", "let me think", "next time", "to be continued"
         ]
-        if response and any(m in response.lower() for m in unresolved_markers):
-            self._unresolved_topics.append({
-                "topic": user_input[:200],
-                "timestamp": time.time(),
-                "reminder_fired": False,
-            })
+        is_unresolved = bool(response) and any(
+            m in response.lower() for m in unresolved_markers
+        )
+        now = time.time()
+        with self._lock:
+            self._last_user_activity = now
+            self._reset_daily_count_if_needed()
+
+            if user_input:
+                self._conversation_patterns.append({
+                    "input": user_input[:200],
+                    "timestamp": now,
+                    "resolved": False,
+                })
+
+            if is_unresolved:
+                self._unresolved_topics.append({
+                    "topic": user_input[:200],
+                    "timestamp": now,
+                    "reminder_fired": False,
+                })
+                self._prune_unresolved_topics(now)
+
+    def _prune_unresolved_topics(self, now: float) -> None:
+        """Caller must hold ``self._lock``. Drop spent and expired entries."""
+        live = [
+            topic for topic in self._unresolved_topics
+            if not topic.get("reminder_fired")
+            and (now - float(topic.get("timestamp", 0.0))) <= self.UNRESOLVED_TOPIC_RETENTION_S
+        ]
+        if len(live) != len(self._unresolved_topics):
+            self._unresolved_topics.clear()
+            self._unresolved_topics.extend(live)
 
     def record_interest(self, keywords: list[str]):
         """Call when user demonstrates interest in topics."""
-        for kw in keywords:
-            if kw not in self._user_interest_keywords:
-                self._user_interest_keywords.append(kw)
-        self._user_interest_keywords = self._user_interest_keywords[-50:]
+        with self._lock:
+            existing = set(self._user_interest_keywords)
+            for kw in keywords:
+                if kw not in existing:
+                    # deque(maxlen=…) evicts its own oldest; the previous
+                    # rebinding slice was a race, since a concurrent reader
+                    # kept a list that had silently stopped being the state.
+                    self._user_interest_keywords.append(kw)
+                    existing.add(kw)
 
     async def _sample_system_state(self) -> dict[str, float]:
         """Get current system metrics."""
@@ -218,18 +267,24 @@ class ProactiveAnticipationEngine:
             return {}
 
     def _can_initiate(self) -> bool:
-        """Check rate limits before firing an initiation."""
-        self._reset_daily_count_if_needed()
-        now = time.time()
-        idle_seconds = now - self._last_user_activity
+        """Check rate limits before firing an initiation.
 
-        if idle_seconds < 30:
-            return False  # User is active — don't interrupt
-        if now - self._last_initiation_time < self.MIN_INITIATION_INTERVAL_S:
-            return False
-        if self._daily_initiation_count >= self.MAX_DAILY_INITIATIONS:
-            return False
-        return True
+        Held under the lock end to end. Checking the budget and spending it
+        in separate critical sections is the classic way a "max 20 per day"
+        cap delivers 21 — two concurrent callers both read 19.
+        """
+        with self._lock:
+            self._reset_daily_count_if_needed()
+            now = time.time()
+            idle_seconds = now - self._last_user_activity
+
+            if idle_seconds < 30:
+                return False  # User is active — don't interrupt
+            if now - self._last_initiation_time < self.MIN_INITIATION_INTERVAL_S:
+                return False
+            if self._daily_initiation_count >= self.MAX_DAILY_INITIATIONS:
+                return False
+            return True
 
     async def _fire_initiation(self, content: str, priority: str = "low"):
         """Fire a proactive initiation through the event bus."""
@@ -316,20 +371,35 @@ class ProactiveAnticipationEngine:
             )
 
     async def _check_unresolved_topics(self):
-        """Remind user of things they said they'd return to."""
+        """Remind user of things they said they'd return to.
+
+        Claims one topic under the lock, then awaits outside it. Iterating
+        the live structure across an await let record_activity() append
+        mid-iteration; and marking the topic fired only after the await
+        meant a second cycle entering during the await picked the same
+        topic and reminded twice.
+        """
         now = time.time()
-        for topic in self._unresolved_topics:
-            if topic.get("reminder_fired"):
-                continue
-            age_hours = (now - topic["timestamp"]) / 3600
-            if age_hours > 24:
-                topic["reminder_fired"] = True
-                await self._fire_initiation(
-                    f"You mentioned something yesterday that we didn't finish — "
-                    f"\"{topic['topic'][:80]}\" — want to pick that up?",
-                    priority="low"
-                )
-                break
+        claimed = None
+        with self._lock:
+            self._prune_unresolved_topics(now)
+            for topic in self._unresolved_topics:
+                if topic.get("reminder_fired"):
+                    continue
+                if (now - float(topic.get("timestamp", 0.0))) / 3600 > 24:
+                    # Claim it before releasing the lock, not after the await.
+                    topic["reminder_fired"] = True
+                    claimed = topic
+                    break
+        if claimed is None:
+            return
+        await self._fire_initiation(
+            f"You mentioned something yesterday that we didn't finish — "
+            f"\"{claimed['topic'][:80]}\" — want to pick that up?",
+            priority="low"
+        )
+        with self._lock:
+            self._prune_unresolved_topics(time.time())
 
     async def _check_pending_agency_goals(self):
         """Surface goals the agency engine has queued but not acted on."""
