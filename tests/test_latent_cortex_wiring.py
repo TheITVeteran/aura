@@ -3012,7 +3012,11 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
         )
     )
 
-    assert result == {"ok": False, "reason": "profile_observed"}
+    assert result["ok"] is False
+    assert result["reason"] == "profile_observed"
+    # CP126 5879d2b5: a refusal now carries a bounded receipt tying
+    # it to this call, so exact-dict equality is no longer the contract.
+    assert result["refusal_receipt"]["reason"] == result["reason"]
     assert captured["config"]["decode_max_tokens"] == 256
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v1"
     assert captured["config"]["verifier_probe_max_tokens"] == 24
@@ -3069,7 +3073,11 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
             foreground_request=True,
         )
     )
-    assert result == {"ok": False, "reason": "profile_observed"}
+    assert result["ok"] is False
+    assert result["reason"] == "profile_observed"
+    # CP126 5879d2b5: a refusal now carries a bounded receipt tying
+    # it to this call, so exact-dict equality is no longer the contract.
+    assert result["refusal_receipt"]["reason"] == result["reason"]
     assert 320 <= captured["config"]["decode_max_tokens"] <= 384
     # Compound answers decode near-greedy for coverage determinism — safe
     # now that the repetition penalty, EOS floor, and newline discipline
@@ -4253,7 +4261,11 @@ def test_service_rejects_malformed_inputs_before_model_client_lookup(
     question = kwargs.pop("question", "q")
     result = asyncio.run(svc.deep_reason(question, **kwargs))
 
-    assert result == {"ok": False, "reason": expected_reason}
+    assert result["ok"] is False
+    assert result["reason"] == expected_reason
+    # CP126 5879d2b5: a refusal now carries a bounded receipt tying
+    # it to this call, so exact-dict equality is no longer the contract.
+    assert result["refusal_receipt"]["reason"] == result["reason"]
 
 
 def test_service_propagates_background_lane_priority(monkeypatch):
@@ -4276,7 +4288,11 @@ def test_service_propagates_background_lane_priority(monkeypatch):
 
     result = asyncio.run(svc.deep_reason("idle thought", foreground_request=False))
 
-    assert result == {"ok": False, "reason": "generation_active"}
+    assert result["ok"] is False
+    assert result["reason"] == "generation_active"
+    # CP126 5879d2b5: a refusal now carries a bounded receipt tying
+    # it to this call, so exact-dict equality is no longer the contract.
+    assert result["refusal_receipt"]["reason"] == result["reason"]
     assert captured["foreground_request"] is False
 
 
@@ -4896,7 +4912,12 @@ def test_successful_episode_queues_facet_judgments_for_grading(monkeypatch):
     by_verifier = {row["verifier"]: row for row in recorded}
     explain = by_verifier["latent_facet_explain"]
     assert explain["hard_pass"] is True and explain["score"] == 1.0
-    assert explain["checked"] is True
+    # CP126 94ecfee0: this is the WORKER's assertion about its own output, so
+    # it enters the Foundry ungraded. An operator grading it against the
+    # excerpt is what makes it checked — recording it as checked gave a
+    # self-report the standing of a verified grade.
+    assert explain["checked"] is False
+    assert explain["meta"]["source"] == "worker_self_assertion"
     assert "lease ordering" in explain["meta"]["excerpt"]
     compare = by_verifier["latent_facet_compare"]
     assert compare["hard_pass"] is False and compare["score"] == 0.0

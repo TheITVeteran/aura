@@ -3301,10 +3301,45 @@ class LatentCortexService:
             ],
         }
 
-    def _record_failure(self, reason: str) -> dict[str, Any]:
+    def _record_failure(
+        self, reason: str, *, stage: str = "", evidence: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Refuse with a receipt tying the refusal to THIS call.
+
+        CP126 5879d2b5: the module's contract promises a refusal carries
+        bounded evidence, and this returned only ok and reason while mutating
+        shared counters. Every disabled, invalid, busy, missing-model and
+        client failure was therefore indistinguishable from every other
+        instance of itself — no episode id, no stage, no timestamp, nothing
+        connecting the refusal to the call that caused it. A failure lane that
+        cannot be attributed is a failure lane that cannot be debugged, which
+        is why the same refusals kept being re-diagnosed from scratch.
+        """
         self._failure_streak += 1
         self._last_refusal = str(reason or "unknown")
-        return {"ok": False, "reason": self._last_refusal}
+        receipt: dict[str, Any] = {
+            "schema": "aura.latent_cortex.refusal_receipt.v1",
+            "refusal_id": f"refusal-{uuid.uuid4().hex[:12]}",
+            "reason": self._last_refusal,
+            # The reason's first segment is its class; the rest is detail.
+            "reason_class": self._last_refusal.split(":", 1)[0],
+            "stage": str(stage or "pre_dispatch"),
+            "at": time.time(),
+            "failure_streak": self._failure_streak,
+            "ok_episodes": self._ok_episodes,
+            "last_success_at": self._last_success_at,
+        }
+        if isinstance(evidence, dict):
+            # Bounded: a refusal receipt must not become a payload.
+            for index, (key, value) in enumerate(evidence.items()):
+                if index >= 24:
+                    receipt["evidence_truncated"] = True
+                    break
+                receipt[str(key)[:64]] = (
+                    value if isinstance(value, (int, float, bool)) or value is None
+                    else str(value)[:400]
+                )
+        return {"ok": False, "reason": self._last_refusal, "refusal_receipt": receipt}
 
     @staticmethod
     def _visible_objective(question: str | None, messages: list | None) -> str:
@@ -3376,15 +3411,33 @@ class LatentCortexService:
                 facet = row.get("facet") if isinstance(row, dict) else None
                 if not isinstance(facet, str) or not facet:
                     continue
-                satisfied = bool(row.get("satisfied"))
+                # CP126 94ecfee0: bool() on a worker-supplied field turns any
+                # non-empty string into True — including the string "false".
+                # A facet the worker reported as unsatisfied could therefore be
+                # recorded as a hard pass, and these verdicts train the
+                # Foundry's reliability statistics.
+                raw_satisfied = row.get("satisfied")
+                if type(raw_satisfied) is not bool:
+                    # Not a verdict. Recording it either way would invent one.
+                    continue
+                satisfied = raw_satisfied
                 foundry.record_verdict(
                     verifier=f"latent_facet_{facet}",
                     domain=str(domain),
                     hard_pass=satisfied,
                     score=1.0 if satisfied else 0.0,
-                    checked=True,
+                    # CP126 94ecfee0: this is the WORKER's assertion about its
+                    # own output, not an independent check. Recording it as
+                    # checked=True let a self-report enter the Foundry with the
+                    # standing of a verified grade; an operator grading against
+                    # the excerpt is what makes it checked.
+                    checked=False,
                     task_key=task_key,
-                    meta={"excerpt": str(row.get("excerpt") or "")[:200]},
+                    meta={
+                        "excerpt": str(row.get("excerpt") or "")[:200],
+                        "source": "worker_self_assertion",
+                        "independently_checked": False,
+                    },
                 )
         except (
             ImportError,
@@ -5078,7 +5131,23 @@ class LatentCortexService:
             )
         else:
             self._last_failure_receipt = result_receipt
-            self._record_failure(str(result.get("reason") or "unknown"))
+            # CP126 5879d2b5: the refusal receipt was BUILT here and then
+            # thrown away — the raw client dict was returned, so a client
+            # failure reached the caller with no stage, no timing and nothing
+            # tying it to this call. Attach it.
+            refusal = self._record_failure(
+                str(result.get("reason") or "unknown"),
+                stage=str(
+                    result_receipt.get("last_stage")
+                    or self._last_progress.get("stage")
+                    or "client"
+                ),
+                evidence={
+                    "input_token_count": result_receipt.get("input_token_count"),
+                    "elapsed_s": round(elapsed, 3),
+                },
+            )
+            result.setdefault("refusal_receipt", refusal["refusal_receipt"])
             logger.info(
                 "🧠 Latent episode refused/failed: %s (%.1fs) stage=%s "
                 "input_tokens=%s timings=%s progress=%s",
