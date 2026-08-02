@@ -219,6 +219,31 @@ _MAX_RECEIPT_KEYS = 512
 _MAX_RECEIPT_ITEMS = 200_000
 _MAX_RECEIPT_DEPTH = 24
 
+#: Request schema bounds (CP126 1a992727). An oversized or malformed request
+#: reaches IPC and the calibration stores that learn from it, so it is refused
+#: at the door rather than truncated somewhere downstream.
+_MAX_QUESTION_CHARS = 200_000
+_MAX_MESSAGES = 512
+_MAX_MESSAGES_CHARS = 400_000
+_MAX_DOMAIN_CHARS = 64
+_ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
+_ALLOWED_MESSAGE_KEYS = frozenset({"role", "content", "name", "tool_call_id"})
+
+#: The only prompt-shape fields this routing decision examines (CP126
+#: fc2f6c87). Anything else a caller supplies is dropped and named in the
+#: receipt rather than copied into an auditable decision.
+_PROMPT_SHAPE_KEYS = frozenset({
+    "question_parts",
+    "explicit_question_marks",
+    "question_like_lines",
+    "connector_parts",
+    "repeated_clause_parts",
+    "numbered_parts",
+    "imperative_parts",
+    "prefers_extended_answer",
+    "requires_single_reply_coverage",
+})
+
 _UNKNOWN_BODY_PRESSURE = 0.6
 
 
@@ -3178,8 +3203,16 @@ class LatentCortexService:
     ) -> dict[str, Any]:
         """Return a deterministic, auditable decision for live latent routing."""
 
-        shape = dict(prompt_shape or {})
+        # CP126 fc2f6c87: the ENTIRE caller-supplied dictionary was copied into
+        # the returned receipt, so arbitrary keys and oversized nested values
+        # travelled into an auditable routing decision — and supplied counts
+        # could only ever RAISE the analyzed ones, which makes the caller's
+        # claim authoritative over the measurement. A closed schema keeps the
+        # receipt describing what this method actually examined.
         analyzed_shape = analyze_prompt_shape(visible_objective).to_dict()
+        supplied_shape = prompt_shape if isinstance(prompt_shape, dict) else {}
+        shape: dict[str, Any] = {}
+        rejected_shape_keys = sorted(set(supplied_shape) - _PROMPT_SHAPE_KEYS)[:8]
         for key in (
             "question_parts",
             "explicit_question_marks",
@@ -3189,11 +3222,13 @@ class LatentCortexService:
             "numbered_parts",
             "imperative_parts",
         ):
-            supplied = shape.get(key)
-            supplied = supplied if type(supplied) is int else 0
+            supplied = supplied_shape.get(key)
+            # Bounded as well as typed: a caller cannot inflate a routing
+            # signal by declaring a huge count.
+            supplied = supplied if type(supplied) is int and 0 <= supplied <= 512 else 0
             shape[key] = max(supplied, int(analyzed_shape.get(key) or 0))
         for key in ("prefers_extended_answer", "requires_single_reply_coverage"):
-            shape[key] = bool(shape.get(key) or analyzed_shape.get(key))
+            shape[key] = bool(supplied_shape.get(key) or analyzed_shape.get(key))
         question_parts = shape.get("question_parts", 0)
         question_parts = question_parts if type(question_parts) is int else 0
         extended = bool(shape.get("prefers_extended_answer"))
@@ -3242,8 +3277,23 @@ class LatentCortexService:
             "latent_cortex_selection_reason": reason,
             "latent_cortex_depth_worthy": depth_worthy,
             "latent_cortex_prompt_shape": shape,
+            # CP126 fc2f6c87: what the caller supplied that this decision did
+            # NOT examine. Dropped rather than copied into an auditable
+            # receipt, and named so the drop is visible.
+            "latent_cortex_prompt_shape_rejected_keys": rejected_shape_keys,
             "stakes": round(max(0.55, depth_signal - 0.05), 3),
             "uncertainty": round(depth_signal, 3),
+            # CP126 0eef80b2: these come from PROMPT SHAPE — part counts,
+            # extended-answer hints, an explicit request — not from memory,
+            # body, goals, Will, risk, or calibrated uncertainty. Prompt
+            # length and formatting are a routing heuristic, and calling the
+            # outputs "stakes" and "uncertainty" borrows the vocabulary of
+            # epistemic and consequence signals they are not. Stated here so a
+            # consumer treats them as a routing hint rather than evidence.
+            "signal_basis": "prompt_shape_heuristic",
+            "signal_sources": ["prompt_text_shape"],
+            "calibrated_uncertainty": False,
+            "consequence_evidence": False,
         }
 
     @staticmethod
@@ -3300,6 +3350,42 @@ class LatentCortexService:
                 "same-model vanilla control on a held-out set",
             ],
         }
+
+    @staticmethod
+    def _request_schema_error(
+        question: str | None, messages: list | None, domain: str
+    ) -> str:
+        """The first schema violation in this request, or "" (CP126 1a992727)."""
+        if isinstance(question, str) and len(question) > _MAX_QUESTION_CHARS:
+            return f"question_too_large:{len(question)}"
+        if not isinstance(domain, str) or not domain.strip():
+            return "invalid_domain"
+        if len(domain) > _MAX_DOMAIN_CHARS or any(ord(ch) < 32 for ch in domain):
+            return "invalid_domain"
+        if messages is None:
+            return ""
+        if len(messages) > _MAX_MESSAGES:
+            return f"too_many_messages:{len(messages)}"
+        total_chars = 0
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                return f"message_{index}_not_mapping"
+            unknown = set(message) - _ALLOWED_MESSAGE_KEYS
+            if unknown:
+                # Unknown fields are refused rather than ignored: a field this
+                # layer does not understand is one it cannot bound, and it
+                # still reaches the worker.
+                return f"message_{index}_unknown_fields:{','.join(sorted(unknown))[:80]}"
+            role = message.get("role")
+            if not isinstance(role, str) or role not in _ALLOWED_MESSAGE_ROLES:
+                return f"message_{index}_invalid_role"
+            content = message.get("content")
+            if not isinstance(content, str):
+                return f"message_{index}_invalid_content"
+            total_chars += len(content)
+            if total_chars > _MAX_MESSAGES_CHARS:
+                return f"messages_too_large:{total_chars}"
+        return ""
 
     def _record_failure(
         self, reason: str, *, stage: str = "", evidence: dict[str, Any] | None = None
@@ -3858,6 +3944,16 @@ class LatentCortexService:
             return self._record_failure("invalid_messages")
         if not (isinstance(question, str) and question.strip()) and not messages:
             return self._record_failure("empty_question")
+        # CP126 1a992727: type checks are not a schema. Nothing bounded the
+        # text or the list, validated message roles and content shapes,
+        # rejected unknown message fields, or constrained the domain — so an
+        # oversized or malformed request went straight into IPC and into the
+        # downstream calibration stores that learn from it. A store poisoned
+        # by one malformed request keeps mis-scoring long after the request
+        # is gone.
+        schema_error = self._request_schema_error(question, messages, domain)
+        if schema_error:
+            return self._record_failure(schema_error, stage="request_schema")
         if config_overrides is not None and not isinstance(config_overrides, dict):
             return self._record_failure("invalid_config_overrides")
         if runtime_controls is not None and not isinstance(runtime_controls, dict):
