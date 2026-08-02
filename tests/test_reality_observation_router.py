@@ -18,6 +18,7 @@ from core.reality_reach.contracts import (
     NumericDomain,
     RealityLayer,
 )
+from core.reality_reach.digital_twin import RealityDigitalTwinGraph
 from core.reality_reach.historian import HistorianCorruptionError, RealityHistorian
 from core.reality_reach.live import ChannelReading, ReadingStatus, RealityReachService
 from core.reality_reach.observation_router import (
@@ -130,6 +131,13 @@ def _accepting_cognition(cognitive: list[tuple[tuple, dict]]) -> SimpleNamespace
         return {"receipt_id": f"advanced.receipt.{len(cognitive)}"}
 
     return SimpleNamespace(observe_state=_observe)
+
+
+def _digital_twin(tmp_path, *, name: str = "twin.sqlite3") -> RealityDigitalTwinGraph:
+    return RealityDigitalTwinGraph(
+        tmp_path / name,
+        session_id=f"test.router.{name.removesuffix('.sqlite3')}",
+    )
 
 
 @pytest.mark.asyncio
@@ -493,10 +501,12 @@ async def test_durable_outbox_restores_cognitive_delivery_after_router_restart(
         raising=False,
     )
     path = tmp_path / "history.sqlite3"
+    digital_twin = _digital_twin(tmp_path)
     first_historian = RealityHistorian(path)
     first_router = RealityObservationRouter(
         RealityReachService(),
         historian=first_historian,
+        digital_twin=digital_twin,
     )
     queued = await first_router.submit(
         _declaration("test.restart_delivery"),
@@ -510,6 +520,7 @@ async def test_durable_outbox_restores_cognitive_delivery_after_router_restart(
     restored_router = RealityObservationRouter(
         RealityReachService(),
         historian=restored_historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
         max_delivery_rate_hz=100.0,
     )
@@ -556,9 +567,11 @@ async def test_failed_cognitive_delivery_retries_durably_after_restart(
         raising=False,
     )
     first_historian = RealityHistorian(path, clock=lambda: clock["value"])
+    digital_twin = _digital_twin(tmp_path)
     first_router = RealityObservationRouter(
         RealityReachService(),
         historian=first_historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
     )
     queued = await first_router.submit(
@@ -585,6 +598,7 @@ async def test_failed_cognitive_delivery_retries_durably_after_restart(
     restored_router = RealityObservationRouter(
         RealityReachService(),
         historian=restored_historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
     )
     await restored_router.start()
@@ -618,9 +632,11 @@ async def test_historian_quality_and_order_evidence_reach_both_cognitive_sinks(
         raising=False,
     )
     historian = RealityHistorian(tmp_path / "history.sqlite3")
+    digital_twin = _digital_twin(tmp_path)
     router = RealityObservationRouter(
         RealityReachService(),
         historian=historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
         max_delivery_rate_hz=100.0,
     )
@@ -676,9 +692,11 @@ async def test_rejected_sink_receipt_prevents_false_delivery_completion(
         raising=False,
     )
     historian = RealityHistorian(tmp_path / "history.sqlite3")
+    digital_twin = _digital_twin(tmp_path)
     router = RealityObservationRouter(
         RealityReachService(),
         historian=historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
     )
     await router.start()
@@ -718,9 +736,11 @@ async def test_historian_database_failure_is_supervised_and_recovers(
         raising=False,
     )
     historian = RealityHistorian(tmp_path / "history.sqlite3")
+    digital_twin = _digital_twin(tmp_path)
     router = RealityObservationRouter(
         RealityReachService(),
         historian=historian,
+        digital_twin=digital_twin,
         poll_interval_s=60.0,
     )
     queued = await router.submit(
@@ -758,6 +778,258 @@ async def test_historian_database_failure_is_supervised_and_recovers(
     assert len(events) == 1
     assert len(cognitive) == 1
     assert historian.status()["delivery_counts"] == {"delivered": 1}
+
+
+@pytest.mark.asyncio
+async def test_twin_delivery_fence_is_anchored_in_authoritative_observation_columns(
+    tmp_path,
+) -> None:
+    path = tmp_path / "history.sqlite3"
+    historian = RealityHistorian(path)
+    digital_twin = _digital_twin(tmp_path)
+    router = RealityObservationRouter(
+        RealityReachService(),
+        historian=historian,
+        digital_twin=digital_twin,
+    )
+    receipt = await router.submit(
+        _declaration("test.authoritative_twin_fence"),
+        _reading("test.authoritative_twin_fence", 42.0),
+        adapter_id="test.authoritative_twin_adapter",
+    )
+    assert receipt.accepted is True
+
+    connection = sqlite3.connect(path)
+    try:
+        row = connection.execute(
+            "SELECT d.payload_json, d.sink_states_json, o.twin_id, "
+            "o.attachment_generation, o.attachment_bound_at_ns, o.topology_revision "
+            "FROM reality_deliveries AS d JOIN reality_observations AS o "
+            "ON o.record_id=d.record_id WHERE d.observation_id=?",
+            (receipt.observation_id,),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(str(row[0]))
+        sink_envelope = json.loads(str(row[1]))
+        assert row[2] == payload["twin_binding"]["twin_id"]
+        assert row[3] == payload["twin_binding"]["attachment_generation"]
+        assert row[4] == payload["twin_binding"]["attachment_bound_at_ns"]
+        assert row[5] == payload["twin_binding"]["topology_revision"]
+
+        payload["twin_binding"]["attachment_generation"] += 1
+        twin_evidence = dict(payload["twin_binding"])
+        twin_evidence.pop("binding_sha256")
+        payload["twin_binding"]["binding_sha256"] = str(
+            sha256_hex(
+                canonical_json(
+                    {
+                        "observation_id": receipt.observation_id,
+                        "binding": twin_evidence,
+                    }
+                )
+            )
+        )
+        base_payload = dict(payload)
+        base_payload.pop("historian")
+        historian_evidence = dict(payload["historian"])
+        historian_evidence.pop("binding_sha256")
+        payload["historian"]["binding_sha256"] = str(
+            sha256_hex(
+                canonical_json(
+                    {
+                        "observation": base_payload,
+                        "historian": historian_evidence,
+                    }
+                )
+            )
+        )
+        sink_envelope["payload_sha256"] = str(
+            sha256_hex(canonical_json(payload))
+        )
+        connection.execute(
+            "UPDATE reality_deliveries SET payload_json=?, sink_states_json=? "
+            "WHERE observation_id=?",
+            (
+                canonical_json(payload).decode("utf-8"),
+                canonical_json(sink_envelope).decode("utf-8"),
+                receipt.observation_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(HistorianCorruptionError, match="authoritative record"):
+        await historian.claim_delivery(receipt.observation_id)
+    assert historian.status()["delivery_counts"] == {"quarantined": 1}
+
+
+@pytest.mark.asyncio
+async def test_required_sink_registry_keeps_boot_degradation_unready_and_durable(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    services = {
+        "advanced_cognition": _accepting_cognition([]),
+    }
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+        raising=False,
+    )
+    historian = RealityHistorian(tmp_path / "history.sqlite3")
+    router = RealityObservationRouter(
+        RealityReachService(),
+        historian=historian,
+        poll_interval_s=60.0,
+    )
+    await router.start()
+    try:
+        status = router.status()
+        assert router.is_alive() is True
+        assert router.is_ready() is False
+        assert status["required_sinks"] == [
+            "digital_twin",
+            "multimodal",
+            "advanced_cognition",
+        ]
+        assert status["required_sink_registry"]["digital_twin"] == {
+            "dependency_key": "reality_digital_twin",
+            "callable_attribute": "observe_observation",
+            "configured": False,
+            "ready": False,
+            "reason": "dependency_unavailable",
+        }
+        assert status["required_sink_registry"]["multimodal"]["ready"] is False
+        receipt = await router.submit(
+            _declaration("test.boot_degraded"),
+            _reading("test.boot_degraded", 37.0),
+            adapter_id="test.boot_degraded_adapter",
+        )
+        assert receipt.accepted is True
+        await asyncio.sleep(0.02)
+    finally:
+        await router.stop()
+
+    sink_status = historian.status()["delivery_sink_status"]
+    assert sink_status["digital_twin"]["pending"] == 1
+    assert sink_status["multimodal"]["pending"] == 1
+    assert sink_status["advanced_cognition"]["pending"] == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_head_backfill_is_receipted_idempotent_and_restart_safe(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    services = {
+        "multimodal_synchronizer": _accepting_synchronizer([]),
+        "advanced_cognition": _accepting_cognition([]),
+    }
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+        raising=False,
+    )
+    history_path = tmp_path / "history.sqlite3"
+    legacy = RealityHistorian(history_path)
+    declaration = _declaration("test.legacy_head")
+    reading = _reading("test.legacy_head", 63.0, captured_at_ns=12_345)
+    admitted = await legacy.admit(
+        declaration,
+        reading,
+        adapter_id="test.legacy_head_adapter",
+    )
+    assert admitted.accepted is True
+
+    connection = sqlite3.connect(history_path)
+    try:
+        connection.execute("DROP TABLE reality_backfill_receipts")
+        for column in (
+            "topology_revision",
+            "attachment_bound_at_ns",
+            "attachment_generation",
+            "twin_id",
+        ):
+            connection.execute(
+                f"ALTER TABLE reality_observations DROP COLUMN {column}"
+            )
+        connection.execute(
+            "UPDATE reality_historian_meta SET value='1' WHERE key='schema_version'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    historian = RealityHistorian(history_path)
+    assert historian.status()["schema_version"] == 2
+    digital_twin = _digital_twin(tmp_path)
+    original_record_receipt = historian.record_backfill_receipt
+
+    async def _fail_receipt_once(**_kwargs):
+        raise HistorianCorruptionError("synthetic receipt interruption")
+
+    monkeypatch.setattr(historian, "record_backfill_receipt", _fail_receipt_once)
+    interrupted = RealityObservationRouter(
+        RealityReachService(),
+        historian=historian,
+        digital_twin=digital_twin,
+        poll_interval_s=60.0,
+    )
+    await interrupted.start()
+    try:
+        assert interrupted.status()["twin_backfill_ready"] is False
+        assert interrupted.status()["twin_backfill_failures"] == 1
+    finally:
+        await interrupted.stop()
+    assert historian.status()["backfill_receipt_count"] == 0
+
+    monkeypatch.setattr(
+        historian,
+        "record_backfill_receipt",
+        original_record_receipt,
+    )
+    resumed = RealityObservationRouter(
+        RealityReachService(),
+        historian=historian,
+        digital_twin=digital_twin,
+        poll_interval_s=60.0,
+    )
+    await resumed.start()
+    try:
+        assert resumed.status()["twin_backfill_ready"] is True
+        assert resumed.status()["twin_backfill_receipts"] == 1
+    finally:
+        await resumed.stop()
+    assert historian.status()["backfill_receipt_count"] == 1
+
+    restarted_historian = RealityHistorian(history_path)
+    restarted = RealityObservationRouter(
+        RealityReachService(),
+        historian=restarted_historian,
+        digital_twin=digital_twin,
+        poll_interval_s=60.0,
+    )
+    await restarted.start()
+    try:
+        assert restarted.status()["twin_backfill_ready"] is True
+        assert restarted.status()["twin_backfill_receipts"] == 0
+    finally:
+        await restarted.stop()
+    assert restarted_historian.status()["backfill_receipt_count"] == 1
+    public_snapshot = digital_twin.snapshot()
+    assert public_snapshot["properties"] == []
+    twin_connection = sqlite3.connect(digital_twin.db_path)
+    try:
+        projected = twin_connection.execute(
+            "SELECT historian_record_id, captured_at_ns, value_json "
+            "FROM twin_properties"
+        ).fetchone()
+    finally:
+        twin_connection.close()
+    assert projected == (admitted.record_id, 12_345, "63.0")
 
 
 @pytest.mark.asyncio

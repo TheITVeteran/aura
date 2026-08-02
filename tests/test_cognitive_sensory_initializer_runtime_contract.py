@@ -26,6 +26,7 @@ class Service:
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        self.session_id = "test.cognitive-sensory"
         self.started = False
         self.initialized = False
 
@@ -38,6 +39,10 @@ class Service:
     def refresh(self):
         self.refreshed = True
         return {}
+
+    def reconcile_service(self, service):
+        self.reconciled_service = service
+        return ()
 
     def bind_reality_reach(self, service, coordinator=None):
         self.reality_reach = service
@@ -121,6 +126,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         monkeypatch,
         "core.reality_reach.historian",
         RealityHistorian=Service,
+    )
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.digital_twin",
+        RealityDigitalTwinGraph=Service,
     )
     _install_module(
         monkeypatch,
@@ -211,14 +221,30 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_actuation"].is_alive() is True
     assert registered["reality_historian"] is orchestrator.reality_historian
     assert registered["reality_historian"].args[0].name == "reality_historian.sqlite3"
+    assert registered["reality_digital_twin"] is orchestrator.reality_digital_twin
+    assert registered["reality_digital_twin"].args[0].name == (
+        "reality_digital_twin.sqlite3"
+    )
+    assert registered["reality_digital_twin"].kwargs["session_id"] == (
+        "test.cognitive-sensory"
+    )
+    assert registered["reality_digital_twin"].reconciled_service is (
+        orchestrator.reality_reach
+    )
     assert registered["reality_observation_router"] is orchestrator.reality_observation_router
     assert (
         registered["reality_observation_router"].kwargs["historian"]
         is orchestrator.reality_historian
     )
+    assert registered["reality_observation_router"].kwargs["digital_twin"] is (
+        orchestrator.reality_digital_twin
+    )
     assert registered["reality_observation_router"].started is True
     assert registered["reality_attachment_broker"] is orchestrator.reality_attachment_broker
     assert registered["reality_attachment_broker"].started is True
+    assert registered["reality_attachment_broker"].kwargs["digital_twin"] is (
+        orchestrator.reality_digital_twin
+    )
     assert registered["reality_attachment_broker"].kwargs["trust_store"]["path"].name == (
         "reality_attachment_trust.json"
     )

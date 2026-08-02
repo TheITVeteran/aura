@@ -209,6 +209,10 @@ async def test_aura_can_authorize_pending_attachment_through_her_will(monkeypatc
             assert kwargs == {"persistent": True, "grant_ttl_s": 3600}
             return intent
 
+        def manifest_migration_intent(self, request_id):
+            assert request_id == "request-1"
+            return None
+
         async def authorize_and_attach(self, request_id, **kwargs):
             assert request_id == "request-1"
             assert kwargs["authority_capability"] == {"signed": "capability"}
@@ -257,6 +261,97 @@ async def test_aura_can_authorize_pending_attachment_through_her_will(monkeypatc
     assert result["ok"] is True
     assert result["authority_receipt_id"] == "will-physical-1"
     assert result["grant_ttl_s"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_aura_authorizes_manifest_migration_as_a_distinct_will_decision(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    attachment_intent = {
+        "schema": "aura.reality-attachment-authority.intent.v1",
+        "requested_access": ["observe"],
+        "scope": "reality_attachment.observe",
+        "grant_ttl_s": 3600,
+    }
+    migration_intent = {
+        "schema": "aura.reality-attachment-manifest-migration.intent.v1",
+        "action": "reality_attachment.migrate_manifest",
+        "request_id": "request-1",
+        "expected_manifest_sha256": "sha256:" + "a" * 64,
+        "new_manifest_sha256": "sha256:" + "b" * 64,
+        "scope": "reality_attachment.manifest_migration",
+    }
+    attached = SimpleNamespace(
+        state=ConnectionState.ATTACHED,
+        authority_receipt_id="will-physical-1",
+        to_dict=lambda: {"request_id": "request-1", "state": "attached"},
+    )
+
+    class Broker:
+        def authority_intent(self, request_id, **kwargs):
+            assert request_id == "request-1"
+            return attachment_intent
+
+        def manifest_migration_intent(self, request_id):
+            assert request_id == "request-1"
+            return migration_intent
+
+        async def authorize_and_attach(self, request_id, **kwargs):
+            assert request_id == "request-1"
+            assert kwargs["authority_capability"] == {"signed": "attachment"}
+            assert kwargs["manifest_migration_capability"] == {"signed": "migration"}
+            return attached
+
+    class Will:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def decide(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(receipt_id=f"will-physical-{len(self.calls)}")
+
+    class Capability:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def to_dict(self):
+            return {"signed": self.label}
+
+    class Issuer:
+        def issue_from_decision(self, decision, **kwargs):
+            del decision
+            if kwargs["action"] == "reality_attachment.authorize":
+                assert kwargs["payload"] == attachment_intent
+                return Capability("attachment")
+            assert kwargs["action"] == "reality_attachment.migrate_manifest"
+            assert kwargs["payload"] == migration_intent
+            return Capability("migration")
+
+    will = Will()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: Broker() if name == "reality_attachment_broker" else None,
+    )
+    monkeypatch.setattr(skill_module, "get_will", lambda: will)
+    monkeypatch.setattr(skill_module, "get_capability_issuer", lambda: Issuer())
+
+    result = await EmbodimentSkill().execute(
+        {
+            "action": "authorize_connection",
+            "request_id": "request-1",
+            "persistent": "true",
+            "grant_ttl_s": "3600",
+        },
+        {"foreground_request": True},
+    )
+
+    assert result["ok"] is True
+    assert result["manifest_migration_authorized"] is True
+    assert len(will.calls) == 2
+    assert will.calls[1]["context"]["physical_manifest_migration"] is True
 
 
 @pytest.mark.asyncio

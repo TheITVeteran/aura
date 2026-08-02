@@ -34,7 +34,7 @@ class FileMotor(BaseMotor):
         try:
             gateway = get_file_write_gateway()
             if action == "write":
-                await gateway.write_text_async(path, content, source="life_loop.file_motor")
+                await gateway.write_text_async(path, content, source="organism.file_motor")
                 return {
                     "status": "success",
                     "action": "write",
@@ -42,7 +42,7 @@ class FileMotor(BaseMotor):
                     "bytes": len(content)
                 }
             elif action == "delete":
-                if gateway.delete_file(path, source="life_loop.file_motor"):
+                if gateway.delete_file(path, source="organism.file_motor"):
                     return {"status": "success", "action": "delete", "path": str(path)}
                 return {"status": "ignored", "message": "File does not exist"}
         except _FILE_MOTOR_ERRORS as e:

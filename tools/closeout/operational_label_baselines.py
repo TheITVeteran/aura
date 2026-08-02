@@ -359,7 +359,10 @@ BASELINES: tuple[OperationalLabelBaseline, ...] = (
             "Must treat replication/spread as governed and consent-bounded.",
         ),
         source_paths=(
-            "core/organism/life_loop.py",
+            # life_loop.py (a daemon wrapper nobody started) was removed; the
+            # organism tick it wrapped lives in life_tick.py, which is what
+            # the ablation suite actually exercises.
+            "core/organism/life_tick.py",
             "core/organism/viability.py",
             "core/consciousness/alife_dynamics.py",
             "core/adaptation/adaptive_immunity.py",

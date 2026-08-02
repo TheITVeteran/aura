@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from dataclasses import replace
@@ -28,6 +29,7 @@ from core.reality_reach.contracts import (
     NumericDomain,
     RealityLayer,
 )
+from core.reality_reach.digital_twin import RealityDigitalTwinGraph
 from core.reality_reach.live import ChannelReading, ReadingStatus, RealityReachService
 from core.reality_reach.observation_router import RealityObservationRouter
 from core.reality_reach.trust_custody import KeychainAttachmentTrustStore
@@ -101,12 +103,36 @@ def _candidate(*, persistent: bool = True, manifest: str = "b") -> DeviceCandida
     )
 
 
+def _named_candidate(
+    name: str,
+    *,
+    digest_character: str,
+    salience: float,
+) -> DeviceCandidate:
+    base = _candidate(persistent=False, manifest=digest_character)
+    return replace(
+        base,
+        candidate_id=f"test.candidate.{name}",
+        device_id=f"test.device.{name}",
+        display_name=f"Test Device {name.title()}",
+        identity_fingerprint="sha256:" + digest_character * 64,
+        proposal_salience=salience,
+    )
+
+
 class Connector:
     connector_id = "test.connector"
 
-    def __init__(self, candidate: DeviceCandidate, *, fail_attach: bool = False) -> None:
+    def __init__(
+        self,
+        candidate: DeviceCandidate,
+        *,
+        fail_attach: bool = False,
+        fail_detach: bool = False,
+    ) -> None:
         self.candidate = candidate
         self.fail_attach = fail_attach
+        self.fail_detach = fail_detach
         self.attach_count = 0
         self.detach_count = 0
 
@@ -128,6 +154,44 @@ class Connector:
     async def detach(self, adapter: Adapter) -> None:
         assert adapter.adapter_id == Adapter.adapter_id
         self.detach_count += 1
+        if self.fail_detach:
+            raise RuntimeError("remote teardown unavailable")
+
+
+class BlockingAttachConnector(Connector):
+    def __init__(self, candidate: DeviceCandidate) -> None:
+        super().__init__(candidate)
+        self.attach_entered = asyncio.Event()
+        self.attach_release = asyncio.Event()
+
+    async def attach(
+        self,
+        candidate: DeviceCandidate,
+        access: tuple[AttachmentAccess, ...],
+    ) -> Adapter:
+        assert candidate.identity_fingerprint == self.candidate.identity_fingerprint
+        assert access == (AttachmentAccess.OBSERVE,)
+        self.attach_count += 1
+        self.attach_entered.set()
+        await self.attach_release.wait()
+        return Adapter()
+
+
+class MutableDiscoveryConnector(Connector):
+    def __init__(self, candidates: tuple[DeviceCandidate, ...]) -> None:
+        super().__init__(candidates[0])
+        self.visible_candidates = candidates
+
+    async def discover(self) -> tuple[DeviceCandidate, ...]:
+        now_ns = time.time_ns()
+        return tuple(
+            replace(
+                candidate,
+                discovered_at_ns=now_ns,
+                expires_at_ns=now_ns + 60_000_000_000,
+            )
+            for candidate in self.visible_candidates
+        )
 
 
 class FakeKeychain:
@@ -167,6 +231,47 @@ class FakeAuthorityVerifier:
         return dict(evidence)
 
 
+class FakeMigrationAuthorityVerifier(FakeAuthorityVerifier):
+    def __init__(self) -> None:
+        super().__init__()
+        self.migration_seen: set[str] = set()
+
+    def verify_manifest_migration(self, capability, *, intent, persistent):
+        receipt_id = str(capability.get("receipt_id") or "")
+        if not receipt_id:
+            raise AttachmentAuthorityError(
+                "manifest_migration_authority_receipt_missing"
+            )
+        if receipt_id in self.migration_seen:
+            raise AttachmentAuthorityError(
+                "manifest_migration_authority_capability_replayed"
+            )
+        self.migration_seen.add(receipt_id)
+        return {
+            "capability": {"receipt_id": receipt_id},
+            "intent": dict(intent),
+            "persistent": bool(persistent),
+            "verified_at_ns": time.time_ns(),
+            "evidence_sha256": "sha256:" + "d" * 64,
+        }
+
+    def validate_persisted_manifest_migration(
+        self,
+        evidence,
+        *,
+        intent,
+        persistent,
+    ):
+        value = dict(evidence)
+        if value.get("intent") != dict(intent) or value.get("persistent") is not bool(
+            persistent
+        ) or value.get("evidence_sha256") != "sha256:" + "d" * 64:
+            raise AttachmentAuthorityError(
+                "manifest_migration_authority_evidence_invalid"
+            )
+        return value
+
+
 @pytest.fixture
 def no_body_projection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -183,18 +288,24 @@ def _broker(
     backend: FakeKeychain | None = None,
     authority: FakeAuthorityVerifier | None = None,
     clock_ns=time.time_ns,
+    digital_twin: RealityDigitalTwinGraph | None = None,
+    max_candidates: int = 2048,
+    disappearance_quorum: int = 3,
 ) -> tuple[DeviceAttachmentBroker, RealityReachService]:
     service = RealityReachService(session_id="test.attachments")
-    router = RealityObservationRouter(service)
+    router = RealityObservationRouter(service, digital_twin=digital_twin)
     keychain = backend or FakeKeychain()
     return (
         DeviceAttachmentBroker(
             service,
             router,
+            digital_twin=digital_twin,
             state_path=state_path,
             trust_store=KeychainAttachmentTrustStore(keychain, state_path),
             authority_verifier=authority or FakeAuthorityVerifier(),
             clock_ns=clock_ns,
+            max_candidates=max_candidates,
+            disappearance_quorum=disappearance_quorum,
         ),
         service,
     )
@@ -331,6 +442,251 @@ async def test_revocation_does_not_claim_success_before_durable_grant_removal(
     assert service.status()["adapter_count"] == 1
     assert connector.detach_count == 0
     assert broker.requests()[0].state == ConnectionState.ATTACHED
+
+
+@pytest.mark.asyncio
+async def test_cancelled_attach_completes_shielded_rollback_before_reraising(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    broker, service = _broker(tmp_path / "cancelled-attach.json")
+    connector = BlockingAttachConnector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+
+    attaching = asyncio.create_task(
+        broker.authorize_and_attach(
+            request_id,
+            authority_capability=_authority("authority.test.cancelled"),
+            persistent=False,
+        )
+    )
+    await connector.attach_entered.wait()
+    attaching.cancel()
+    connector.attach_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await attaching
+
+    request = next(item for item in broker.requests() if item.request_id == request_id)
+    assert request.state == ConnectionState.ERROR
+    assert request.error == "attachment_cancelled"
+    assert connector.attach_count == 1
+    assert connector.detach_count == 1
+    assert service.status()["adapter_count"] == 0
+    assert broker.status()["attached"] == 0
+    assert broker.status()["trust_grants"] == 0
+
+
+@pytest.mark.asyncio
+async def test_manifest_migration_preflight_is_retryable_and_end_to_end_bound(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "migration" / "graph.sqlite3",
+        session_id="test.attachments.migration",
+    )
+    authority = FakeMigrationAuthorityVerifier()
+    broker, _service = _broker(
+        tmp_path / "migration-trust.json",
+        authority=authority,
+        digital_twin=graph,
+    )
+    original = _candidate(persistent=False, manifest="b")
+    connector = Connector(original)
+    broker.register_connector(connector)
+    await broker.discover()
+
+    connector.candidate = replace(original, manifest_sha256="sha256:" + "c" * 64)
+    await broker.discover()
+    request = await broker.request_connection(
+        connector.candidate.candidate_id,
+        requested_access=(AttachmentAccess.OBSERVE,),
+        initiated_by="aura",
+        reason="admit an observed manifest replacement",
+    )
+    migration_intent = broker.manifest_migration_intent(request.request_id)
+    assert migration_intent is not None
+
+    with pytest.raises(
+        AttachmentAuthorityError,
+        match="manifest_migration_authority_capability_missing",
+    ):
+        await broker.authorize_and_attach(
+            request.request_id,
+            authority_capability=_authority("authority.test.migration.attach"),
+            persistent=False,
+        )
+    assert authority.seen == set()
+
+    attached = await broker.authorize_and_attach(
+        request.request_id,
+        authority_capability=_authority("authority.test.migration.attach"),
+        manifest_migration_capability=_authority("authority.test.migration.cas"),
+        persistent=False,
+    )
+    assert attached.state == ConnectionState.ATTACHED
+    assert (
+        graph.manifest_migration_intent(
+            connector.candidate,
+            request_id=request.request_id,
+        )
+        is None
+    )
+    assert authority.seen == {"authority.test.migration.attach"}
+    assert authority.migration_seen == {"authority.test.migration.cas"}
+    assert graph.snapshot()["twins"][0]["generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_disappearance_uses_uncapped_scan_and_bounded_quorum(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    candidate_a = _named_candidate("alpha", digest_character="c", salience=1.0)
+    candidate_b = _named_candidate("beta", digest_character="d", salience=0.1)
+    connector = MutableDiscoveryConnector((candidate_a,))
+    broker, service = _broker(
+        tmp_path / "disappearance-quorum.json",
+        max_candidates=1,
+        disappearance_quorum=3,
+    )
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+    await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.quorum"),
+        persistent=False,
+    )
+
+    connector.visible_candidates = (
+        replace(candidate_b, proposal_salience=1.0),
+        replace(candidate_a, proposal_salience=0.0),
+    )
+    visible = await broker.discover()
+
+    assert [item.candidate_id for item in visible] == [candidate_b.candidate_id]
+    assert connector.detach_count == 0
+    assert service.status()["adapter_count"] == 1
+
+    connector.visible_candidates = (replace(candidate_b, proposal_salience=1.0),)
+    await broker.discover()
+    await broker.discover()
+    assert connector.detach_count == 0
+    assert broker.status()["candidate_absence_streaks"] == {
+        candidate_a.candidate_id: 2
+    }
+
+    await broker.discover()
+
+    request = next(item for item in broker.requests() if item.request_id == request_id)
+    assert connector.detach_count == 1
+    assert request.state == ConnectionState.LOST
+    assert request.error == "candidate_disappearance_quorum_reached"
+    assert service.status()["adapter_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_twin_detach_failure_never_blocks_local_fencing_and_reconciles(
+    tmp_path: Path,
+    no_body_projection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del no_body_projection
+    graph = RealityDigitalTwinGraph(
+        tmp_path / "twin" / "graph.sqlite3",
+        session_id="test.attachments",
+    )
+    connector = MutableDiscoveryConnector((_candidate(persistent=False),))
+    broker, service = _broker(
+        tmp_path / "twin-reconcile.json",
+        digital_twin=graph,
+        disappearance_quorum=2,
+    )
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+    await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.twin.reconcile"),
+        persistent=False,
+    )
+    original_detach = graph.detach_adapter
+    detach_attempts = 0
+
+    def fail_first_detach(adapter_id: str, *, reason: str, lost: bool = False):
+        nonlocal detach_attempts
+        detach_attempts += 1
+        if detach_attempts == 1:
+            raise OSError("simulated twin store outage")
+        return original_detach(adapter_id, reason=reason, lost=lost)
+
+    monkeypatch.setattr(graph, "detach_adapter", fail_first_detach)
+    connector.visible_candidates = ()
+    await broker.discover()
+    await broker.discover()
+
+    request = next(item for item in broker.requests() if item.request_id == request_id)
+    assert request.state == ConnectionState.LOST
+    assert connector.detach_count == 1
+    assert service.status()["adapter_count"] == 0
+    assert broker.status()["twin_reconciliation"] == {
+        "healthy": False,
+        "pending": 1,
+        "pending_detaches": 1,
+        "pending_revocations": 0,
+    }
+
+    await broker.discover()
+
+    assert detach_attempts == 2
+    assert broker.status()["twin_reconciliation"]["healthy"] is True
+    assert graph.snapshot()["twins"][0]["lifecycle"] == "lost"
+
+
+@pytest.mark.asyncio
+async def test_active_connector_requires_retirement_and_failed_teardown_keeps_owner(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    broker, service = _broker(tmp_path / "connector-retirement.json")
+    connector = Connector(_candidate(persistent=False), fail_detach=True)
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+    await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.retirement"),
+        persistent=False,
+    )
+
+    with pytest.raises(RuntimeError, match="retire_connector"):
+        broker.unregister_connector(connector.connector_id)
+    with pytest.raises(RuntimeError, match="could not fence"):
+        await broker.retire_connector(connector.connector_id)
+
+    assert broker.status()["connectors"] == 1
+    assert broker.status()["attached"] == 1
+    assert broker.status()["teardown_pending"] == 1
+    assert service.status()["adapter_count"] == 0
+
+    connector.fail_detach = False
+    await broker.retire_connector(connector.connector_id)
+
+    request = next(item for item in broker.requests() if item.request_id == request_id)
+    assert broker.status()["connectors"] == 0
+    assert broker.status()["attached"] == 0
+    assert broker.status()["teardown_pending"] == 0
+    assert connector.detach_count == 2
+    assert request.state == ConnectionState.LOST
+    assert service.status()["adapter_count"] == 0
 
 
 @pytest.mark.asyncio
