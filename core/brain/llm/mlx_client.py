@@ -6133,6 +6133,13 @@ class MLXLocalClient:
                     "ok": True,
                     "text": answer,
                     "receipt": receipt,
+                    # CP126 f22c4ed8: the facade cannot recompute this digest
+                    # — it would have to duplicate the wire normalization
+                    # above and would drift. Publishing the digest THIS client
+                    # bound the request to lets the facade confirm the binding
+                    # happened instead of shape-checking the receipt's own
+                    # claim about itself.
+                    "request_payload_sha256_bound": expected_request_sha256,
                     **(
                         {
                             "action_state_capture_receipt": action_capture_receipt,

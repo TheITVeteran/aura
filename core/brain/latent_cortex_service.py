@@ -811,6 +811,7 @@ class LatentCortexService:
         output_text: Any = ...,
         answer_replacement_private: Any = None,
         expected_objective: str = "",
+        expected_request_payload_sha256: str = "",
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -1314,8 +1315,21 @@ class LatentCortexService:
                 or receipt["steps_taken"] < expected_loops
             ):
                 errors.append("live_recurrence_depth_unproven")
-        if not sha256(receipt.get("request_payload_sha256")):
+        # CP126 f22c4ed8: this checked only that the field LOOKED like a
+        # 64-character hex digest. The facade never hashed the actual
+        # question, messages, config or budget, so a receipt could describe a
+        # different request entirely and still pass — the digest proved the
+        # worker could format a string, not that it answered this call.
+        claimed_request_sha256 = receipt.get("request_payload_sha256")
+        if not sha256(claimed_request_sha256):
             errors.append("request_payload_identity_unproven")
+        elif expected_request_payload_sha256:
+            if str(claimed_request_sha256) != expected_request_payload_sha256:
+                errors.append("request_payload_identity_mismatch")
+        else:
+            # Say when the binding could not be performed rather than letting
+            # a shape check stand in for it.
+            errors.append("request_payload_identity_unbound")
         if not sha256(receipt.get("input_tokens_sha256")) or not positive_int(
             receipt, "input_token_count"
         ):
@@ -4536,6 +4550,23 @@ class LatentCortexService:
         )
         visible_objective = self._visible_objective(question, messages)
         if result.get("ok") is True:
+            # CP126 f22c4ed8: the facade cannot recompute this digest
+            # correctly. mlx_client hashes WIRE-NORMALIZED config, budget and
+            # runtime controls plus operation authority, action policy
+            # evidence, intervention, response contract, verifier guidance and
+            # facet reliability — duplicating that normalization here would
+            # drift and start rejecting valid receipts on the live path.
+            #
+            # The client already performs the binding against the payload it
+            # actually sent (mlx_client._latent_reason, request_payload_sha256
+            # mismatch) and refuses the result. So the facade's job is to
+            # confirm the binding HAPPENED rather than to redo it with
+            # different inputs — an unbound receipt is reported instead of
+            # being waved through by a shape check.
+            expected_request_sha256 = str(
+                result.get("request_payload_sha256_bound") or ""
+            )
+
             contract_errors = self._receipt_contract_errors(
                 raw_receipt,
                 config,
@@ -4546,6 +4577,7 @@ class LatentCortexService:
                 output_text=result.get("text"),
                 answer_replacement_private=private_answer_replacement,
                 expected_objective=visible_objective,
+                expected_request_payload_sha256=expected_request_sha256,
             )
             if not contract_errors and adaptive_plan is not None:
                 try:

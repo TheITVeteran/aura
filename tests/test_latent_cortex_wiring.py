@@ -3354,6 +3354,10 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                 "text": text,
                 "tokens": tokens,
                 "receipt": receipt,
+                # A real client binds the receipt to the request payload it
+                # sent and publishes the digest (CP126 f22c4ed8); a stub that
+                # omits it is simulating a client that never bound anything.
+                "request_payload_sha256_bound": receipt.get("request_payload_sha256"),
                 "reason": "",
             }
 
@@ -4760,6 +4764,10 @@ def _full_success_stub_client(captured):
                 "text": text,
                 "tokens": tokens,
                 "receipt": receipt,
+                # A real client binds the receipt to the request payload it
+                # sent and publishes the digest (CP126 f22c4ed8); a stub that
+                # omits it is simulating a client that never bound anything.
+                "request_payload_sha256_bound": receipt.get("request_payload_sha256"),
                 "reason": "",
             }
 
