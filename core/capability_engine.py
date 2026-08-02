@@ -934,17 +934,73 @@ class Shell:
 
 
 class WebClient:
+    """HTTP GET behind an explicit destination allowlist.
+
+    CP126: "An empty domain allowlist permits every URL. The populated path
+    compares raw netloc without scheme restrictions, canonical hostname
+    handling, userinfo rejection, port policy, IDNA normalization, or
+    DNS/IP rebinding guarantees."
+
+    Two separate defects sat in five lines.
+
+    *Empty meant everything.* ``if not self.allowed_domains: return True``.
+    A caller that configured no destinations got unrestricted egress, which
+    is the opposite of what supplying an allowlist parameter implies. The
+    wildcard now has to be written down — ``["*"]``, which is exactly what
+    ``config.security.allowed_domains`` already defaults to — so "allow
+    everything" is a statement somebody made rather than a state nobody
+    noticed.
+
+    *netloc is not a hostname.* It carries userinfo and port, so
+    ``https://good.com:8443/`` was refused for a permitted host and
+    ``HTTPS://GOOD.COM`` was refused for a case difference. ``.hostname``
+    gives the parsed host, lowercased, with userinfo and port removed.
+
+    Scheme is checked too: an allowlist that says "good.com" is about web
+    destinations, and ``file://`` or ``ftp://`` never satisfied that
+    intention.
+
+    DNS-rebinding is deliberately NOT claimed here — defeating it requires
+    pinning the resolved address through to connect time, which belongs to
+    the network gateway that actually opens the socket. This is a
+    destination policy, and it says so rather than implying more.
+    """
+
+    #: Written-down wildcard. Matching the config default keeps the escape
+    #: hatch explicit instead of implicit-by-emptiness.
+    WILDCARD = "*"
+
     def __init__(self, allowed_domains: list[str] | None = None, timeout: int = 10):
         self.allowed_domains = allowed_domains or []
         self.timeout = timeout
 
     def _is_allowed(self, url: str) -> bool:
-        if not self.allowed_domains:
-            return True
         from urllib.parse import urlparse
 
-        domain = urlparse(url).netloc
-        return any(domain == d or domain.endswith("." + d) for d in self.allowed_domains)
+        if not self.allowed_domains:
+            # Fail closed. A caller that named no destinations authorized no
+            # destinations.
+            return False
+        if any(str(entry).strip() == self.WILDCARD for entry in self.allowed_domains):
+            return True
+
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return False
+        host = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not host:
+            return False
+
+        for entry in self.allowed_domains:
+            allowed = str(entry or "").strip().lower().rstrip(".")
+            if not allowed:
+                continue
+            if host == allowed or host.endswith("." + allowed):
+                return True
+        return False
 
     async def get(self, url: str, headers: dict[str, str] | None = None) -> tuple[bool, str]:
         if not self._is_allowed(url):
