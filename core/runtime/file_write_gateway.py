@@ -818,12 +818,12 @@ class FileWriteGateway:
                         }
                     )
                 try:
-                    for entry, (_name, payload, mode) in zip(
+                    for journal_entry, (_name, payload, mode) in zip(
                         journal_entries,
                         ordered,
                         strict=True,
                     ):
-                        temporary = entry["temporary"]
+                        temporary = journal_entry["temporary"]
                         transaction_names.add(temporary)
                         _stage_bytes_at(
                             directory_fd,
@@ -831,14 +831,14 @@ class FileWriteGateway:
                             payload,
                             mode,
                         )
-                        if entry["original_exists"]:
-                            original = originals[entry["target"]]
+                        if journal_entry["original_exists"]:
+                            original = originals[journal_entry["target"]]
                             if original is None:
                                 raise FileWriteTransactionError(
                                     "directory batch original disappeared"
                                 )
                             original_payload, original_mode = original
-                            backup = entry["backup"]
+                            backup = journal_entry["backup"]
                             transaction_names.add(backup)
                             _stage_bytes_at(
                                 directory_fd,
@@ -852,23 +852,23 @@ class FileWriteGateway:
                         entries=journal_entries,
                         state="rollback_required",
                     )
-                    for entry in journal_entries:
+                    for journal_entry in journal_entries:
                         os.replace(
-                            entry["temporary"],
-                            entry["target"],
+                            journal_entry["temporary"],
+                            journal_entry["target"],
                             src_dir_fd=directory_fd,
                             dst_dir_fd=directory_fd,
                         )
-                        transaction_names.discard(entry["temporary"])
+                        transaction_names.discard(journal_entry["temporary"])
                     os.fsync(directory_fd)
                     final_inventory = set(os.listdir(directory_fd))
                     expected_internal = {
                         _DIRECTORY_BATCH_LOCK_FILE,
                         _DIRECTORY_BATCH_JOURNAL_FILE,
                         *(
-                            entry["backup"]
-                            for entry in journal_entries
-                            if entry["original_exists"]
+                            journal_entry["backup"]
+                            for journal_entry in journal_entries
+                            if journal_entry["original_exists"]
                         ),
                     }
                     if final_inventory != allowed | expected_internal:

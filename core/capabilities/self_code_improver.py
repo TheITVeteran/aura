@@ -146,6 +146,13 @@ def _enactment_key_path() -> Path:
 
 def _read_enactment_key() -> bytes:
     key = read_stable_bytes(_enactment_key_path(), max_bytes=_ENACTMENT_KEY_BYTES)
+    if not isinstance(key, bytes):
+        # A signing key that is not bytes is a corrupted read, not something
+        # to coerce: the failure belongs here rather than three frames deeper
+        # inside hmac.
+        raise EnactmentRecordError(
+            f"enactment signing key read returned {type(key).__name__}, not bytes"
+        )
     if len(key) != _ENACTMENT_KEY_BYTES:
         raise EnactmentRecordError("enactment signing key has an invalid length")
     return key

@@ -36,7 +36,10 @@ def _deepest_aura_traceback_frame(error: BaseException) -> tuple[str | None, int
                 continue
         except (OSError, RuntimeError, ValueError):
             continue
-        return resolved_frame, int(frame.lineno)
+        # traceback frames carry lineno as int | None; a frame with no line
+        # number is still a useful location, so report 0 rather than crash
+        # the error handler that is already handling an error.
+        return resolved_frame, int(frame.lineno or 0)
     return None, None
 
 

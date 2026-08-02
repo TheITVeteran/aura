@@ -4412,6 +4412,51 @@ class InferenceGate:
         return primary_budget, fallback_budget
 
     @staticmethod
+    def _strict_contract_grounding_turns(
+        provided_messages: list[Any] | None,
+    ) -> list[dict[str, Any]]:
+        """Non-system turns a strict rewrite must not throw away.
+
+        CP126: "Strict contracts discard the original system messages and
+        grounding history ... Safety policy, tool receipts, evidence, prior
+        assistant context, and caller-required system content."
+
+        The system half was fixed by collecting every system message. The
+        other half was not: the payload was rebuilt as exactly
+        ``[system, user]``, so every assistant turn, tool result and earlier
+        user turn vanished. On a strict route that is precisely the evidence
+        the answer depends on — a tool receipt in the previous assistant
+        turn is the difference between an answer and a guess, and the guess
+        still arrives in a well-formed <answer> envelope.
+
+        Everything before the final user turn is preserved AS MESSAGES
+        rather than flattened into the prompt, so the existing context-window
+        trimming still applies and no new budget constant is invented here.
+        """
+        if not provided_messages:
+            return []
+        last_user_index = -1
+        for index in range(len(provided_messages) - 1, -1, -1):
+            msg = provided_messages[index]
+            if isinstance(msg, dict) and str(
+                msg.get("role", "") or ""
+            ).strip().lower() == "user":
+                last_user_index = index
+                break
+        preserved: list[dict[str, Any]] = []
+        for index, msg in enumerate(provided_messages):
+            if index == last_user_index or not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", "") or "").strip().lower()
+            if role in {"system", ""}:
+                continue
+            content = str(msg.get("content", "") or "").strip()
+            if not content:
+                continue
+            preserved.append({"role": role, "content": content})
+        return preserved
+
+    @staticmethod
     def _strict_contract_procedure_hints(prompt: Any) -> str:
         """Low-level strict contracts do not inject task-shape hints.
 
@@ -8433,6 +8478,7 @@ class InferenceGate:
             strict_system_prompt += self._strict_contract_procedure_hints(strict_user_prompt)
             provided_messages = [
                 {"role": "system", "content": strict_system_prompt},
+                *self._strict_contract_grounding_turns(provided_messages),
                 {"role": "user", "content": strict_user_prompt},
             ]
         elif strict_value_contract:
@@ -8470,6 +8516,7 @@ class InferenceGate:
             )
             provided_messages = [
                 {"role": "system", "content": strict_value_system_prompt},
+                *self._strict_contract_grounding_turns(provided_messages),
                 {"role": "user", "content": strict_value_user_prompt},
             ]
         visible_user_prompt = initial_visible_user_prompt

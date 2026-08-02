@@ -924,7 +924,14 @@ class HostAutomationProvider:
             in_root = resolved is not None and any(
                 resolved == r or str(resolved).startswith(str(r) + os.sep) for r in allowed_roots
             )
-            if not in_root or resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            # `in_root` already requires resolved is not None, but that is a
+            # correlation mypy cannot follow — and a reader cannot either.
+            # Test the thing directly rather than relying on a prior clause.
+            if (
+                resolved is None
+                or not in_root
+                or resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}
+            ):
                 return AutomationReceipt(
                     action="take_screenshot",
                     target=str(save_path),

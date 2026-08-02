@@ -223,9 +223,7 @@ class DesktopSnapshot:
             screen_text=_bounded_text(source.get("screen_text"), 4000),
             clipboard_excerpt=_bounded_text(source.get("clipboard_excerpt"), 1200),
             running_apps=running_apps,
-            files=tuple(
-                item for item in (source.get("files") or ()) if isinstance(item, FileFact)
-            ),
+            files=_coerce_file_facts(source.get("files")),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -591,12 +589,12 @@ def build_effect_contract(
         # These caveats say "we cannot see the artifact". Now we can: the
         # requirement above stats the exact path. Deletion stays unsupported —
         # absence is not the same evidence as presence.
-        control_caveats = tuple(
+        control_caveats = [
             reason
             for reason in control_caveats
             if "durable artifact postcondition" not in reason
             and "source, destination, and artifact verification" not in reason
-        )
+        ]
     unsupported.extend(control_caveats)
 
     if not requirements:
@@ -961,6 +959,18 @@ def _normalize_app_target(value: str) -> str:
     if tokens and tokens <= _GENERIC_APP_TARGETS:
         return ""
     return _APP_ALIASES.get(lowered, candidate[:80])
+
+
+def _coerce_file_facts(raw: object) -> tuple[FileFact, ...]:
+    """Only real FileFacts, from something that is actually a sequence.
+
+    ``source.get(...)`` is typed ``object``; iterating it directly is a
+    runtime TypeError waiting for the first caller who passes a dict or a
+    scalar, and mypy strict says so.
+    """
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return ()
+    return tuple(item for item in raw if isinstance(item, FileFact))
 
 
 def _unsupported_control_operations(goal: str) -> list[str]:

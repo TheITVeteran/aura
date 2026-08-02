@@ -6358,7 +6358,16 @@ def _model_text_integrity_reasons(
     loop_reason = _phrase_loop_reason(prompt, raw)
     if loop_reason:
         reasons.append(loop_reason)
-    if _has_internal_task_prompt_leak(raw):
+    if _has_internal_task_prompt_leak(raw) and not _matches_strict_answer_tag_request(
+        prompt, raw
+    ):
+        # An <answer> tag is protocol scaffolding when it leaks out of an
+        # internal lane, and it is the REQUESTED OUTPUT FORMAT when the
+        # person asked for it — which the strict-answer contract, and every
+        # benchmark harness built on it, does explicitly. Flagging
+        # "<answer>4</answer>" as an internal leak fails the reply the
+        # prompt asked for. The autonomous branch above keeps the
+        # text-only check, because it has no prompt to judge against.
         reasons.append("internal_task_prompt_leak")
     if _has_truncated_tail(raw):
         reasons.append("truncated_tail")
