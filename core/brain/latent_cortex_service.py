@@ -212,6 +212,13 @@ _DEADLINE_RESERVE_FRACTION = 0.2
 #: and the overrun is theirs to see rather than hidden in a larger budget.
 _MIN_USABLE_WALL_CLOCK_S = 0.5
 
+#: Receipt size budget (CP126 09f2fbcf). A receipt is evidence about one
+#: episode; past these bounds it is a payload, and the facade refuses to walk
+#: it rather than spending the process's memory on a worker's output.
+_MAX_RECEIPT_KEYS = 512
+_MAX_RECEIPT_ITEMS = 200_000
+_MAX_RECEIPT_DEPTH = 24
+
 _UNKNOWN_BODY_PRESSURE = 0.6
 
 
@@ -799,6 +806,71 @@ class LatentCortexService:
             "budget": dict(budget),
         }
         return config, budget
+
+    @staticmethod
+    def _receipt_size_errors(receipt: Any) -> list[str]:
+        """Refuse a receipt too large or too deep to validate safely.
+
+        CP126 09f2fbcf: decision lists, score/loss/gradient trails, step
+        sizes, compaction objects, runtime identity, progress and stage
+        timings had no aggregate count or size budget before the facade
+        copied and iterated them. A worker response could therefore spend the
+        facade's memory and CPU — the validator was a denial-of-service
+        surface for the process it was protecting.
+        """
+        if not isinstance(receipt, dict):
+            return []
+        errors: list[str] = []
+        if len(receipt) > _MAX_RECEIPT_KEYS:
+            errors.append("receipt_key_count_exceeds_budget")
+
+        total_items = 0
+        stack: list[tuple[Any, int]] = [(receipt, 0)]
+        while stack:
+            node, depth = stack.pop()
+            if depth > _MAX_RECEIPT_DEPTH:
+                errors.append("receipt_nesting_exceeds_budget")
+                break
+            if isinstance(node, dict):
+                children = list(node.values())
+            elif isinstance(node, (list, tuple)):
+                children = list(node)
+            else:
+                continue
+            total_items += len(children)
+            if total_items > _MAX_RECEIPT_ITEMS:
+                errors.append("receipt_size_exceeds_budget")
+                break
+            for child in children:
+                if isinstance(child, (dict, list, tuple)):
+                    stack.append((child, depth + 1))
+        return errors
+
+    def _safe_receipt_contract_errors(self, *args: Any, **kwargs: Any) -> list[str]:
+        """Run the contract validator without letting it raise.
+
+        Every failure mode of a malformed receipt has to arrive as a contract
+        error, because that is what the caller was promised (CP126 94593618).
+        """
+        # Size first: an oversized receipt must be refused BEFORE the
+        # validator walks it, or the bound protects nothing.
+        size_errors = self._receipt_size_errors(args[0] if args else None)
+        if size_errors:
+            return size_errors
+        try:
+            return self._receipt_contract_errors(*args, **kwargs)
+        except (
+            ArithmeticError,
+            AttributeError,
+            IndexError,
+            KeyError,
+            LookupError,
+            RecursionError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.warning("Receipt contract validation raised: %s", exc)
+            return [f"receipt_contract_validator_error:{type(exc).__name__}"]
 
     @staticmethod
     def _receipt_contract_errors(
@@ -2761,9 +2833,16 @@ class LatentCortexService:
             # verified outcome (every proposal was checked and declined) —
             # the verifier evidence must exist to earn that exemption.
             verifier_evidence = receipt.get("verifier_guidance")
+            # CP126 94593618: int() on a worker-supplied field raises on a
+            # string or a list, and this sits OUTSIDE any protective
+            # conversion — so a malformed receipt escaped the contract as an
+            # exception instead of the promised ok=false with a reason. A
+            # validator that can be crashed by the thing it validates is not
+            # a validator.
             verifier_ran = (
                 isinstance(verifier_evidence, dict)
-                and int(verifier_evidence.get("evaluations") or 0) > 0
+                and type(verifier_evidence.get("evaluations")) is int
+                and verifier_evidence["evaluations"] > 0
             )
             if not positive_int(receipt, "latent_opt_steps") and not verifier_ran:
                 errors.append("latent_optimization_no_accepted_steps")
@@ -4600,7 +4679,11 @@ class LatentCortexService:
                 result.get("request_payload_sha256_bound") or ""
             )
 
-            contract_errors = self._receipt_contract_errors(
+            # CP126 94593618: the contract validator is the fail-honest path,
+            # so it must not be able to raise past deep_reason's promise of
+            # ok=false with a reason. A malformed receipt is a contract
+            # failure, not an exception for the caller to handle.
+            contract_errors = self._safe_receipt_contract_errors(
                 raw_receipt,
                 config,
                 runtime_controls,
