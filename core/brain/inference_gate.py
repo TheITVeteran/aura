@@ -10141,11 +10141,41 @@ class InferenceGate:
             logger.debug("Suppressed Exception in homeostasis feedback: %s", _exc)
 
         # ── World Model: Extract beliefs from response ────────────────────
+        #
+        # CP126 (critical): "Any response longer than 100 characters is fed
+        # back into epistemic state without citations, calibration status,
+        # tool receipts, source separation, contradiction checks, or a marker
+        # that the text was model-generated. Hallucinations can become future
+        # grounding."
+        #
+        # The world model side is handled: extractions are stamped
+        # source="self_generated", capped at low confidence, and run through
+        # dissonance resolution. What was missing is here — length was the
+        # ONLY gate, so text this class wrote itself qualified: the terminal
+        # recovery message, an unattributed cloud string, a reply the
+        # reliability assessment had already rejected. Beliefs were being
+        # extracted from Aura's apologies.
+        #
+        # A generation receipt now has to say the text came from a real,
+        # attributed, successful generation before any of it becomes belief.
         try:
             world_model = ServiceContainer.get("epistemic_state", default=None)
             if world_model and hasattr(world_model, "extract_beliefs_from_response"):
-                if len(response_text) > 100:
+                generation = self.get_last_generation_metadata()
+                verified_generation = bool(
+                    generation
+                    and generation.get("ok")
+                    and generation.get("attributed", True)
+                )
+                if len(response_text) > 100 and verified_generation:
                     world_model.extract_beliefs_from_response(response_text)
+                elif len(response_text) > 100:
+                    logger.debug(
+                        "Skipped belief extraction: no verified generation receipt "
+                        "(ok=%s attributed=%s)",
+                        generation.get("ok") if generation else None,
+                        generation.get("attributed") if generation else None,
+                    )
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
