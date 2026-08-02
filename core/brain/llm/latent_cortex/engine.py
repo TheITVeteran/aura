@@ -4753,14 +4753,21 @@ class LatentCortexEngine:
                 decompose_branch_candidates,
             )
 
-            candidate_decompositions = (
-                decompose_branch_candidates(
-                    branch_probe_texts,
-                    objective=verification_objective,
-                )
-                if len(branch_probe_texts) == len(ensemble.branches)
-                else {}
-            )
+            candidate_decompositions: dict[str, dict[str, Any]] = {}
+            if len(branch_probe_texts) == len(ensemble.branches):
+                try:
+                    candidate_decompositions = decompose_branch_candidates(
+                        branch_probe_texts,
+                        objective=verification_objective,
+                    )
+                except (TypeError, ValueError) as exc:
+                    # Probe text is untrusted model output. A malformed branch
+                    # is negative evidence for structural diagnosis, not an
+                    # infrastructure failure for the completed latent episode.
+                    receipt.flag(
+                        "branch_candidate_decomposition_invalid:"
+                        f"{type(exc).__name__}"
+                    )
             receipt.disagreement_graph = build_disagreement_graph_receipt(
                 n_branches=len(ensemble.branches),
                 operator_trace=receipt.cognitive_operator_trace,

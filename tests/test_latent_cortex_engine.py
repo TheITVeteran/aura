@@ -55,6 +55,14 @@ class _ExactEvidenceTokenizer:
         return f"2 + 2 = 4. Probe tokens {rendered}."
 
 
+class _ControlCharacterProbeTokenizer(_ExactEvidenceTokenizer):
+    def decode(self, ids):
+        rendered = list(ids)
+        if rendered == [999]:
+            return "Malformed branch probe.\x0b"
+        return super().decode(rendered)
+
+
 def _exact_evidence_verifier() -> EpisodeTaskVerifier:
     return EpisodeTaskVerifier("")
 
@@ -924,6 +932,41 @@ def test_verifier_selects_branch_and_scores_land_in_receipt(tiny_model):
     result = engine.reason(token_ids=PROMPT_TOKENS, verifier=lambda text: 1.0)
     assert result.ok
     assert len(result.receipt.branch_scores) == 2
+
+
+def test_malformed_branch_probe_is_negative_diagnostic_evidence_not_episode_failure(
+    tiny_model,
+    monkeypatch,
+):
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ControlCharacterProbeTokenizer(),
+        config=_config(local_repair_enabled=False),
+    )
+    original_decode_probe = engine._decode_probe
+
+    def malformed_probe(*args, **kwargs):
+        original_decode_probe(*args, **kwargs)
+        return [999]
+
+    monkeypatch.setattr(engine, "_decode_probe", malformed_probe)
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
+
+    assert result.ok
+    assert "branch_candidate_decomposition_invalid:ValueError" in (
+        result.receipt.honest_flags
+    )
+    assert not any(
+        flag.startswith("fallback_vanilla:") for flag in result.receipt.honest_flags
+    )
+    assert result.receipt.disagreement_graph["candidate_evidence_status"] == (
+        "decoded_candidates_unavailable"
+    )
+    assert result.receipt.disagreement_graph["candidate_decompositions"] == {}
 
 
 def test_latent_opt_episode_records_trace(tiny_model):
