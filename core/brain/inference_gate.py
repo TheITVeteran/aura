@@ -884,11 +884,30 @@ class InferenceGate:
             if stabilized != original:
                 metadata = self.get_last_generation_metadata()
                 if not metadata:
+                    # CP126: "A fabricated unattributed metadata record can
+                    # also be marked ok when repair changes text."
+                    #
+                    # ok=bool(stabilized) asserted success from the fact
+                    # that a string was non-empty. There is no provider, no
+                    # endpoint, no request correlation here — that is the
+                    # definition of unattributed, and an unattributed record
+                    # cannot claim the generation succeeded. Downstream
+                    # consumers read `ok` as provider-verified success.
                     metadata = {
-                        "ok": bool(stabilized),
+                        "ok": False,
+                        "attributed": False,
                         "endpoint": "unattributed-response-path",
                         "text_length": len(stabilized),
+                        "reason": "stabilized_text_without_generation_attribution",
                     }
+                    _record_inference_degradation(
+                        RuntimeError(
+                            "post-generation stabilization ran with no generation "
+                            "metadata to attribute it to"
+                        ),
+                        action="published an explicitly unattributed stabilization receipt",
+                        severity="warning",
+                    )
                 receipt = dict(metadata.get("surface_control_receipt") or {})
                 append_text_mutation(
                     receipt,
@@ -912,6 +931,31 @@ class InferenceGate:
                 exc,
                 action="returned unstabilized user-facing text after output stabilization failed",
             )
+            # CP126: "Stabilization failure silently returns the unvalidated
+            # original ... without degradation or a failed output-contract
+            # receipt."
+            #
+            # Returning the raw draft is the right behaviour — the person
+            # gets the model's actual answer rather than nothing. What was
+            # missing is the receipt saying the output contract never ran,
+            # so a reader downstream could not tell a validated response
+            # from an unvalidated one.
+            try:
+                metadata = self.get_last_generation_metadata()
+                if metadata:
+                    receipt = dict(metadata.get("surface_control_receipt") or {})
+                    receipt["output_contract_enforced"] = False
+                    receipt["output_contract_failure"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )[:300]
+                    metadata["surface_control_receipt"] = receipt
+                    metadata["post_generation_repair_applied"] = False
+                    metadata["output_contract_enforced"] = False
+                    self._publish_generation_metadata(metadata, receipt)
+            except _INFERENCE_RECOVERABLE_ERRORS as receipt_exc:
+                logger.debug(
+                    "Could not publish failed output-contract receipt: %s", receipt_exc
+                )
             return original
 
     def _finalize_nonlocal_user_facing_text(
@@ -929,16 +973,53 @@ class InferenceGate:
 
         cleaned = str(text or "").strip()
         if is_user_facing:
+            # CP126: "Nonlocal output success is based only on nonempty text.
+            # The nonlocal finalizer publishes success=bool(cleaned) and
+            # records the supplied label as the user-generation endpoint
+            # without requiring verified provider metadata, output
+            # integrity, request correlation, or a post-stabilization
+            # quality result."
+            #
+            # A provider that returns "I'm sorry, an error occurred" — or a
+            # recovery string this class wrote itself — is non-empty, and
+            # was therefore published as a verified success from a named
+            # endpoint. Success now additionally requires the provider to
+            # have said so: an explicit error field is a failure, and a
+            # record with no provider attribution is unattributed rather
+            # than successful.
+            provider_metadata = (
+                dict(generation_metadata) if isinstance(generation_metadata, dict) else {}
+            )
+            provider_error = str(provider_metadata.get("error") or "").strip()
+            attributed = bool(
+                provider_metadata.get("provider")
+                or provider_metadata.get("model")
+                or provider_metadata.get("endpoint")
+            )
+            success = bool(cleaned) and not provider_error and attributed
+            if cleaned and not success:
+                _record_inference_degradation(
+                    RuntimeError(
+                        f"nonlocal text from {label!r} published without provider "
+                        f"attribution (error={provider_error or 'none'})"
+                    ),
+                    action="published nonlocal output as unverified rather than successful",
+                    severity="warning",
+                )
+            if not attributed:
+                provider_metadata["attributed"] = False
             self._record_client_generation_metadata(
                 None,
                 label=label,
-                success=bool(cleaned),
+                success=success,
                 text=cleaned,
                 requested_max_tokens=max_tokens,
                 output_contract=output_contract,
-                generation_metadata=generation_metadata,
+                generation_metadata=provider_metadata or generation_metadata,
             )
-            if cleaned:
+            if success:
+                # Only a verified generation names an endpoint as the one
+                # that served the user; an unattributed string must not.
                 self._record_user_generation_endpoint(label)
         return self._stabilize_user_facing_text(
             cleaned,
