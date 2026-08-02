@@ -397,6 +397,28 @@ def main() -> int:
         region_idx += 1
 
         if region in skip_regions:
+            # CP126 (critical): "All skipped regions cause an infinite busy
+            # loop. Once every region enters skip_regions, each iteration
+            # continues before incrementing total_attempts or sleeping. With
+            # the default unlimited maximum, the process rotates through the
+            # list forever at full CPU."
+            #
+            # Skipping is normal — a region out of capacity gets parked. The
+            # defect is that a skip costs nothing: no attempt counted, no
+            # sleep, so the exit condition can never advance. When the LAST
+            # region is parked the loop becomes a pure spin, and the default
+            # MAX_ATTEMPTS of 0 means nothing ever stops it.
+            #
+            # There is nothing left to try, so say so and stop.
+            if len(skip_regions) >= len(REGIONS):
+                print(
+                    "\n[!] Every region is skipped — no capacity anywhere and "
+                    "nothing left to retry."
+                )
+                for skipped in sorted(skip_regions):
+                    print(f"      skipped: {skipped}")
+                print("[*] Stopping rather than spinning. Re-run to start over.")
+                break
             continue
 
         state["total_attempts"] += 1

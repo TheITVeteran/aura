@@ -49,8 +49,44 @@ fi
 # 2. Install Ollama
 # ------------------------------------------------------------------
 echo ">>> [2/7] Installing Ollama..."
+# CP126 (critical): "Ollama installer is executed as root without pinning.
+# The current response from ollama.ai is piped directly to sh under a
+# privileged setup script. There is no version lock, digest, signature
+# verification, artifact retention, or package manager involvement."
+#
+# Same defect and same fix as cloud/hetzner_setup.sh: fetch the script to
+# disk, print its digest, keep the artifact so what ran can be read
+# afterwards, and execute it only against a pin or an explicit
+# acknowledgement. Piping a live URL into a privileged shell hands root to
+# whoever controls that URL, and leaves nothing behind to inspect.
 if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.ai/install.sh | sh
+    OLLAMA_INSTALLER="${HOME}/ollama-install.sh"
+    curl -fsSL --proto '=https' --tlsv1.2 https://ollama.ai/install.sh -o "$OLLAMA_INSTALLER"
+    OLLAMA_SHA="$(sha256sum "$OLLAMA_INSTALLER" | cut -d' ' -f1)"
+    echo "    installer sha256: $OLLAMA_SHA"
+    echo "    saved to: $OLLAMA_INSTALLER"
+
+    if [ -n "${OLLAMA_INSTALLER_SHA256:-}" ]; then
+        if [ "$OLLAMA_SHA" != "$OLLAMA_INSTALLER_SHA256" ]; then
+            echo "!!! installer digest mismatch."
+            echo "    expected: $OLLAMA_INSTALLER_SHA256"
+            echo "    got:      $OLLAMA_SHA"
+            echo "    Refusing to execute it. Nothing has been installed."
+            exit 1
+        fi
+        echo "    digest matches the pin; executing."
+        sh "$OLLAMA_INSTALLER"
+    elif [ "${OLLAMA_INSTALL_UNVERIFIED:-}" = "1" ]; then
+        echo "    WARNING: executing an UNVERIFIED remote installer because"
+        echo "    OLLAMA_INSTALL_UNVERIFIED=1 was set. Its digest is above."
+        sh "$OLLAMA_INSTALLER"
+    else
+        echo "!!! Not executing the installer."
+        echo "    Review $OLLAMA_INSTALLER, then re-run with either:"
+        echo "      OLLAMA_INSTALLER_SHA256=$OLLAMA_SHA   (pin what you reviewed)"
+        echo "      OLLAMA_INSTALL_UNVERIFIED=1           (accept it unverified)"
+        exit 1
+    fi
 fi
 
 # Start Ollama service
