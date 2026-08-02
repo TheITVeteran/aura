@@ -9511,11 +9511,28 @@ class InferenceGate:
         # 1.5. EMERGENCY REFLEX FALLBACK — tiny 1.5B model on CPU as absolute last local resort.
         # If Cortex AND Brainstem both failed for a user-facing request, the 1.5B Reflex
         # model can still produce SOMETHING so the user isn't left hanging.
-        # [STABILITY v54] Never run the 1.5B reflex if we are in a protected 32B foreground lane.
+        # [STABILITY v54] Never run the 1.5B reflex if we are in a protected 32B
+        # foreground lane.
+        #
+        # CP126: that sentence described a protection the code did not have.
+        # The guard tested protected_deep_fallback, which is a different thing
+        # — it marks a deep-probe request that fell back to the deep model —
+        # and is False on exactly the turn the comment is about. So a turn
+        # that explicitly asked for the deep mind, with both local lanes
+        # down, could be answered by a 1.5B CPU model presenting as that
+        # mind.
+        #
+        # protected_foreground_lane is narrow on purpose: it is set only for
+        # a user-facing deep-probe turn and for strict_primary_proof_lane
+        # (already excluded below). Ordinary conversation never sets it, so
+        # this keeps the last-resort reply exactly where it earns its keep —
+        # a normal turn with no other local option — and withholds it where
+        # the answer would misrepresent which mind produced it.
         if (
             _is_user_facing
             and not is_background
             and not protected_deep_fallback
+            and not protected_foreground_lane
             and not proof_evaluation_contract
             and not desktop_cognitive_engine_contract
             # Strict/operator/proof contracts refuse lower-lane fallback
