@@ -130,7 +130,7 @@ Environment="AURA_LLM_PROVIDER=local"
 Environment="AURA_LLM_MODEL=qwen2.5:14b"
 Environment="AURA_LLM_BASE_URL=http://localhost:11434"
 
-ExecStart=/opt/aura/venv/bin/python run_aura.py --server
+ExecStart=/opt/aura/venv/bin/python aura_main.py --server
 Restart=always
 RestartSec=10
 StandardOutput=append:/opt/aura/logs/aura_stdout.log
