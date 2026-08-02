@@ -8,6 +8,25 @@ Use:
     pre = controller.before_generation(prompt, state=aura_state, objective=...)
     response = mlx_client.generate(prompt, **pre.policy)
     controller.after_generation(...)
+
+STATUS: NOT WIRED INTO THE LIVE RESPONSE PATH.
+--------------------------------------------
+``build_main15_closed_loop`` is called from this docstring, and from
+``tests/being/test_closed_loop_v3_main15.py``. It has no production caller.
+The code below is exercised and correct in isolation; it is not part of
+generating a reply, and nothing here should be credited as live behaviour on
+that basis.
+
+That is recorded in the module rather than left to be rediscovered, because
+"substantial, tested, and uninvoked" reads exactly like "working" from the
+outside — the same way a status of "deferred" read like "will happen" for
+the LatentBridge next door, which also had no caller. A capability claim
+needs a call site, not a class.
+
+``core/organism/model_validation.py`` is where a claim about Aura gets
+registered with the test that validates it. Until this controller has a
+production call site, the only honest claim available is the one in this
+paragraph.
 """
 from __future__ import annotations
 

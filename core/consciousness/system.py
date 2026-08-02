@@ -79,6 +79,9 @@ class ConsciousnessSystem:
         self.synaptic_plasticity = None
         self.temporal_continuity = None
         self.layer_status: dict[str, str] = {}
+        #: Why a layer is in its state, for statuses that need a reason.
+        #: "unwired" with no reason is just a different word for broken.
+        self.layer_detail: dict[str, str] = {}
         self._degraded_layers: dict[str, str] = {}
 
         # Accelerate Authority Registration (Phase Unification)
@@ -135,6 +138,7 @@ class ConsciousnessSystem:
     def _mark_layer_online(self, layer: str) -> None:
         if not hasattr(self, "layer_status"):
             self.layer_status = {}
+            self.layer_detail = {}
         if not hasattr(self, "_degraded_layers"):
             self._degraded_layers = {}
         self.layer_status[layer] = "online"
@@ -150,6 +154,7 @@ class ConsciousnessSystem:
     ) -> None:
         if not hasattr(self, "layer_status"):
             self.layer_status = {}
+            self.layer_detail = {}
         if not hasattr(self, "_degraded_layers"):
             self._degraded_layers = {}
         self.layer_status[layer] = "degraded"
@@ -231,10 +236,29 @@ class ConsciousnessSystem:
             )
             logger.warning("Could not register AffectiveSteering: %s", e)
 
-        # Layer 3: LatentBridge — attaches AFTER model loads in mlx_client
-        # (not booted here — it needs the model reference)
-        self.layer_status["latent_bridge"] = "deferred"
-        logger.info("🧠 Layer 3: LatentBridge deferred (attaches on model load)")
+        # Layer 3: LatentBridge — backward path, model hidden state -> substrate.
+        #
+        # This said "deferred (attaches on model load)" and had done since it
+        # was written. `deferred` reads as "will happen shortly" — it is a
+        # promise about a future event, and nothing redeems it:
+        # attach_latent_bridge() has NO caller anywhere in the repository.
+        # mlx_client does import a latent_bridge, but a DIFFERENT module
+        # (core.brain.latent_bridge) and only for compute_inference_params;
+        # it never attaches this one.
+        #
+        # So the backward path is not deferred, it is unwired — and a status
+        # claiming otherwise is the same defect class as a health check that
+        # reports success because it never ran. Reported honestly, with the
+        # reason, so nobody credits model-hidden-state feedback as live.
+        self.layer_status["latent_bridge"] = "unwired"
+        self.layer_detail["latent_bridge"] = (
+            "attach_latent_bridge() has no production caller; the backward "
+            "hidden-state path is defined but never attached to a model"
+        )
+        logger.warning(
+            "🧠 Layer 3: LatentBridge UNWIRED — attach_latent_bridge() is never "
+            "called, so model hidden state does not feed back into the substrate."
+        )
 
         # Layer 4: Closed Causal Loop — self-prediction + output receptor
         try:
@@ -528,6 +552,7 @@ class ConsciousnessSystem:
                 status = self.aura_protocol.get_status()
                 if not hasattr(self, "layer_status"):
                     self.layer_status = {}
+                    self.layer_detail = {}
                 if not hasattr(self, "_degraded_layers"):
                     self._degraded_layers = {}
                 self.layer_status["aura_protocol"] = "degraded"
