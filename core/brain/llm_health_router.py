@@ -2317,6 +2317,30 @@ class HealthAwareLLMRouter:
         return format_chatml_messages(messages, require_json=require_json)
 
     @staticmethod
+    def _transport_carries_messages(client: Any) -> bool:
+        """Will this client's entry point actually receive `messages`?
+
+        Signature-based, matching how `_call_kwargs` filters the payload: a
+        method taking **kwargs receives everything, a method that names
+        `messages` receives it, and anything else does not.
+        """
+        for attribute in ("think", "call", "generate_text_async", "generate"):
+            method = getattr(client, attribute, None)
+            if not callable(method):
+                continue
+            try:
+                sig = inspect.signature(method)
+            except (TypeError, ValueError):
+                return True
+            if any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in sig.parameters.values()
+            ):
+                return True
+            return "messages" in sig.parameters
+        return False
+
+    @staticmethod
     def _coerce_prompt_from_messages(messages: Any) -> tuple[str, str | None]:
         """Serialize a full OpenAI-style message list into prompt/system fields.
 
@@ -4025,6 +4049,36 @@ class HealthAwareLLMRouter:
                         elif schema:
                             # If only a raw prompt exists but JSON is required
                             final_prompt = f"{prompt}\n\nResponse must be JSON:\n```json\n{{\n"
+
+                    # prepare_runtime_payload folds the caller's system message
+                    # into `messages` and nulls system_prompt, on the premise
+                    # that "structured messages are authoritative". That premise
+                    # holds only for a transport that actually carries messages.
+                    # A client whose signature has no `messages` parameter gets
+                    # neither — its system content vanished, and the persona
+                    # block below was substituted for it, so a caller-supplied
+                    # system prompt was silently replaced by a generic one.
+                    outbound_messages = clean_kwargs.get("messages")
+                    if (
+                        isinstance(outbound_messages, list)
+                        and outbound_messages
+                        and not self._transport_carries_messages(client)
+                    ):
+                        recovered_prompt, recovered_system = (
+                            self._coerce_prompt_from_messages(outbound_messages)
+                        )
+                        if recovered_system and recovered_system not in (system_prompt or ""):
+                            # Caller-first. Their instruction is the one that
+                            # was addressed to this turn; Aura's persona and
+                            # cognition guidelines are the standing layer
+                            # underneath it.
+                            system_prompt = (
+                                f"{recovered_system}\n\n{system_prompt}".strip()
+                                if system_prompt
+                                else recovered_system
+                            )
+                        if recovered_prompt and final_prompt == prompt:
+                            final_prompt = recovered_prompt
 
                     if hasattr(client, "think"):
                         result = await client.think(

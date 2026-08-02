@@ -68,6 +68,7 @@ from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.process_identity import assert_owned, capture_identity
+from core.brain.request_contract import REQUEST_FIELDS, validate_request_context
 
 logger = logging.getLogger("Aura.InferenceGate")
 _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
@@ -402,6 +403,10 @@ ADMISSION_SNAPSHOT_SCHEMA = "aura.memory_admission_snapshot.v1"
 #: on this host moves in seconds under load, so an older reading is history
 #: rather than evidence.
 ADMISSION_SNAPSHOT_MAX_AGE_S = 30.0
+
+#: Keyword arguments ``think()`` consumes rather than forwards. Listed so an
+#: undeclared-kwarg report does not cry wolf about them.
+_THINK_LOCAL_KWARGS = frozenset({"timeout", "brief", "system_prompt_is_brief"})
 
 _REQUIRED_ADMISSION_FIELDS = (
     "can_admit",
@@ -10169,77 +10174,44 @@ class InferenceGate:
         else:
             context["brief"] = system_prompt
 
-        for key in (
-            "history",
-            "messages",
-            "max_tokens",
-            "temperature",
-            "temp",
-            "top_p",
-            "top_k",
-            "min_p",
-            "repetition_penalty",
-            "repetition_context_size",
-            "presence_penalty",
-            "stop_sequences",
-            "schema",
-            "deep_handoff",
-            "allow_cloud_fallback",
-            "prefer_tier",
-            "origin",
-            "purpose",
-            "is_background",
-            "foreground_request",
-            "benchmark_request",
-            "protected_foreground_lane",
-            "proof_primary_lane_required",
-            "proof_model_tier",
-            "strict_answer_contract",
-            "strict_value_contract",
-            "proof_evaluation_contract",
-            "operator_evidence_contract",
-            "web_interlocutor_contract",
-            "cognitive_engine_required",
-            # Without this the gate cannot know the turn must emit a PLAN, and
-            # applies the origin's conversational token default.
-            "desktop_execution_contract",
-            "desktop_cognitive_engine_required",
-            "live_runtime_payload_required",
-            "visible_user_message",
-            "current_user_message",
-            "recent_conversation_context",
-            "recent_context_needed",
-            "desktop_quick_reply_contract",
-            "capability_inventory_contract",
-            "desktop_execution_contract",
-            "memory_state_contract",
-            "runtime_fact_status_contract",
-            "grounded_runtime_status_contract",
-            "canonical_memory_state_evidence",
-            "response_style_contract",
-            "live_speech_grounding_frame",
-            "live_mind_controls_bound",
-            "live_mind_generation_controls",
-            "live_mind_snapshot_ready",
-            "live_mind_required_subsystems_ok",
-            "allow_mesh_cognition",
-            "clean_user_surface_contract",
-            "user_surface_validation_prompt",
-            "user_surface_prompt_binding",
-            "clean_user_surface_steering_alpha",
-            "clean_user_surface_recurrent_loops",
-            "disable_prompt_cache",
-            "clear_prompt_cache",
-            "health_probe",
-            "allow_tools",
-            "state",
-            "sampling_bias",
-            "imagination_sampling_bias",
-            "bicameral_sampling_bias",
-            "skip_runtime_payload",
-        ):
-            if key in kwargs:
-                context[key] = kwargs[key]
+        # CP126 (critical x3): "Unauthenticated context flags control proof,
+        # foreground, cloud, and model-tier policy"; "Caller context is
+        # copied into provider policy and proof kwargs without validation.
+        # No per-key type schema, authority source, unknown-field
+        # rejection"; "The public think interface forwards policy-sensitive
+        # kwargs without authority validation."
+        #
+        # The list this replaces was an allowlist of NAMES with no types, and
+        # every flag downstream is read with a bare truthiness test. So
+        # allow_cloud_fallback="false" — a perfectly ordinary thing to get
+        # from a config file or a JSON body — enabled cloud fallback, and
+        # proof_primary_lane_required="no" required it. A caller got the
+        # opposite of what it asked for and nothing reported it.
+        #
+        # core.brain.request_contract declares what each key is, rejects what
+        # cannot be honestly coerced (rather than guessing), and names the
+        # policy-bearing subset so the authority binding that follows has a
+        # fixed target instead of a rediscovery exercise.
+        validation = validate_request_context(
+            {key: value for key, value in kwargs.items() if key in REQUEST_FIELDS}
+        )
+        context.update(validation.context)
+        if validation.rejected:
+            _record_inference_degradation(
+                ValueError(
+                    "rejected malformed request context fields: "
+                    + ", ".join(
+                        f"{key} ({why})" for key, why in sorted(validation.rejected.items())
+                    )
+                ),
+                action="dropped malformed request context fields and used gate defaults",
+                severity="warning",
+            )
+        unknown_keys = sorted(set(kwargs) - set(REQUEST_FIELDS) - _THINK_LOCAL_KWARGS)
+        if unknown_keys:
+            logger.debug(
+                "think() ignored undeclared kwargs: %s", ", ".join(unknown_keys)
+            )
         result = await self.generate(prompt, context=context, timeout=timeout)
         if isinstance(result, str) and result.strip():
             # Close bidirectional causal loop after each inference
