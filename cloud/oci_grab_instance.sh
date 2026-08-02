@@ -34,7 +34,7 @@ SUBNET_ID="${OCI_SUBNET_ID:-}"
 
 # SSH Public Key — paste the FULL public key content
 # This should match the key you downloaded earlier
-SSH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDGYl9CbsgGn6QDzhhAInlf09cp1ABCQ2zaofpiSolzW2lQb9/K1d8QkBK7UqLDXoVricua+lhKQ7JEZSxq8ybc7NWM5qvABOa7omYaqWz56R/1MbYohbUNyfrUipN9iGKyGK7MPgDNKfwaL5kSfYnMdSC4WXeliYZ3L6lsZMW1evx4u95RHHGHXsZtAXYjIccntVFlN24fRSy5xCNW71fnjAD07RStbHou0cOko3xYGiU0Vd4lLJq2ESZXHNfkBYf9Z4yuZg5k9cvMagfcrpGckaWmQbwxUFw684GVj7Yg37K2L4J2VFsfeSz3Qn90OncU69A+2HXime+UIAxvvrCn ssh-key-2026-02-09"
+SSH_PUBLIC_KEY="${OCI_SSH_PUBLIC_KEY:-ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDGYl9CbsgGn6QDzhhAInlf09cp1ABCQ2zaofpiSolzW2lQb9/K1d8QkBK7UqLDXoVricua+lhKQ7JEZSxq8ybc7NWM5qvABOa7omYaqWz56R/1MbYohbUNyfrUipN9iGKyGK7MPgDNKfwaL5kSfYnMdSC4WXeliYZ3L6lsZMW1evx4u95RHHGHXsZtAXYjIccntVFlN24fRSy5xCNW71fnjAD07RStbHou0cOko3xYGiU0Vd4lLJq2ESZXHNfkBYf9Z4yuZg5k9cvMagfcrpGckaWmQbwxUFw684GVj7Yg37K2L4J2VFsfeSz3Qn90OncU69A+2HXime+UIAxvvrCn ssh-key-2026-02-09}"
 
 # ============================================================================
 # Instance Configuration (defaults are max Always Free)
@@ -122,6 +122,89 @@ echo ""
 log "Starting instance creation loop. Press Ctrl+C to stop."
 echo ""
 
+# ============================================================================
+# Reconciliation — CP126: "The script enters an unbounded launch loop without
+# first querying for an existing running, provisioning, or previously-created
+# instance by idempotency token or durable instance ID. Restarting after a
+# lost local receipt can create another VM and boot volume."
+#
+# The receipt this script wrote was /tmp/aura_cloud_ip.txt, which does not
+# survive a reboot. Every rerun therefore started from "I have no instance"
+# and asked for another one — and because the loop retries for hours, an
+# operator who re-ran it after closing their laptop got a second VM and a
+# second 200GB boot volume against a tenancy whose Always Free allowance is
+# exactly one. The instances that resulted looked identical and neither was
+# obviously the spare.
+#
+# Two independent defences, because they fail in different situations:
+#   1. reconcile_existing — ask the cloud, not the local disk, what exists.
+#      Handles the lost-receipt case.
+#   2. --opc-retry-token — OCI's idempotency key. Handles the case the query
+#      cannot: a launch that succeeded server-side but whose response was
+#      lost in transit, which is precisely what a flaky retry loop produces.
+# ============================================================================
+
+# A token stable across runs for the same requested instance, so a retried
+# launch is recognised by OCI as the same request rather than a new one.
+# Derived from the identity of what is being asked for; changing the shape
+# or the AD is a different request and correctly gets a different token.
+RETRY_TOKEN="$(printf '%s|%s|%s|%s|%s' \
+    "$COMPARTMENT_ID" "$AVAILABILITY_DOMAIN" "$DISPLAY_NAME" "$SHAPE" "$SUBNET_ID" \
+    | shasum -a 256 | cut -c1-32)"
+
+reconcile_existing() {
+    # Print the OCID of an instance that already exists for this request, if
+    # any. PROVISIONING and STARTING count: an instance mid-creation is a
+    # commitment already made, and launching beside it is the exact
+    # double-spend this guards against.
+    oci compute instance list \
+        --compartment-id "$COMPARTMENT_ID" \
+        --display-name "$DISPLAY_NAME" \
+        --query "data[?\"lifecycle-state\"=='RUNNING' || \"lifecycle-state\"=='PROVISIONING' || \"lifecycle-state\"=='STARTING'].id | [0]" \
+        --raw-output 2>/dev/null | grep -v '^None$' || true
+}
+
+report_instance() {
+    # Everything the success path reports, for an instance we did not just
+    # create. An adopted instance and a fresh one must be equally usable, or
+    # operators will re-run the script to get "a proper one".
+    local instance_id="$1"
+    log "Instance ID: $instance_id"
+    local public_ip
+    public_ip=$(oci compute instance list-vnics \
+        --instance-id "$instance_id" \
+        --query 'data[0]."public-ip"' \
+        --raw-output 2>/dev/null)
+    if [ -n "$public_ip" ] && [ "$public_ip" != "None" ]; then
+        echo ""
+        success "PUBLIC IP: $public_ip"
+        echo ""
+        echo "  SSH:    ssh -i ~/.ssh/aura-oracle.key ubuntu@${public_ip}"
+        echo "  Deploy: ./cloud/deploy.sh ${public_ip}"
+        echo ""
+        echo "$public_ip" > /tmp/aura_cloud_ip.txt
+    else
+        warn "Instance exists but has no public IP yet. Check the Oracle Console."
+    fi
+}
+
+log "Checking whether an instance already exists for this request..."
+EXISTING_ID="$(reconcile_existing)"
+if [ -n "$EXISTING_ID" ]; then
+    echo ""
+    success "═══════════════════════════════════════════"
+    success "  INSTANCE ALREADY EXISTS — NOT LAUNCHING"
+    success "═══════════════════════════════════════════"
+    echo ""
+    warn "Found '$DISPLAY_NAME' already running or provisioning."
+    warn "Launching again would create a second VM and boot volume."
+    report_instance "$EXISTING_ID"
+    echo "  To deliberately create another, use a different DISPLAY_NAME."
+    echo ""
+    exit 0
+fi
+success "No existing instance found — proceeding."
+
 # --- Retry loop ---
 ATTEMPT=0
 while true; do
@@ -135,6 +218,7 @@ while true; do
     log "Attempt #${ATTEMPT} — requesting instance..."
 
     RESULT=$(oci compute instance launch \
+        --opc-retry-token "$RETRY_TOKEN" \
         --compartment-id "$COMPARTMENT_ID" \
         --availability-domain "$AVAILABILITY_DOMAIN" \
         --shape "$SHAPE" \
@@ -211,6 +295,19 @@ while true; do
     else
         warn "Unknown error. Retrying in ${RETRY_INTERVAL}s..."
         echo "$RESULT" | tail -3
+    fi
+
+    # An error here does not prove nothing was created. A launch can succeed
+    # server-side and still return a failure to us — a dropped connection,
+    # an SDK timeout, a signal. Re-check before asking for another one; the
+    # retry token covers the same case at the API, and this covers it when
+    # the token has been rotated by a config change mid-run.
+    RECHECK_ID="$(reconcile_existing)"
+    if [ -n "$RECHECK_ID" ]; then
+        echo ""
+        success "Instance appeared despite the reported error — adopting it."
+        report_instance "$RECHECK_ID"
+        exit 0
     fi
 
     sleep "$RETRY_INTERVAL"
