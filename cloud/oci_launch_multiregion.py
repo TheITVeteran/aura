@@ -159,33 +159,57 @@ def ensure_networking(region, vn_client, identity_client):
         )
     )
 
-    # Update default security list to allow SSH + HTTP
+    # CP126 (critical): "Provisioner exposes SSH and Aura backend globally.
+    # The default security list is replaced with ingress from 0.0.0.0/0 to
+    # SSH, port 8000, HTTP, and HTTPS, plus unrestricted egress. This exposes
+    # the backend directly and broadens SSH before host hardening."
+    #
+    # Port 8000 is the Aura backend itself — the API that drives the runtime —
+    # published to the entire internet at provisioning time, before anything
+    # on the box has been hardened. SSH open to 0.0.0.0/0 on a fresh cloud
+    # image is the other half.
+    #
+    # Ingress is now sourced from an explicit allowlist, and port 8000 is NOT
+    # opened by default: the backend is reachable through the TLS front door
+    # or an SSH tunnel, both of which already work. Opening it requires
+    # saying so.
+    admin_cidr = os.environ.get("AURA_ADMIN_CIDR", "").strip()
+    if not admin_cidr:
+        raise SystemExit(
+            "AURA_ADMIN_CIDR is required: the CIDR permitted to reach SSH.\n"
+            "  Your address:  curl -s https://checkip.amazonaws.com\n"
+            "  Then:          AURA_ADMIN_CIDR=<that-ip>/32\n"
+            "Refusing to open SSH to 0.0.0.0/0 on a freshly provisioned host."
+        )
+
+    public_web = os.environ.get("AURA_PUBLIC_WEB", "1").strip() not in {"0", "false", "no"}
+    backend_cidr = os.environ.get("AURA_BACKEND_CIDR", "").strip()
+
+    def _tcp_rule(source: str, port: int):
+        return oci.core.runtime.models.IngressSecurityRule(
+            protocol="6", source=source,
+            tcp_options=oci.core.runtime.models.TcpOptions(
+                destination_port_range=oci.core.runtime.models.PortRange(
+                    min=port, max=port))
+        )
+
+    ingress_rules = [_tcp_rule(admin_cidr, 22)]
+    if public_web:
+        ingress_rules.append(_tcp_rule("0.0.0.0/0", 80))
+        ingress_rules.append(_tcp_rule("0.0.0.0/0", 443))
+    if backend_cidr:
+        # Deliberate direct exposure of the backend port, scoped to a CIDR.
+        ingress_rules.append(_tcp_rule(backend_cidr, 8000))
+
+    print(f"    ingress: SSH<-{admin_cidr}"
+          f"{' , 80/443<-0.0.0.0/0' if public_web else ''}"
+          f"{f' , 8000<-{backend_cidr}' if backend_cidr else ' , 8000 CLOSED'}")
+
     sl = vn_client.get_security_list(vcn.default_security_list_id).data
     vn_client.update_security_list(
         sl.id,
         oci.core.runtime.models.UpdateSecurityListDetails(
-            ingress_security_rules=[
-                oci.core.runtime.models.IngressSecurityRule(
-                    protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.runtime.models.TcpOptions(
-                        destination_port_range=oci.core.runtime.models.PortRange(min=22, max=22))
-                ),
-                oci.core.runtime.models.IngressSecurityRule(
-                    protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.runtime.models.TcpOptions(
-                        destination_port_range=oci.core.runtime.models.PortRange(min=8000, max=8000))
-                ),
-                oci.core.runtime.models.IngressSecurityRule(
-                    protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.runtime.models.TcpOptions(
-                        destination_port_range=oci.core.runtime.models.PortRange(min=443, max=443))
-                ),
-                oci.core.runtime.models.IngressSecurityRule(
-                    protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.runtime.models.TcpOptions(
-                        destination_port_range=oci.core.runtime.models.PortRange(min=80, max=80))
-                ),
-            ],
+            ingress_security_rules=ingress_rules,
             egress_security_rules=[
                 oci.core.runtime.models.EgressSecurityRule(
                     protocol="all", destination="0.0.0.0/0")
