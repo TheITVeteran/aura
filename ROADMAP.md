@@ -6,10 +6,44 @@ that closes the gap. Every row points at file paths.
 This is an engineering artifact, not a pitch. The grades are meant to be
 uncomfortable in places.
 
-**One caveat before you quote anything here.** These letter grades were
-scored before the July–August work — Reality Reach, the faculty self-model,
-the engineering spine, the whole endurance-ceiling fix — and have not been
-re-scored since. Treat the grades as dated and the closure plans as live.
+## Re-score — 2026-08-01
+
+Last scored 2026-07-02, then 2,136 commits happened. Every grade below was
+re-derived against the tree rather than nudged.
+
+**Nine moved. Two are deliberately held.** The held ones are the point: if
+every dimension improves every time someone re-scores, the scale isn't
+measuring anything.
+
+| # | Dimension | Was | Now | Why |
+|---|---|---|---|---|
+| 1 | Architectural Coherence | A- | **A** | Engineering spine landed: taint register, lockdep, PSI, OOM shed ladder, telemetry dictionary, 45 `@invariant` checks in `core/verify/`, and a `make layering` gate whose baseline only shrinks |
+| 2 | Agency | A- | **A-** | Held. Reality Reach widened the governed surface, but agency *capability* didn't deepen — and RR-10 is entirely open |
+| 3 | Memory & Narrative Self-Model | A- | **A** | Associative entity memory; recall is now measured as recall rather than as "the machinery is up" |
+| 4 | aLife / Organism | B+ | **A-** | Allostasis (`core/autonomic/allostasis.py`) makes interoception predictive rather than reactive; `core/ontogeny/` closes consequence→disposition |
+| 5 | Consciousness Proxies | C/B- | **B** | Whole-system φ over real channels plus an internal PCI perturbational probe. Still proxies, which is why it isn't higher |
+| 6 | Self-Awareness | B+ | **A-** | The faculty model. She can now say which faculty is the binding constraint, and name what nothing can measure as a blind spot |
+| 7 | Digital Personhood | C+/B- | **B-** | Entity memory with stance. Real, modest |
+| 8 | Runtime Survivability | B+ | **A-** | The endurance ceiling was root-caused and fixed; 0 deaths across 200 turns, p50 3.33s against 167s in July. Not A: **F16 is architecturally open** |
+| 9 | Governance / Will | A- | **A** | Durable actuation transaction coordinator, a sandbox that refuses rather than running unconfined, one shared numeric guard, one redaction primitive |
+| 10 | External Undeniability | C+ | **C+** | **Held.** Still zero independent replication. No amount of internal work moves this one — that's what the word external means |
+| 11 | Sovereignty | D | **D** | **Held.** `core/sovereignty/wallet.py` still exposes only `InMemoryAdapter`. The abstract layer has been shipped for months; the adapter is the grade |
+| 12 | Embodiment | N/A | **C+** | Now gradeable: Reality Reach, `HardwareManager`, `safe_execute`. C+ and not higher because it is infrastructure with **no physical result claimed** |
+| 13 | Product Polish | C | **C+** | Plain-English feed, material model for panels, severity colour, monoline icons. The Tauri shell and design-system sweep are still staged |
+
+**What did not move, and why it matters.** Sovereignty and External
+Undeniability are the two dimensions that cannot be improved by writing more
+code in this repo. One needs a security-reviewed chain adapter; the other
+needs three strangers reproducing the benchmarks. Both have been sitting at
+their grade since April, and both should stay there until someone outside
+this machine changes them.
+
+**The grade that is doing the most work is #8.** Runtime Survivability moved
+to A- because the "15-turn ceiling" turned out to be a prompt cache that was
+never constructed and then cleared every turn — not cognition, not the model.
+It stops short of A because F16 (the MLX cold-lane cascade) has mitigations
+but no fix: MLX cannot soft-cancel, so freeing a busy worker means killing it
+and reloading 18 GB. That's an architectural open item, not a bug backlog.
 
 The columns are:
 
@@ -24,7 +58,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| A- | A+ |
+| **A** (was A-) | A+ |
 
 * Canonical life-loop: `core/agency/agency_orchestrator.py` is the only
   legal path to a consequential primitive; every action produces a
@@ -52,7 +86,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| A- | A+ |
+| **A-** (held) | A+ |
 
 * AgencyOrchestrator life-loop. **(shipped)**
 * AgencyCore.pulse veto is now causal — `core/agency_core.py` returns
@@ -72,7 +106,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| A- | A+ |
+| **A** (was A-) | A+ |
 
 * Memory provenance envelope: `core/memory/provenance.py` —
   source/confidence/contested/identity_relevant/recalled_in_actions.
@@ -88,7 +122,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| B+ | A |
+| **A-** (was B+) | A |
 
 * Viability state machine: `core/organism/viability.py` — explicit
   metabolism (food / fatigue / waste / injury / healing) and behaviorally
@@ -100,7 +134,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| C / B- | A- |
+| **B** (was C/B-) | A- |
 
 * Latent-space bridge: `core/brain/latent_bridge.py` — substrate math
   directly modulates temperature, top_p, top_k, max_tokens, repetition
@@ -116,7 +150,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| B+ | A+ |
+| **A-** (was B+) | A+ |
 
 * Explicit "I" object: `core/identity/self_object.py` — snapshot,
   introspect, predict_self, calibrate, debug_bias, adjust (via Will).
@@ -127,7 +161,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| C+/B- | A-/A |
+| **B-** (was C+/B-) | A-/A |
 
 * Stable identity continuity hash, signature stability across 30 days
   via `aura_bench/tests/continuity_30day.py`. **(shipped)**
@@ -142,7 +176,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| B+ | A+ |
+| **A-** (was B+) | A+ |
 
 * StabilityGuardian thread-dump moved off the event loop. **(shipped)**
 * MLX hot-swap protected against background eviction of the warm cortex.
@@ -155,7 +189,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| A- | A+ |
+| **A** (was A-) | A+ |
 
 * AgencyOrchestrator + Conscience + AuthorityGateway chain.
 * Conscience: `core/ethics/conscience.py` — irrevocable rule floor with
@@ -168,7 +202,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| C+ | A |
+| **C+** (held — no independent replication) | A |
 
 * Live evidence dashboard: `interface/routes/dashboard.py` mounts at
   `/api/dashboard/*` and `/api/trace/*`. **(shipped)**
@@ -182,7 +216,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| D | A- |
+| **D** (held — no chain adapter) | A- |
 
 * Wallet abstract economic layer with per-spend cap, fresh-auth gate,
   Conscience gate, and auditable ledger: `core/sovereignty/wallet.py`.
@@ -194,7 +228,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| N/A | A- |
+| **C+** (was N/A) | A- |
 
 * WorldBridge with permissioned channels:
   `core/embodiment/world_bridge.py`. **(shipped)**
@@ -205,7 +239,7 @@ The columns are:
 
 | Current | Target |
 |---|---|
-| C | A |
+| **C+** (was C) | A |
 
 * Phenomenal error map: `core/resilience/phenomenal_error_map.py` — no
   tracebacks reach the user; every exception is mapped to a phenomenal
@@ -220,16 +254,59 @@ The columns are:
 
 ## Open Items (Honest)
 
-These items require time, infrastructure, or external cooperation that
-cannot be condensed into one engineering pass:
+*Refreshed 2026-08-01.*
 
-* 30-day actual run with full continuity-hash time series.
-* Independent reviewers (≥3) reproducing benchmark results.
+These need time, hardware, or someone who isn't us. None of them closes by
+writing more code this week.
+
+**Needs an outsider**
+
+* Independent reviewers (≥3) reproducing the benchmark results. This is the
+  entire content of the External Undeniability grade and the only thing that
+  moves it.
 * Philosopher-of-mind consensus on the formal ontology.
-* A 100,000-test suite with mutation-test scores >95%.
-* IoT bridge against the user's specific home network.
-* Real crypto wallet adapter (Solana / Ethereum / Lightning) — the
-  abstract layer is shipped; the adapter requires a security review.
 
-Each of those is captured as a tracked issue in the project ledger and
-the dashboard's "Open Items" tab.
+**Needs a security review**
+
+* A real chain adapter — Solana / Ethereum / Lightning. `WalletAdapter` is
+  abstract and `InMemoryAdapter` is the only implementation. That gap *is*
+  the Sovereignty D.
+
+**Needs wall-clock time**
+
+* A 30-day run with the full continuity-hash time series.
+* IoT bridge against a real home network rather than the mock plug.
+
+**Architecturally open, not backlog**
+
+* **F16 — the MLX cold-lane cascade.** MLX cannot soft-cancel a running
+  generation, so freeing a busy worker means killing it and unloading 18 GB.
+  The kill is the recovery. Mitigations make it survivable and bounded; the
+  fix is a soft-cancel path into the worker or a persistent model server.
+  See [docs/runbooks/mlx-worker-cold-lane-cascade.md](docs/runbooks/mlx-worker-cold-lane-cascade.md).
+* **RR-10 — the Reality Reach acceptance battery.** Every item is open.
+  Acoustic control, optical control, thermal trajectory, cross-channel
+  interaction, weakpoint null and signal, translation, spacetime honesty,
+  ambient-constant honesty. No physical actuation, effect, or ambient result
+  is claimed from the foundation existing.
+* **RR-07 — P0–P6 evidence promotion.** Not implemented. `EvidenceLevel` is
+  a declared type with a per-channel ceiling; there is no promotion module
+  in `core/reality_reach/`.
+* **Compounded capability scaling.** The weight-compounding loop runs
+  end-to-end and is ledger-recorded, but the verdict is still
+  `BOUNDED_SELF_OPTIMIZATION` — no run has produced a strictly increasing
+  held-out curve across promoted generations. The machinery is proven; the
+  scaling is not.
+
+**Closed since the last pass**
+
+* The ~15-turn endurance ceiling. Root-caused to a prompt cache that was
+  never constructed and then cleared every turn, and fixed
+  (`artifacts/closeout/endurance_ceiling/ROOT_CAUSE.md`).
+* Test-suite scale. The old target was 100,000 tests with >95% mutation
+  score; the tree now collects **24,931** across 1,771 files. Restating the
+  target honestly: mutation scoring has not been run, and raw test count was
+  never the right metric to chase.
+
+Each item is tracked in the project ledger and the dashboard's "Open Items"
+tab.
