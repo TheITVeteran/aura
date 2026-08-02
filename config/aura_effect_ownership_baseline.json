@@ -10857,6 +10857,102 @@
       "scope": "<module>.register_memory_services.create_vector_memory"
     },
     {
+      "callee": "path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._cleanup_unreferenced_archive_files"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._connect"
+    },
+    {
+      "callee": "self._archive_pending_path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._discard_archive_transaction"
+    },
+    {
+      "callee": "unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._discard_archive_transaction"
+    },
+    {
+      "callee": "self._archive_pending_path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._finalize_archive_transaction"
+    },
+    {
+      "callee": "unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._finalize_archive_transaction"
+    },
+    {
+      "callee": "archive.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._prepare_storage"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._prepare_storage"
+    },
+    {
+      "callee": "parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._prepare_storage"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._write_archive_json"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._write_archive_json"
+    },
+    {
+      "callee": "temporary.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/reality_reach/digital_twin.py",
+      "scope": "<module>.RealityDigitalTwinGraph._write_archive_json"
+    },
+    {
       "callee": "os.remove",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15378,6 +15474,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b3548e5453cf99827f083273c13d96b5b199f3b2a4ada1888f94496545ece5b3",
+  "inventory_sha256": "ff8e26fbddab9954d88a53169809ce658992ff8d84d466e9664cec3af78be638",
   "schema_version": 1
 }

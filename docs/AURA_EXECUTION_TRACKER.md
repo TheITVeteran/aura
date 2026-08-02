@@ -34728,6 +34728,114 @@ evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 920-checkpoint completion envelope, approximately 86.7% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
 
+### 2026-08-02 - Total checkpoint 803: canonical causal Reality Reach digital twins
+
+Reality Reach now has one durable digital-twin graph rather than separate
+adapter, observation, body, and UI inventories that only happen to describe the
+same device. Stable physical identity owns the twin; runtime sessions own
+transient adapters. Typed entity, adapter, channel, and body-limb nodes are
+connected by explicit containment, exposure, and projection relationships.
+Topology changes advance a monotonic graph revision and disable removed
+channels instead of silently deleting their history. Persistent identities
+survive process restart, while transient identities and process-bound adapter
+bindings are fenced out and cannot be mistaken for a still-live attachment.
+
+The graph is a private SQLite owner with WAL, FULL synchronization, foreign
+keys, bounded storage and query limits, exact schema verification, startup
+integrity checks, symlink refusal, and fail-closed owner-only directory and
+database permissions. Stable device and display labels are stored only as
+digests. Public snapshots omit sensitive twins entirely and redact property
+values from the remaining topology. Private topology or values require a fresh
+one-use capability in the explicit
+`reality_reach.private_twin` scope. The graph describes physical state but
+mints no attachment or actuation authority. Manifest drift can advance identity
+only through a separate one-use, signed, exact-transition capability and a
+compare-and-swap migration independently revalidated by the graph.
+
+Candidate, attach, detach, lost, revoke, migration, runtime-reconcile, and
+observation transitions are transactional and idempotent. Non-prunable
+lifecycle events form a sequence-numbered SHA-256 chain whose recorded head is
+verified at startup and during full probes; mutation, deletion, sequence gaps,
+and head rollback fail closed. Bounded candidate heartbeat and observation
+events remain prunable so rediscovery cannot exhaust the lifecycle ledger.
+Same-adapter detach/reattach and A-to-B-to-A adapter reuse create fresh binding
+epochs. Every observation carries the twin identity, attachment generation,
+binding timestamp, and topology revision, so a delayed pre-detach sample cannot
+resurrect state after detach, restart, migration, or adapter reuse.
+
+The observation router now treats the digital twin and historian as independent
+durable required sinks. It cannot complete delivery until each configured sink
+has produced its own content-bound receipt, and its health reports per-sink
+pending counts and oldest age. Boot reconciles the current Reality Reach
+inventory into the graph before acquisition. The attachment broker keeps an
+authoritative attached-candidate snapshot: a successful discovery that no
+longer sees a device marks it lost and detaches its topology, while a connector
+timeout or exception retains the last unexpired attachment and reports the
+connector degradation instead of fabricating physical disappearance.
+
+Twenty-three adversarial digital-twin tests cover privacy, schema and permission
+failure, stable/transient restart identity, topology replacement, manifest
+migration, forged bindings, stale ordering, same-adapter and A-B-A epoch reuse,
+candidate rediscovery, bounded heartbeat pruning, event mutation and deletion,
+live corruption laundering, bounded lifecycle segmentation and restart,
+archived-segment mutation and deletion, required durable sinks, vanished
+devices, and transient connector failure. The complete physical-runtime family
+passes 218/218, and
+the repository smoke suite passes 103/103. Ruff, Python compilation, strict
+targeted MyPy, architectural layering, and diff integrity pass. Repository-wide
+governance lint remains red on 122 unrelated regressions and 11 stale baseline
+buckets. The digital twin's twelve fixed-path, owner-private archive operations
+were reviewed, registered as the canonical lifecycle-archive owner, and added
+to the ratchet without accepting any of those unrelated drifts.
+The six-chunk repository suite was also started through its required bounded
+runner. Chunk one passed 3,426 tests before stopping on seven deterministic
+failures outside the CP803 diff and three separately identified order-dependent
+failures; the deterministic set is the inherited governance-lint baseline plus
+current voice-route and degradation-marker source-contract tests. No full-suite
+green claim is made, and those failures remain named follow-on work rather than
+being attributed to or hidden inside the 218-test physical-runtime result.
+
+Two post-implementation adversarial passes close twenty-one cross-owner gaps:
+attach cancellation completes shielded rollback; local adapter, sampler, body,
+and authority fencing survives twin-store failure; historian rows durably bind
+the authoritative twin epoch; migration authority is independently signed and
+one-use; ordinary persisted grants re-fetch and cryptographically verify their
+current Will material; disappearance decisions use the complete connector scan
+plus lease and quorum evidence; all three configured sinks require explicit
+health evidence; later writes cannot launder corrupt rows; binding and property
+rows are verified before stale/fence decisions; sensitive twins do not enter
+public snapshots; active connectors require cancellation-safe retirement;
+legacy historian heads receive idempotent, restart-safe cursor pagination with
+live-inventory filtering beyond the former 4,096-head ceiling; twin detach and
+revoke intents persist and replay across restart; and lifecycle evidence rolls
+through bounded external hash-linked segments instead of reaching a permanent
+database or filesystem capacity ceiling. Combined testing then exposed and
+closed two further integration defects: session-only detach no longer requires
+persistent custody to finish immediate fencing, and privacy assertions always
+exercise the one-use verifier rather than ambient global state.
+
+This closes the canonical digital-twin obligation formerly labelled CP802 in
+the additive Reality Reach sequence. The historian and Messages work were
+pulled forward, so the closure is recorded as total checkpoint 803 without
+rewriting the historical numbering. No configured hardware was available for
+live hardware-in-loop acceptance. Old version-one historian rows are not
+rewritten into fabricated history; their current authoritative heads are
+projected once through the live binding and recorded with idempotent backfill
+receipts. The graph itself does not claim a physical effect. ROS-shaped
+telemetry/action lifecycle,
+declarative event flows, metrology/HIL, concrete protocol connectors, and live
+configured-hardware acceptance remain mandatory.
+
+The immutable CP796 resident 32B recurrent-SFT campaign has separately reached
+96/96 steps with a durable final adapter and monotonic internal validation-loss
+reduction. That proves training-objective learning only. The adapter remains
+unpromoted until the preregistered fresh-task, equal-compute held-out certificate
+tests base vanilla, base plus RLC, adapter vanilla, and adapter plus RLC without
+regression. No physical-effect, reasoning-gain, frontier, release, or
+`WOW Signal` claim is made. This is total checkpoint 803 of the current
+920-checkpoint completion envelope, approximately 87.3% by count; long soaks
+remain deferred.
+
 ### 2026-08-02 - Total checkpoint 802: durable Reality Reach historian and store-and-forward
 
 The planned historian checkpoint is now implemented beneath the universal
