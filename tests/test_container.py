@@ -12,9 +12,24 @@ from core.container import ServiceContainer, ServiceLifetime
 
 @pytest.fixture
 def clean_container():
-    """Provides a fresh container for each test."""
+    """Provides a fresh container for each test, and leaves one behind.
+
+    Clearing only on the way IN meant the last test in this file left its
+    registrations installed for the whole session. ``register_instance``
+    defaults to ``required=True``, which descriptors turn into a
+    ``fail-closed`` failure policy — so the mycelium instance registered by
+    the shutdown test below silently made ``mycelium`` a fail-closed
+    subsystem for every test that ran afterwards. 37 mycelium tests that
+    inject a failure and assert graceful degradation then saw
+    ``record_degradation`` escalate and raise instead. They passed alone and
+    failed in-suite, which is the signature of leaked global state, not of a
+    defect in the code they were testing.
+    """
     ServiceContainer.clear()
-    return ServiceContainer
+    try:
+        yield ServiceContainer
+    finally:
+        ServiceContainer.clear()
 
 
 class TestServiceRegistration:

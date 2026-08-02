@@ -22,6 +22,34 @@ from ...container import ServiceContainer
 logger = logging.getLogger(__name__)
 
 
+def _tool_result_succeeded(result: Any) -> bool:
+    """Whether a tool result actually reports success.
+
+    CP126 2462d3c5: the caller inferred success from the absence of an
+    exception. A tool that returns {"ok": False} or {"error": ...} did its job
+    and reported a failure, and treating that as a win taught the router to
+    prefer the pathway that produced it.
+
+    A result with no outcome field is treated as success — that is the legacy
+    contract for tools returning bare values — but it reaches reinforcement as
+    UNVERIFIED, so it can no longer masquerade as a checked outcome.
+    """
+    if result is None:
+        return False
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, dict):
+        for key in ("ok", "success", "verified_success"):
+            if key in result and isinstance(result[key], bool):
+                return result[key]
+        if result.get("error"):
+            return False
+        status = str(result.get("status") or "").strip().lower()
+        if status in {"failed", "error", "refused", "denied", "timeout"}:
+            return False
+    return True
+
+
 def _record_response_processing_degradation(
     error: BaseException,
     *,
@@ -655,8 +683,13 @@ class ResponseProcessingMixin:
                 f"Skill: {pw.skill_name} 🍄", pw.activity_label or f"Executing {pw.skill_name}..."
             )
             result = await self.execute_tool(pw.skill_name, params, origin=origin)
-            # Record success for Physarum reinforcement
-            mycelium.reinforce(pw.pathway_id, success=True)
+            # CP126 2462d3c5: this passed success=True unconditionally, so a
+            # tool that RETURNED a failure still strengthened the pathway that
+            # chose it — routing confidence rose on evidence of "nothing
+            # threw". The result is the evidence; it decides the outcome and
+            # is handed over so the reinforcement counts as verified.
+            tool_ok = _tool_result_succeeded(result)
+            mycelium.reinforce(pw.pathway_id, success=tool_ok, evidence=result)
             return result
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             _record_response_processing_degradation(
@@ -665,7 +698,10 @@ class ResponseProcessingMixin:
                 severity="error",
             )
             logger.error("Mycelial shortcut execution failed: %s", e)
-            mycelium.reinforce(pw.pathway_id, success=False)
+            # A raised exception IS the outcome, so this one is verified.
+            mycelium.reinforce(
+                pw.pathway_id, success=False, evidence={"ok": False, "error": str(e)[:200]}
+            )
             return None
 
     async def _attempt_fast_path(

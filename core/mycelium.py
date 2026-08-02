@@ -91,6 +91,36 @@ def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
     return compiled.search(str(text or "")[:_MAX_ROUTE_INPUT_LEN])
 
 
+def _evidence_verifies_outcome(evidence: Any, success: bool) -> bool:
+    """Whether ``evidence`` actually states the outcome it is offered for.
+
+    CP126 2462d3c5. A caller boolean is a claim; this asks for the execution
+    result behind it. An evidence object only verifies when it carries an
+    explicit outcome field AGREEING with the claim — evidence that contradicts
+    the caller is not evidence for the caller, and an object with no outcome
+    field at all (a bare result, a string, None) verifies nothing.
+    """
+    if evidence is None:
+        return False
+    if isinstance(evidence, bool):
+        # A second boolean is not corroboration.
+        return False
+    outcome: Any = None
+    if isinstance(evidence, dict):
+        for key in ("verified_success", "ok", "success"):
+            if key in evidence:
+                outcome = evidence[key]
+                break
+    else:
+        for key in ("verified_success", "ok", "success"):
+            if hasattr(evidence, key):
+                outcome = getattr(evidence, key)
+                break
+    if not isinstance(outcome, bool):
+        return False
+    return outcome is bool(success)
+
+
 def _redact_source_path(path: Any) -> Optional[str]:
     """Return a project-relative module path, never an absolute filesystem path.
 
@@ -169,6 +199,13 @@ class HardwiredPathway(BaseModel):
     activity_label: str = ""
     hit_count: int = 0
     miss_count: int = 0
+    # CP126 2462d3c5: hit/miss count every reinforcement, including ones whose
+    # only evidence is "the call did not raise". These count ONLY outcomes
+    # backed by an execution result, so a pathway's earned reliability can be
+    # told apart from its asserted one.
+    verified_hits: int = 0
+    verified_misses: int = 0
+    unverified_reinforcements: int = 0
     created_at: float = Field(default_factory=time.time)
     last_matched: float = Field(default_factory=time.monotonic)
     direct_response: Optional[str] = None  # Legacy non-user emergency response only
@@ -178,6 +215,8 @@ class HardwiredPathway(BaseModel):
 
     # Physarum thresholds
     REINFORCE_DELTA: ClassVar[float] = 0.05
+    #: A success nobody verified is weaker evidence than one that was.
+    UNVERIFIED_REINFORCE_DELTA: ClassVar[float] = 0.02
     WEAKEN_DELTA: ClassVar[float] = 0.15
     PRUNE_THRESHOLD: ClassVar[float] = 0.2
     MAX_CONFIDENCE: ClassVar[float] = 1.0
@@ -185,18 +224,63 @@ class HardwiredPathway(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    def reinforce(self, success: bool):
-        """Physarum-inspired conductivity update."""
+    def reinforce(self, success: bool, *, verified: bool = False):
+        """Physarum-inspired conductivity update.
+
+        CP126 2462d3c5: this trained routing confidence from a caller boolean
+        with no execution receipt and no independent outcome check. The live
+        callers made that concrete — the response lane passed success=True
+        immediately after a tool call that had merely not raised, so a tool
+        returning a failure RESULT still strengthened the pathway that chose
+        it. Confidence then rose on evidence of "nothing threw".
+
+        Unverified reinforcement still moves confidence, because refusing it
+        would freeze routing everywhere the caller has no receipt. What it no
+        longer does is look the same as a verified outcome: an unverified
+        success earns a fraction of the delta, and the verified counters are
+        kept separately so reliability can be read at its true strength.
+        """
         if success:
-            self.confidence = min(self.MAX_CONFIDENCE, self.confidence + self.REINFORCE_DELTA)
+            delta = self.REINFORCE_DELTA if verified else self.UNVERIFIED_REINFORCE_DELTA
+            self.confidence = min(self.MAX_CONFIDENCE, self.confidence + delta)
             self.hit_count += 1
+            if verified:
+                self.verified_hits += 1
         else:
+            # A failure is weakened at full strength either way: acting on a
+            # pathway that did not work is the risk, and discounting the
+            # penalty for missing evidence would keep a broken route alive.
             self.confidence = max(self.MIN_CONFIDENCE, self.confidence - self.WEAKEN_DELTA)
             self.miss_count += 1
+            if verified:
+                self.verified_misses += 1
+        if not verified:
+            self.unverified_reinforcements += 1
 
     @property
     def is_weak(self) -> bool:
         return self.confidence < self.PRUNE_THRESHOLD
+
+    @property
+    def verified_success_rate(self) -> Optional[float]:
+        """Success rate over VERIFIED outcomes, or None when there are none.
+
+        None rather than 0.0: no verified evidence is not a bad record
+        (CP126 2462d3c5).
+        """
+        total = self.verified_hits + self.verified_misses
+        return (self.verified_hits / total) if total > 0 else None
+
+    @property
+    def evidence_grade(self) -> str:
+        """How much of this pathway's record rests on checked outcomes."""
+        total = self.hit_count + self.miss_count
+        if total == 0:
+            return "untested"
+        verified = self.verified_hits + self.verified_misses
+        if verified == 0:
+            return "asserted_only"
+        return "verified" if verified >= total else "mixed"
 
     @property
     def success_rate(self) -> float:
@@ -1384,8 +1468,15 @@ class MycelialNetwork:
         """Compatibility hook: evaluate owner heartbeats; never invent one."""
         await self._pulse_once()
 
-    def reinforce(self, pathway_id: str, success: bool):
+    def reinforce(
+        self, pathway_id: str, success: bool, *, evidence: Any = None
+    ):
         """Physarum-inspired conductivity update after skill execution.
+
+        ``evidence`` is the execution result that justifies ``success``. When
+        it actually carries an outcome the reinforcement counts as VERIFIED;
+        without it the update still applies but at reduced weight and is
+        tallied separately (CP126 2462d3c5).
 
         Enterprise Enhancement: Also pulses all physical hyphae connected to
         the pathway's source module, so the import graph strengthens where
@@ -1399,11 +1490,11 @@ class MycelialNetwork:
             if owner is None:
                 return
             if owner is not self:
-                return owner.reinforce(pathway_id, success)
+                return owner.reinforce(pathway_id, success, evidence=evidence)
             pw = self.pathways.get(pathway_id)
             if not pw:
                 return
-            pw.reinforce(success)
+            pw.reinforce(success, verified=_evidence_verifies_outcome(evidence, success))
             self._mark_topology_mutated_locked()
 
         # --- QUALIA-WEIGHTED REINFORCEMENT ---
@@ -2851,6 +2942,7 @@ class MycelialNetwork:
             "source_file", "dependencies", "confidence", "activity_label",
             "hit_count", "miss_count", "created_at", "last_matched_age_s",
             "direct_response", "color", "description", "size",
+            "verified_hits", "verified_misses", "unverified_reinforcements",
         }
         restored: Dict[str, HardwiredPathway] = {}
         for key, value in raw.items():
@@ -2858,7 +2950,10 @@ class MycelialNetwork:
                 raise ValueError("vault pathway entries must be named objects")
             unknown = set(value) - allowed
             if unknown:
-                raise ValueError(f"vault pathway contains unknown fields: {key}")
+                raise ValueError(
+                    f"vault pathway {key} contains unknown fields: "
+                    f"{', '.join(sorted(unknown))}"
+                )
             fields = {name: item for name, item in value.items() if name in allowed}
             if str(fields.get("pathway_id") or "") != key:
                 raise ValueError(f"vault pathway identity mismatch: {key}")
@@ -2917,6 +3012,26 @@ class MycelialNetwork:
             )
             fields["miss_count"] = cls._vault_count(
                 fields.get("miss_count", 0), f"vault pathway miss count: {key}"
+            )
+            # The evidence split is the part of the record that says how much
+            # of the confidence was actually checked. A vault that restored
+            # the totals but dropped the split would come back looking fully
+            # corroborated, which is exactly the claim the counters exist to
+            # deny.
+            for counter, total in (
+                ("verified_hits", "hit_count"),
+                ("verified_misses", "miss_count"),
+            ):
+                fields[counter] = cls._vault_count(
+                    fields.get(counter, 0), f"vault pathway {counter}: {key}"
+                )
+                if fields[counter] > fields[total]:
+                    raise ValueError(
+                        f"vault pathway {counter} exceeds {total}: {key}"
+                    )
+            fields["unverified_reinforcements"] = cls._vault_count(
+                fields.get("unverified_reinforcements", 0),
+                f"vault pathway unverified reinforcements: {key}",
             )
             for field_name in ("activity_label", "color", "description"):
                 if not isinstance(fields.get(field_name, ""), str):
