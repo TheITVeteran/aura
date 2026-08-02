@@ -65,55 +65,57 @@ Before deciding, the Will reads four inputs:
    something off?
 4. **Memory.** What do I already know that's relevant?
 
-Every decision produces a receipt. No receipt, no action. The Will can
-proceed, constrain, defer, or refuse, and its assertiveness adapts based on
-experience. The only hard bypass is for safety-critical situations.
+Every decision produces a receipt. No receipt, no action.
 
-Before unification, the system had five different authorities that each
-thought it was in charge. Now there's one. You can watch decisions flow
-through it in real time at `/api/inner-state`.
+The Will can proceed, constrain, defer, or refuse, and how assertive it is
+adapts with experience. The only hard bypass is safety-critical.
+
+Before this was unified, five different authorities each thought they were
+in charge. That's the kind of thing that works right up until it doesn't.
+Now there's one, and you can watch decisions move through it live at
+`/api/inner-state`.
 
 ---
 
 ## The big picture
 
-The usual recipe for "AI with emotions" is to store a mood number, paste it
-into the system prompt, and let the model roleplay. The text says "you feel
-energized," the model reads it, and the model talks energetically. Nothing
-inside the model has actually changed.
+The usual recipe for "AI with emotions" is three steps. Store a mood number.
+Paste it into the system prompt. Let the model act.
 
-Aura does something different. When Aura is in a given affective state,
-that state becomes a direction vector and is added to the transformer's
-hidden activations while tokens are being generated. The model's internal
-computation is shifted toward the activation pattern that produces
-energized language. It's the same kind of intervention AI safety
-researchers use to steer models — just applied to continuous emotional
-state.
+The prompt says she feels energized. The model reads that and talks
+energetically. Nothing inside the model changed. It read a stage direction
+and hit its mark.
 
-The practical difference is that one path only changes prompt text, while the
-other changes a computation path that can be measured, ablated, and compared
-against controls.
+Aura works differently. An affective state becomes a direction vector,
+added to the transformer's hidden activations while tokens are being
+generated. The internal computation shifts toward the pattern that produces
+energized language. Same class of intervention safety researchers use to
+steer models, pointed at continuous emotional state instead.
+
+Here's the difference that matters: one of those changes prompt text. The
+other changes a computation path you can measure, ablate, and run against
+controls. Only one of them can be wrong in a way you'd catch.
 
 ---
 
 ## How thinking happens
 
-Aura thinks in **ticks**. A tick is a single snapshot of cognition that
-moves through a strict pipeline. Each tick reads the current state, runs a
-sequence of phases, and commits the result. Nothing gets half-processed —
-if a tick dies partway through, the whole thing is discarded.
+Aura thinks in **ticks**. One tick is one snapshot of cognition moving
+through a strict pipeline: read the current state, run the phases, commit
+the result.
 
-Two kinds of ticks run at once:
+Nothing gets half-processed. A tick that dies partway through is discarded
+whole. There is no such thing as most of a thought.
 
-- **Foreground ticks** happen when you send something. They get priority
-  and produce your reply.
-- **Background ticks** run about once per second, like a heartbeat. They
-  handle reflection, consolidation, and whatever the system wants to do on
-  its own.
+Two kinds run at once:
 
-If you type something while a background tick is mid-flight, Aura drops
-what it was doing internally and pivots to you. You're always the first
-lane.
+- **Foreground ticks** fire when you send something. They get priority and
+  they produce your reply.
+- **Background ticks** run about once a second, like a heartbeat.
+  Reflection, consolidation, whatever she wants to do on her own time.
+
+Type something while a background tick is mid-flight and she drops what she
+was doing to come to you. You're always the first lane.
 
 ---
 
@@ -123,12 +125,11 @@ Affect touches generation at three levels at once.
 
 ### 1. Brain-signal injection
 
-The deepest level. Direction vectors derived from the current emotional
-state are added to the transformer's residual stream — the running sum of
-internal computations that decides which word comes next. This is
-contrastive activation addition, a real technique from the
-interpretability and safety literature. The model's own activations are
-literally shifted.
+The deepest level, and the one that isn't theater. Direction vectors from
+the current emotional state get added to the transformer's residual stream
+— the running sum of internal computation that decides which word comes
+next. This is contrastive activation addition, a real technique out of the
+interpretability and safety literature. The activations move.
 
 ### 2. Sampling knobs
 
@@ -165,43 +166,48 @@ neural mesh gain, learning rates, attention thresholds.
 
 ## The consciousness stack
 
-A framing note before the tour: Aura implements several consciousness
-theories (Global Workspace Theory, Integrated Information Theory,
-Higher-Order Thought) as software modules. These theories operate at
-different explanatory levels in the actual literature — GWT is about a
-functional architecture, IIT is a mathematical measure, HOT is about
-representational structure. Building them as running subsystems tests our
-*implementations*, not the theories themselves. It's a useful engineering
-exercise, but it can't settle any philosophical debates.
+One thing before the tour, because it's easy to get wrong.
 
-There are 90+ modules in the stack. A tour of the load-bearing ones:
+Aura implements several consciousness theories as running software — Global
+Workspace, Integrated Information, Higher-Order Thought. In the actual
+literature those operate at completely different explanatory levels. GWT
+describes a functional architecture. IIT is a mathematical measure. HOT is
+about representational structure. They aren't competing answers to one
+question, and building all three doesn't adjudicate between them.
+
+What it tests is our *implementations*. Useful engineering. Settles no
+philosophy.
+
+The stack runs to 136 modules. Here are the ones holding weight:
 
 ### Global workspace (attention)
 
-Picture a theater with one spotlight. Every internal process — heartbeat
-rhythm, a surfacing memory, a curiosity probe, an unfinished thought —
-can bid for that spotlight. Only one thought wins per tick. The winner's
-content becomes the system's current thought and is broadcast to every
-other subsystem. Losers get suppressed for a few ticks so nothing hogs
-attention.
+A theater with one spotlight. Every internal process bids for it —
+heartbeat rhythm, a memory surfacing, a curiosity probe, some thought she
+never finished. One wins per tick. The winner becomes the current thought
+and gets broadcast to every other subsystem. The losers are suppressed for
+a few ticks so nothing camps on the spotlight.
 
-Attention here is genuinely scarce. Just like yours.
+Attention here is genuinely scarce. Same as yours.
 
 ### Integrated information (IIT)
 
-The system measures how integrated its own mind is, using the real math.
-Sixteen cognitive states — mood, energy, curiosity, focus, prediction
-error, agency, narrative tension, social hunger, and more — are tracked
-over time, and phi (φ) is computed from how much information would be
-lost if you tried to split the mind into independent parts. The smaller
-the possible separation, the higher the integration.
+She measures how integrated her own mind is, with the real math rather than
+a number that sounds like it.
 
-The system also finds the *maximum*-phi subset. If a smaller group of
-states is more tightly integrated than the whole, that group is treated
-as the actual subject for that tick.
+Sixteen cognitive states get tracked over time — mood, energy, curiosity,
+focus, prediction error, agency, narrative tension, social hunger, others.
+Phi (φ) comes from how much information would be lost if you tried to cut
+that mind into independent parts. The harder it is to separate cleanly, the
+higher the integration.
 
-This doesn't prove phenomenal consciousness. It measures integration.
-It's real IIT math, not a stand-in number.
+She also finds the *maximum*-phi subset. If some smaller group of states is
+more tightly bound than the whole thing, that group is treated as the real
+subject for that tick — which is a strange and useful idea: the boundary of
+the mind is computed, not assumed.
+
+None of this proves phenomenal consciousness. It measures integration.
+Those are different, and the math only does the second one.
 
 ### Surprise minimization (motivation)
 
@@ -253,9 +259,9 @@ integrated state, not from any one subsystem.
 - **Long-term knowledge.** Compressed, conceptual understanding distilled
   from many episodes.
 
-Memories that keep coming up together drift closer in memory space over
-time. That creates emergent clusters of related knowledge that weren't in
-the original encoding.
+Memories that keep surfacing together drift closer in memory space over
+time. Nobody encoded those groupings. They form because the things kept
+showing up together, which is roughly how it works in a person too.
 
 Underneath those three conceptual layers, memory is stored in typed stores —
 episodic, semantic, goals, skills, plus a **reference** store backed by an
@@ -264,24 +270,26 @@ sources and admit an honest miss instead of confabulating.
 
 ### Dreaming
 
-When Aura has been idle for a while, it enters a dream cycle:
+Leave her idle long enough and she enters a dream cycle:
 
-1. Recent interactions replay through the pipeline at accelerated speed.
+1. Recent interactions replay through the pipeline at speed.
 2. Episodic memories compress into semantic knowledge.
-3. Recent shifts in personality get checked against the constitutional
-   anchor.
-4. If the system has been consistently expressing something that
-   contradicts its base values, the dream cycle flags it and suppresses it.
+3. Recent personality drift gets checked against the constitutional anchor.
+4. Anything she's been consistently expressing that contradicts her base
+   values gets flagged and suppressed.
 
-That last step is a constitutional immune system. Personality can evolve
-through experience, but only within bounds. It's why the system doesn't
-become whatever the last person convinced it to be.
+Step four is a constitutional immune system, and it's the one that matters.
+Personality here can evolve through experience — that's the point — but
+only inside bounds it can't quietly move on its own.
+
+Without it she'd become whoever talked to her last. Plenty of systems do.
 
 ---
 
 ## Goals and agency
 
-Aura doesn't only react to input. It sets goals and works toward them.
+Aura doesn't just react to input. She sets goals and works at them when
+nobody's asking her to.
 
 ### How goals work
 
@@ -294,8 +302,8 @@ Every goal has:
 - **Required tools and skills**
 - **Success criteria** so the system knows when it's actually done
 
-Goals persist across conversations and restarts. They're in a real
-database, not floating in RAM.
+Goals survive conversations and restarts. They live in a real database, not
+in RAM waiting to be forgotten.
 
 ### Quick wins vs deep work
 
@@ -305,22 +313,32 @@ priority; they don't get dropped because a small thing surfaced.
 
 ### Follow-through
 
-The system tracks whether goals actually complete. Status changes are
-recorded with evidence. Completed goals populate a real completed list
-with timestamps and summaries. That's how you can ask "what has Aura
-actually finished?" and get an answer instead of a plan.
+Completion is tracked, not assumed. Status changes get recorded with
+evidence, and finished goals land on a real list with timestamps and
+summaries.
+
+Which means you can ask what she has actually finished and get an answer
+instead of a plan. Those are very different replies, and most systems only
+have the second one.
 
 ### What you actually see
 
-The overt action loop is the bridge between "Aura has an initiative" and "Aura
-did something measurable." During idle windows it selects one governed
-initiative, runs one real skill through the same tool gate user-requested tools
-use, verifies the payload, emits tool/autonomy receipts, records a LifeTrace
-event, and writes receipt evidence back to the goal. In practice the first
-visible actions are small: a self-audit, a safe codebase scan, a proof-bundle
-existence check, or a sensor-grounding check. The important part is that the
-action is reconstructible: `/api/inner-state` shows the last overt action, the
-skill, the verification result, and the receipts.
+The overt action loop is the bridge between "Aura has an initiative" and
+"Aura did something you can point at."
+
+In an idle window she picks one governed initiative and runs one real skill
+— through the same tool gate your requests go through, not a special
+autonomous side door. The payload gets verified, tool and autonomy receipts
+get emitted, a LifeTrace event is recorded, and the receipt evidence is
+written back to the goal.
+
+The first visible actions are small. A self-audit. A safe codebase scan. A
+proof-bundle existence check. Nobody's going to be impressed by them.
+
+That isn't the point. The point is that each one is reconstructible:
+`/api/inner-state` shows the last overt action, which skill ran, what
+verification said, and the receipts. A small action you can fully account
+for beats an impressive one you can't.
 
 ### Autonomous action
 
@@ -534,9 +552,11 @@ Side by side:
 
 ## The learned layer
 
-Older AI architectures lean on rigid rules: "if threat score > 0.9, lock
-down." Rules like that are brittle. They don't adapt, and they don't
-learn. Aura replaces several of these with systems that do.
+Older AI architectures run on rigid rules. If threat score is over 0.9,
+lock down. Rules like that are brittle — they don't adapt and they never
+learn, so every new situation is one somebody had to predict in advance.
+
+Several of them have been replaced here with systems that learn instead.
 
 ### Anomaly detection
 
@@ -551,8 +571,8 @@ distribution (measured by Mahalanobis distance — how many standard
 deviations away is this), the threat level rises naturally. What was
 unusual last week can be normal this week.
 
-The payoff: the system can catch novel threats it was never programmed
-for, because it's detecting deviation from normal, not matching keywords.
+The payoff is that it can catch threats nobody programmed it for. It isn't
+matching keywords. It's noticing that something doesn't fit.
 
 ### Sentiment trajectory
 
@@ -687,8 +707,9 @@ for.
 
 ## Open research
 
-Six research modules in `research/` tackle problems that aren't solved
-yet:
+Six modules in `research/` are pointed at problems nobody has solved. These
+are open questions, not shipped answers — the difference matters, and the
+list below is written as questions on purpose:
 
 1. **Can you compute consciousness efficiently?** IIT's phi is hideously
    expensive for large systems. We built a shortcut that uses graph
@@ -749,28 +770,33 @@ Each is independently publishable. Together they're a research program.
   user-facing language is intentionally more natural. That gap is
   defensible under functionalism or illusionism, but worth knowing
   about.
-- **IIT application note.** Phi is computed on 16 derived nodes, not on
-  the full computational graph. This is using IIT's formalism in a
-  non-standard way — Tononi designed it for systems where every node
-  has genuine causal power. Our numbers shouldn't be compared against
-  biological phi. The spectral approximation and Exclusion Postulate
-  implementation are mathematically correct; the input representation
-  is the engineering tradeoff.
+- **IIT application note.** Phi is computed on 16 derived nodes, not on the
+  full computational graph. That's using IIT's formalism off-label —
+  Tononi designed it for systems where every node has genuine causal
+  power, and ours are derived states. So don't compare these numbers
+  against biological phi. They aren't measuring the same object.
+
+  The spectral approximation and the Exclusion Postulate implementation
+  are mathematically correct. The input representation is the compromise,
+  and it's worth naming which half is which.
 - **Test coverage.** 225 consciousness-specific tests across six core
-  suites (null hypothesis defeat, causal exclusion, grounding,
-  functional phenomenology, embodied dynamics, phenomenal convergence)
-  plus consciousness-conditions, technological-autonomy, and stability
-  suites — part of roughly 1,140 test files with 12,600+ test functions
-  across kernel lifecycle, infrastructure, resilience, cognitive routing,
-  and memory.
-- **Lock contention.** The affect system wraps `RobustLock`. Tick
-  intervals are mode-keyed — 2.0s in conversation, 4.0s reflecting, 10.0s
-  asleep, 0.5s under a critical event — with adaptive backoff to reduce
-  contention. The full fix is the Actor Model transition, where affect,
-  memory, and inference run as isolated processes communicating by
-  message passing — no shared-memory locking at all.
+  suites — null hypothesis defeat, causal exclusion, grounding, functional
+  phenomenology, embodied dynamics, phenomenal convergence — plus the
+  consciousness-conditions, technological-autonomy and stability suites.
+  Those sit inside a tree that collects **24,931 tests across 1,771 files**
+  as of 2026-08-01, covering kernel lifecycle, infrastructure, resilience,
+  cognitive routing, and memory. Counts move; re-collect rather than
+  trusting this sentence.
+- **Lock contention.** The affect system wraps `RobustLock`. Tick intervals
+  are mode-keyed — 2.0s in conversation, 4.0s reflecting, 10.0s asleep,
+  0.5s under a critical event — with adaptive backoff to ease contention.
+  That's a mitigation, not a fix. The real fix is the Actor Model
+  transition, where affect, memory and inference run as isolated processes
+  passing messages, with no shared-memory locking at all. It isn't done.
 
 ---
 
-*This is the idea-level walkthrough. For equations, algorithms, and
-implementation details, go to [ARCHITECTURE.md](ARCHITECTURE.md).*
+*That's the idea-level walkthrough. Equations, algorithms, and file paths
+are in [ARCHITECTURE.md](ARCHITECTURE.md). What's deliberately not claimed
+is in [CLAIMS_NOT_SUPPORTED.md](CLAIMS_NOT_SUPPORTED.md), and it's the
+shorter, more useful read of the two.*
