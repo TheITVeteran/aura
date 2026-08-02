@@ -1,5 +1,9 @@
 # RLC Spark Execution Ledger
 
+> **Append-only ledger.** Checkpoint entries are written as the work lands
+> and are never rewritten, including for style. A ledger you edit after the
+> fact is not a ledger. New checkpoints go at the bottom.
+
 Status: ACTIVE
 Source requirement: `/Users/bryan/Downloads/Spark.txt` (1,239 lines)
 Source SHA-256: `b9caf67c7709b1b0d82fd7eb917c88e1afa17d514af0df17ca03ed600685237c`

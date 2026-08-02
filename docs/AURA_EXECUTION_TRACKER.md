@@ -1,5 +1,11 @@
 # Aura Execution Tracker
 
+> **Append-only ledger.** Entries are written at the time the work lands and
+> are not revised afterward — including for style. Each one says what was
+> true when it was added, which is the whole value of keeping it. New work
+> goes at the bottom. This file is still actively appended to, so treat the
+> tail as current and everything above it as history.
+
 ## Post-Closeout Daily Runtime Program (2026-06-30)
 
 The configured local proof profile passed on 2026-06-30, but live use exposed
