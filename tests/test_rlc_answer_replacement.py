@@ -6,6 +6,8 @@ import hashlib
 import pytest
 
 from core.brain.llm.latent_cortex.answer_replacement import (
+    MAX_BASELINE_EVIDENCE_TOKENS,
+    MAX_REPLACEMENT_OUTPUT_TOKENS,
     build_answer_replacement_receipt,
     validate_answer_replacement_receipt,
 )
@@ -583,6 +585,73 @@ def test_service_reexecution_rejects_tampered_private_baseline_tokens():
             expected_max_output_tokens=64,
             expected_output_text="2 + 2 = 4.",
             expected_output_tokens=tokens,
+        )
+
+
+def test_private_baseline_evidence_accepts_engine_decode_beyond_replacement_limit():
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left="2 + 2 = 5.",
+        right="2 + 2 = 4.",
+        repaired="2 + 2 = 4.",
+    )
+    baseline_tokens = [1] * (MAX_REPLACEMENT_OUTPUT_TOKENS + 1)
+
+    receipt, accepted_tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text="ordinary unverified decode",
+        baseline_tokens=baseline_tokens,
+        encode=_encode,
+        decode=_decode,
+        max_output_tokens=64,
+    )
+
+    assert len(private["baseline_tokens"]) == MAX_REPLACEMENT_OUTPUT_TOKENS + 1
+    assert receipt["baseline_decode"]["token_count"] == len(baseline_tokens)
+    assert receipt["decision"] == "abstain"
+    assert accepted_tokens == []
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence=private,
+        expected_objective=objective,
+        expected_selected_branch=0,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=64,
+        expected_output_text="",
+        expected_output_tokens=accepted_tokens,
+    )
+
+
+def test_private_baseline_evidence_rejects_tokens_beyond_engine_decode_envelope():
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left="2 + 2 = 5.",
+        right="2 + 2 = 4.",
+        repaired="2 + 2 = 4.",
+    )
+
+    with pytest.raises(ValueError, match="baseline token limit exceeded"):
+        build_answer_replacement_receipt(
+            disagreement_graph=graph,
+            diagnostic_selection=selector,
+            local_repair=local_repair,
+            selected_branch=0,
+            branch_candidates=candidates,
+            generated_repairs=generated,
+            objective=objective,
+            baseline_text="ordinary unverified decode",
+            baseline_tokens=[1] * (MAX_BASELINE_EVIDENCE_TOKENS + 1),
+            encode=_encode,
+            decode=_decode,
+            max_output_tokens=64,
         )
 
 

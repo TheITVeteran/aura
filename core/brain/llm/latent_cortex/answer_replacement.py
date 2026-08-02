@@ -35,6 +35,10 @@ ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v3"
 ANSWER_REPLACEMENT_PRIVATE_SCHEMA = "aura.rlc.answer_replacement_private.v2"
 DEFAULT_REPLACEMENT_MARGIN = 0.05
 MAX_REPLACEMENT_OUTPUT_TOKENS = 1024
+# Baseline evidence binds output that was already admitted by the engine's
+# decode limit (8192) plus its contract-completion grace (4096).  It is not a
+# replacement candidate and must not inherit the narrower promotion ceiling.
+MAX_BASELINE_EVIDENCE_TOKENS = 12_288
 _REFUTATION_VERIFIERS = {"exact_integer_arithmetic", "python_ast", "json_parser"}
 _SEMANTIC_EXACT_VERIFIERS = {"exact_integer_arithmetic"}
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -155,7 +159,6 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
         or not isinstance(value["objective"], str)
         or not isinstance(value["baseline_text"], str)
         or not isinstance(baseline_tokens, list)
-        or len(baseline_tokens) > MAX_REPLACEMENT_OUTPUT_TOKENS
         or any(type(token) is not int or token < 0 for token in baseline_tokens)
         or not isinstance(branches, Mapping)
         or len(branches) > 64
@@ -176,6 +179,10 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
         )
     ):
         raise ValueError("answer replacement private evidence is invalid")
+    if len(baseline_tokens) > MAX_BASELINE_EVIDENCE_TOKENS:
+        raise ValueError(
+            "answer replacement private evidence baseline token limit exceeded"
+        )
     return {
         "schema": ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
         "objective": value["objective"],
@@ -776,6 +783,7 @@ __all__ = [
     "ANSWER_REPLACEMENT_PRIVATE_SCHEMA",
     "ANSWER_REPLACEMENT_SCHEMA",
     "DEFAULT_REPLACEMENT_MARGIN",
+    "MAX_BASELINE_EVIDENCE_TOKENS",
     "MAX_REPLACEMENT_OUTPUT_TOKENS",
     "build_answer_replacement_receipt",
     "validate_answer_replacement_receipt",
