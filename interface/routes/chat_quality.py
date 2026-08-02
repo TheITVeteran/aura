@@ -63,8 +63,17 @@ def _log_response_quality_metrics(
         from core.conversation.surface_delivery import note_route_delivered
 
         note_route_delivered(reply_text)
-    except Exception:  # bookkeeping must never break a delivered reply
-        pass
+    except Exception as exc:  # bookkeeping must never break a delivered reply
+        # The reply still goes out. A delivery-note path that has been broken
+        # for weeks should not be indistinguishable from one that simply had
+        # nothing to note.
+        record_degradation(
+            "chat_quality",
+            exc,
+            severity="warning",
+            action="delivered the reply after route-delivery bookkeeping failed",
+            enforce_failure_policy=False,
+        )
 
     try:
         assessment_reasons: tuple[str, ...] = ()

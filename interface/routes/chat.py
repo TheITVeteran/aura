@@ -10074,6 +10074,7 @@ from interface.routes.chat_quality import (  # noqa: E402
     _log_response_quality_metrics,
     _reply_assessment_requires_repair,
 )
+from core.runtime.errors import record_degradation
 
 # ── Conversation Lane Helpers ─────────────────────────────────
 
@@ -16762,8 +16763,17 @@ async def _collect_desktop_required_search_evidence(
         from core.conversation.surface_disposition import record_tool_receipt
 
         record_tool_receipt("web_search", ok=bool(result.get("ok")))
-    except Exception:  # bookkeeping must never break a collected search
-        pass
+    except Exception as exc:  # bookkeeping must never break a collected search
+        # `pass` here meant a receipt path broken forever looked exactly like
+        # one that never needed to fire. The search still returns; the
+        # bookkeeping failure is now on the record.
+        record_degradation(
+            "chat_routes",
+            exc,
+            severity="warning",
+            action="returned the collected search after tool-receipt bookkeeping failed",
+            enforce_failure_policy=False,
+        )
 
     return {
         "ok": bool(result.get("ok")),

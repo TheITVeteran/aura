@@ -195,8 +195,16 @@ class DevMode:
                 from core.conversation.surface_disposition import record_tool_receipt
 
                 record_tool_receipt(trace.tool_name, ok=bool(result.get("ok", False)))
-            except Exception:  # never let bookkeeping break a tool result
-                pass
+            except Exception as exc:  # never let bookkeeping break a tool result
+                # The tool result stands. A receipt recorder that throws on
+                # every call is a real fault, and `pass` was hiding it.
+                record_degradation(
+                    "transparency_dev_mode",
+                    exc,
+                    severity="warning",
+                    action="returned the tool result after receipt bookkeeping failed",
+                    enforce_failure_policy=False,
+                )
         
         if self.level != TransparencyLevel.SILENT:
             if deferred:
