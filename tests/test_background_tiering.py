@@ -19,6 +19,14 @@ logger = logging.getLogger("Aura.Test")
 
 @contextmanager
 def _safe_boot_disabled():
+    """Scope AURA_SAFE_BOOT_DESKTOP to this block.
+
+    The restore is in a finally, so it is correct — but the flag it touches
+    steers sensory lane selection process-wide, and a neighbouring test that
+    reads it inherits whatever is set at that moment. Documented here because
+    the coupling is invisible from either side: the leak this guards against
+    surfaced as a boot-sensory test asserting an empty degraded map.
+    """
     previous = os.environ.get("AURA_SAFE_BOOT_DESKTOP")
     os.environ["AURA_SAFE_BOOT_DESKTOP"] = "0"
     try:

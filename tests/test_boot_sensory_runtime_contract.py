@@ -46,6 +46,20 @@ def _patch_container(monkeypatch):
 async def test_sensory_boot_records_failed_modality_and_keeps_other_lanes(monkeypatch):
     from core.orchestrator.mixins.boot.boot_sensory import BootSensoryMixin
 
+    # Pin the lane decision instead of inheriting it.
+    #
+    # _eager_local_sensory_boot_enabled() reads AURA_HEADLESS and
+    # AURA_SAFE_BOOT_DESKTOP from the PROCESS environment. With either set,
+    # the ears and vision lanes are skipped rather than run — so this test,
+    # which asserts that a broken ears lane is recorded as DEGRADED, saw an
+    # empty degraded map and failed. Whether it passed depended entirely on
+    # what an earlier test in the same process had left in os.environ, which
+    # is the definition of an order-dependent test.
+    #
+    # A test that asserts lane behaviour must state which lane mode it is
+    # asserting about.
+    monkeypatch.setenv("AURA_EAGER_LOCAL_SENSORY_BOOT", "1")
+
     class BrokenEars:
         def __init__(self):
             reason = "audio device unavailable"
