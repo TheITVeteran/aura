@@ -261,6 +261,18 @@ _CRITICAL_ACTION_SKILLS = frozenset(
 )
 
 
+#: Effect scopes that may still run when the constitutional gate itself is
+#: unavailable during boot. Every one of these is incapable of changing
+#: anything outside the process. Anything else — including ``unknown`` —
+#: waits for a working gate.
+_PRE_RUNTIME_UNGATED_EFFECT_SCOPES: frozenset[str] = frozenset({
+    "pure_compute",
+    "read_only",
+    "sandboxed_compute",
+    "status",
+})
+
+
 def _record_unreconciled_authority(auth: Any, *, reason: str) -> None:
     """Queue an authority grant whose finalization never completed.
 
@@ -4381,8 +4393,54 @@ class CapabilityEngine(AuraBaseModule):
                         "error": "Constitutional gate unavailable",
                         "status": "blocked_by_executive_gate_failure",
                     }
-                self.logger.debug(
-                    "CapabilityEngine: constitutional check failed, proceeding degraded: %s", e
+                # CP126 (critical): "When the inferred runtime-live flag is
+                # false, constitutional gate failure is recorded as a warning
+                # and execution continues. The security boundary is therefore
+                # optional during the exact startup and recovery intervals
+                # where service registration is incomplete."
+                #
+                # Pre-runtime execution has to stay possible or nothing can
+                # boot — but "the constitution module is broken" is not a
+                # licence to run anything. The gate fails here on ImportError
+                # / AttributeError / RuntimeError, i.e. the constitution
+                # itself is unavailable, which is exactly the state where an
+                # effectful skill must not proceed unchecked.
+                #
+                # So the ungated allowance is narrowed to skills that
+                # provably cannot cause an effect. `unknown` is deliberately
+                # NOT on that list: not knowing a skill's scope is not a
+                # safety property, and treating it as one is how this class
+                # of hole gets reopened.
+                pre_runtime_scope = self._effect_scope_for(skill_name, meta)
+                if pre_runtime_scope not in _PRE_RUNTIME_UNGATED_EFFECT_SCOPES:
+                    self.logger.error(
+                        "🚫 CapabilityEngine: refusing '%s' (effect_scope=%s) — the "
+                        "constitutional gate is unavailable and this skill can "
+                        "cause effects: %s",
+                        skill_name,
+                        pre_runtime_scope,
+                        e,
+                    )
+                    _record_capability_degradation(
+                        e,
+                        action=(
+                            "refused an effectful skill during pre-runtime boot "
+                            "because the constitutional gate was unavailable"
+                        ),
+                        severity="critical",
+                    )
+                    return {
+                        "ok": False,
+                        "error": "Constitutional gate unavailable",
+                        "status": "blocked_by_pre_runtime_constitutional_gate_failure",
+                        "effect_scope": pre_runtime_scope,
+                    }
+                self.logger.warning(
+                    "CapabilityEngine: constitutional check failed for '%s'; "
+                    "proceeding because effect_scope=%s cannot cause an effect: %s",
+                    skill_name,
+                    pre_runtime_scope,
+                    e,
                 )
 
             # 2a. Metabolic self-preservation guard
