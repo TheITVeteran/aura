@@ -41,6 +41,15 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     validate_verified_recurrent_grpo_adapter_identity_receipt,
 )
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    IDENTITY_RECEIPT_SCHEMA as RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
+)
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    MANIFEST_SCHEMA as RESIDENT_SFT_MANIFEST_SCHEMA,
+)
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    declared_bindings as resident_sft_declared_bindings,
+)
 from core.runtime.file_read_gateway import open_stable_readonly_binary, read_stable_bytes
 
 ADAPTER_FREEZE_SCHEMA = "aura.latent_cortex.adapter_freeze.v1"
@@ -68,7 +77,9 @@ _SUPPORTED_IDENTITY_RECEIPT_SCHEMAS = {
     IDENTITY_RECEIPT_SCHEMA_V2,
     GRPO_IDENTITY_RECEIPT_SCHEMA,
     VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
+    RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
 }
+RESIDENT_SFT_COMPLETION_SCHEMA = "aura.resident_recurrent_sft_adapter_package_completion.v1"
 
 
 class CampaignLaunchBundleError(ValueError):
@@ -180,13 +191,10 @@ def _contained_file(root: Path, relative: str, *, role: str) -> Path:
             _fail(f"{role}_unavailable")
         if stat.S_ISLNK(observed.st_mode):
             _fail(f"{role}_symlink_rejected")
-        if (
-            current != candidate
-            and (
-                not stat.S_ISDIR(observed.st_mode)
-                or observed.st_uid != os.geteuid()
-                or observed.st_mode & 0o022
-            )
+        if current != candidate and (
+            not stat.S_ISDIR(observed.st_mode)
+            or observed.st_uid != os.geteuid()
+            or observed.st_mode & 0o022
         ):
             _fail(f"{role}_directory_storage_invalid")
     try:
@@ -228,6 +236,12 @@ def _declared_paths(manifest: Mapping[str, Any]) -> list[str]:
         binding_roles = _BINDING_ROLES
     elif schema == GRPO_MANIFEST_SCHEMA:
         binding_roles = GRPO_BINDING_ROLES
+    elif schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+        paths = [_MANIFEST_FILE, _COMPLETION_FILE]
+        paths.extend(binding["path"] for _role, binding in resident_sft_declared_bindings(manifest))
+        if len(paths) > _MAX_ARTIFACTS or len(set(paths)) != len(paths):
+            _fail("adapter_artifact_set_invalid")
+        return sorted(paths)
     else:
         _fail("adapter_manifest_schema_invalid")
     paths = [_MANIFEST_FILE, _COMPLETION_FILE]
@@ -243,9 +257,7 @@ def _declared_paths(manifest: Mapping[str, Any]) -> list[str]:
         if not isinstance(source_role, str) or not isinstance(source, Mapping):
             _fail("adapter_sources_invalid")
         paths.append(
-            _relative_path(
-                source.get("snapshot_path"), role=f"adapter_source_{source_role}"
-            )
+            _relative_path(source.get("snapshot_path"), role=f"adapter_source_{source_role}")
         )
     if len(paths) > _MAX_ARTIFACTS or len(set(paths)) != len(paths):
         _fail("adapter_artifact_set_invalid")
@@ -273,20 +285,21 @@ def adapter_artifact_inventory(
         or root_metadata.st_mode & 0o022
     ):
         _fail("adapter_root_invalid")
-    manifest_path = _contained_file(
-        resolved_root, _MANIFEST_FILE, role="adapter_manifest"
-    )
+    manifest_path = _contained_file(resolved_root, _MANIFEST_FILE, role="adapter_manifest")
     manifest = read_canonical_json(manifest_path, role="adapter_manifest")
     schema = manifest.get("schema")
-    binding_roles = (
-        _BINDING_ROLES if schema == MANIFEST_SCHEMA_V2 else GRPO_BINDING_ROLES
-    )
+    if schema == MANIFEST_SCHEMA_V2:
+        binding_roles = _BINDING_ROLES
+    elif schema == GRPO_MANIFEST_SCHEMA:
+        binding_roles = GRPO_BINDING_ROLES
+    elif schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+        binding_roles = ()
+    else:
+        _fail("adapter_manifest_schema_invalid")
     paths = _declared_paths(manifest)
     inventory: list[dict[str, Any]] = []
     for index, relative in enumerate(paths):
-        path = _contained_file(
-            resolved_root, relative, role=f"adapter_artifact_{index}"
-        )
+        path = _contained_file(resolved_root, relative, role=f"adapter_artifact_{index}")
         binding = _file_binding(path, role=f"adapter_artifact_{index}")
         inventory.append({"path": relative, **binding})
 
@@ -299,13 +312,23 @@ def adapter_artifact_inventory(
             or declared.get("size_bytes") != actual["size_bytes"]
         ):
             _fail(f"adapter_{role}_binding_mismatch")
-    for source_role, source in manifest["sources"].items():
-        actual = by_path[source["snapshot_path"]]
-        if (
-            source.get("sha256") != actual["sha256"]
-            or source.get("size_bytes") != actual["size_bytes"]
-        ):
-            _fail(f"adapter_source_{source_role}_binding_mismatch")
+    if schema != RESIDENT_SFT_MANIFEST_SCHEMA:
+        for source_role, source in manifest["sources"].items():
+            actual = by_path[source["snapshot_path"]]
+            if (
+                source.get("sha256") != actual["sha256"]
+                or source.get("size_bytes") != actual["size_bytes"]
+            ):
+                _fail(f"adapter_source_{source_role}_binding_mismatch")
+
+    if schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+        for role, declared in resident_sft_declared_bindings(manifest):
+            actual = by_path[declared["path"]]
+            if (
+                declared.get("sha256") != actual["sha256"]
+                or declared.get("size_bytes") != actual["size_bytes"]
+            ):
+                _fail(f"adapter_{role}_binding_mismatch")
 
     completion = read_canonical_json(
         _contained_file(resolved_root, _COMPLETION_FILE, role="training_completion"),
@@ -326,13 +349,11 @@ def adapter_artifact_inventory(
             and completion.get("schema") == COMPLETION_SCHEMA_V1
             and completion.get("complete") is True
             and completion.get("halt_reason") == "max_steps"
-            and completion.get("manifest_sha256")
-            == by_path[_MANIFEST_FILE]["sha256"]
+            and completion.get("manifest_sha256") == by_path[_MANIFEST_FILE]["sha256"]
             and completion.get("adapter_sha256") == manifest["adapter"]["sha256"]
-            and completion.get("receipt_sha256")
-            == manifest["training_receipt"]["sha256"]
+            and completion.get("receipt_sha256") == manifest["training_receipt"]["sha256"]
         )
-    else:
+    elif schema == GRPO_MANIFEST_SCHEMA:
         valid_completion = (
             set(completion)
             == {
@@ -354,14 +375,45 @@ def adapter_artifact_inventory(
             and completion["step"] > 0
             and type(completion.get("optimizer_updates")) is int
             and 0 < completion["optimizer_updates"] <= completion["step"]
-            and completion.get("manifest_sha256")
-            == by_path[_MANIFEST_FILE]["sha256"]
+            and completion.get("manifest_sha256") == by_path[_MANIFEST_FILE]["sha256"]
             and completion.get("adapter_sha256") == manifest["adapter"]["sha256"]
-            and completion.get("receipt_sha256")
-            == manifest["training_receipt"]["sha256"]
+            and completion.get("receipt_sha256") == manifest["training_receipt"]["sha256"]
             and completion.get("protocol_sha256") == manifest["protocol_sha256"]
-            and completion.get("execution_spec_sha256")
-            == manifest["execution_spec_sha256"]
+            and completion.get("execution_spec_sha256") == manifest["execution_spec_sha256"]
+        )
+    else:
+        adapter_binding = manifest.get("bindings", {}).get("adapter", {})
+        checkpoint_binding = manifest.get("bindings", {}).get("checkpoint_complete", {})
+        authority_binding = manifest.get("bindings", {}).get("authority", {})
+        authority = read_canonical_json(
+            _contained_file(
+                resolved_root,
+                authority_binding.get("path"),
+                role="resident_sft_authority",
+            ),
+            role="resident_sft_authority",
+        )
+        valid_completion = (
+            set(completion)
+            == {
+                "schema",
+                "complete",
+                "halt_reason",
+                "step",
+                "adapter_sha256",
+                "checkpoint_complete_sha256",
+                "authority_sha256",
+                "manifest_sha256",
+            }
+            and completion.get("schema") == RESIDENT_SFT_COMPLETION_SCHEMA
+            and completion.get("complete") is True
+            and completion.get("halt_reason") == "max_steps"
+            and type(completion.get("step")) is int
+            and completion["step"] > 0
+            and completion.get("manifest_sha256") == by_path[_MANIFEST_FILE]["sha256"]
+            and completion.get("adapter_sha256") == adapter_binding.get("sha256")
+            and completion.get("checkpoint_complete_sha256") == checkpoint_binding.get("sha256")
+            and completion.get("authority_sha256") == authority.get("authority_sha256")
         )
     if not valid_completion:
         _fail("training_completion_binding_invalid")
@@ -476,9 +528,7 @@ def _verify_frozen_grpo_identity(
     adapter_binding = manifest.get("adapter")
     if not isinstance(adapter_binding, Mapping):
         _fail("adapter_freeze_verified_manifest_invalid")
-    adapter_relative = _relative_path(
-        adapter_binding.get("path"), role="verified_adapter"
-    )
+    adapter_relative = _relative_path(adapter_binding.get("path"), role="verified_adapter")
     rebuilt = validate_recurrent_grpo_adapter_identity(
         manifest_bytes,
         adapter_id=receipt["adapter_id"],
@@ -503,6 +553,61 @@ def _verify_frozen_grpo_identity(
         or rebuilt.get("personality_adapter_bundle_sha256")
         != model_identity.get("personality_adapter_bundle_sha256")
         or rebuilt.get("training_runtime_identity_sha256")
+        != model_identity.get("runtime_environment_identity_sha256")
+    ):
+        _fail("adapter_freeze_verified_model_identity_mismatch")
+
+
+def _verify_frozen_resident_sft_identity(
+    root: Path,
+    receipt: Mapping[str, Any],
+    model_identity: Mapping[str, Any],
+) -> None:
+    from core.brain.llm.latent_cortex.adapter_identity import (
+        inspect_mlx_tensor_metadata,
+    )
+    from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+        runtime_environment_identity,
+    )
+    from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+        validate_resident_recurrent_sft_adapter_identity,
+    )
+
+    manifest_path = _contained_file(root, _MANIFEST_FILE, role="verified_manifest")
+    manifest_bytes = read_stable_bytes(manifest_path, max_bytes=_MAX_JSON_BYTES)
+    manifest = _strict_json(manifest_bytes, role="verified_resident_sft_manifest")
+    artifacts: dict[str, bytes] = {}
+    for role, binding in resident_sft_declared_bindings(manifest):
+        relative = _relative_path(binding["path"], role=f"verified_{role}")
+        artifacts[relative] = read_stable_bytes(
+            _contained_file(root, relative, role=f"verified_{role}"),
+            max_bytes=_MAX_ARTIFACT_BYTES,
+        )
+    artifacts[_COMPLETION_FILE] = read_stable_bytes(
+        _contained_file(root, _COMPLETION_FILE, role="verified_completion"),
+        max_bytes=_MAX_JSON_BYTES,
+    )
+    adapter_binding = manifest["bindings"]["adapter"]
+    adapter_path = _contained_file(root, adapter_binding["path"], role="verified_adapter")
+    rebuilt = validate_resident_recurrent_sft_adapter_identity(
+        manifest_bytes,
+        adapter_id=receipt["adapter_id"],
+        actual_base_checkpoint=manifest["base_checkpoint"],
+        actual_model_behavior_bundle=manifest["model_behavior_bundle"],
+        actual_personality_adapter=manifest["personality_adapter"],
+        actual_runtime_environment=runtime_environment_identity(),
+        artifacts=artifacts,
+        tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+    )
+    if rebuilt != receipt:
+        _fail("adapter_freeze_verified_resident_sft_identity_mismatch")
+    if (
+        rebuilt.get("base_checkpoint_fingerprint") != model_identity.get("fingerprint")
+        or rebuilt.get("model_behavior_bundle_sha256")
+        != model_identity.get("model_behavior_bundle_sha256")
+        or rebuilt.get("personality_adapter_bundle_sha256")
+        != model_identity.get("personality_adapter_bundle_sha256")
+        or rebuilt.get("evaluation_runtime_identity_sha256")
         != model_identity.get("runtime_environment_identity_sha256")
     ):
         _fail("adapter_freeze_verified_model_identity_mismatch")
@@ -563,9 +668,7 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
         "validator_identity",
         "certificate_sha256",
     }
-    material = {
-        key: value for key, value in certificate.items() if key != "certificate_sha256"
-    }
+    material = {key: value for key, value in certificate.items() if key != "certificate_sha256"}
     if (
         set(certificate) != required
         or certificate.get("schema") != ADAPTER_FREEZE_SCHEMA
@@ -574,10 +677,9 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
     ):
         _fail("adapter_freeze_certificate_invalid")
     inventory = adapter_artifact_inventory(resolved, reject_unplanned=True)
-    if (
-        certificate.get("artifacts") != inventory
-        or certificate.get("content_root_sha256") != inventory_root_sha256(inventory)
-    ):
+    if certificate.get("artifacts") != inventory or certificate.get(
+        "content_root_sha256"
+    ) != inventory_root_sha256(inventory):
         _fail("adapter_freeze_content_mismatch")
     model_identity = certificate.get("model_identity")
     if not isinstance(model_identity, Mapping):
@@ -591,6 +693,8 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
         VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
     }:
         _verify_frozen_grpo_identity(resolved, receipt, model_identity)
+    elif receipt.get("schema") == RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA:
+        _verify_frozen_resident_sft_identity(resolved, receipt, model_identity)
     return certificate
 
 

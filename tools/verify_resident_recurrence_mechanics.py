@@ -22,6 +22,18 @@ from core.brain.llm.latent_cortex.campaign_launch_bundle import (  # noqa: E402
     read_canonical_json,
     verify_adapter_freeze,
 )
+from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
+    IDENTITY_RECEIPT_SCHEMA_V2,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # noqa: E402
+    IDENTITY_RECEIPT_SCHEMA as GRPO_IDENTITY_RECEIPT_SCHEMA,
+)
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # noqa: E402
+    VERIFIED_IDENTITY_RECEIPT_SCHEMA as VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
+)
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
+    IDENTITY_RECEIPT_SCHEMA as RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
+)
 from tools.verify_recurrence_v2_smoke import (  # noqa: E402
     _atomic_create_or_verify,
     _verify_campaign,
@@ -31,9 +43,11 @@ SCHEMA = "aura.latent_cortex.resident_recurrence_mechanics.v1"
 PROMOTION_SCHEMA = "aura.latent_cortex.recurrence_training_promotion.v1"
 ADMISSION_SCHEMA = "aura.resident_v3_training_admission.v1"
 RECOVERY_ADMISSION_SCHEMA = "aura.resident_v3_recovery_training_admission.v1"
+RESIDENT_SFT_ADMISSION_SCHEMA = "aura.resident_recurrent_sft_training_admission.v1"
 ADMISSION_SCOPES = {
     ADMISSION_SCHEMA: "resident_v3_training_mechanics_admission_only",
     RECOVERY_ADMISSION_SCHEMA: "resident_v3_recovery_training_mechanics_admission_only",
+    RESIDENT_SFT_ADMISSION_SCHEMA: ("resident_recurrent_sft_training_mechanics_admission_only"),
 }
 EXPECTED_ARMS = ["base_vanilla", "base_rlc", "adapter_vanilla", "adapter_rlc"]
 
@@ -60,15 +74,20 @@ def _sha256_file(path: Path) -> str:
 
 def _validator_identity() -> dict[str, str]:
     paths = {
-        "campaign_runner_sha256": REPO_ROOT
-        / "tools/run_latent_cortex_paired_campaign.py",
+        "campaign_runner_sha256": REPO_ROOT / "tools/run_latent_cortex_paired_campaign.py",
         "freeze_contract_sha256": REPO_ROOT
         / "core/brain/llm/latent_cortex/campaign_launch_bundle.py",
+        "recurrence_v2_identity_validator_sha256": REPO_ROOT
+        / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
+        "recurrent_grpo_identity_validator_sha256": REPO_ROOT
+        / "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py",
+        "resident_recurrent_sft_identity_validator_sha256": REPO_ROOT
+        / "core/brain/llm/latent_cortex/resident_recurrent_sft_adapter_identity.py",
+        # Historical freezes used this key for recurrence-v2.
         "identity_validator_sha256": REPO_ROOT
         / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
         "mechanics_verifier_sha256": Path(__file__).resolve(),
-        "smoke_replay_verifier_sha256": REPO_ROOT
-        / "tools/verify_recurrence_v2_smoke.py",
+        "smoke_replay_verifier_sha256": REPO_ROOT / "tools/verify_recurrence_v2_smoke.py",
     }
     return {role: _sha256_file(path) for role, path in paths.items()}
 
@@ -81,8 +100,7 @@ def _verified_promotion(path: Path) -> dict[str, Any]:
     if (
         promotion.get("schema") != PROMOTION_SCHEMA
         or claimed != _sha256(material)
-        or promotion.get("claim_scope")
-        != "terminal_training_and_immutable_adapter_identity_only"
+        or promotion.get("claim_scope") != "terminal_training_and_immutable_adapter_identity_only"
         or promotion.get("training_complete") is not True
         or promotion.get("immutable_freeze_verified") is not True
         or promotion.get("ready_for_mechanics_smoke") is not True
@@ -91,8 +109,7 @@ def _verified_promotion(path: Path) -> dict[str, Any]:
         or promotion.get("frontier_gain_proven") is not False
         or promotion.get("external_attestation_present") is not False
         or promotion.get("external_trust_required_before_claim_campaign") is not True
-        or promotion.get("required_next_gate")
-        != "resident_32b_frozen_adapter_mechanics_smoke"
+        or promotion.get("required_next_gate") != "resident_32b_frozen_adapter_mechanics_smoke"
     ):
         _fail("training_promotion_invalid")
     return promotion
@@ -153,8 +170,7 @@ def _model_identity_from_plan(model: Mapping[str, Any]) -> dict[str, Any]:
     environment = model.get("runtime_environment")
     personality = model.get("personality_adapter")
     if not all(
-        isinstance(value, Mapping)
-        for value in (behavior, runtime, environment, personality)
+        isinstance(value, Mapping) for value in (behavior, runtime, environment, personality)
     ):
         _fail("campaign_model_identity_invalid")
     return {
@@ -181,16 +197,14 @@ def _verify_bindings(
     freeze_model = freeze.get("model_identity")
     metadata = plan.to_dict().get("metadata")
     if not all(
-        isinstance(value, Mapping)
-        for value in (training, freeze_receipt, freeze_model, metadata)
+        isinstance(value, Mapping) for value in (training, freeze_receipt, freeze_model, metadata)
     ):
         _fail("resident_mechanics_identity_missing")
     adapter_identity = metadata.get("adapter_identity")
     model_identity = metadata.get("model_identity")
     execution = metadata.get("execution_config")
     if not all(
-        isinstance(value, Mapping)
-        for value in (adapter_identity, model_identity, execution)
+        isinstance(value, Mapping) for value in (adapter_identity, model_identity, execution)
     ):
         _fail("campaign_identity_missing")
     plan_receipt = adapter_identity.get("identity_receipt")
@@ -199,19 +213,15 @@ def _verify_bindings(
     effective = execution.get("effective_rlc_config")
     adapter_spec = execution.get("adapter_execution_spec")
     legacy_binding_invalid = not is_admission and (
-        promotion.get("freeze_certificate_sha256")
-        != freeze.get("certificate_sha256")
+        promotion.get("freeze_certificate_sha256") != freeze.get("certificate_sha256")
         or training.get("content_root_sha256") != freeze.get("content_root_sha256")
         or training.get("base_checkpoint_sha256") != freeze_model.get("fingerprint")
-        or Path(str(training.get("frozen_adapter") or "")).expanduser().resolve(
-            strict=False
-        )
+        or Path(str(training.get("frozen_adapter") or "")).expanduser().resolve(strict=False)
         != frozen_adapter
     )
     admission_binding_invalid = is_admission and (
         training != freeze_receipt
-        or training.get("base_checkpoint_fingerprint")
-        != freeze_model.get("fingerprint")
+        or training.get("base_checkpoint_fingerprint") != freeze_model.get("fingerprint")
     )
     if (
         legacy_binding_invalid
@@ -233,8 +243,7 @@ def _verify_bindings(
     if (
         not isinstance(runtime, Mapping)
         or runtime.get("model_type") != "qwen2"
-        or runtime.get("logical_parameter_count_basis")
-        != "architecture_config_logical"
+        or runtime.get("logical_parameter_count_basis") != "architecture_config_logical"
         or type(runtime.get("logical_parameter_count")) is not int
         or int(runtime["logical_parameter_count"]) < 30_000_000_000
     ):
@@ -265,13 +274,26 @@ def verify(
     freeze = verify_adapter_freeze(frozen_adapter)
     validators = _validator_identity()
     frozen_validators = freeze.get("validator_identity")
+    freeze_receipt = freeze.get("identity_receipt")
+    receipt_schema = freeze_receipt.get("schema") if isinstance(freeze_receipt, Mapping) else None
+    identity_role = {
+        IDENTITY_RECEIPT_SCHEMA_V2: "recurrence_v2_identity_validator_sha256",
+        GRPO_IDENTITY_RECEIPT_SCHEMA: "recurrent_grpo_identity_validator_sha256",
+        VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA: ("recurrent_grpo_identity_validator_sha256"),
+        RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA: ("resident_recurrent_sft_identity_validator_sha256"),
+    }.get(receipt_schema)
+    if identity_role is None and isinstance(frozen_validators, Mapping):
+        if "identity_validator_sha256" in frozen_validators:
+            identity_role = "identity_validator_sha256"
+    if identity_role is None:
+        _fail("freeze_validator_identity_mismatch")
+    required_roles: tuple[str, ...] = (
+        "campaign_runner_sha256",
+        "freeze_contract_sha256",
+        identity_role,
+    )
     if not isinstance(frozen_validators, Mapping) or any(
-        frozen_validators.get(role) != validators[role]
-        for role in (
-            "campaign_runner_sha256",
-            "freeze_contract_sha256",
-            "identity_validator_sha256",
-        )
+        frozen_validators.get(role) != validators[role] for role in required_roles
     ):
         _fail("freeze_validator_identity_mismatch")
     plan = CampaignPlan.from_dict(

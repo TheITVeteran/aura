@@ -32,7 +32,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from core.brain.llm.latent_cortex import recurrent_grpo_adapter_identity  # noqa: E402
+from core.brain.llm.latent_cortex import (  # noqa: E402
+    recurrent_grpo_adapter_identity,  # noqa: E402
+    resident_recurrent_sft_adapter_identity,
+)
 from core.brain.llm.latent_cortex.adapter_identity import (  # noqa: E402
     build_legacy_v1_manifest,
     inspect_mlx_tensor_metadata,
@@ -187,11 +190,7 @@ def _csv_ints(parser: argparse.ArgumentParser, raw: str, role: str) -> tuple[int
         values = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
     except ValueError:
         parser.error(f"{role} must be comma-separated integers")
-    if (
-        not values
-        or len(set(values)) != len(values)
-        or any(value < 0 for value in values)
-    ):
+    if not values or len(set(values)) != len(values) or any(value < 0 for value in values):
         parser.error(f"{role} must contain unique non-negative integers")
     return values
 
@@ -302,9 +301,7 @@ def _atomic_create_or_verify(path: Path, payload: bytes) -> None:
             os.link(temporary, path, follow_symlinks=False)
         except FileExistsError as exc:
             if _read_stable_bytes(path, max_bytes=max(1, len(payload))) != payload:
-                raise CampaignProducerError(
-                    f"concurrent artifact differs: {path}"
-                ) from exc
+                raise CampaignProducerError(f"concurrent artifact differs: {path}") from exc
     finally:
         temporary.unlink(missing_ok=True)
     directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
@@ -317,11 +314,7 @@ def _atomic_create_or_verify(path: Path, payload: bytes) -> None:
 def _worker_slot_stem(arm: str, attempt_slot: int) -> str:
     if arm not in FULL_ARMS:
         raise CampaignProducerError("worker authorization arm is invalid")
-    if (
-        isinstance(attempt_slot, bool)
-        or not isinstance(attempt_slot, int)
-        or attempt_slot <= 0
-    ):
+    if isinstance(attempt_slot, bool) or not isinstance(attempt_slot, int) or attempt_slot <= 0:
         raise CampaignProducerError("worker authorization attempt slot is invalid")
     return f"{arm}.attempt-{attempt_slot:02d}"
 
@@ -372,11 +365,7 @@ def _runtime_bundle_identity(
 ) -> dict[str, Any]:
     behavior_files: list[dict[str, Any]] = []
     for path in sorted(model_path.iterdir(), key=lambda item: item.name):
-        if (
-            not path.is_file()
-            or path.name == "README.md"
-            or path.suffix == ".safetensors"
-        ):
+        if not path.is_file() or path.name == "README.md" or path.suffix == ".safetensors":
             continue
         if path.is_symlink():
             raise CampaignProducerError(f"model bundle symlink rejected: {path}")
@@ -501,25 +490,29 @@ def _v2_artifacts(adapter_dir: Path, manifest: dict[str, Any]) -> dict[str, byte
             raise CampaignProducerError("v2 artifact path is duplicated")
         artifacts[str(relative)] = _read_stable_bytes(path, max_bytes=size)
     completion = _contained_adapter_artifact(adapter_dir, "training_completion.json")
-    artifacts["training_completion.json"] = _read_stable_bytes(
-        completion, max_bytes=1024 * 1024
-    )
+    artifacts["training_completion.json"] = _read_stable_bytes(completion, max_bytes=1024 * 1024)
     return artifacts
 
 
-def _recurrent_grpo_artifacts(
-    adapter_dir: Path, manifest: dict[str, Any]
-) -> dict[str, bytes]:
+def _recurrent_grpo_artifacts(adapter_dir: Path, manifest: dict[str, Any]) -> dict[str, bytes]:
     artifacts: dict[str, bytes] = {}
     for _role, binding in recurrent_grpo_adapter_identity.declared_bindings(manifest):
         path = _contained_adapter_artifact(adapter_dir, binding["path"])
-        artifacts[binding["path"]] = _read_stable_bytes(
-            path, max_bytes=int(binding["size_bytes"])
-        )
+        artifacts[binding["path"]] = _read_stable_bytes(path, max_bytes=int(binding["size_bytes"]))
     completion = _contained_adapter_artifact(adapter_dir, "training_completion.json")
-    artifacts["training_completion.json"] = _read_stable_bytes(
-        completion, max_bytes=1024 * 1024
-    )
+    artifacts["training_completion.json"] = _read_stable_bytes(completion, max_bytes=1024 * 1024)
+    return artifacts
+
+
+def _resident_recurrent_sft_artifacts(
+    adapter_dir: Path, manifest: dict[str, Any]
+) -> dict[str, bytes]:
+    artifacts: dict[str, bytes] = {}
+    for _role, binding in resident_recurrent_sft_adapter_identity.declared_bindings(manifest):
+        path = _contained_adapter_artifact(adapter_dir, binding["path"])
+        artifacts[binding["path"]] = _read_stable_bytes(path, max_bytes=int(binding["size_bytes"]))
+    completion = _contained_adapter_artifact(adapter_dir, "training_completion.json")
+    artifacts["training_completion.json"] = _read_stable_bytes(completion, max_bytes=1024 * 1024)
     return artifacts
 
 
@@ -542,9 +535,7 @@ def _resolve_campaign_personality(
     adapter_dir: Path,
     adapter_manifest: dict[str, Any] | None,
 ) -> str | None:
-    requested = str(
-        getattr(args, "personality_adapter", "trained") or "trained"
-    ).strip()
+    requested = str(getattr(args, "personality_adapter", "trained") or "trained").strip()
     lowered = requested.lower()
     if lowered == "trained":
         if adapter_manifest is None:
@@ -555,18 +546,25 @@ def _resolve_campaign_personality(
                     "personality_adapter_path", ""
                 )
             ).strip()
-        elif (
-            adapter_manifest.get("schema")
-            == recurrent_grpo_adapter_identity.MANIFEST_SCHEMA
-        ):
+        elif adapter_manifest.get("schema") == recurrent_grpo_adapter_identity.MANIFEST_SCHEMA:
             personality = adapter_manifest.get("personality_adapter")
             if not isinstance(personality, Mapping):
-                raise CampaignProducerError(
-                    "recurrent GRPO personality binding is invalid"
-                )
+                raise CampaignProducerError("recurrent GRPO personality binding is invalid")
             if personality.get("present") is True:
                 raise CampaignProducerError(
                     "recurrent GRPO bundle does not carry a loadable personality path"
+                )
+            configured = "none"
+        elif (
+            adapter_manifest.get("schema")
+            == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+        ):
+            personality = adapter_manifest.get("personality_adapter")
+            if not isinstance(personality, Mapping):
+                raise CampaignProducerError("resident recurrent-SFT personality binding is invalid")
+            if personality.get("present") is True:
+                raise CampaignProducerError(
+                    "resident recurrent-SFT package does not carry a loadable personality path"
                 )
             configured = "none"
         else:
@@ -579,9 +577,7 @@ def _resolve_campaign_personality(
         from core.brain.llm.model_registry import resolve_personality_adapter
 
         resolved = resolve_personality_adapter(str(model_path), backend="mlx")
-        return (
-            str(Path(resolved).expanduser().resolve(strict=True)) if resolved else None
-        )
+        return str(Path(resolved).expanduser().resolve(strict=True)) if resolved else None
     resolved = Path(requested).expanduser().resolve(strict=True)
     if not resolved.is_dir():
         raise CampaignProducerError("personality adapter must be a directory")
@@ -645,9 +641,7 @@ def _validate_recurrent_grpo_adapter_dir(
     personality_identity: Mapping[str, Any],
     runtime_environment: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    manifest = strict_json_loads(
-        manifest_bytes, role="campaign_recurrent_grpo_manifest"
-    )
+    manifest = strict_json_loads(manifest_bytes, role="campaign_recurrent_grpo_manifest")
     artifacts = _recurrent_grpo_artifacts(adapter_dir, manifest)
     adapter_binding = manifest.get("adapter")
     if not isinstance(adapter_binding, dict):
@@ -662,6 +656,37 @@ def _validate_recurrent_grpo_adapter_dir(
         actual_runtime_environment=runtime_environment,
         artifacts=artifacts,
         tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+    )
+    return manifest, receipt
+
+
+def _validate_resident_recurrent_sft_adapter_dir(
+    adapter_dir: Path,
+    manifest_bytes: bytes,
+    *,
+    adapter_id: str,
+    base_checkpoint: Mapping[str, Any],
+    model_behavior_bundle: Mapping[str, Any],
+    personality_identity: Mapping[str, Any],
+    runtime_environment: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = strict_json_loads(manifest_bytes, role="campaign_resident_recurrent_sft_manifest")
+    artifacts = _resident_recurrent_sft_artifacts(adapter_dir, manifest)
+    adapter_binding = manifest.get("bindings", {}).get("adapter")
+    if not isinstance(adapter_binding, dict):
+        raise CampaignProducerError("resident recurrent-SFT adapter binding is invalid")
+    adapter_path = _contained_adapter_artifact(adapter_dir, adapter_binding.get("path"))
+    receipt = (
+        resident_recurrent_sft_adapter_identity.validate_resident_recurrent_sft_adapter_identity(
+            manifest_bytes,
+            adapter_id=adapter_id,
+            actual_base_checkpoint=base_checkpoint,
+            actual_model_behavior_bundle=model_behavior_bundle,
+            actual_personality_adapter=personality_identity,
+            actual_runtime_environment=runtime_environment,
+            artifacts=artifacts,
+            tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+        )
     )
     return manifest, receipt
 
@@ -727,9 +752,23 @@ def _identity_material(
                 personality_identity=personality_identity,
                 runtime_environment=runtime_environment,
             )
+        elif schema == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+            manifest, receipt = _validate_resident_recurrent_sft_adapter_dir(
+                adapter_dir,
+                adapter_manifest_bytes,
+                adapter_id=args.adapter_id,
+                base_checkpoint=weight_identity,
+                model_behavior_bundle=model_behavior_identity,
+                personality_identity=personality_identity,
+                runtime_environment=runtime_environment,
+            )
         else:
             raise CampaignProducerError("adapter manifest schema is unsupported")
-        execution_binding = manifest["execution_spec"]
+        execution_binding = (
+            manifest["bindings"]["execution_spec"]
+            if schema == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+            else manifest["execution_spec"]
+        )
         execution_payload = _read_stable_bytes(
             _contained_adapter_artifact(adapter_dir, execution_binding["path"]),
             max_bytes=int(execution_binding["size_bytes"]),
@@ -739,9 +778,7 @@ def _identity_material(
             "format": schema,
             "manifest": manifest,
             "identity_receipt": receipt,
-            "execution_spec": strict_json_loads(
-                execution_payload, role="campaign_execution_spec"
-            ),
+            "execution_spec": strict_json_loads(execution_payload, role="campaign_execution_spec"),
         }
         return model_identity, adapter_identity
     if personality_path is not None:
@@ -758,12 +795,8 @@ def _identity_material(
         manifest,
         actual_base_checkpoint_fingerprint=model_identity["fingerprint"],
         adapter_bytes=(adapter_dir / manifest.adapter.path).read_bytes(),
-        training_receipt_bytes=(
-            adapter_dir / manifest.training_receipt.path
-        ).read_bytes(),
-        tensor_metadata=inspect_mlx_tensor_metadata(
-            adapter_dir / manifest.adapter.path
-        ),
+        training_receipt_bytes=(adapter_dir / manifest.training_receipt.path).read_bytes(),
+        tensor_metadata=inspect_mlx_tensor_metadata(adapter_dir / manifest.adapter.path),
     )
     adapter_identity = {
         "adapter_dir": str(adapter_dir),
@@ -845,8 +878,25 @@ def _adapter_load_boundary_identity(
             runtime_environment=runtime_environment,
         )
         if parsed != manifest:
+            raise CampaignProducerError("recurrent GRPO adapter manifest differs from frozen plan")
+        return receipt
+    if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+        manifest_bytes = _read_stable_bytes(
+            adapter_dir / V2_MANIFEST_FILE,
+            max_bytes=16 * 1024 * 1024,
+        )
+        parsed, receipt = _validate_resident_recurrent_sft_adapter_dir(
+            adapter_dir,
+            manifest_bytes,
+            adapter_id=adapter_id,
+            base_checkpoint=base_checkpoint,
+            model_behavior_bundle=model_behavior_bundle,
+            personality_identity=personality_identity,
+            runtime_environment=runtime_environment,
+        )
+        if parsed != manifest:
             raise CampaignProducerError(
-                "recurrent GRPO adapter manifest differs from frozen plan"
+                "resident recurrent-SFT adapter manifest differs from frozen plan"
             )
         return receipt
     adapter_binding = manifest["adapter"]
@@ -895,8 +945,7 @@ def _public_tasks_from_plan(plan: CampaignPlan) -> tuple[PublicTaskRecord, ...]:
         raise CampaignProducerError("persisted public task manifest hash mismatch")
     task_ids = {task.task_id for task in tasks}
     if any(
-        plan.cell_definition(cell_id).get("task_id") not in task_ids
-        for cell_id in plan.cell_ids
+        plan.cell_definition(cell_id).get("task_id") not in task_ids for cell_id in plan.cell_ids
     ):
         raise CampaignProducerError("persisted plan cell references an unknown task")
     return tasks
@@ -921,9 +970,7 @@ def _load_contamination_trust_root(path_value: str) -> tuple[Any, bytes, str]:
     try:
         public_key = serialization.load_pem_public_key(trust_bytes)
     except ValueError as exc:
-        raise CampaignProducerError(
-            "contamination audit trust root is invalid"
-        ) from exc
+        raise CampaignProducerError("contamination audit trust root is invalid") from exc
     if not isinstance(public_key, Ed25519PublicKey):
         raise CampaignProducerError("contamination audit trust root is not Ed25519")
     public_der = public_key.public_bytes(
@@ -939,6 +986,10 @@ def _adapter_dataset_manifest_sha256(
     manifest = adapter_identity.get("manifest")
     if not isinstance(manifest, Mapping):
         return None
+    if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+        receipt = adapter_identity.get("identity_receipt")
+        digest = receipt.get("dataset_sha256") if isinstance(receipt, Mapping) else None
+        return digest if isinstance(digest, str) and len(digest) == 64 else None
     binding = manifest.get("dataset_manifest")
     if not isinstance(binding, Mapping):
         return None
@@ -1008,11 +1059,7 @@ def _contamination_audit(
         )
     ):
         raise CampaignProducerError("contamination audit verification failed")
-    corpus_hashes = {
-        record["snapshot_sha256"]
-        for record in corpora
-        if isinstance(record, dict)
-    }
+    corpus_hashes = {record["snapshot_sha256"] for record in corpora if isinstance(record, dict)}
     if (
         expected_training_corpus_sha256 is not None
         and expected_training_corpus_sha256 not in corpus_hashes
@@ -1027,27 +1074,19 @@ def _contamination_audit(
     ):
         raise CampaignProducerError("contamination audit signature is invalid")
     try:
-        signature_bytes = base64.b64decode(
-            str(signature["signature_b64"]), validate=True
-        )
+        signature_bytes = base64.b64decode(str(signature["signature_b64"]), validate=True)
     except (KeyError, ValueError) as exc:
         raise CampaignProducerError("contamination audit signature is invalid") from exc
     from cryptography.exceptions import InvalidSignature
 
-    public_key, public_der, trust_root_sha256 = _load_contamination_trust_root(
-        trust_root_path
-    )
+    public_key, public_der, trust_root_sha256 = _load_contamination_trust_root(trust_root_path)
     if signature.get("key_id") != trust_root_sha256:
-        raise CampaignProducerError(
-            "contamination audit signer does not match trust root"
-        )
+        raise CampaignProducerError("contamination audit signer does not match trust root")
     signed_payload = canonical_json_bytes(body)
     try:
         public_key.verify(signature_bytes, signed_payload)
     except InvalidSignature as exc:
-        raise CampaignProducerError(
-            "contamination audit signature verification failed"
-        ) from exc
+        raise CampaignProducerError("contamination audit signature verification failed") from exc
     return {
         **body,
         "signature": {
@@ -1084,8 +1123,7 @@ def _campaign_protocol_sha256() -> str:
 
 def _prelaunch_role_implementation_sha256(role: str) -> str:
     paths = {
-        TASK_ISSUER: REPO_ROOT
-        / "core/brain/llm/latent_cortex/frontier_tasks.py",
+        TASK_ISSUER: REPO_ROOT / "core/brain/llm/latent_cortex/frontier_tasks.py",
         CAMPAIGN_RUNNER: Path(__file__).resolve(),
         "contamination_auditor": REPO_ROOT / "tools/produce_contamination_audit.py",
     }
@@ -1117,9 +1155,7 @@ def _load_campaign_trust_policy(
     if not policy_path and not root_path:
         return None
     if not policy_path or not root_path:
-        raise CampaignProducerError(
-            "campaign trust policy and independent root are both required"
-        )
+        raise CampaignProducerError("campaign trust policy and independent root are both required")
     policy = _read_json_artifact(policy_path, role="campaign trust policy")
     root_bytes = _read_stable_bytes(
         Path(root_path).expanduser().resolve(strict=True),
@@ -1150,19 +1186,13 @@ def _prelaunch_payloads(
         "task_registry_version": execution_config["task_registry_version"],
     }
     if "generation_seeds" in execution_config:
-        generation_config["generation_seeds"] = execution_config[
-            "generation_seeds"
-        ]
+        generation_config["generation_seeds"] = execution_config["generation_seeds"]
     else:
-        generation_config["generation_seed_count"] = execution_config[
-            "generation_seed_count"
-        ]
+        generation_config["generation_seed_count"] = execution_config["generation_seed_count"]
         generation_config["generation_seed_min_entropy_bits"] = execution_config[
             "generation_seed_min_entropy_bits"
         ]
-        generation_config["generation_seed_policy"] = execution_config[
-            "generation_seed_policy"
-        ]
+        generation_config["generation_seed_policy"] = execution_config["generation_seed_policy"]
         generation_config["generation_seed_disclosure"] = execution_config[
             "generation_seed_disclosure"
         ]
@@ -1174,9 +1204,7 @@ def _prelaunch_payloads(
             "unsigned_plan_sha256": unsigned_plan.plan_sha256,
             "task_manifest_sha256": task_manifest["manifest_sha256"],
             "task_commitment_sha256": task_commitment["commitment_sha256"],
-            "generation_config_sha256": _sha256_bytes(
-                canonical_json_bytes(generation_config)
-            ),
+            "generation_config_sha256": _sha256_bytes(canonical_json_bytes(generation_config)),
         },
         CAMPAIGN_RUNNER: {
             "schema": CAMPAIGN_RUNNER_PAYLOAD_SCHEMA,
@@ -1190,9 +1218,7 @@ def _prelaunch_payloads(
             "adapter_identity_sha256": _sha256_bytes(
                 canonical_json_bytes(metadata["adapter_identity"])
             ),
-            "execution_config_sha256": _sha256_bytes(
-                canonical_json_bytes(execution_config)
-            ),
+            "execution_config_sha256": _sha256_bytes(canonical_json_bytes(execution_config)),
             "contamination_audit_sha256": _sha256_bytes(
                 canonical_json_bytes(metadata["contamination_audit"])
             ),
@@ -1246,29 +1272,22 @@ def _verified_campaign_trust(
             "contamination auditor does not match the pre-pinned campaign role"
         )
     for role in (TASK_ISSUER, CAMPAIGN_RUNNER, "contamination_auditor"):
-        if (
-            policy.role_pin(role)["implementation_sha256"]
-            != _prelaunch_role_implementation_sha256(role)
+        if policy.role_pin(role)["implementation_sha256"] != _prelaunch_role_implementation_sha256(
+            role
         ):
             raise CampaignProducerError(
                 f"{role} implementation does not match the pre-pinned source"
             )
     payloads = _prelaunch_payloads(args, unsigned_plan=unsigned_plan, policy=policy)
-    issuer_path = str(
-        getattr(args, "task_issuer_attestation", "") or ""
-    ).strip()
+    issuer_path = str(getattr(args, "task_issuer_attestation", "") or "").strip()
     runner_path = str(getattr(args, "runner_attestation", "") or "").strip()
     if not issuer_path or not runner_path:
         raise CampaignProducerError(
             "task issuer and campaign runner prelaunch attestations are required"
         )
     admitted_at = int(time.time())
-    issuer_attestation = _read_json_artifact(
-        issuer_path, role="task issuer attestation"
-    )
-    runner_attestation = _read_json_artifact(
-        runner_path, role="campaign runner attestation"
-    )
+    issuer_attestation = _read_json_artifact(issuer_path, role="task issuer attestation")
+    runner_attestation = _read_json_artifact(runner_path, role="campaign runner attestation")
     verify_role_attestation(
         policy,
         issuer_attestation,
@@ -1291,13 +1310,9 @@ def _verified_campaign_trust(
         "protocol_sha256": _campaign_protocol_sha256(),
         "unsigned_plan_sha256": unsigned_plan.plan_sha256,
         "task_issuer_attestation": issuer_attestation,
-        "task_issuer_payload_sha256": _sha256_bytes(
-            canonical_json_bytes(payloads[TASK_ISSUER])
-        ),
+        "task_issuer_payload_sha256": _sha256_bytes(canonical_json_bytes(payloads[TASK_ISSUER])),
         "runner_attestation": runner_attestation,
-        "runner_payload_sha256": _sha256_bytes(
-            canonical_json_bytes(payloads[CAMPAIGN_RUNNER])
-        ),
+        "runner_payload_sha256": _sha256_bytes(canonical_json_bytes(payloads[CAMPAIGN_RUNNER])),
         "prelaunch_verified": True,
         "externally_custodied": externally_custodied_roles(policy),
     }
@@ -1354,9 +1369,7 @@ def _build_rlc_config(
             decode_contract_grace_tokens=contract_grace_tokens,
             verifier_probe_max_tokens=verifier_probe_tokens,
             decode_bridge_policy=(
-                "assistant_answer_v3"
-                if spec.decode_bridge_policy == "assistant_answer"
-                else "none"
+                "assistant_answer_v3" if spec.decode_bridge_policy == "assistant_answer" else "none"
             ),
             decode_repetition_penalty=1.25,
             decode_repetition_window=72,
@@ -1369,9 +1382,7 @@ def _build_rlc_config(
         "resident_full_stack_no_fast_weights",
         "resident_full_stack_no_branch_exchange",
     }:
-        branch_exchange_enabled = (
-            args.rlc_profile != "resident_full_stack_no_branch_exchange"
-        )
+        branch_exchange_enabled = args.rlc_profile != "resident_full_stack_no_branch_exchange"
         latent_opt_enabled = args.rlc_profile != "resident_full_stack_no_latent_opt"
         fast_weights_enabled = args.rlc_profile != "resident_full_stack_no_fast_weights"
         return CortexConfig(
@@ -1432,9 +1443,7 @@ def _execution_config(
             "task_registry_version",
             REGISTRY_VERSION,
         ),
-        "generation_seed_count": int(
-            getattr(args, "seed_count", 0) or len(args.seed_values)
-        ),
+        "generation_seed_count": int(getattr(args, "seed_count", 0) or len(args.seed_values)),
         "generation_seed_min_entropy_bits": int(
             getattr(args, "seed_entropy_bits", 0)
             or min(value.bit_length() for value in args.seed_values)
@@ -1488,9 +1497,7 @@ def _statistical_power_plan(args: argparse.Namespace) -> dict[str, Any]:
         comparison_count += 1
     if ADAPTER_EQUAL_COMPUTE in arms:
         comparison_count += 1
-    planned = int(
-        getattr(args, "seed_count", 0) or len(args.seed_values)
-    )
+    planned = int(getattr(args, "seed_count", 0) or len(args.seed_values))
     return exact_campaign_power_plan(
         domain_count=len(args.domain_values),
         comparison_count=comparison_count,
@@ -1558,9 +1565,7 @@ def _expected_worker_plan(
     contamination_audit = _contamination_audit(
         args,
         tasks,
-        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(
-            adapter_identity
-        ),
+        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(adapter_identity),
     )
     execution_config = _execution_config(args, adapter_identity)
     unsigned_plan = build_campaign_plan(
@@ -1622,8 +1627,7 @@ def _claim_eligible(
         and set(args.domain_values) == set(FRONTIER_DOMAINS)
         and isinstance(runtime_bundle, dict)
         and runtime_bundle.get("model_type") == "qwen2"
-        and runtime_bundle.get("logical_parameter_count_basis")
-        == "architecture_config_logical"
+        and runtime_bundle.get("logical_parameter_count_basis") == "architecture_config_logical"
         and int(runtime_bundle.get("logical_parameter_count") or 0) >= 30_000_000_000
         and _adapter_dataset_manifest_sha256(adapter_identity) is not None
         and contamination_audit.get("status") == "passed_zero_overlap"
@@ -1675,9 +1679,7 @@ def _resolve_projection(model: Any, projection: str) -> tuple[Any, str, Any]:
     try:
         original = getattr(current, leaf)
     except AttributeError as exc:
-        raise CampaignProducerError(
-            f"adapter projection is missing: {projection}"
-        ) from exc
+        raise CampaignProducerError(f"adapter projection is missing: {projection}") from exc
     return current, leaf, original
 
 
@@ -1694,18 +1696,15 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     is_scoped = manifest.get("schema") in {
         MANIFEST_SCHEMA_V2,
         recurrent_grpo_adapter_identity.MANIFEST_SCHEMA,
+        resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA,
     }
     expected = int(
-        manifest["lora"][
-            "wrapped_projections" if is_scoped else "wrapped_projection_count"
-        ]
+        manifest["lora"]["wrapped_projections" if is_scoped else "wrapped_projection_count"]
     )
     tensor_records = {record["key"]: record for record in manifest["tensors"]}
-    wrapper_type = (
-        ScopedLoRALinear
-        if is_scoped
-        else LoRALinear
-    )
+    lora_scale = float(manifest["lora"].get("scale", 20.0))
+    lora_dropout = float(manifest["lora"].get("dropout", 0.0))
+    wrapper_type = ScopedLoRALinear if is_scoped else LoRALinear
     projections = sorted(
         {key.removesuffix(".lora_a").removesuffix(".lora_b") for key in tensor_records}
     )
@@ -1742,6 +1741,8 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
                 wrapped = wrapper_type.from_base(
                     original,
                     r=rank,
+                    scale=lora_scale,
+                    dropout=lora_dropout,
                     block_index=block_index,
                     site=projection,
                 )
@@ -1749,9 +1750,14 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
                 wrapped = wrapper_type.from_base(original, r=rank)
             setattr(parent, leaf, wrapped)
 
-        weights_path = adapter_dir / manifest["adapter"]["path"]
-        expected_adapter_sha256 = manifest["adapter"]["sha256"]
-        expected_adapter_size = int(manifest["adapter"]["size_bytes"])
+        adapter_binding = (
+            manifest["bindings"]["adapter"]
+            if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+            else manifest["adapter"]
+        )
+        weights_path = adapter_dir / adapter_binding["path"]
+        expected_adapter_sha256 = adapter_binding["sha256"]
+        expected_adapter_size = int(adapter_binding["size_bytes"])
         before_load = _read_stable_bytes(
             weights_path,
             max_bytes=max(1, expected_adapter_size),
@@ -1774,9 +1780,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
         model.load_weights(list(weights.items()), strict=False)
         loaded = dict(tree_flatten(model.parameters()))
         mx.eval(*(loaded[key] for key in sorted(expected_keys)))
-        if any(
-            not bool(mx.array_equal(loaded[key], weights[key])) for key in expected_keys
-        ):
+        if any(not bool(mx.array_equal(loaded[key], weights[key])) for key in expected_keys):
             raise CampaignProducerError("adapter weight readback mismatch")
         after_load = _read_stable_bytes(
             weights_path,
@@ -1860,14 +1864,10 @@ def _vanilla_once(
     ledger.charge(
         "vanilla_prefill",
         transformer_layer_apps=prompt_tokens * n_layers,
-        attention_query_key_pairs=(
-            triangular_attention_pairs(prompt_tokens) * n_layers
-        ),
+        attention_query_key_pairs=(triangular_attention_pairs(prompt_tokens) * n_layers),
         output_head_tokens=1,
     )
-    decode_pairs = sum(
-        prompt_tokens + index + 1 for index in range(decode_forwards)
-    )
+    decode_pairs = sum(prompt_tokens + index + 1 for index in range(decode_forwards))
     ledger.charge(
         "vanilla_decode",
         transformer_layer_apps=decode_forwards * n_layers,
@@ -1988,9 +1988,7 @@ def _equal_compute(
         )
     best_score = max(scores)
     eligible = [
-        output
-        for output, score in zip(outputs, scores, strict=True)
-        if score == best_score
+        output for output, score in zip(outputs, scores, strict=True) if score == best_score
     ]
     return (
         _majority_output(eligible),
@@ -2048,12 +2046,8 @@ def _run_rlc(
     if not result.ok:
         raise CampaignProducerError(f"latent episode failed: {result.reason}")
     try:
-        resource = validate_resource_receipt(
-            receipt["budget"]["resource_accounting"]
-        )
-        information = validate_information_receipt(
-            receipt["budget"]["information_accounting"]
-        )
+        resource = validate_resource_receipt(receipt["budget"]["resource_accounting"])
+        information = validate_information_receipt(receipt["budget"]["information_accounting"])
     except (KeyError, TypeError, ValueError) as exc:
         raise CampaignProducerError("latent episode accounting is invalid") from exc
     if (
@@ -2083,17 +2077,13 @@ def _prior_rlc_costs(
         arm = definition["arm"]
         if arm in {BASE_RLC, ADAPTER_RLC}:
             try:
-                resource = validate_resource_receipt(
-                    record["result"].get("resource_accounting")
-                )
+                resource = validate_resource_receipt(record["result"].get("resource_accounting"))
             except (TypeError, ValueError) as exc:
                 raise CampaignProducerError(
                     "RLC prerequisite lacks valid resource accounting"
                 ) from exc
             if resource["accounting_complete"] is not True:
-                raise CampaignProducerError(
-                    "RLC prerequisite resource accounting is incomplete"
-                )
+                raise CampaignProducerError("RLC prerequisite resource accounting is incomplete")
             costs[(definition["task_id"], arm)] = (
                 int(record["result"]["layer_apps"]),
                 resource,
@@ -2110,9 +2100,7 @@ def _worker_origin_context(
     supplied = bool(args.worker_attempt_slot and stage_value)
     if not claim_required:
         if supplied:
-            raise CampaignProducerError(
-                "preflight worker received claim-only origin credentials"
-            )
+            raise CampaignProducerError("preflight worker received claim-only origin credentials")
         return None
     if not supplied:
         raise CampaignProducerError("claim worker stage and origin channel are required")
@@ -2170,9 +2158,7 @@ def _execute_worker(
         with _deadline_alarm(args.load_timeout, "model_load"):
             planned_model = metadata["model_identity"]
             planned_runtime = planned_model["runtime_bundle"]
-            personality_path = (
-                str(planned_model.get("personality_adapter_path") or "") or None
-            )
+            personality_path = str(planned_model.get("personality_adapter_path") or "") or None
             planned_load_boundary = {
                 "weight_fingerprint": planned_model["fingerprint"],
                 "weight_method": planned_model["method"],
@@ -2183,13 +2169,9 @@ def _execute_worker(
                 "personality_adapter": planned_model["personality_adapter"],
                 "effective_stack_sha256": planned_model["effective_stack_sha256"],
             }
-            pre_load_boundary = _model_load_boundary_identity(
-                model_dir, personality_path
-            )
+            pre_load_boundary = _model_load_boundary_identity(model_dir, personality_path)
             if pre_load_boundary != planned_load_boundary:
-                raise CampaignProducerError(
-                    "model bytes differ from frozen plan before load"
-                )
+                raise CampaignProducerError("model bytes differ from frozen plan before load")
             actual_adapter_identity: dict[str, Any] | None = None
             if arm.startswith("adapter_"):
                 actual_adapter_identity = _adapter_load_boundary_identity(
@@ -2205,13 +2187,8 @@ def _execute_worker(
                     personality_identity=planned_model["personality_adapter"],
                     runtime_environment=planned_model["runtime_environment"],
                 )
-                if (
-                    actual_adapter_identity
-                    != metadata["adapter_identity"]["identity_receipt"]
-                ):
-                    raise CampaignProducerError(
-                        "adapter bytes differ from frozen plan before load"
-                    )
+                if actual_adapter_identity != metadata["adapter_identity"]["identity_receipt"]:
+                    raise CampaignProducerError("adapter bytes differ from frozen plan before load")
             load_kwargs = {"adapter_path": personality_path} if personality_path else {}
             model, tokenizer = load(model_path, **load_kwargs)
             wrapped = 0
@@ -2231,16 +2208,10 @@ def _execute_worker(
                     runtime_environment=planned_model["runtime_environment"],
                 )
                 if post_adapter_identity != actual_adapter_identity:
-                    raise CampaignProducerError(
-                        "adapter identity changed across load boundary"
-                    )
-            post_load_boundary = _model_load_boundary_identity(
-                model_dir, personality_path
-            )
+                    raise CampaignProducerError("adapter identity changed across load boundary")
+            post_load_boundary = _model_load_boundary_identity(model_dir, personality_path)
             if post_load_boundary != pre_load_boundary:
-                raise CampaignProducerError(
-                    "model identity changed across load boundary"
-                )
+                raise CampaignProducerError("model identity changed across load boundary")
             from core.brain.llm.latent_cortex.worker_capture_identity import (
                 build_worker_capture_identity,
             )
@@ -2255,33 +2226,19 @@ def _execute_worker(
             worker_identity = build_worker_identity(
                 model,
                 model_path=model_path,
-                worker_boot_id=worker_capture_signing_identity.public_identity[
-                    "worker_boot_id"
-                ],
+                worker_boot_id=worker_capture_signing_identity.public_identity["worker_boot_id"],
                 worker_source_path=Path(__file__).resolve(),
-                worker_action_capture_identity=(
-                    worker_capture_signing_identity.public_identity
-                ),
+                worker_action_capture_identity=(worker_capture_signing_identity.public_identity),
                 tokenizer=tokenizer,
             )
             worker_identity.update(
                 {
-                    "worker_weight_fingerprint": post_load_boundary[
-                        "weight_fingerprint"
-                    ],
-                    "worker_weight_fingerprint_method": post_load_boundary[
-                        "weight_method"
-                    ],
+                    "worker_weight_fingerprint": post_load_boundary["weight_fingerprint"],
+                    "worker_weight_fingerprint_method": post_load_boundary["weight_method"],
                     "worker_weight_file_count": post_load_boundary["weight_file_count"],
-                    "worker_runtime_bundle_sha256": post_load_boundary[
-                        "runtime_bundle_sha256"
-                    ],
-                    "worker_personality_adapter": post_load_boundary[
-                        "personality_adapter"
-                    ],
-                    "worker_effective_stack_sha256": post_load_boundary[
-                        "effective_stack_sha256"
-                    ],
+                    "worker_runtime_bundle_sha256": post_load_boundary["runtime_bundle_sha256"],
+                    "worker_personality_adapter": post_load_boundary["personality_adapter"],
+                    "worker_effective_stack_sha256": post_load_boundary["effective_stack_sha256"],
                     "worker_load_boundary_verified": True,
                 }
             )
@@ -2291,9 +2248,7 @@ def _execute_worker(
                 or worker_identity["worker_model_parameter_count_basis"]
                 != planned_runtime["logical_parameter_count_basis"]
             ):
-                raise CampaignProducerError(
-                    "loaded model identity differs from frozen plan"
-                )
+                raise CampaignProducerError("loaded model identity differs from frozen plan")
         load_elapsed = time.monotonic() - load_started
         if load_elapsed > args.load_timeout:
             raise CampaignProducerError(
@@ -2316,9 +2271,7 @@ def _execute_worker(
             )
 
         raw_execution_spec = metadata["execution_config"].get("adapter_execution_spec")
-        execution_spec = (
-            raw_execution_spec if isinstance(raw_execution_spec, Mapping) else None
-        )
+        execution_spec = raw_execution_spec if isinstance(raw_execution_spec, Mapping) else None
         # Every arm receives the same bound engine configuration so resource
         # profiles and information-policy commitments are reconstructed from
         # the identical resident model/runtime.  Non-RLC arms use it only for
@@ -2344,8 +2297,7 @@ def _execute_worker(
             pending = [
                 cell_id
                 for cell_id in journal.resume().runnable_cell_ids
-                if plan.cell_definition(cell_id)["arm"] == arm
-                and cell_id not in sealed
+                if plan.cell_definition(cell_id)["arm"] == arm and cell_id not in sealed
             ]
             pending.sort(
                 key=lambda cell_id: int(
@@ -2375,14 +2327,10 @@ def _execute_worker(
                                 information_accounting,
                             ) = _run_rlc(rlc_engine, task, args)
                         elif arm.endswith("_equal_compute"):
-                            source_arm = (
-                                BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
-                            )
+                            source_arm = BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
                             target = costs.get((task.task_id, source_arm))
                             if target is None:
-                                raise CampaignProducerError(
-                                    "equal-compute prerequisite missing"
-                                )
+                                raise CampaignProducerError("equal-compute prerequisite missing")
                             target_layer_apps, target_resource = target
                             (
                                 text,
@@ -2432,9 +2380,9 @@ def _execute_worker(
                         "model_load_s": round(load_elapsed, 6),
                         "warmup_s": round(warm_elapsed, 6),
                         "adapter_wrapped_projections": wrapped,
-                        "adapter_identity_sha256": metadata["adapter_identity"][
-                            "identity_receipt"
-                        ]["composite_identity_sha256"]
+                        "adapter_identity_sha256": metadata["adapter_identity"]["identity_receipt"][
+                            "composite_identity_sha256"
+                        ]
                         if arm.startswith("adapter_")
                         else None,
                         "runtime_adapter_identity": actual_adapter_identity,
@@ -2458,9 +2406,7 @@ def _execute_worker(
                             attempt_id,
                             {
                                 "schema": "aura.latent_cortex.worker_stage_transport_verification.v1",
-                                "result_origin_sha256": result["worker_origin"][
-                                    "origin_sha256"
-                                ],
+                                "result_origin_sha256": result["worker_origin"]["origin_sha256"],
                             },
                         )
                         journal.commit_cell(
@@ -2468,9 +2414,7 @@ def _execute_worker(
                             attempt_id,
                             {
                                 "schema": "aura.latent_cortex.worker_stage_transport_commit.v1",
-                                "result_sha256": _sha256_bytes(
-                                    canonical_json_bytes(result)
-                                ),
+                                "result_sha256": _sha256_bytes(canonical_json_bytes(result)),
                             },
                         )
                     print(
@@ -2600,11 +2544,7 @@ def _worker_args(
 def _arm_outputs_sealed(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         sealed = set(journal.resume().sealed_cell_ids)
-    expected = {
-        cell_id
-        for cell_id in plan.cell_ids
-        if plan.cell_definition(cell_id)["arm"] == arm
-    }
+    expected = {cell_id for cell_id in plan.cell_ids if plan.cell_definition(cell_id)["arm"] == arm}
     return expected.issubset(sealed)
 
 
@@ -2625,12 +2565,8 @@ def _seal_output_manifest(
         {
             "cell_id": cell_id,
             "attempt_id": by_cell[cell_id]["attempt_id"],
-            "arm_result_event_sha256": by_cell[cell_id][
-                "arm_result_event_sha256"
-            ],
-            "result_sha256": _sha256_bytes(
-                canonical_json_bytes(by_cell[cell_id]["result"])
-            ),
+            "arm_result_event_sha256": by_cell[cell_id]["arm_result_event_sha256"],
+            "result_sha256": _sha256_bytes(canonical_json_bytes(by_cell[cell_id]["result"])),
         }
         for cell_id in plan.cell_ids
     ]
@@ -2643,12 +2579,8 @@ def _seal_output_manifest(
     if worker_execution is not None:
         material.update(
             {
-                "worker_execution_manifest_sha256": worker_execution[
-                    "manifest_sha256"
-                ],
-                "detached_plan_sha256": worker_execution[
-                    "detached_plan_sha256"
-                ],
+                "worker_execution_manifest_sha256": worker_execution["manifest_sha256"],
+                "detached_plan_sha256": worker_execution["detached_plan_sha256"],
                 "detached_classification_head_sha256": worker_execution[
                     "detached_classification_head_sha256"
                 ],
@@ -2656,9 +2588,7 @@ def _seal_output_manifest(
                     "detached_classifications_sha256"
                 ],
                 "worker_imports_sha256": worker_execution["imports_sha256"],
-                "worker_excluded_attempts_sha256": worker_execution[
-                    "excluded_attempts_sha256"
-                ],
+                "worker_excluded_attempts_sha256": worker_execution["excluded_attempts_sha256"],
             }
         )
     manifest = {
@@ -2685,16 +2615,12 @@ def _answer_reveal_payload(
         if task is None:
             raise CampaignProducerError("answer reveal task is absent from issuer set")
         payload = task.reveal_for_verifier()
-        if _sha256_bytes(canonical_json_bytes(payload)) != public[
-            "answer_commitment_sha256"
-        ]:
+        if _sha256_bytes(canonical_json_bytes(payload)) != public["answer_commitment_sha256"]:
             raise CampaignProducerError("answer reveal differs from prelaunch commitment")
         answers.append(
             {
                 "task_id": task.task_id,
-                "answer_commitment_sha256": public[
-                    "answer_commitment_sha256"
-                ],
+                "answer_commitment_sha256": public["answer_commitment_sha256"],
                 "answer_payload": payload,
             }
         )
@@ -2721,9 +2647,7 @@ def _load_or_prepare_role_request(
         request = _read_json_artifact(str(path), role=f"{role} signature request")
         signed_payload = request.get("signed_payload")
         signed_at = (
-            signed_payload.get("signed_at_unix")
-            if isinstance(signed_payload, dict)
-            else None
+            signed_payload.get("signed_at_unix") if isinstance(signed_payload, dict) else None
         )
         if type(signed_at) is not int:
             raise CampaignProducerError(f"{role} request timestamp is invalid")
@@ -2734,9 +2658,7 @@ def _load_or_prepare_role_request(
             signed_at_unix=signed_at,
         )
         if request != expected:
-            raise CampaignProducerError(
-                f"{role} request differs from the current payload"
-            )
+            raise CampaignProducerError(f"{role} request differs from the current payload")
         return request
     request = prepare_role_signature_request(
         policy,
@@ -2754,10 +2676,7 @@ def _read_canonical_json_artifact(path: Path, *, role: str) -> dict[str, Any]:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CampaignProducerError(f"{role} is not valid JSON") from exc
-    if (
-        not isinstance(document, dict)
-        or payload != canonical_json_bytes(document) + b"\n"
-    ):
+    if not isinstance(document, dict) or payload != canonical_json_bytes(document) + b"\n":
         raise CampaignProducerError(f"{role} is not canonical JSON")
     return document
 
@@ -2789,17 +2708,13 @@ def _admit_answer_reveal(
             payload=payload,
         )
         request_sha256 = request["request_sha256"]
-        attestation_path = str(
-            getattr(args, "answer_reveal_attestation", "") or ""
-        ).strip()
+        attestation_path = str(getattr(args, "answer_reveal_attestation", "") or "").strip()
         if not attestation_path:
             print(
                 json.dumps(
                     {
                         "state": "answer_reveal_signature_required",
-                        "request_path": str(
-                            campaign_dir / ANSWER_REVEAL_REQUEST_FILE
-                        ),
+                        "request_path": str(campaign_dir / ANSWER_REVEAL_REQUEST_FILE),
                         "request_sha256": request_sha256,
                     },
                     indent=2,
@@ -2808,9 +2723,7 @@ def _admit_answer_reveal(
                 flush=True,
             )
             return None
-        attestation = _read_json_artifact(
-            attestation_path, role="answer reveal attestation"
-        )
+        attestation = _read_json_artifact(attestation_path, role="answer reveal attestation")
         signed = verify_role_attestation(
             policy,
             attestation,
@@ -2858,30 +2771,20 @@ def _score_sealed_outputs(
             verification = {
                 "correct": score["correct"],
                 "score_receipt": score,
-                "answer_commitment_sha256": (
-                    task.public.answer_commitment_sha256
-                ),
+                "answer_commitment_sha256": (task.public.answer_commitment_sha256),
             }
             if state == "ARM_RESULT":
-                journal.record_verified(
-                    record["cell_id"], record["attempt_id"], verification
-                )
+                journal.record_verified(record["cell_id"], record["attempt_id"], verification)
             elif state == "VERIFIED" and record["verification"] != verification:
-                raise CampaignProducerError(
-                    "persisted verification differs from post-seal scoring"
-                )
+                raise CampaignProducerError("persisted verification differs from post-seal scoring")
             elif state != "VERIFIED":
                 raise CampaignProducerError("sealed output state is invalid")
             journal.commit_cell(
                 record["cell_id"],
                 record["attempt_id"],
                 {
-                    "result_sha256": _sha256_bytes(
-                        canonical_json_bytes(record["result"])
-                    ),
-                    "verification_sha256": _sha256_bytes(
-                        canonical_json_bytes(verification)
-                    ),
+                    "result_sha256": _sha256_bytes(canonical_json_bytes(record["result"])),
+                    "verification_sha256": _sha256_bytes(canonical_json_bytes(verification)),
                 },
             )
 
@@ -2930,20 +2833,14 @@ def _admit_final_run_envelope(
         "campaign_manifest_sha256": campaign_manifest["manifest_sha256"],
         "journal_head_sha256": campaign_manifest["journal_head_sha256"],
         "published_grade_sha256": grade["grade_sha256"],
-        "worker_execution_manifest_sha256": worker_execution[
-            "manifest_sha256"
-        ],
+        "worker_execution_manifest_sha256": worker_execution["manifest_sha256"],
         "detached_plan_sha256": worker_execution["detached_plan_sha256"],
         "detached_classification_head_sha256": worker_execution[
             "detached_classification_head_sha256"
         ],
-        "detached_classifications_sha256": worker_execution[
-            "detached_classifications_sha256"
-        ],
+        "detached_classifications_sha256": worker_execution["detached_classifications_sha256"],
         "worker_imports_sha256": worker_execution["imports_sha256"],
-        "worker_excluded_attempts_sha256": worker_execution[
-            "excluded_attempts_sha256"
-        ],
+        "worker_excluded_attempts_sha256": worker_execution["excluded_attempts_sha256"],
     }
     request = _load_or_prepare_role_request(
         campaign_dir / FINAL_RUN_REQUEST_FILE,
@@ -2951,9 +2848,7 @@ def _admit_final_run_envelope(
         role=CAMPAIGN_RUNNER,
         payload=payload,
     )
-    attestation_path = str(
-        getattr(args, "final_run_attestation", "") or ""
-    ).strip()
+    attestation_path = str(getattr(args, "final_run_attestation", "") or "").strip()
     if not attestation_path:
         print(
             json.dumps(
@@ -2968,9 +2863,7 @@ def _admit_final_run_envelope(
             flush=True,
         )
         return None
-    attestation = _read_json_artifact(
-        attestation_path, role="final run attestation"
-    )
+    attestation = _read_json_artifact(attestation_path, role="final run attestation")
     signed = verify_role_attestation(
         policy,
         attestation,
@@ -2979,9 +2872,7 @@ def _admit_final_run_envelope(
         not_before_unix=request["signed_payload"]["signed_at_unix"],
     )
     if signed != request["signed_payload"]:
-        raise CampaignProducerError(
-            "final run attestation does not sign the issued request"
-        )
+        raise CampaignProducerError("final run attestation does not sign the issued request")
     material = {
         "payload": payload,
         "request_sha256": request["request_sha256"],
@@ -3048,16 +2939,12 @@ def _load_brokered_worker_result(path: Path) -> tuple[BrokeredProcessResult, dic
     field_names = set(BrokeredProcessResult.__dataclass_fields__)
     if (
         set(artifact) != {"schema", *field_names, "artifact_sha256"}
-        or artifact.get("schema")
-        != "aura.latent_cortex.brokered_worker_result.v1"
-        or artifact.get("artifact_sha256")
-        != _sha256_bytes(canonical_json_bytes(body))
+        or artifact.get("schema") != "aura.latent_cortex.brokered_worker_result.v1"
+        or artifact.get("artifact_sha256") != _sha256_bytes(canonical_json_bytes(body))
     ):
         raise CampaignProducerError("brokered worker result artifact is invalid")
     return (
-        BrokeredProcessResult(
-            **{field: artifact[field] for field in field_names}
-        ),
+        BrokeredProcessResult(**{field: artifact[field] for field in field_names}),
         artifact,
     )
 
@@ -3077,9 +2964,7 @@ def _verify_detached_worker_broker_result(
             require_claim_eligible=require_claim_eligible,
         )
     except DetachedCampaignEvidenceError as exc:
-        raise CampaignProducerError(
-            f"detached supervisor evidence rejected: {exc.code}"
-        ) from exc
+        raise CampaignProducerError(f"detached supervisor evidence rejected: {exc.code}") from exc
     if (
         plan_path != run_dir / "detached_plan.json"
         or attempts_path != run_dir / "detached_attempts.jsonl"
@@ -3104,9 +2989,7 @@ def _detached_evidence_environment() -> tuple[Path, Path, Path, str, int]:
         attempts_path = Path(attempts_value).expanduser().resolve(strict=True)
         supervisor_attempt = int(attempt_value)
     except (OSError, ValueError) as exc:
-        raise CampaignProducerError(
-            "detached supervisor evidence environment is invalid"
-        ) from exc
+        raise CampaignProducerError("detached supervisor evidence environment is invalid") from exc
     if (
         plan_path != run_dir / "detached_plan.json"
         or attempts_path != run_dir / "detached_attempts.jsonl"
@@ -3114,9 +2997,7 @@ def _detached_evidence_environment() -> tuple[Path, Path, Path, str, int]:
         or any(character not in "0123456789abcdef" for character in plan_sha256)
         or supervisor_attempt <= 0
     ):
-        raise CampaignProducerError(
-            "detached supervisor evidence environment is inconsistent"
-        )
+        raise CampaignProducerError("detached supervisor evidence environment is inconsistent")
     return run_dir, plan_path, attempts_path, plan_sha256, supervisor_attempt
 
 
@@ -3134,9 +3015,7 @@ def _import_brokered_worker_attempt(
     if result.returncode != 0 or result.status != "passed":
         return None
     summary = result.worker_origin_lifecycle
-    lifecycle_value = (
-        summary.get("artifact_path") if isinstance(summary, Mapping) else None
-    )
+    lifecycle_value = summary.get("artifact_path") if isinstance(summary, Mapping) else None
     if not isinstance(lifecycle_value, str) or not lifecycle_value:
         raise CampaignProducerError("brokered worker has no terminal lifecycle")
     lifecycle_path = Path(lifecycle_value).expanduser().resolve(strict=True)
@@ -3148,9 +3027,7 @@ def _import_brokered_worker_attempt(
     )
     authorization = lifecycle.get("authorization_payload")
     detached_plan_sha256 = (
-        authorization.get("detached_plan_sha256")
-        if isinstance(authorization, Mapping)
-        else None
+        authorization.get("detached_plan_sha256") if isinstance(authorization, Mapping) else None
     )
     if not isinstance(detached_plan_sha256, str):
         raise CampaignProducerError("brokered worker detached plan is missing")
@@ -3236,9 +3113,7 @@ def _build_worker_execution_manifest(
                         "worker attempt has activity without broker evidence"
                     )
                 continue
-            broker_result, broker_artifact = _load_brokered_worker_result(
-                paths["broker_result"]
-            )
+            broker_result, broker_artifact = _load_brokered_worker_result(paths["broker_result"])
             summary = broker_result.worker_origin_lifecycle
             if not isinstance(summary, dict):
                 raise CampaignProducerError(
@@ -3253,14 +3128,11 @@ def _build_worker_execution_manifest(
                 asdict(terminal) for terminal in detached_evidence.terminal_summaries
             ]
             current_quarantines = [
-                asdict(quarantine)
-                for quarantine in detached_evidence.quarantine_summaries
+                asdict(quarantine) for quarantine in detached_evidence.quarantine_summaries
             ]
             if detached_plan_sha256 is None:
                 detached_plan_sha256 = current_detached_plan
-                detached_classification_head_sha256 = (
-                    detached_evidence.classification_head_sha256
-                )
+                detached_classification_head_sha256 = detached_evidence.classification_head_sha256
                 detached_terminals = current_terminals
                 detached_quarantines = current_quarantines
             elif (
@@ -3279,9 +3151,7 @@ def _build_worker_execution_manifest(
                 if terminal["request_id"] == broker_result.request_id
             ]
             if len(matching_terminals) != 1:
-                raise CampaignProducerError(
-                    "worker broker result has no unique detached terminal"
-                )
+                raise CampaignProducerError("worker broker result has no unique detached terminal")
             detached_terminal = matching_terminals[0]
             expected_claim_eligible = bool(
                 broker_result.returncode == 0 and broker_result.status == "passed"
@@ -3293,9 +3163,7 @@ def _build_worker_execution_manifest(
             common = {
                 "arm": arm,
                 "worker_attempt_slot": attempt_slot,
-                "broker_result_artifact_sha256": broker_artifact[
-                    "artifact_sha256"
-                ],
+                "broker_result_artifact_sha256": broker_artifact["artifact_sha256"],
                 "broker_policy_sha256": broker_result.policy_sha256,
                 "broker_request_id": broker_result.request_id,
                 "broker_receipt_sha256": broker_result.receipt_sha256,
@@ -3346,25 +3214,17 @@ def _build_worker_execution_manifest(
             if not isinstance(stage_detached_plan, str):
                 raise CampaignProducerError("worker stage detached plan is invalid")
             if detached_plan_sha256 != stage_detached_plan:
-                raise CampaignProducerError(
-                    "worker attempts span different detached plans"
-                )
+                raise CampaignProducerError("worker attempts span different detached plans")
             imports.append(
                 {
                     **common,
                     "classification": "terminal_imported",
                     "session_id": summary["session_id"],
                     "detached_plan_sha256": stage_detached_plan,
-                    "verified_stage_manifest_sha256": verified_stage[
-                        "manifest_sha256"
-                    ],
+                    "verified_stage_manifest_sha256": verified_stage["manifest_sha256"],
                     "stage_sha256": verified_stage["stage_sha256"],
-                    "stage_journal_head_sha256": verified_stage[
-                        "stage_journal_head_sha256"
-                    ],
-                    "result_chain_head_sha256": verified_stage[
-                        "result_chain_head_sha256"
-                    ],
+                    "stage_journal_head_sha256": verified_stage["stage_journal_head_sha256"],
+                    "result_chain_head_sha256": verified_stage["result_chain_head_sha256"],
                     "cell_ids": verified_stage["cell_ids"],
                     "import_intent_sha256": import_intent["intent_sha256"],
                     "import_receipt_sha256": import_receipt["receipt_sha256"],
@@ -3383,30 +3243,18 @@ def _build_worker_execution_manifest(
         raise CampaignProducerError("worker execution arm coverage is incomplete")
     if detached_plan_sha256 != environment_plan_sha256:
         raise CampaignProducerError("worker execution detached plan differs from env")
-    if (
-        _read_stable_bytes(detached_plan_path, max_bytes=64 * 1024 * 1024)
-        != detached_plan_artifact
-    ):
-        raise CampaignProducerError(
-            "detached plan changed while worker evidence was assembled"
-        )
+    if _read_stable_bytes(detached_plan_path, max_bytes=64 * 1024 * 1024) != detached_plan_artifact:
+        raise CampaignProducerError("detached plan changed while worker evidence was assembled")
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         canonical_records = journal.result_records()
     canonical_origins = {
-        record["result"]["worker_origin"]["origin_sha256"]
-        for record in canonical_records
+        record["result"]["worker_origin"]["origin_sha256"] for record in canonical_records
     }
     imported_origins = {
-        cell["result_origin_sha256"]
-        for entry in imports
-        for cell in entry["canonical_imports"]
+        cell["result_origin_sha256"] for entry in imports for cell in entry["canonical_imports"]
     }
-    if canonical_origins != imported_origins or len(canonical_records) != len(
-        plan.cell_ids
-    ):
-        raise CampaignProducerError(
-            "canonical worker origins differ from terminal imports"
-        )
+    if canonical_origins != imported_origins or len(canonical_records) != len(plan.cell_ids):
+        raise CampaignProducerError("canonical worker origins differ from terminal imports")
     detached_classifications = {
         "terminal_count": len(detached_terminals),
         "terminals": detached_terminals,
@@ -3422,13 +3270,9 @@ def _build_worker_execution_manifest(
         "detached_run_dir": str(detached_run_dir),
         "detached_plan_path": str(detached_plan_path),
         "detached_attempts_path": str(detached_attempts_path),
-        "detached_plan_artifact_sha256": _sha256_bytes(
-            detached_plan_artifact
-        ),
+        "detached_plan_artifact_sha256": _sha256_bytes(detached_plan_artifact),
         "detached_plan_sha256": detached_plan_sha256,
-        "detached_classification_head_sha256": (
-            detached_classification_head_sha256
-        ),
+        "detached_classification_head_sha256": (detached_classification_head_sha256),
         "detached_classifications": detached_classifications,
         "detached_classifications_sha256": _sha256_bytes(
             canonical_json_bytes(detached_classifications)
@@ -3438,9 +3282,7 @@ def _build_worker_execution_manifest(
         "imports_sha256": _sha256_bytes(canonical_json_bytes(imports)),
         "excluded_count": len(excluded),
         "excluded_attempts": excluded,
-        "excluded_attempts_sha256": _sha256_bytes(
-            canonical_json_bytes(excluded)
-        ),
+        "excluded_attempts_sha256": _sha256_bytes(canonical_json_bytes(excluded)),
     }
     manifest = {
         **material,
@@ -3504,9 +3346,7 @@ def _run_child(
                     authorization_announced = True
                 time.sleep(min(0.5, max(0.01, remaining)))
     if worker_attempt_slot is not None:
-        raise CampaignProducerError(
-            "claim worker requires the detached supervisor broker"
-        )
+        raise CampaignProducerError("claim worker requires the detached supervisor broker")
     with log_path.open("ab", buffering=0) as log:
         process = subprocess.Popen(
             command,
@@ -3545,11 +3385,7 @@ def _detached_worker_origin_policy(
         if plan.cell_definition(cell_id).get("arm") == arm
     ]
     cells.sort(
-        key=lambda cell: int(
-            plan.cell_definition(cell["cell_id"])[
-                "execution_ordinal_within_arm"
-            ]
-        )
+        key=lambda cell: int(plan.cell_definition(cell["cell_id"])["execution_ordinal_within_arm"])
     )
     if not cells:
         raise CampaignProducerError("worker-origin arm has no planned cells")
@@ -3562,16 +3398,12 @@ def _detached_worker_origin_policy(
         "trust_policy_path": str(
             Path(args.campaign_trust_policy).expanduser().resolve(strict=True)
         ),
-        "trust_root_path": str(
-            Path(args.campaign_trust_root).expanduser().resolve(strict=True)
-        ),
+        "trust_root_path": str(Path(args.campaign_trust_root).expanduser().resolve(strict=True)),
         "artifact_dir": str(paths["origin_dir"]),
         "arm": arm,
         "worker_attempt_slot": attempt_slot,
         "allowed_cells": cells,
-        "model_identity_sha256": _sha256_bytes(
-            canonical_json_bytes(metadata["model_identity"])
-        ),
+        "model_identity_sha256": _sha256_bytes(canonical_json_bytes(metadata["model_identity"])),
         "adapter_identity_sha256": _sha256_bytes(
             canonical_json_bytes(metadata["adapter_identity"])
         ),
@@ -3589,9 +3421,7 @@ def _detached_broker_policy(
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     if args.confirmatory:
         if plan is None:
-            raise CampaignProducerError(
-                "claim broker policy requires the frozen campaign plan"
-            )
+            raise CampaignProducerError("claim broker policy requires the frozen campaign plan")
         return [
             {
                 "command": _worker_args(
@@ -3672,11 +3502,7 @@ def _orchestrate(
                 min(args.arm_timeout, remaining),
                 worker_attempt_slot=worker_attempt_slot,
             )
-            code = (
-                outcome.returncode
-                if isinstance(outcome, BrokeredProcessResult)
-                else outcome
-            )
+            code = outcome.returncode if isinstance(outcome, BrokeredProcessResult) else outcome
             if worker_origin_required:
                 if not isinstance(outcome, BrokeredProcessResult):
                     if code == 124:
@@ -3685,9 +3511,7 @@ def _orchestrate(
                             flush=True,
                         )
                         return code
-                    raise CampaignProducerError(
-                        "claim worker has no authenticated broker result"
-                    )
+                    raise CampaignProducerError("claim worker has no authenticated broker result")
                 _import_brokered_worker_attempt(
                     args,
                     plan,
@@ -3730,28 +3554,20 @@ def _orchestrate(
     final_material = dict(grade)
     final_material.pop("grade_sha256", None)
     final_material["campaign_manifest_sha256"] = manifest["manifest_sha256"]
-    final_material["sealed_output_manifest_sha256"] = sealed_outputs[
-        "manifest_sha256"
-    ]
+    final_material["sealed_output_manifest_sha256"] = sealed_outputs["manifest_sha256"]
     final_material["answer_reveal_sha256"] = answer_reveal["reveal_sha256"]
     if worker_origin_required:
         if worker_execution is None:
             raise CampaignProducerError("worker execution evidence is missing")
-        final_material["worker_execution_manifest_sha256"] = worker_execution[
-            "manifest_sha256"
-        ]
-        final_material["detached_plan_sha256"] = worker_execution[
-            "detached_plan_sha256"
-        ]
+        final_material["worker_execution_manifest_sha256"] = worker_execution["manifest_sha256"]
+        final_material["detached_plan_sha256"] = worker_execution["detached_plan_sha256"]
         final_material["detached_classification_head_sha256"] = worker_execution[
             "detached_classification_head_sha256"
         ]
         final_material["detached_classifications_sha256"] = worker_execution[
             "detached_classifications_sha256"
         ]
-        final_material["worker_imports_sha256"] = worker_execution[
-            "imports_sha256"
-        ]
+        final_material["worker_imports_sha256"] = worker_execution["imports_sha256"]
         final_material["worker_excluded_attempts_sha256"] = worker_execution[
             "excluded_attempts_sha256"
         ]
@@ -3759,9 +3575,7 @@ def _orchestrate(
         **final_material,
         "grade_sha256": _sha256_bytes(canonical_json_bytes(final_material)),
     }
-    _atomic_create_or_verify(
-        campaign_dir / GRADE_FILE, canonical_json_bytes(final) + b"\n"
-    )
+    _atomic_create_or_verify(campaign_dir / GRADE_FILE, canonical_json_bytes(final) + b"\n")
     final_run_envelope = _admit_final_run_envelope(
         args,
         plan,
@@ -3784,9 +3598,7 @@ def _orchestrate(
                 "observed_cell_count": final["observed_cell_count"],
                 "reasons": final["reasons"],
                 "frontier_claim_eligible": False,
-                "final_run_envelope_sha256": final_run_envelope.get(
-                    "envelope_sha256"
-                ),
+                "final_run_envelope_sha256": final_run_envelope.get("envelope_sha256"),
                 "grade_path": str(campaign_dir / GRADE_FILE),
             },
             indent=2,
@@ -3803,9 +3615,7 @@ def _prepare_trust_requests(args: argparse.Namespace) -> dict[str, Any]:
     contamination_audit = _contamination_audit(
         args,
         tasks,
-        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(
-            adapter_identity
-        ),
+        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(adapter_identity),
     )
     execution_config = _execution_config(args, adapter_identity)
     unsigned_plan = build_campaign_plan(
@@ -3859,9 +3669,7 @@ def _parser() -> argparse.ArgumentParser:
         help="issuer-only generation seeds; required outside isolated worker mode",
     )
     parser.add_argument("--seed-count", type=int, default=0, help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--seed-entropy-bits", type=int, default=0, help=argparse.SUPPRESS
-    )
+    parser.add_argument("--seed-entropy-bits", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--domains", default=",".join(FRONTIER_DOMAINS))
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument(
@@ -3902,9 +3710,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--equal-compute-max-samples", type=_positive_int, default=8)
     parser.add_argument("--max-infra-attempts", type=_positive_int, default=3)
     parser.add_argument("--plan-only", action="store_true")
-    parser.add_argument(
-        "--worker-arm", choices=FULL_ARMS, default="", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--worker-arm", choices=FULL_ARMS, default="", help=argparse.SUPPRESS)
     parser.add_argument(
         "--worker-attempt-slot", type=_positive_int, default=0, help=argparse.SUPPRESS
     )
@@ -3932,13 +3738,9 @@ def main() -> int:
         parser.error("worker origin arguments are reserved for isolated workers")
     if args.worker_arm:
         if args.seed_count <= 0 or not 1 <= args.seed_entropy_bits <= 63:
-            parser.error(
-                "worker process requires public seed count and entropy bounds"
-            )
+            parser.error("worker process requires public seed count and entropy bounds")
     elif args.seed_count != 0 or args.seed_entropy_bits != 0:
-        parser.error(
-            "--seed-count/--seed-entropy-bits are reserved for isolated workers"
-        )
+        parser.error("--seed-count/--seed-entropy-bits are reserved for isolated workers")
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     args.campaign_dir = str(campaign_dir)
     if args.worker_stage_journal:
@@ -3950,9 +3752,7 @@ def main() -> int:
             Path(args.contamination_audit).expanduser().resolve(strict=True)
         )
         if not args.contamination_trust_root:
-            parser.error(
-                "--contamination-trust-root is required with --contamination-audit"
-            )
+            parser.error("--contamination-trust-root is required with --contamination-audit")
         args.contamination_trust_root = str(
             Path(args.contamination_trust_root).expanduser().resolve(strict=True)
         )
@@ -3964,12 +3764,8 @@ def main() -> int:
         args.task_issuer_attestation,
         args.runner_attestation,
     )
-    if any(trust_paths) and not (
-        args.campaign_trust_policy and args.campaign_trust_root
-    ):
-        parser.error(
-            "--campaign-trust-policy and --campaign-trust-root are required together"
-        )
+    if any(trust_paths) and not (args.campaign_trust_policy and args.campaign_trust_root):
+        parser.error("--campaign-trust-policy and --campaign-trust-root are required together")
     if args.confirmatory and not args.prepare_trust:
         if not args.contamination_audit:
             parser.error("--confirmatory requires --contamination-audit")
@@ -3993,9 +3789,7 @@ def main() -> int:
         if not args.contamination_audit:
             parser.error("--prepare-trust requires --contamination-audit")
         if not args.campaign_trust_policy or not args.campaign_trust_root:
-            parser.error(
-                "--prepare-trust requires campaign trust policy and independent root"
-            )
+            parser.error("--prepare-trust requires campaign trust policy and independent root")
         if args.worker_arm:
             parser.error("--prepare-trust cannot be combined with --worker-arm")
         print(json.dumps(_prepare_trust_requests(args), indent=2, sort_keys=True))
@@ -4005,9 +3799,7 @@ def main() -> int:
         persisted = _load_persisted_plan(campaign_dir)
         expected, public_tasks = _expected_worker_plan(args, persisted)
         if persisted.to_dict() != expected.to_dict():
-            raise CampaignProducerError(
-                "persisted plan does not match requested worker campaign"
-            )
+            raise CampaignProducerError("persisted plan does not match requested worker campaign")
         return _execute_worker(args, persisted, public_tasks)
     expected, tasks = _expected_plan(args)
     _persist_plan(campaign_dir, expected)

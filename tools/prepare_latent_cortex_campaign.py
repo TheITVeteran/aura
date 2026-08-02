@@ -54,6 +54,9 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # noqa: E402
     MANIFEST_SCHEMA as RECURRENT_GRPO_MANIFEST_SCHEMA,
 )
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
+    MANIFEST_SCHEMA as RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+)
 from core.runtime.file_read_gateway import (  # noqa: E402
     open_stable_readonly_binary,
     read_stable_bytes,
@@ -63,20 +66,19 @@ from tools import run_latent_cortex_paired_campaign as campaign_runner  # noqa: 
 RUNNER_PATH = REPO_ROOT / "tools/run_latent_cortex_paired_campaign.py"
 IDENTITY_PATHS = {
     "recurrence_v2_identity_validator_sha256": (
-        REPO_ROOT
-        / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
+        REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
     ),
     "recurrent_grpo_identity_validator_sha256": (
-        REPO_ROOT
-        / "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"
+        REPO_ROOT / "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"
+    ),
+    "resident_recurrent_sft_identity_validator_sha256": (
+        REPO_ROOT / "core/brain/llm/latent_cortex/resident_recurrent_sft_adapter_identity.py"
     ),
 }
 # Backward-compatible name consumed by the supervised-v2 promotion verifier.
 IDENTITY_PATH = IDENTITY_PATHS["recurrence_v2_identity_validator_sha256"]
 TASK_ISSUER_PATH = REPO_ROOT / "core/brain/llm/latent_cortex/frontier_tasks.py"
-FREEZE_PATH = (
-    REPO_ROOT / "core/brain/llm/latent_cortex/campaign_launch_bundle.py"
-)
+FREEZE_PATH = REPO_ROOT / "core/brain/llm/latent_cortex/campaign_launch_bundle.py"
 
 _LAUNCH_SPEC_FILE = "launch_spec.json"
 _TRUST_REQUESTS_FILE = "trust_requests.json"
@@ -143,9 +145,7 @@ def copy_adapter_snapshot(source: Path, staging: Path) -> list[dict[str, Any]]:
     source_root = supplied_source.resolve(strict=True)
     if staging.exists() or staging.is_symlink():
         _fail("adapter_staging_already_exists")
-    source_inventory = adapter_artifact_inventory(
-        source_root, reject_unplanned=False
-    )
+    source_inventory = adapter_artifact_inventory(source_root, reject_unplanned=False)
     staging.mkdir(parents=False, mode=0o700)
     try:
         for binding in source_inventory:
@@ -158,11 +158,7 @@ def copy_adapter_snapshot(source: Path, staging: Path) -> list[dict[str, Any]]:
             digest = hashlib.sha256()
             descriptor = os.open(
                 target,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | _NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | _NOFOLLOW,
                 0o600,
             )
             try:
@@ -184,14 +180,9 @@ def copy_adapter_snapshot(source: Path, staging: Path) -> list[dict[str, Any]]:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-            if (
-                copied != binding["size_bytes"]
-                or digest.hexdigest() != binding["sha256"]
-            ):
+            if copied != binding["size_bytes"] or digest.hexdigest() != binding["sha256"]:
                 _fail("adapter_snapshot_source_changed")
-        copied_inventory = adapter_artifact_inventory(
-            staging, reject_unplanned=False
-        )
+        copied_inventory = adapter_artifact_inventory(staging, reject_unplanned=False)
         if copied_inventory != source_inventory:
             _fail("adapter_snapshot_copy_mismatch")
         return copied_inventory
@@ -209,9 +200,7 @@ def seal_adapter_snapshot(
 
     write_canonical_exclusive(staging / ADAPTER_FREEZE_FILE, certificate)
     try:
-        for path in sorted(
-            staging.rglob("*"), key=lambda value: len(value.parts), reverse=True
-        ):
+        for path in sorted(staging.rglob("*"), key=lambda value: len(value.parts), reverse=True):
             if path.is_file():
                 path.chmod(0o400)
             elif path.is_dir():
@@ -232,9 +221,7 @@ def seal_adapter_snapshot(
         if isinstance(exc, FileExistsError):
             _fail("adapter_freeze_destination_exists")
         raise
-    directory_fd = os.open(
-        destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    )
+    directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(directory_fd)
     finally:
@@ -368,9 +355,7 @@ def _strict_process_json(raw: bytes, *, role: str) -> dict[str, Any]:
             raw,
             object_pairs_hook=pairs,
             parse_float=lambda value: (
-                float(value)
-                if math.isfinite(float(value))
-                else _fail(f"{role}_number_invalid")
+                float(value) if math.isfinite(float(value)) else _fail(f"{role}_number_invalid")
             ),
             parse_constant=lambda _value: _fail(f"{role}_number_invalid"),
         )
@@ -397,9 +382,7 @@ def _run_prepare_trust(argv: list[str], *, timeout: float) -> dict[str, Any]:
         _fail("campaign_prepare_timeout")
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace")[-1000:]
-        raise CampaignPreparationError(
-            f"campaign_prepare_failed:{completed.returncode}:{detail}"
-        )
+        raise CampaignPreparationError(f"campaign_prepare_failed:{completed.returncode}:{detail}")
     trust = _strict_process_json(completed.stdout, role="campaign_trust_requests")
     requests = trust.get("requests")
     if (
@@ -417,16 +400,10 @@ def _selected_model_identity(model: dict[str, Any]) -> dict[str, Any]:
         selected = {
             "fingerprint": model["fingerprint"],
             "files": model["files"],
-            "model_behavior_bundle_sha256": model["model_behavior_bundle"][
-                "bundle_sha256"
-            ],
+            "model_behavior_bundle_sha256": model["model_behavior_bundle"]["bundle_sha256"],
             "runtime_bundle_sha256": model["runtime_bundle"]["bundle_sha256"],
-            "runtime_environment_identity_sha256": model["runtime_environment"][
-                "identity_sha256"
-            ],
-            "personality_adapter_bundle_sha256": model["personality_adapter"][
-                "bundle_sha256"
-            ],
+            "runtime_environment_identity_sha256": model["runtime_environment"]["identity_sha256"],
+            "personality_adapter_bundle_sha256": model["personality_adapter"]["bundle_sha256"],
             "effective_stack_sha256": model["effective_stack_sha256"],
         }
     except (KeyError, TypeError):
@@ -467,6 +444,7 @@ def freeze_adapter(args: argparse.Namespace) -> dict[str, Any]:
         if adapter_identity.get("format") not in {
             MANIFEST_SCHEMA_V2,
             RECURRENT_GRPO_MANIFEST_SCHEMA,
+            RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
         }:
             _fail("supported_scoped_adapter_required")
         certificate = build_adapter_freeze_certificate(
@@ -477,10 +455,7 @@ def freeze_adapter(args: argparse.Namespace) -> dict[str, Any]:
             validator_identity={
                 "campaign_runner_sha256": _source_sha256(RUNNER_PATH),
                 "freeze_contract_sha256": _source_sha256(FREEZE_PATH),
-                **{
-                    role: _source_sha256(path)
-                    for role, path in IDENTITY_PATHS.items()
-                },
+                **{role: _source_sha256(path) for role, path in IDENTITY_PATHS.items()},
             },
         )
         seal_adapter_snapshot(staging, destination, certificate)
@@ -619,9 +594,7 @@ def prepare_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "campaign_runner_sha256": _source_sha256(RUNNER_PATH),
         "runner_argv": runner_argv,
         "runner_argv_sha256": _sha256(runner_argv),
-        "campaign_dir": str(
-            Path(values["--campaign-dir"]).expanduser().resolve(strict=False)
-        ),
+        "campaign_dir": str(Path(values["--campaign-dir"]).expanduser().resolve(strict=False)),
         "adapter_freeze_dir": str(freeze_dir),
         "adapter_freeze_certificate_sha256": certificate["certificate_sha256"],
         "protocol_sha256": trust["protocol_sha256"],
@@ -652,13 +625,10 @@ def prepare_bundle(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _verify_bundle_artifacts(bundle_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    manifest = read_canonical_json(
-        bundle_dir / PRELAUNCH_MANIFEST_FILE, role="prelaunch_manifest"
-    )
+    manifest = read_canonical_json(bundle_dir / PRELAUNCH_MANIFEST_FILE, role="prelaunch_manifest")
     material = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
     if (
-        set(manifest)
-        != {"schema", "phase", "artifacts", "artifact_root_sha256", "manifest_sha256"}
+        set(manifest) != {"schema", "phase", "artifacts", "artifact_root_sha256", "manifest_sha256"}
         or manifest.get("schema") != PRELAUNCH_BUNDLE_SCHEMA
         or manifest.get("phase") != "awaiting_prelaunch_signatures"
         or manifest.get("manifest_sha256") != _sha256(material)
@@ -744,17 +714,14 @@ def admit_bundle(args: argparse.Namespace) -> dict[str, Any]:
     manifest, launch_spec = _verify_bundle_artifacts(bundle_dir)
     freeze_dir = Path(launch_spec["adapter_freeze_dir"])
     certificate = verify_adapter_freeze(freeze_dir)
-    if certificate["certificate_sha256"] != launch_spec.get(
-        "adapter_freeze_certificate_sha256"
-    ):
+    if certificate["certificate_sha256"] != launch_spec.get("adapter_freeze_certificate_sha256"):
         _fail("launch_adapter_freeze_changed")
     material = {key: value for key, value in launch_spec.items() if key != "launch_spec_sha256"}
     if (
         launch_spec.get("schema") != _LAUNCH_SPEC_SCHEMA
         or launch_spec.get("launch_spec_sha256") != _sha256(material)
         or launch_spec.get("campaign_runner_sha256") != _source_sha256(RUNNER_PATH)
-        or launch_spec.get("python_executable_sha256")
-        != _source_sha256(Path(sys.executable))
+        or launch_spec.get("python_executable_sha256") != _source_sha256(Path(sys.executable))
     ):
         _fail("launch_spec_invalid")
     _verify_dependency_bindings(launch_spec.get("dependency_artifacts"))
@@ -856,22 +823,17 @@ def admit_bundle(args: argparse.Namespace) -> dict[str, Any]:
 def inspect_bundle(args: argparse.Namespace) -> dict[str, Any]:
     bundle_dir = args.bundle_dir.expanduser().resolve(strict=True)
     manifest, launch_spec = _verify_bundle_artifacts(bundle_dir)
-    material = {
-        key: value for key, value in launch_spec.items() if key != "launch_spec_sha256"
-    }
+    material = {key: value for key, value in launch_spec.items() if key != "launch_spec_sha256"}
     if (
         launch_spec.get("schema") != _LAUNCH_SPEC_SCHEMA
         or launch_spec.get("launch_spec_sha256") != _sha256(material)
         or launch_spec.get("campaign_runner_sha256") != _source_sha256(RUNNER_PATH)
-        or launch_spec.get("python_executable_sha256")
-        != _source_sha256(Path(sys.executable))
+        or launch_spec.get("python_executable_sha256") != _source_sha256(Path(sys.executable))
     ):
         _fail("launch_spec_invalid")
     _verify_dependency_bindings(launch_spec.get("dependency_artifacts"))
     freeze = verify_adapter_freeze(Path(launch_spec["adapter_freeze_dir"]))
-    if freeze["certificate_sha256"] != launch_spec.get(
-        "adapter_freeze_certificate_sha256"
-    ):
+    if freeze["certificate_sha256"] != launch_spec.get("adapter_freeze_certificate_sha256"):
         _fail("launch_adapter_freeze_changed")
     result: dict[str, Any] = {
         "schema": "aura.latent_cortex.prelaunch_bundle_inspection.v1",
@@ -883,15 +845,11 @@ def inspect_bundle(args: argparse.Namespace) -> dict[str, Any]:
     packet_path = bundle_dir / LAUNCH_PACKET_FILE
     if packet_path.exists():
         packet = read_canonical_json(packet_path, role="launch_packet")
-        packet_material = {
-            key: value for key, value in packet.items() if key != "packet_sha256"
-        }
+        packet_material = {key: value for key, value in packet.items() if key != "packet_sha256"}
         issuer_path = bundle_dir / _ISSUER_ATTESTATION_FILE
         runner_path = bundle_dir / _RUNNER_ATTESTATION_FILE
         issuer = read_canonical_json(issuer_path, role="persisted_task_issuer_attestation")
-        runner = read_canonical_json(
-            runner_path, role="persisted_campaign_runner_attestation"
-        )
+        runner = read_canonical_json(runner_path, role="persisted_campaign_runner_attestation")
         runner_argv = launch_spec.get("runner_argv")
         expected_argv = [
             str(Path(sys.executable).resolve(strict=True)),
@@ -941,8 +899,7 @@ def inspect_bundle(args: argparse.Namespace) -> dict[str, Any]:
             packet.get("schema") != LAUNCH_PACKET_SCHEMA
             or packet.get("packet_sha256") != _sha256(packet_material)
             or packet.get("prelaunch_manifest_sha256") != manifest["manifest_sha256"]
-            or packet.get("adapter_freeze_certificate_sha256")
-            != freeze["certificate_sha256"]
+            or packet.get("adapter_freeze_certificate_sha256") != freeze["certificate_sha256"]
             or packet.get("task_issuer_attestation_sha256")
             != _bundle_binding(issuer_path)["sha256"]
             or packet.get("campaign_runner_attestation_sha256")
@@ -959,9 +916,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    freeze = commands.add_parser(
-        "freeze", help="snapshot one completed scoped recurrence adapter"
-    )
+    freeze = commands.add_parser("freeze", help="snapshot one completed scoped recurrence adapter")
     freeze.add_argument("--source-adapter", type=Path, required=True)
     freeze.add_argument("--destination", type=Path, required=True)
     freeze.add_argument("--model", type=Path, required=True)

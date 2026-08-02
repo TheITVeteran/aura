@@ -21,12 +21,19 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
 from core.brain.llm.latent_cortex.campaign_launch_bundle import (  # noqa: E402
     read_canonical_json,
 )
+from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
+    RLCExecutionSpec,
+)
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     CURRENT_REGISTRY_VERSION,
+)
+from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
+    IDENTITY_RECEIPT_SCHEMA as RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
 )
 
 SCHEMA = "aura.latent_cortex.resident_pilot_contract.v1"
 SCHEMA_V2 = "aura.latent_cortex.resident_pilot_contract.v2"
+SCHEMA_V3 = "aura.latent_cortex.resident_pilot_contract.v3"
 PREFLIGHT_SCHEMA = "aura.latent_cortex.resident_pilot_preflight.v1"
 DOMAINS = [
     "novel_algorithms",
@@ -105,6 +112,81 @@ def _file_sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _verify_v3_execution_binding(
+    contract: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    adapter_receipt: Mapping[str, Any],
+) -> None:
+    campaign = contract["campaign"]
+    adapter = contract["adapter"]
+    raw_spec = execution.get("adapter_execution_spec")
+    effective = execution.get("effective_rlc_config")
+    if not isinstance(raw_spec, Mapping) or not isinstance(effective, Mapping):
+        _fail("pilot_v3_execution_spec_missing")
+    try:
+        spec = RLCExecutionSpec.from_dict(raw_spec)
+    except (TypeError, ValueError) as exc:
+        raise PilotPreflightError("pilot_v3_execution_spec_invalid") from exc
+    workspace = effective.get("workspace")
+    recurrence = effective.get("recurrence")
+    branches = effective.get("branches")
+    latent_opt = effective.get("latent_opt")
+    fast_weights = effective.get("fast_weights")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (workspace, recurrence, branches, latent_opt, fast_weights)
+    ):
+        _fail("pilot_v3_effective_config_invalid")
+    expected_bridge = (
+        "assistant_answer_v3" if spec.decode_bridge_policy == "assistant_answer" else "none"
+    )
+    if (
+        adapter_receipt.get("schema") != RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA
+        or adapter_receipt.get("execution_spec_sha256") != spec.sha256
+        or adapter.get("identity_receipt_schema") != RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA
+        or adapter.get("execution_spec_sha256") != spec.sha256
+        or campaign.get("adapter_execution_spec_sha256") != spec.sha256
+        or campaign.get("n_slots") != spec.n_slots
+        or campaign.get("branches") != len(spec.branch_roles)
+        or campaign.get("rlc_steps") != spec.recurrent_steps
+        or execution.get("n_slots") != spec.n_slots
+        or execution.get("branches") != len(spec.branch_roles)
+        or execution.get("rlc_steps") != spec.recurrent_steps
+        or workspace.get("n_slots") != spec.n_slots
+        or workspace.get("seed") != spec.slot_seed
+        or workspace.get("roles") != list(spec.slot_roles)
+        or workspace.get("anchor_scale") != spec.anchor_scale
+        or recurrence.get("max_steps") != spec.recurrent_steps
+        or recurrence.get("min_steps") != spec.recurrent_steps
+        or recurrence.get("alpha") != spec.alpha
+        or recurrence.get("alpha_schedule") != spec.alpha_schedule
+        or recurrence.get("rms_clip_ratio") != spec.rms_clip_ratio
+        or recurrence.get("fixed_depth") is not True
+        or branches.get("n_branches") != len(spec.branch_roles)
+        or branches.get("exchange_interval") != spec.exchange_interval
+        or branches.get("exchange_gamma") != spec.exchange_gamma
+        or branches.get("comm_slot") != spec.comm_slot
+        or branches.get("collapse_cos_threshold") != spec.collapse_cos_threshold
+        or branches.get("jitter_scale") != spec.jitter_scale
+        or branches.get("roles") != list(spec.branch_roles)
+        or effective.get("prelude_frac") != spec.prelude_frac
+        or effective.get("coda_frac") != spec.coda_frac
+        or effective.get("decode_bridge_policy") != expected_bridge
+        or effective.get("allow_vanilla_fallback") is not False
+        or latent_opt.get("enabled") is not False
+        or fast_weights.get("enabled") is not False
+    ):
+        _fail("pilot_v3_execution_binding_mismatch")
+
+
 def _verified_contract(path: Path) -> dict[str, Any]:
     contract = _read_contract(path)
     claimed = contract.get("contract_sha256")
@@ -113,12 +195,13 @@ def _verified_contract(path: Path) -> dict[str, Any]:
     campaign = contract.get("campaign")
     decision = contract.get("decision")
     mechanics = contract.get("mechanics_gate")
+    adapter = contract.get("adapter")
     if not all(isinstance(value, Mapping) for value in (campaign, decision, mechanics)):
         _fail("pilot_contract_sections_invalid")
     seeds = campaign.get("seeds")
     required_rules = decision.get("advance_only_if")
     if (
-        contract.get("schema") not in {SCHEMA, SCHEMA_V2}
+        contract.get("schema") not in {SCHEMA, SCHEMA_V2, SCHEMA_V3}
         or claimed != _sha(material)
         or contract.get("claim_scope") != "internal_directional_falsification_only"
         or contract.get("preregistered_before_model_output") is not True
@@ -154,6 +237,25 @@ def _verified_contract(path: Path) -> dict[str, Any]:
         or campaign.get("max_infra_attempts") != 3
     ):
         _fail("pilot_v2_execution_contract_invalid")
+    if contract.get("schema") == SCHEMA_V3 and (
+        not isinstance(adapter, Mapping)
+        or campaign.get("task_registry_version") != CURRENT_REGISTRY_VERSION
+        or campaign.get("profile") != "primary"
+        or campaign.get("difficulty") != 2
+        or campaign.get("rlc_profile") != "recurrence_attribution"
+        or campaign.get("decode_max_tokens") != 768
+        or campaign.get("max_infra_attempts") != 3
+        or type(campaign.get("n_slots")) is not int
+        or not 2 <= campaign["n_slots"] <= 128
+        or type(campaign.get("branches")) is not int
+        or not 1 <= campaign["branches"] <= 8
+        or type(campaign.get("rlc_steps")) is not int
+        or not 1 <= campaign["rlc_steps"] <= 64
+        or not _is_sha256(campaign.get("adapter_execution_spec_sha256"))
+        or adapter.get("identity_receipt_schema") != RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA
+        or adapter.get("execution_spec_sha256") != campaign.get("adapter_execution_spec_sha256")
+    ):
+        _fail("pilot_v3_execution_contract_invalid")
     return contract
 
 
@@ -169,18 +271,12 @@ def _verify_plan(contract: Mapping[str, Any], plan_path: Path) -> CampaignPlan:
     execution = metadata.get("execution_config")
     model = metadata.get("model_identity")
     adapter = metadata.get("adapter_identity")
-    if not all(
-        isinstance(value, Mapping)
-        for value in (task_manifest, execution, model, adapter)
-    ):
+    if not all(isinstance(value, Mapping) for value in (task_manifest, execution, model, adapter)):
         _fail("pilot_plan_sections_invalid")
     adapter_receipt = adapter.get("identity_receipt")
     model_behavior = model.get("model_behavior_bundle")
     runtime = model.get("runtime_bundle")
-    if not all(
-        isinstance(value, Mapping)
-        for value in (adapter_receipt, model_behavior, runtime)
-    ):
+    if not all(isinstance(value, Mapping) for value in (adapter_receipt, model_behavior, runtime)):
         _fail("pilot_plan_identity_invalid")
     requested = {
         "profile": campaign.get("profile"),
@@ -208,27 +304,24 @@ def _verify_plan(contract: Mapping[str, Any], plan_path: Path) -> CampaignPlan:
         or len(plan.cell_ids) != campaign.get("cell_count")
         or metadata.get("arms") != ARMS
         or metadata.get("claim_eligible") is not False
-        or task_manifest.get("manifest_sha256")
-        != campaign.get("task_manifest_sha256")
+        or task_manifest.get("manifest_sha256") != campaign.get("task_manifest_sha256")
         or task_manifest.get("task_count") != campaign.get("task_count")
         or sorted(task_manifest.get("domains", [])) != sorted(DOMAINS)
         or any(execution.get(key) != value for key, value in requested.items())
-        or execution.get("effective_rlc_config", {}).get("allow_vanilla_fallback")
-        is not False
+        or execution.get("effective_rlc_config", {}).get("allow_vanilla_fallback") is not False
         or model.get("model_path") != contract["model"]["path"]
         or model.get("fingerprint") != contract["model"]["base_checkpoint_sha256"]
-        or model_behavior.get("bundle_sha256")
-        != contract["model"]["model_behavior_bundle_sha256"]
-        or runtime.get("logical_parameter_count")
-        != contract["model"]["logical_parameter_count"]
+        or model_behavior.get("bundle_sha256") != contract["model"]["model_behavior_bundle_sha256"]
+        or runtime.get("logical_parameter_count") != contract["model"]["logical_parameter_count"]
         or adapter.get("adapter_dir") != contract["adapter"]["path"]
         or adapter_receipt.get("adapter_id") != contract["adapter"]["adapter_id"]
-        or adapter_receipt.get("adapter_sha256")
-        != contract["adapter"]["adapter_sha256"]
+        or adapter_receipt.get("adapter_sha256") != contract["adapter"]["adapter_sha256"]
         or adapter_receipt.get("composite_identity_sha256")
         != contract["adapter"]["identity_sha256"]
     ):
         _fail("pilot_plan_binding_mismatch")
+    if contract.get("schema") == SCHEMA_V3:
+        _verify_v3_execution_binding(contract, execution, adapter_receipt)
     return plan
 
 

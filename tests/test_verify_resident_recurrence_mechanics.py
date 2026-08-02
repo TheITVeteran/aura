@@ -187,6 +187,27 @@ def test_bindings_accept_recovery_training_admission(tmp_path: Path) -> None:
     assert identity["training_gate_sha256"] == admission["admission_sha256"]
 
 
+def test_bindings_accept_resident_sft_training_admission(tmp_path: Path) -> None:
+    _promotion, freeze, plan = _evidence(tmp_path)
+    admission = _admission(freeze, schema=verifier.RESIDENT_SFT_ADMISSION_SCHEMA)
+    metadata = plan.to_dict()["metadata"]
+    metadata["adapter_identity"]["identity_receipt"] = freeze["identity_receipt"]
+    rebound = CampaignPlan.build(
+        "resident-mechanics",
+        [{"domain": "mathematics", "seed": 7, "task_sha256": "7" * 64}],
+        metadata=metadata,
+    )
+
+    identity = verifier._verify_bindings(
+        promotion=admission,
+        freeze=freeze,
+        plan=rebound,
+        frozen_adapter=tmp_path.resolve(),
+    )
+
+    assert identity["training_gate_schema"] == verifier.RESIDENT_SFT_ADMISSION_SCHEMA
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -210,9 +231,7 @@ def test_bindings_reject_substitution(tmp_path: Path, mutation: str) -> None:
     elif mutation == "adapter_path":
         metadata["adapter_identity"]["adapter_dir"] = str(tmp_path / "other")
     elif mutation == "fallback":
-        metadata["execution_config"]["effective_rlc_config"][
-            "allow_vanilla_fallback"
-        ] = True
+        metadata["execution_config"]["effective_rlc_config"]["allow_vanilla_fallback"] = True
     else:
         metadata["claim_eligible"] = True
     tampered = CampaignPlan.build(
