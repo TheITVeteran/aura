@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import inspect
 import logging
+import sqlite3
 from collections.abc import Callable
 from typing import Any
 
@@ -21,6 +22,7 @@ _COGNITIVE_SENSORY_RECOVERABLE_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
+    sqlite3.Error,
 )
 
 
@@ -191,6 +193,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
     )
 
     async def _reality_reach() -> None:
+        from core.environment.runtime_workspace import environment_runtime_file
+        from core.reality_reach.historian import RealityHistorian
         from core.reality_reach.live import get_reality_reach_service
         from core.reality_reach.transactions import get_reality_actuation_coordinator
 
@@ -202,6 +206,27 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         )
         orchestrator.reality_reach = service
         orchestrator.reality_actuation = coordinator
+        historian = None
+        try:
+            historian_path = environment_runtime_file(
+                "shared",
+                "reality_historian.sqlite3",
+                purpose="history",
+            )
+            historian = await asyncio.to_thread(RealityHistorian, historian_path)
+        except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+            _record_cognitive_sensory_degradation(
+                orchestrator,
+                exc,
+                phase="reality_historian",
+                action=(
+                    "Kept live physical sensing and actuation available without "
+                    "durable history; alarms and store-and-forward remain explicitly "
+                    "degraded until historian recovery"
+                ),
+                severity="warning",
+            )
+        orchestrator.reality_historian = historian
         ServiceContainer.register_instance(
             "reality_reach",
             service,
@@ -220,8 +245,23 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             required_for="governed physical actuation and effect reconciliation",
             failure_policy="degrade_with_receipt",
         )
+        if historian is not None:
+            ServiceContainer.register_instance(
+                "reality_historian",
+                historian,
+                required=False,
+                owner="core/reality_reach/historian.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=(
+                    "restart-safe physical history, alarms, quarantine, and "
+                    "cognitive store-and-forward"
+                ),
+                failure_policy="degrade_with_receipt",
+            )
         report["registered"]["reality_reach"] = service.__class__.__name__
         report["registered"]["reality_actuation"] = coordinator.__class__.__name__
+        if historian is not None:
+            report["registered"]["reality_historian"] = historian.__class__.__name__
 
     await _run_phase(
         orchestrator,
@@ -240,7 +280,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         reality_reach = getattr(orchestrator, "reality_reach", None)
         if reality_reach is None:
             raise RuntimeError("Reality Reach must be initialized before its sensory fabric")
-        router = RealityObservationRouter(reality_reach)
+        historian = getattr(orchestrator, "reality_historian", None)
+        router = RealityObservationRouter(reality_reach, historian=historian)
         await router.start()
         try:
             trust_store = None

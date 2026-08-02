@@ -84,6 +84,42 @@ def test_runtime_end_to_end_learning_loop(tmp_path):
     assert runtime.health_report()["world_model_episodes"] >= 1
 
 
+def test_observation_delivery_is_idempotent_and_content_bound(tmp_path):
+    runtime = AdvancedCognitionRuntime(state_dir=tmp_path)
+    first = runtime.observe_state(
+        "physical_environment",
+        {"observation_id": "reality.obs.proof", "temperature": 21.0},
+        source="reality:test.sensor",
+        confidence=0.8,
+        observed_at=1_785_600_000.0,
+        idempotency_key="reality.obs.proof",
+    )
+    repeated = runtime.observe_state(
+        "physical_environment",
+        {"observation_id": "reality.obs.proof", "temperature": 21.0},
+        source="reality:test.sensor",
+        confidence=0.8,
+        observed_at=1_785_600_000.0,
+        idempotency_key="reality.obs.proof",
+    )
+
+    assert repeated is first
+    assert repeated["receipt_id"] == first["receipt_id"]
+    assert len(runtime._observation_receipts) == 1
+
+    import pytest
+
+    with pytest.raises(ValueError, match="conflicts with prior evidence"):
+        runtime.observe_state(
+            "physical_environment",
+            {"observation_id": "reality.obs.proof", "temperature": 99.0},
+            source="reality:test.sensor",
+            confidence=0.8,
+            observed_at=1_785_600_000.0,
+            idempotency_key="reality.obs.proof",
+        )
+
+
 def test_world_model_social_tier_validation_and_architecture_surfaces(tmp_path):
     runtime = AdvancedCognitionRuntime(state_dir=tmp_path / "advanced_runtime")
     obs = Observation(domain="repo", state={"file": "core/x.py", "unknown": True, "confidence": 0.2})

@@ -13,6 +13,7 @@ import uuid
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -127,12 +128,65 @@ _SENSOR_DOMAINS: dict[str, tuple[float, float]] = {
 }
 
 
+def _home_assistant_event_time_ns(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    timestamp_ns = int(parsed.timestamp() * 1_000_000_000)
+    return timestamp_ns if timestamp_ns > 0 else None
+
+
 class HomeAssistantRealityError(RuntimeError):
     """Stable refusal raised at the Home Assistant physical-effect boundary."""
 
 
 def _digest(value: Any) -> str:
     return str(sha256_hex(canonical_json(value)))
+
+
+def _home_assistant_source_lineage(
+    state: Mapping[str, Any],
+    *,
+    entity_id: str,
+) -> tuple[int, str, str, str, str]:
+    if str(state.get("entity_id") or "") != entity_id:
+        raise HomeAssistantRealityError("hass_sensor_entity_identity_mismatch")
+    raw_source_time = state.get("last_updated") or state.get("last_changed")
+    source_time_ns = _home_assistant_event_time_ns(raw_source_time)
+    raw_context = state.get("context")
+    context_id = (
+        str(raw_context.get("id") or "")[:128]
+        if isinstance(raw_context, Mapping)
+        else ""
+    )
+    source_event_id = (
+        _digest(
+            {
+                "context_id": context_id,
+                "entity_id": entity_id,
+                "source_time": str(raw_source_time),
+            }
+        )
+        if source_time_ns is not None
+        else ""
+    )
+    return (
+        source_time_ns or max(1, time.time_ns()),
+        (
+            "home_assistant.last_updated"
+            if source_time_ns is not None
+            else "system.time_ns.fallback"
+        ),
+        f"hass.{entity_id}",
+        source_event_id,
+        "good" if source_time_ns is not None else "uncertain",
+    )
 
 
 def _finite(value: object, *, name: str) -> float:
@@ -920,16 +974,28 @@ class HomeAssistantSensorAdapter:
         return (self._last_observation,)
 
     def _reading_from_state(self, state: Mapping[str, Any]) -> ChannelReading:
-        if str(state.get("entity_id") or "") != self.entity_id:
-            raise HomeAssistantRealityError("hass_sensor_entity_identity_mismatch")
+        (
+            captured_at_ns,
+            wall_clock_source,
+            source_epoch,
+            source_event_id,
+            source_quality,
+        ) = _home_assistant_source_lineage(
+            state,
+            entity_id=self.entity_id,
+        )
         return ChannelReading(
             channel_id=self._declaration.channel_id,
             value=_sensor_value(state, self._profile),
             unit=self._declaration.unit,
-            captured_at_ns=max(1, time.time_ns()),
+            captured_at_ns=captured_at_ns,
             status=ReadingStatus.AVAILABLE,
             source=f"{self.adapter_id}.state_api",
             uncertainty=self._declaration.resolution,
+            wall_clock_source=wall_clock_source,
+            source_epoch=source_epoch,
+            source_event_id=source_event_id,
+            source_quality=source_quality,
         )
 
     async def refresh_readback(self) -> ChannelReading:
@@ -1062,14 +1128,28 @@ class HomeAssistantRealityAdapter:
         return (actuator, self._last_observation)
 
     def _reading_from_state(self, state: Mapping[str, Any]) -> ChannelReading:
+        (
+            captured_at_ns,
+            wall_clock_source,
+            source_epoch,
+            source_event_id,
+            source_quality,
+        ) = _home_assistant_source_lineage(
+            state,
+            entity_id=self.entity_id,
+        )
         return ChannelReading(
             channel_id=self._observation.channel_id,
             value=_primary_value(state, self._profile),
             unit=self._observation.unit,
-            captured_at_ns=max(1, time.time_ns()),
+            captured_at_ns=captured_at_ns,
             status=ReadingStatus.AVAILABLE,
             source=f"{self.adapter_id}.state_api",
             uncertainty=self._observation.resolution,
+            wall_clock_source=wall_clock_source,
+            source_epoch=source_epoch,
+            source_event_id=source_event_id,
+            source_quality=source_quality,
         )
 
     async def refresh_readback(self) -> ChannelReading:

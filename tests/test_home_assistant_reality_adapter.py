@@ -11,6 +11,7 @@ from core.embodiment import home_assistant_reality as hass_module
 from core.embodiment.home_assistant_connector import HomeAssistantConnector
 from core.embodiment.home_assistant_reality import (
     HomeAssistantEffect,
+    HomeAssistantRealityAdapter,
     HomeAssistantRealityError,
     HomeAssistantTransport,
 )
@@ -106,6 +107,39 @@ def _install_network(
         "request_network_transport",
         staticmethod(network.request),
     )
+
+
+@pytest.mark.asyncio
+async def test_actuator_readback_preserves_home_assistant_event_lineage(
+    hass_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del hass_environment
+    state = {
+        "entity_id": "light.office",
+        "state": "off",
+        "attributes": {"brightness": 10},
+        "last_updated": "2026-08-02T08:00:00Z",
+        "context": {"id": "shared-context"},
+    }
+    network = HomeAssistantNetwork(state)
+    _install_network(monkeypatch, network)
+    adapter = HomeAssistantRealityAdapter(
+        HomeAssistantTransport(),
+        "light.office",
+        initial_state=state,
+    )
+
+    first = adapter.read()[1]
+    assert first.wall_clock_source == "home_assistant.last_updated"
+    assert first.source_epoch == "hass.light.office"
+    assert first.source_quality == "good"
+    assert first.source_event_id.startswith("sha256:")
+
+    network.state["last_updated"] = "2026-08-02T08:00:01Z"
+    second = await adapter.refresh_readback()
+    assert second.captured_at_ns > first.captured_at_ns
+    assert second.source_event_id != first.source_event_id
 
 
 @pytest.mark.asyncio
@@ -370,6 +404,8 @@ async def test_numeric_and_binary_entities_become_typed_read_only_sensors(
         {
             "entity_id": "sensor.office_temperature",
             "state": "21.5",
+            "last_updated": "2026-08-01T20:15:30.123456+00:00",
+            "context": {"id": "01K1KQHOMEASSISTANTPROOF"},
             "attributes": {
                 "device_class": "temperature",
                 "unit_of_measurement": "\u00b0C",
@@ -385,11 +421,30 @@ async def test_numeric_and_binary_entities_become_typed_read_only_sensors(
     assert declaration.unit == "celsius"
     assert declaration.observable == "home_assistant_temperature"
     assert numeric.read()[0].value == 21.5
+    assert numeric.read()[0].wall_clock_source == "home_assistant.last_updated"
+    assert numeric.read()[0].source_event_id.startswith("sha256:")
+    assert numeric.read()[0].source_event_id != "01K1KQHOMEASSISTANTPROOF"
+    assert numeric.read()[0].source_quality == "good"
+    assert numeric.read()[0].captured_at_ns == 1_785_615_330_123_456_000
     assert declaration.compliance_tags == (
         "home_assistant",
         "read_only_sensor",
         "device_class_standard",
     )
+    first_event_id = numeric.read()[0].source_event_id
+    network.state = {
+        "entity_id": "sensor.office_temperature",
+        "state": "22.0",
+        "last_updated": "2026-08-01T20:15:31.123456+00:00",
+        "context": {"id": "01K1KQHOMEASSISTANTPROOF"},
+        "attributes": {
+            "device_class": "temperature",
+            "unit_of_measurement": "°C",
+            "suggested_display_precision": 1,
+        },
+    }
+    second_reading = await numeric.refresh_readback()
+    assert second_reading.source_event_id != first_event_id
 
     network.state = {
         "entity_id": "binary_sensor.front_door",

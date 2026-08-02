@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 import types
 from pathlib import Path
@@ -118,6 +119,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.historian",
+        RealityHistorian=Service,
+    )
+    _install_module(
+        monkeypatch,
         "core.reality_reach.observation_router",
         RealityObservationRouter=Service,
     )
@@ -203,7 +209,13 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_reach"].refreshed is True
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
+    assert registered["reality_historian"] is orchestrator.reality_historian
+    assert registered["reality_historian"].args[0].name == "reality_historian.sqlite3"
     assert registered["reality_observation_router"] is orchestrator.reality_observation_router
+    assert (
+        registered["reality_observation_router"].kwargs["historian"]
+        is orchestrator.reality_historian
+    )
     assert registered["reality_observation_router"].started is True
     assert registered["reality_attachment_broker"] is orchestrator.reality_attachment_broker
     assert registered["reality_attachment_broker"].started is True
@@ -293,3 +305,69 @@ async def test_keychain_failure_keeps_physical_discovery_but_closes_durable_trus
     assert broker.started is True
     assert broker.kwargs["trust_store"] is None
     assert "Keychain locked" in broker.kwargs["trust_store_error"]
+
+
+@pytest.mark.asyncio
+async def test_historian_failure_keeps_live_sensing_and_actuation_registered(
+    monkeypatch,
+):
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    class BrokenHistorian:
+        def __init__(self, _path):
+            raise RuntimeError("synthetic historian corruption")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.historian",
+        RealityHistorian=BrokenHistorian,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert "reality_historian" in report["degraded"]
+    assert "reality_reach" in report["completed"]
+    assert "reality_sensory_fabric" in report["completed"]
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert registered["reality_actuation"] is orchestrator.reality_actuation
+    assert "reality_historian" not in registered
+    assert orchestrator.reality_historian is None
+    assert registered["reality_observation_router"].kwargs["historian"] is None
+    assert registered["reality_observation_router"].started is True
+
+
+@pytest.mark.asyncio
+async def test_native_sqlite_historian_failure_degrades_only_durable_history(
+    monkeypatch,
+):
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    class BrokenHistorian:
+        def __init__(self, _path):
+            raise sqlite3.OperationalError("synthetic locked database")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.historian",
+        RealityHistorian=BrokenHistorian,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert "reality_historian" in report["degraded"]
+    assert "reality_reach" in report["completed"]
+    assert "reality_sensory_fabric" in report["completed"]
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert registered["reality_actuation"] is orchestrator.reality_actuation
+    assert orchestrator.reality_historian is None
+    assert registered["reality_observation_router"].kwargs["historian"] is None

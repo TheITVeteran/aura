@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -32,6 +33,25 @@ def _boolean_parameter(value: Any, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError("boolean parameter must be true or false")
+
+
+def _bounded_int_parameter(
+    value: Any,
+    *,
+    name: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f"{name} must lie inside [{minimum}, {maximum}]")
+    return parsed
 
 
 def _service(name: str) -> Any | None:
@@ -70,7 +90,8 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         "Use my live physical body and Reality Reach fabric: inspect connected "
         "sensors and actuators, discover nearby configured devices, propose a "
         "connection, focus attention on a sensor, read observations, or execute "
-        "a governed and verified physical command."
+        "a governed and verified physical command. I can also inspect durable "
+        "sensor history, active alarms, and quarantined physical evidence."
     )
     effect_scope = "external_io"
     retry_safe = False
@@ -79,8 +100,10 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         "action": (
             "inventory | discover | candidates | connection_requests | "
             "request_connection | authorize_connection | rotate_trust_custody | "
-            "focus_sensor | pause_sensors | resume_sensors | latest_observations | "
-            "query_device | command_device"
+            "focus_sensor | pause_sensors | resume_sensors | "
+            "pause_sensor_attention | resume_sensor_attention | latest_observations | "
+            "observation_history | active_alarms | acknowledge_alarm | "
+            "observation_quarantine | query_device | command_device"
         ),
         "device_id": "Hardware device id for query or command.",
         "candidate_id": "Discovered candidate id for request_connection.",
@@ -163,6 +186,16 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 return {"ok": False, "error": "physical observation router is offline"}
             (router.pause if action == "pause_sensors" else router.resume)()
             return {"ok": True, "observation_router": router.status()}
+        if action in {"pause_sensor_attention", "resume_sensor_attention"}:
+            router = _service("reality_observation_router")
+            if router is None:
+                return {"ok": False, "error": "physical observation router is offline"}
+            (
+                router.pause_attention
+                if action == "pause_sensor_attention"
+                else router.resume_attention
+            )()
+            return {"ok": True, "observation_router": router.status()}
         if action == "latest_observations":
             router = _service("reality_observation_router")
             if router is None:
@@ -174,6 +207,103 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                     key: value for key, value in latest.items() if key.startswith(prefix)
                 }
             return {"ok": True, "observations": latest, "router": router.status()}
+        if action == "observation_history":
+            historian = _service("reality_historian")
+            if historian is None:
+                return {"ok": False, "error": "physical historian is offline"}
+            try:
+                limit = _bounded_int_parameter(
+                    params.get("limit"),
+                    name="limit",
+                    default=100,
+                    minimum=1,
+                    maximum=500,
+                )
+                before_row_id = params.get("before_row_id")
+                if before_row_id is not None and before_row_id != "":
+                    before_row_id = _bounded_int_parameter(
+                        before_row_id,
+                        name="before_row_id",
+                        default=1,
+                        minimum=1,
+                        maximum=2**63 - 1,
+                    )
+                else:
+                    before_row_id = None
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            history = await historian.replay_history(
+                channel_id=str(params.get("channel_id") or "").strip().lower() or None,
+                before_row_id=before_row_id,
+                limit=limit,
+            )
+            historian_status = await asyncio.to_thread(historian.status)
+            return {"ok": True, "history": history, "historian": historian_status}
+        if action == "active_alarms":
+            historian = _service("reality_historian")
+            if historian is None:
+                return {"ok": False, "error": "physical historian is offline"}
+            try:
+                limit = _bounded_int_parameter(
+                    params.get("limit"),
+                    name="limit",
+                    default=100,
+                    minimum=1,
+                    maximum=500,
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            alarms = await historian.active_alarms(limit=limit)
+            historian_status = await asyncio.to_thread(historian.status)
+            return {
+                "ok": True,
+                "active_alarms": list(alarms),
+                "historian": historian_status,
+            }
+        if action == "acknowledge_alarm":
+            historian = _service("reality_historian")
+            channel_id = str(params.get("channel_id") or "").strip().lower()
+            if historian is None or not channel_id:
+                return {
+                    "ok": False,
+                    "error": "physical historian and channel_id are required",
+                }
+            try:
+                receipt = await historian.acknowledge_alarm(
+                    channel_id,
+                    actor="aura",
+                )
+            except LookupError:
+                return {
+                    "ok": False,
+                    "error": "no active physical alarm exists for that channel",
+                }
+            return {
+                "ok": True,
+                "acknowledgement": receipt,
+                "summary": "I acknowledged the alarm without clearing its physical state.",
+            }
+        if action == "observation_quarantine":
+            historian = _service("reality_historian")
+            if historian is None:
+                return {"ok": False, "error": "physical historian is offline"}
+            try:
+                limit = _bounded_int_parameter(
+                    params.get("limit"),
+                    name="limit",
+                    default=100,
+                    minimum=1,
+                    maximum=500,
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            quarantined = await historian.quarantine(limit=limit)
+            historian_status = await asyncio.to_thread(historian.status)
+            return {
+                "ok": True,
+                "quarantine": list(quarantined),
+                "historian": historian_status,
+            }
         if action == "query_device":
             return await self._query(params)
         if action == "command_device":
@@ -186,6 +316,7 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         reality = _service("reality_reach")
         router = _service("reality_observation_router")
         broker = _service("reality_attachment_broker")
+        historian = _service("reality_historian")
         body = _service("body_schema")
         devices = manager.list_devices() if manager is not None else []
         declarations = (
@@ -205,6 +336,14 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             "channels": declarations,
             "physical_limbs": physical_limbs,
             "observation_router": router.status() if router is not None else None,
+            "historian": (
+                historian.health_snapshot()
+                if historian is not None
+                and callable(getattr(historian, "health_snapshot", None))
+                else historian.status()
+                if historian is not None
+                else None
+            ),
             "attachments": broker.status() if broker is not None else None,
             "summary": (
                 f"My physical body currently exposes {len(declarations)} channels "

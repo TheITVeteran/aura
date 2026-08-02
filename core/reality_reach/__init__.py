@@ -30,6 +30,14 @@ from core.reality_reach.contracts import (
     RealityIR,
     RealityLayer,
 )
+from core.reality_reach.historian import (
+    HistorianAdmission,
+    HistorianCorruptionError,
+    HistorianDelivery,
+    HistorianDisposition,
+    ObservationQuality,
+    RealityHistorian,
+)
 from core.reality_reach.live import (
     ChannelReading,
     HostResourceAdapter,
@@ -62,11 +70,17 @@ __all__ = [
     "EffectReceipt",
     "FailureCode",
     "HostResourceAdapter",
+    "HistorianAdmission",
+    "HistorianCorruptionError",
+    "HistorianDelivery",
+    "HistorianDisposition",
     "NumericDomain",
     "ObjectiveKind",
+    "ObservationQuality",
     "ProofRequirement",
     "PreparedActuation",
     "RealityIR",
+    "RealityHistorian",
     "RealityAdapter",
     "RealityActuationCoordinator",
     "RealityActuationError",

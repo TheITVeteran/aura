@@ -34728,6 +34728,79 @@ evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 920-checkpoint completion envelope, approximately 86.7% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
 
+### 2026-08-02 - Total checkpoint 802: durable Reality Reach historian and store-and-forward
+
+The planned historian checkpoint is now implemented beneath the universal
+physical sensory fabric. `RealityHistorian` is the single durable owner for
+bounded scalar observations, source ordering, quality, alarms, quarantine,
+retention, and cognitive store-and-forward. Its private SQLite database uses
+WAL plus FULL synchronization, foreign keys, incremental vacuum, secure
+deletion, owner-only files, symlink rejection, bounded busy waits, exact
+canonical DDL verification, monotonic counters, and startup integrity checks.
+Native SQLite initialization failures degrade historian-only: discovery,
+bounded live sensing, and governed actuation remain registered with an explicit
+boot receipt rather than being discarded.
+
+History admission and attention delivery are one transaction. Per-channel
+coalescing, priority eviction, record-capacity enforcement, source deadbands,
+quality/order classification, alarm transitions, and the durable outbox either
+commit together or not at all. Store-and-forward claims use exclusive expiring
+leases, bounded attempts, exponential retry, restart recovery, and terminal
+quarantine. Multimodal and advanced-cognition delivery each require an exact
+idempotent sink receipt; partial success survives retry and restart, and final
+delivery cannot commit before every required sink is durably accepted.
+
+Durable evidence is not trusted merely because it parses. Declaration and
+reading digests, record identity, adapter, quality, ordering basis/gaps, and
+alarm claims are checked against authoritative observation rows. Alarm codes
+are independently re-derived from stored status, quality, and ordering state.
+The observation envelope and separate sink-state envelope bind the complete
+payload. Malformed or forged rows are quarantined before a lease can be issued,
+so corruption cannot strand a delivery in-flight or reach cognition. An
+adversarial regression changes alarm evidence and recomputes both unkeyed
+digests; the authoritative comparison still refuses and quarantines it.
+
+Retention is enforced during admission and by periodic maintenance even while
+attention or acquisition is paused. Age pruning drains all eligible batches,
+repairs channel and alarm references, and clears stale deadband baselines so a
+later sample cannot be silently compared with deleted evidence. Aggregate
+database/WAL/SHM bytes and disk headroom are checked inside the serialized write
+transaction and again after candidate writes. Attention pause is now a
+non-destructive runtime overlay: it neither enables intentionally disabled
+subscriptions on resume nor lets newly created focus subscriptions bypass the
+pause. Durable queue-depth telemetry remains truthful when unattended readings
+are historized without entering attention.
+
+Historian quality, ordering, gaps, alarms, source provenance, and confidence
+effects reach both multimodal perception and advanced cognition. Advanced
+cognition supplies content-bound idempotent receipts, including deterministic
+retry behavior. Home Assistant actuator readback now carries the same native
+event timestamp, source epoch, event identity, and quality lineage as read-only
+sensors; reused causal context IDs cannot collapse distinct physical changes.
+Full historian status work stays off the event loop, while lock-only health and
+bounded periodic probes keep readiness truthful without introducing a polling
+latency hazard.
+
+The focused historian/router/adapter/boot/cognition suite passes 88/88. The
+complete physical runtime family passes 188/188 across discovery, attachments,
+trust custody, transaction recovery, actuation, adapters, hardware baselines,
+historian fault/restoration, boot wiring, and cognition delivery. Ruff, Python
+compilation, strict targeted MyPy, degradation auditing, and diff integrity
+pass. An independent adversarial review initially found nine durability and
+integration defects; all nine were reproduced or concretely traced, repaired,
+regression-tested, and re-reviewed closed.
+
+This closes the historian/store-and-forward obligation that had remained first
+in the post-CP801 Reality Reach list; the earlier Messages checkpoint was pulled
+forward, so the closure is recorded honestly as total checkpoint 802. Canonical
+digital twins, ROS-shaped telemetry/action lifecycle, declarative event flows,
+metrology/HIL, concrete protocol connectors, live Messages acceptance, and live
+configured-hardware acceptance remain mandatory. No physical effect,
+bootstrap-complete, reasoning-gain, frontier, release, or `WOW Signal` claim is
+made. This is total checkpoint 802 of the current 920-checkpoint completion
+envelope, approximately 87.2% by count. The immutable CP796 resident campaign
+continues separately; long soaks remain deferred.
+
 ### 2026-08-01 - Total checkpoint 801: private Messages conversation transport
 
 The planned CP807 owner-text capability was pulled forward without removing or

@@ -150,6 +150,44 @@ def test_inventory_reports_physical_limbs_as_part_of_auras_body(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_sensor_acquisition_and_attention_have_distinct_controls(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    calls: list[str] = []
+    router = SimpleNamespace(
+        pause=lambda: calls.append("pause_acquisition"),
+        resume=lambda: calls.append("resume_acquisition"),
+        pause_attention=lambda: calls.append("pause_attention"),
+        resume_attention=lambda: calls.append("resume_attention"),
+        status=lambda: {"ready": True},
+    )
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: router if name == "reality_observation_router" else None,
+    )
+    skill = EmbodimentSkill()
+
+    for action in (
+        "pause_sensors",
+        "pause_sensor_attention",
+        "resume_sensor_attention",
+        "resume_sensors",
+    ):
+        result = await skill.execute({"action": action}, {})
+        assert result["ok"] is True
+
+    assert calls == [
+        "pause_acquisition",
+        "pause_attention",
+        "resume_attention",
+        "resume_acquisition",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_aura_can_authorize_pending_attachment_through_her_will(monkeypatch) -> None:
     import core.skills.embodiment_skill as skill_module
 
@@ -243,3 +281,119 @@ async def test_trust_rotation_uses_broker_custody_boundary(monkeypatch) -> None:
 
     assert result["ok"] is True
     assert result["rotation_receipt"] == {"sequence": 4, "key_version": 2}
+
+
+@pytest.mark.asyncio
+async def test_historian_actions_are_bounded_and_keep_alarm_state_explicit(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    class Historian:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def replay_history(self, **kwargs):
+            self.calls.append(("history", kwargs))
+            return {"records": [{"record_id": "record-1"}], "count": 1}
+
+        async def active_alarms(self, **kwargs):
+            self.calls.append(("alarms", kwargs))
+            return ({"channel_id": "test.room.temperature", "active": True},)
+
+        async def acknowledge_alarm(self, channel_id, **kwargs):
+            self.calls.append(("acknowledge", {"channel_id": channel_id, **kwargs}))
+            return {"channel_id": channel_id, "acknowledged": True}
+
+        async def quarantine(self, **kwargs):
+            self.calls.append(("quarantine", kwargs))
+            return ({"reason": "source_sequence_regressed"},)
+
+        @staticmethod
+        def status():
+            return {"ready": True, "observation_count": 1}
+
+    historian = Historian()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: historian if name == "reality_historian" else None,
+    )
+    skill = EmbodimentSkill()
+
+    history = await skill.execute(
+        {
+            "action": "observation_history",
+            "channel_id": "TEST.Room.Temperature",
+            "before_row_id": "12",
+            "limit": "25",
+        },
+        {},
+    )
+    alarms = await skill.execute({"action": "active_alarms", "limit": 10}, {})
+    acknowledgement = await skill.execute(
+        {"action": "acknowledge_alarm", "channel_id": "TEST.Room.Temperature"},
+        {},
+    )
+    quarantine = await skill.execute(
+        {"action": "observation_quarantine", "limit": 7},
+        {},
+    )
+
+    assert history["ok"] is True
+    assert history["historian"]["ready"] is True
+    assert alarms["active_alarms"][0]["active"] is True
+    assert acknowledgement["acknowledgement"]["acknowledged"] is True
+    assert "without clearing" in acknowledgement["summary"]
+    assert quarantine["quarantine"][0]["reason"] == "source_sequence_regressed"
+    assert historian.calls == [
+        (
+            "history",
+            {
+                "channel_id": "test.room.temperature",
+                "before_row_id": 12,
+                "limit": 25,
+            },
+        ),
+        ("alarms", {"limit": 10}),
+        (
+            "acknowledge",
+            {"channel_id": "test.room.temperature", "actor": "aura"},
+        ),
+        ("quarantine", {"limit": 7}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_historian_skill_rejects_invalid_limits_and_missing_alarm(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    class Historian:
+        async def acknowledge_alarm(self, channel_id, **kwargs):
+            del channel_id, kwargs
+            raise LookupError("no alarm")
+
+    historian = Historian()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: historian if name == "reality_historian" else None,
+    )
+    skill = EmbodimentSkill()
+
+    invalid = await skill.execute(
+        {"action": "observation_history", "limit": "unbounded"},
+        {},
+    )
+    missing = await skill.execute(
+        {"action": "acknowledge_alarm", "channel_id": "test.room.temperature"},
+        {},
+    )
+
+    assert invalid == {"ok": False, "error": "limit must be an integer"}
+    assert missing == {
+        "ok": False,
+        "error": "no active physical alarm exists for that channel",
+    }

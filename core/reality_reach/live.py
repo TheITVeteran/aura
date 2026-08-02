@@ -28,6 +28,8 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.resource_observation import ObservationSource, get_resource_observer
 from core.runtime.service_registry import register_runtime_service
 
+_SQLITE_INT_MAX = (1 << 63) - 1
+
 
 class ReadingStatus(StrEnum):
     AVAILABLE = "available"
@@ -55,14 +57,24 @@ class ChannelReading:
     session_id: str = ""
     sequence: int = 0
     wall_clock_source: str = "system.time_ns"
+    source_epoch: str = ""
+    source_sequence: int = 0
+    source_event_id: str = ""
+    source_quality: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.channel_id, str) or not self.channel_id:
             raise ValueError("channel_id must be non-empty")
         if not isinstance(self.unit, str) or not self.unit:
             raise ValueError("unit must be non-empty")
-        if isinstance(self.captured_at_ns, bool) or self.captured_at_ns <= 0:
-            raise ValueError("captured_at_ns must be positive")
+        if (
+            isinstance(self.captured_at_ns, bool)
+            or not isinstance(self.captured_at_ns, int)
+            or not 0 < self.captured_at_ns <= _SQLITE_INT_MAX
+        ):
+            raise ValueError(
+                "captured_at_ns must be a positive signed 64-bit integer"
+            )
         if not isinstance(self.status, ReadingStatus):
             raise TypeError("status must be a ReadingStatus")
         if not isinstance(self.source, str) or not self.source:
@@ -71,13 +83,29 @@ class ChannelReading:
             ("ingested_at_ns", self.ingested_at_ns),
             ("ingested_monotonic_ns", self.ingested_monotonic_ns),
             ("sequence", self.sequence),
+            ("source_sequence", self.source_sequence),
         ):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"{name} must be a non-negative integer")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= _SQLITE_INT_MAX
+            ):
+                raise ValueError(
+                    f"{name} must be a non-negative signed 64-bit integer"
+                )
         if not isinstance(self.session_id, str):
             raise TypeError("session_id must be a string")
         if not isinstance(self.wall_clock_source, str) or not self.wall_clock_source:
             raise ValueError("wall_clock_source must be non-empty")
+        for text_name, text_value in (
+            ("source_epoch", self.source_epoch),
+            ("source_event_id", self.source_event_id),
+            ("source_quality", self.source_quality),
+        ):
+            if not isinstance(text_value, str):
+                raise TypeError(f"{text_name} must be a string")
+            if len(text_value) > 256:
+                raise ValueError(f"{text_name} exceeds its bounded contract")
         if self.value is not None:
             if isinstance(self.value, bool) or not math.isfinite(float(self.value)):
                 raise ValueError("value must be finite when present")
@@ -107,11 +135,42 @@ class ChannelReading:
             "session_id": self.session_id,
             "sequence": self.sequence,
             "wall_clock_source": self.wall_clock_source,
+            "source_epoch": self.source_epoch,
+            "source_sequence": self.source_sequence,
+            "source_event_id": self.source_event_id,
+            "source_quality": self.source_quality,
         }
 
     @property
     def sha256(self) -> str:
         return str(sha256_hex(canonical_json(self.to_dict())))
+
+    @property
+    def event_sha256(self) -> str:
+        """Digest source evidence without Aura-owned ingestion lineage."""
+
+        return str(
+            sha256_hex(
+                canonical_json(
+                    {
+                        "channel_id": self.channel_id,
+                        "value": self.value,
+                        "unit": self.unit,
+                        "captured_at_ns": self.captured_at_ns,
+                        "status": self.status.value,
+                        "source": self.source,
+                        "scenario_id": self.scenario_id,
+                        "uncertainty": self.uncertainty,
+                        "error": self.error,
+                        "wall_clock_source": self.wall_clock_source,
+                        "source_epoch": self.source_epoch,
+                        "source_sequence": self.source_sequence,
+                        "source_event_id": self.source_event_id,
+                        "source_quality": self.source_quality,
+                    }
+                )
+            )
+        )
 
 
 @runtime_checkable
@@ -285,6 +344,7 @@ class RealityReachService:
         self._actuator_adapters: dict[str, RealityAdapter] = {}
         self._readings: dict[str, ChannelReading] = {}
         self._refresh_generation = 0
+        self._ingest_generation = 0
         self._last_refresh_ns = 0
         self._last_refresh_monotonic_ns = 0
         for adapter in adapters:
@@ -457,11 +517,14 @@ class RealityReachService:
         with self._refresh_lock:
             with self._lock:
                 adapters = tuple(self._adapters.items())
-                sequence = self._refresh_generation + 1
+                refresh_generation = self._refresh_generation + 1
             last_wall_ns = int(self._clock_ns())
             last_monotonic_ns = int(self._monotonic_clock_ns())
             for adapter_id, adapter in adapters:
                 expected = self._adapter_channels[adapter_id]
+                with self._lock:
+                    self._ingest_generation += 1
+                    sequence = self._ingest_generation
                 try:
                     returned = tuple(adapter.read())
                     last_wall_ns = int(self._clock_ns())
@@ -497,13 +560,55 @@ class RealityReachService:
                 with self._lock:
                     self._readings.update(by_channel)
             with self._lock:
-                self._refresh_generation = sequence
+                self._refresh_generation = refresh_generation
                 self._last_refresh_ns = last_wall_ns
                 self._last_refresh_monotonic_ns = last_monotonic_ns
             return self.readings(
                 now_ns=last_wall_ns,
                 monotonic_now_ns=last_monotonic_ns,
             )
+
+    def ingest_sensor_readings(
+        self,
+        adapter_id: str,
+        readings: Iterable[ChannelReading],
+    ) -> dict[str, ChannelReading]:
+        """Normalize one async sensor batch through the canonical live boundary."""
+
+        if not isinstance(adapter_id, str) or not adapter_id:
+            raise ValueError("adapter_id must be non-empty")
+        returned = tuple(readings)
+        with self._refresh_lock:
+            with self._lock:
+                if adapter_id not in self._adapters:
+                    raise LookupError(f"adapter is not registered: {adapter_id}")
+                expected = tuple(
+                    channel_id
+                    for channel_id in self._adapter_channels[adapter_id]
+                    if (
+                        (declaration := self._registry.get(channel_id)) is not None
+                        and declaration.kind == ChannelKind.SENSOR
+                    )
+                )
+                self._ingest_generation += 1
+                sequence = self._ingest_generation
+            if not expected:
+                raise ValueError(f"adapter has no sensor channels: {adapter_id}")
+            now_ns = int(self._clock_ns())
+            monotonic_now_ns = int(self._monotonic_clock_ns())
+            normalized = self._validate_adapter_readings(
+                adapter_id,
+                expected,
+                returned,
+                now_ns=now_ns,
+                monotonic_now_ns=monotonic_now_ns,
+                sequence=sequence,
+            )
+            with self._lock:
+                self._readings.update(normalized)
+                self._last_refresh_ns = now_ns
+                self._last_refresh_monotonic_ns = monotonic_now_ns
+            return dict(normalized)
 
     def readings(
         self,
@@ -586,6 +691,7 @@ class RealityReachService:
                 "executable_actuator_count": len(self.executable_actuator_channels()),
                 "registry_sha256": self._registry.sha256,
                 "refresh_generation": self._refresh_generation,
+                "ingest_generation": self._ingest_generation,
                 "last_refresh_ns": self._last_refresh_ns,
                 "last_refresh_monotonic_ns": self._last_refresh_monotonic_ns,
                 "session_id": self._session_id,
@@ -654,7 +760,7 @@ class RealityReachService:
                 )
             elif reading.value is not None and not declaration.domain.contains(reading.value):
                 normalized = replace(
-                    reading,
+                    normalized,
                     status=ReadingStatus.DEGRADED,
                     error="reading_outside_declared_domain",
                 )
@@ -663,7 +769,7 @@ class RealityReachService:
                 and now_ns > declaration.calibration_valid_until_ns
             ):
                 normalized = replace(
-                    reading,
+                    normalized,
                     status=ReadingStatus.UNCALIBRATED,
                     error="channel_calibration_expired",
                 )

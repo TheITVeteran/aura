@@ -15,8 +15,8 @@ import re
 import threading
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
 from core.perception.multimodal_sync import (
@@ -27,7 +27,19 @@ from core.perception.multimodal_sync import (
     PrivacyClass,
     PrivacyPolicy,
 )
-from core.reality_reach.contracts import ChannelDeclaration, ChannelKind
+from core.reality_reach.contracts import (
+    ChannelDeclaration,
+    ChannelKind,
+    CouplingClass,
+    EvidenceLevel,
+    NumericDomain,
+    RealityLayer,
+)
+from core.reality_reach.historian import (
+    HistorianDisposition,
+    HistorianError,
+    RealityHistorian,
+)
 from core.reality_reach.live import (
     ChannelReading,
     ReadingStatus,
@@ -40,6 +52,21 @@ from core.utils.task_tracker import get_task_tracker
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _SELECTOR = re.compile(r"^(?:\*|[a-z0-9][a-z0-9_.:-]{0,127}\*?)$")
 _AVAILABLE = frozenset({ReadingStatus.AVAILABLE, ReadingStatus.SIMULATED})
+_OBSERVATION_SCHEMA = "aura.reality-observation.v1"
+_HISTORIAN_EVIDENCE_SCHEMA = "aura.reality-historian-evidence.v1"
+_HISTORIAN_EVIDENCE_KEYS = frozenset(
+    {
+        "alarm_codes",
+        "binding_sha256",
+        "order_basis",
+        "order_gap",
+        "quality",
+        "reason",
+        "record_id",
+        "schema",
+    }
+)
+_SQLITE_INT_MAX = (1 << 63) - 1
 
 
 def _finite(value: float, *, name: str) -> float:
@@ -55,6 +82,52 @@ def _clamp01(value: float) -> float:
 
 def _digest(value: Any) -> str:
     return str(sha256_hex(canonical_json(value)))
+
+
+def _stored_bool(value: Any, *, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} must be a boolean")
+    return value
+
+
+def _stored_sequence(value: Any, *, name: str) -> tuple[Any, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{name} must be a sequence")
+    return tuple(value)
+
+
+def _stored_int(
+    value: Any,
+    *,
+    name: str,
+    minimum: int = 0,
+    maximum: int = _SQLITE_INT_MAX,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    if value > maximum:
+        raise ValueError(f"{name} exceeds the signed 64-bit storage contract")
+    return int(value)
+
+
+def _observation_identifier(
+    *,
+    adapter_id: str,
+    channel_id: str,
+    reading_sha256: str,
+    received_monotonic_ns: int,
+) -> str:
+    digest = _digest(
+        {
+            "adapter_id": adapter_id,
+            "channel_id": channel_id,
+            "reading_sha256": reading_sha256,
+            "received_monotonic_ns": received_monotonic_ns,
+        }
+    )
+    return f"reality.obs.{digest.removeprefix('sha256:')[:32]}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +212,11 @@ class RealityObservation:
     received_at_ns: int
     received_monotonic_ns: int
     subscription_id: str
+    historian_record_id: str = ""
+    historian_quality: str = "ephemeral"
+    historian_order_basis: str = "ephemeral"
+    historian_order_gap: bool = False
+    historian_alarm_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not _IDENTIFIER.fullmatch(self.observation_id):
@@ -153,21 +231,266 @@ class RealityObservation:
             raise ValueError("reading and declaration units differ")
         if self.received_at_ns <= 0 or self.received_monotonic_ns <= 0:
             raise ValueError("observation receipt clocks must be positive")
+        if not _IDENTIFIER.fullmatch(self.subscription_id):
+            raise ValueError("subscription_id must be a canonical identifier")
+        if self.historian_record_id and not _IDENTIFIER.fullmatch(
+            self.historian_record_id
+        ):
+            raise ValueError("historian_record_id must be a canonical identifier")
+        if self.historian_quality not in {
+            "ephemeral",
+            "good",
+            "uncertain",
+            "bad",
+            "stale",
+            "simulated",
+        }:
+            raise ValueError("historian_quality differs from its bounded ontology")
+        if not self.historian_order_basis or len(self.historian_order_basis) > 80:
+            raise ValueError("historian_order_basis must be present and bounded")
+        if not isinstance(self.historian_order_gap, bool):
+            raise TypeError("historian_order_gap must be a boolean")
+        if len(self.historian_alarm_codes) > 8 or any(
+            not _IDENTIFIER.fullmatch(item) for item in self.historian_alarm_codes
+        ):
+            raise ValueError("historian_alarm_codes differ from their bounded contract")
+        expected_id = _observation_identifier(
+            adapter_id=self.adapter_id,
+            channel_id=self.declaration.channel_id,
+            reading_sha256=self.reading.sha256,
+            received_monotonic_ns=self.received_monotonic_ns,
+        )
+        if self.observation_id != expected_id:
+            raise ValueError("observation_id differs from its evidence")
         object.__setattr__(self, "salience", _clamp01(self.salience))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
+            "schema": _OBSERVATION_SCHEMA,
             "observation_id": self.observation_id,
             "adapter_id": self.adapter_id,
+            "declaration": self.declaration.to_dict(),
+            "declaration_sha256": self.declaration.sha256,
             "channel_id": self.declaration.channel_id,
             "observable": self.declaration.observable,
             "unit": self.declaration.unit,
             "reading": self.reading.to_dict(),
+            "reading_sha256": self.reading.sha256,
             "salience": self.salience,
             "received_at_ns": self.received_at_ns,
             "received_monotonic_ns": self.received_monotonic_ns,
             "subscription_id": self.subscription_id,
         }
+        historian: dict[str, Any] = {
+            "schema": _HISTORIAN_EVIDENCE_SCHEMA,
+            "record_id": self.historian_record_id,
+            "quality": self.historian_quality,
+            "order_basis": self.historian_order_basis,
+            "order_gap": self.historian_order_gap,
+            "alarm_codes": list(self.historian_alarm_codes),
+            "reason": (
+                "ephemeral"
+                if self.historian_quality == "ephemeral"
+                else "accepted_with_source_gap"
+                if self.historian_order_gap
+                else "accepted"
+            ),
+        }
+        historian["binding_sha256"] = _digest(
+            {"observation": payload, "historian": historian}
+        )
+        payload["historian"] = historian
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> RealityObservation:
+        """Reconstruct one bounded durable observation without executable input."""
+
+        if not isinstance(payload, Mapping):
+            raise TypeError("Reality observation payload must be a mapping")
+        schema = str(payload.get("schema") or "")
+        if schema != _OBSERVATION_SCHEMA:
+            raise ValueError("unsupported Reality observation schema")
+        raw_declaration = payload.get("declaration")
+        raw_reading = payload.get("reading")
+        if not isinstance(raw_declaration, Mapping) or not isinstance(
+            raw_reading,
+            Mapping,
+        ):
+            raise ValueError("Reality observation evidence is incomplete")
+        raw_domain = raw_declaration.get("domain")
+        if not isinstance(raw_domain, Mapping):
+            raise ValueError("Reality observation domain is missing")
+        declaration = ChannelDeclaration(
+            channel_id=str(raw_declaration.get("channel_id") or ""),
+            kind=ChannelKind(str(raw_declaration.get("kind") or "")),
+            observable=str(raw_declaration.get("observable") or ""),
+            unit=str(raw_declaration.get("unit") or ""),
+            domain=NumericDomain(
+                raw_domain.get("minimum"),
+                raw_domain.get("maximum"),
+            ),
+            coupling=CouplingClass(str(raw_declaration.get("coupling") or "")),
+            reality_layers=tuple(
+                RealityLayer(str(value))
+                for value in _stored_sequence(
+                    raw_declaration.get("reality_layers", ()),
+                    name="declaration.reality_layers",
+                )
+            ),
+            evidence_level=EvidenceLevel(
+                str(raw_declaration.get("evidence_level") or "")
+            ),
+            owner=str(raw_declaration.get("owner") or ""),
+            resolution=raw_declaration.get("resolution", 0.0),
+            sample_rate_hz=raw_declaration.get("sample_rate_hz", 0.0),
+            max_latency_s=raw_declaration.get("max_latency_s", 0.0),
+            stale_after_s=raw_declaration.get("stale_after_s", 30.0),
+            reference_id=str(raw_declaration.get("reference_id") or ""),
+            calibration_id=str(raw_declaration.get("calibration_id") or ""),
+            calibration_valid_until_ns=raw_declaration.get(
+                "calibration_valid_until_ns"
+            ),
+            compliance_tags=tuple(
+                str(value)
+                for value in _stored_sequence(
+                    raw_declaration.get("compliance_tags", ()),
+                    name="declaration.compliance_tags",
+                )
+            ),
+            external_metrology=_stored_bool(
+                raw_declaration.get("external_metrology", False),
+                name="declaration.external_metrology",
+            ),
+            coupling_validated=_stored_bool(
+                raw_declaration.get("coupling_validated", False),
+                name="declaration.coupling_validated",
+            ),
+            enabled=_stored_bool(
+                raw_declaration.get("enabled", True),
+                name="declaration.enabled",
+            ),
+        )
+        reading = ChannelReading(
+            channel_id=str(raw_reading.get("channel_id") or ""),
+            value=raw_reading.get("value"),
+            unit=str(raw_reading.get("unit") or ""),
+            captured_at_ns=_stored_int(
+                raw_reading.get("captured_at_ns"),
+                name="reading.captured_at_ns",
+                minimum=1,
+            ),
+            status=ReadingStatus(str(raw_reading.get("status") or "")),
+            source=str(raw_reading.get("source") or ""),
+            scenario_id=str(raw_reading.get("scenario_id") or ""),
+            uncertainty=raw_reading.get("uncertainty"),
+            error=str(raw_reading.get("error") or ""),
+            ingested_at_ns=_stored_int(
+                raw_reading.get("ingested_at_ns", 0),
+                name="reading.ingested_at_ns",
+            ),
+            ingested_monotonic_ns=_stored_int(
+                raw_reading.get("ingested_monotonic_ns", 0),
+                name="reading.ingested_monotonic_ns",
+            ),
+            session_id=str(raw_reading.get("session_id") or ""),
+            sequence=_stored_int(
+                raw_reading.get("sequence", 0),
+                name="reading.sequence",
+            ),
+            wall_clock_source=str(
+                raw_reading.get("wall_clock_source") or "system.time_ns"
+            ),
+            source_epoch=str(raw_reading.get("source_epoch") or ""),
+            source_sequence=_stored_int(
+                raw_reading.get("source_sequence", 0),
+                name="reading.source_sequence",
+            ),
+            source_event_id=str(raw_reading.get("source_event_id") or ""),
+            source_quality=str(raw_reading.get("source_quality") or ""),
+        )
+        if payload.get("channel_id") not in {None, declaration.channel_id}:
+            raise ValueError("Reality observation channel summary conflicts with evidence")
+        if payload.get("unit") not in {None, declaration.unit}:
+            raise ValueError("Reality observation unit summary conflicts with evidence")
+        if payload.get("declaration_sha256") != declaration.sha256:
+            raise ValueError("Reality observation declaration digest differs")
+        if payload.get("reading_sha256") != reading.sha256:
+            raise ValueError("Reality observation reading digest differs")
+        received_at_ns = _stored_int(
+            payload.get("received_at_ns"),
+            name="received_at_ns",
+            minimum=1,
+        )
+        received_monotonic_ns = _stored_int(
+            payload.get("received_monotonic_ns"),
+            name="received_monotonic_ns",
+            minimum=1,
+        )
+        raw_historian = payload.get("historian", {})
+        if not isinstance(raw_historian, Mapping):
+            raise ValueError("Reality observation historian evidence is invalid")
+        if set(raw_historian) != _HISTORIAN_EVIDENCE_KEYS:
+            raise ValueError("Reality observation historian evidence manifest differs")
+        if raw_historian.get("schema") != _HISTORIAN_EVIDENCE_SCHEMA:
+            raise ValueError("Reality observation historian schema differs")
+        historian_record_id = str(raw_historian.get("record_id") or "")
+        historian_quality = str(raw_historian.get("quality") or "")
+        historian_order_basis = str(raw_historian.get("order_basis") or "")
+        historian_order_gap = _stored_bool(
+            raw_historian.get("order_gap", False),
+            name="historian.order_gap",
+        )
+        historian_alarm_codes = tuple(
+            str(value)
+            for value in _stored_sequence(
+                raw_historian.get("alarm_codes", ()),
+                name="historian.alarm_codes",
+            )
+        )
+        expected_reason = (
+            "ephemeral"
+            if historian_quality == "ephemeral"
+            else "accepted_with_source_gap"
+            if historian_order_gap
+            else "accepted"
+        )
+        if str(raw_historian.get("reason") or "") != expected_reason:
+            raise ValueError("Reality observation historian reason differs")
+        if historian_quality == "ephemeral":
+            if (
+                historian_record_id
+                or historian_order_basis != "ephemeral"
+                or historian_order_gap
+                or historian_alarm_codes
+            ):
+                raise ValueError("Ephemeral observation carries durable historian claims")
+        elif not historian_record_id:
+            raise ValueError("Durable observation has no historian record binding")
+        binding_payload = dict(payload)
+        binding_payload.pop("historian", None)
+        binding_evidence = dict(raw_historian)
+        supplied_binding = str(binding_evidence.pop("binding_sha256", ""))
+        expected_binding = _digest(
+            {"observation": binding_payload, "historian": binding_evidence}
+        )
+        if supplied_binding != expected_binding:
+            raise ValueError("Reality observation historian evidence binding differs")
+        return cls(
+            observation_id=str(payload.get("observation_id") or ""),
+            adapter_id=str(payload.get("adapter_id") or ""),
+            declaration=declaration,
+            reading=reading,
+            salience=payload.get("salience", 0.0),
+            received_at_ns=received_at_ns,
+            received_monotonic_ns=received_monotonic_ns,
+            subscription_id=str(payload.get("subscription_id") or ""),
+            historian_record_id=historian_record_id,
+            historian_quality=historian_quality,
+            historian_order_basis=historian_order_basis,
+            historian_order_gap=historian_order_gap,
+            historian_alarm_codes=historian_alarm_codes,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +512,12 @@ class _ChannelState:
 
 
 @dataclass(slots=True)
+class _SourceState:
+    source_epoch: str
+    source_sequence: int
+
+
+@dataclass(slots=True)
 class _Sampler:
     adapter_id: str
     declarations: dict[str, ChannelDeclaration]
@@ -204,6 +533,7 @@ class RealityObservationRouter:
         self,
         service: RealityReachService,
         *,
+        historian: RealityHistorian | None = None,
         queue_limit: int = 256,
         poll_interval_s: float = 2.0,
         sampler_timeout_s: float = 8.5,
@@ -214,6 +544,9 @@ class RealityObservationRouter:
         if not 8 <= int(queue_limit) <= 8192:
             raise ValueError("queue_limit must lie inside [8, 8192]")
         self._service = service
+        if historian is not None and not isinstance(historian, RealityHistorian):
+            raise TypeError("historian must be a RealityHistorian")
+        self._historian = historian
         self._queue_limit = int(queue_limit)
         self._poll_interval_s = max(0.1, min(float(poll_interval_s), 60.0))
         self._sampler_timeout_s = max(0.1, min(float(sampler_timeout_s), 30.0))
@@ -224,6 +557,7 @@ class RealityObservationRouter:
         self._queue: deque[RealityObservation] = deque()
         self._latest: dict[str, RealityObservation] = {}
         self._channel_state: dict[str, _ChannelState] = {}
+        self._source_state: dict[str, _SourceState] = {}
         self._subscriptions: dict[str, ObservationSubscription] = {
             "reality.default": ObservationSubscription(
                 subscription_id="reality.default",
@@ -250,6 +584,16 @@ class RealityObservationRouter:
         self._delivery_failures = 0
         self._sampler_failures = 0
         self._last_delivery_ns = 0
+        self._historian_admitted = 0
+        self._historian_rejected = 0
+        self._historian_replays = 0
+        self._historian_failures = 0
+        self._historian_backoff_s = 0.25
+        self._durable_queue_depth = 0
+        self._last_historian_probe_monotonic = 0.0
+        self._last_historian_maintenance_monotonic = 0.0
+        self._attention_paused = False
+        self._acquisition_paused = False
 
     def configure_subscription(self, subscription: ObservationSubscription) -> None:
         if not isinstance(subscription, ObservationSubscription):
@@ -285,23 +629,29 @@ class RealityObservationRouter:
         self.configure_subscription(subscription)
         return subscription
 
-    def pause(self) -> None:
+    def pause_attention(self) -> None:
         with self._lock:
-            self._subscriptions = {
-                key: ObservationSubscription(
-                    **{**value.to_dict(), "enabled": False}
-                )
-                for key, value in self._subscriptions.items()
-            }
+            self._attention_paused = True
+
+    def resume_attention(self) -> None:
+        with self._lock:
+            self._attention_paused = False
+
+    def pause_acquisition(self) -> None:
+        with self._lock:
+            self._acquisition_paused = True
+
+    def resume_acquisition(self) -> None:
+        with self._lock:
+            self._acquisition_paused = False
+
+    def pause(self) -> None:
+        """Compatibility control: stop acquiring new physical samples."""
+
+        self.pause_acquisition()
 
     def resume(self) -> None:
-        with self._lock:
-            self._subscriptions = {
-                key: ObservationSubscription(
-                    **{**value.to_dict(), "enabled": True}
-                )
-                for key, value in self._subscriptions.items()
-            }
+        self.resume_acquisition()
 
     def register_sampler(self, adapter: Any) -> None:
         adapter_id = str(getattr(adapter, "adapter_id", "") or "")
@@ -347,60 +697,183 @@ class RealityObservationRouter:
         *,
         adapter_id: str,
     ) -> ObservationReceipt:
+        with self._lock:
+            acquisition_paused = self._acquisition_paused
+            queue_depth = (
+                self._durable_queue_depth
+                if self._historian is not None
+                else len(self._queue)
+            )
+        if acquisition_paused:
+            return ObservationReceipt(
+                "",
+                False,
+                "acquisition_paused",
+                queue_depth,
+                0.0,
+            )
         if declaration.kind != ChannelKind.SENSOR:
             raise ValueError("only sensor declarations can be submitted")
         if reading.channel_id != declaration.channel_id or reading.unit != declaration.unit:
             raise ValueError("reading differs from its declaration")
         now = time.monotonic()
         policy = self._policy_for(declaration.channel_id, now=now)
-        if policy is None:
-            return ObservationReceipt("", False, "not_subscribed", len(self._queue), 0.0)
         reading_sha256 = reading.sha256
+        event_sha256 = reading.event_sha256
         with self._lock:
             previous = self._channel_state.get(declaration.channel_id)
-        if previous is not None and previous.reading_sha256 == reading_sha256:
+            previous_source = self._source_state.get(declaration.channel_id)
+        attention_reason = ""
+        salience = 0.0
+        if policy is None:
+            attention_reason = "not_subscribed"
+        elif previous is not None and previous.reading_sha256 == event_sha256:
             self._deduplicated += 1
-            return ObservationReceipt("", False, "duplicate", len(self._queue), 0.0)
-        salience = self._salience(declaration, reading, previous)
-        if previous is not None:
+            attention_reason = "duplicate"
+        else:
+            salience = self._salience(
+                declaration,
+                reading,
+                previous,
+                previous_source,
+            )
+        if policy is not None and not attention_reason and previous is not None:
             interval = 1.0 / policy.max_rate_hz
-            if now - previous.accepted_monotonic < interval and previous.status == reading.status:
-                self._rate_limited += 1
-                return ObservationReceipt("", False, "rate_limited", len(self._queue), salience)
             if (
+                now - previous.accepted_monotonic < interval
+                and previous.status == reading.status
+                and salience < 0.9
+            ):
+                self._rate_limited += 1
+                attention_reason = "rate_limited"
+            elif (
                 previous.value is not None
                 and reading.value is not None
                 and abs(reading.value - previous.value) < policy.min_delta
                 and previous.status == reading.status
             ):
                 self._deduplicated += 1
-                return ObservationReceipt("", False, "below_min_delta", len(self._queue), salience)
-        if salience < policy.min_salience:
+                attention_reason = "below_min_delta"
+        if (
+            policy is not None
+            and not attention_reason
+            and salience < policy.min_salience
+        ):
             self._below_salience += 1
-            return ObservationReceipt("", False, "below_salience", len(self._queue), salience)
-        received_at_ns = max(1, time.time_ns())
-        received_monotonic_ns = max(1, time.monotonic_ns())
-        self._sequence += 1
-        digest = _digest(
-            {
-                "adapter_id": adapter_id,
-                "channel_id": declaration.channel_id,
-                "reading_sha256": reading_sha256,
-                "sequence": self._sequence,
-                "received_monotonic_ns": received_monotonic_ns,
-            }
-        )
-        observation = RealityObservation(
-            observation_id=f"reality.obs.{digest.removeprefix('sha256:')[:32]}",
-            adapter_id=adapter_id,
-            declaration=declaration,
-            reading=reading,
-            salience=salience,
-            received_at_ns=received_at_ns,
-            received_monotonic_ns=received_monotonic_ns,
-            subscription_id=policy.subscription_id,
-        )
+            attention_reason = "below_salience"
+        observation: RealityObservation | None = None
+        if not attention_reason and policy is not None:
+            received_at_ns = max(1, time.time_ns())
+            received_monotonic_ns = max(1, time.monotonic_ns())
+            self._sequence += 1
+            observation = RealityObservation(
+                observation_id=_observation_identifier(
+                    adapter_id=adapter_id,
+                    channel_id=declaration.channel_id,
+                    reading_sha256=reading_sha256,
+                    received_monotonic_ns=received_monotonic_ns,
+                ),
+                adapter_id=adapter_id,
+                declaration=declaration,
+                reading=reading,
+                salience=salience,
+                received_at_ns=received_at_ns,
+                received_monotonic_ns=received_monotonic_ns,
+                subscription_id=policy.subscription_id,
+            )
+        if self._historian is not None:
+            admission = await self._historian.admit(
+                declaration,
+                reading,
+                adapter_id=adapter_id,
+                delivery_observation_id=(
+                    observation.observation_id if observation is not None else ""
+                ),
+                delivery_payload=(
+                    observation.to_dict() if observation is not None else None
+                ),
+                delivery_queue_limit=self._queue_limit,
+                delivery_salience=salience,
+                delivery_required_sinks=(
+                    "advanced_cognition",
+                    "multimodal",
+                ),
+            )
+            if admission.disposition in {
+                HistorianDisposition.ACCEPTED,
+                HistorianDisposition.DEADBAND,
+            }:
+                self._advance_source_state(reading)
+            if not admission.accepted:
+                self._historian_rejected += 1
+                return ObservationReceipt(
+                    "",
+                    False,
+                    f"historian_{admission.reason}",
+                    self._durable_queue_depth,
+                    salience,
+                )
+            self._historian_admitted += 1
+            if observation is not None:
+                self._durable_queue_depth = admission.delivery_queue_depth
+        else:
+            self._advance_source_state(reading)
+        if attention_reason:
+            return ObservationReceipt(
+                "",
+                False,
+                attention_reason,
+                (
+                    self._durable_queue_depth
+                    if self._historian is not None
+                    else len(self._queue)
+                ),
+                salience,
+            )
+        if observation is None:
+            raise RuntimeError("accepted Reality observation was not constructed")
+        if self._historian is not None:
+            observation = replace(
+                observation,
+                historian_record_id=admission.record_id,
+                historian_quality=admission.quality.value,
+                historian_order_basis=admission.order_basis or "unknown",
+                historian_order_gap=admission.order_gap,
+                historian_alarm_codes=admission.alarm_codes,
+            )
+            if not admission.delivery_accepted:
+                self._overflow_drops += 1
+                return ObservationReceipt(
+                    observation.observation_id,
+                    False,
+                    admission.delivery_reason,
+                    admission.delivery_queue_depth,
+                    salience,
+                )
+            superseded = admission.superseded_delivery_ids
+            evicted = superseded[0] if superseded else ""
+            if superseded:
+                self._coalesced += len(superseded)
+            with self._lock:
+                self._latest[declaration.channel_id] = observation
+                self._channel_state[declaration.channel_id] = _ChannelState(
+                    status=reading.status,
+                    value=reading.value,
+                    accepted_monotonic=now,
+                    reading_sha256=event_sha256,
+                )
+                self._accepted += 1
+            self._wake.set()
+            return ObservationReceipt(
+                observation.observation_id,
+                True,
+                "accepted",
+                admission.delivery_queue_depth,
+                salience,
+                evicted_observation_id=evicted,
+            )
         evicted = ""
+        rejected_for_capacity = False
         with self._lock:
             for pending_index, pending in enumerate(self._queue):
                 if pending.declaration.channel_id != declaration.channel_id:
@@ -416,26 +889,31 @@ class RealityObservationRouter:
                 )
                 if least.salience >= observation.salience:
                     self._overflow_drops += 1
-                    return ObservationReceipt(
-                        observation.observation_id,
-                        False,
-                        "queue_full_lower_priority",
-                        len(self._queue),
-                        salience,
-                    )
-                evicted = least.observation_id
-                del self._queue[least_index]
-                self._overflow_drops += 1
-            self._queue.append(observation)
-            self._latest[declaration.channel_id] = observation
-            self._channel_state[declaration.channel_id] = _ChannelState(
-                status=reading.status,
-                value=reading.value,
-                accepted_monotonic=now,
-                reading_sha256=reading_sha256,
-            )
+                    rejected_for_capacity = True
+                else:
+                    evicted = least.observation_id
+                    del self._queue[least_index]
+                    self._overflow_drops += 1
+            if not rejected_for_capacity:
+                self._queue.append(observation)
+                self._latest[declaration.channel_id] = observation
+                self._channel_state[declaration.channel_id] = _ChannelState(
+                    status=reading.status,
+                    value=reading.value,
+                    accepted_monotonic=now,
+                    reading_sha256=event_sha256,
+                )
             depth = len(self._queue)
-            self._accepted += 1
+            if not rejected_for_capacity:
+                self._accepted += 1
+        if rejected_for_capacity:
+            return ObservationReceipt(
+                observation.observation_id,
+                False,
+                "queue_full_lower_priority",
+                depth,
+                salience,
+            )
         self._wake.set()
         return ObservationReceipt(
             observation.observation_id,
@@ -447,6 +925,9 @@ class RealityObservationRouter:
         )
 
     async def poll_once(self) -> int:
+        with self._lock:
+            if self._acquisition_paused:
+                return 0
         readings = await asyncio.to_thread(self._service.refresh)
         declarations = {
             item.channel_id: item
@@ -501,8 +982,13 @@ class RealityObservationRouter:
                         timeout=self._sampler_timeout_s,
                     )
                     readings = result if isinstance(result, tuple) else (result,)
+                    normalized = await asyncio.to_thread(
+                        self._service.ingest_sensor_readings,
+                        sampler.adapter_id,
+                        readings,
+                    )
                     accepted = 0
-                    for reading in readings:
+                    for reading in normalized.values():
                         if not isinstance(reading, ChannelReading):
                             raise TypeError("sampler returned a non-reading")
                         declaration = sampler.declarations.get(reading.channel_id)
@@ -531,6 +1017,26 @@ class RealityObservationRouter:
     async def start(self) -> None:
         if self._running:
             return
+        if self._historian is not None:
+            try:
+                self._historian_replays += await self._historian.recover_inflight()
+                historian_status = await asyncio.to_thread(self._historian.status)
+                delivery_counts = historian_status.get("delivery_counts", {})
+                if isinstance(delivery_counts, Mapping):
+                    self._durable_queue_depth = sum(
+                        int(delivery_counts.get(state, 0) or 0)
+                        for state in ("queued", "delivering")
+                    )
+            except HistorianError as exc:
+                self._historian_failures += 1
+                record_degradation(
+                    "reality_observation_router.historian_start",
+                    exc,
+                    action=(
+                        "Started live sensing in an explicitly unready state; "
+                        "the supervised durable worker will retry with backoff"
+                    ),
+                )
         self._running = True
         self._worker_task = get_task_tracker().create_task(
             self._worker_loop(),
@@ -559,9 +1065,38 @@ class RealityObservationRouter:
         while self._running:
             try:
                 await self.poll_once()
+                now = time.monotonic()
+                if (
+                    self._historian is not None
+                    and now - self._last_historian_maintenance_monotonic >= 30.0
+                ):
+                    await self._historian.maintain()
+                    self._last_historian_maintenance_monotonic = now
+                if (
+                    self._historian is not None
+                    and now - self._last_historian_probe_monotonic >= 30.0
+                ):
+                    prior_ready = self._historian.is_ready()
+                    historian_ready = await self._historian.probe_health()
+                    self._last_historian_probe_monotonic = now
+                    if not historian_ready:
+                        self._historian_failures += 1
+                        if prior_ready:
+                            record_degradation(
+                                "reality_observation_router.historian_probe",
+                                HistorianError(
+                                    "Reality historian periodic probe failed"
+                                ),
+                                action=(
+                                    "Kept live router supervision active and "
+                                    "backed off durable delivery pending recovery"
+                                ),
+                            )
             except asyncio.CancelledError:
                 raise
             except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                if isinstance(exc, HistorianError):
+                    self._historian_failures += 1
                 record_degradation(
                     "reality_observation_router.poll",
                     exc,
@@ -572,39 +1107,177 @@ class RealityObservationRouter:
     async def _worker_loop(self) -> None:
         next_delivery = time.monotonic()
         while self._running:
-            await self._wake.wait()
-            while self._running:
-                with self._lock:
-                    observation = self._queue.popleft() if self._queue else None
-                    if not self._queue:
-                        self._wake.clear()
+            observation: RealityObservation | None = None
+            claimed_id = ""
+            lease_token = ""
+            sink_states: dict[str, dict[str, str]] = {}
+            try:
+                (
+                    observation,
+                    claimed_id,
+                    lease_token,
+                    sink_states,
+                ) = await self._next_observation()
                 if observation is None:
-                    break
-                try:
-                    now = time.monotonic()
-                    if now < next_delivery:
-                        await asyncio.sleep(next_delivery - now)
-                    next_delivery = max(next_delivery, time.monotonic()) + (
-                        1.0 / self._max_delivery_rate_hz
+                    try:
+                        await asyncio.wait_for(self._wake.wait(), timeout=1.0)
+                    except TimeoutError:
+                        pass
+                    continue
+                now = time.monotonic()
+                if now < next_delivery:
+                    await asyncio.sleep(next_delivery - now)
+                next_delivery = max(next_delivery, time.monotonic()) + (
+                    1.0 / self._max_delivery_rate_hz
+                )
+                await self._deliver(
+                    observation,
+                    claimed_id=claimed_id,
+                    lease_token=lease_token,
+                    sink_states=sink_states,
+                )
+                if self._historian is not None and claimed_id:
+                    await self._historian.mark_delivered(
+                        claimed_id,
+                        lease_token=lease_token,
                     )
-                    await self._deliver(observation)
-                    self._delivered += 1
-                    self._last_delivery_ns = max(1, time.time_ns())
-                except asyncio.CancelledError:
-                    raise
-                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
-                    self._delivery_failures += 1
-                    record_degradation(
-                        "reality_observation_router.delivery",
-                        exc,
-                        action="retained subsequent physical observations after one cognitive delivery failed",
+                    self._durable_queue_depth = max(
+                        0,
+                        self._durable_queue_depth - 1,
                     )
+                self._delivered += 1
+                self._last_delivery_ns = max(1, time.time_ns())
+                self._historian_backoff_s = 0.25
+            except asyncio.CancelledError:
+                if self._historian is not None and claimed_id:
+                    try:
+                        cancelled_state = await asyncio.shield(
+                            self._historian.mark_delivery_failed(
+                                claimed_id,
+                                error_code="delivery_cancelled",
+                                lease_token=lease_token,
+                            )
+                        )
+                        if cancelled_state == "quarantined":
+                            self._durable_queue_depth = max(
+                                0,
+                                self._durable_queue_depth - 1,
+                            )
+                    except (RuntimeError, ValueError):
+                        pass
+                raise
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                self._delivery_failures += 1
+                if isinstance(exc, HistorianError):
+                    self._historian_failures += 1
+                if self._historian is not None and claimed_id:
+                    try:
+                        failed_state = await self._historian.mark_delivery_failed(
+                            claimed_id,
+                            error_code=f"{type(exc).__name__}_delivery_failure".lower(),
+                            lease_token=lease_token,
+                        )
+                        if failed_state == "quarantined":
+                            self._durable_queue_depth = max(
+                                0,
+                                self._durable_queue_depth - 1,
+                            )
+                    except (RuntimeError, ValueError) as receipt_exc:
+                        record_degradation(
+                            "reality_observation_router.delivery_receipt",
+                            receipt_exc,
+                            action="left durable delivery failure visible for recovery audit",
+                        )
+                record_degradation(
+                    "reality_observation_router.delivery",
+                    exc,
+                    action="retained and scheduled retry for a failed physical observation delivery",
+                )
+                if isinstance(exc, HistorianError):
+                    delay = self._historian_backoff_s
+                    self._historian_backoff_s = min(30.0, delay * 2.0)
+                    await asyncio.sleep(delay)
 
-    async def _deliver(self, observation: RealityObservation) -> None:
+    async def _next_observation(
+        self,
+    ) -> tuple[
+        RealityObservation | None,
+        str,
+        str,
+        dict[str, dict[str, str]],
+    ]:
+        while self._running:
+            with self._lock:
+                observation = self._queue.popleft() if self._queue else None
+                if not self._queue:
+                    self._wake.clear()
+            if observation is not None:
+                if self._historian is None:
+                    return observation, "", "", {}
+                delivery = await self._historian.claim_delivery(
+                    observation.observation_id
+                )
+                if delivery is None:
+                    continue
+                try:
+                    restored = RealityObservation.from_dict(delivery.payload)
+                except (KeyError, TypeError, ValueError) as exc:
+                    await self._historian.mark_delivery_failed(
+                        delivery.observation_id,
+                        error_code="durable_payload_invalid",
+                        lease_token=delivery.lease_token,
+                    )
+                    raise ValueError("durable Reality observation is invalid") from exc
+                return (
+                    restored,
+                    delivery.observation_id,
+                    delivery.lease_token,
+                    delivery.sink_states,
+                )
+            if self._historian is None:
+                return None, "", "", {}
+            due = await self._historian.claim_due_deliveries(limit=1)
+            if not due:
+                return None, "", "", {}
+            delivery = due[0]
+            self._historian_replays += 1
+            try:
+                restored = RealityObservation.from_dict(delivery.payload)
+            except (KeyError, TypeError, ValueError) as exc:
+                await self._historian.mark_delivery_failed(
+                    delivery.observation_id,
+                    error_code="durable_payload_invalid",
+                    lease_token=delivery.lease_token,
+                )
+                raise ValueError("durable Reality observation is invalid") from exc
+            return (
+                restored,
+                delivery.observation_id,
+                delivery.lease_token,
+                delivery.sink_states,
+            )
+        return None, "", "", {}
+
+    async def _deliver(
+        self,
+        observation: RealityObservation,
+        *,
+        claimed_id: str,
+        lease_token: str,
+        sink_states: Mapping[str, Mapping[str, str]],
+    ) -> None:
         from core.container import ServiceContainer
 
         synchronizer = ServiceContainer.get("multimodal_synchronizer", default=None)
-        if synchronizer is not None and callable(getattr(synchronizer, "ingest", None)):
+        multimodal_required = "multimodal" in sink_states
+        multimodal_delivered = (
+            str(sink_states.get("multimodal", {}).get("state") or "")
+            == "delivered"
+        )
+        ingest = getattr(synchronizer, "ingest", None)
+        if multimodal_required and not callable(ingest):
+            raise RuntimeError("multimodal_synchronizer_unavailable")
+        if callable(ingest) and not multimodal_delivered:
             reading = observation.reading
             claims: list[PerceptualClaim] = [
                 PerceptualClaim(
@@ -656,7 +1329,11 @@ class RealityObservationRouter:
                 ),
                 privacy=PrivacyPolicy(
                     classification=PrivacyClass.PRIVATE,
-                    retention="ephemeral",
+                    retention=(
+                        "bounded_private_historian"
+                        if self._historian is not None
+                        else "ephemeral"
+                    ),
                     consent_scope="reality_reach.sensor_summary",
                     redacted=True,
                     raw_retained=False,
@@ -664,9 +1341,32 @@ class RealityObservationRouter:
                 quality_flags=(
                     f"status:{reading.status.value}",
                     f"evidence:{observation.declaration.evidence_level.value}",
+                    f"historian_quality:{observation.historian_quality}",
+                    f"historian_order:{observation.historian_order_basis}",
+                    f"historian_gap:{str(observation.historian_order_gap).lower()}",
+                    *tuple(
+                        f"historian_alarm:{code}"
+                        for code in observation.historian_alarm_codes
+                    ),
                 ),
             )
-            synchronizer.ingest(event)
+            receipt = ingest(event)
+            accepted = bool(getattr(receipt, "accepted", False))
+            reason = str(getattr(receipt, "reason", "") or "")
+            event_id = str(getattr(receipt, "event_id", "") or "")
+            if not accepted and reason != "duplicate_event":
+                raise RuntimeError(
+                    f"multimodal_ingest_rejected:{reason or 'missing_receipt'}"
+                )
+            if event_id != observation.observation_id:
+                raise RuntimeError("multimodal_ingest_receipt_identity_mismatch")
+            if multimodal_required and self._historian is not None:
+                await self._historian.mark_sink_delivered(
+                    claimed_id,
+                    sink="multimodal",
+                    receipt_id=f"{event_id}:{reason or 'accepted'}",
+                    lease_token=lease_token,
+                )
 
         advanced = ServiceContainer.get("advanced_cognition", default=None)
         if advanced is None:
@@ -676,11 +1376,19 @@ class RealityObservationRouter:
 
             advanced = get_advanced_cognition_runtime()
         observe_state = getattr(advanced, "observe_state", None)
-        if callable(observe_state):
-            await asyncio.to_thread(
+        advanced_required = "advanced_cognition" in sink_states
+        advanced_delivered = (
+            str(sink_states.get("advanced_cognition", {}).get("state") or "")
+            == "delivered"
+        )
+        if advanced_required and not callable(observe_state):
+            raise RuntimeError("advanced_cognition_observer_unavailable")
+        if callable(observe_state) and not advanced_delivered:
+            advanced_receipt = await asyncio.to_thread(
                 observe_state,
                 "physical_environment",
                 {
+                    "observation_id": observation.observation_id,
                     "adapter_id": observation.adapter_id,
                     "channel_id": observation.declaration.channel_id,
                     "observable": observation.declaration.observable,
@@ -694,10 +1402,35 @@ class RealityObservationRouter:
                         layer.value for layer in observation.declaration.reality_layers
                     ],
                     "observation_sha256": observation.reading.sha256,
+                    "historian": {
+                        "record_id": observation.historian_record_id,
+                        "quality": observation.historian_quality,
+                        "order_basis": observation.historian_order_basis,
+                        "order_gap": observation.historian_order_gap,
+                        "alarm_codes": list(observation.historian_alarm_codes),
+                    },
                 },
                 source=f"reality:{observation.adapter_id}",
                 confidence=self._confidence(observation),
+                observed_at=(
+                    observation.reading.captured_at_ns / 1_000_000_000
+                ),
+                idempotency_key=observation.observation_id,
             )
+            if not isinstance(advanced_receipt, Mapping):
+                raise RuntimeError("advanced_cognition_missing_receipt")
+            advanced_receipt_id = str(
+                advanced_receipt.get("receipt_id") or ""
+            )
+            if not advanced_receipt_id:
+                raise RuntimeError("advanced_cognition_missing_receipt_id")
+            if advanced_required and self._historian is not None:
+                await self._historian.mark_sink_delivered(
+                    claimed_id,
+                    sink="advanced_cognition",
+                    receipt_id=advanced_receipt_id,
+                    lease_token=lease_token,
+                )
 
     def latest(self) -> dict[str, dict[str, Any]]:
         with self._lock:
@@ -721,11 +1454,22 @@ class RealityObservationRouter:
             )
 
     def status(self) -> dict[str, Any]:
+        historian_status = (
+            self._historian.health_snapshot()
+            if self._historian is not None
+            else None
+        )
         with self._lock:
+            ready = self.is_ready()
             return {
+                "status": "active" if ready else "degraded",
                 "alive": self.is_alive(),
-                "ready": self.is_ready(),
-                "queue_depth": len(self._queue),
+                "ready": ready,
+                "queue_depth": (
+                    self._durable_queue_depth
+                    if self._historian is not None
+                    else len(self._queue)
+                ),
                 "queue_limit": self._queue_limit,
                 "latest_channels": len(self._latest),
                 "subscriptions": len(self.subscriptions()),
@@ -740,6 +1484,14 @@ class RealityObservationRouter:
                 "delivery_failures": self._delivery_failures,
                 "sampler_failures": self._sampler_failures,
                 "last_delivery_ns": self._last_delivery_ns,
+                "durable_store_forward": self._historian is not None,
+                "historian_admitted": self._historian_admitted,
+                "historian_rejected": self._historian_rejected,
+                "historian_replays": self._historian_replays,
+                "historian_failures": self._historian_failures,
+                "historian": historian_status,
+                "attention_paused": self._attention_paused,
+                "acquisition_paused": self._acquisition_paused,
             }
 
     def get_status(self) -> dict[str, Any]:
@@ -755,7 +1507,14 @@ class RealityObservationRouter:
         )
 
     def is_ready(self) -> bool:
-        return self.is_alive() and any(item.enabled for item in self.subscriptions())
+        historian_ready = (
+            self._historian is None or self._historian.is_ready()
+        )
+        return bool(
+            self.is_alive()
+            and historian_ready
+            and any(item.enabled for item in self.subscriptions())
+        )
 
     def _policy_for(
         self,
@@ -764,6 +1523,8 @@ class RealityObservationRouter:
         now: float,
     ) -> ObservationSubscription | None:
         with self._lock:
+            if self._attention_paused:
+                return None
             matches = [
                 item
                 for item in self._subscriptions.values()
@@ -788,13 +1549,26 @@ class RealityObservationRouter:
         evidence = 0.4 + 0.08 * observation.declaration.evidence_level.rank
         if not observation.declaration.coupling_validated:
             evidence *= 0.7
-        return _clamp01(evidence * (1.0 - uncertainty_penalty))
+        quality_factor = {
+            "good": 1.0,
+            "simulated": 0.75,
+            "uncertain": 0.5,
+            "stale": 0.2,
+            "bad": 0.0,
+            "ephemeral": 0.8,
+        }[observation.historian_quality]
+        if observation.historian_order_gap:
+            quality_factor *= 0.55
+        return _clamp01(
+            evidence * (1.0 - uncertainty_penalty) * quality_factor
+        )
 
     @staticmethod
     def _salience(
         declaration: ChannelDeclaration,
         reading: ChannelReading,
         previous: _ChannelState | None,
+        previous_source: _SourceState | None,
     ) -> float:
         if previous is None:
             base = 0.42 if reading.status in _AVAILABLE else 0.65
@@ -811,6 +1585,21 @@ class RealityObservationRouter:
         tags = set(declaration.compliance_tags)
         if tags & {"safety_critical", "life_safety", "interlock", "alarm"}:
             base = max(base, 0.95)
+        if (
+            previous_source is not None
+            and reading.source_epoch
+            and reading.source_epoch == previous_source.source_epoch
+            and reading.source_sequence > 0
+            and previous_source.source_sequence > 0
+            and reading.source_sequence > previous_source.source_sequence + 1
+        ):
+            base = max(base, 0.95)
+        if str(reading.source_quality or "").strip().lower() in {
+            "bad",
+            "stale",
+            "uncertain",
+        }:
+            base = max(base, 0.9)
         if reading.status in {
             ReadingStatus.DEGRADED,
             ReadingStatus.PERMISSION_DENIED,
@@ -818,6 +1607,22 @@ class RealityObservationRouter:
         }:
             base = max(base, 0.75)
         return _clamp01(base)
+
+    def _advance_source_state(self, reading: ChannelReading) -> None:
+        if not reading.source_epoch or reading.source_sequence <= 0:
+            return
+        with self._lock:
+            previous = self._source_state.get(reading.channel_id)
+            if (
+                previous is not None
+                and previous.source_epoch == reading.source_epoch
+                and reading.source_sequence <= previous.source_sequence
+            ):
+                return
+            self._source_state[reading.channel_id] = _SourceState(
+                source_epoch=reading.source_epoch,
+                source_sequence=reading.source_sequence,
+            )
 
 
 __all__ = [

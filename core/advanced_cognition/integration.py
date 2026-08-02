@@ -1,9 +1,13 @@
 """Integration facade for advanced cognition services."""
 from __future__ import annotations
 
+import math
+import threading
 import time
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, cast
 
 from .continual_learning_stability import ContinualLearningStabilityEngine
 from .ontology_invention import OntologyInventionEngine
@@ -29,6 +33,12 @@ class AdvancedCognitionRuntime:
         self.social = SocialCognitionLayer()
         self.tiers = TieredActionController()
         self._recent_predictions: dict[str, dict[str, Any]] = {}
+        self._observation_lock = threading.RLock()
+        self._observation_receipts: OrderedDict[
+            str,
+            tuple[str, dict[str, Any]],
+        ] = OrderedDict()
+        self._observation_receipt_limit = 4096
 
     def observe_state(
         self,
@@ -37,20 +47,68 @@ class AdvancedCognitionRuntime:
         *,
         source: str = "runtime",
         confidence: float = 0.7,
+        observed_at: float | None = None,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
-        obs = Observation(domain=domain, state=dict(state), source=source, confidence=confidence)
-        grounded = self.grounding.ingest(obs)
-        self.stability.observe_feature_distribution(domain, sorted(obs.features()))
-        model = None
-        if domain not in self.ontology.models or grounded.confidence < 0.45:
-            model = self.ontology.ingest([obs])
-        current_model = model or self.ontology.models.get(domain)
-        return {
-            "observation": obs.to_dict(),
-            "grounded_state": grounded,
-            "ontology": current_model.to_dict() if current_model else None,
-            "receipt_id": stable_hash({"obs": obs.to_dict(), "gr": grounded.state_id}, prefix="adv_obs_"),
-        }
+        timestamp = time.time() if observed_at is None else float(observed_at)
+        if not math.isfinite(timestamp) or timestamp <= 0.0:
+            raise ValueError("observed_at must be a positive finite timestamp")
+        key = str(idempotency_key or "").strip()
+        if len(key) > 192:
+            raise ValueError("idempotency_key exceeds its bounded contract")
+        request_state = dict(state)
+        request_sha256 = stable_hash(
+            {
+                "domain": domain,
+                "state": request_state,
+                "source": source,
+                "confidence": confidence,
+                "observed_at": timestamp,
+            },
+            prefix="adv_request_",
+        )
+        with self._observation_lock:
+            if key:
+                prior = self._observation_receipts.get(key)
+                if prior is not None:
+                    if prior[0] != request_sha256:
+                        raise ValueError(
+                            "advanced cognition idempotency key conflicts with prior evidence"
+                        )
+                    self._observation_receipts.move_to_end(key)
+                    return prior[1]
+            obs = Observation(
+                domain=domain,
+                state=request_state,
+                timestamp=timestamp,
+                source=source,
+                confidence=confidence,
+            )
+            grounded = self.grounding.ingest(obs)
+            self.stability.observe_feature_distribution(domain, sorted(obs.features()))
+            model = None
+            if domain not in self.ontology.models or grounded.confidence < 0.45:
+                model = self.ontology.ingest([obs])
+            current_model = model or self.ontology.models.get(domain)
+            result = {
+                "observation": obs.to_dict(),
+                "grounded_state": grounded,
+                "ontology": current_model.to_dict() if current_model else None,
+                "receipt_id": stable_hash(
+                    {
+                        "idempotency_key": key,
+                        "obs": obs.to_dict(),
+                        "gr": grounded.state_id,
+                    },
+                    prefix="adv_obs_",
+                ),
+            }
+            if key:
+                self._observation_receipts[key] = (request_sha256, result)
+                self._observation_receipts.move_to_end(key)
+                while len(self._observation_receipts) > self._observation_receipt_limit:
+                    self._observation_receipts.popitem(last=False)
+            return result
 
     def pre_action_gate(
         self,
@@ -191,7 +249,7 @@ class AdvancedCognitionRuntime:
             score += 0.15 * (1 - pred.get("confidence", 0.5))
         if any(t in goal_text for t in ("safe", "survive", "preserve", "avoid")):
             score -= 0.25 * pred.get("risk", 0.0)
-        return max(-1.0, min(1.0, score))
+        return float(max(-1.0, min(1.0, score)))
 
     def after_action(
         self,
@@ -229,12 +287,15 @@ class AdvancedCognitionRuntime:
         runtime_state: Mapping[str, Any] | None = None,
         confidence: float = 0.7,
     ) -> dict[str, Any]:
-        return self.social.evaluate(
-            message,
-            relationship_memory=relationship_memory,
-            runtime_state=runtime_state,
-            confidence=confidence,
-        ).to_dict()
+        return cast(
+            dict[str, Any],
+            self.social.evaluate(
+                message,
+                relationship_memory=relationship_memory,
+                runtime_state=runtime_state,
+                confidence=confidence,
+            ).to_dict(),
+        )
 
     def health_report(self) -> dict[str, Any]:
         stability = self.stability.assess_stability()
@@ -297,7 +358,10 @@ def _shared_state_dir() -> Path:
     try:
         from core.environment.runtime_workspace import environment_runtime_dir
 
-        return environment_runtime_dir("shared", purpose="learning") / "advanced_cognition"
+        return cast(
+            Path,
+            environment_runtime_dir("shared", purpose="learning"),
+        ) / "advanced_cognition"
     except (ImportError, RuntimeError, AttributeError, OSError):
         return Path(".aura/advanced_cognition")
 
@@ -314,7 +378,7 @@ def get_advanced_cognition_runtime(*, state_dir: str | Path | None = None) -> Ad
 
         existing = ServiceContainer.get("advanced_cognition", default=None)
         if existing is not None:
-            return existing
+            return cast(AdvancedCognitionRuntime, existing)
         runtime = AdvancedCognitionRuntime(state_dir=resolved_dir)
         ServiceContainer.register_instance("advanced_cognition", runtime)
         return runtime

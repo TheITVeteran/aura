@@ -236,12 +236,44 @@ def test_refresh_sequence_and_operational_readiness_require_live_evidence() -> N
     assert status["last_refresh_monotonic_ns"] == 10_000_000_000
 
 
+def test_source_event_identity_is_independent_of_ingestion_lineage() -> None:
+    source = replace(
+        _reading(),
+        source_epoch="sensor.boot.a",
+        source_sequence=7,
+        source_event_id="sensor.event.7",
+        source_quality="good",
+    )
+    first = replace(
+        source,
+        ingested_at_ns=NOW_NS + 1,
+        ingested_monotonic_ns=10_000,
+        session_id="aura.session.a",
+        sequence=1,
+    )
+    second = replace(
+        source,
+        ingested_at_ns=NOW_NS + 2,
+        ingested_monotonic_ns=20_000,
+        session_id="aura.session.b",
+        sequence=9,
+    )
+
+    assert first.sha256 != second.sha256
+    assert first.event_sha256 == second.event_sha256
+
+
 def test_out_of_domain_and_expired_calibration_are_not_live_evidence() -> None:
     out_of_domain = RealityReachService(
         (StaticAdapter(_declaration(), (_reading(value=101.0),)),),
         clock_ns=lambda: NOW_NS,
     )
-    assert out_of_domain.refresh()["test.cpu"].status == ReadingStatus.DEGRADED
+    out_of_domain_reading = out_of_domain.refresh()["test.cpu"]
+    assert out_of_domain_reading.status == ReadingStatus.DEGRADED
+    assert out_of_domain_reading.sequence == 1
+    assert out_of_domain_reading.ingested_at_ns == NOW_NS
+    assert out_of_domain_reading.ingested_monotonic_ns > 0
+    assert out_of_domain_reading.session_id
 
     calibrated = _declaration(
         calibration_id="test.calibration.1",
@@ -251,7 +283,12 @@ def test_out_of_domain_and_expired_calibration_are_not_live_evidence() -> None:
         (StaticAdapter(calibrated, (_reading(),)),),
         clock_ns=lambda: NOW_NS,
     )
-    assert expired.refresh()["test.cpu"].status == ReadingStatus.UNCALIBRATED
+    expired_reading = expired.refresh()["test.cpu"]
+    assert expired_reading.status == ReadingStatus.UNCALIBRATED
+    assert expired_reading.sequence == 1
+    assert expired_reading.ingested_at_ns == NOW_NS
+    assert expired_reading.ingested_monotonic_ns > 0
+    assert expired_reading.session_id
 
 
 def test_missing_or_failed_adapter_reading_becomes_explicitly_unavailable() -> None:
