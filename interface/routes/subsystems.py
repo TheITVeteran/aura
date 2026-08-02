@@ -651,7 +651,7 @@ async def api_mycelial_graph():
     """Transform the Mycelial Network topology into 3d-force-graph-compatible JSON."""
     mycelium = ServiceContainer.get("mycelium", default=None)
     if not mycelium:
-        return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
+        return JSONResponse({"nodes": [], "links": [], "cohesion": None, "pathway_count": 0})
     return await run_io_bound(
         _MYCELIAL_GRAPH_RESPONSE_CACHE.render,
         mycelium,
@@ -887,7 +887,10 @@ def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
             {
                 "nodes": list(nodes_map.values()),
                 "links": links,
-                "system_cohesion": topo.get("system_cohesion", 0) if nodes_map else 0.5,
+                # CP126 40325f75: no topology is an unmeasured cohesion, not a
+                # measured 0.5. The UI renders null as "not measured".
+                "system_cohesion": topo.get("system_cohesion") if nodes_map else None,
+                "cohesion_basis": topo.get("cohesion_basis"),
                 "pathway_count": topo.get("pathway_count", 0),
                 "mapping_generation": mapping_generation,
                 "mapping_state": mapping_state,
@@ -904,7 +907,7 @@ def _build_mycelial_graph_response(mycelium: Any) -> JSONResponse:
     except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         logger.error("Mycelial graph generation failed: %s", e, exc_info=True)
-        return JSONResponse({"nodes": [], "links": [], "cohesion": 0, "pathway_count": 0})
+        return JSONResponse({"nodes": [], "links": [], "cohesion": None, "pathway_count": 0})
 
 
 # ── Knowledge Graph ───────────────────────────────────────────

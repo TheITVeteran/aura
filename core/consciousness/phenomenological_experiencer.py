@@ -1078,9 +1078,15 @@ class PhenomenalSelfModel:
 
             cohesion = None
             if mycelium is not None:
-                cohesion = float(mycelium.get_system_cohesion())
-                if not math.isfinite(cohesion):
-                    raise ValueError("mycelium cohesion must be finite")
+                # None means the topology has not been measured, not that it
+                # measured badly. Saying she feels fragmented on the strength of
+                # an absent measurement is the same defect as saying she feels
+                # fine on one (CP126 40325f75).
+                raw = mycelium.get_system_cohesion()
+                if raw is not None:
+                    cohesion = float(raw)
+                    if not math.isfinite(cohesion):
+                        raise ValueError("mycelium cohesion must be finite")
             mass = getattr(vault, "total_mass_kb", 0.0) if vault else 0.0
 
             somatic_desc = ""

@@ -30,6 +30,7 @@ Architecture:
 
 import ast
 import asyncio
+import inspect
 import json
 import logging
 import math
@@ -37,6 +38,7 @@ import os
 import re
 import threading
 import time
+import contextlib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from itertools import islice
@@ -89,6 +91,57 @@ def _compile_route_pattern(pattern: str) -> "re.Pattern[str]":
 def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):
     """Search a routing regex against length-bounded input."""
     return compiled.search(str(text or "")[:_MAX_ROUTE_INPUT_LEN])
+
+
+def _cohesion_from_topology(
+    strengths: List[float], confidences: List[float]
+) -> Optional[float]:
+    """Fraction of the topology that is not weak, or None when there is none.
+
+    CP126 40325f75. The old number was ``mean(edge strengths + route
+    confidences)`` — an average across two different scales (strength runs to
+    10.0, confidence to 1.0) reported as "system cohesion". Its one behavioural
+    consumer compared it against 0.7 as though it were a fraction, so a healthy
+    network sat near 1.5 and the "I feel a sense of fragmentation in my roots"
+    line was effectively unreachable. Padding empty lists with ``[0.0]`` and
+    ``[1.0]`` also manufactured a cohesion of 0.5 for a network with no
+    topology at all.
+
+    This is a fraction with a statable meaning: of the edges and routes that
+    exist, how many are at or above the health they were established with. No
+    topology means nothing to measure, which is None, not zero.
+    """
+    total = len(strengths) + len(confidences)
+    if total == 0:
+        return None
+    healthy = sum(1 for value in strengths if value >= Hypha.DEFAULT_STRENGTH)
+    healthy += sum(
+        1 for value in confidences if value >= HardwiredPathway.PRUNE_THRESHOLD
+    )
+    return round(healthy / total, 3)
+
+
+def _calling_site() -> str:
+    """The first frame outside this module — who opened the flow.
+
+    An absorbed failure is only actionable if the report names the code that
+    absorbed it. ``mycelium.py`` frames are skipped so the site is the caller's,
+    not the context manager's — and so is ``contextlib``, which sits between
+    them because ``rooted_flow`` is an ``@asynccontextmanager``. Without that
+    second skip every flow in the runtime reports the same line of the standard
+    library, which names nothing.
+    """
+    try:
+        frame = inspect.currentframe()
+        skip = {__file__, contextlib.__file__}
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if filename not in skip:
+                return f"{filename}:{frame.f_lineno}"
+            frame = frame.f_back
+    except (AttributeError, ValueError):  # pragma: no cover - introspection guard
+        pass
+    return "<unknown>"
 
 
 def _evidence_verifies_outcome(evidence: Any, success: bool) -> bool:
@@ -323,14 +376,26 @@ class Hypha(BaseModel):
     size: float = 1.0
     trace: List[str] = Field(default_factory=list)
 
+    #: The scale an edge's strength lives on. Named because ``get_system_cohesion``
+    #: used to average this quantity with route confidence — which tops out at
+    #: 1.0 — and report the result as a fraction (CP126 40325f75).
+    MIN_STRENGTH: ClassVar[float] = 0.1
+    MAX_STRENGTH: ClassVar[float] = 10.0
+    DEFAULT_STRENGTH: ClassVar[float] = 1.0
+
     def pulse(self, success: bool = True):
         """Reinforce or prune the hypha based on successful transmission."""
         self.last_pulse = time.monotonic()
         self.pulse_count += 1
         if success:
-            self.strength = min(10.0, self.strength + 0.5)
+            self.strength = min(self.MAX_STRENGTH, self.strength + 0.5)
         else:
-            self.strength = max(0.1, self.strength - 1.0)
+            self.strength = max(self.MIN_STRENGTH, self.strength - 1.0)
+
+    @property
+    def is_weak(self) -> bool:
+        """Weaker than it was when established — it has lost more than it gained."""
+        return self.strength < self.DEFAULT_STRENGTH
 
     def refresh_heartbeat(self):
         """Refresh liveness without mutating the learned strength of the edge."""
@@ -379,20 +444,45 @@ class RootedFlowHandle:
         self._priority = priority
         self._hypha_id = f"{source}->{target}"
         self._error: Optional[BaseException] = None
+        # CP126 34f01634: an absorbed failure leaves the caller's ``async with``
+        # completing normally, so a failed action reads as a finished one unless
+        # the caller remembers to ask. Remembering is not a safeguard. The
+        # handle records where it was opened and whether anyone ever collected
+        # the failure; the network sweeps the ones nobody did.
+        self._activity: str = ""
+        self._absorbed = False
+        self._acknowledged = False
+        self._swept = False
+        self._caller_site: str = _calling_site()
+
+    def _acknowledge(self) -> None:
+        self._acknowledged = True
 
     @property
     def failed(self) -> bool:
+        self._acknowledge()
         return self._error is not None
 
     @property
     def error(self) -> Optional[BaseException]:
+        self._acknowledge()
         return self._error
+
+    @property
+    def absorbed(self) -> bool:
+        """Whether this flow's failure was swallowed instead of propagated."""
+        return self._absorbed
 
     def _mark_failed(self, error: BaseException) -> None:
         self._error = error
 
+    def _mark_absorbed(self, activity: str) -> None:
+        self._absorbed = True
+        self._activity = activity
+
     def raise_for_status(self) -> None:
         """Re-raise an absorbed flow failure at the caller's owned boundary."""
+        self._acknowledge()
         if self._error is not None:
             raise self._error
 
@@ -469,6 +559,48 @@ def _take_deferred_pulses(
         return network._deferred_pulses.pop(key, (0, 0))
 
 
+#: Absorbed-failure handles awaiting acknowledgement, and the ones that aged out
+#: of a sweep without ever being collected. Capped because an unacknowledged
+#: absorption is a defect report, not a queue: past the cap the count still
+#: rises but no further handles are retained.
+_ABSORBED_FLOW_LOCK = threading.Lock()
+_MAX_TRACKED_ABSORPTIONS = 256
+
+
+def _track_absorbed_flow(
+    network: "MycelialNetwork", handle: "RootedFlowHandle"
+) -> None:
+    with _ABSORBED_FLOW_LOCK:
+        pending = network._absorbed_flows
+        if len(pending) >= _MAX_TRACKED_ABSORPTIONS:
+            network._absorbed_flow_overflow += 1
+            return
+        pending.append(handle)
+
+
+def _sweep_absorbed_flows(network: "MycelialNetwork") -> List["RootedFlowHandle"]:
+    """Return absorbed failures that survived a full sweep unacknowledged.
+
+    Acknowledgement can only happen after the ``async with`` block returns, so a
+    handle is never judged on the sweep that first sees it. Surviving two sweeps
+    means no caller ever asked whether the flow failed.
+    """
+    with _ABSORBED_FLOW_LOCK:
+        pending = network._absorbed_flows
+        survivors: List[RootedFlowHandle] = []
+        unclaimed: List[RootedFlowHandle] = []
+        for handle in pending:
+            if handle._acknowledged:
+                continue
+            if handle._swept:
+                unclaimed.append(handle)
+                continue
+            handle._swept = True
+            survivors.append(handle)
+        network._absorbed_flows = survivors
+    return unclaimed
+
+
 def _merge_deferred_pulses(
     network: "MycelialNetwork",
     source: str,
@@ -526,6 +658,9 @@ class MycelialNetwork:
             self._route_signal_log_state: Dict[str, Tuple[str, float, int]] = {}
             self._hypha_alert_times: Dict[str, float] = {}
             self._deferred_pulses: Dict[str, Tuple[int, int]] = {}
+            self._absorbed_flows: List[RootedFlowHandle] = []
+            self._absorbed_flow_overflow: int = 0
+            self._unclaimed_absorptions: int = 0
 
             # --- Props ---
             self.ui_callback: Optional[Callable[[str], Coroutine]] = None
@@ -1767,6 +1902,8 @@ class MycelialNetwork:
             self._hypha_alert_times.clear()
             with _DEFERRED_PULSE_LOCK:
                 self._deferred_pulses.clear()
+            with _ABSORBED_FLOW_LOCK:
+                self._absorbed_flows = []
             self.pathways.clear()
             object.__setattr__(self, "_pathway_order", [])
             self.direct_roots.clear()
@@ -1799,8 +1936,18 @@ class MycelialNetwork:
 
     @asynccontextmanager
     async def rooted_flow(self, source: str, target: str, activity: str = None,
-                          timeout: float = 60.0, priority: float = 1.0):
-        """Wraps a process in a mycelial root. If it stalls, the root overrides."""
+                          timeout: float = 60.0, priority: float = 1.0,
+                          absorb_failures: Optional[bool] = None):
+        """Wraps a process in a mycelial root. If it stalls, the root overrides.
+
+        ``absorb_failures`` decides whether a failure inside the block reaches
+        the caller. Left unset it is derived from ``priority``, which is the
+        historical rule and the one the live lanes are tuned for — but the
+        derivation is now named rather than implied by a magic threshold, and
+        every absorption is tracked until somebody collects it. Absorbing a
+        failure without anyone asking is the shape of a failed action that
+        looks finished (CP126 34f01634).
+        """
         try:
             timeout_s = float(timeout)
         except (TypeError, ValueError):
@@ -1818,6 +1965,7 @@ class MycelialNetwork:
                 activity=activity_label,
                 timeout=timeout_s,
                 priority=priority,
+                absorb_failures=absorb_failures,
             ) as handle:
                 yield handle
             return
@@ -1879,8 +2027,16 @@ class MycelialNetwork:
                         recovery_error,
                         exc_info=True,
                     )
-            if hypha is not None and hypha.priority >= 1.0:
-                return  # Absorbed error — failsafe bypass
+            if absorb_failures is None:
+                # Historical rule, now stated: a priority root is a failsafe
+                # bypass, so its failure is absorbed rather than propagated.
+                absorbing = hypha is not None and hypha.priority >= 1.0
+            else:
+                absorbing = bool(absorb_failures)
+            if absorbing:
+                handle._mark_absorbed(activity_label)
+                _track_absorbed_flow(self, handle)
+                return  # Absorbed error — the handle carries it
             raise
 
     async def _emergency_override(self, hypha: Hypha, activity: str, error_msg: str):
@@ -2467,6 +2623,24 @@ class MycelialNetwork:
             return owner.get_topology_summary()
         return dict(self._topology_summary_cache)
 
+    def get_rooted_flow_integrity(self) -> Dict[str, int]:
+        """How many absorbed failures are outstanding, and how many went unclaimed.
+
+        ``unclaimed`` is the number a caller never collected — each one is a
+        failed action that its caller treated as complete.
+        """
+        owner = self._active_owner()
+        if owner is not None and owner is not self:
+            return owner.get_rooted_flow_integrity()
+        with _ABSORBED_FLOW_LOCK:
+            awaiting = len(self._absorbed_flows)
+            overflow = self._absorbed_flow_overflow
+        return {
+            "absorptions_awaiting_acknowledgement": awaiting,
+            "absorptions_unclaimed": self._unclaimed_absorptions,
+            "absorptions_untracked_overflow": overflow,
+        }
+
     def get_hypha_signal_snapshot(self, *, limit: int) -> List[Tuple[float, float]]:
         """Return detached strength/recency inputs for bounded numeric consumers."""
         bounded_limit = max(0, int(limit))
@@ -2629,6 +2803,40 @@ class MycelialNetwork:
                     pathway_id,
                     confidence,
                 )
+            self._report_unclaimed_absorptions()
+
+    def _report_unclaimed_absorptions(self) -> None:
+        """Name the failures that were swallowed and never collected.
+
+        CP126 34f01634. The absorption itself is a deliberate failsafe; what was
+        not deliberate is that nothing distinguished "the caller checked and
+        handled it" from "the caller never asked and carried on as though the
+        action had completed". Each unclaimed handle names the call site so the
+        second case is fixable rather than invisible.
+        """
+        for handle in _sweep_absorbed_flows(self):
+            self._unclaimed_absorptions += 1
+            error = handle._error
+            record_degradation(
+                "mycelium.rooted_flow",
+                error if isinstance(error, Exception) else RuntimeError(str(error)),
+                severity="error",
+                action=(
+                    f"absorbed a failed rooted flow ({handle._hypha_id}: "
+                    f"{handle._activity or 'unnamed activity'}) that "
+                    f"{handle._caller_site} never collected — the caller "
+                    "continued as though the action had completed"
+                ),
+                enforce_failure_policy=False,
+            )
+            logger.error(
+                "🍄 [MYCELIUM] Unclaimed absorbed failure on %s (%s), opened at "
+                "%s: %s",
+                handle._hypha_id,
+                handle._activity or "unnamed activity",
+                handle._caller_site,
+                error,
+            )
 
     async def pulse_check(self):
         """Periodic background check to keep critical hyphae alive and prune weak pathways."""
@@ -2697,14 +2905,43 @@ class MycelialNetwork:
                 data[field_name] = _redact_source_path(data[field_name])
         return data
 
+    @staticmethod
+    def _redact_read_model_payloads(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Replace payload surfaces with their shape.
+
+        CP126 479423bb. ``to_dict()`` and ``model_dump()`` were returned
+        wholesale to API consumers. The edge trace is the concrete leak: the
+        response lane opens its rooted flow with
+        ``activity=f"Process: {message[:20]}"``, so every hypha trace carried
+        the opening characters of the user's message into a public topology
+        endpoint. ``direct_response`` is a canned reply body and ``param_map``
+        is route-extraction detail; neither is read by any consumer of this
+        model. The counts stay so the graph keeps the signal without the
+        content.
+        """
+        trace = data.pop("trace", None)
+        if trace is not None:
+            data["trace_entries"] = len(trace) if isinstance(trace, list) else 0
+        if "direct_response" in data:
+            data["has_direct_response"] = bool(data.pop("direct_response"))
+        param_map = data.pop("param_map", None)
+        if param_map is not None:
+            data["param_count"] = len(param_map) if isinstance(param_map, dict) else 0
+        return data
+
+    @classmethod
+    def _public_read_model(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        return cls._redact_read_model_payloads(cls._redact_read_model_paths(data))
+
     def _network_topology_snapshot_locked(self) -> Dict[str, Any]:
-        # Public read models must not leak absolute filesystem paths.
+        # Public read models must not leak absolute filesystem paths, and must
+        # not carry route payloads or edge traces (CP126 363d2438, 479423bb).
         pathways = {
-            pathway_id: self._redact_read_model_paths(pathway.to_dict())
+            pathway_id: self._public_read_model(pathway.to_dict())
             for pathway_id, pathway in self.pathways.items()
         }
         hyphae = {
-            name: self._redact_read_model_paths(hypha.model_dump())
+            name: self._public_read_model(hypha.model_dump())
             for name, hypha in self.hyphae.items()
         }
         cross_layer_linked = len(self._cross_links)
@@ -2716,11 +2953,13 @@ class MycelialNetwork:
             1 for hypha in hyphae.values() if hypha.get("is_physical")
         )
         logical_count = len(hyphae) - physical_count
-        strengths = [float(hypha.get("strength", 0.0)) for hypha in hyphae.values()] or [0.0]
+        # No ``or [0.0]`` / ``or [1.0]`` padding: an absent measurement is not a
+        # measurement of zero, and it is not a measurement of one either.
+        strengths = [float(hypha.get("strength", 0.0)) for hypha in hyphae.values()]
         confidences = [
-            float(pathway.get("confidence", 1.0))
+            float(pathway.get("confidence", 0.0))
             for pathway in pathways.values()
-        ] or [1.0]
+        ]
 
         return {
             "pathways": pathways,
@@ -2738,10 +2977,8 @@ class MycelialNetwork:
             "critical_modules": critical_modules,
             "discovery_candidates": discovery_candidates,
             "ui_connected": ui_connected,
-            "system_cohesion": round(
-                sum(strengths + confidences) / max(len(strengths + confidences), 1),
-                3,
-            ),
+            "system_cohesion": _cohesion_from_topology(strengths, confidences),
+            "cohesion_basis": {"edges": len(strengths), "routes": len(confidences)},
             "total_pathway_hits": sum(
                 int(pathway.get("hit_count", 0)) for pathway in pathways.values()
             ),
@@ -2766,34 +3003,68 @@ class MycelialNetwork:
             pathway_count = len(self.pathways)
             pathway_confidences = [
                 pathway.confidence for pathway in self.pathways.values()
-            ] or [1.0]
+            ]
             ui_connected = self.ui_callback is not None
-        strengths = [entry["strength"] for entry in hyphae.values()] or [0.0]
+        strengths = [entry["strength"] for entry in hyphae.values()]
         return {
             "hyphae": hyphae,
             "pathways": pathway_count,
             "ui_connected": ui_connected,
-            "system_cohesion": round(
-                sum(strengths + pathway_confidences)
-                / max(len(strengths + pathway_confidences), 1),
-                3,
-            ),
+            "system_cohesion": _cohesion_from_topology(strengths, pathway_confidences),
+            "cohesion_basis": {
+                "edges": len(strengths),
+                "routes": len(pathway_confidences),
+            },
         }
 
-    def get_system_cohesion(self) -> float:
-        """Return the active owner's detached system-cohesion read model."""
+    def get_system_cohesion(self) -> Optional[float]:
+        """Fraction of the topology that is not weak, in [0, 1].
+
+        ``None`` when there is no topology to measure. Callers that turn this
+        into a statement about how Aura feels must check for that — a network
+        with no edges and no routes has not been measured as fragmented, it has
+        not been measured at all.
+        """
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
             if owner is None:
                 raise RuntimeError("retired mycelium instance has no active owner")
             if owner is not None and owner is not self:
                 return owner.get_system_cohesion()
-            strengths = [h.strength for h in self.hyphae.values()] or [0.0]
-            confidences = [pw.confidence for pw in self.pathways.values()] or [1.0]
-        all_values = strengths + confidences
-        return round(sum(all_values) / max(len(all_values), 1), 3)
+            strengths = [h.strength for h in self.hyphae.values()]
+            confidences = [pw.confidence for pw in self.pathways.values()]
+        return _cohesion_from_topology(strengths, confidences)
 
-    def _calculate_cohesion(self) -> float:
+    def get_cohesion_report(self) -> Dict[str, Any]:
+        """Cohesion with the sample it was computed from and its definition."""
+        with MycelialNetwork._lock:
+            owner = self._active_owner_locked()
+            if owner is None:
+                raise RuntimeError("retired mycelium instance has no active owner")
+            if owner is not None and owner is not self:
+                return owner.get_cohesion_report()
+            strengths = [h.strength for h in self.hyphae.values()]
+            confidences = [pw.confidence for pw in self.pathways.values()]
+        value = _cohesion_from_topology(strengths, confidences)
+        return {
+            "value": value,
+            "measured": value is not None,
+            "edges": len(strengths),
+            "weak_edges": sum(
+                1 for s in strengths if s < Hypha.DEFAULT_STRENGTH
+            ),
+            "routes": len(confidences),
+            "weak_routes": sum(
+                1 for c in confidences if c < HardwiredPathway.PRUNE_THRESHOLD
+            ),
+            "definition": (
+                "fraction of edges and routes at or above the health they were "
+                "established with"
+            ),
+            "range": [0.0, 1.0],
+        }
+
+    def _calculate_cohesion(self) -> Optional[float]:
         """Backward-compatible internal alias for the owner-backed read API."""
         return self.get_system_cohesion()
 

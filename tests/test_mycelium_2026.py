@@ -483,8 +483,12 @@ def test_force_remap_preserves_import_learning_and_cannot_collide_with_logical_e
     assert network.map_infrastructure(str(tmp_path), force=True) is True
     after = network.get_graph_snapshot()["topology"]["hyphae"][edge_id]
 
-    for field in ("strength", "created_at", "last_pulse", "pulse_count", "trace"):
+    # ``trace_entries`` rather than ``trace``: the public read model carries the
+    # trace's size, not its contents (CP126 479423bb). Preserving the count
+    # across a remap is the same guarantee — the learned log was not reset.
+    for field in ("strength", "created_at", "last_pulse", "pulse_count", "trace_entries"):
         assert after[field] == before[field]
+    assert after["trace_entries"] > 0
 
 
 def test_force_remap_clears_annotation_when_backing_file_disappears(network, tmp_path):
@@ -1146,14 +1150,67 @@ def test_system_cohesion_read_routes_to_live_replacement(network):
     retired.shutdown()
     replacement = MycelialNetwork()
 
+    # CP126 40325f75: cohesion is now the fraction of the topology at or above
+    # its established health, so degrading it means crossing the thresholds the
+    # module declares — a hypha below its default strength, a route below the
+    # prune threshold — not just picking small numbers.
+    replacement.register_pathway(
+        pathway_id="degraded", pattern=r"x", skill_name="s"
+    )
+    replacement.establish_connection("a", "b")
     with MycelialNetwork._lock:
         for hypha in replacement.hyphae.values():
             hypha.strength = 0.2
         for pathway in replacement.pathways.values():
-            pathway.confidence = 0.4
+            pathway.confidence = 0.1
 
     assert retired.get_system_cohesion() == replacement.get_system_cohesion()
-    assert retired.get_system_cohesion() < 0.7
+    assert retired.get_system_cohesion() == 0.0
+
+
+def test_cohesion_is_unmeasured_rather_than_zero_on_an_empty_topology():
+    """The old formula padded empty lists with [0.0] and [1.0] and reported
+    0.5 — a measurement of a network that has none."""
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+    empty = MycelialNetwork()
+    try:
+        with MycelialNetwork._lock:
+            empty.hyphae.clear()
+            empty.pathways.clear()
+
+        assert empty.get_system_cohesion() is None
+        report = empty.get_cohesion_report()
+        assert report["measured"] is False
+        assert report["value"] is None
+        assert report["edges"] == 0 and report["routes"] == 0
+    finally:
+        MycelialNetwork._instance = None
+        MycelialNetwork._initialized = False
+
+
+def test_cohesion_is_a_fraction_with_a_stated_basis():
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+    net = MycelialNetwork()
+    try:
+        with MycelialNetwork._lock:
+            net.hyphae.clear()
+            net.pathways.clear()
+        net.establish_connection("healthy_a", "healthy_b")
+        net.establish_connection("weak_a", "weak_b")
+        with MycelialNetwork._lock:
+            net.hyphae["weak_a->weak_b"].strength = 0.2
+
+        report = net.get_cohesion_report()
+
+        assert report["edges"] == 2 and report["weak_edges"] == 1
+        assert report["value"] == 0.5
+        assert report["range"] == [0.0, 1.0]
+        assert net.get_system_cohesion() == 0.5
+    finally:
+        MycelialNetwork._instance = None
+        MycelialNetwork._initialized = False
 
 
 def test_migrated_cached_hypha_callers_follow_live_replacement(network):
@@ -1966,3 +2023,54 @@ def test_graph_uses_full_critical_snapshot_and_exact_pathway_annotation():
 
 
 ##
+
+
+def test_public_topology_does_not_carry_user_text_in_edge_traces():
+    """CP126 479423bb: the response lane opens its rooted flow with
+    ``Process: {message[:20]}``, so hypha traces carried the opening of the
+    user's message straight into a public topology endpoint."""
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+    net = MycelialNetwork()
+    try:
+        net.establish_connection("cognition", "response")
+        with MycelialNetwork._lock:
+            net.hyphae["cognition->response"].log(
+                "INITIATING: Process: my bank password is"
+            )
+
+        topology = net.get_network_topology()
+        edge = topology["hyphae"]["cognition->response"]
+
+        assert "trace" not in edge
+        assert edge["trace_entries"] == 1
+        assert "bank password" not in json.dumps(topology)
+    finally:
+        MycelialNetwork._instance = None
+        MycelialNetwork._initialized = False
+
+
+def test_public_topology_does_not_carry_route_payloads():
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+    net = MycelialNetwork()
+    try:
+        net.register_pathway(
+            pathway_id="p",
+            pattern=r"open (.+)",
+            skill_name="s",
+            param_map={"target": 1},
+            direct_response="a canned reply body",
+        )
+
+        topology = net.get_network_topology()
+        route = topology["pathways"]["p"]
+
+        assert "direct_response" not in route
+        assert "param_map" not in route
+        assert route["has_direct_response"] is True
+        assert route["param_count"] == 1
+        assert "canned reply body" not in json.dumps(topology)
+    finally:
+        MycelialNetwork._instance = None
+        MycelialNetwork._initialized = False
