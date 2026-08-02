@@ -538,6 +538,30 @@ class AuraEventBus:
         self._subscribers.clear()
         self._loop = None
 
+    async def _acquire_lock_async(self, timeout: float, where: str) -> bool:
+        """Take the subscriber lock without blocking the event loop.
+
+        CP126 (critical): "Async subscription paths block on a threading
+        lock. subscribe, unsubscribe, and local publish acquire a process
+        threading lock with a multi-second timeout from coroutine code,
+        allowing contention to freeze the event loop."
+
+        ``threading.Lock.acquire(timeout=5.0)`` called from a coroutine
+        blocks the loop THREAD, not the coroutine — so under contention
+        every task on that loop stopped for up to five seconds, including
+        the heartbeats that decide whether the runtime is alive.
+
+        The uncontended case still takes the fast path: a non-blocking
+        acquire, no thread hop, no measurable cost. Only actual contention
+        goes to a worker thread, where waiting is free.
+        """
+        if self._lock.acquire(blocking=False):
+            return True
+        acquired = await asyncio.to_thread(self._lock.acquire, True, timeout)
+        if not acquired:
+            logger.error("🚨 [EVENTBUS] lock contention timeout in %s", where)
+        return acquired
+
     async def subscribe(self, topic: str) -> asyncio.Queue:
         """Subscribe to a topic and receive a queue for events."""
         # Auto-capture the running loop for threadsafe publishing
@@ -554,9 +578,8 @@ class AuraEventBus:
         q = BoundedPriorityQueue(maxsize=1000)
         current_loop = asyncio.get_running_loop()
         
-        acquired = self._lock.acquire(timeout=5.0)
+        acquired = await self._acquire_lock_async(5.0, f"subscribe({topic})")
         if not acquired:
-            logger.error("🚨 [EVENTBUS] DEADLOCK DETECTED in subscribe(%s)!", topic)
             return q
         try:
             self._subscribers[topic].add((q, current_loop))
@@ -568,9 +591,8 @@ class AuraEventBus:
 
     async def unsubscribe(self, topic: str, q: asyncio.PriorityQueue):
         """Remove a subscriber from a topic."""
-        acquired = self._lock.acquire(timeout=5.0)
+        acquired = await self._acquire_lock_async(5.0, f"unsubscribe({topic})")
         if not acquired:
-            logger.error("🚨 [EVENTBUS] DEADLOCK DETECTED in unsubscribe(%s)!", topic)
             return
         
         try:
@@ -681,7 +703,7 @@ class AuraEventBus:
             data["_bounce_count"] = bounce_count + 1
         # -------------------------------
 
-        acquired = self._lock.acquire(timeout=5.0)
+        acquired = await self._acquire_lock_async(5.0, f"publish_local({topic})")
         if not acquired:
             self._record_error(
                 RuntimeError(f"event bus local publish lock timeout for topic {topic!r}"),
@@ -750,7 +772,7 @@ class AuraEventBus:
 
         # Clean up stale subscribers
         if stale_subscribers:
-            acquired = self._lock.acquire(timeout=2.0)
+            acquired = await self._acquire_lock_async(2.0, "publish_local.stale_cleanup")
             if acquired:
                 try:
                     for tup in stale_subscribers:

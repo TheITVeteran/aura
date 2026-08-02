@@ -1618,7 +1618,13 @@ async def test_event_bus_local_lock_timeout_marks_degraded():
     from core.event_bus import AuraEventBus
 
     class NeverAcquires:
-        def acquire(self, timeout=None):
+        # Mirrors threading.Lock.acquire(blocking=True, timeout=-1). The stub
+        # previously accepted only `timeout`, which was enough while the bus
+        # called acquire(timeout=...) from the event loop. That call blocked
+        # the loop thread; the bus now tries a non-blocking acquire first and
+        # only waits in a worker thread, so the stub has to model the real
+        # signature.
+        def acquire(self, blocking=True, timeout=-1):
             return False
 
         def release(self):
