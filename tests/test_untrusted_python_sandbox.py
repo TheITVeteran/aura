@@ -23,8 +23,6 @@ from core.sandbox.untrusted_python import (
     run_untrusted_script,
 )
 
-pytestmark = pytest.mark.timeout(180)
-
 _HAS_BOUNDARY = bool(available_boundary())
 _needs_boundary = pytest.mark.skipif(
     not _HAS_BOUNDARY, reason="no OS sandbox boundary on this host"

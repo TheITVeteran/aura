@@ -507,7 +507,37 @@ def _execute(
             boundary=boundary,
             scratch=scratch,
             source=source,
+            env=_child_environment(scratch),
         )
+
+
+#: The only environment variables untrusted code inherits.
+#:
+#: A live escape probe found the original version handing the child this
+#: process's entire environment. A kernel boundary that blocks the
+#: filesystem and then passes ANTHROPIC_API_KEY in os.environ has not
+#: stopped exfiltration, it has just made it require one more line. The
+#: allowlist is short on purpose: anything not here is something untrusted
+#: code has no business knowing.
+_ENV_ALLOWLIST: frozenset[str] = frozenset({"LANG", "LC_ALL", "LC_CTYPE", "TZ"})
+
+
+def _child_environment(scratch: Path) -> dict[str, str]:
+    """A minimal, secret-free environment for the sandboxed child."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in _ENV_ALLOWLIST
+    }
+    # PATH is deliberately empty rather than absent: an empty PATH means
+    # "find nothing", while an absent one makes some libraries fall back to
+    # a compiled-in default that includes /usr/bin.
+    env["PATH"] = ""
+    env["HOME"] = str(scratch)
+    env["TMPDIR"] = str(scratch)
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
 
 
 def _wrap_with_boundary(
@@ -534,6 +564,7 @@ def _spawn(
     boundary: str,
     scratch: Path,
     source: str,
+    env: dict[str, str] | None = None,
 ) -> SandboxOutcome:
     from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -544,6 +575,7 @@ def _spawn(
             timeout=timeout_s + 5.0,
             capture_output=True,
             cwd=str(scratch),
+            env=env,
             source=f"sandbox.untrusted_python.{source}",
         )
     except subprocess.TimeoutExpired:
