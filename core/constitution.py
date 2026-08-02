@@ -19,6 +19,11 @@ from typing import Any
 from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
+from core.security.structural_redaction import (
+    redact_mapping,
+    redact_structure,
+    redaction_marker,
+)
 
 logger = logging.getLogger("Aura.ConstitutionalCore")
 
@@ -389,23 +394,38 @@ class ConstitutionalCore:
         try:
             from core.event_bus import get_event_bus
 
+            # CP126 (critical): "Tool telemetry publishes full arguments and
+            # results. The event payload copies raw args and arbitrary
+            # results into the telemetry bus. Credentials, message bodies,
+            # file content, personal data, and large outputs have no
+            # structural redaction or size limit."
+            #
+            # Every tool call in the system passes through here, so this was
+            # the single widest exposure surface: a shell command's argv, a
+            # web request's headers, a file write's content, an email body —
+            # published verbatim to a bus with an unbounded payload.
+            safe_args, args_report = redact_mapping(dict(args or {}))
             payload = {
                 "type": "tool_event",
                 "stage": stage,
                 "tool": tool_name,
                 "source": source,
-                "args": dict(args or {}),
+                "args": safe_args,
                 "success": success,
                 "error": error,
                 "duration_ms": duration_ms,
                 "timestamp": time.time(),
             }
+            args_marker = redaction_marker(args_report)
+            if args_marker:
+                payload["args_redaction"] = args_marker
             if decision is not None:
                 payload["decision"] = {
                     "proposal_id": decision.proposal_id,
                     "outcome": decision.outcome.value,
                     "reason": decision.reason,
-                    "constraints": dict(decision.constraints or {}),
+                    # Constraints can carry caller-supplied values too.
+                    "constraints": redact_mapping(dict(decision.constraints or {}))[0],
                 }
             if handle is not None:
                 payload["handle"] = {
@@ -414,7 +434,13 @@ class ConstitutionalCore:
                     "intention_id": handle.intention_id,
                 }
             if result is not None:
-                payload["result"] = result
+                # Results are the larger half: a tool can return a whole
+                # file, a page of HTML, or a directory listing.
+                safe_result, result_report = redact_structure(result)
+                payload["result"] = safe_result
+                result_marker = redaction_marker(result_report)
+                if result_marker:
+                    payload["result_redaction"] = result_marker
             get_event_bus().publish_threadsafe("telemetry", payload)
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('constitution', exc)
@@ -597,12 +623,31 @@ class ConstitutionalCore:
         error: str | None = None,
     ) -> dict[str, Any]:
         if handle is None:
+            # CP126 (critical): "Missing execution handle is reported as
+            # fully closed. finish_tool_execution(None) asserts that intent
+            # closure and token revocation succeeded even though no handle
+            # exists from which either fact can be established."
+            #
+            # With no handle there is genuinely nothing outstanding, so
+            # `closed` stays True — a caller asking "is anything left to
+            # reconcile?" gets the right answer. But `intent_closed` and
+            # `token_revoked` asserted that two specific ACTIONS succeeded,
+            # and neither was attempted. They are now None: not applicable,
+            # rather than done.
+            #
+            # This matters downstream. capability_engine invalidates an
+            # effectful result when a closure receipt reports failure, and
+            # the authority gateway queues unreconciled grants — both read
+            # these fields. A receipt that claims a revocation nobody
+            # performed is exactly the kind of evidence those checks exist
+            # to catch.
             return {
                 "closed": True,
                 "mode": "no_handle",
                 "success": bool(success),
-                "intent_closed": True,
-                "token_revoked": True,
+                "intent_closed": None,
+                "token_revoked": None,
+                "handle_present": False,
                 "errors": [],
             }
 

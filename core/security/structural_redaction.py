@@ -86,6 +86,24 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # Credentials embedded in a URL: scheme://user:password@host
     (re.compile(r"\b([a-z][a-z0-9+.\-]*://)[^\s/:@]+:[^\s/@]+@"), r"\1[REDACTED_USERINFO]@"),
+    # Direct personal identifiers.
+    #
+    # Added when core/constitution.py's tool telemetry was routed through
+    # here: that bus carries every tool call in the system, so "credentials
+    # only" was the wrong boundary — a shell argument or an email tool's
+    # payload carries the person, not just their keys. Ordering matters, so
+    # these sit after the credential patterns: an email inside a userinfo
+    # URL is already gone by the time this runs.
+    (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), "[EMAIL_REDACTED]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN_REDACTED]"),
+    (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "[CARD_REDACTED]"),
+    (
+        re.compile(
+            r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?)?\d{3,4}[ .-]\d{3,4}"
+            r"(?:[ .-]\d{2,4})?\b"
+        ),
+        "[PHONE_REDACTED]",
+    ),
 )
 
 DEFAULT_MAX_DEPTH = 8
