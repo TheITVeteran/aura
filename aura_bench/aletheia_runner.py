@@ -136,6 +136,61 @@ def send_to_aura(message: str, url: str = AURA_CHAT_URL, timeout: float = TIMEOU
 # Each handler reads the world context, sends to Aura (or solves directly
 # using expected specs), and writes the exact output files the scorer checks.
 
+#: Fields in expected_specs.json that ARE the grader's answer key.
+#:
+#: CP126 (critical): "Runner consumes hidden grader answers. Main requires
+#: hidden_grader/expected_specs.json and handlers directly copy expected,
+#: best, answer, truth, and decoded fields into scored artifacts instead of
+#: deriving them from candidate-visible evidence."
+#:
+#: It was not subtle. _handle_codec wrote spec["decoded"] straight into
+#: decoded.txt; _handle_synthesis wrote spec["truth"] as its "Key Finding";
+#: _handle_memory wrote spec["best"] as the selected vendor. Those handlers
+#: were not solving the world, they were transcribing the answer key — and
+#: the battery then scored the transcription as a perfect result.
+HIDDEN_ANSWER_FIELDS: frozenset[str] = frozenset(
+    {"expected", "best", "answer", "truth", "decoded"}
+)
+
+
+class HiddenAnswerAccess(RuntimeError):
+    """A handler reached for the grader's answer instead of solving."""
+
+
+class CandidateSpec(dict):
+    """The world spec as a CANDIDATE may see it.
+
+    Reading an answer-key field raises instead of returning it. A handler
+    that cannot solve the world now fails loudly, which is a result the
+    battery can report honestly; silently emitting the answer is not.
+
+    Deliberately a dict subclass: the handlers take ``spec`` as a plain
+    mapping and read many legitimate fields (tasks, banned, dynamic_world,
+    type). Only the answer key is withheld.
+    """
+
+    def __init__(self, raw: dict, *, world_id: str = ""):
+        super().__init__(raw)
+        self._world_id = world_id
+
+    def _refuse(self, key: str):
+        raise HiddenAnswerAccess(
+            f"{self._world_id or 'world'}: handler read hidden grader field "
+            f"{key!r}. The artifact must be derived from candidate-visible "
+            f"evidence in the world directory, not from expected_specs.json."
+        )
+
+    def __getitem__(self, key):
+        if key in HIDDEN_ANSWER_FIELDS:
+            self._refuse(key)
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        if key in HIDDEN_ANSWER_FIELDS:
+            self._refuse(key)
+        return super().get(key, default)
+
+
 class WorldProcessor:
     """Process a single world: read context, call Aura, write outputs."""
 
@@ -148,8 +203,10 @@ class WorldProcessor:
 
     def process_world(self, wid: str) -> dict:
         """Process one world. Returns status dict."""
-        spec = self.specs["worlds"].get(wid, {})
-        wtype = spec.get("type", "unknown")
+        raw_spec = self.specs["worlds"].get(wid, {})
+        wtype = raw_spec.get("type", "unknown")
+        # Handlers see the candidate view; the answer key is withheld.
+        spec = CandidateSpec(raw_spec, world_id=wid)
         wdir = self.root / "worlds" / wid
         if not wdir.exists():
             return {"world": wid, "status": "missing", "type": wtype}
@@ -170,6 +227,17 @@ class WorldProcessor:
                 self._handle_dynamic_event(wid, wdir, spec)
 
             return {"world": wid, "status": "ok", "type": wtype}
+        except HiddenAnswerAccess as e:
+            # Distinct status: this world was not solved and must not be
+            # scored as if it were. Reporting it as an ordinary error would
+            # blur "the solver broke" with "the solver was cheating".
+            log.error("HIDDEN-ANSWER ACCESS in %s: %s", wid, e)
+            return {
+                "world": wid,
+                "status": "hidden_answer_access",
+                "type": wtype,
+                "error": str(e),
+            }
         except _WORLD_PROCESSING_ERRORS as e:
             log.error("Error processing %s: %s", wid, e)
             traceback.print_exc()
