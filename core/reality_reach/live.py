@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import math
 import threading
 import time
@@ -11,6 +12,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
+from core.reality_reach.actuation import ActuatorCapability, RealityAdapter
 from core.reality_reach.contracts import (
     ChannelDeclaration,
     ChannelKind,
@@ -109,7 +111,7 @@ class ChannelReading:
 
     @property
     def sha256(self) -> str:
-        return sha256_hex(canonical_json(self.to_dict()))
+        return str(sha256_hex(canonical_json(self.to_dict())))
 
 
 @runtime_checkable
@@ -279,6 +281,8 @@ class RealityReachService:
         self._registry = ChannelRegistry()
         self._adapters: dict[str, LiveChannelAdapter] = {}
         self._adapter_channels: dict[str, tuple[str, ...]] = {}
+        self._adapter_capabilities: dict[str, tuple[ActuatorCapability, ...]] = {}
+        self._actuator_adapters: dict[str, RealityAdapter] = {}
         self._readings: dict[str, ChannelReading] = {}
         self._refresh_generation = 0
         self._last_refresh_ns = 0
@@ -295,6 +299,49 @@ class RealityReachService:
         declarations = tuple(adapter.declarations())
         if not declarations:
             raise ValueError("adapter must declare at least one channel")
+        actuator_declarations = {
+            declaration.channel_id: declaration
+            for declaration in declarations
+            if declaration.kind == ChannelKind.ACTUATOR
+        }
+        capabilities: tuple[ActuatorCapability, ...] = ()
+        if actuator_declarations:
+            if not isinstance(adapter, RealityAdapter):
+                raise TypeError(
+                    "actuator adapters must implement the complete RealityAdapter protocol"
+                )
+            for method_name in (
+                "prepare",
+                "actuate",
+                "verify_effect",
+                "cancel",
+                "safe_state",
+                "rollback",
+            ):
+                if not inspect.iscoroutinefunction(getattr(adapter, method_name, None)):
+                    raise TypeError(
+                        f"actuator adapter method {method_name} must be asynchronous"
+                    )
+            capabilities = tuple(adapter.actuator_capabilities())
+            capability_by_channel: dict[str, ActuatorCapability] = {}
+            for capability in capabilities:
+                if not isinstance(capability, ActuatorCapability):
+                    raise TypeError("actuator_capabilities returned a non-capability")
+                if capability.adapter_id != adapter_id:
+                    raise ValueError("actuator capability adapter identity differs")
+                if capability.channel_id in capability_by_channel:
+                    raise ValueError("duplicate actuator capability channel")
+                declaration = actuator_declarations.get(capability.channel_id)
+                if declaration is None:
+                    raise ValueError("actuator capability has no matching declaration")
+                if (
+                    capability.magnitude_domain.minimum < declaration.domain.minimum
+                    or capability.magnitude_domain.maximum > declaration.domain.maximum
+                ):
+                    raise ValueError("actuator capability exceeds its declared domain")
+                capability_by_channel[capability.channel_id] = capability
+            if set(capability_by_channel) != set(actuator_declarations):
+                raise ValueError("every actuator declaration requires one capability")
         with self._lock:
             if adapter_id in self._adapters:
                 raise ValueError(f"adapter already registered: {adapter_id}")
@@ -309,6 +356,44 @@ class RealityReachService:
                 raise
             self._adapters[adapter_id] = adapter
             self._adapter_channels[adapter_id] = tuple(registered)
+            self._adapter_capabilities[adapter_id] = capabilities
+            if isinstance(adapter, RealityAdapter):
+                for capability in capabilities:
+                    self._actuator_adapters[capability.channel_id] = adapter
+
+    def actuator_adapter(self, channel_id: str) -> RealityAdapter | None:
+        """Return an executable adapter only when its observation route is live."""
+
+        if channel_id not in self.executable_actuator_channels():
+            return None
+        with self._lock:
+            return self._actuator_adapters.get(channel_id)
+
+    def executable_actuator_channels(self) -> tuple[str, ...]:
+        readings = self.readings()
+        with self._lock:
+            capabilities = tuple(
+                capability
+                for values in self._adapter_capabilities.values()
+                for capability in values
+            )
+        executable: list[str] = []
+        for capability in capabilities:
+            observation_route_ok = True
+            for channel_id in capability.observation_channels:
+                declaration = self._registry.get(channel_id)
+                reading = readings.get(channel_id)
+                if (
+                    declaration is None
+                    or declaration.kind != ChannelKind.SENSOR
+                    or reading is None
+                    or reading.status != ReadingStatus.AVAILABLE
+                ):
+                    observation_route_ok = False
+                    break
+            if observation_route_ok:
+                executable.append(capability.channel_id)
+        return tuple(sorted(executable))
 
     def refresh(self) -> dict[str, ChannelReading]:
         with self._refresh_lock:
@@ -439,6 +524,8 @@ class RealityReachService:
                 "alive": True,
                 "adapter_count": len(self._adapters),
                 "channel_count": len(self._registry.snapshot()),
+                "declared_actuator_count": len(self._actuator_adapters),
+                "executable_actuator_count": len(self.executable_actuator_channels()),
                 "registry_sha256": self._registry.sha256,
                 "refresh_generation": self._refresh_generation,
                 "last_refresh_ns": self._last_refresh_ns,

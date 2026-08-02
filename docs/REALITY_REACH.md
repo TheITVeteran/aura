@@ -193,14 +193,14 @@ language alone.
 
 ### RR-06 Governed experiment execution
 
-- [ ] Replace the read-only adapter protocol with a versioned bidirectional
+- [x] Replace the read-only adapter protocol with a versioned bidirectional
   `RealityAdapter` contract supporting `declarations`, `read`, `prepare`,
   `actuate`, `verify_effect`, `cancel`, `safe_state`, and `rollback`.
-- [ ] Define canonical `ActuationCommand`, `ActuationLease`, `ActuationReceipt`,
+- [x] Define canonical `ActuationCommand`, `ActuationLease`, `ActuationReceipt`,
   `EffectReceipt`, and `RollbackReceipt` envelopes with units, preconditions,
   deadlines, idempotency keys, capability identity, command lineage, expected
   effects, safe envelopes, abort predicates, and content digests.
-- [ ] Require adapters to declare reversibility, compensation semantics,
+- [x] Require adapters to declare reversibility, compensation semantics,
   command rate and magnitude limits, exclusivity, permissions, warmup/cooldown,
   watchdog behavior, independent observation routes, and failure modes.
 - [ ] Implement one transaction coordinator whose state machine distinguishes

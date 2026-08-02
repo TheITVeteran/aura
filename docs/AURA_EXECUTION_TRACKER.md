@@ -34580,3 +34580,39 @@ reasoning-gain, frontier, release, or `WOW Signal` claim is made. This is total
 checkpoint 793 of the current 920-checkpoint completion envelope,
 approximately 86.2% by count. The resident 32B full campaign remains active and
 its model/import closure is untouched. Long soaks remain deferred.
+
+### 2026-08-01 - CP794 bidirectional Reality Reach adapter contract
+
+Reality Reach actuator declarations can no longer enter the live registry
+through the read-only sensor protocol. An actuator-bearing adapter must satisfy
+the runtime-checkable `RealityAdapter` surface and expose asynchronous
+`prepare`, `actuate`, `verify_effect`, `cancel`, `safe_state`, and `rollback`
+methods. Every actuator declaration must have exactly one same-adapter bounded
+capability; undeclared, duplicate, oversized-domain, synchronous-lookalike, or
+partially implemented adapters fail registration atomically.
+
+The new immutable contract layer includes content-addressed commands, dual-
+clock/session-bound authority leases, preparations, transport/execution
+receipts, independent effect receipts, rollback/safe-state receipts, explicit
+transaction states, and bounded actuator capabilities. Commands bind canonical
+units, inventory identity, idempotency, deadlines, parameters, preconditions,
+expected effects, safe numeric envelopes, and abort predicates. Capabilities
+bind reversibility or a non-reversibility certificate, compensation action,
+rate and magnitude limits, exclusivity, permissions, warmup/cooldown, watchdog,
+observation routes, and failure modes. Receipt invariants prevent transport
+from implying execution and prevent execution from implying independently
+verified effect. Lease validity requires matching service session plus both
+wall and monotonic deadlines.
+
+The live service exposes an adapter for execution only when every declared
+observation channel currently has an available sensor reading; declarations
+alone remain non-executable. The full Reality Reach/boot contract suite passes
+28/28; focused Ruff, compilation, strict MyPy, and diff integrity pass. This
+closes the first three RR-06 contract items. Durable transaction coordination,
+ActionExecutor dispatch, real hardware adapters, interlocks, effect readback,
+and live physical acceptance remain open. No physical effect, evidence
+promotion, bootstrap-complete, reasoning-gain, frontier, release, or
+`WOW Signal` claim is made. This is total checkpoint 794 of the current
+920-checkpoint completion envelope, approximately 86.3% by count. The resident
+32B full campaign remains active and its model/import closure is untouched.
+Long soaks remain deferred.

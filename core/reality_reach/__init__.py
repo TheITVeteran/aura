@@ -1,6 +1,18 @@
 # ruff: noqa: N999
 """Typed physical reachability, experimentation, and evidence contracts."""
 
+from core.reality_reach.actuation import (
+    ActuationCommand,
+    ActuationLease,
+    ActuationReceipt,
+    ActuationState,
+    ActuatorCapability,
+    EffectReceipt,
+    PreparedActuation,
+    RealityAdapter,
+    Reversibility,
+    RollbackReceipt,
+)
 from core.reality_reach.contracts import (
     ChannelDeclaration,
     ChannelKind,
@@ -29,6 +41,11 @@ from core.reality_reach.live import (
 from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
 
 __all__ = [
+    "ActuationCommand",
+    "ActuationLease",
+    "ActuationReceipt",
+    "ActuationState",
+    "ActuatorCapability",
     "ChannelDeclaration",
     "ChannelKind",
     "ChannelReading",
@@ -37,12 +54,15 @@ __all__ = [
     "ConstraintKind",
     "CouplingClass",
     "EvidenceLevel",
+    "EffectReceipt",
     "FailureCode",
     "HostResourceAdapter",
     "NumericDomain",
     "ObjectiveKind",
     "ProofRequirement",
+    "PreparedActuation",
     "RealityIR",
+    "RealityAdapter",
     "RealityLayer",
     "ReadingStatus",
     "ReachabilityCertificate",
@@ -50,6 +70,8 @@ __all__ = [
     "ReachabilityFailure",
     "ReachabilityStatus",
     "RealityReachService",
+    "Reversibility",
+    "RollbackReceipt",
     "get_reality_reach_service",
     "register_reality_reach_service",
 ]
