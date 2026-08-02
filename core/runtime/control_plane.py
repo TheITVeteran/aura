@@ -1232,11 +1232,40 @@ class ServiceObservation:
     next_retry_at: float = 0.0
     last_error: str = ""
     admission_receipt_id: str = ""
+    #: Independent named claims about this service. A single collapsed
+    #: observed_state cannot express "loaded but not accepting foreground
+    #: work" or "degraded while recovering normally" — those are separate
+    #: facts, and squashing them forces every consumer to re-derive the
+    #: distinction from a prose reason string.
+    conditions: Any = None
+    #: Cleanups that must complete before this service counts as stopped.
+    finalizers: Any = None
+
+    def condition_set(self) -> Any:
+        """The live condition set, created on first use."""
+        if self.conditions is None:
+            from core.runtime.service_conditions import ConditionSet
+
+            self.conditions = ConditionSet(generation=self.generation)
+        return self.conditions
+
+    def finalizer_set(self) -> Any:
+        if self.finalizers is None:
+            from core.runtime.service_conditions import FinalizerSet
+
+            self.finalizers = FinalizerSet()
+        return self.finalizers
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["desired_state"] = self.desired_state.value
         payload["observed_state"] = self.observed_state.value
+        payload["conditions"] = (
+            self.conditions.to_dict() if self.conditions is not None else None
+        )
+        payload["finalizers"] = (
+            self.finalizers.to_dict() if self.finalizers is not None else None
+        )
         return payload
 
 
@@ -1364,6 +1393,75 @@ class RuntimeControlPlane:
         observation.observed_state = state
         observation.reason = reason
         observation.last_error = error
+        # Derive the independent claims from the state the reconciler just
+        # observed, so conditions are populated by real reconciliation rather
+        # than being a parallel surface someone has to remember to update.
+        RuntimeControlPlane._sync_conditions(observation, state, reason, error)
+
+    @staticmethod
+    def _sync_conditions(
+        observation: ServiceObservation,
+        state: ObservedServiceState,
+        reason: str,
+        error: str,
+    ) -> None:
+        """Project an observed state onto independent conditions.
+
+        Never raises: conditions are an observability surface, and a reporting
+        failure must not break the reconciliation that produced it.
+        """
+        try:
+            from core.runtime.service_conditions import (
+                ConditionStatus,
+                ConditionType,
+            )
+
+            conditions = observation.condition_set()
+            value = getattr(state, "value", str(state))
+
+            alive = value in {"running", "degraded", "starting", "stopping"}
+            ready = value in {"running", "degraded"}
+            terminating = value == "stopping"
+
+            conditions.set(
+                ConditionType.ALIVE,
+                ConditionStatus.TRUE if alive else (
+                    ConditionStatus.UNKNOWN if value == "unknown"
+                    else ConditionStatus.FALSE
+                ),
+                reason=reason,
+                message=error,
+            )
+            conditions.set(
+                ConditionType.READY,
+                ConditionStatus.TRUE if ready else (
+                    ConditionStatus.UNKNOWN if value == "unknown"
+                    else ConditionStatus.FALSE
+                ),
+                reason=reason,
+            )
+            # Degraded is running-but-not-fully-capable; it is NOT down, and a
+            # consumer that treats it as down takes a working service offline.
+            conditions.set(
+                ConditionType.DEGRADED,
+                ConditionStatus.TRUE if value == "degraded" else ConditionStatus.FALSE,
+                reason=reason,
+            )
+            conditions.set(
+                ConditionType.TERMINATING,
+                ConditionStatus.TRUE if terminating else ConditionStatus.FALSE,
+                reason=reason,
+            )
+            # A service still inside its restart budget is recovering, not
+            # merely failing — the distinction decides whether to escalate.
+            recovering = bool(observation.next_retry_at) and value != "running"
+            conditions.set(
+                ConditionType.RECOVERING,
+                ConditionStatus.TRUE if recovering else ConditionStatus.FALSE,
+                reason=f"next_retry_at={observation.next_retry_at:.0f}" if recovering else reason,
+            )
+        except (ImportError, AttributeError, TypeError, ValueError, KeyError):
+            return
 
     @staticmethod
     def _probe_ok(value: Any) -> bool:
