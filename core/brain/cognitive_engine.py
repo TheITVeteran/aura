@@ -691,6 +691,13 @@ def _compact_bicameral_directive(frame: dict[str, Any] | None) -> str:
     if not isinstance(frame, dict):
         return ""
     try:
+        from core.brain.bicameral_advisory import validate_bicameral_frame
+
+        if not validate_bicameral_frame(frame):
+            return ""
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return ""
+    try:
         salience = float(frame.get("salience", 0.0) or 0.0)
     except (TypeError, ValueError):
         salience = 0.0
@@ -710,7 +717,7 @@ def _compact_bicameral_directive(frame: dict[str, Any] | None) -> str:
     directives = [
         "Bicameral advisory: reconcile internal proposals into one coherent answer; do not present them as voices or evidence of phenomenal experience."
     ]
-    summary = str(frame.get("narrator_summary") or "").strip()
+    summary = " ".join(str(frame.get("narrator_summary") or "").split())
     if summary:
         directives.append(summary[:260])
     if routing.get("use_tool_gateway"):
@@ -721,7 +728,9 @@ def _compact_bicameral_directive(frame: dict[str, Any] | None) -> str:
         directives.append("Check assumptions and resolve uncertainty before answering strongly.")
     if routing.get("use_imagination") or routing.get("expand_options"):
         directives.append("Use a novel option or analogy if it helps the user's actual request.")
-    rendered_attention = ", ".join(str(item)[:40] for item in attention[:4] if item)
+    rendered_attention = ", ".join(
+        " ".join(str(item).split())[:40] for item in attention[:4] if item
+    )
     if rendered_attention:
         directives.append(f"Attention: {rendered_attention}.")
     if _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45:
@@ -1250,9 +1259,12 @@ class CognitiveEngine:
             return context
 
         frame_dict = frame.to_dict()
-        causal = dict(frame.causal_effects or {})
-        routing = dict(frame.routing_bias or {})
-        sampling = dict(frame.sampling_bias or {})
+        # The issued frame is deeply immutable. AuraState is intentionally
+        # deepcopy-able for phase retry/rebase, so only its fully materialized
+        # signed transport payload may cross into state modifiers.
+        causal = dict(frame_dict.get("causal_effects") or {})
+        routing = dict(frame_dict.get("routing_bias") or {})
+        sampling = dict(frame_dict.get("sampling_bias") or {})
 
         state.response_modifiers["bicameral_advisory"] = frame_dict
         state.response_modifiers["bicameral_consensus"] = frame.consensus

@@ -65,12 +65,13 @@ class TestMidsentenceCutoffTrim:
         assert trimmed == text
         assert changed is False
 
-    def test_early_boundary_does_not_discard_majority(self):
-        # Boundary in the first 60% — trimming would throw away most of the
-        # reply, so the text stays as-is.
+    def test_early_boundary_salvages_complete_answer(self):
+        # A complete answer is preferable to losing the entire turn because a
+        # much longer unfinished tail reached the token budget.
         text = "Short opener. " + "then a very long unfinished clause " * 5
         trimmed, changed = _trim_midsentence_cutoff(text)
-        assert changed is False
+        assert trimmed == "Short opener."
+        assert changed is True
 
     def test_empty_and_whitespace_safe(self):
         assert _trim_midsentence_cutoff("") == ("", False)
