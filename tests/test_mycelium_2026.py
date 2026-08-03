@@ -2598,3 +2598,36 @@ def test_shutdown_does_not_claim_a_stuck_mapper_when_there_is_none(network):
     assert (
         network.get_infrastructure_report()["shutdown_left_mapper_running"] is False
     )
+
+
+def test_the_vault_schema_follows_the_model_it_persists():
+    """Consolidation guard. The allowed-field sets were hand-written copies of
+    the models; adding three counters to HardwiredPathway serialized fine and
+    was then rejected at restore, breaking the round-trip."""
+    from core.mycelium import _vault_allowed_fields
+
+    pathway_fields = _vault_allowed_fields(
+        HardwiredPathway, dropped={"last_matched"}, added={"last_matched_age_s"}
+    )
+    assert set(HardwiredPathway.model_fields) - {"last_matched"} <= pathway_fields
+    assert "last_matched" not in pathway_fields
+    assert "last_matched_age_s" in pathway_fields
+
+
+def test_a_new_model_field_is_accepted_by_restore_without_a_second_edit():
+    """The property the hand-written list did not have."""
+    from core.mycelium import _vault_allowed_fields
+
+    for field in ("verified_hits", "verified_misses", "unverified_reinforcements"):
+        assert field in _vault_allowed_fields(
+            HardwiredPathway, dropped={"last_matched"}, added={"last_matched_age_s"}
+        )
+
+
+def test_the_vault_schema_refuses_to_drop_a_field_that_is_gone():
+    """A rename that silently stopped dropping a monotonic timestamp would
+    persist a process-local clock into the vault."""
+    from core.mycelium import _vault_allowed_fields
+
+    with pytest.raises(ValueError, match="drops fields"):
+        _vault_allowed_fields(HardwiredPathway, dropped={"never_existed"}, added=set())

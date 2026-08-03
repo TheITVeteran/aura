@@ -15,7 +15,7 @@ Inspired by Physarum polycephalum (slime mold), this module provides:
    This file used to call them "unblockable" and say they "bypass the LLM
    reasoning loop entirely". The runtime never granted the first and the second
    was read as licence for the first (CP126 39f4805f). The description is now
-   the contract, and ``tests/test_mycelium_roots_are_governed.py`` holds every
+   the contract, and ``tests/test_mycelium_routing_authority.py`` holds every
    effect-producing consumer to it.
 
 2. **Physarum Reinforcement**: Pathways strengthen on success, weaken on failure.
@@ -208,6 +208,25 @@ _ROUTE_UTTERANCE_PREFIX = (
     r"(?:go\s+(?:ahead\s+)?and\s+)?"
     r"(?:just\s+)?"
 )
+
+
+def _vault_allowed_fields(
+    model: type[BaseModel], *, dropped: set[str], added: set[str]
+) -> set[str]:
+    """The field names a vault row for ``model`` may carry.
+
+    Derived from the model rather than hand-listed. The hand-written copies
+    drifted the moment anyone added a field: three counters added to
+    HardwiredPathway serialized fine and were then rejected at restore, so the
+    vault round-trip broke and only an integration test caught it. ``dropped``
+    and ``added`` name the deliberate differences — monotonic timestamps are
+    persisted as ages, because a monotonic clock does not survive a restart.
+    """
+    fields = set(model.model_fields) - dropped
+    missing = dropped - set(model.model_fields)
+    if missing:  # pragma: no cover - guards against a silent rename
+        raise ValueError(f"vault schema drops fields {model.__name__} lacks: {missing}")
+    return fields | added
 
 
 def _live_skill_names() -> set[str] | None:
@@ -1078,7 +1097,7 @@ class MycelialNetwork:
 
         Each pattern is now anchored to the start of the utterance, past an
         optional address or courtesy lead-in, so it fires on an instruction and
-        not on a mention. ``tests/test_mycelium_default_route_precision.py``
+        not on a mention. ``tests/test_mycelium_routing_authority.py``
         carries the negative controls.
         """
         self.register_pathway(
@@ -3760,13 +3779,9 @@ class MycelialNetwork:
     ) -> dict[str, HardwiredPathway]:
         if not isinstance(raw, dict):
             raise ValueError("vault pathways must be an object")
-        allowed = {
-            "pathway_id", "pattern", "skill_name", "param_map", "priority",
-            "source_file", "dependencies", "confidence", "activity_label",
-            "hit_count", "miss_count", "created_at", "last_matched_age_s",
-            "direct_response", "color", "description", "size",
-            "verified_hits", "verified_misses", "unverified_reinforcements",
-        }
+        allowed = _vault_allowed_fields(
+            HardwiredPathway, dropped={"last_matched"}, added={"last_matched_age_s"}
+        )
         restored: dict[str, HardwiredPathway] = {}
         for key, value in raw.items():
             if not isinstance(key, str) or not isinstance(value, dict):
@@ -3896,14 +3911,11 @@ class MycelialNetwork:
     ) -> dict[str, Hypha]:
         if not isinstance(raw, dict):
             raise ValueError("vault hyphae must be an object")
-        allowed = {
-            "name", "source", "target", "priority", "strength", "created_age_s",
-            "last_pulse_age_s", "pulse_count", "active", "is_physical", "source_file",
-            "target_file", "color", "description", "size", "trace",
-            "hardware_id", "pinned", "root_kind", "liveness_contract", "state",
-            "owner_generation", "attested_identity", "last_activity_at",
-            "last_probe_at", "last_probe_success_at", "stale_after_s", "last_error",
-        }
+        allowed = _vault_allowed_fields(
+            NeuralRoot,  # the widest shape: a plain Hypha is a subset of it
+            dropped={"created_at", "last_pulse"},
+            added={"created_age_s", "last_pulse_age_s"},
+        )
         restored: dict[str, Hypha] = {}
         for key, value in raw.items():
             if not isinstance(key, str) or not isinstance(value, dict):
