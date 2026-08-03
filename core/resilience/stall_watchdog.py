@@ -226,6 +226,13 @@ class StallWatchdog(threading.Thread):
         self._last_stall_dump_path: str = ""
         self._suppressed_stall_dumps: int = 0
 
+        # Boot-grace wedge detection. Boot grace is a time budget, so a boot
+        # that is progressing slowly and a boot parked on one frame look
+        # identical to it. They are not: a progressing boot moves. These track
+        # the loop's innermost frame so a motionless one can be told apart.
+        self._boot_frame_signature: str = ""
+        self._boot_frame_signature_since: float = time.time()
+
     @staticmethod
     def _resolve_heartbeat_file() -> Path | None:
         raw = _FLAG_LIVENESS_HEARTBEAT_FILE.value()
@@ -457,6 +464,47 @@ class StallWatchdog(threading.Thread):
         except (TypeError, ValueError):
             return 240.0
 
+    def _loop_frame_signature(self) -> str:
+        """Cheap identity of the loop's innermost frame — file:line:function.
+
+        Deliberately not a formatted traceback: this runs every watchdog tick,
+        and composing full stacks is the GIL burst that made stall dumps cause
+        the next stall.
+        """
+
+        thread_id = self._loop_thread_id
+        if thread_id is None:
+            return ""
+        try:
+            frame = sys._current_frames().get(thread_id)
+            if frame is None:
+                return ""
+            code = frame.f_code
+            return f"{os.path.basename(code.co_filename)}:{frame.f_lineno}:{code.co_name}"
+        except (AttributeError, KeyError, RuntimeError, ValueError):
+            return ""
+
+    def _boot_frame_stuck_for(self) -> tuple[float, str]:
+        """How long the loop's innermost frame has been unchanged, and which.
+
+        Returns ``(0.0, frame)`` whenever the frame moves — progress resets the
+        clock, so only a genuinely motionless loop accumulates time.
+        """
+
+        signature = self._loop_frame_signature()
+        now = time.time()
+        if not signature:
+            # No readable frame is not evidence of a wedge; the loop thread id
+            # is only learned once the heartbeat has run on the loop.
+            self._boot_frame_signature = ""
+            self._boot_frame_signature_since = now
+            return 0.0, ""
+        if signature != self._boot_frame_signature:
+            self._boot_frame_signature = signature
+            self._boot_frame_signature_since = now
+            return 0.0, signature
+        return now - self._boot_frame_signature_since, signature
+
     def _should_force_exit(self, loop_silence: float) -> bool:
         """True when the loop is wedged beyond any in-process recovery.
 
@@ -469,12 +517,33 @@ class StallWatchdog(threading.Thread):
             return False
         boot_grace = self._hard_exit_boot_grace_s()
         if boot_grace > 0 and (time.time() - self._started_at) < boot_grace:
+            motionless_for, frame = self._boot_frame_stuck_for()
+            if motionless_for >= ceiling:
+                # BOUNDED, like the foreground-lane suppression above. On
+                # 2026-08-03 the boot loop parked in the skill catalog behind
+                # an ABBA deadlock; the watchdog dumped 33 times in three
+                # minutes and suppressed every escalation, because 1200s of
+                # boot grace had not elapsed. The reaper killed the kernel
+                # first and the launcher restarted into the same race. A boot
+                # whose loop has not moved off one frame for longer than the
+                # wedge ceiling is not booting slowly — it is wedged, and boot
+                # grace must not protect it.
+                logger.critical(
+                    "🛑 [WATCHDOG] Boot loop wedged: silent %.0fs and parked on %s for "
+                    "%.0fs (≥ %.0fs ceiling) — boot grace no longer applies.",
+                    loop_silence,
+                    frame or "an unreadable frame",
+                    motionless_for,
+                    ceiling,
+                )
+                return True
             self._log_suppression(
                 "_last_hard_exit_boot_suppression_log_at",
                 "StallWatchdog: suppressing %.1fs hard-exit loop silence during boot grace "
-                "(grace=%.1fs).",
+                "(grace=%.1fs, loop frame moving, at=%s).",
                 loop_silence,
                 boot_grace,
+                frame or "unknown",
             )
             return False
         service_grace = self._runtime_service_progress_grace_s()

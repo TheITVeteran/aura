@@ -233,6 +233,10 @@ class LockdepValidator:
         self._splat_counts: dict[str, int] = {}
         self._acquires = 0
         self._loop_thread_ident: int | None = None
+        # Per-thread "already reporting" flag. Reporting logs, and a log
+        # handler may acquire a checked lock; without this, that acquisition
+        # would report again from inside the report.
+        self._reporting = threading.local()
 
     # ── execution context identity ────────────────────────────────────
     @staticmethod
@@ -341,6 +345,7 @@ class LockdepValidator:
         key = self._context_key()
         site = self._site()
         now = time.monotonic()
+        pending: list[Splat | None] = []
 
         with self._lock:
             self._acquires += 1
@@ -353,7 +358,7 @@ class LockdepValidator:
 
             # 3. self-deadlock on a non-reentrant lock
             if not reentrant and any(h.name == name for h in held):
-                self._splat_locked(
+                splat = self._splat_locked(
                     kind="self_deadlock",
                     signature=f"self:{name}",
                     message=(
@@ -364,13 +369,14 @@ class LockdepValidator:
                     acquiring=name,
                     context=label,
                 )
+                pending.append(splat)
 
             # 2. sync lock held across an await
             if is_async:
                 sync_held = [h for h in held if not h.is_async]
                 if sync_held:
                     names = ", ".join(h.name for h in sync_held)
-                    self._splat_locked(
+                    splat = self._splat_locked(
                         kind="sync_held_across_await",
                         signature=f"await:{names}->{name}",
                         message=(
@@ -383,6 +389,7 @@ class LockdepValidator:
                         acquiring=name,
                         context=label,
                     )
+                    pending.append(splat)
 
             for h in held:
                 # 1a. declared rank inversion
@@ -392,7 +399,7 @@ class LockdepValidator:
                     and rank <= h.rank
                     and h.name != name
                 ):
-                    self._splat_locked(
+                    splat = self._splat_locked(
                         kind="rank_inversion",
                         signature=f"rank:{h.name}->{name}",
                         message=(
@@ -405,6 +412,7 @@ class LockdepValidator:
                         acquiring=name,
                         context=label,
                     )
+                    pending.append(splat)
 
                 # 1b. observed order inversion
                 if h.name == name:
@@ -415,7 +423,7 @@ class LockdepValidator:
                 cycle = self._creates_cycle(h.name, name)
                 if cycle is not None:
                     opposing = self._edge_site.get((name, h.name), "<unknown site>")
-                    self._splat_locked(
+                    splat = self._splat_locked(
                         kind="order_inversion",
                         signature="cycle:" + "->".join(sorted({*cycle, h.name, name})),
                         message=(
@@ -428,6 +436,7 @@ class LockdepValidator:
                         acquiring=name,
                         context=label,
                     )
+                    pending.append(splat)
                 self._edges.setdefault(h.name, set()).add(name)
                 self._edge_site.setdefault(edge, site)
 
@@ -442,9 +451,13 @@ class LockdepValidator:
                 )
             )
 
+        # Outside the lock on purpose — see _report_splats.
+        self._report_splats(pending)
+
     def on_release(self, name: str, *, is_async: bool) -> None:
         key = self._context_key()
         now = time.monotonic()
+        pending: list[Splat | None] = []
         with self._lock:
             state = self._contexts.get(key)
             if state is None:
@@ -467,7 +480,7 @@ class LockdepValidator:
                 and self._loop_thread_ident is not None
                 and entry.thread_ident == self._loop_thread_ident
             ):
-                self._splat_locked(
+                splat = self._splat_locked(
                     kind="loop_blocking_hold",
                     signature=f"hold:{name}@{entry.site}",
                     message=(
@@ -480,6 +493,10 @@ class LockdepValidator:
                     acquiring=name,
                     context=label,
                 )
+                pending.append(splat)
+
+        # Outside the lock on purpose — see _report_splats.
+        self._report_splats(pending)
 
     # ── reporting ─────────────────────────────────────────────────────
     def _splat_locked(
@@ -491,13 +508,19 @@ class LockdepValidator:
         held: list[_HeldLock],
         acquiring: str,
         context: str,
-    ) -> None:
-        """Caller holds self._lock."""
+    ) -> Splat | None:
+        """Record a finding. Caller holds self._lock; nothing here may block.
+
+        Returns the splat to report, or None when it is a duplicate or past
+        the retention cap. Reporting is the caller's job, *after* releasing
+        the lock — see :meth:`_report_splats`.
+        """
+
         self._splat_counts[signature] = self._splat_counts.get(signature, 0) + 1
         if signature in self._splats:
-            return  # already reported; count is enough
+            return None  # already reported; count is enough
         if len(self._splats) >= MAX_SPLATS:
-            return
+            return None
         splat = Splat(
             kind=kind,
             signature=signature,
@@ -509,28 +532,58 @@ class LockdepValidator:
             context=context,
         )
         self._splats[signature] = splat
-        # Report outside the caller's critical path as much as possible:
-        # logging and taint are cheap and must not be deferred, because a
-        # process that deadlocks after this point still needs the record.
-        logger.error("🔒 LOCKDEP %s: %s", kind, message)
-        taint(
-            TaintFlag.LOCK_ORDER,
-            f"{kind}: {message[:200]}",
-            subsystem="lockdep",
-        )
-        try:
-            from core.runtime.errors import record_degradation
+        return splat
 
-            record_degradation(
-                "lockdep",
-                RuntimeError(message),
-                severity="warning",
-                action=f"recorded {kind} splat; execution continued",
-                extra={"kind": kind, "signature": signature, "held": list(splat.held)},
-                enforce_failure_policy=False,
-            )
-        except Exception:  # noqa: BLE001 — never let reporting break the lock
-            logger.debug("lockdep degradation record failed", exc_info=True)
+    def _report_splats(self, pending: list[Splat | None]) -> None:
+        """Log, taint, and record findings with ``self._lock`` released.
+
+        This ran under the lock until 2026-08-03, when it wedged a live boot:
+        ``logger.error`` reached a handler that lazily imported a module whose
+        import took a checked lock, which re-entered ``on_acquire``, which
+        waited for the very lock the reporting path was holding. A validator
+        that deadlocks the process it is validating is worse than no
+        validator, so reporting now happens outside the critical section and
+        cannot re-enter it.
+
+        The reentrancy flag covers the remaining hop: reporting may itself
+        acquire checked locks, and those acquisitions are still *recorded* —
+        they simply do not recurse into reporting.
+        """
+
+        findings = [splat for splat in pending if splat is not None]
+        if not findings or getattr(self._reporting, "active", False):
+            return
+        self._reporting.active = True
+        try:
+            for splat in findings:
+                logger.error("🔒 LOCKDEP %s: %s", splat.kind, splat.message)
+                try:
+                    taint(
+                        TaintFlag.LOCK_ORDER,
+                        f"{splat.kind}: {splat.message[:200]}",
+                        subsystem="lockdep",
+                    )
+                except Exception:  # noqa: BLE001 — never let reporting break the lock
+                    logger.debug("lockdep taint failed", exc_info=True)
+                try:
+                    from core.runtime.errors import record_degradation
+
+                    record_degradation(
+                        "lockdep",
+                        RuntimeError(splat.message),
+                        severity="warning",
+                        action=f"recorded {splat.kind} splat; execution continued",
+                        extra={
+                            "kind": splat.kind,
+                            "signature": splat.signature,
+                            "held": list(splat.held),
+                        },
+                        enforce_failure_policy=False,
+                    )
+                except Exception:  # noqa: BLE001 — never let reporting break the lock
+                    logger.debug("lockdep degradation record failed", exc_info=True)
+        finally:
+            self._reporting.active = False
 
     def splats(self) -> list[Splat]:
         with self._lock:

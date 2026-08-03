@@ -1136,7 +1136,12 @@ class BootAutonomyMixin:
         state_machine = StateMachine(orchestrator=self)
         ServiceContainer.register_instance("state_machine", state_machine)
 
-        self.status.skills_loaded = len(engine.skills)
+        # Off the loop: this is the first touch of the catalog, so it runs the
+        # whole discovery/validation transaction — ~1.4s of imports and file
+        # I/O that lockdep measured as a loop-blocking hold. During boot the
+        # loop is what serves /api/health/boot, and a loop that cannot answer
+        # is a desktop stuck on "RESUMING LIVE SURFACE".
+        self.status.skills_loaded = await asyncio.to_thread(lambda: len(engine.skills))
         logger.info("✓ Capability Engine initialized with %d skills", self.status.skills_loaded)
 
         from core.skill_management.hephaestus import HephaestusEngine
