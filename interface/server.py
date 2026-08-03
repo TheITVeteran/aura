@@ -654,6 +654,23 @@ async def serve_immutable_runtime_shell(request: Request, call_next):
     path = str(request.url.path or "")
     if not runtime_shell_request_path(path):
         return await call_next(request)
+    if path == "/static/service-worker.js":
+        # The one asset that must never be frozen. A registered worker's script
+        # URL carries the revision it was registered under, and the browser
+        # revalidates exactly that URL to discover a newer worker. Answering it
+        # from that revision's snapshot means the update check can only ever see
+        # the bytes it already has, so the registration — and every asset it
+        # serves from its own cache — becomes permanent.
+        #
+        # Measured live 2026-08-03: a desktop window was controlled by a worker
+        # from a revision hours old, across four runtime restarts and three
+        # revision changes, and could not be rescued by reloading. Freezing the
+        # update channel leaves no channel.
+        #
+        # The worker still binds itself to the revision in its own URL, so the
+        # immutability of everything it serves is unchanged; only its own code
+        # is allowed to move forward.
+        return await call_next(request)
     directly_addressed = "_aura_runtime" in request.query_params
     revision = str(request.query_params.get("_aura_runtime") or "").strip().lower()
     if not revision:

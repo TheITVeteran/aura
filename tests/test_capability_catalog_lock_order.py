@@ -127,6 +127,36 @@ class TestLoadUnderTheGuardIsRefusedNotHung:
         assert len(engine.skills) > 0
 
 
+class TestRegistrationSurvivesTheLazyLoad:
+    """Removing the inversion made a latent defect reachable.
+
+    register_skill wrote into a catalog that had not loaded yet, so the first
+    later read rebuilt _skills from discovery and the registration vanished.
+    It used to work by accident: _refresh_active_skills read the lazy `skills`
+    property from inside the guard, which loaded the catalog as a side effect
+    of the very lock inversion that deadlocked boot.
+    """
+
+    def test_a_registered_skill_is_still_there_after_the_catalog_loads(self, engine):
+        from core.skills.base_skill import BaseSkill
+
+        class RuntimeSkill(BaseSkill):
+            name = "lock_order_probe_skill"
+            description = "Registered at runtime, then read back after a lazy load."
+            effect_scope = "pure_compute"
+
+            async def execute(self, params, context=None):
+                return {"ok": True}
+
+        skill = RuntimeSkill()
+        assert engine.register_skill(skill) is True
+        # The property is the first thing that triggers the catalog load.
+        assert "lock_order_probe_skill" in engine.skills
+        assert engine.skills["lock_order_probe_skill"].instance is skill
+        # And the discovered catalog is present too — registration adds, not replaces.
+        assert len(engine.skills) > 1
+
+
 class TestNoInvertedReadsInSource:
     """A source ratchet, so the next edit cannot reintroduce the class."""
 

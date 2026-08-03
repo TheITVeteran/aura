@@ -2512,6 +2512,14 @@ class CapabilityEngine(AuraBaseModule):
     def register_skill(self, implementation: Any, *, replace: bool = False) -> bool:
         """Atomically add one runtime implementation to the current catalog generation."""
 
+        # Load first, then add. Registering into a catalog that has not loaded
+        # yet writes into a generation the first later read replaces: the lazy
+        # load rebuilds _skills from discovery and the registration is simply
+        # gone. This used to be masked because _refresh_active_skills read the
+        # lazy `skills` property from inside the guard, which loaded the
+        # catalog as a side effect of the very inversion that deadlocked boot.
+        # Removing the inversion made the latent defect reachable.
+        self._ensure_catalog_loaded()
         with self._catalog_mutation_guard(), self._catalog_guard():
             return self._register_skill_locked(implementation, replace=replace)
 
