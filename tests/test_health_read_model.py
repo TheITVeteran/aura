@@ -1516,7 +1516,15 @@ def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
     assert "revision.verified !== true" in source
     assert "revision.required !== true" in source
     assert "function healthSnapshotRevisionEvidence(payload)" in source
-    assert "metadata.fresh !== true" in source
+    # This used to pin `metadata.fresh !== true`, which was the defect rather
+    # than the contract: this same module serves stale-while-revalidate, so a
+    # valid unexpired snapshot reads fresh=false most of the time and the
+    # shell formed no revision evidence at all. An open desktop window then
+    # ran a replaced shell indefinitely (measured live 2026-08-03, across four
+    # runtime restarts). `expired` is the real "do not trust this" signal and
+    # is what must be honoured — see tests/test_open_shell_reloads_for_new_assets.py.
+    assert "metadata.fresh !== true" not in source
+    assert "metadata.expired === true" in source
     assert "function runtimeRevisionEvidenceIsMonotonic" in source
     assert "function runtimeRevisionMarkerFromLocation" in source
     assert "RUNTIME_REVISION_RELOAD_LIMIT" in source
@@ -1675,16 +1683,27 @@ def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
             assert.equal(handoff.scope, `owner:${{'e'.repeat(64)}}`);
             assert.equal(Object.hasOwn(handoff.active, 'approvalResumeToken'), false);
 
-        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ verified: false }})), false);
-        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ fresh: false }})), false);
-        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ expired: true }})), false);
-        assert.equal(replacements.length, 0);
-
         // A shell that CLAIMS a required revision and cannot prove it is
         // untrusted, and a heartbeat carrying no runtime_revision key at all
         // must inherit that verdict.
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ verified: false }})), false);
         assert.equal(state.runtimeRevisionTrust, 'untrusted');
         assert.equal(runtimeRevisionPolicyBlocker({{}}), 'runtime_revision_unverified');
+
+        // A STALE snapshot does not unprove a proven revision. This module
+        // serves stale-while-revalidate, so fresh=false is the normal reading
+        // of a perfectly valid snapshot; treating it as no evidence left an
+        // open desktop window running a shell the runtime had replaced (live
+        // 2026-08-03). First sighting binds the revision without reloading.
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ fresh: false }})), false);
+        assert.equal(state.runtimeRevisionTrust, 'trusted');
+        assert.equal(state.runtimeRevision, revisionA);
+
+        // An EXPIRED snapshot is neither proof nor disproof: it is not
+        // authoritative, so it must leave the standing verdict alone.
+        assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ expired: true }})), false);
+        assert.equal(state.runtimeRevisionTrust, 'trusted');
+        assert.equal(replacements.length, 0);
 
         // A direct/source launch has no signed revision and never will: the
         // runtime says required === false, and the server's own blocker treats

@@ -5553,7 +5553,22 @@ function healthSnapshotRevisionEvidence(payload) {
     if (
         !revision
         || !metadata
-        || metadata.fresh !== true
+        // NOT `fresh === true`. The health read model serves
+        // stale-while-revalidate — a 5s refresh interval against a 30s
+        // max-stale window — so `fresh` is false for most of any given
+        // second while `expired` stays false and the snapshot stays valid by
+        // the server's own contract. Demanding freshness meant the shell
+        // formed no revision evidence at all on a perfectly good snapshot,
+        // so the reload path below could not run: measured live 2026-08-03
+        // with fresh=false, stale=true, expired=false, age=13.9s. Bryan's
+        // desktop window stayed open across four runtime restarts and three
+        // revision-token changes, still executing the shell it had loaded
+        // hours earlier, showing "Conversation lane initializing" while
+        // /api/health reported conversation_ready: true.
+        //
+        // `expired` is the server's real "do not trust this" signal and is
+        // still honoured. Monotonicity below still stops a snapshot from
+        // walking the revision backwards.
         || metadata.expired === true
         || !Number.isInteger(generation)
         || generation <= 0
@@ -5563,6 +5578,84 @@ function healthSnapshotRevisionEvidence(payload) {
         return null;
     }
     return { revision, generation, capturedAtUnix };
+}
+
+// ── Served-shell binding ──────────────────────────────────────────────
+//
+// runtime_revision.revision_token identifies the SIGNED APP BUNDLE, so it does
+// not change when the source on disk changes — which is exactly when the HTML
+// and JS an already-open window is running go stale. Measured live on
+// 2026-08-03: Bryan's desktop window stayed open across four runtime restarts
+// and kept executing the shell it had loaded hours earlier, so a UI fix that
+// was deployed, served, and verified in a fresh tab was invisible to him. He
+// was still looking at "Conversation lane initializing" while /api/health
+// reported conversation_ready: true.
+//
+// The runtime already hashes what it is actually serving and reports it as
+// actual_shell_assets_sha256. That is the fingerprint the open window has to
+// be bound to.
+const SERVED_SHELL_ASSETS_KEY = 'aura.servedShellAssets';
+const SERVED_SHELL_MARKER_PARAM = '_aura_shell';
+const SERVED_SHELL_MARKER_LENGTH = 16;
+
+function servedShellAssetsFingerprint(payload) {
+    const revision = payload?.runtime_revision;
+    if (!revision || revision.schema !== 'aura.runtime_revision.v2') return '';
+    const actual = String(revision.actual_shell_assets_sha256 || '').toLowerCase();
+    return /^[0-9a-f]{64}$/.test(actual) ? actual : '';
+}
+
+function storedServedShellAssets() {
+    try {
+        return sessionStorage.getItem(SERVED_SHELL_ASSETS_KEY) || '';
+    } catch (_err) {
+        return state.servedShellAssets || '';
+    }
+}
+
+function rememberServedShellAssets(fingerprint) {
+    state.servedShellAssets = fingerprint;
+    try {
+        sessionStorage.setItem(SERVED_SHELL_ASSETS_KEY, fingerprint);
+    } catch (_err) {
+        // Storage denial must not pin the tab to stale bytes; the URL marker
+        // below is the storage-independent half of the loop guard.
+    }
+}
+
+function servedShellMarkerFromLocation() {
+    try {
+        return new URL(window.location.href).searchParams.get(SERVED_SHELL_MARKER_PARAM) || '';
+    } catch (_err) {
+        return '';
+    }
+}
+
+function reconcileServedShellAssets(payload) {
+    if (state.runtimeRevisionReloading) return false;
+    const fingerprint = servedShellAssetsFingerprint(payload);
+    if (!fingerprint) return false;
+
+    const marker = fingerprint.slice(0, SERVED_SHELL_MARKER_LENGTH);
+    // Two independent loop guards, because one reload that reloads again is
+    // worse than a stale shell. The URL marker survives a storage denial; the
+    // stored fingerprint survives a URL the launcher rewrote.
+    if (servedShellMarkerFromLocation() === marker) {
+        rememberServedShellAssets(fingerprint);
+        return false;
+    }
+    const previous = storedServedShellAssets();
+    if (!previous || previous === fingerprint) {
+        rememberServedShellAssets(fingerprint);
+        return false;
+    }
+
+    // Record the new fingerprint BEFORE navigating, so the reloaded page sees
+    // itself as current even if the URL marker is stripped.
+    rememberServedShellAssets(fingerprint);
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set(SERVED_SHELL_MARKER_PARAM, marker);
+    return requestGuardedShellReload({ replaceUrl: nextUrl.toString() });
 }
 
 function healthSnapshotRevisionIsAuthoritative(payload) {
@@ -5934,6 +6027,8 @@ async function pollHealth() {
         const d = await res.json();
         if (!d || typeof d !== 'object') throw new Error('invalid health payload');
         if (reconcileRuntimeShellRevision(d)) return;
+        // The signed-bundle token above does not move when the source does.
+        if (reconcileServedShellAssets(d)) return;
         const recovered = recordHealthPollSuccess(d);
         state.runtimeHealthy = payloadRuntimeHealthy(d);
         state.runtimeHealthBlockers = runtimeHealthBlockers(d);
