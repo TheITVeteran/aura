@@ -64,7 +64,7 @@ def _binding(path: Path, *, max_bytes: int | None = None) -> dict[str, Any]:
 
 
 def _read_authority(path: Path) -> dict[str, Any]:
-    binding = _binding(path, max_bytes=MAX_JSON_BYTES)
+    _binding(path, max_bytes=MAX_JSON_BYTES)
     raw = path.read_bytes()
     try:
         value = json.loads(raw)
@@ -74,9 +74,7 @@ def _read_authority(path: Path) -> dict[str, Any]:
         ) from exc
     if not isinstance(value, dict) or canonical_json_bytes(value) != raw:
         _fail("resident_sft_migration_authority_noncanonical")
-    validated = validate_authority(value, allow_expired_resume=True)
-    validated["_artifact_binding"] = binding
-    return validated
+    return validate_authority(value, allow_expired_resume=True)
 
 
 def _resolve_artifact_root(repo_root: Path, authority: Mapping[str, Any]) -> Path:
@@ -186,10 +184,10 @@ def migrate_checkpoint(
 ) -> dict[str, Any]:
     """Rebind one exact durable checkpoint to a repaired source closure."""
 
-    source_authority = _read_authority(source_authority_path.expanduser().resolve(strict=True))
-    destination_authority = _read_authority(
-        destination_authority_path.expanduser().resolve(strict=True)
-    )
+    source_authority_path = source_authority_path.expanduser().resolve(strict=True)
+    destination_authority_path = destination_authority_path.expanduser().resolve(strict=True)
+    source_authority = _read_authority(source_authority_path)
+    destination_authority = _read_authority(destination_authority_path)
     source_root = _resolve_artifact_root(source_repo_root, source_authority)
     destination_root = _resolve_artifact_root(destination_repo_root, destination_authority)
     if source_root == destination_root:
@@ -255,7 +253,7 @@ def migrate_checkpoint(
         "prepared_at_unix": time.time(),
         "source": {
             "repo_root": str(source_repo_root.expanduser().resolve(strict=True)),
-            "authority": source_authority.pop("_artifact_binding"),
+            "authority": _binding(source_authority_path, max_bytes=MAX_JSON_BYTES),
             "artifact_root": str(source_root),
             "checkpoint": str(inspected.checkpoint_dir),
             "complete": source_complete,
@@ -265,7 +263,9 @@ def migrate_checkpoint(
         },
         "destination": {
             "repo_root": str(destination_repo_root.expanduser().resolve(strict=True)),
-            "authority": destination_authority.pop("_artifact_binding"),
+            "authority": _binding(
+                destination_authority_path, max_bytes=MAX_JSON_BYTES
+            ),
             "artifact_root": str(destination_root),
             "checkpoint": str(generation),
             "complete": _binding(generation / "complete.json", max_bytes=MAX_JSON_BYTES),

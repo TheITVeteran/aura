@@ -153,15 +153,15 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
     _write_authority(destination_authority_path, destination_authority)
 
     monkeypatch.setattr(migration, "validate_authority", lambda value, **_kwargs: dict(value))
-    monkeypatch.setattr(
-        migration,
-        "authority_state_bindings",
-        lambda authority: (
+    def authority_bindings(authority):
+        assert "_artifact_binding" not in authority
+        return (
             source_bindings
             if authority["campaign_id"] == "source-campaign"
             else destination_bindings
-        ),
-    )
+        )
+
+    monkeypatch.setattr(migration, "authority_state_bindings", authority_bindings)
 
     receipt = migration.migrate_checkpoint(
         source_repo_root=tmp_path,
