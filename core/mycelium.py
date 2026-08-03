@@ -161,6 +161,54 @@ def _vault_mac(key: bytes, encoded: str) -> str:
     return hmac.new(key, encoded.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+#: What the topology surfaces are and are not evidence of. Carried in the public
+#: read models because the numbers travel further than the code that produced
+#: them: a reverse-import count rendered as a large red node reads as "this is
+#: load-bearing at runtime", and it is not that measurement (CP126 0eae8e2d).
+_TOPOLOGY_EVIDENCE_DISCLOSURE = {
+    "centrality": {
+        "measures": "count of modules that statically import this one",
+        "basis": "static_import_graph",
+        "does_not_establish": [
+            "runtime information flow",
+            "intervention dependence",
+            "functional integration",
+        ],
+    },
+    "critical_modules": {
+        "measures": "the highest static reverse-dependency counts",
+        "basis": "static_import_graph",
+        "does_not_establish": ["runtime criticality", "failure blast radius"],
+    },
+    "edges": {
+        "observed": "has carried at least one pulse",
+        "static_import": "derived from an import statement, never exercised",
+        "declared": "named in configuration, never exercised",
+    },
+}
+
+_MODULE_NAME_SEPARATORS = re.compile(r"[./\\_]+")
+
+
+def _module_name_parts(module_path: str) -> tuple[str, ...]:
+    """Split a module path into lowercase name components."""
+    return tuple(
+        part for part in _MODULE_NAME_SEPARATORS.split(str(module_path).lower()) if part
+    )
+
+
+def _alias_matches_parts(alias: str, parts: tuple[str, ...]) -> bool:
+    """Whether an alias equals a component or a contiguous run of components."""
+    alias_parts = _module_name_parts(alias)
+    if not alias_parts or len(alias_parts) > len(parts):
+        return False
+    span = len(alias_parts)
+    return any(
+        parts[start : start + span] == alias_parts
+        for start in range(len(parts) - span + 1)
+    )
+
+
 def _cohesion_from_topology(
     strengths: list[float], confidences: list[float]
 ) -> float | None:
@@ -514,6 +562,26 @@ class Hypha(BaseModel):
     def is_weak(self) -> bool:
         """Weaker than it was when established — it has lost more than it gained."""
         return self.strength < self.DEFAULT_STRENGTH
+
+    @property
+    def evidence_basis(self) -> str:
+        """What this edge is evidence OF.
+
+        CP126 106a29f4, 0eae8e2d. Three different things were being presented
+        as one: an edge derived from a static import, an edge somebody declared
+        in a hardcoded list, and an edge that has actually carried traffic. Only
+        the third is evidence of runtime information flow, and the topology
+        surfaced no way to tell them apart — so a hardcoded
+        ``("qualia", "phenomenology")`` link read exactly like a measured one.
+
+        ``observed`` is derived from the edge's own pulse history rather than
+        stored, so it cannot drift away from what actually happened.
+        """
+        if self.pulse_count > 0:
+            return "observed"
+        if self.is_physical:
+            return "static_import"
+        return "declared"
 
     def refresh_heartbeat(self):
         """Refresh liveness without mutating the learned strength of the edge."""
@@ -2142,7 +2210,14 @@ class MycelialNetwork:
         ]
         for src, tgt, prio in links:
             self.establish_connection(src, tgt, priority=prio)
-        logger.info("🍄 [MYCELIUM] 👁️ Consciousness Hyphae established.")
+        # CP126 106a29f4: these are declared edges, not measured integration.
+        # They start with evidence_basis "declared" and only become "observed"
+        # once something actually pulses them; the log says which it is.
+        logger.info(
+            "🍄 [MYCELIUM] 👁️ Declared %d consciousness hyphae (no traffic "
+            "observed on them yet).",
+            len(links),
+        )
 
     @asynccontextmanager
     async def rooted_flow(self, source: str, target: str, activity: str = None,
@@ -2411,7 +2486,7 @@ class MycelialNetwork:
             if self._stop_event.is_set():
                 logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during parsing.")
                 return False
-            deps = self._extract_imports(file_path, base)
+            deps, source_sha256 = self._extract_imports(file_path, base)
             dependency_graph[module_key] = deps
 
             # Build privately. Readers must never observe a half-published map.
@@ -2419,6 +2494,10 @@ class MycelialNetwork:
                 "path": str(file_path),
                 "size_bytes": file_path.stat().st_size if file_path.exists() else 0,
                 "imports": deps,
+                # None when the module could not be read or parsed: an empty
+                # import list from an unreadable file is not evidence that the
+                # module imports nothing.
+                "source_sha256": source_sha256,
             }
 
         # 3. Create physical Hypha connections for import relationships
@@ -2503,10 +2582,24 @@ class MycelialNetwork:
         }
 
         def _matches_subsystem(subsystem_name: str, module_path: str) -> bool:
-            """Check if a module path belongs to a named subsystem."""
+            """Whether a module belongs to a named subsystem.
+
+            CP126 9d0e7313. This was raw substring containment, so ``cel``
+            matched ``cancel``, ``parcel`` and ``excel``; ``phi`` matched
+            ``philosophy``; ``identity`` matched
+            ``resident_recurrent_sft_adapter_identity``. Every false hit became
+            a cross-layer link, and cross-layer links are presented as
+            integration.
+
+            Matching is on name components — a module is split on ``.``, ``/``
+            and ``_``, and an alias matches when it equals a component or a
+            contiguous run of them. ``llm`` still matches ``core.brain.llm_router``
+            and ``cognitive_engine`` still matches ``core.cognitive_engine``;
+            ``cel`` no longer matches ``cancel``.
+            """
             aliases = SUBSYSTEM_ALIASES.get(subsystem_name, [subsystem_name])
-            mp = module_path.lower()
-            return any(alias in mp for alias in aliases)
+            parts = _module_name_parts(module_path)
+            return any(_alias_matches_parts(alias, parts) for alias in aliases)
 
         def _build_cross_links(
             logical_hyphae: dict[str, Hypha],
@@ -2681,19 +2774,46 @@ class MycelialNetwork:
         all_files: dict[str, Path],
         dependency_graph: dict[str, list[str]],
     ) -> dict[str, tuple[str, list[str]]]:
-        """Build pathway-to-module annotations outside the topology lock."""
+        """Attribute a pathway to the module that implements its skill.
+
+        CP126 88be9de3. The rule was containment in either direction with a
+        ``break`` on the first hit, so ``web.py`` and ``search.py`` both claimed
+        ``web_search``, and which one won depended on directory walk order —
+        the same codebase could annotate differently between two runs. A source
+        attribution that changes without the source changing is not evidence of
+        anything.
+
+        Now: an exact match on the module's own name wins, a full-module-key
+        match is the fallback, and an ambiguous result annotates nothing. No
+        owner is a truthful answer; an arbitrary one is not.
+        """
         annotations: dict[str, tuple[str, list[str]]] = {}
         for pathway_id, skill_name in pathway_skills.items():
-            skill = skill_name.lower().replace("_", "")
+            skill_parts = _module_name_parts(skill_name)
+            if not skill_parts:
+                continue
+            exact: list[str] = []
+            tail: list[str] = []
             for module_key, file_path in all_files.items():
-                stem = file_path.stem.lower().replace("_", "")
-                module_name = module_key.lower().replace("_", "")
-                if skill in module_name or skill in stem or stem in skill:
-                    annotations[pathway_id] = (
-                        str(file_path),
-                        dependency_graph.get(module_key, []),
+                if _module_name_parts(file_path.stem) == skill_parts:
+                    exact.append(module_key)
+                elif _module_name_parts(module_key)[-len(skill_parts) :] == skill_parts:
+                    tail.append(module_key)
+            candidates = exact or tail
+            if len(candidates) != 1:
+                if len(candidates) > 1:
+                    logger.debug(
+                        "🍄 [MYCELIUM] Pathway '%s' has %d candidate source "
+                        "modules; leaving it unattributed.",
+                        pathway_id,
+                        len(candidates),
                     )
-                    break
+                continue
+            module_key = candidates[0]
+            annotations[pathway_id] = (
+                str(all_files[module_key]),
+                dependency_graph.get(module_key, []),
+            )
         return annotations
 
     def _foreground_mapping_deferred(self) -> bool:
@@ -2718,15 +2838,31 @@ class MycelialNetwork:
             return True
         return False
 
-    def _extract_imports(self, file_path: Path, base_dir: Path) -> list[str]:
-        """Parse a Python file's AST and extract import targets as dotted module keys."""
+    def _extract_imports(
+        self, file_path: Path, base_dir: Path
+    ) -> tuple[list[str], str | None]:
+        """Extract import targets, and the digest of the bytes they came from.
+
+        CP126 fe556a31. ``errors="ignore"`` silently deleted every byte that
+        would not decode, so the AST was built from a program that differs from
+        the one on disk — and nothing downstream could tell, because the result
+        looked like a clean parse of a real module. Undecodable source is now a
+        parse failure, which is what it is.
+
+        The returned digest is over the exact bytes parsed, so the topology
+        derived from a module is tied to the source generation it was derived
+        from (CP126 5894e929). ``None`` means the module was not successfully
+        read — an unmapped module, not a module that maps to nothing.
+        """
         imports: list[str] = []
         try:
-            source = file_path.read_text(encoding="utf-8", errors="ignore")
+            raw = file_path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            source = raw.decode("utf-8")
             tree = ast.parse(source, filename=str(file_path))
-        except (SyntaxError, UnicodeDecodeError, OSError) as e:
+        except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as e:
             logger.debug("🍄 [MYCELIUM] AST parse failed for %s: %s", file_path.name, e)
-            return imports
+            return imports, None
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -2750,7 +2886,7 @@ class MycelialNetwork:
                     else:
                         imports.append(node.module)
 
-        return imports
+        return imports, digest
 
     def get_mapped_files_snapshot(self) -> dict[str, dict[str, Any]]:
         """Return one detached infrastructure-map generation for concurrent readers."""
@@ -3157,7 +3293,9 @@ class MycelialNetwork:
             for pathway_id, pathway in self.pathways.items()
         }
         hyphae = {
-            name: self._public_read_model(hypha.model_dump())
+            name: self._public_read_model(
+                {**hypha.model_dump(), "evidence_basis": hypha.evidence_basis}
+            )
             for name, hypha in self.hyphae.items()
         }
         cross_layer_linked = len(self._cross_links)
@@ -3189,8 +3327,19 @@ class MycelialNetwork:
                 "physical": physical_count,
                 "cross_layer_linked": cross_layer_linked,
                 "infrastructure_mapped": infrastructure_mapped,
+                # CP126 106a29f4: a hardcoded ("qualia","phenomenology") edge
+                # used to be indistinguishable from one that has carried traffic.
+                "by_evidence_basis": {
+                    basis: sum(
+                        1
+                        for edge in hyphae.values()
+                        if edge.get("evidence_basis") == basis
+                    )
+                    for basis in ("observed", "static_import", "declared")
+                },
             },
             "critical_modules": critical_modules,
+            "topology_evidence": _TOPOLOGY_EVIDENCE_DISCLOSURE,
             "discovery_candidates": discovery_candidates,
             "ui_connected": ui_connected,
             "system_cohesion": _cohesion_from_topology(strengths, confidences),
@@ -3827,14 +3976,25 @@ class MycelialNetwork:
             size_bytes = value.get("size_bytes")
             module_centrality = value.get("centrality")
             is_critical = value.get("is_critical")
+            source_sha256 = value.get("source_sha256")
             if set(value) != {
                 "path",
                 "size_bytes",
                 "imports",
                 "centrality",
                 "is_critical",
+                "source_sha256",
             }:
                 raise ValueError(f"vault mapped-file fields are invalid: {key}")
+            # CP126 5894e929: the digest ties the restored topology to the
+            # source generation it was derived from. None is the honest value
+            # for a module that could not be read; a malformed one is not.
+            if source_sha256 is not None and (
+                not isinstance(source_sha256, str)
+                or len(source_sha256) != 64
+                or not all(c in "0123456789abcdef" for c in source_sha256)
+            ):
+                raise ValueError(f"vault mapped-file digest is malformed: {key}")
             if not isinstance(path, str) or not path or not Path(path).is_absolute():
                 raise ValueError(f"vault mapped-file path is malformed: {key}")
             if path in mapped_paths:
@@ -3864,6 +4024,7 @@ class MycelialNetwork:
                 "imports": list(imports),
                 "centrality": module_centrality,
                 "is_critical": is_critical,
+                "source_sha256": source_sha256,
             }
         if not isinstance(centrality, dict) or any(
             key not in mapped_files

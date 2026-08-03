@@ -1,5 +1,6 @@
 ################################################################################
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -631,7 +632,7 @@ def test_shutdown_during_mapping_cannot_publish_into_retired_network(
     def blocking_extract(_file_path, _base_dir):
         entered.set()
         assert release.wait(timeout=2.0)
-        return []
+        return [], None
 
     monkeypatch.setattr(network, "_extract_imports", blocking_extract)
     worker = threading.Thread(
@@ -1609,7 +1610,7 @@ def test_mapper_cannot_publish_after_singleton_owner_replacement(
     def blocking_extract(_file_path, _base_dir):
         entered.set()
         assert release.wait(timeout=2.0)
-        return []
+        return [], None
 
     monkeypatch.setattr(network, "_extract_imports", blocking_extract)
     mapper = threading.Thread(
@@ -2227,3 +2228,208 @@ def test_a_real_generation_is_well_inside_every_limit(network):
         payload = network._vault_snapshot_locked()
 
     MycelialNetwork._enforce_vault_cardinality(payload)
+
+
+# ── Mapped source is attested, not silently mutilated (CP126 fe556a31, 5894e929) ──
+
+
+def test_the_map_records_the_digest_of_the_source_it_parsed(network, tmp_path):
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    body = "import core.beta\n"
+    (core_dir / "alpha.py").write_text(body, encoding="utf-8")
+    (core_dir / "beta.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+
+    entry = network.get_mapped_files_snapshot()["core.alpha"]
+    assert entry["source_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+
+
+def test_a_changed_module_gets_a_different_digest(network, tmp_path):
+    """This is what ties a topology generation to a source generation."""
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "alpha.py").write_text("import core.beta\n", encoding="utf-8")
+    (core_dir / "beta.py").write_text("VALUE = 1\n", encoding="utf-8")
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+    first = network.get_mapped_files_snapshot()["core.beta"]["source_sha256"]
+
+    (core_dir / "beta.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+    second = network.get_mapped_files_snapshot()["core.beta"]["source_sha256"]
+
+    assert first != second
+
+
+def test_undecodable_source_is_a_parse_failure_not_a_silent_edit(network, tmp_path):
+    """``errors="ignore"`` deleted every byte that would not decode, so the AST
+    came from a program that differs from the one on disk — and the result was
+    indistinguishable from a clean parse of a real module."""
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "beta.py").write_text("VALUE = 1\n", encoding="utf-8")
+    # Valid UTF-8 would import beta; the invalid byte breaks the decode.
+    (core_dir / "alpha.py").write_bytes(b"import core.beta\nX = '\xff\xfe'\n")
+
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+
+    entry = network.get_mapped_files_snapshot()["core.alpha"]
+    assert entry["source_sha256"] is None
+    assert entry["imports"] == []
+    # And no edge is invented from a file that was never successfully read.
+    assert "import:core.alpha->core.beta" not in network.get_network_topology()["hyphae"]
+
+
+@pytest.mark.asyncio
+async def test_the_vault_carries_and_validates_the_digest(
+    network, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "alpha.py").write_text("VALUE = 1\n", encoding="utf-8")
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+    expected = network.get_mapped_files_snapshot()["core.alpha"]["source_sha256"]
+
+    assert await network.vault_sync() is True
+    assert await MycelialNetwork.restore_from_vault() is True
+
+    assert (
+        network.get_mapped_files_snapshot()["core.alpha"]["source_sha256"] == expected
+    )
+
+
+def test_a_malformed_vault_digest_is_refused(network, tmp_path):
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "alpha.py").write_text("VALUE = 1\n", encoding="utf-8")
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+    with MycelialNetwork._lock:
+        payload = network._vault_snapshot_locked()
+    assert payload["mapped_files"], "the fixture must produce a mapped module"
+    payload["mapped_files"]["core.alpha"]["source_sha256"] = "not-a-digest"
+
+    with pytest.raises(ValueError, match="digest is malformed"):
+        MycelialNetwork._decode_vault_topology(payload)
+
+
+# ── Structure is not integration (CP126 0eae8e2d, 106a29f4, 9d0e7313, 88be9de3) ──
+
+
+def test_declared_static_and_observed_edges_are_told_apart(network):
+    from core.mycelium import Hypha
+
+    declared = Hypha(name="a->b", source="a", target="b")
+    static = Hypha(name="c->d", source="c", target="d", is_physical=True)
+    observed = Hypha(name="e->f", source="e", target="f")
+    observed.pulse(success=True)
+
+    assert declared.evidence_basis == "declared"
+    assert static.evidence_basis == "static_import"
+    assert observed.evidence_basis == "observed"
+
+
+def test_a_static_import_edge_that_carries_traffic_becomes_observed(network):
+    from core.mycelium import Hypha
+
+    edge = Hypha(name="c->d", source="c", target="d", is_physical=True)
+    assert edge.evidence_basis == "static_import"
+
+    edge.pulse(success=True)
+
+    assert edge.evidence_basis == "observed"
+
+
+def test_the_consciousness_hyphae_are_declared_not_measured(network):
+    """Hardcoded ("qualia","phenomenology") links were presented alongside
+    measured ones with nothing distinguishing them."""
+    network.establish_consciousness_hyphae()
+
+    topology = network.get_network_topology()
+    edge = topology["hyphae"]["qualia->phenomenology"]
+
+    assert edge["evidence_basis"] == "declared"
+    assert topology["hyphae_summary"]["by_evidence_basis"]["declared"] >= 3
+
+
+def test_the_topology_says_what_centrality_does_not_establish(network):
+    evidence = network.get_network_topology()["topology_evidence"]
+
+    assert evidence["centrality"]["basis"] == "static_import_graph"
+    assert "runtime information flow" in evidence["centrality"]["does_not_establish"]
+    assert "functional integration" in evidence["centrality"]["does_not_establish"]
+
+
+@pytest.mark.parametrize(
+    "alias,module,expected",
+    [
+        ("cel", "core.cognition.cancel_handler", False),
+        ("cel", "core.consciousness.cel", True),
+        ("phi", "core.philosophy.ethics", False),
+        ("phi", "core.consciousness.phi", True),
+        ("identity", "core.brain.sft_adapter_identity", True),
+        ("identity", "core.brain.identityless_router", False),
+        ("llm", "core.brain.llm_router", True),
+        ("cognitive_engine", "core.cognitive_engine", True),
+        ("cognitive_engine", "core.cognitive.engine", True),
+        ("memory", "core.memory_infra.store", True),
+        ("memory", "core.memorabilia", False),
+    ],
+)
+def test_subsystem_aliases_match_name_components_not_substrings(
+    alias, module, expected
+):
+    """CP126 9d0e7313: substring containment made ``cel`` match ``cancel``, and
+    every false hit became a cross-layer link presented as integration."""
+    from core.mycelium import _alias_matches_parts, _module_name_parts
+
+    assert _alias_matches_parts(alias, _module_name_parts(module)) is expected
+
+
+def test_an_ambiguous_pathway_source_is_left_unattributed(network, tmp_path):
+    """Two modules could both claim ``web_search``; which one won depended on
+    directory walk order, so the same source annotated differently run to run."""
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "web_search.py").write_text("A = 1\n", encoding="utf-8")
+    (core_dir / "beta.py").write_text("B = 1\n", encoding="utf-8")
+    sub = core_dir / "skills"
+    sub.mkdir()
+    (sub / "web_search.py").write_text("C = 1\n", encoding="utf-8")
+
+    network.register_pathway(
+        pathway_id="ws", pattern=r"search (.+)", skill_name="web_search"
+    )
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+
+    assert network.pathways["ws"].source_file is None
+
+
+def test_an_unambiguous_pathway_source_is_attributed(network, tmp_path):
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "web_search.py").write_text("A = 1\n", encoding="utf-8")
+    (core_dir / "beta.py").write_text("B = 1\n", encoding="utf-8")
+
+    network.register_pathway(
+        pathway_id="ws", pattern=r"search (.+)", skill_name="web_search"
+    )
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+
+    assert network.pathways["ws"].source_file is not None
+    assert "web_search.py" in network.pathways["ws"].source_file
+
+
+def test_a_partial_name_no_longer_claims_a_skill(network, tmp_path):
+    """``web.py`` used to claim ``web_search`` through ``stem in skill``."""
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "web.py").write_text("A = 1\n", encoding="utf-8")
+
+    network.register_pathway(
+        pathway_id="ws", pattern=r"search (.+)", skill_name="web_search"
+    )
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+
+    assert network.pathways["ws"].source_file is None
