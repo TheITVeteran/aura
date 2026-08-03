@@ -202,6 +202,11 @@ def test_prepare_refuses_dirty_or_unpublished_main(monkeypatch: pytest.MonkeyPat
 
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
+    assert config.objective == prepare.OBJECTIVE_NAME_V2
+    assert config.generated_rollin is not None
+    assert prepare.SOURCE_PATHS["objective_policy"].endswith(
+        "recurrence_native_objective_v5.py"
+    )
     plan = prepare._build_plan(
         campaign_id="resident-32b-recurrent-sft-bootstrap-cp-test-full",
         profile="full",

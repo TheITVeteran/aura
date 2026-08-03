@@ -26,6 +26,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
 )
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     GeneratedRollinSelectionConfig,
+    derive_rollin_seed,
     detached_softmin_weights,
     deterministic_mixed_rollin,
     generated_rollin_live_path_loss,
@@ -116,6 +117,21 @@ def test_generated_rollin_config_is_strict_and_hash_bound():
         GeneratedRollinSelectionConfig.from_dict(malformed)
     with pytest.raises(ValueError, match="branch_softmin_temperature"):
         GeneratedRollinSelectionConfig(branch_softmin_temperature=0.0)
+
+
+def test_rollin_seed_is_source_bound_and_resume_stable():
+    inputs = {
+        "campaign_seed": 2026080107,
+        "phase": "train",
+        "example_id": "logic-depth-4-0001",
+        "sample_ordinal": 17,
+        "execution_spec_sha256": _spec().sha256,
+    }
+    first = derive_rollin_seed(**inputs)
+    assert first == derive_rollin_seed(**inputs)
+    assert 0 <= first <= 0xFFFFFFFF
+    assert first != derive_rollin_seed(**{**inputs, "sample_ordinal": 18})
+    assert first != derive_rollin_seed(**{**inputs, "phase": "validation"})
 
 
 def test_deterministic_mixed_rollin_has_true_probability_boundaries():

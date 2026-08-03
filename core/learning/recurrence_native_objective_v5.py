@@ -35,6 +35,7 @@ GENERATED_ROLLIN_TRUST_BOUNDARY = (
 )
 _ROLLIN_SEED_DOMAIN = b"aura.generated_rollin.branch_seed.v1\0"
 _MIX_MASK_DOMAIN = b"aura.generated_rollin.mix_mask.v1\0"
+_EXAMPLE_SEED_DOMAIN = b"aura.generated_rollin.example_seed.v1\0"
 
 
 def _sha256_tokens(tokens: Sequence[int], *, allow_empty: bool = False) -> str:
@@ -228,6 +229,26 @@ class GeneratedRollinLivePathResult:
     def branch_indices(self) -> tuple[int, ...]:
         return self.evaluation.branch_indices
 
+    @property
+    def answer_token_count(self) -> int:
+        return self.evaluation.answer_token_count
+
+    @property
+    def execution_spec_sha256(self) -> str:
+        return self.evaluation.execution_spec_sha256
+
+    @property
+    def prompt_tokens_sha256(self) -> str:
+        return self.evaluation.prompt_tokens_sha256
+
+    @property
+    def answer_tokens_sha256(self) -> str:
+        return self.evaluation.answer_tokens_sha256
+
+    @property
+    def bridge_tokens_sha256(self) -> str:
+        return self.evaluation.bridge_tokens_sha256
+
 
 def detached_softmin_weights(
     losses: Sequence[float],
@@ -255,6 +276,59 @@ def detached_softmin_weights(
     if not math.isfinite(total) or total <= 0.0:
         raise FloatingPointError("branch selection weights are non-finite")
     return tuple(value / total for value in raw)
+
+
+def derive_rollin_seed(
+    *,
+    campaign_seed: int,
+    phase: str,
+    example_id: str,
+    sample_ordinal: int,
+    execution_spec_sha256: str,
+) -> int:
+    """Derive a resume-stable 32-bit behavior seed from bound sample identity."""
+
+    if type(campaign_seed) is not int or not 0 <= campaign_seed <= 2**63 - 1:
+        raise ValueError("campaign_seed must be inside [0, 2^63-1]")
+    if phase not in {"train", "validation"}:
+        raise ValueError("roll-in phase must be train or validation")
+    if (
+        not isinstance(example_id, str)
+        or not example_id
+        or len(example_id) > 256
+        or any(ord(character) < 0x20 for character in example_id)
+    ):
+        raise ValueError("example_id is invalid")
+    if type(sample_ordinal) is not int or not 0 <= sample_ordinal <= 10_000_000:
+        raise ValueError("sample_ordinal must be inside [0, 10000000]")
+    if (
+        not isinstance(execution_spec_sha256, str)
+        or len(execution_spec_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in execution_spec_sha256
+        )
+    ):
+        raise ValueError("execution_spec_sha256 is invalid")
+    payload = {
+        "campaign_seed": campaign_seed,
+        "phase": phase,
+        "example_id": example_id,
+        "sample_ordinal": sample_ordinal,
+        "execution_spec_sha256": execution_spec_sha256,
+    }
+    digest = hashlib.sha256()
+    digest.update(_EXAMPLE_SEED_DOMAIN)
+    digest.update(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    )
+    return int.from_bytes(digest.digest()[:4], "big")
 
 
 def _softmin_value(losses: Sequence[float], *, temperature: float) -> float:
@@ -860,6 +934,7 @@ __all__ = [
     "GeneratedRollinLivePathEvaluation",
     "GeneratedRollinLivePathResult",
     "GeneratedRollinSelectionConfig",
+    "derive_rollin_seed",
     "detached_softmin_weights",
     "deterministic_mixed_rollin",
     "generated_rollin_live_path_loss",

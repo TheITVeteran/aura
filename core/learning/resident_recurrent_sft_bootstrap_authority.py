@@ -25,18 +25,24 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     CURRENT_REGISTRY_VERSION,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinSelectionConfig,
+)
 from core.runtime.secure_path_custody import (
     SecurePathCustodyError,
     validate_directory_identity,
 )
 
 LEGACY_AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v1"
-AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v2"
+PREVIOUS_AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v2"
+AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v3"
 DATASET_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_dataset.v1"
 TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
+TRAINER_CONFIG_SCHEMA_V2: Final = "aura.resident_recurrent_sft_bootstrap_config.v2"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
 CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
+OBJECTIVE_NAME_V2: Final = "generated_rollin_branch_softmin_cached_ce.v2"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
 LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
@@ -67,7 +73,7 @@ LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
         "mlx_memory_guard",
     }
 )
-REQUIRED_SOURCE_ROLES: Final = LEGACY_REQUIRED_SOURCE_ROLES | frozenset(
+PREVIOUS_REQUIRED_SOURCE_ROLES: Final = LEGACY_REQUIRED_SOURCE_ROLES | frozenset(
     {
         "scoped_recurrence_adapter",
         "depth_conditioning",
@@ -77,6 +83,9 @@ REQUIRED_SOURCE_ROLES: Final = LEGACY_REQUIRED_SOURCE_ROLES | frozenset(
         "paired_campaign_loader",
     }
 )
+REQUIRED_SOURCE_ROLES: Final = PREVIOUS_REQUIRED_SOURCE_ROLES | frozenset(
+    {"objective_policy"}
+)
 
 
 def required_source_roles(authority: Mapping[str, Any]) -> frozenset[str]:
@@ -85,6 +94,8 @@ def required_source_roles(authority: Mapping[str, Any]) -> frozenset[str]:
     schema = authority.get("schema") if isinstance(authority, Mapping) else None
     if schema == LEGACY_AUTHORITY_SCHEMA:
         return LEGACY_REQUIRED_SOURCE_ROLES
+    if schema == PREVIOUS_AUTHORITY_SCHEMA:
+        return PREVIOUS_REQUIRED_SOURCE_ROLES
     if schema == AUTHORITY_SCHEMA:
         return REQUIRED_SOURCE_ROLES
     _fail("resident_sft_authority_schema_invalid")
@@ -224,16 +235,27 @@ class ResidentSFTBootstrapConfig:
     memory_fraction: float = 0.72
     branch_indices: tuple[int, ...] = (0, 1)
     objective: str = OBJECTIVE_NAME
+    generated_rollin: GeneratedRollinSelectionConfig | None = None
     optimizer: str = "adamw"
     sampler: str = SAMPLER_NAME
     token_weighting: str = "uniform_nonnegative_normalized"
     schema: str = TRAINER_CONFIG_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema != TRAINER_CONFIG_SCHEMA:
+        if self.schema not in {TRAINER_CONFIG_SCHEMA, TRAINER_CONFIG_SCHEMA_V2}:
             _fail("resident_sft_config_schema_invalid")
-        if self.objective != OBJECTIVE_NAME:
+        expected_objective = (
+            OBJECTIVE_NAME
+            if self.schema == TRAINER_CONFIG_SCHEMA
+            else OBJECTIVE_NAME_V2
+        )
+        if self.objective != expected_objective:
             _fail("resident_sft_config_objective_invalid")
+        if self.schema == TRAINER_CONFIG_SCHEMA:
+            if self.generated_rollin is not None:
+                _fail("resident_sft_config_rollin_not_supported")
+        elif not isinstance(self.generated_rollin, GeneratedRollinSelectionConfig):
+            _fail("resident_sft_config_rollin_required")
         if self.optimizer != "adamw":
             _fail("resident_sft_config_optimizer_invalid")
         if self.sampler != SAMPLER_NAME:
@@ -347,7 +369,7 @@ class ResidentSFTBootstrapConfig:
             _fail("resident_sft_branch_indices_invalid")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema": self.schema,
             "objective": self.objective,
             "optimizer": self.optimizer,
@@ -372,10 +394,29 @@ class ResidentSFTBootstrapConfig:
             "memory_fraction": self.memory_fraction,
             "branch_indices": list(self.branch_indices),
         }
+        if self.schema == TRAINER_CONFIG_SCHEMA_V2:
+            assert self.generated_rollin is not None
+            result["generated_rollin"] = self.generated_rollin.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ResidentSFTBootstrapConfig:
-        expected = set(cls(seed=0).to_dict())
+        if not isinstance(raw, Mapping):
+            _fail("resident_sft_config_schema_invalid")
+        schema = raw.get("schema")
+        if schema == TRAINER_CONFIG_SCHEMA:
+            expected = set(cls(seed=0).to_dict())
+        elif schema == TRAINER_CONFIG_SCHEMA_V2:
+            expected = set(
+                cls(
+                    seed=0,
+                    schema=TRAINER_CONFIG_SCHEMA_V2,
+                    objective=OBJECTIVE_NAME_V2,
+                    generated_rollin=GeneratedRollinSelectionConfig(),
+                ).to_dict()
+            )
+        else:
+            _fail("resident_sft_config_schema_invalid")
         record = _exact(raw, expected, role="resident_sft_config")
         try:
             return cls(
@@ -402,6 +443,13 @@ class ResidentSFTBootstrapConfig:
                 max_seq_length=record["max_seq_length"],
                 memory_fraction=record["memory_fraction"],
                 branch_indices=tuple(record["branch_indices"]),
+                generated_rollin=(
+                    GeneratedRollinSelectionConfig.from_dict(
+                        record["generated_rollin"]
+                    )
+                    if schema == TRAINER_CONFIG_SCHEMA_V2
+                    else None
+                ),
             )
         except (TypeError, ValueError, KeyError) as exc:
             if isinstance(exc, ResidentSFTBootstrapAuthorityError):
@@ -830,7 +878,12 @@ def validate_authority(
     ):
         _fail("resident_sft_authority_identity_mismatch")
     if (
-        record.get("schema") not in {LEGACY_AUTHORITY_SCHEMA, AUTHORITY_SCHEMA}
+        record.get("schema")
+        not in {
+            LEGACY_AUTHORITY_SCHEMA,
+            PREVIOUS_AUTHORITY_SCHEMA,
+            AUTHORITY_SCHEMA,
+        }
         or record.get("training_authority") != TRAINING_AUTHORITY
         or not str(record.get("campaign_id", "")).startswith(
             "resident-32b-recurrent-sft-bootstrap-cp"
@@ -1028,11 +1081,15 @@ __all__ = [
     "LEGACY_AUTHORITY_SCHEMA",
     "LEGACY_REQUIRED_SOURCE_ROLES",
     "OBJECTIVE_NAME",
+    "OBJECTIVE_NAME_V2",
+    "PREVIOUS_AUTHORITY_SCHEMA",
+    "PREVIOUS_REQUIRED_SOURCE_ROLES",
     "REQUIRED_SOURCE_ROLES",
     "ResidentSFTBootstrapAuthorityError",
     "ResidentSFTBootstrapConfig",
     "SAMPLER_NAME",
     "TRAINER_CONFIG_SCHEMA",
+    "TRAINER_CONFIG_SCHEMA_V2",
     "TRAINING_AUTHORITY",
     "artifact_binding",
     "authorize_bound_artifacts",

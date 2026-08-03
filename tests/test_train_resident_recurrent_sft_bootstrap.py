@@ -14,9 +14,14 @@ from mlx_lm.models.qwen2 import Model, ModelArgs
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinSelectionConfig,
+)
 from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
+    OBJECTIVE_NAME_V2,
     REQUIRED_SOURCE_ROLES,
+    TRAINER_CONFIG_SCHEMA_V2,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -110,7 +115,10 @@ def test_state_document_is_accepted_by_durable_state_contract() -> None:
 def test_validation_summary_binds_exact_objective_results(monkeypatch) -> None:
     rows = _rows()[:2]
     config = _config()
-    spec = SimpleNamespace(sha256="c" * 64)
+    spec = RLCExecutionSpec(
+        branch_roles=("constructive_solution",),
+        recurrent_steps=2,
+    )
 
     def evaluate(
         _model,
@@ -151,7 +159,10 @@ def test_validation_summary_binds_exact_objective_results(monkeypatch) -> None:
 def test_validation_summary_rejects_objective_identity_drift(monkeypatch) -> None:
     rows = _rows()[:2]
     config = _config()
-    spec = SimpleNamespace(sha256="c" * 64)
+    spec = RLCExecutionSpec(
+        branch_roles=("constructive_solution",),
+        recurrent_steps=2,
+    )
     monkeypatch.setattr(
         trainer,
         "cached_supervised_live_path_loss",
@@ -266,9 +277,11 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
         )
 
 
+@pytest.mark.parametrize("objective_version", ("v1", "v2"))
 def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     monkeypatch,
     tmp_path: Path,
+    objective_version: str,
 ) -> None:
     monkeypatch.setattr(trainer, "REPO_ROOT", tmp_path)
     model_dir = tmp_path / "model"
@@ -347,6 +360,19 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     runtime_identity = {"identity_sha256": "1" * 64, "runtime": "test"}
     config = ResidentSFTBootstrapConfig(
         seed=19,
+        **(
+            {
+                "schema": TRAINER_CONFIG_SCHEMA_V2,
+                "objective": OBJECTIVE_NAME_V2,
+                "generated_rollin": GeneratedRollinSelectionConfig(
+                    student_forcing_probability=1.0,
+                    sampling_temperature=0.0,
+                    branch_softmin_temperature=0.5,
+                ),
+            }
+            if objective_version == "v2"
+            else {}
+        ),
         lora_initialization_seed=23,
         max_steps=2,
         max_invocation_steps=1,
@@ -612,6 +638,21 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
         "baseline_validation",
     ):
         assert resumed.state[field] == uninterrupted.state[field]
+    if objective_version == "v2":
+        for entry in resumed.state["loss_trail"]:
+            validated = trainer.validate_generated_rollin_receipt(
+                entry["objective_receipt"]
+            )
+            assert (
+                validated["receipt_sha256"]
+                == entry["objective_receipt_sha256"]
+            )
+            assert entry["branch_weights"] == pytest.approx(
+                [branch["selection_weight"] for branch in validated["branches"]],
+                abs=1e-12,
+            )
+
+
 def test_execution_spec_reader_accepts_pretty_strict_json() -> None:
     spec = RLCExecutionSpec(recurrent_steps=2)
     payload = json.dumps(spec.to_dict(), indent=2, sort_keys=True).encode("utf-8") + b"\n"

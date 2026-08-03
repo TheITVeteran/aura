@@ -36,8 +36,13 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
     RecurrenceTrainingTask,
     disjoint_task_split,
 )
+from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
+    GeneratedRollinSelectionConfig,
+)
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
+    OBJECTIVE_NAME_V2,
     REQUIRED_SOURCE_ROLES,
+    TRAINER_CONFIG_SCHEMA_V2,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -79,6 +84,7 @@ SOURCE_PATHS: Final[dict[str, str]] = {
     "preparer": "tools/prepare_resident_recurrent_sft_bootstrap_campaign.py",
     "controller": "tools/run_resident_recurrent_sft_bootstrap_campaign.py",
     "objective": "core/learning/recurrence_native_objective_v2.py",
+    "objective_policy": "core/learning/recurrence_native_objective_v5.py",
     "recurrent_sft_execution": "core/learning/recurrent_sft_execution.py",
     "execution_spec": "core/brain/llm/latent_cortex/execution_spec.py",
     "recurrence_adapter": "core/learning/recurrent_grpo.py",
@@ -322,6 +328,9 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
+                schema=TRAINER_CONFIG_SCHEMA_V2,
+                objective=OBJECTIVE_NAME_V2,
+                generated_rollin=GeneratedRollinSelectionConfig(),
                 lora_initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
                 max_steps=2,
                 max_invocation_steps=1,
@@ -346,6 +355,9 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
+                schema=TRAINER_CONFIG_SCHEMA_V2,
+                objective=OBJECTIVE_NAME_V2,
+                generated_rollin=GeneratedRollinSelectionConfig(),
                 lora_initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
                 max_steps=96,
                 max_invocation_steps=4,

@@ -32,6 +32,12 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     cached_supervised_live_path_loss,
     cached_supervised_live_path_value_and_grad,
 )
+from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
+    derive_rollin_seed,
+    generated_rollin_live_path_loss,
+    generated_rollin_live_path_value_and_grad,
+    validate_generated_rollin_receipt,
+)
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
 )
@@ -41,6 +47,8 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
     assert_adapter_tensor_topology,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
+    OBJECTIVE_NAME,
+    OBJECTIVE_NAME_V2,
     ResidentSFTBootstrapConfig,
     authorize_bound_artifacts,
     sha256_bytes,
@@ -302,18 +310,47 @@ def _validation_summary(
     if config.validation_examples > len(order):
         _fail("resident_sft_trainer_validation_budget_exceeds_split")
     selected = order[: config.validation_examples]
+    objective_name = getattr(config, "objective", OBJECTIVE_NAME)
     records: list[dict[str, Any]] = []
-    for index in selected:
+    for sample_ordinal, index in enumerate(selected):
         row = rows[index]
         row_spec = execution_spec_for_projected_row(row, base_spec=spec)
-        result = cached_supervised_live_path_loss(
-            model,
-            row["prompt_tokens"],
-            row["answer_tokens"],
-            spec=row_spec,
-            bridge_tokens=row["bridge_tokens"],
-            branch_indices=config.branch_indices,
-        )
+        if objective_name == OBJECTIVE_NAME:
+            result = cached_supervised_live_path_loss(
+                model,
+                row["prompt_tokens"],
+                row["answer_tokens"],
+                spec=row_spec,
+                bridge_tokens=row["bridge_tokens"],
+                branch_indices=config.branch_indices,
+            )
+            branch_weights: list[float] | None = None
+            objective_receipt: dict[str, Any] | None = None
+            rollin_base_seed: int | None = None
+        elif objective_name == OBJECTIVE_NAME_V2:
+            if config.generated_rollin is None:
+                _fail("resident_sft_trainer_rollin_config_missing")
+            rollin_base_seed = derive_rollin_seed(
+                campaign_seed=config.seed,
+                phase="validation",
+                example_id=row["example_id"],
+                sample_ordinal=sample_ordinal,
+                execution_spec_sha256=row_spec.sha256,
+            )
+            result = generated_rollin_live_path_loss(
+                model,
+                row["prompt_tokens"],
+                row["answer_tokens"],
+                spec=row_spec,
+                base_seed=rollin_base_seed,
+                config=config.generated_rollin,
+                bridge_tokens=row["bridge_tokens"],
+                branch_indices=config.branch_indices,
+            )
+            branch_weights = list(result.branch_weights)
+            objective_receipt = validate_generated_rollin_receipt(result.receipt())
+        else:
+            _fail("resident_sft_trainer_objective_unsupported")
         if (
             result.execution_spec_sha256 != row_spec.sha256
             or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
@@ -321,17 +358,29 @@ def _validation_summary(
             or not math.isfinite(result.value)
         ):
             _fail("resident_sft_trainer_validation_objective_drift")
-        records.append(
-            {
-                "example_id": row["example_id"],
-                "loss": result.value,
-                "branch_values": list(result.branch_values),
-                "answer_token_count": result.answer_token_count,
-                "requested_recurrent_depth": row["depth"],
-                "executed_recurrent_depth": row_spec.recurrent_steps,
-                "execution_spec_sha256": row_spec.sha256,
-            }
-        )
+        record = {
+            "example_id": row["example_id"],
+            "loss": result.value,
+            "branch_values": list(result.branch_values),
+            "answer_token_count": result.answer_token_count,
+            "requested_recurrent_depth": row["depth"],
+            "executed_recurrent_depth": row_spec.recurrent_steps,
+            "execution_spec_sha256": row_spec.sha256,
+        }
+        if objective_receipt is not None:
+            assert branch_weights is not None
+            assert rollin_base_seed is not None
+            record.update(
+                {
+                    "branch_weights": branch_weights,
+                    "rollin_base_seed": rollin_base_seed,
+                    "objective_receipt_sha256": objective_receipt[
+                        "receipt_sha256"
+                    ],
+                    "objective_receipt": objective_receipt,
+                }
+            )
+        records.append(record)
     mean = sum(record["loss"] for record in records) / len(records)
     body = {
         "examples": len(records),
@@ -346,6 +395,8 @@ def _validation_summary(
         ),
         "branch_indices": list(config.branch_indices),
     }
+    if objective_name == OBJECTIVE_NAME_V2:
+        body["objective"] = objective_name
     return {**body, "receipt_sha256": sha256_json(body)}
 
 
@@ -840,14 +891,42 @@ def _run(args: argparse.Namespace) -> int:
                 row = projected_train[order[cursor]]
                 row_spec = execution_spec_for_projected_row(row, base_spec=spec)
                 before_update = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-                result = cached_supervised_live_path_value_and_grad(
-                    model,
-                    row["prompt_tokens"],
-                    row["answer_tokens"],
-                    spec=row_spec,
-                    bridge_tokens=row["bridge_tokens"],
-                    branch_indices=config.branch_indices,
-                )
+                if config.objective == OBJECTIVE_NAME:
+                    result = cached_supervised_live_path_value_and_grad(
+                        model,
+                        row["prompt_tokens"],
+                        row["answer_tokens"],
+                        spec=row_spec,
+                        bridge_tokens=row["bridge_tokens"],
+                        branch_indices=config.branch_indices,
+                    )
+                    rollin_base_seed = None
+                    objective_receipt = None
+                elif config.objective == OBJECTIVE_NAME_V2:
+                    if config.generated_rollin is None:
+                        _fail("resident_sft_trainer_rollin_config_missing")
+                    rollin_base_seed = derive_rollin_seed(
+                        campaign_seed=config.seed,
+                        phase="train",
+                        example_id=row["example_id"],
+                        sample_ordinal=step + 1,
+                        execution_spec_sha256=row_spec.sha256,
+                    )
+                    result = generated_rollin_live_path_value_and_grad(
+                        model,
+                        row["prompt_tokens"],
+                        row["answer_tokens"],
+                        spec=row_spec,
+                        base_seed=rollin_base_seed,
+                        config=config.generated_rollin,
+                        bridge_tokens=row["bridge_tokens"],
+                        branch_indices=config.branch_indices,
+                    )
+                    objective_receipt = validate_generated_rollin_receipt(
+                        result.evaluation.receipt()
+                    )
+                else:
+                    _fail("resident_sft_trainer_objective_unsupported")
                 if (
                     result.execution_spec_sha256 != row_spec.sha256
                     or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
@@ -870,21 +949,32 @@ def _run(args: argparse.Namespace) -> int:
                     epoch=epoch,
                     cursor=cursor,
                 )
-                loss_trail.append(
-                    {
-                        "step": step,
-                        "epoch": epoch,
-                        "cursor": cursor,
-                        "example_id": row["example_id"],
-                        "loss": result.value,
-                        "branch_values": list(result.branch_values),
-                        "requested_recurrent_depth": row["depth"],
-                        "executed_recurrent_depth": row_spec.recurrent_steps,
-                        "execution_spec_sha256": row_spec.sha256,
-                        "adapter_before_sha256": before_update,
-                        "adapter_after_sha256": after_update,
-                    }
-                )
+                loss_record = {
+                    "step": step,
+                    "epoch": epoch,
+                    "cursor": cursor,
+                    "example_id": row["example_id"],
+                    "loss": result.value,
+                    "branch_values": list(result.branch_values),
+                    "requested_recurrent_depth": row["depth"],
+                    "executed_recurrent_depth": row_spec.recurrent_steps,
+                    "execution_spec_sha256": row_spec.sha256,
+                    "adapter_before_sha256": before_update,
+                    "adapter_after_sha256": after_update,
+                }
+                if objective_receipt is not None:
+                    assert rollin_base_seed is not None
+                    loss_record.update(
+                        {
+                            "branch_weights": list(result.branch_weights),
+                            "rollin_base_seed": rollin_base_seed,
+                            "objective_receipt_sha256": objective_receipt[
+                                "receipt_sha256"
+                            ],
+                            "objective_receipt": objective_receipt,
+                        }
+                    )
+                loss_trail.append(loss_record)
                 reached_max = step >= config.max_steps
                 reached_wall = elapsed() >= config.max_minutes * 60.0
                 terminal = reached_max or reached_wall

@@ -44,10 +44,15 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
     topology_sha256,
     validate_resident_recurrent_sft_adapter_identity,
 )
+from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
+    validate_generated_rollin_receipt,
+)
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_fingerprint,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
+    OBJECTIVE_NAME,
+    OBJECTIVE_NAME_V2,
     authorize_bound_artifacts,
     sha256_bytes,
     sha256_json,
@@ -336,6 +341,60 @@ def _adapter_value_identity(path: Path, *, role: str) -> tuple[str, str]:
     return adapter_tensor_fingerprint(tensors), adapter_topology_sha256(tensors)
 
 
+def _verify_objective_record(record: Mapping[str, Any]) -> None:
+    receipt = record.get("objective_receipt")
+    if not isinstance(receipt, Mapping):
+        _fail("resident_sft_materialize_objective_receipt_missing")
+    try:
+        validated = validate_generated_rollin_receipt(receipt)
+    except (TypeError, ValueError) as exc:
+        raise ResidentRecurrentSFTMaterializationError(
+            "resident_sft_materialize_objective_receipt_invalid"
+        ) from exc
+    branches = validated["branches"]
+    if (
+        record.get("objective_receipt_sha256") != validated["receipt_sha256"]
+        or record.get("rollin_base_seed") != validated["base_seed"]
+        or record.get("execution_spec_sha256")
+        != validated["execution_spec_sha256"]
+        or record.get("loss") != validated["value"]
+        or record.get("branch_values")
+        != [branch["loss"] for branch in branches]
+        or record.get("branch_weights")
+        != [branch["selection_weight"] for branch in branches]
+    ):
+        _fail("resident_sft_materialize_objective_receipt_drift")
+
+
+def _verify_objective_evidence(
+    state: Mapping[str, Any],
+    *,
+    objective: str,
+) -> None:
+    if objective == OBJECTIVE_NAME:
+        if any(
+            "objective_receipt" in record
+            for record in state["loss_trail"]
+        ):
+            _fail("resident_sft_materialize_legacy_objective_receipt_unexpected")
+        return
+    if objective != OBJECTIVE_NAME_V2:
+        _fail("resident_sft_materialize_objective_unsupported")
+    for record in state["loss_trail"]:
+        _verify_objective_record(record)
+    summaries = [state["baseline_validation"], *state["validation_trail"]]
+    for summary in summaries:
+        if summary.get("objective") != OBJECTIVE_NAME_V2:
+            _fail("resident_sft_materialize_validation_objective_drift")
+        records = summary.get("records")
+        if not isinstance(records, list) or not records:
+            _fail("resident_sft_materialize_validation_records_invalid")
+        for record in records:
+            if not isinstance(record, Mapping):
+                _fail("resident_sft_materialize_validation_records_invalid")
+            _verify_objective_record(record)
+
+
 def _verify_checkpoint_chain(
     training_root: Path,
     *,
@@ -435,6 +494,10 @@ def _verify_checkpoint_chain(
             or observed_topology_sha256 != state["adapter_topology_sha256"]
         ):
             _fail("resident_sft_materialize_checkpoint_trail_invalid")
+        _verify_objective_evidence(
+            state,
+            objective=authority["trainer"]["objective"],
+        )
         if step == 0:
             if adapter_value_sha256 != state["initial_adapter_sha256"]:
                 _fail("resident_sft_materialize_initial_adapter_identity_mismatch")

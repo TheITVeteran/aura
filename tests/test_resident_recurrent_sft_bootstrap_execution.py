@@ -8,7 +8,15 @@ import mlx.core as mx
 import pytest
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
-from core.learning.resident_recurrent_sft_bootstrap_authority import sha256_json
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinSelectionConfig,
+)
+from core.learning.resident_recurrent_sft_bootstrap_authority import (
+    OBJECTIVE_NAME_V2,
+    TRAINER_CONFIG_SCHEMA_V2,
+    ResidentSFTBootstrapConfig,
+    sha256_json,
+)
 from core.learning.resident_recurrent_sft_bootstrap_execution import (
     ResidentSFTBootstrapExecutionError,
     adapter_topology_sha256,
@@ -223,6 +231,70 @@ def test_validation_executes_and_receipts_each_projected_depth(monkeypatch: Any)
         record["requested_recurrent_depth"] == record["executed_recurrent_depth"]
         for record in summary["records"]
     )
+
+
+def test_validation_uses_bound_generated_rollin_objective(monkeypatch: Any) -> None:
+    row = _projected_rows()[0]
+    observed: list[tuple[int, int]] = []
+
+    def fake_generated_loss(
+        _model: Any,
+        prompt_tokens: list[int],
+        answer_tokens: list[int],
+        *,
+        spec: RLCExecutionSpec,
+        base_seed: int,
+        config: GeneratedRollinSelectionConfig,
+        bridge_tokens: list[int],
+        branch_indices: tuple[int, ...],
+    ) -> SimpleNamespace:
+        assert config == GeneratedRollinSelectionConfig()
+        assert bridge_tokens == []
+        assert branch_indices == (0, 1)
+        observed.append((base_seed, spec.recurrent_steps))
+        return SimpleNamespace(
+            execution_spec_sha256=spec.sha256,
+            prompt_tokens_sha256=sha256_json(prompt_tokens),
+            answer_tokens_sha256=sha256_json(answer_tokens),
+            value=0.75,
+            branch_values=(0.5, 1.0),
+            branch_weights=(0.8, 0.2),
+            answer_token_count=len(answer_tokens),
+            receipt=lambda: {"receipt_sha256": "a" * 64},
+        )
+
+    monkeypatch.setattr(
+        trainer,
+        "generated_rollin_live_path_loss",
+        fake_generated_loss,
+    )
+    monkeypatch.setattr(
+        trainer,
+        "validate_generated_rollin_receipt",
+        lambda value: value,
+    )
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        schema=TRAINER_CONFIG_SCHEMA_V2,
+        objective=OBJECTIVE_NAME_V2,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        validation_examples=1,
+    )
+    summary = trainer._validation_summary(
+        object(),
+        [row],
+        spec=RLCExecutionSpec(recurrent_steps=4),
+        config=config,
+    )
+
+    assert len(observed) == 1
+    assert observed[0][0] == summary["records"][0]["rollin_base_seed"]
+    assert summary["objective"] == OBJECTIVE_NAME_V2
+    assert summary["records"][0]["branch_weights"] == [0.8, 0.2]
+    assert summary["records"][0]["objective_receipt_sha256"] == "a" * 64
+    assert summary["records"][0]["objective_receipt"] == {
+        "receipt_sha256": "a" * 64
+    }
 
 
 def test_family_depth_schedule_is_deterministic_and_without_replacement() -> None:

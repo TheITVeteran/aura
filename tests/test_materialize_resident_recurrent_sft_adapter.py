@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,11 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
     declared_bindings,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinBranchEvidence,
+    GeneratedRollinLivePathEvaluation,
+    GeneratedRollinSelectionConfig,
+)
 from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     REQUIRED_SOURCE_ROLES,
@@ -53,6 +59,54 @@ class CampaignFixture:
     model: Path
     destination: Path
     evaluation_runtime: dict[str, Any]
+
+
+def _objective_record() -> dict[str, Any]:
+    evaluation = GeneratedRollinLivePathEvaluation(
+        value=0.5 - 0.5 * math.log((1.0 + math.exp(-1.0)) / 2.0),
+        branches=(
+            GeneratedRollinBranchEvidence(
+                branch_index=0,
+                branch_seed=11,
+                loss=0.5,
+                selection_weight=0.7310585786300049,
+                generated_tokens_sha256="1" * 64,
+                effective_rollin_sha256="2" * 64,
+                student_forced_positions=(0,),
+            ),
+            GeneratedRollinBranchEvidence(
+                branch_index=1,
+                branch_seed=12,
+                loss=1.0,
+                selection_weight=0.2689414213699951,
+                generated_tokens_sha256="3" * 64,
+                effective_rollin_sha256="4" * 64,
+                student_forced_positions=(0,),
+            ),
+        ),
+        answer_token_count=2,
+        execution_spec_sha256="5" * 64,
+        prompt_tokens_sha256="6" * 64,
+        answer_tokens_sha256="7" * 64,
+        bridge_tokens_sha256="8" * 64,
+        config=GeneratedRollinSelectionConfig(
+            branch_softmin_temperature=0.5,
+        ),
+        base_seed=10,
+    )
+    # Softmin(0.5, 1.0; tau=.5), not the weighted arithmetic mean.
+    receipt = evaluation.receipt()
+    return {
+        "loss": receipt["value"],
+        "branch_values": [branch["loss"] for branch in receipt["branches"]],
+        "branch_weights": [
+            branch["selection_weight"] for branch in receipt["branches"]
+        ],
+        "rollin_base_seed": receipt["base_seed"],
+        "execution_spec_sha256": receipt["execution_spec_sha256"],
+        "objective_receipt_sha256": receipt["receipt_sha256"],
+        "objective_receipt": receipt,
+    }
 
 
 def _write(path: Path, payload: bytes) -> None:
@@ -599,6 +653,18 @@ def test_refuses_partial_checkpoint_chain(
     ):
         _materialize(fixture, monkeypatch)
     assert not fixture.destination.exists()
+
+
+def test_materializer_replays_embedded_generated_rollin_evidence() -> None:
+    record = _objective_record()
+    materializer._verify_objective_record(record)
+
+    record["branch_weights"][0] += 0.01
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="objective_receipt_drift",
+    ):
+        materializer._verify_objective_record(record)
 
 
 def test_refuses_rehashed_historical_prefix_drift(

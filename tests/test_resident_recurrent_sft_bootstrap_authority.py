@@ -7,12 +7,19 @@ from datetime import datetime
 import pytest
 
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinSelectionConfig,
+)
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     AUTHORITY_SCHEMA,
     CLAIMS_NOT_SUPPORTED,
     LEGACY_AUTHORITY_SCHEMA,
     LEGACY_REQUIRED_SOURCE_ROLES,
+    OBJECTIVE_NAME_V2,
+    PREVIOUS_AUTHORITY_SCHEMA,
+    PREVIOUS_REQUIRED_SOURCE_ROLES,
     REQUIRED_SOURCE_ROLES,
+    TRAINER_CONFIG_SCHEMA_V2,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
     ResidentSFTBootstrapConfig,
@@ -156,12 +163,70 @@ def test_current_authority_requires_depth_conditioned_source_closure() -> None:
         "adapter_package_identity",
         "adapter_materializer",
         "paired_campaign_loader",
+        "objective_policy",
     } <= set(authority["sources"])
 
     authority["sources"].pop("depth_conditioning")
     _recompute_authority_sha256(authority)
     with pytest.raises(ResidentSFTBootstrapAuthorityError, match="source_roles_invalid"):
         validate_authority(authority)
+
+
+def test_v2_trainer_config_requires_and_binds_generated_rollin_policy() -> None:
+    rollin = GeneratedRollinSelectionConfig(
+        student_forcing_probability=0.7,
+        sampling_temperature=0.6,
+        branch_softmin_temperature=0.4,
+    )
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        schema=TRAINER_CONFIG_SCHEMA_V2,
+        objective=OBJECTIVE_NAME_V2,
+        generated_rollin=rollin,
+    )
+
+    assert ResidentSFTBootstrapConfig.from_dict(config.to_dict()) == config
+    assert config.to_dict()["generated_rollin"] == rollin.to_dict()
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="rollin_required",
+    ):
+        ResidentSFTBootstrapConfig(
+            seed=17,
+            schema=TRAINER_CONFIG_SCHEMA_V2,
+            objective=OBJECTIVE_NAME_V2,
+        )
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="rollin_not_supported",
+    ):
+        ResidentSFTBootstrapConfig(
+            seed=17,
+            generated_rollin=rollin,
+        )
+
+
+def test_historical_v2_authority_retains_pre_policy_source_closure() -> None:
+    authority, train, validation, sources = _authority()
+    authority["schema"] = PREVIOUS_AUTHORITY_SCHEMA
+    authority["sources"] = {
+        role: authority["sources"][role]
+        for role in sorted(PREVIOUS_REQUIRED_SOURCE_ROLES)
+    }
+    previous_sources = {
+        role: sources[role] for role in PREVIOUS_REQUIRED_SOURCE_ROLES
+    }
+    _recompute_authority_sha256(authority)
+
+    validated = validate_authority(authority)
+    assert set(validated["sources"]) == PREVIOUS_REQUIRED_SOURCE_ROLES
+    authorize_bound_artifacts(
+        validated,
+        train_payload=train,
+        validation_payload=validation,
+        source_payloads=previous_sources,
+        expected_authority_sha256=validated["authority_sha256"],
+    )
 
 
 def test_historical_v1_authority_retains_its_original_source_closure() -> None:
