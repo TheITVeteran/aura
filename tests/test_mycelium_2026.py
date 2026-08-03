@@ -778,11 +778,17 @@ async def test_invalid_vault_generation_cannot_partially_replace_topology(
             "pattern": "corrupt",
             "skill_name": "corrupt",
         }
+        encoded = json.dumps(payload)
         connection.execute(
             "UPDATE aegis_vault SET data = ? WHERE key = ?",
-            (json.dumps(payload), "topology_v3"),
+            (encoded, "topology_v3"),
         )
-        connection.commit()
+        # Re-signed so this test exercises the malformed-CONTENT
+        # validation it is named for. Without it the MAC check
+        # short-circuits and the test passes with that protection
+        # entirely removed. Forgery has its own test:
+        # test_an_edited_vault_is_refused_rather_than_restored.
+        _reattest_vault(connection, tmp_path, encoded)
 
     before = network.get_graph_snapshot()
     assert await MycelialNetwork.restore_from_vault() is False
@@ -828,11 +834,17 @@ async def test_vault_rejects_malformed_nested_surfaces_without_partial_restore(
             payload["mapped_files"]["core.alpha"]["imports"] = None
         else:
             payload["pathways"]["vault_search"]["source_file"] = "/outside/map.py"
+        encoded = json.dumps(payload)
         connection.execute(
             "UPDATE aegis_vault SET data = ? WHERE key = ?",
-            (json.dumps(payload), "topology_v3"),
+            (encoded, "topology_v3"),
         )
-        connection.commit()
+        # Re-signed so this test exercises the malformed-CONTENT
+        # validation it is named for. Without it the MAC check
+        # short-circuits and the test passes with that protection
+        # entirely removed. Forgery has its own test:
+        # test_an_edited_vault_is_refused_rather_than_restored.
+        _reattest_vault(connection, tmp_path, encoded)
 
     before = network.get_graph_snapshot()
     assert await MycelialNetwork.restore_from_vault() is False
@@ -1954,11 +1966,17 @@ async def test_vault_rejects_nonfinite_negative_and_cross_surface_corruption(
             pathway["last_matched_age_s"] = 5.0
         else:
             raise AssertionError(f"unhandled corruption fixture: {corruption}")
+        encoded = json.dumps(payload)
         connection.execute(
             "UPDATE aegis_vault SET data = ? WHERE key = ?",
-            (json.dumps(payload), "topology_v3"),
+            (encoded, "topology_v3"),
         )
-        connection.commit()
+        # Re-signed so this test exercises the malformed-CONTENT
+        # validation it is named for. Without it the MAC check
+        # short-circuits and the test passes with that protection
+        # entirely removed. Forgery has its own test:
+        # test_an_edited_vault_is_refused_rather_than_restored.
+        _reattest_vault(connection, tmp_path, encoded)
 
     before = network.get_graph_snapshot()
     assert await MycelialNetwork.restore_from_vault() is False
