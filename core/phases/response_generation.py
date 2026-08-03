@@ -1275,6 +1275,11 @@ class ResponseGenerationPhase(BasePhase):
                     {"role": "user", "content": objective},
                 ]
             else:
+                from core.brain.cognitive_context_manager import (
+                    bind_unified_context_to_state,
+                )
+
+                await bind_unified_context_to_state(state, objective)
                 messages = ContextAssembler.build_messages(state, objective)
             contract = build_response_contract(
                 state,

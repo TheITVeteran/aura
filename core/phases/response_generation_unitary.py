@@ -37,7 +37,6 @@ from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.kernel.bridge import Phase
 from core.phases.dialogue_policy import enforce_dialogue_contract, validate_dialogue_response
-from core.self.inner_language import say_focus
 from core.phases.response_contract import (
     ResponseContract,
     build_response_contract,
@@ -54,6 +53,7 @@ from core.runtime.proof_policy import (
     structured_proof_solver_enabled,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
+from core.self.inner_language import say_focus
 from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.prompt_compression import compress_system_prompt
@@ -5125,6 +5125,20 @@ class UnitaryResponsePhase(Phase):
                 if strict_proof_answer_request
                 else False
             )
+            bind_context_packet = bool(
+                is_user_facing
+                and routing_origin != "benchmark"
+                and not strict_proof_answer_request
+                and not proof_evaluation_turn
+                and not operator_evidence_turn
+                and not _is_system_directive
+            )
+            if bind_context_packet:
+                from core.brain.cognitive_context_manager import (
+                    bind_unified_context_to_state,
+                )
+
+                await bind_unified_context_to_state(new_state, objective)
             if _is_system_directive:
                 # For instruct-tuned models, providing ONLY a system prompt causes
                 # them to continue generating the prompt itself. We must provide
@@ -5233,6 +5247,21 @@ class UnitaryResponsePhase(Phase):
                     )
                 else:
                     messages.insert(0, {"role": "system", "content": system_prompt})
+
+            if bind_context_packet and messages and messages[0].get("role") == "system":
+                from core.brain.cognitive_context_manager import (
+                    PROMPT_MARKER,
+                    render_unified_context_prompt,
+                )
+
+                if PROMPT_MARKER not in str(messages[0].get("content") or ""):
+                    unified_block = render_unified_context_prompt(
+                        new_state.response_modifiers.get("unified_context_packet")
+                    )
+                    if unified_block:
+                        messages[0]["content"] = (
+                            f"{messages[0]['content']}\n\n{unified_block}"
+                        )
 
             # When processing a CORE DIRECTIVE / sensory feed, skip all
             # personality and contract prompt injections. The directive IS the

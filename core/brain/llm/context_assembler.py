@@ -1564,6 +1564,22 @@ class ContextAssembler:
                     )
                     if goals_text:
                         dynamic_system += f"\nActive Drives: {goals_text}"
+
+                # The context manager contributes observed data, never a second
+                # authority surface.  Its renderer labels provenance, failures,
+                # freshness, and the trust boundary before any service-provided
+                # text reaches the model.
+                unified_packet = getattr(state, "response_modifiers", {}).get(
+                    "unified_context_packet"
+                )
+                if unified_packet:
+                    from core.brain.cognitive_context_manager import (
+                        render_unified_context_prompt,
+                    )
+
+                    unified_block = render_unified_context_prompt(unified_packet)
+                    if unified_block:
+                        dynamic_system += f"\n\n{unified_block}"
             except (OSError, ConnectionError, TimeoutError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "context_assembler.functional_state",
