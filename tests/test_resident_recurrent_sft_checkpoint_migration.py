@@ -211,6 +211,62 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         )
 
 
+def test_migration_verifies_an_objective_only_source_transition(monkeypatch, tmp_path):
+    source_root = tmp_path / "source-run"
+    destination_root = tmp_path / "destination-run"
+    source_root.mkdir()
+    destination_root.mkdir()
+    source_bindings = _bindings("source")
+    destination_bindings = _bindings("destination")
+    _seed_checkpoint(source_root, source_bindings)
+    trainer_sha = _sha("same-trainer")
+    source = _authority(source_root, campaign="source", trainer_sha=trainer_sha)
+    destination = _authority(
+        destination_root,
+        campaign="destination",
+        trainer_sha=trainer_sha,
+    )
+    source_sha = "8299def67d36726a4c82601210ef20ca530aef0ab7f5cb0691d5fbcacdd8b165"
+    destination_sha = "46ffabd2f81547b08a4353276014d4fd3159c0ca3249d9f6aa596782d03dc185"
+    source["sources"]["specialization_objective"] = {
+        "path": "core/specialization.py",
+        "sha256": source_sha,
+        "size_bytes": 300,
+    }
+    destination["sources"]["specialization_objective"] = {
+        "path": "core/specialization.py",
+        "sha256": destination_sha,
+        "size_bytes": 400,
+    }
+    source_path = tmp_path / "source.json"
+    destination_path = tmp_path / "destination.json"
+    _write_authority(source_path, source)
+    _write_authority(destination_path, destination)
+    monkeypatch.setattr(migration, "validate_authority", lambda value, **_kwargs: dict(value))
+    monkeypatch.setattr(
+        migration,
+        "authority_state_bindings",
+        lambda authority: (
+            source_bindings if authority["campaign_id"] == "source" else destination_bindings
+        ),
+    )
+
+    receipt = migration.migrate_checkpoint(
+        source_repo_root=tmp_path,
+        source_authority_path=source_path,
+        destination_repo_root=tmp_path,
+        destination_authority_path=destination_path,
+    )
+    verified = migration.verify_migration(
+        destination_root / "checkpoint-migration.json",
+        destination_repo_root=tmp_path,
+        destination_authority=destination,
+    )
+
+    assert receipt["changed_source_roles"] == ["specialization_objective"]
+    assert verified["migration_sha256"] == receipt["migration_sha256"]
+
+
 def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):
     source_root = tmp_path / "source-run"
     destination_root = tmp_path / "destination-run"

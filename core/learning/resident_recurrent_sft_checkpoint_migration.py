@@ -392,7 +392,6 @@ def verify_migration(
         }
         or not isinstance(changed_roles, list)
         or not changed_roles
-        or "trainer" not in changed_roles
         or not isinstance(implementation, Mapping)
     ):
         _fail("resident_sft_migration_receipt_invalid")
