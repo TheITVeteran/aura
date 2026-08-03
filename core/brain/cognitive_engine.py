@@ -1590,6 +1590,18 @@ class CognitiveEngine:
         # of three entries has not stopped anything a caller can rely on.
         self._refuse_if_stopped("think")
 
+        # Restore the antecedent for a message that cannot stand alone. Live
+        # on 2026-08-03: "Can you do it now?" after a refused screen read, and
+        # "From the grant research funds manager" answering Aura's own
+        # "Response from who?" — both were reasoned about as though the
+        # conversation had just begun, because every path below receives one
+        # message and no turn before it.
+        #
+        # Done here rather than at each caller because think() is the single
+        # chokepoint they all pass through, and a fix applied per-route is a
+        # fix that the next route will not have.
+        objective = self._objective_with_antecedent(objective)
+
         outcome = TurnOutcome(origin=str(origin or "unknown"))
         try:
             with bind_turn(outcome):
@@ -3654,6 +3666,48 @@ class CognitiveEngine:
     def stopped(self) -> bool:
         """True once stop() has run. Consulted before any cognitive work."""
         return bool(getattr(self, "_stopped", False))
+
+    def _objective_with_antecedent(self, objective: str) -> str:
+        """Join a non-self-contained message to the turn that gives it meaning.
+
+        Returns the objective UNCHANGED in the ordinary case. Only a retry, an
+        assent, a pro-form, or a fragment answering a question Aura just asked
+        is joined, and the resolver refuses anything carrying standalone
+        content of its own — attaching stale intent to a fresh request is a
+        worse failure than missing a follow-up.
+
+        Never raises. Reasoning must not become impossible because a
+        conversational lookup failed.
+        """
+        text = str(objective or "")
+        if not text.strip():
+            return text
+        try:
+            from core.conversation.unified_transcript import UnifiedTranscript
+            from core.runtime.referential_continuation import effective_message
+
+            last_user, last_aura = UnifiedTranscript.get_instance().preceding_turns(
+                before_content=text
+            )
+            if not last_user and not last_aura:
+                return text
+            resolution = effective_message(
+                text,
+                previous_user_request=last_user,
+                previous_assistant_message=last_aura,
+            )
+            if not resolution.resolved:
+                return text
+            logger.info(
+                "🔗 CognitiveEngine: resolved a %s against the previous turn "
+                "(%d chars of antecedent restored).",
+                resolution.kind,
+                len(resolution.antecedent),
+            )
+            return resolution.text
+        except Exception:  # noqa: BLE001 — never block a turn on this
+            logger.debug("antecedent resolution unavailable", exc_info=True)
+            return text
 
     def _refuse_if_stopped(self, operation: str) -> None:
         """Raise rather than perform cognitive work on a stopped engine."""

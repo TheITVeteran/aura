@@ -112,6 +112,42 @@ class UnifiedTranscript:
                     cls._instance = cls()
         return cls._instance
 
+    def preceding_turns(self, *, before_content: str = "") -> tuple[str, str]:
+        """The last user request and the last thing Aura said, in that order.
+
+        This is what a message like "Can you do it now?" or "From the grant
+        research funds manager" needs in order to mean anything. Both were said
+        to Aura live on 2026-08-03 and both were answered as though the
+        conversation had just started, because every router reads one message
+        at a time.
+
+        ``before_content`` skips the current turn when it has already been
+        written to the transcript, so a message never resolves against itself.
+        """
+        with self._lock:
+            entries = list(self._entries)
+
+        if before_content:
+            needle = str(before_content).strip()
+            for index in range(len(entries) - 1, -1, -1):
+                if entries[index].role == "user" and entries[index].content.strip() == needle:
+                    entries = entries[:index]
+                    break
+
+        last_user = ""
+        last_aura = ""
+        for entry in reversed(entries):
+            content = str(getattr(entry, "content", "") or "").strip()
+            if not content:
+                continue
+            if not last_user and entry.role == "user":
+                last_user = content
+            elif not last_aura and entry.role == "aura":
+                last_aura = content
+            if last_user and last_aura:
+                break
+        return last_user, last_aura
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------

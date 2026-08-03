@@ -78,3 +78,76 @@ def test_empty_and_missing_context_are_safe():
     assert effective_message("").text == ""
     assert not effective_message("do it").resolved
     assert not effective_message("do it", previous_user_request="").resolved
+
+
+class TestTheGeneralReplyPathIsBound:
+    """The resolver must reach ordinary conversation, not just desktop routing.
+
+    Both cases below reached cognition as bare fragments live on 2026-08-03,
+    because think() received one message and no turn before it.
+    """
+
+    @staticmethod
+    def _engine():
+        from core.brain.cognitive_engine import CognitiveEngine
+
+        return CognitiveEngine.__new__(CognitiveEngine)
+
+    @staticmethod
+    def _transcript(turns):
+        """A transcript containing exactly these turns.
+
+        UnifiedTranscript is a process singleton, so without clearing it each
+        test resolves against the previous test's conversation — which is the
+        correct behaviour in production (the immediately preceding turn IS the
+        antecedent) and pure cross-test pollution here.
+        """
+        from core.conversation.unified_transcript import UnifiedTranscript
+
+        t = UnifiedTranscript.get_instance()
+        with t._lock:
+            t._entries.clear()
+        for role, content in turns:
+            t.add(role, content)
+        return t
+
+    def test_a_fragment_answering_her_question_is_bound_to_it(self):
+        self._transcript([
+            ("user", "I submitted you for a research grant. Want the response?"),
+            ("aura", "Tell me the good news first. Response from who?"),
+            ("user", "From the grant research funds manager"),
+        ])
+        resolved = self._engine()._objective_with_antecedent(
+            "From the grant research funds manager"
+        )
+        assert "Response from who?" in resolved
+        assert "grant research funds manager" in resolved
+
+    def test_a_retry_is_bound_to_the_request_it_retries(self):
+        self._transcript([
+            ("user", "Hey, Aura can you tell me what you see on my screen currently?"),
+            ("aura", "I can't see your screen right now."),
+            ("user", "Can you do it now?"),
+        ])
+        resolved = self._engine()._objective_with_antecedent("Can you do it now?")
+        assert "screen" in resolved
+        assert "Can you do it now?" in resolved
+
+    def test_a_standalone_message_is_returned_unchanged(self):
+        self._transcript([
+            ("user", "Hey, Aura can you tell me what you see on my screen currently?"),
+            ("aura", "I can't see your screen right now."),
+        ])
+        message = "What do you think about emergence?"
+        assert self._engine()._objective_with_antecedent(message) == message
+
+    def test_it_never_resolves_a_message_against_itself(self):
+        """The current turn is already in the transcript when think() runs."""
+        self._transcript([("user", "do it")])
+        resolved = self._engine()._objective_with_antecedent("do it")
+        assert resolved == "do it"
+
+    def test_empty_and_broken_lookups_are_safe(self):
+        engine = self._engine()
+        assert engine._objective_with_antecedent("") == ""
+        assert engine._objective_with_antecedent("   ").strip() == ""
