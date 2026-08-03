@@ -65,20 +65,6 @@ def _read_private_canonical(
     return value, raw
 
 
-def _write_create_once(path: Path, payload: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        os.fchmod(descriptor, 0o600)
-        written = 0
-        while written < len(payload):
-            written += os.write(descriptor, payload[written:])
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def _result_state(
     path: Path,
     *,
@@ -112,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         command_sha256 = os.environ["AURA_DETACHED_COMMAND_SHA256"]
         prior_attempt = int(os.environ["AURA_DETACHED_PRIOR_ATTEMPT"])
         prior_head = os.environ["AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256"]
-        evidence_path = Path(os.environ["AURA_DETACHED_RESUME_EVIDENCE_PATH"])
+        if os.environ["AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT"] != "stdout-v3":
+            raise ValueError("resume evidence transport is not stdout-v3")
         if (
             not _is_sha(plan_sha256)
             or not _is_sha(command_sha256)
@@ -152,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("authoritative result conflicts with candidate")
         checkpoint_sequence = 1 if candidate_state == "valid" else 0
         evidence = {
-            "schema": "aura.detached_step.resume_evidence.v1",
+            "schema": "aura.detached_step.resume_evidence.v2",
             "plan_sha256": plan_sha256,
             "command_sha256": command_sha256,
             "prior_attempt": prior_attempt,
@@ -168,9 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             "candidate_result_state": candidate_state,
             "authoritative_result_state": result_state,
         }
-        evidence_bytes = _canonical(evidence) + b"\n"
-        _write_create_once(evidence_path, evidence_bytes)
-        evidence_sha256 = _sha(evidence_bytes)
+        evidence_sha256 = _sha(_canonical(evidence))
         checkpoint_identity = _sha(
             _canonical(
                 {
@@ -182,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         verdict = {
-            "schema": "aura.detached_step.resume_verdict.v2",
+            "schema": "aura.detached_step.resume_verdict.v3",
             "plan_sha256": plan_sha256,
             "command_sha256": command_sha256,
             "prior_attempt": prior_attempt,
@@ -190,7 +175,6 @@ def main(argv: list[str] | None = None) -> int:
             "checkpoint_sequence": checkpoint_sequence,
             "checkpoint_identity": checkpoint_identity,
             "verdict": "safe_to_resume",
-            "evidence_path": str(evidence_path),
             "evidence_sha256": evidence_sha256,
             "evidence": evidence,
         }

@@ -411,3 +411,48 @@ def test_call_contract_and_long_timeout_bounds(tmp_path: Path) -> None:
         match="timeout_invalid",
     ):
         _job(tmp_path, target, timeout_seconds=93_600.1)
+
+
+def test_runner_output_volume_is_distinguishable_from_runner_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A noisy runner and a failed runner must not report the same code.
+
+    Both once raised ``durable_verifier_detached_runner_failed`` with no
+    detail, so a resume that died on a contract mismatch was indistinguishable
+    from one that merely printed too much.
+    """
+    target = _target_script(tmp_path)
+    job = _job(tmp_path, target)
+    arguments = ["status", "--run-dir", str(tmp_path / "run")]
+
+    def _stub(returncode: int, stdout: bytes, stderr: bytes) -> Any:
+        def _run(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.CompletedProcess(
+                args=["runner"],
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        return _run
+
+    monkeypatch.setattr(subprocess, "run", _stub(2, b"", b"contract mismatch"))
+    with pytest.raises(DurableExternalVerifierJobError) as failed:
+        job._runner_call(arguments)
+    assert failed.value.code == "durable_verifier_detached_runner_failed"
+    # The detail is what makes such a failure localisable at all.
+    assert "returncode=2" in failed.value.detail
+    assert "contract mismatch" in failed.value.detail
+
+    flood = b"x" * ((1 << 20) + 1)
+    monkeypatch.setattr(subprocess, "run", _stub(0, flood, b""))
+    with pytest.raises(DurableExternalVerifierJobError) as flooded:
+        job._runner_call(arguments)
+    assert flooded.value.code == "durable_verifier_detached_runner_output_too_large"
+
+    monkeypatch.setattr(subprocess, "run", _stub(0, b"", flood))
+    with pytest.raises(DurableExternalVerifierJobError) as noisy:
+        job._runner_call(arguments)
+    assert noisy.value.code == "durable_verifier_detached_runner_output_too_large"

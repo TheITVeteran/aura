@@ -313,9 +313,10 @@ def _resume_verdict(request_path: Path, result_path: Path) -> dict[str, Any]:
     command = os.environ["AURA_DETACHED_COMMAND_SHA256"]
     attempt = int(os.environ["AURA_DETACHED_PRIOR_ATTEMPT"])
     head = os.environ["AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256"]
-    evidence_path = Path(os.environ["AURA_DETACHED_RESUME_EVIDENCE_PATH"])
+    if os.environ["AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT"] != "stdout-v3":
+        _fail("policy_state_replay_resume_evidence_transport_invalid")
     evidence = {
-        "schema": "aura.detached_step.resume_evidence.v1",
+        "schema": "aura.detached_step.resume_evidence.v2",
         "plan_sha256": plan,
         "command_sha256": command,
         "prior_attempt": attempt,
@@ -328,14 +329,9 @@ def _resume_verdict(request_path: Path, result_path: Path) -> dict[str, Any]:
         "request_sha256": request["request_sha256"],
         "result_state": result_state,
     }
-    evidence_payload = canonical_json_bytes(evidence) + b"\n"
-    if not atomic_write_bytes_if_absent(
-        evidence_path,
-        evidence_payload,
-        mode=0o600,
-    ):
-        _fail("policy_state_replay_resume_evidence_conflict")
-    evidence_sha = hashlib.sha256(evidence_payload).hexdigest()
+    # The runner hashes the evidence object it receives over stdout-v3, so this
+    # digest must not include the trailing newline the old file transport wrote.
+    evidence_sha = hashlib.sha256(canonical_json_bytes(evidence)).hexdigest()
     checkpoint_sequence = evidence["checkpoint_sequence"]
     checkpoint_identity = _digest(
         {
@@ -346,7 +342,7 @@ def _resume_verdict(request_path: Path, result_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "schema": "aura.detached_step.resume_verdict.v2",
+        "schema": "aura.detached_step.resume_verdict.v3",
         "plan_sha256": plan,
         "command_sha256": command,
         "prior_attempt": attempt,
@@ -354,7 +350,6 @@ def _resume_verdict(request_path: Path, result_path: Path) -> dict[str, Any]:
         "checkpoint_sequence": checkpoint_sequence,
         "checkpoint_identity": checkpoint_identity,
         "verdict": verdict,
-        "evidence_path": str(evidence_path),
         "evidence_sha256": evidence_sha,
         "evidence": evidence,
     }

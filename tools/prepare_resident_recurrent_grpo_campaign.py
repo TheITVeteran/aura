@@ -1638,9 +1638,11 @@ def build_resume_verdict(
         "AURA_DETACHED_COMMAND_SHA256",
         "AURA_DETACHED_PRIOR_ATTEMPT",
         "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256",
-        "AURA_DETACHED_RESUME_EVIDENCE_PATH",
     }
-    if any(not environment.get(key) for key in required_environment):
+    if (
+        any(not environment.get(key) for key in required_environment)
+        or environment.get("AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT") != "stdout-v3"
+    ):
         _fail("resume_environment_incomplete")
     try:
         prior_attempt = int(environment["AURA_DETACHED_PRIOR_ATTEMPT"])
@@ -1661,11 +1663,8 @@ def build_resume_verdict(
         for value in (plan_sha, command_sha, journal_head)
     ):
         _fail("resume_supervisor_binding_invalid")
-    evidence_path = Path(environment["AURA_DETACHED_RESUME_EVIDENCE_PATH"])
-    if not evidence_path.is_absolute() or evidence_path.is_symlink():
-        _fail("resume_evidence_path_invalid")
     evidence = {
-        "schema": "aura.detached_step.resume_evidence.v1",
+        "schema": "aura.detached_step.resume_evidence.v2",
         "plan_sha256": plan_sha,
         "command_sha256": command_sha,
         "prior_attempt": prior_attempt,
@@ -1684,12 +1683,9 @@ def build_resume_verdict(
         "adapter": checkpoint_evidence["adapter"],
         "optimizer": checkpoint_evidence["optimizer"],
     }
-    evidence_raw = canonical_json_bytes(evidence)
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    if not atomic_write_bytes_if_absent(evidence_path, evidence_raw, mode=0o600):
-        if evidence_path.read_bytes() != evidence_raw:
-            _fail("resume_evidence_publication_raced")
-    evidence_sha = _sha256(evidence_raw)
+    # The runner hashes the evidence object itself, so this digest must use the
+    # newline-free canonical form -- canonical_json_bytes appends b"\n".
+    evidence_sha = _sha256(_bare_canonical(evidence))
     checkpoint_identity = _sha256(
         _bare_canonical(
             {
@@ -1701,7 +1697,7 @@ def build_resume_verdict(
         )
     )
     return {
-        "schema": "aura.detached_step.resume_verdict.v2",
+        "schema": "aura.detached_step.resume_verdict.v3",
         "plan_sha256": plan_sha,
         "command_sha256": command_sha,
         "prior_attempt": prior_attempt,
@@ -1709,7 +1705,6 @@ def build_resume_verdict(
         "checkpoint_sequence": step,
         "checkpoint_identity": checkpoint_identity,
         "verdict": "safe_to_resume",
-        "evidence_path": str(evidence_path),
         "evidence_sha256": evidence_sha,
         "evidence": evidence,
     }

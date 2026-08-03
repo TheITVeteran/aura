@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,6 +16,23 @@ from core.brain.llm.latent_cortex.campaign_journal import (
 from tools import verify_latent_cortex_campaign_resume as verifier
 
 
+def _runner_sha256(value: Any) -> str:
+    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+
+    Reproduced here rather than imported so a drift in either canonicaliser
+    fails this test instead of cancelling out against itself.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _bind_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -24,10 +43,7 @@ def _bind_environment(
     monkeypatch.setenv("AURA_DETACHED_COMMAND_SHA256", "b" * 64)
     monkeypatch.setenv("AURA_DETACHED_PRIOR_ATTEMPT", "1")
     monkeypatch.setenv("AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256", "c" * 64)
-    monkeypatch.setenv(
-        "AURA_DETACHED_RESUME_EVIDENCE_PATH",
-        str(tmp_path / f"resume-evidence-{suffix}.json"),
-    )
+    monkeypatch.setenv("AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT", "stdout-v3")
 
 
 def _plan() -> CampaignPlan:
@@ -60,8 +76,11 @@ def test_missing_campaign_is_safe_to_start(
     verdict = verifier.verify_campaign(tmp_path / "missing")
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["evidence"]["reason"] == "campaign_not_started"
-    assert Path(verdict["evidence_path"]).is_file()
     assert verdict["prior_attempt"] == 1
+    # Evidence rides inline on stdout-v3; the runner hashes the object itself.
+    assert "evidence_path" not in verdict
+    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
+    assert not list(tmp_path.glob("*resume-evidence*"))
 
 
 def test_replayable_incomplete_journal_is_safe_to_resume(

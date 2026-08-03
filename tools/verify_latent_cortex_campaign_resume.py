@@ -27,7 +27,7 @@ PLAN_FILE = "plan.json"
 JOURNAL_FILE = "campaign.jsonl"
 MANIFEST_FILE = "campaign_manifest.json"
 GRADE_FILE = "grade.json"
-VERDICT_SCHEMA = "aura.detached_step.resume_verdict.v2"
+VERDICT_SCHEMA = "aura.detached_step.resume_verdict.v3"
 
 
 class ResumeVerificationError(RuntimeError):
@@ -92,12 +92,13 @@ def _verify_grade(path: Path, manifest_sha256: str) -> None:
         raise ResumeVerificationError("campaign grade binding is invalid")
 
 
-def _bound_environment() -> tuple[str, str, int, str, Path]:
+def _bound_environment() -> tuple[str, str, int, str]:
     plan_sha = os.environ.get("AURA_DETACHED_PLAN_SHA256", "")
     command_sha = os.environ.get("AURA_DETACHED_COMMAND_SHA256", "")
     raw_attempt = os.environ.get("AURA_DETACHED_PRIOR_ATTEMPT", "")
     prior_journal_head = os.environ.get("AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256", "")
-    raw_evidence_path = os.environ.get("AURA_DETACHED_RESUME_EVIDENCE_PATH", "")
+    if os.environ.get("AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT") != "stdout-v3":
+        raise ResumeVerificationError("detached resume evidence transport is not stdout-v3")
     if (
         len(plan_sha) != 64
         or len(command_sha) != 64
@@ -114,42 +115,7 @@ def _bound_environment() -> tuple[str, str, int, str, Path]:
         raise ResumeVerificationError("detached attempt binding is invalid") from exc
     if prior_attempt <= 0:
         raise ResumeVerificationError("detached attempt binding is invalid")
-    evidence_path = Path(raw_evidence_path).expanduser()
-    if not evidence_path.is_absolute() or evidence_path.name in {"", ".", ".."}:
-        raise ResumeVerificationError("detached resume evidence path is invalid")
-    return plan_sha, command_sha, prior_attempt, prior_journal_head, evidence_path
-
-
-def _write_evidence(path: Path, evidence: dict[str, Any]) -> str:
-    if path.exists() or path.is_symlink():
-        raise ResumeVerificationError("detached resume evidence path already exists")
-    payload = canonical_json_bytes(evidence) + b"\n"
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
-        0o600,
-    )
-    try:
-        view = memoryview(payload)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise ResumeVerificationError("short detached resume evidence write")
-            view = view[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    try:
-        os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return hashlib.sha256(payload).hexdigest()
+    return plan_sha, command_sha, prior_attempt, prior_journal_head
 
 
 @contextmanager
@@ -176,7 +142,6 @@ def verify_campaign(campaign_dir: Path) -> dict[str, Any]:
         command_sha,
         prior_attempt,
         prior_journal_head,
-        evidence_path,
     ) = _bound_environment()
     campaign_dir = campaign_dir.expanduser().resolve(strict=False)
     plan_path = campaign_dir / PLAN_FILE
@@ -235,7 +200,7 @@ def verify_campaign(campaign_dir: Path) -> dict[str, Any]:
                 reason = "journal_replay_allows_infrastructure_resume"
 
     evidence = {
-        "schema": "aura.detached_step.resume_evidence.v1",
+        "schema": "aura.detached_step.resume_evidence.v2",
         "evidence_kind": "aura.latent_cortex.campaign_checkpoint.v1",
         "campaign_dir": str(campaign_dir),
         "plan_sha256": detached_plan_sha,
@@ -251,7 +216,9 @@ def verify_campaign(campaign_dir: Path) -> dict[str, Any]:
         "reason": reason,
         "verdict": verdict,
     }
-    evidence_sha = _write_evidence(evidence_path, evidence)
+    # The runner hashes the evidence object it receives over stdout-v3, so this
+    # digest must not include the trailing newline the old file transport wrote.
+    evidence_sha = hashlib.sha256(canonical_json_bytes(evidence)).hexdigest()
     checkpoint_identity = hashlib.sha256(
         canonical_json_bytes(
             {
@@ -271,7 +238,6 @@ def verify_campaign(campaign_dir: Path) -> dict[str, Any]:
         "checkpoint_sequence": committed_count,
         "checkpoint_identity": checkpoint_identity,
         "verdict": verdict,
-        "evidence_path": str(evidence_path),
         "evidence_sha256": evidence_sha,
         "evidence": evidence,
     }

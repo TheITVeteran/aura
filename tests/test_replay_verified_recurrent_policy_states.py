@@ -20,6 +20,23 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
+def _runner_sha256(value: Any) -> str:
+    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+
+    Reproduced here rather than imported so a drift in either canonicaliser
+    fails this test instead of cancelling out against itself.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _request() -> dict[str, Any]:
     body = {
         "schema": worker.REQUEST_SCHEMA,
@@ -158,7 +175,7 @@ def test_resume_verdict_is_cheap_and_fails_closed_on_bad_output(
         "AURA_DETACHED_COMMAND_SHA256": "2" * 64,
         "AURA_DETACHED_PRIOR_ATTEMPT": "1",
         "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256": "3" * 64,
-        "AURA_DETACHED_RESUME_EVIDENCE_PATH": str(evidence_path),
+        "AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT": "stdout-v3",
     }
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
@@ -168,7 +185,10 @@ def test_resume_verdict_is_cheap_and_fails_closed_on_bad_output(
     assert verdict["verdict"] == expected
     assert verdict["evidence"]["result_state"] == result_state
     assert verdict["checkpoint_sequence"] == (1 if result_state == "complete" else 0)
-    assert evidence_path.stat().st_mode & 0o077 == 0
+    # Evidence rides inline on stdout-v3; the runner hashes the object itself.
+    assert "evidence_path" not in verdict
+    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
+    assert not evidence_path.exists()
 
 
 def test_request_rejects_resealed_schema_or_digest_drift() -> None:

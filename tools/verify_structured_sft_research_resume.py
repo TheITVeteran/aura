@@ -30,15 +30,13 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
 )
 from core.learning.structured_sft_research_state import (  # noqa: E402
     StructuredSFTResearchStateError,
-    canonical_json_bytes,
     inspect_checkpoint,
     validate_journal,
 )
-from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
-VERDICT_SCHEMA = "aura.detached_step.resume_verdict.v2"
-EVIDENCE_SCHEMA = "aura.detached_step.resume_evidence.v1"
+VERDICT_SCHEMA = "aura.detached_step.resume_verdict.v3"
+EVIDENCE_SCHEMA = "aura.detached_step.resume_evidence.v2"
 COMPLETION_SCHEMA = "aura.rlc.synthetic_recurrent_sft_completion.v1"
 
 
@@ -146,11 +144,11 @@ def _detached_context() -> dict[str, Any]:
             os.environ.get("AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256", ""),
             role="journal_head",
         ),
-        "evidence_path": Path(
-            os.environ.get("AURA_DETACHED_RESUME_EVIDENCE_PATH", "")
-        ).expanduser(),
     }
-    if prior_attempt < 1 or not context["evidence_path"].is_absolute():
+    if (
+        prior_attempt < 1
+        or os.environ.get("AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT") != "stdout-v3"
+    ):
         _fail("resume_verifier_detached_context_invalid")
     return context
 
@@ -324,12 +322,9 @@ def build_verdict(
         "research_journal_head_sha256": events[-1]["event_sha256"],
         "checkpoint_state": verdict_name,
     }
-    evidence_payload = canonical_json_bytes(evidence)
-    evidence_path = detached_context["evidence_path"]
-    if evidence_path.exists() or evidence_path.is_symlink():
-        _fail("resume_verifier_evidence_path_preexists")
-    atomic_write_bytes(evidence_path, evidence_payload, mode=0o600)
-    evidence_sha256 = hashlib.sha256(evidence_payload).hexdigest()
+    # The runner hashes the evidence object itself, so this digest must use the
+    # newline-free canonical form -- state.canonical_json_bytes appends b"\n".
+    evidence_sha256 = sha256_json(evidence)
     checkpoint_identity = hashlib.sha256(
         json.dumps(
             {
@@ -355,7 +350,6 @@ def build_verdict(
         "checkpoint_sequence": state["step"],
         "checkpoint_identity": checkpoint_identity,
         "verdict": verdict_name,
-        "evidence_path": str(evidence_path),
         "evidence_sha256": evidence_sha256,
         "evidence": evidence,
     }
