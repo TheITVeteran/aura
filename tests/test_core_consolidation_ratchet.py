@@ -37,7 +37,10 @@ ALLOWED_TOP_LEVEL = frozenset({
     "curiosity_engine", "drive_engine", "reaper", "terminal_monitor",
     "initiative_synthesis", "fictional_ai_synthesis", "final_engines",
     "continuous_cognition", "conversation_reflection", "reliability_engine",
-    "local_chat_brain", "self_modification_engine", "global_workspace",
+    # self_modification_engine removed: it no longer exists at core/ top level,
+    # and the ratchet only tightens when a departed module leaves the allowlist
+    # with it. Left in place, it would silently re-permit the module's return.
+    "local_chat_brain", "global_workspace",
     # legacy shims shadowed by or redirecting to packaged implementations —
     # queued for the kill-shim pass; do NOT add new shims
     "agency_bus", "circuit_breaker", "drives", "dual_memory",
