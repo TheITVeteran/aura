@@ -72,6 +72,19 @@ def _seed_checkpoint(root: Path, bindings: dict[str, str]) -> None:
 
 def _authority(root: Path, *, campaign: str, trainer_sha: str) -> dict[str, Any]:
     stat = root.stat()
+    trust_path = root.parent / f"{campaign}-trust.json"
+    trust_document = {
+        "schema": "test-trust.v1",
+        "campaign_id": campaign,
+        "source": {"commit": trainer_sha},
+        "policy_sha256": _sha(f"policy:{campaign}"),
+        "training_only": True,
+        "gain_claim_allowed": False,
+    }
+    trust_payload = json.dumps(
+        trust_document, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+    trust_path.write_bytes(trust_payload)
     return {
         "authority_sha256": _sha(campaign),
         "campaign_id": campaign,
@@ -84,11 +97,19 @@ def _authority(root: Path, *, campaign: str, trainer_sha: str) -> dict[str, Any]
             "behavior_bundle": {"bundle_sha256": _sha("behavior")},
             "personality_bundle": {"identity_sha256": _sha("personality")},
         },
-        "tokenizer": {"identity_sha256": _sha("tokenizer")},
+        "tokenizer": {
+            "identity_sha256": _sha(f"tokenizer:{campaign}"),
+            "artifact_sha256": _sha("tokenizer-artifact"),
+            "runtime_sha256": _sha("tokenizer-runtime"),
+        },
         "execution_spec": {"semantic_sha256": _sha("spec")},
         "trainer": {"objective": "same", "max_steps": 4},
         "runtime": {"identity_sha256": _sha("runtime")},
-        "trust_policy": {"semantic_sha256": _sha("trust")},
+        "trust_policy": {
+            "path": trust_path.name,
+            "sha256": hashlib.sha256(trust_payload).hexdigest(),
+            "semantic_sha256": hashlib.sha256(trust_payload).hexdigest(),
+        },
         "sources": {
             "trainer": {
                 "path": "tools/train.py",

@@ -96,18 +96,42 @@ def _resolve_artifact_root(repo_root: Path, authority: Mapping[str, Any]) -> Pat
 
 def _identity(authority: Mapping[str, Any]) -> dict[str, Any]:
     model = authority["model"]
+    tokenizer = authority["tokenizer"]
     return {
         "campaign_scope": authority["campaign_scope"],
         "dataset_sha256": authority["dataset"]["dataset_sha256"],
         "base_checkpoint_sha256": model["base_checkpoint"]["fingerprint"],
         "behavior_sha256": model["behavior_bundle"]["bundle_sha256"],
         "personality_sha256": model["personality_bundle"]["identity_sha256"],
-        "tokenizer_sha256": authority["tokenizer"]["identity_sha256"],
+        # The aggregate tokenizer identity intentionally includes its absolute
+        # capsule directory.  Migration compares the immutable artifact and
+        # executable runtime identities instead of pretending two paths match.
+        "tokenizer_artifact_sha256": tokenizer["artifact_sha256"],
+        "tokenizer_runtime_sha256": tokenizer["runtime_sha256"],
         "execution_spec_sha256": authority["execution_spec"]["semantic_sha256"],
         "trainer_config_sha256": _sha(canonical_json_bytes(authority["trainer"])),
         "runtime_sha256": authority["runtime"]["identity_sha256"],
-        "trust_policy_sha256": authority["trust_policy"]["semantic_sha256"],
     }
+
+
+def _trust_policy_identity(repo_root: Path, authority: Mapping[str, Any]) -> str:
+    binding = authority["trust_policy"]
+    path = (repo_root.expanduser().resolve(strict=True) / binding["path"]).resolve(
+        strict=True
+    )
+    if _binding(path, max_bytes=MAX_JSON_BYTES)["sha256"] != binding["sha256"]:
+        _fail("resident_sft_migration_trust_policy_binding_drift")
+    try:
+        policy = json.loads(path.read_bytes())
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ResidentSFTCheckpointMigrationError(
+            "resident_sft_migration_trust_policy_invalid"
+        ) from exc
+    if not isinstance(policy, dict):
+        _fail("resident_sft_migration_trust_policy_invalid")
+    for path_bound in ("campaign_id", "policy_sha256", "source"):
+        policy.pop(path_bound, None)
+    return _sha(canonical_json_bytes(policy))
 
 
 def _changed_source_roles(
@@ -176,6 +200,12 @@ def migrate_checkpoint(
     scientific_identity = _identity(source_authority)
     if scientific_identity != _identity(destination_authority):
         _fail("resident_sft_migration_scientific_identity_changed")
+    source_trust_identity = _trust_policy_identity(source_repo_root, source_authority)
+    destination_trust_identity = _trust_policy_identity(
+        destination_repo_root, destination_authority
+    )
+    if source_trust_identity != destination_trust_identity:
+        _fail("resident_sft_migration_trust_policy_changed")
     changed_roles = _changed_source_roles(
         source_authority["sources"], destination_authority["sources"]
     )
@@ -244,6 +274,7 @@ def migrate_checkpoint(
             "bindings": destination_bindings,
         },
         "scientific_identity": scientific_identity,
+        "trust_policy_identity_sha256": source_trust_identity,
         "changed_source_roles": list(changed_roles),
         "migration_implementation": _binding(Path(__file__).resolve()),
         "preserved_state_sha256": _sha(canonical_json_bytes(preserved_state)),
