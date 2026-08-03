@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -13,24 +12,25 @@ from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignPlan,
     canonical_json_bytes,
 )
+from tests import detached_resume_harness as harness
+from tools import run_detached_step
 from tools import verify_latent_cortex_campaign_resume as verifier
 
 
-def _runner_sha256(value: Any) -> str:
-    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+def _assert_runner_accepts(verdict: Any) -> None:
+    """Prove the verdict against the only process that ever consumes one.
 
-    Reproduced here rather than imported so a drift in either canonicaliser
-    fails this test instead of cancelling out against itself.
+    This verifier runs as its own process, so nothing binds it to the runner's
+    contract at import time. Without this the schema and evidence digest can
+    drift silently until a campaign actually resumes.
     """
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    run_detached_step.validate_resume_verdict(
+        verdict,
+        plan_sha256="a" * 64,
+        command_sha256="b" * 64,
+        prior_attempt=1,
+        prior_journal_head_sha256="c" * 64,
+    )
 
 
 def _bind_environment(
@@ -77,10 +77,10 @@ def test_missing_campaign_is_safe_to_start(
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["evidence"]["reason"] == "campaign_not_started"
     assert verdict["prior_attempt"] == 1
-    # Evidence rides inline on stdout-v3; the runner hashes the object itself.
+    # Evidence rides inline on stdout-v3; no evidence file is written any more.
     assert "evidence_path" not in verdict
-    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
     assert not list(tmp_path.glob("*resume-evidence*"))
+    _assert_runner_accepts(verdict)
 
 
 def test_replayable_incomplete_journal_is_safe_to_resume(
@@ -97,6 +97,7 @@ def test_replayable_incomplete_journal_is_safe_to_resume(
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["evidence"]["incomplete_count"] == 1
     assert verdict["evidence"]["reason"] == "journal_replay_allows_infrastructure_resume"
+    _assert_runner_accepts(verdict)
 
 
 def test_complete_bound_campaign_is_not_relaunched(
@@ -122,6 +123,7 @@ def test_complete_bound_campaign_is_not_relaunched(
     verdict = verifier.verify_campaign(tmp_path)
     assert verdict["verdict"] == "already_completed"
     assert verdict["evidence"]["committed_count"] == 1
+    _assert_runner_accepts(verdict)
 
 
 def test_orphan_or_tampered_artifacts_fail_closed(
@@ -132,9 +134,30 @@ def test_orphan_or_tampered_artifacts_fail_closed(
     (tmp_path / verifier.JOURNAL_FILE).write_text("orphan\n", encoding="utf-8")
     verdict = verifier.verify_campaign(tmp_path)
     assert verdict["verdict"] == "indeterminate"
+    _assert_runner_accepts(verdict)
 
     plan = _plan()
     _persist_plan(tmp_path, plan)
     _bind_environment(monkeypatch, tmp_path, suffix="second")
     with pytest.raises(CampaignJournalError):
         verifier.verify_campaign(tmp_path)
+
+
+def test_verdict_is_accepted_by_the_real_detached_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner supplies the environment; nothing here sets it by hand.
+
+    ``_bind_environment`` is deliberately not called: this proves the verifier
+    against what ``run_detached_step`` actually exports, so the pair cannot
+    drift apart the way they did at bd2961d3d.
+    """
+    verdict = harness.accepted_verdict(
+        monkeypatch,
+        lambda _environment: verifier.verify_campaign(tmp_path / "missing"),
+        cwd=tmp_path,
+    )
+    assert verdict["verdict"] == "safe_to_resume"
+    assert verdict["evidence"]["reason"] == "campaign_not_started"
+    assert verdict["plan_sha256"] == harness.PLAN_SHA256

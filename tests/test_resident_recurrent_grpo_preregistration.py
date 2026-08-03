@@ -15,27 +15,28 @@ from core.learning.verified_token_trace import (
     build_tokenizer_bundle_identity,
     observable_completion_receipt_sha256,
 )
+from tests import detached_resume_harness as harness
 from tools import prepare_resident_recurrent_grpo_campaign as prereg
+from tools import run_detached_step
 
 BASE_IDENTITY = {"method": "sha256", "fingerprint": "1" * 64, "files": 4}
 BEHAVIOR_IDENTITY = {"bundle_sha256": "2" * 64, "file_count": 1, "files": []}
 
 
-def _runner_sha256(value: object) -> str:
-    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+def _assert_runner_accepts(verdict: object) -> None:
+    """Prove the verdict against the only process that ever consumes one.
 
-    Reproduced here rather than imported so a drift in either canonicaliser
-    fails this test instead of cancelling out against itself.
+    This verifier runs as its own process, so nothing binds it to the runner's
+    contract at import time. Without this the schema and evidence digest can
+    drift silently until a campaign actually resumes.
     """
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    run_detached_step.validate_resume_verdict(
+        verdict,
+        plan_sha256="3" * 64,
+        command_sha256="4" * 64,
+        prior_attempt=1,
+        prior_journal_head_sha256="5" * 64,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -784,7 +785,8 @@ def test_preregistration_rejects_any_uncommitted_byte_change():
         prereg.validate_contract(contract, verify_model=False)
 
 
-def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
+def _resume_ready_contract(tmp_path, monkeypatch):
+    """One committed generation a resume verdict can legitimately bind."""
     contract = _contract()
     training = tmp_path / "training"
     checkpoint = training / "checkpoints" / "step-00000003-proof"
@@ -836,6 +838,11 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    return contract, adapter
+
+
+def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
+    contract, adapter = _resume_ready_contract(tmp_path, monkeypatch)
     environment = {
         "AURA_DETACHED_PLAN_SHA256": "3" * 64,
         "AURA_DETACHED_COMMAND_SHA256": "4" * 64,
@@ -856,16 +863,8 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
     # The runner carries evidence inline over stdout-v3; no evidence file exists.
     assert verdict["schema"] == "aura.detached_step.resume_verdict.v3"
     assert verdict["evidence"]["schema"] == "aura.detached_step.resume_evidence.v2"
-    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
-    assert verdict["checkpoint_identity"] == _runner_sha256(
-        {
-            "prior_attempt": 1,
-            "prior_journal_head_sha256": "5" * 64,
-            "checkpoint_sequence": verdict["checkpoint_sequence"],
-            "evidence_sha256": verdict["evidence_sha256"],
-        }
-    )
     assert not (tmp_path / "supervisor" / "resume.json").exists()
+    _assert_runner_accepts(verdict)
 
     for absent in ("AURA_DETACHED_PLAN_SHA256", "AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT"):
         with pytest.raises(prereg.PreregistrationError, match="resume_environment_incomplete"):
@@ -2305,3 +2304,28 @@ def test_launch_causal_learnability_preflight_is_detached_and_source_bound(
     assert command[2:4] == ["run-causal-learnability-preflight", "--contract"]
     assert command[4] == str(contract_path.resolve(strict=True))
     assert command[5] == "--teardown-safe-exit"
+
+
+def test_resume_verdict_is_accepted_by_the_real_detached_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner supplies the environment; nothing here sets it by hand.
+
+    This proves the verifier against what ``run_detached_step`` actually
+    exports, so the pair cannot drift apart the way they did at bd2961d3d.
+    """
+    contract, _adapter = _resume_ready_contract(tmp_path, monkeypatch)
+
+    verdict = harness.accepted_verdict(
+        monkeypatch,
+        lambda environment: prereg.build_resume_verdict(
+            contract,
+            environment=environment,
+            verify_model=False,
+        ),
+        cwd=tmp_path,
+    )
+    assert verdict["verdict"] == "safe_to_resume"
+    assert verdict["checkpoint_sequence"] == 3
+    assert verdict["plan_sha256"] == harness.PLAN_SHA256

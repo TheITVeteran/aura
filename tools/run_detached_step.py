@@ -4722,6 +4722,73 @@ def _verify_run_locked(
     return plan, events, status, receipt
 
 
+def validate_resume_verdict(
+    verdict: Any,
+    *,
+    plan_sha256: str,
+    command_sha256: str,
+    prior_attempt: int,
+    prior_journal_head_sha256: str,
+) -> dict[str, Any]:
+    """Accept one resume verdict exactly as the supervisor does.
+
+    Every resume verifier is a separate process, so nothing links them to this
+    contract at import time -- a version bump here strands its implementations
+    silently until a campaign resumes at 3am.  Verifier tests call this to prove
+    their real output against the only consumer that matters.
+
+    Structural acceptance only: an ``indeterminate`` or ``already_completed``
+    verdict is well-formed.  Whether resuming is permitted is the caller's call.
+    """
+    if not isinstance(verdict, dict):
+        raise DetachedStepError("target checkpoint verifier verdict must be an object")
+    evidence_sha = str(verdict.get("evidence_sha256") or "")
+    evidence = verdict.get("evidence")
+    checkpoint_sequence = verdict.get("checkpoint_sequence")
+    checkpoint_identity = str(verdict.get("checkpoint_identity") or "")
+    if (
+        verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v3"
+        or verdict.get("plan_sha256") != plan_sha256
+        or verdict.get("command_sha256") != command_sha256
+        or verdict.get("prior_attempt") != prior_attempt
+        or verdict.get("prior_journal_head_sha256") != prior_journal_head_sha256
+        or not isinstance(evidence, dict)
+        or not isinstance(checkpoint_sequence, int)
+        or isinstance(checkpoint_sequence, bool)
+        or checkpoint_sequence < 0
+        or verdict.get("verdict") not in {"safe_to_resume", "already_completed", "indeterminate"}
+        or len(evidence_sha) != 64
+        or len(checkpoint_identity) != 64
+        or any(
+            character not in "0123456789abcdef" for character in evidence_sha + checkpoint_identity
+        )
+    ):
+        raise DetachedStepError("target checkpoint verifier verdict binding is invalid")
+    artifact_sha = _sha256(evidence)
+    if artifact_sha != evidence_sha:
+        raise DetachedStepError("target checkpoint evidence binding is invalid")
+    if (
+        evidence.get("schema") != f"{SCHEMA_PREFIX}.resume_evidence.v2"
+        or evidence.get("plan_sha256") != plan_sha256
+        or evidence.get("command_sha256") != command_sha256
+        or evidence.get("prior_attempt") != prior_attempt
+        or evidence.get("prior_journal_head_sha256") != prior_journal_head_sha256
+        or evidence.get("checkpoint_sequence") != checkpoint_sequence
+    ):
+        raise DetachedStepError("target checkpoint evidence content is not attempt-bound")
+    expected_checkpoint_identity = _sha256(
+        {
+            "prior_attempt": prior_attempt,
+            "prior_journal_head_sha256": prior_journal_head_sha256,
+            "checkpoint_sequence": checkpoint_sequence,
+            "evidence_sha256": evidence_sha,
+        }
+    )
+    if checkpoint_identity != expected_checkpoint_identity:
+        raise DetachedStepError("target checkpoint identity is invalid")
+    return verdict
+
+
 def _run_resume_verifier(
     plan: dict[str, Any],
     run_dir: Path,
@@ -4762,52 +4829,13 @@ def _run_resume_verifier(
         verdict = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise DetachedStepError("target checkpoint verifier returned invalid JSON") from exc
-    if not isinstance(verdict, dict):
-        raise DetachedStepError("target checkpoint verifier verdict must be an object")
-    evidence_sha = str(verdict.get("evidence_sha256") or "")
-    evidence = verdict.get("evidence")
-    checkpoint_sequence = verdict.get("checkpoint_sequence")
-    checkpoint_identity = str(verdict.get("checkpoint_identity") or "")
-    if (
-        verdict.get("schema") != f"{SCHEMA_PREFIX}.resume_verdict.v3"
-        or verdict.get("plan_sha256") != plan["plan_sha256"]
-        or verdict.get("command_sha256") != plan["command_sha256"]
-        or verdict.get("prior_attempt") != prior_attempt
-        or verdict.get("prior_journal_head_sha256") != prior_journal_head_sha256
-        or not isinstance(evidence, dict)
-        or not isinstance(checkpoint_sequence, int)
-        or isinstance(checkpoint_sequence, bool)
-        or checkpoint_sequence < 0
-        or verdict.get("verdict") not in {"safe_to_resume", "already_completed", "indeterminate"}
-        or len(evidence_sha) != 64
-        or len(checkpoint_identity) != 64
-        or any(
-            character not in "0123456789abcdef" for character in evidence_sha + checkpoint_identity
-        )
-    ):
-        raise DetachedStepError("target checkpoint verifier verdict binding is invalid")
-    artifact_sha = _sha256(evidence)
-    if artifact_sha != evidence_sha:
-        raise DetachedStepError("target checkpoint evidence binding is invalid")
-    if (
-        evidence.get("schema") != f"{SCHEMA_PREFIX}.resume_evidence.v2"
-        or evidence.get("plan_sha256") != plan["plan_sha256"]
-        or evidence.get("command_sha256") != plan["command_sha256"]
-        or evidence.get("prior_attempt") != prior_attempt
-        or evidence.get("prior_journal_head_sha256") != prior_journal_head_sha256
-        or evidence.get("checkpoint_sequence") != checkpoint_sequence
-    ):
-        raise DetachedStepError("target checkpoint evidence content is not attempt-bound")
-    expected_checkpoint_identity = _sha256(
-        {
-            "prior_attempt": prior_attempt,
-            "prior_journal_head_sha256": prior_journal_head_sha256,
-            "checkpoint_sequence": checkpoint_sequence,
-            "evidence_sha256": evidence_sha,
-        }
+    verdict = validate_resume_verdict(
+        verdict,
+        plan_sha256=str(plan["plan_sha256"]),
+        command_sha256=str(plan["command_sha256"]),
+        prior_attempt=prior_attempt,
+        prior_journal_head_sha256=prior_journal_head_sha256,
     )
-    if checkpoint_identity != expected_checkpoint_identity:
-        raise DetachedStepError("target checkpoint identity is invalid")
     if verdict["verdict"] != "safe_to_resume":
         raise DetachedStepError(f"target checkpoint verifier returned {verdict['verdict']}")
     return verdict

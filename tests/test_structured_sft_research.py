@@ -14,6 +14,8 @@ from core.learning.recurrent_sft_sampling import (
     FAMILY_BALANCED_SAMPLER,
     family_balanced_epoch_order,
 )
+from tests import detached_resume_harness as harness
+from tools import run_detached_step
 from tools import train_structured_sft_research as trainer
 from tools import verify_structured_sft_research_resume as resume_verifier
 
@@ -22,21 +24,20 @@ SHA_B = "b" * 64
 SHA_C = "c" * 64
 
 
-def _runner_sha256(value: Any) -> str:
-    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+def _assert_runner_accepts(verdict: Any, *, prior_attempt: int) -> None:
+    """Prove the verdict against the only process that ever consumes one.
 
-    Reproduced here rather than imported so a drift in either canonicaliser
-    fails this test instead of cancelling out against itself.
+    This verifier runs as its own process, so nothing binds it to the runner's
+    contract at import time. Without this the schema and evidence digest can
+    drift silently until a campaign actually resumes.
     """
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    run_detached_step.validate_resume_verdict(
+        verdict,
+        plan_sha256=SHA_A,
+        command_sha256=SHA_B,
+        prior_attempt=prior_attempt,
+        prior_journal_head_sha256=SHA_C,
+    )
 
 
 def _identified(body: dict[str, Any]) -> dict[str, Any]:
@@ -787,16 +788,8 @@ def test_resume_verdict_is_attempt_bound_and_safe(tmp_path: Path) -> None:
     # The runner carries evidence inline over stdout-v3; no evidence file exists.
     assert verdict["schema"] == resume_verifier.VERDICT_SCHEMA
     assert verdict["evidence"]["schema"] == resume_verifier.EVIDENCE_SCHEMA
-    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
-    assert verdict["checkpoint_identity"] == _runner_sha256(
-        {
-            "prior_attempt": 2,
-            "prior_journal_head_sha256": SHA_C,
-            "checkpoint_sequence": verdict["checkpoint_sequence"],
-            "evidence_sha256": verdict["evidence_sha256"],
-        }
-    )
     assert not list(tmp_path.glob("*resume-evidence*"))
+    _assert_runner_accepts(verdict, prior_attempt=2)
 
 
 def test_resume_verdict_rejects_dataset_digest_tamper(tmp_path: Path) -> None:
@@ -967,3 +960,34 @@ def test_resume_verdict_refuses_to_reset_total_wall_clock_budget(
         },
     )
     assert verdict["verdict"] == "indeterminate"
+
+
+def test_resume_verdict_is_accepted_by_the_real_detached_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner supplies the environment; nothing here sets it by hand.
+
+    This proves the verifier against what ``run_detached_step`` actually
+    exports, so the pair cannot drift apart the way they did at bd2961d3d.
+    """
+    document = _authority()
+    dataset = _dataset()
+    authority_path = tmp_path / "authority.json"
+    authority_path.write_bytes(authority.canonical_json_bytes(document))
+    run_dir = tmp_path / "run"
+    _write_checkpoint(run_dir, document=document, dataset=dataset)
+
+    verdict = harness.accepted_verdict(
+        monkeypatch,
+        lambda _environment: resume_verifier.build_verdict(
+            authority_path=authority_path,
+            expected_authority_sha256=document["authority_sha256"],
+            run_dir=run_dir,
+            detached_context=resume_verifier._detached_context(),
+        ),
+        cwd=tmp_path,
+    )
+    assert verdict["verdict"] == "safe_to_resume"
+    assert verdict["checkpoint_sequence"] == 5
+    assert verdict["plan_sha256"] == harness.PLAN_SHA256

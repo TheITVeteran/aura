@@ -13,28 +13,29 @@ import pytest
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.verified_transition_episode import canonical_json_bytes
+from tests import detached_resume_harness as harness
 from tools import replay_verified_recurrent_policy_states as worker
+from tools import run_detached_step
 
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def _runner_sha256(value: Any) -> str:
-    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+def _assert_runner_accepts(verdict: Any) -> None:
+    """Prove the verdict against the only process that ever consumes one.
 
-    Reproduced here rather than imported so a drift in either canonicaliser
-    fails this test instead of cancelling out against itself.
+    This verifier runs as its own process, so nothing binds it to the runner's
+    contract at import time. Without this the schema and evidence digest can
+    drift silently until a campaign actually resumes.
     """
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-    ).hexdigest()
+    run_detached_step.validate_resume_verdict(
+        verdict,
+        plan_sha256="1" * 64,
+        command_sha256="2" * 64,
+        prior_attempt=1,
+        prior_journal_head_sha256="3" * 64,
+    )
 
 
 def _request() -> dict[str, Any]:
@@ -185,10 +186,10 @@ def test_resume_verdict_is_cheap_and_fails_closed_on_bad_output(
     assert verdict["verdict"] == expected
     assert verdict["evidence"]["result_state"] == result_state
     assert verdict["checkpoint_sequence"] == (1 if result_state == "complete" else 0)
-    # Evidence rides inline on stdout-v3; the runner hashes the object itself.
+    # Evidence rides inline on stdout-v3; no evidence file is written any more.
     assert "evidence_path" not in verdict
-    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
     assert not evidence_path.exists()
+    _assert_runner_accepts(verdict)
 
 
 def test_request_rejects_resealed_schema_or_digest_drift() -> None:
@@ -199,3 +200,26 @@ def test_request_rejects_resealed_schema_or_digest_drift() -> None:
         match="request_invalid",
     ):
         worker.validate_request(request)
+
+
+def test_resume_verdict_is_accepted_by_the_real_detached_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner supplies the environment; nothing here sets it by hand.
+
+    This proves the verifier against what ``run_detached_step`` actually
+    exports, so the pair cannot drift apart the way they did at bd2961d3d.
+    """
+    request_path = tmp_path / "request.json"
+    result_path = tmp_path / "result.json"
+    _write(request_path, _request())
+
+    verdict = harness.accepted_verdict(
+        monkeypatch,
+        lambda _environment: worker._resume_verdict(request_path, result_path),
+        cwd=tmp_path,
+    )
+    assert verdict["verdict"] == "safe_to_resume"
+    assert verdict["evidence"]["result_state"] == "absent"
+    assert verdict["plan_sha256"] == harness.PLAN_SHA256
