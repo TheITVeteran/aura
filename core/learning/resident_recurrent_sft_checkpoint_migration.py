@@ -18,6 +18,7 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (
     BINDING_ROLES,
     CHECKPOINT_SCHEMA,
     POINTER_SCHEMA,
+    ResidentSFTBootstrapStateError,
     authority_state_bindings,
     inspect_checkpoint,
     validate_checkpoint_state,
@@ -31,7 +32,7 @@ from core.runtime.atomic_writer import (
 MIGRATION_SCHEMA: Final = "aura.resident_recurrent_sft_checkpoint_migration.v1"
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 COPY_CHUNK_BYTES: Final = 4 * 1024 * 1024
-ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset({"trainer"})
+ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset({"trainer", "controller"})
 
 
 class ResidentSFTCheckpointMigrationError(RuntimeError):
@@ -61,6 +62,14 @@ def _binding(path: Path, *, max_bytes: int | None = None) -> dict[str, Any]:
         for chunk in iter(lambda: handle.read(COPY_CHUNK_BYTES), b""):
             digest.update(chunk)
     return {"path": str(path), "sha256": digest.hexdigest(), "size_bytes": size}
+
+
+def _binding_matches(
+    observed: Mapping[str, Any], expected: Mapping[str, Any]
+) -> bool:
+    return all(
+        observed.get(key) == expected.get(key) for key in ("sha256", "size_bytes")
+    )
 
 
 def _read_authority(path: Path) -> dict[str, Any]:
@@ -307,9 +316,185 @@ def migrate_checkpoint(
     return receipt
 
 
+def verify_migration(
+    path: Path,
+    *,
+    destination_repo_root: Path,
+    destination_authority: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Independently verify a migration against the current destination."""
+
+    path = path.expanduser().resolve(strict=True)
+    raw = path.read_bytes()
+    try:
+        receipt = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ResidentSFTCheckpointMigrationError(
+            "resident_sft_migration_receipt_invalid"
+        ) from exc
+    if not isinstance(receipt, dict) or canonical_json_bytes(receipt) != raw:
+        _fail("resident_sft_migration_receipt_invalid")
+    claimed = receipt.get("migration_sha256")
+    material = dict(receipt)
+    material.pop("migration_sha256", None)
+    source = receipt.get("source")
+    destination = receipt.get("destination")
+    preservation = receipt.get("preservation")
+    changed_roles = receipt.get("changed_source_roles")
+    implementation = receipt.get("migration_implementation")
+    if (
+        receipt.get("schema") != MIGRATION_SCHEMA
+        or claimed != _sha(canonical_json_bytes(material))
+        or not isinstance(source, Mapping)
+        or not isinstance(destination, Mapping)
+        or preservation
+        != {
+            "adapter_state_reset": False,
+            "optimizer_state_reset": False,
+            "sample_cursor_reset": False,
+            "loss_or_validation_history_reset": False,
+        }
+        or not isinstance(changed_roles, list)
+        or not changed_roles
+        or "trainer" not in changed_roles
+        or set(changed_roles) - ALLOWED_CHANGED_SOURCE_ROLES
+        or not isinstance(implementation, Mapping)
+    ):
+        _fail("resident_sft_migration_receipt_invalid")
+    observed_implementation = _binding(Path(__file__).resolve())
+    if any(
+        observed_implementation[key] != implementation.get(key)
+        for key in ("sha256", "size_bytes")
+    ):
+        _fail("resident_sft_migration_implementation_drift")
+    validated_authority = validate_authority(
+        destination_authority, allow_expired_resume=True
+    )
+    destination_authority_binding = destination.get("authority")
+    if not isinstance(destination_authority_binding, Mapping):
+        _fail("resident_sft_migration_destination_binding_drift")
+    destination_authority_path = Path(
+        str(destination_authority_binding.get("path", ""))
+    )
+    if not _binding_matches(
+        _binding(destination_authority_path, max_bytes=MAX_JSON_BYTES),
+        destination_authority_binding,
+    ) or _read_authority(destination_authority_path) != validated_authority:
+        _fail("resident_sft_migration_destination_binding_drift")
+    destination_root = _resolve_artifact_root(
+        destination_repo_root, validated_authority
+    )
+    if path != destination_root / "checkpoint-migration.json":
+        _fail("resident_sft_migration_receipt_path_invalid")
+    expected_bindings = authority_state_bindings(validated_authority)
+    if destination.get("bindings") != expected_bindings:
+        _fail("resident_sft_migration_destination_binding_drift")
+    if receipt.get("scientific_identity") != _identity(validated_authority):
+        _fail("resident_sft_migration_scientific_identity_changed")
+    if receipt.get("trust_policy_identity_sha256") != _trust_policy_identity(
+        destination_repo_root, validated_authority
+    ):
+        _fail("resident_sft_migration_trust_policy_changed")
+    source_authority_binding = source.get("authority")
+    source_repo_root_value = source.get("repo_root")
+    if not isinstance(source_authority_binding, Mapping) or not isinstance(
+        source_repo_root_value, str
+    ):
+        _fail("resident_sft_migration_source_binding_drift")
+    source_authority_path = Path(str(source_authority_binding.get("path", "")))
+    if not _binding_matches(
+        _binding(source_authority_path, max_bytes=MAX_JSON_BYTES),
+        source_authority_binding,
+    ):
+        _fail("resident_sft_migration_source_binding_drift")
+    source_authority = _read_authority(source_authority_path)
+    source_repo_root = Path(source_repo_root_value)
+    source_root = _resolve_artifact_root(source_repo_root, source_authority)
+    if (
+        receipt.get("scientific_identity") != _identity(source_authority)
+        or receipt.get("trust_policy_identity_sha256")
+        != _trust_policy_identity(source_repo_root, source_authority)
+        or tuple(changed_roles)
+        != _changed_source_roles(source_authority["sources"], validated_authority["sources"])
+    ):
+        _fail("resident_sft_migration_source_identity_drift")
+    try:
+        source_inspected = inspect_checkpoint(
+            source_root, expected_bindings=authority_state_bindings(source_authority)
+        )
+    except ResidentSFTBootstrapStateError as exc:
+        raise ResidentSFTCheckpointMigrationError(
+            "resident_sft_migration_source_binding_drift"
+        ) from exc
+    if source_inspected.checkpoint_dir != Path(
+        str(source.get("checkpoint", ""))
+    ).resolve(strict=True):
+        _fail("resident_sft_migration_source_checkpoint_drift")
+    for role in ("complete", "adapter", "optimizer"):
+        source_binding = source.get(role)
+        if not isinstance(source_binding, Mapping):
+            _fail("resident_sft_migration_source_binding_drift")
+        observed = _binding(
+            source_inspected.checkpoint_dir
+            / ("complete.json" if role == "complete" else f"{role}.safetensors"),
+            max_bytes=(MAX_JSON_BYTES if role == "complete" else None),
+        )
+        if not _binding_matches(observed, source_binding):
+            _fail("resident_sft_migration_source_binding_drift")
+    try:
+        inspected = inspect_checkpoint(
+            destination_root, expected_bindings=expected_bindings
+        )
+    except ResidentSFTBootstrapStateError as exc:
+        raise ResidentSFTCheckpointMigrationError(
+            "resident_sft_migration_destination_binding_drift"
+        ) from exc
+    expected_checkpoint = Path(str(destination.get("checkpoint", ""))).resolve(
+        strict=True
+    )
+    if inspected.checkpoint_dir != expected_checkpoint:
+        _fail("resident_sft_migration_destination_checkpoint_drift")
+    for role in ("complete", "adapter", "optimizer"):
+        binding = destination.get(role)
+        if not isinstance(binding, Mapping):
+            _fail("resident_sft_migration_destination_binding_drift")
+        observed = _binding(
+            inspected.checkpoint_dir
+            / ("complete.json" if role == "complete" else f"{role}.safetensors"),
+            max_bytes=(MAX_JSON_BYTES if role == "complete" else None),
+        )
+        if not _binding_matches(observed, binding):
+            _fail("resident_sft_migration_destination_binding_drift")
+    for role in ("adapter", "optimizer"):
+        source_binding = source.get(role)
+        destination_binding = destination.get(role)
+        if not isinstance(source_binding, Mapping) or not isinstance(
+            destination_binding, Mapping
+        ):
+            _fail("resident_sft_migration_tensor_identity_drift")
+        if not _binding_matches(source_binding, destination_binding):
+            _fail("resident_sft_migration_tensor_identity_drift")
+    preserved_state = {
+        key: value for key, value in inspected.state.items() if key not in BINDING_ROLES
+    }
+    source_preserved_state = {
+        key: value
+        for key, value in source_inspected.state.items()
+        if key not in BINDING_ROLES
+    }
+    if (
+        source_preserved_state != preserved_state
+        or receipt.get("preserved_state_sha256")
+        != _sha(canonical_json_bytes(preserved_state))
+    ):
+        _fail("resident_sft_migration_state_changed")
+    return receipt
+
+
 __all__ = [
     "ALLOWED_CHANGED_SOURCE_ROLES",
     "MIGRATION_SCHEMA",
     "ResidentSFTCheckpointMigrationError",
     "migrate_checkpoint",
+    "verify_migration",
 ]

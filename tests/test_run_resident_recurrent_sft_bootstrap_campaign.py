@@ -156,6 +156,52 @@ def test_attempt_record_requires_checkpoint_and_step_progress() -> None:
     assert same["required_end_reached"] is False
 
 
+def test_initial_checkpoint_accepts_only_the_exact_verified_migration_step() -> None:
+    assert controller._initial_checkpoint_matches_plan(
+        observed_step=0,
+        required_start=0,
+        required_end=4,
+        migration_start=None,
+    )
+    assert controller._initial_checkpoint_matches_plan(
+        observed_step=2,
+        required_start=0,
+        required_end=4,
+        migration_start=2,
+    )
+    assert not controller._initial_checkpoint_matches_plan(
+        observed_step=2,
+        required_start=0,
+        required_end=4,
+        migration_start=None,
+    )
+    assert not controller._initial_checkpoint_matches_plan(
+        observed_step=5,
+        required_start=0,
+        required_end=4,
+        migration_start=5,
+    )
+
+
+def test_verified_migration_start_rejects_invalid_receipt(monkeypatch, tmp_path) -> None:
+    receipt = tmp_path / "checkpoint-migration.json"
+    receipt.write_text("{}", encoding="ascii")
+    monkeypatch.setattr(controller, "_repo_path", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr(
+        controller,
+        "verify_migration",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            controller.ResidentSFTCheckpointMigrationError("invalid")
+        ),
+    )
+
+    with pytest.raises(
+        controller.ResidentSFTCampaignControllerError,
+        match="checkpoint_migration_invalid",
+    ):
+        controller._verified_migration_start_step({"artifact_root": "ignored"})
+
+
 def test_protected_source_changes_include_dynamic_and_declared_closure() -> None:
     changed = [
         "README.md",

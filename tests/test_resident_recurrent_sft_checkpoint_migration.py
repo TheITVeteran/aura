@@ -169,12 +169,18 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         destination_repo_root=tmp_path,
         destination_authority_path=destination_authority_path,
     )
+    verified = migration.verify_migration(
+        destination_root / "checkpoint-migration.json",
+        destination_repo_root=tmp_path,
+        destination_authority=destination_authority,
+    )
     source_loaded = load_checkpoint(source_root, expected_bindings=source_bindings)
     destination_loaded = load_checkpoint(
         destination_root, expected_bindings=destination_bindings
     )
 
     assert receipt["changed_source_roles"] == ["trainer"]
+    assert verified["migration_sha256"] == receipt["migration_sha256"]
     assert receipt["preservation"] == {
         "adapter_state_reset": False,
         "optimizer_state_reset": False,
@@ -201,6 +207,18 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
     assert inspect_checkpoint(
         destination_root, expected_bindings=destination_bindings
     ).state["step"] == 2
+
+    source_optimizer = source_loaded.checkpoint_dir / "optimizer.safetensors"
+    source_optimizer.write_bytes(source_optimizer.read_bytes() + b"drift")
+    with pytest.raises(
+        migration.ResidentSFTCheckpointMigrationError,
+        match="source_binding_drift",
+    ):
+        migration.verify_migration(
+            destination_root / "checkpoint-migration.json",
+            destination_repo_root=tmp_path,
+            destination_authority=destination_authority,
+        )
 
 
 def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):

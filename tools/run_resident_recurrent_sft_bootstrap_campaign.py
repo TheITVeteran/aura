@@ -47,6 +47,10 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (  # noqa: E402
     authority_state_bindings,
     inspect_checkpoint,
 )
+from core.learning.resident_recurrent_sft_checkpoint_migration import (  # noqa: E402
+    ResidentSFTCheckpointMigrationError,
+    verify_migration,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_bytes_if_absent,
@@ -758,6 +762,42 @@ def _checkpoint_snapshot(authority: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _verified_migration_start_step(authority: Mapping[str, Any]) -> int | None:
+    root = _repo_path(
+        authority["artifact_root"], role="artifact_root", must_exist=False
+    )
+    if not root.is_dir():
+        return None
+    receipt_path = root / "checkpoint-migration.json"
+    if not receipt_path.is_file():
+        return None
+    try:
+        verify_migration(
+            receipt_path,
+            destination_repo_root=REPO_ROOT,
+            destination_authority=authority,
+        )
+    except (ResidentSFTCheckpointMigrationError, OSError, ValueError) as exc:
+        raise ResidentSFTCampaignControllerError(
+            "resident_sft_controller_checkpoint_migration_invalid"
+        ) from exc
+    snapshot = _checkpoint_snapshot(authority)
+    return int(snapshot["step"])
+
+
+def _initial_checkpoint_matches_plan(
+    *,
+    observed_step: int,
+    required_start: int,
+    required_end: int,
+    migration_start: int | None,
+) -> bool:
+    return observed_step == required_start or (
+        migration_start == observed_step
+        and required_start < observed_step <= required_end
+    )
+
+
 def _invocation_receipt(
     authority: Mapping[str, Any], snapshot: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1333,9 +1373,20 @@ def _run_controller_custodied(
                 required_end = int(definition["required_end_step"])
                 before = _checkpoint_snapshot(authority)
                 initial_attempt_status = journal.attempt_status(cell_id)
+                migration_start = (
+                    _verified_migration_start_step(authority)
+                    if ordinal == 1
+                    else None
+                )
+                fresh_start_valid = _initial_checkpoint_matches_plan(
+                    observed_step=int(before["step"]),
+                    required_start=required_start,
+                    required_end=required_end,
+                    migration_start=migration_start,
+                )
                 if (
                     initial_attempt_status["active_attempt_id"] is None
-                    and int(before["step"]) != required_start
+                    and not fresh_start_valid
                 ) or (
                     initial_attempt_status["active_attempt_id"] is not None
                     and not required_start <= int(before["step"]) <= required_end
