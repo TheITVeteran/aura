@@ -714,8 +714,8 @@ def prepare_campaign(
         },
         "launch": {
             "label": f"com.aura.resident-sft.{campaign_id}",
-            "launchd_required": profile == "full",
-            "caffeinate_required": profile == "full",
+            "launchd_required": True,
+            "caffeinate_required": True,
         },
         "claim_state": {
             "reasoning_gain_proven": False,

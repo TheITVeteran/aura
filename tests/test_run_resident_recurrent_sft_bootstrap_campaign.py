@@ -66,8 +66,8 @@ def _config() -> dict[str, Any]:
         },
         "launch": {
             "label": "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-test-canary",
-            "launchd_required": False,
-            "caffeinate_required": False,
+            "launchd_required": True,
+            "caffeinate_required": True,
         },
         "claim_state": {
             "reasoning_gain_proven": False,
@@ -95,6 +95,18 @@ def _plan(config: dict[str, Any]) -> CampaignPlan:
             },
         ],
         metadata={"strict_execution_order": True},
+    )
+
+
+def _stub_verified_supervision(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        controller,
+        "_verify_execution_supervision",
+        lambda *_args, **_kwargs: {
+            "mode": "launchd_caffeinate",
+            "launchd": True,
+            "caffeinate": True,
+        },
     )
 
 
@@ -325,6 +337,7 @@ def test_controller_completes_two_cells_and_never_promotes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _stub_verified_supervision(monkeypatch)
     config = _config()
     plan = _plan(config)
     authority = {
@@ -385,7 +398,7 @@ def test_controller_completes_two_cells_and_never_promotes(
     config_path = tmp_path / "config.json"
     config_path.write_text("{}")
 
-    receipt = controller.run_controller(config_path)
+    receipt = controller.run_controller(config_path, launchd_supervised=True)
 
     assert receipt["campaign_scope"] == "canary_lifecycle"
     assert receipt["canary_lifecycle_complete"] is True
@@ -402,6 +415,7 @@ def test_controller_stops_after_two_consecutive_no_progress_failures(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _stub_verified_supervision(monkeypatch)
     config = _config()
     plan = CampaignPlan.build(
         config["campaign_id"],
@@ -434,7 +448,7 @@ def test_controller_stops_after_two_consecutive_no_progress_failures(
         controller.ResidentSFTCampaignControllerError,
         match="no_progress_limit_exhausted",
     ):
-        controller.run_controller(config_path)
+        controller.run_controller(config_path, launchd_supervised=True)
 
     results = list(
         (tmp_path / "artifacts" / "run" / "controller" / "attempt-results").glob("*.json")
@@ -547,6 +561,7 @@ def test_restart_after_journal_start_without_reservation_fails_attempt_then_retr
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _stub_verified_supervision(monkeypatch)
     config = _config()
     plan = CampaignPlan.build(
         config["campaign_id"],
@@ -615,7 +630,7 @@ def test_restart_after_journal_start_without_reservation_fails_attempt_then_retr
     config_path = tmp_path / "config.json"
     config_path.write_text("{}")
 
-    receipt = controller.run_controller(config_path)
+    receipt = controller.run_controller(config_path, launchd_supervised=True)
 
     assert receipt["canary_lifecycle_complete"] is True
     with CampaignJournal(journal_path, plan) as recovered:
@@ -626,6 +641,7 @@ def test_target_checkpoint_with_failed_receipt_is_certified_without_overshoot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _stub_verified_supervision(monkeypatch)
     config = _config()
     plan = CampaignPlan.build(
         config["campaign_id"],
@@ -696,7 +712,7 @@ def test_target_checkpoint_with_failed_receipt_is_certified_without_overshoot(
     config_path = tmp_path / "config.json"
     config_path.write_text("{}")
 
-    receipt = controller.run_controller(config_path)
+    receipt = controller.run_controller(config_path, launchd_supervised=True)
 
     assert receipt["canary_lifecycle_complete"] is True
     assert len(waits) == 2
@@ -757,17 +773,11 @@ def test_stale_detached_heartbeat_requests_authenticated_stop(
     assert stops == [run_dir]
 
 
-def test_full_profile_refuses_manual_controller_entrypoint() -> None:
+def test_every_profile_refuses_manual_controller_entrypoint() -> None:
     config = _config()
-    config["profile"] = "full"
-    config["launch"] = {
-        "label": f"com.aura.resident-sft.{config['campaign_id']}",
-        "launchd_required": True,
-        "caffeinate_required": True,
-    }
     with pytest.raises(
         controller.ResidentSFTCampaignControllerError,
-        match="full_requires_launchd_entrypoint",
+        match="requires_launchd_entrypoint",
     ):
         controller._verify_execution_supervision(config, launchd_supervised=False)
 
@@ -877,6 +887,7 @@ def test_recovered_active_attempt_reattaches_from_partial_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _stub_verified_supervision(monkeypatch)
     config = _config()
     plan = CampaignPlan.build(
         config["campaign_id"],
@@ -953,7 +964,7 @@ def test_recovered_active_attempt_reattaches_from_partial_checkpoint(
     config_path = tmp_path / "config.json"
     config_path.write_text("{}")
 
-    receipt = controller.run_controller(config_path)
+    receipt = controller.run_controller(config_path, launchd_supervised=True)
 
     assert receipt["canary_lifecycle_complete"] is True
     assert receipt["bootstrap_complete"] is False

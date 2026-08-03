@@ -364,12 +364,8 @@ def _wait_launchd_job(label: str, *, timeout_s: float = 15.0) -> dict[str, Any]:
 def _verify_execution_supervision(
     config: Mapping[str, Any], *, launchd_supervised: bool
 ) -> dict[str, Any]:
-    if config["profile"] != "full":
-        if launchd_supervised:
-            _fail("resident_sft_controller_canary_launchd_flag_invalid")
-        return {"mode": "bounded_canary", "launchd": False, "caffeinate": False}
     if not launchd_supervised:
-        _fail("resident_sft_controller_full_requires_launchd_entrypoint")
+        _fail("resident_sft_controller_requires_launchd_entrypoint")
     job = _launchd_job(str(config["launch"]["label"]))
     controller_pid = os.getpid()
     if controller_pid != job["job_pid"]:
@@ -561,13 +557,12 @@ def _load_config(path: Path) -> dict[str, Any]:
         ):
             _fail("resident_sft_controller_watchdog_invalid")
     launch = config.get("launch")
-    expected_full = config["profile"] == "full"
     if (
         not isinstance(launch, Mapping)
         or set(launch) != {"label", "launchd_required", "caffeinate_required"}
         or launch.get("label") != f"com.aura.resident-sft.{campaign_id}"
-        or launch.get("launchd_required") is not expected_full
-        or launch.get("caffeinate_required") is not expected_full
+        or launch.get("launchd_required") is not True
+        or launch.get("caffeinate_required") is not True
     ):
         _fail("resident_sft_controller_launch_policy_invalid")
     return config
@@ -1676,12 +1671,12 @@ def _verify_resume_custodied(
 def install_launchd(config_path: Path) -> dict[str, Any]:
     global _ACTIVE_CUSTODIES
     config, authority, _plan = _load_contracts(config_path.expanduser().resolve(strict=True))
-    if config["profile"] != "full" or config["launch"] != {
+    if config["launch"] != {
         "label": f"com.aura.resident-sft.{config['campaign_id']}",
         "launchd_required": True,
         "caffeinate_required": True,
     }:
-        _fail("resident_sft_controller_launchd_full_profile_required")
+        _fail("resident_sft_controller_launchd_policy_invalid")
     label = config["launch"]["label"]
     custodies = _acquire_campaign_custodies(config)
     _ACTIVE_CUSTODIES = custodies
