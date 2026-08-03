@@ -11,7 +11,7 @@ from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
 from core.runtime.errors import record_degradation
 from core.state.aura_state import AuraState
-from core.synthesis import IDENTITY_LOCK
+from core.synthesis import get_identity_lock
 
 logger = logging.getLogger("Brain.Context")
 
@@ -451,7 +451,7 @@ class ContextAssembler:
         affect = state.affect
         
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
-        identity_block = f"{IDENTITY_LOCK}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
+        identity_block = f"{get_identity_lock()}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
 
         # Existential stakes affect runtime policy and inference parameters, not
         # conversational identity. Injecting pressure language into the user

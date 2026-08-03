@@ -5055,10 +5055,10 @@ class InferenceGate:
                 # Fallback: Use the static identity prompt
                 try:
                     from core.brain.aura_persona import AURA_IDENTITY
-                    from core.synthesis import IDENTITY_LOCK
+                    from core.synthesis import get_identity_lock
 
                     base = (
-                        f"{IDENTITY_LOCK}\n\n"
+                        f"{get_identity_lock()}\n\n"
                         f"[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n\n"
                         "## RULES OF ENGAGEMENT\n"
                         "- NO PREAMBLE. NO 'CERTAINLY'. NO 'AS AN AI'.\n"

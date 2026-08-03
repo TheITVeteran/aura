@@ -566,7 +566,7 @@ class AutonomousConversationLoop:
         """
         try:
             # Import identity lock and meta-filter
-            from core.synthesis import IDENTITY_LOCK, strip_meta_commentary
+            from core.synthesis import get_identity_lock, strip_meta_commentary
 
             # Build context from conversation history
             history_text = ""
@@ -578,8 +578,8 @@ class AutonomousConversationLoop:
                 elif role in [self.AI_ROLE, "aura", "model"]:
                     history_text += f"Aura: {content}\n"
 
-            # Build prompt with IDENTITY_LOCK
-            prompt = f"""{IDENTITY_LOCK}
+            # Build prompt with the live identity lock
+            prompt = f"""{get_identity_lock()}
 
 FOURTH WALL PROTOCOL (v3.2):
 - NEVER narrate your process. Just speak.
@@ -650,9 +650,9 @@ Respond naturally as Aura:
 
             # Apply Identity Lock to Synthesis (Fix 1)
             try:
-                from core.synthesis import IDENTITY_LOCK, strip_meta_commentary
+                from core.synthesis import get_identity_lock, strip_meta_commentary
 
-                identity_lock = IDENTITY_LOCK
+                identity_lock = get_identity_lock()
             except ImportError:
                 identity_lock = ""
 
