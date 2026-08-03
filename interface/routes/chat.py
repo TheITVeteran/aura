@@ -17437,18 +17437,45 @@ def _desktop_task_observation(result: dict[str, Any]) -> str:
     someone the mechanism when they asked what is on their screen is the
     receipt standing in for the answer.
     """
+    observation_keys = (
+        "observation",
+        "screen_text",
+        "accessibility_text",
+        "text",
+        "output",
+        "content",
+    )
+
+    def _first_observation(entry: dict[str, Any], depth: int = 0) -> str:
+        for key in observation_keys:
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        # The reading lives one level down. desktop_task returns `receipts`,
+        # each carrying the executor's own payload under `result` — and a
+        # screen read fills `text` there while leaving the receipt's own
+        # `screen_text` empty. Checking only for a string at the top meant the
+        # dict was skipped and the observation was never found: live on
+        # 2026-08-03 a completed read of a Chrome window was reported as
+        # "Desktop task completed 1/1 governed computer-use steps".
+        nested = entry.get("result")
+        if depth < 2 and isinstance(nested, dict):
+            return _first_observation(nested, depth + 1)
+        return ""
+
     candidates: list[str] = []
-    steps = result.get("steps") or result.get("step_results") or []
-    if isinstance(steps, list):
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            for key in ("observation", "screen_text", "text", "output", "content", "result"):
-                value = step.get(key)
-                if isinstance(value, str) and value.strip():
-                    candidates.append(value.strip())
-                    break
-    for key in ("observation", "screen_text", "text", "output"):
+    steps: list[Any] = []
+    for container in ("steps", "step_results", "receipts"):
+        value = result.get(container)
+        if isinstance(value, list):
+            steps.extend(value)
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        found = _first_observation(step)
+        if found:
+            candidates.append(found)
+    for key in observation_keys:
         value = result.get(key)
         if isinstance(value, str) and value.strip():
             candidates.append(value.strip())
