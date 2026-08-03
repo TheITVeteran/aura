@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Never
 
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     SAMPLER_NAME,
     sha256_json,
@@ -187,6 +188,40 @@ def project_rows(
     if len(identities) != len(set(identities)):
         _fail("resident_sft_execution_projected_identity_duplicate")
     return projected
+
+
+def execution_spec_for_projected_row(
+    row: Mapping[str, Any],
+    *,
+    base_spec: RLCExecutionSpec,
+) -> RLCExecutionSpec:
+    """Bind a projected example's authorized depth to the executed graph.
+
+    Dataset depth is part of the example identity and sampling strata.  It must
+    therefore select the actual recurrent transition count, rather than remain
+    descriptive metadata while every row executes ``base_spec`` unchanged.
+    Only ``recurrent_steps`` may vary; all other campaign controls remain bound
+    to the authority-signed base specification.
+    """
+
+    if not isinstance(row, Mapping):
+        _fail("resident_sft_execution_projected_row_invalid")
+    depth = row.get("depth")
+    if type(depth) is not int or not 1 <= depth <= 64:
+        _fail("resident_sft_execution_projected_depth_invalid")
+    try:
+        executed = base_spec.with_depth(depth)
+    except (TypeError, ValueError) as exc:
+        raise ResidentSFTBootstrapExecutionError(
+            "resident_sft_execution_projected_depth_spec_invalid"
+        ) from exc
+    base_controls = base_spec.to_dict()
+    executed_controls = executed.to_dict()
+    base_controls.pop("recurrent_steps")
+    executed_controls.pop("recurrent_steps")
+    if base_controls != executed_controls or executed.recurrent_steps != depth:
+        _fail("resident_sft_execution_projected_depth_binding_drift")
+    return executed
 
 
 def _schedule_digest(seed: int, epoch: int, *parts: Any) -> bytes:
@@ -433,6 +468,7 @@ __all__ = [
     "SAMPLING_RECEIPT_SCHEMA",
     "advance_sample_history",
     "adapter_topology_sha256",
+    "execution_spec_for_projected_row",
     "family_depth_balanced_order",
     "initial_sample_history",
     "project_example",

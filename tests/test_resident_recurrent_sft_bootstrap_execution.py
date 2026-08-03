@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 from typing import Any
 
 import mlx.core as mx
 import pytest
 
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.resident_recurrent_sft_bootstrap_authority import sha256_json
 from core.learning.resident_recurrent_sft_bootstrap_execution import (
     ResidentSFTBootstrapExecutionError,
     adapter_topology_sha256,
     advance_sample_history,
+    execution_spec_for_projected_row,
     family_depth_balanced_order,
     initial_sample_history,
     project_example,
@@ -18,6 +21,7 @@ from core.learning.resident_recurrent_sft_bootstrap_execution import (
     sampling_receipt,
     validate_family_depth_balanced_order,
 )
+from tools import train_resident_recurrent_sft_bootstrap as trainer
 
 
 class FakeTokenizer:
@@ -140,6 +144,85 @@ def test_projected_identity_is_input_sensitive_and_unique() -> None:
             tokenizer=FakeTokenizer(),
             max_seq_length=512,
         )
+
+
+@pytest.mark.parametrize("depth", [2, 4, 8])
+def test_projected_depth_selects_actual_recurrent_graph(depth: int) -> None:
+    projected = project_example(
+        _row(depth=depth),
+        tokenizer=FakeTokenizer(),
+        max_seq_length=512,
+    )
+    base = RLCExecutionSpec(recurrent_steps=4)
+
+    executed = execution_spec_for_projected_row(projected, base_spec=base)
+
+    assert executed.recurrent_steps == depth
+    assert executed.sha256 == base.with_depth(depth).sha256
+    assert {
+        key: value
+        for key, value in executed.to_dict().items()
+        if key != "recurrent_steps"
+    } == {
+        key: value
+        for key, value in base.to_dict().items()
+        if key != "recurrent_steps"
+    }
+
+
+def test_projected_depth_binding_rejects_missing_or_invalid_depth() -> None:
+    base = RLCExecutionSpec(recurrent_steps=4)
+    with pytest.raises(ResidentSFTBootstrapExecutionError, match="projected_depth_invalid"):
+        execution_spec_for_projected_row({}, base_spec=base)
+    with pytest.raises(ResidentSFTBootstrapExecutionError, match="projected_depth_invalid"):
+        execution_spec_for_projected_row({"depth": True}, base_spec=base)
+
+
+def test_validation_executes_and_receipts_each_projected_depth(monkeypatch: Any) -> None:
+    rows = _projected_rows()[:3]
+    for index, depth in enumerate((2, 4, 8)):
+        rows[index]["depth"] = depth
+    observed: list[int] = []
+
+    def fake_loss(
+        _model: Any,
+        prompt_tokens: list[int],
+        answer_tokens: list[int],
+        *,
+        spec: RLCExecutionSpec,
+        bridge_tokens: list[int],
+        branch_indices: tuple[int, ...],
+    ) -> SimpleNamespace:
+        assert bridge_tokens == []
+        assert branch_indices == (0, 1)
+        observed.append(spec.recurrent_steps)
+        return SimpleNamespace(
+            execution_spec_sha256=spec.sha256,
+            prompt_tokens_sha256=sha256_json(prompt_tokens),
+            answer_tokens_sha256=sha256_json(answer_tokens),
+            value=float(spec.recurrent_steps),
+            branch_values=(float(spec.recurrent_steps),) * 2,
+            answer_token_count=len(answer_tokens),
+        )
+
+    monkeypatch.setattr(trainer, "cached_supervised_live_path_loss", fake_loss)
+    summary = trainer._validation_summary(
+        object(),
+        rows,
+        spec=RLCExecutionSpec(recurrent_steps=4),
+        config=SimpleNamespace(seed=17, validation_examples=3, branch_indices=(0, 1)),
+    )
+
+    assert sorted(observed) == [2, 4, 8]
+    assert summary["executed_depths"] == [2, 4, 8]
+    assert len(summary["row_execution_spec_sha256s"]) == 3
+    assert {
+        record["requested_recurrent_depth"] for record in summary["records"]
+    } == {2, 4, 8}
+    assert all(
+        record["requested_recurrent_depth"] == record["executed_recurrent_depth"]
+        for record in summary["records"]
+    )
 
 
 def test_family_depth_schedule_is_deterministic_and_without_replacement() -> None:

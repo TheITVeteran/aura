@@ -51,6 +51,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
 from core.learning.resident_recurrent_sft_bootstrap_execution import (  # noqa: E402
     adapter_topology_sha256,
     advance_sample_history,
+    execution_spec_for_projected_row,
     family_depth_balanced_order,
     initial_sample_history,
     project_rows,
@@ -305,16 +306,17 @@ def _validation_summary(
     records: list[dict[str, Any]] = []
     for index in selected:
         row = rows[index]
+        row_spec = execution_spec_for_projected_row(row, base_spec=spec)
         result = cached_supervised_live_path_loss(
             model,
             row["prompt_tokens"],
             row["answer_tokens"],
-            spec=spec,
+            spec=row_spec,
             bridge_tokens=row["bridge_tokens"],
             branch_indices=config.branch_indices,
         )
         if (
-            result.execution_spec_sha256 != spec.sha256
+            result.execution_spec_sha256 != row_spec.sha256
             or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
             or result.answer_tokens_sha256 != sha256_json(row["answer_tokens"])
             or not math.isfinite(result.value)
@@ -326,6 +328,9 @@ def _validation_summary(
                 "loss": result.value,
                 "branch_values": list(result.branch_values),
                 "answer_token_count": result.answer_token_count,
+                "requested_recurrent_depth": row["depth"],
+                "executed_recurrent_depth": row_spec.recurrent_steps,
+                "execution_spec_sha256": row_spec.sha256,
             }
         )
     mean = sum(record["loss"] for record in records) / len(records)
@@ -334,6 +339,12 @@ def _validation_summary(
         "mean_loss": mean,
         "records": records,
         "execution_spec_sha256": spec.sha256,
+        "executed_depths": sorted(
+            {record["executed_recurrent_depth"] for record in records}
+        ),
+        "row_execution_spec_sha256s": sorted(
+            {record["execution_spec_sha256"] for record in records}
+        ),
         "branch_indices": list(config.branch_indices),
     }
     return {**body, "receipt_sha256": sha256_json(body)}
@@ -825,17 +836,18 @@ def _run(args: argparse.Namespace) -> int:
                     )
                     out_custody.verify()
                 row = projected_train[order[cursor]]
+                row_spec = execution_spec_for_projected_row(row, base_spec=spec)
                 before_update = adapter_tensor_fingerprint(adapter_tensor_dict(model))
                 result = cached_supervised_live_path_value_and_grad(
                     model,
                     row["prompt_tokens"],
                     row["answer_tokens"],
-                    spec=spec,
+                    spec=row_spec,
                     bridge_tokens=row["bridge_tokens"],
                     branch_indices=config.branch_indices,
                 )
                 if (
-                    result.execution_spec_sha256 != spec.sha256
+                    result.execution_spec_sha256 != row_spec.sha256
                     or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
                     or result.answer_tokens_sha256 != sha256_json(row["answer_tokens"])
                     or not math.isfinite(result.value)
@@ -864,6 +876,9 @@ def _run(args: argparse.Namespace) -> int:
                         "example_id": row["example_id"],
                         "loss": result.value,
                         "branch_values": list(result.branch_values),
+                        "requested_recurrent_depth": row["depth"],
+                        "executed_recurrent_depth": row_spec.recurrent_steps,
+                        "execution_spec_sha256": row_spec.sha256,
                         "adapter_before_sha256": before_update,
                         "adapter_after_sha256": after_update,
                     }
