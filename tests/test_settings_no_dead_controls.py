@@ -80,8 +80,31 @@ def test_classification_buckets_are_disjoint():
 
 
 def test_wired_safety_controls_are_actually_bridged():
-    # The two kill switches must be in the runtime-mode bridge key set.
+    # safe_mode is the emergency containment switch: mutable, and therefore it
+    # MUST reconfigure the resident orchestrator immediately rather than at the
+    # next tick. That is what the runtime-mode bridge is for.
     assert "safety.safe_mode" in _RUNTIME_MODE_KEYS
-    assert "autonomy.level" in _RUNTIME_MODE_KEYS
     for key in _RUNTIME_MODE_KEYS:
         assert key in WIRED, f"{key} drives runtime but isn't marked WIRED"
+
+
+def test_the_agency_invariant_is_immutable_rather_than_bridged():
+    """autonomy.level is not a kill switch, and must not become one.
+
+    This test used to require autonomy.level in the runtime-mode bridge, from
+    when it was conceived as the second kill switch. The design deliberately
+    changed: it is declared ``mutable=False`` and read at the authority gate,
+    so operators can constrain particular external effects or enter emergency
+    safe mode, but cannot convert Aura's agency into a user-selected operating
+    level.
+
+    Bridging it would mean it could be set at runtime, which is precisely what
+    immutability forbids — so asserting immutability is the STRONGER contract,
+    not a relaxation. It is also not a dead control: read_at_gate is its wiring.
+    """
+    level = next(s for s in SCHEMA if s.key == "autonomy.level")
+    assert level.mutable is False, "the agency invariant became operator-settable"
+    assert level.apply_mode == "read_at_gate"
+    assert "autonomy.level" not in _RUNTIME_MODE_KEYS, (
+        "an immutable invariant must not be in the runtime-mode bridge"
+    )

@@ -1584,6 +1584,12 @@ class CognitiveEngine:
         ``finally`` — including when a phase raises, which is precisely the
         path that used to leave no record of what the turn had.
         """
+        # Refuse before binding a turn ledger, not after. think_stream and
+        # generate already did this; think — the primary entry point — did
+        # not, so stop() left the busiest path running. A stop that stops two
+        # of three entries has not stopped anything a caller can rely on.
+        self._refuse_if_stopped("think")
+
         outcome = TurnOutcome(origin=str(origin or "unknown"))
         try:
             with bind_turn(outcome):
