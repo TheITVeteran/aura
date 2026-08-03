@@ -92,6 +92,11 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     strict_json_loads,
     validate_v2_adapter_identity,
 )
+from core.brain.llm.latent_cortex.resident_adapter_loader import (  # noqa: E402
+    ResidentAdapterLoadError,
+    load_resident_adapter,
+    resolve_resident_adapter_projection,
+)
 from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     build_worker_identity,
     logical_model_parameter_count,
@@ -1663,172 +1668,28 @@ def _load_persisted_plan(campaign_dir: Path) -> CampaignPlan:
     )
 
 
-def _resolve_projection(model: Any, projection: str) -> tuple[Any, str, Any]:
-    current = model
-    parts = projection.split(".")
-    if len(parts) < 4 or parts[:2] != ["model", "layers"]:
-        raise CampaignProducerError(f"adapter projection path is invalid: {projection}")
-    for segment in parts[:-1]:
-        if segment.isdigit():
-            try:
-                current = current[int(segment)]
-            except (IndexError, KeyError, TypeError) as exc:
-                raise CampaignProducerError(
-                    f"adapter projection index is invalid: {projection}"
-                ) from exc
-        else:
-            try:
-                current = getattr(current, segment)
-            except AttributeError as exc:
-                raise CampaignProducerError(
-                    f"adapter projection owner is missing: {projection}"
-                ) from exc
-    leaf = parts[-1]
-    try:
-        original = getattr(current, leaf)
-    except AttributeError as exc:
-        raise CampaignProducerError(f"adapter projection is missing: {projection}") from exc
-    return current, leaf, original
-
-
 def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> int:
-    import mlx.core as mx
-    from mlx.utils import tree_flatten
-    from mlx_lm.tuner.lora import LoRALinear
-
-    from core.brain.llm.latent_cortex.fast_weights import _linear_dims
-    from core.brain.llm.latent_cortex.recurrence_adapter import ScopedLoRALinear
-
-    rank = int(manifest["lora"]["rank"])
-    targets = tuple(manifest["lora"]["targets"])
-    is_scoped = manifest.get("schema") in {
-        MANIFEST_SCHEMA_V2,
-        recurrent_grpo_adapter_identity.MANIFEST_SCHEMA,
-        *resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS,
-    }
-    expected = int(
-        manifest["lora"]["wrapped_projections" if is_scoped else "wrapped_projection_count"]
-    )
-    tensor_records = {record["key"]: record for record in manifest["tensors"]}
-    lora_scale = float(manifest["lora"].get("scale", 20.0))
-    lora_dropout = float(manifest["lora"].get("dropout", 0.0))
-    wrapper_type = ScopedLoRALinear if is_scoped else LoRALinear
-    def projection_for_tensor(key: str) -> str:
-        if key.endswith(".lora_a") or key.endswith(".lora_b"):
-            return key.rsplit(".", 1)[0]
-        prefix, separator, bank_index = key.rpartition(".")
-        if separator and bank_index.isdecimal() and (
-            prefix.endswith(".depth_a")
-            or prefix.endswith(".depth_b")
-            or prefix.endswith(".role_a")
-            or prefix.endswith(".role_b")
-        ):
-            return prefix.rsplit(".", 1)[0]
-        raise CampaignProducerError(f"adapter tensor key is invalid: {key}")
-
-    projections = sorted({projection_for_tensor(key) for key in tensor_records})
-    if is_scoped and projections != sorted(manifest["lora"]["projection_paths"]):
-        raise CampaignProducerError("scoped adapter projection inventory differs")
-    if len(projections) != expected:
-        raise CampaignProducerError(
-            f"adapter topology mismatch: planned {len(projections)}, expected {expected}"
-        )
-    originals: list[tuple[Any, str, Any]] = []
     try:
-        for projection in projections:
-            target = projection.rsplit(".", 1)[-1]
-            if target not in targets:
-                raise CampaignProducerError(
-                    f"adapter projection target is not declared: {projection}"
-                )
-            parent, leaf, original = _resolve_projection(model, projection)
-            out_features, in_features = _linear_dims(original)
-            a_shape = tuple(tensor_records[f"{projection}.lora_a"]["shape"])
-            b_shape = tuple(tensor_records[f"{projection}.lora_b"]["shape"])
-            if a_shape != (in_features, rank) or b_shape != (rank, out_features):
-                raise CampaignProducerError(
-                    f"adapter tensor dimensions do not match projection: {projection}"
-                )
-            originals.append((parent, leaf, original))
-            if wrapper_type is ScopedLoRALinear:
-                try:
-                    block_index = int(projection.split(".")[2])
-                except (IndexError, ValueError) as exc:
-                    raise CampaignProducerError(
-                        f"scoped adapter projection has no layer identity: {projection}"
-                    ) from exc
-                wrapped = wrapper_type.from_base(
-                    original,
-                    r=rank,
-                    scale=lora_scale,
-                    dropout=lora_dropout,
-                    block_index=block_index,
-                    site=projection,
-                )
-            else:
-                wrapped = wrapper_type.from_base(original, r=rank)
-            setattr(parent, leaf, wrapped)
+        return load_resident_adapter(model, adapter_dir, manifest)
+    except ResidentAdapterLoadError as exc:
+        raise CampaignProducerError(exc.code) from exc
 
-        depth_bank_size = int(manifest["lora"].get("depth_bank_size", 0))
-        if depth_bank_size:
-            from core.learning.depth_conditioned_lora import wrap_depth_conditioned
 
-            banks = wrap_depth_conditioned(model, depths=depth_bank_size)
-            if sorted(banks) != projections:
-                raise CampaignProducerError("depth-conditioned adapter inventory differs")
-        role_bank_size = int(manifest["lora"].get("role_bank_size", 0))
-        if role_bank_size:
-            from core.learning.role_conditioned_lora import wrap_role_conditioned
+def _resolve_projection(model: Any, projection: str) -> tuple[Any, str, Any]:
+    """Compatibility boundary for campaign tests and older tooling."""
 
-            role_banks = wrap_role_conditioned(model, branches=role_bank_size)
-            if sorted(role_banks) != projections:
-                raise CampaignProducerError("role-conditioned adapter inventory differs")
-
-        adapter_binding = (
-            manifest["bindings"]["adapter"]
-            if manifest.get("schema")
-            in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS
-            else manifest["adapter"]
-        )
-        weights_path = adapter_dir / adapter_binding["path"]
-        expected_adapter_sha256 = adapter_binding["sha256"]
-        expected_adapter_size = int(adapter_binding["size_bytes"])
-        before_load = _read_stable_bytes(
-            weights_path,
-            max_bytes=max(1, expected_adapter_size),
-        )
-        if (
-            len(before_load) != expected_adapter_size
-            or _sha256_bytes(before_load) != expected_adapter_sha256
-        ):
-            raise CampaignProducerError("adapter bytes differ from frozen manifest")
-        weights = mx.load(str(weights_path))
-        expected_keys = set(tensor_records)
-        if set(weights) != expected_keys:
-            raise CampaignProducerError("adapter file keys differ from frozen manifest")
-        parameter_map = dict(tree_flatten(model.parameters()))
-        missing_parameters = sorted(expected_keys - set(parameter_map))
-        if missing_parameters:
-            raise CampaignProducerError(
-                f"adapter parameters are not runtime-addressable: {missing_parameters[0]}"
-            )
-        model.load_weights(list(weights.items()), strict=False)
-        loaded = dict(tree_flatten(model.parameters()))
-        mx.eval(*(loaded[key] for key in sorted(expected_keys)))
-        if any(not bool(mx.array_equal(loaded[key], weights[key])) for key in expected_keys):
-            raise CampaignProducerError("adapter weight readback mismatch")
-        after_load = _read_stable_bytes(
-            weights_path,
-            max_bytes=max(1, expected_adapter_size),
-        )
-        if after_load != before_load:
-            raise CampaignProducerError("adapter bytes changed across load boundary")
-    except BaseException:  # noqa: BLE001 - adapter rollback on any exit; original re-raised
-        for parent, leaf, original in reversed(originals):
-            setattr(parent, leaf, original)
-        raise
-    mx.eval(model.parameters())
-    return len(originals)
+    try:
+        return resolve_resident_adapter_projection(model, projection)
+    except ResidentAdapterLoadError as exc:
+        detail = {
+            "resident_adapter_projection_path_invalid": "path is invalid",
+            "resident_adapter_projection_index_invalid": "index is invalid",
+            "resident_adapter_projection_owner_missing": "owner is missing",
+            "resident_adapter_projection_missing": "projection is missing",
+        }.get(exc.code, exc.code)
+        raise CampaignProducerError(
+            f"adapter projection {detail}: {projection}"
+        ) from exc
 
 
 def _vanilla_once(

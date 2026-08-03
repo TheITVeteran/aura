@@ -32,6 +32,10 @@ from core.brain.llm.latent_cortex.detached_campaign_evidence import (
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task_battery
 from core.brain.llm.latent_cortex.paired_campaign import build_campaign_plan
+from core.brain.llm.latent_cortex.resident_adapter_loader import (
+    ResidentAdapterLoadError,
+    load_resident_adapter,
+)
 from core.brain.llm.latent_cortex.resource_accounting import (
     ModelComputeProfile,
     ResourceLedger,
@@ -57,6 +61,21 @@ def test_resident_sft_absent_personality_identity_is_semantically_bound() -> Non
             plain_absence
         ),
     }
+
+
+def test_resident_adapter_loader_rejects_symlinked_package_root(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    alias = tmp_path / "package-alias"
+    alias.symlink_to(package, target_is_directory=True)
+
+    with pytest.raises(
+        ResidentAdapterLoadError,
+        match="resident_adapter_package_symlink_forbidden",
+    ):
+        load_resident_adapter(object(), alias, {})
 
 
 def test_depth_conditioned_adapter_load_reconstructs_and_reads_back_bank(
@@ -137,6 +156,17 @@ def test_depth_conditioned_adapter_load_reconstructs_and_reads_back_bank(
         },
     }
     target = model()
+    original_q_proj = target.model.layers[2].self_attn.q_proj
+    attacked = json.loads(json.dumps(manifest))
+    attacked["bindings"]["adapter"]["sha256"] = "0" * 64
+
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="resident_adapter_weights_identity_mismatch",
+    ):
+        runner._load_adapter(target, tmp_path, attacked)
+    assert target.model.layers[2].self_attn.q_proj is original_q_proj
+    assert not hasattr(original_q_proj, "depth_bank")
 
     loaded_count = runner._load_adapter(target, tmp_path, manifest)
     loaded = dict(tree_flatten(target.parameters()))
