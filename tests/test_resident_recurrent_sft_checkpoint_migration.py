@@ -355,6 +355,18 @@ def test_recomputed_adjoint_transition_is_exact_hash_bound() -> None:
             "nested_transition_layer_rematerialization_v2",
         ),
         (
+            "objective",
+            "30ac036e37ad1e77b80a0d64db5ad3f0329a09c7e00e916249511a5d88a7f147",
+            "a43a9d9dc10c8a71fa6317c27029bc7bdde686fe013f297f3d746d2b3223a9f3",
+            "functional_cached_kv_layer_rematerialization_v3",
+        ),
+        (
+            "objective",
+            "dec1d4f54761c99416e61440a08191157a5f29b3ea8f6274be0380da1e89bef4",
+            "a43a9d9dc10c8a71fa6317c27029bc7bdde686fe013f297f3d746d2b3223a9f3",
+            "functional_cached_kv_layer_rematerialization_v3",
+        ),
+        (
             "objective_policy",
             "5ad187adb9e5c6d0e8e5cfc2abb33c7ee53f7b4ba867a752a188661459f1d321",
             "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",

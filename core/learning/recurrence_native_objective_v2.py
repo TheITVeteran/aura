@@ -851,9 +851,10 @@ class _LayerCheckpointState:
     parameters: Any
     group_size: int
     wrappers: dict[
-        tuple[tuple[int, ...], int | None, int | None],
+        tuple[Any, ...],
         Callable[..., Any],
     ]
+    cached_wrappers: dict[tuple[Any, ...], Callable[..., Any]]
     transition_wrappers: dict[int, Callable[..., Any]]
 
 
@@ -1041,6 +1042,7 @@ def transformer_layer_group_checkpointing(
             parameters=parameters,
             group_size=group_size,
             wrappers={},
+            cached_wrappers={},
             transition_wrappers={},
         )
     )
@@ -1116,6 +1118,100 @@ def _causal_layers(layers: Sequence[Any], hidden: Any) -> Any:
             call = mx.checkpoint(layer_group_call)
             checkpointed.wrappers[key] = call
         hidden = call(checkpointed.parameters, hidden)
+    return hidden
+
+
+def _cached_causal_layers(
+    model: Any,
+    hidden: Any,
+    cache: Sequence[Any],
+    *,
+    start: int = 0,
+    end: int | None = None,
+) -> Any:
+    """Run the exact cached kernel with explicit rematerializable KV state."""
+
+    from mlx_lm.models.base import create_attention_mask
+
+    stop = len(model.model.layers) if end is None else end
+    if not 0 <= start < stop <= len(model.model.layers) or len(cache) != len(model.model.layers):
+        raise ValueError("cached layer window is invalid")
+    checkpointed = _LAYER_CHECKPOINTS.get()
+    mask = create_attention_mask(hidden, cache[start:stop])
+    if checkpointed is None:
+        for index in range(start, stop):
+            hidden = model.model.layers[index](hidden, mask, cache[index])
+        return hidden
+
+    import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
+
+    activation = current_recurrence_adapter_scope()
+    adapter_active = activation is not None
+    scope_start = activation.start if activation is not None else None
+    scope_stop = activation.stop if activation is not None else None
+    branch_index = current_branch_index()
+    depth_index = current_depth_index()
+    for index in range(start, stop):
+        layer = model.model.layers[index]
+        prior = None if cache[index].empty() else cache[index].state
+        key = (
+            "cached",
+            id(layer),
+            prior is not None,
+            adapter_active,
+            scope_start,
+            scope_stop,
+            branch_index,
+            depth_index,
+        )
+        call = checkpointed.cached_wrappers.get(key)
+        if call is None:
+
+            def cached_layer_call(
+                all_parameters: Any,
+                value: Any,
+                *cache_state: Any,
+                _layer: Any = layer,
+                _adapter_active: bool = adapter_active,
+                _scope_start: int | None = scope_start,
+                _scope_stop: int | None = scope_stop,
+                _branch_index: int | None = branch_index,
+                _depth_index: int = depth_index,
+                _mask: Any = mask,
+            ) -> tuple[Any, Any, Any]:
+                checkpointed.model.update(all_parameters)
+                local_cache = KVCache()
+                if cache_state:
+                    local_cache.state = (cache_state[0], cache_state[1])
+                if not _adapter_active:
+                    adapter_scope = nullcontext()
+                elif _scope_start is None or _scope_stop is None:
+                    adapter_scope = recurrence_adapter_scope()
+                else:
+                    adapter_scope = recurrence_adapter_scope(
+                        start=_scope_start,
+                        stop=_scope_stop,
+                    )
+                branch_scope = (
+                    nullcontext()
+                    if _branch_index is None
+                    else recurrent_branch_index(_branch_index)
+                )
+                with adapter_scope, branch_scope, recurrent_depth_index(_depth_index):
+                    output = _layer(value, _mask, local_cache)
+                keys, values = local_cache.state
+                return output, keys, values
+
+            call = mx.checkpoint(cached_layer_call)
+            checkpointed.cached_wrappers[key] = call
+        output = call(
+            checkpointed.parameters,
+            hidden,
+            *(prior or ()),
+        )
+        hidden, keys, values = output
+        cache[index].state = (keys, values)
     return hidden
 
 
@@ -1850,8 +1946,6 @@ def cached_live_path_token_logprobs(
         decode_token_budget=len(bridge) + len(answer),
         adapters_on=adapters_on,
     )
-    from mlx_lm.models.base import create_attention_mask
-
     targets = (*bridge, *answer)
     decoder_inputs = (*bridge, *rollin)
     answer_logprobs: list[Any] = []
@@ -1862,9 +1956,7 @@ def cached_live_path_token_logprobs(
         if position + 1 == len(targets):
             continue
         hidden = model.model.embed_tokens(mx.array([[decoder_input]]))
-        mask = create_attention_mask(hidden, cache)
-        for index, layer in enumerate(layers):
-            hidden = layer(hidden, mask, cache[index])
+        hidden = _cached_causal_layers(model, hidden, cache)
         logits = _logits(model, hidden)[0, -1]
     if len(answer_logprobs) != len(answer):
         raise RuntimeError("cached answer log-probabilities do not align")
@@ -1882,7 +1974,6 @@ def _cached_live_path_initial_logits(
 ) -> tuple[tuple[Any, ...], list[Any], Any]:
     """Create the exact resident cache and first lexical distribution."""
 
-    from mlx_lm.models.base import create_attention_mask
     from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex.recurrence import WindowRunner
@@ -1920,10 +2011,7 @@ def _cached_live_path_initial_logits(
 
         layers = tuple(model.model.layers)
         cache = [KVCache() for _ in layers]
-        hidden = prompt_embeddings
-        mask = create_attention_mask(hidden, cache)
-        for index, layer in enumerate(layers):
-            hidden = layer(hidden, mask, cache[index])
+        _cached_causal_layers(model, prompt_embeddings, cache)
 
         budget = ComputeBudget(
             max_layer_apps=max(
@@ -1933,22 +2021,46 @@ def _cached_live_path_initial_logits(
             ),
             wall_clock_s=600.0,
         )
-        runner = WindowRunner(model.model, budget)
-        runner.run(seeds[branch_index], cache, 0, prelude_end, persist=True)
-        persisted = runner.run(
-            states[branch_index],
-            cache,
-            prelude_end,
-            coda_start,
-            persist=True,
-        )
-        output = runner.run(
-            persisted,
-            cache,
-            coda_start,
-            len(layers),
-            persist=True,
-        )
+        if _LAYER_CHECKPOINTS.get() is None:
+            runner = WindowRunner(model.model, budget)
+            runner.run(seeds[branch_index], cache, 0, prelude_end, persist=True)
+            persisted = runner.run(
+                states[branch_index],
+                cache,
+                prelude_end,
+                coda_start,
+                persist=True,
+            )
+            output = runner.run(
+                persisted,
+                cache,
+                coda_start,
+                len(layers),
+                persist=True,
+            )
+        else:
+            with recurrence_adapter_scope():
+                _cached_causal_layers(
+                    model,
+                    seeds[branch_index],
+                    cache,
+                    start=0,
+                    end=prelude_end,
+                )
+                persisted = _cached_causal_layers(
+                    model,
+                    states[branch_index],
+                    cache,
+                    start=prelude_end,
+                    end=coda_start,
+                )
+                output = _cached_causal_layers(
+                    model,
+                    persisted,
+                    cache,
+                    start=coda_start,
+                    end=len(layers),
+                )
         logits = _logits(model, output)[0, -1]
     return layers, cache, logits
 
