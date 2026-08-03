@@ -21,13 +21,22 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
     LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     PACKAGE_COMPLETION_SCHEMA,
+    ROLE_CONDITIONED_MANIFEST_SCHEMA,
     ResidentRecurrentSFTAdapterIdentityError,
     topology_sha256,
     validate_resident_recurrent_sft_adapter_identity,
 )
+from core.learning.recurrence_native_objective_v5 import (
+    GeneratedRollinSelectionConfig,
+)
+from core.learning.recurrence_native_objective_v6 import (
+    BranchSpecializationConfig,
+)
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
+    OBJECTIVE_NAME_V3,
     REQUIRED_SOURCE_ROLES,
+    TRAINER_CONFIG_SCHEMA_V3,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapConfig,
     build_authority,
@@ -157,6 +166,17 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
     evaluation_runtime = _runtime(runtime_body)
     training_runtime_body = {**runtime_body, "interpreter": "/frozen/python"}
     training_runtime = _runtime(training_runtime_body)
+    config_kwargs: dict[str, Any] = {}
+    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+        config_kwargs = {
+            "schema": TRAINER_CONFIG_SCHEMA_V3,
+            "objective": OBJECTIVE_NAME_V3,
+            "generated_rollin": GeneratedRollinSelectionConfig(),
+            "branch_specialization": BranchSpecializationConfig(),
+            "structural_warmup_steps": 2,
+            "structural_warmup_learning_rate": 1e-4,
+            "role_conditioned_branches": 2,
+        }
     config = ResidentSFTBootstrapConfig(
         seed=2026080107,
         max_steps=8,
@@ -166,6 +186,7 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
         lora_layers=1,
         evaluate_every=8,
         validation_examples=1,
+        **config_kwargs,
     )
     authority = build_authority(
         campaign_id="resident-32b-recurrent-sft-bootstrap-cp-test",
@@ -215,7 +236,7 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
             "dtype": "float32",
         },
     ]
-    if manifest_schema == MANIFEST_SCHEMA:
+    if manifest_schema in {MANIFEST_SCHEMA, ROLE_CONDITIONED_MANIFEST_SCHEMA}:
         for depth in range(2):
             tensors.extend(
                 [
@@ -226,6 +247,22 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
                     },
                     {
                         "key": f"model.layers.1.self_attn.o_proj.depth_b.{depth}",
+                        "shape": [2, 4],
+                        "dtype": "float32",
+                    },
+                ]
+            )
+    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+        for role in range(2):
+            tensors.extend(
+                [
+                    {
+                        "key": f"model.layers.1.self_attn.o_proj.role_a.{role}",
+                        "shape": [4, 2],
+                        "dtype": "float32",
+                    },
+                    {
+                        "key": f"model.layers.1.self_attn.o_proj.role_b.{role}",
                         "shape": [2, 4],
                         "dtype": "float32",
                     },
@@ -352,11 +389,18 @@ def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
             for dimension in [tensor["shape"][0] * tensor["shape"][1]]
         ),
     }
-    if manifest_schema == MANIFEST_SCHEMA:
+    if manifest_schema in {MANIFEST_SCHEMA, ROLE_CONDITIONED_MANIFEST_SCHEMA}:
         lora.update(
             {
                 "conditioning_schema": "aura.depth_conditioned_lora.v1",
                 "depth_bank_size": 2,
+            }
+        )
+    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+        lora.update(
+            {
+                "role_conditioning_schema": "aura.role_conditioned_lora.v1",
+                "role_bank_size": 2,
             }
         )
     manifest = {
@@ -406,6 +450,25 @@ def test_legacy_shared_operator_package_remains_verifiable() -> None:
 
     assert receipt["complete"] is True
     assert receipt["reasoning_gain_proven"] is False
+
+
+def test_role_conditioned_package_is_accepted_with_exact_bank() -> None:
+    receipt = _bundle(manifest_schema=ROLE_CONDITIONED_MANIFEST_SCHEMA).validate()
+
+    assert receipt["complete"] is True
+    assert receipt["training_objective_learned"] is True
+
+
+def test_role_conditioned_package_rejects_missing_bank_tensor() -> None:
+    bundle = _bundle(manifest_schema=ROLE_CONDITIONED_MANIFEST_SCHEMA)
+    bundle.tensors.pop()
+    bundle.manifest["tensors"].pop()
+
+    with pytest.raises(
+        ResidentRecurrentSFTAdapterIdentityError,
+        match="resident_sft_adapter_tensor_pair_mismatch",
+    ):
+        bundle.validate()
 
 
 @pytest.mark.parametrize(

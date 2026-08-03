@@ -200,6 +200,39 @@ def test_prepare_refuses_dirty_or_unpublished_main(monkeypatch: pytest.MonkeyPat
         prepare._git_source_state()
 
 
+def test_prepare_accepts_clean_published_worktree_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    head = "a" * 40
+
+    def run(command: list[str], **_kwargs: Any) -> Result:
+        args = command[1:]
+        if args[:3] == ["diff", "--name-only", "HEAD"]:
+            return Result("")
+        if args == ["rev-parse", "HEAD"]:
+            return Result(f"{head}\n")
+        if args == ["branch", "--show-current"]:
+            return Result("codex/rlc-control-candidate\n")
+        if args == ["rev-parse", "origin/main"]:
+            return Result(f"{head}\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(prepare.subprocess, "run", run)
+
+    assert prepare._git_source_state() == {
+        "branch": "codex/rlc-control-candidate",
+        "commit": head,
+        "origin_main": head,
+    }
+
+
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
     assert config.objective == prepare.OBJECTIVE_NAME_V3

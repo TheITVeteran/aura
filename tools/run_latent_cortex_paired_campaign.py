@@ -1716,9 +1716,12 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     def projection_for_tensor(key: str) -> str:
         if key.endswith(".lora_a") or key.endswith(".lora_b"):
             return key.rsplit(".", 1)[0]
-        prefix, separator, depth = key.rpartition(".")
-        if separator and depth.isdecimal() and (
-            prefix.endswith(".depth_a") or prefix.endswith(".depth_b")
+        prefix, separator, bank_index = key.rpartition(".")
+        if separator and bank_index.isdecimal() and (
+            prefix.endswith(".depth_a")
+            or prefix.endswith(".depth_b")
+            or prefix.endswith(".role_a")
+            or prefix.endswith(".role_b")
         ):
             return prefix.rsplit(".", 1)[0]
         raise CampaignProducerError(f"adapter tensor key is invalid: {key}")
@@ -1773,6 +1776,13 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
             banks = wrap_depth_conditioned(model, depths=depth_bank_size)
             if sorted(banks) != projections:
                 raise CampaignProducerError("depth-conditioned adapter inventory differs")
+        role_bank_size = int(manifest["lora"].get("role_bank_size", 0))
+        if role_bank_size:
+            from core.learning.role_conditioned_lora import wrap_role_conditioned
+
+            role_banks = wrap_role_conditioned(model, branches=role_bank_size)
+            if sorted(role_banks) != projections:
+                raise CampaignProducerError("role-conditioned adapter inventory differs")
 
         adapter_binding = (
             manifest["bindings"]["adapter"]

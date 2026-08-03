@@ -23,6 +23,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
     MANIFEST_SCHEMA,
+    ROLE_CONDITIONED_MANIFEST_SCHEMA,
     declared_bindings,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
@@ -843,6 +844,16 @@ def test_lora_metadata_requires_and_describes_exact_role_bank() -> None:
 
     assert metadata["role_bank_size"] == 2
     assert metadata["role_conditioning_schema"] == "aura.role_conditioned_lora.v1"
+    assert (
+        materializer._manifest_schema_for_lora(
+            {
+                **metadata,
+                "depth_bank_size": 2,
+                "conditioning_schema": "aura.depth_conditioned_lora.v1",
+            }
+        )
+        == ROLE_CONDITIONED_MANIFEST_SCHEMA
+    )
     without_role = [tensor for tensor in tensors if ".role_" not in tensor.key]
     with pytest.raises(
         materializer.ResidentRecurrentSFTMaterializationError,
@@ -854,6 +865,14 @@ def test_lora_metadata_requires_and_describes_exact_role_bank() -> None:
             spec=spec,
             model_config={"num_hidden_layers": 64},
         )
+
+
+def test_role_manifest_refuses_role_bank_without_depth_bank() -> None:
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="role_manifest_requires_depth_bank",
+    ):
+        materializer._manifest_schema_for_lora({"role_bank_size": 2})
 
 
 def test_refuses_rehashed_historical_prefix_drift(

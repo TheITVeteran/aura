@@ -41,6 +41,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
     LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
+    ROLE_CONDITIONED_MANIFEST_SCHEMA,
     declared_bindings,
     topology_sha256,
     validate_resident_recurrent_sft_adapter_identity,
@@ -736,6 +737,16 @@ def _lora_metadata(
     return metadata
 
 
+def _manifest_schema_for_lora(lora: Mapping[str, Any]) -> str:
+    if lora.get("role_bank_size"):
+        if not lora.get("depth_bank_size"):
+            _fail("resident_sft_materialize_role_manifest_requires_depth_bank")
+        return ROLE_CONDITIONED_MANIFEST_SCHEMA
+    if lora.get("depth_bank_size"):
+        return MANIFEST_SCHEMA
+    return LEGACY_MANIFEST_SCHEMA
+
+
 def _package_artifacts(root: Path, manifest: Mapping[str, Any]) -> dict[str, bytes]:
     artifacts: dict[str, bytes] = {}
     for role, binding in declared_bindings(manifest):
@@ -1095,9 +1106,7 @@ def materialize_resident_recurrent_sft_adapter(
             loader_payload = canonical_json_bytes(loader_config)
             bindings["loader_config"] = _copy_into(staging, "adapter_config.json", loader_payload)
             manifest = {
-                "schema": (
-                    MANIFEST_SCHEMA if lora.get("depth_bank_size") else LEGACY_MANIFEST_SCHEMA
-                ),
+                "schema": _manifest_schema_for_lora(lora),
                 "adapter_id": adapter_id,
                 "training_protocol": authority["training_authority"],
                 "base_checkpoint": base_identity,

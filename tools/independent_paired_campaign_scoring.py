@@ -30,6 +30,13 @@ MODEL_PROFILE_SCHEMA = "aura.rlc.model_compute_profile.v1"
 RESOURCE_ACCOUNTING_SCHEMA = "aura.rlc.resource_accounting.v1"
 INFORMATION_ACCOUNTING_SCHEMA = "aura.rlc.information_accounting.v1"
 RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA = "aura.resident_recurrent_sft_adapter_manifest.v1"
+RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS = frozenset(
+    {
+        RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+        "aura.resident_recurrent_sft_adapter_manifest.v2",
+        "aura.resident_recurrent_sft_adapter_manifest.v3",
+    }
+)
 RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 COMPARISON_ACCOUNTING_SCHEMA = "aura.rlc.comparison_accounting.v1"
 RESOURCE_ESTIMATOR_VERSION = "dense_decoder_gqa_structural_flops_v1"
@@ -348,9 +355,10 @@ def _independent_adapter_projection_count(
         return None
     manifest = adapter_identity.get("manifest")
     if (
-        adapter_identity.get("format") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        adapter_identity.get("format") not in RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS
         or not isinstance(manifest, Mapping)
-        or manifest.get("schema") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        or manifest.get("schema") != adapter_identity.get("format")
+        or manifest.get("schema") not in RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS
     ):
         return None
     lora = manifest.get("lora")

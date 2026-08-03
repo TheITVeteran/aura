@@ -321,7 +321,7 @@ def _git_source_state() -> dict[str, str]:
     head = run("rev-parse", "HEAD")
     branch = run("branch", "--show-current")
     upstream = run("rev-parse", "origin/main")
-    if branch != "main" or head != upstream:
+    if head != upstream:
         _fail("resident_sft_prepare_main_not_published")
     return {"branch": branch, "commit": head, "origin_main": upstream}
 

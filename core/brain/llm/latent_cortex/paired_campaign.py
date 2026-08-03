@@ -66,6 +66,13 @@ PRIMARY_ARMS = (BASE_VANILLA, BASE_RLC, ADAPTER_VANILLA, ADAPTER_RLC)
 FULL_ARMS = (*PRIMARY_ARMS, BASE_EQUAL_COMPUTE, ADAPTER_EQUAL_COMPUTE)
 WORKER_ORIGIN_PROTOCOL = "detached_supervisor_staged_arm_import_v3"
 RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA = "aura.resident_recurrent_sft_adapter_manifest.v1"
+RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS = frozenset(
+    {
+        RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+        "aura.resident_recurrent_sft_adapter_manifest.v2",
+        "aura.resident_recurrent_sft_adapter_manifest.v3",
+    }
+)
 RESIDENT_RECURRENT_SFT_RECEIPT_SCHEMA = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 
 _MIN_DOMAIN_TRIALS = 20
@@ -106,9 +113,10 @@ def _adapter_wrapped_projection_count(
         return None
     manifest = adapter_identity.get("manifest")
     if (
-        adapter_identity.get("format") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        adapter_identity.get("format") not in RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS
         or not isinstance(manifest, Mapping)
-        or manifest.get("schema") != RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA
+        or manifest.get("schema") != adapter_identity.get("format")
+        or manifest.get("schema") not in RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS
     ):
         return None
     lora = manifest.get("lora")

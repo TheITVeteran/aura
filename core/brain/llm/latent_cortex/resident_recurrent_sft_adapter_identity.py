@@ -36,7 +36,16 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (
 
 LEGACY_MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v1"
 MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v2"
-MANIFEST_SCHEMAS: Final = frozenset({LEGACY_MANIFEST_SCHEMA, MANIFEST_SCHEMA})
+ROLE_CONDITIONED_MANIFEST_SCHEMA: Final = (
+    "aura.resident_recurrent_sft_adapter_manifest.v3"
+)
+MANIFEST_SCHEMAS: Final = frozenset(
+    {
+        LEGACY_MANIFEST_SCHEMA,
+        MANIFEST_SCHEMA,
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+    }
+)
 IDENTITY_RECEIPT_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 CONTROLLER_COMPLETION_SCHEMA: Final = "aura.resident_recurrent_sft_controller_completion.v1"
 INVOCATION_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_invocation.v1"
@@ -126,7 +135,11 @@ def _identity(value: Any, *, role: str, digest_key: str) -> dict[str, Any]:
 
 
 def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
-    depth_conditioned = manifest_schema == MANIFEST_SCHEMA
+    depth_conditioned = manifest_schema in {
+        MANIFEST_SCHEMA,
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+    }
+    role_conditioned = manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA
     keys = {
         "rank",
         "scale",
@@ -139,6 +152,8 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
     }
     if depth_conditioned:
         keys.update({"conditioning_schema", "depth_bank_size"})
+    if role_conditioned:
+        keys.update({"role_conditioning_schema", "role_bank_size"})
     record = _exact(
         value,
         keys,
@@ -205,6 +220,19 @@ def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
                 ),
             }
         )
+    if role_conditioned:
+        if record.get("role_conditioning_schema") != "aura.role_conditioned_lora.v1":
+            _fail("resident_sft_adapter_role_conditioning_schema_invalid")
+        normalized.update(
+            {
+                "role_conditioning_schema": record["role_conditioning_schema"],
+                "role_bank_size": _positive_int(
+                    record.get("role_bank_size"),
+                    role="role_bank_size",
+                    maximum=32,
+                ),
+            }
+        )
     return normalized
 
 
@@ -227,6 +255,7 @@ def _tensor_inventory(
         _fail("resident_sft_adapter_tensor_inventory_mismatch")
     keys = [row.key for row in expected_rows]
     depth_bank_size = int(lora.get("depth_bank_size", 0))
+    role_bank_size = int(lora.get("role_bank_size", 0))
     projections = sorted(lora["projection_paths"])
     expected_keys = {
         f"{projection}.{suffix}" for projection in projections for suffix in ("lora_a", "lora_b")
@@ -236,6 +265,12 @@ def _tensor_inventory(
         for projection in projections
         for suffix in ("depth_a", "depth_b")
         for depth in range(depth_bank_size)
+    )
+    expected_keys.update(
+        f"{projection}.{suffix}.{role}"
+        for projection in projections
+        for suffix in ("role_a", "role_b")
+        for role in range(role_bank_size)
     )
     if set(keys) != expected_keys:
         _fail("resident_sft_adapter_tensor_pair_mismatch")
@@ -484,11 +519,19 @@ def validate_resident_recurrent_sft_adapter_identity(
         _fail("resident_sft_adapter_completion_evidence_invalid")
 
     lora = _lora(record["lora"], manifest_schema=str(manifest_schema))
-    if manifest_schema == MANIFEST_SCHEMA and lora["depth_bank_size"] != max(
+    if manifest_schema in {
+        MANIFEST_SCHEMA,
+        ROLE_CONDITIONED_MANIFEST_SCHEMA,
+    } and lora["depth_bank_size"] != max(
         authority["dataset"]["depths"]
     ):
         _fail("resident_sft_adapter_depth_bank_authority_mismatch")
     trainer = authority["trainer"]
+    if manifest_schema == ROLE_CONDITIONED_MANIFEST_SCHEMA:
+        if lora["role_bank_size"] != trainer.get("role_conditioned_branches"):
+            _fail("resident_sft_adapter_role_bank_authority_mismatch")
+    elif trainer.get("role_conditioned_branches", 0):
+        _fail("resident_sft_adapter_role_bank_missing")
     if (
         lora["rank"] != trainer["lora_rank"]
         or lora["scale"] != float(trainer["lora_scale"])
@@ -586,6 +629,7 @@ __all__ = [
     "LEGACY_MANIFEST_SCHEMA",
     "MANIFEST_SCHEMA",
     "MANIFEST_SCHEMAS",
+    "ROLE_CONDITIONED_MANIFEST_SCHEMA",
     "PACKAGE_COMPLETION_SCHEMA",
     "ResidentRecurrentSFTAdapterIdentityError",
     "declared_bindings",
