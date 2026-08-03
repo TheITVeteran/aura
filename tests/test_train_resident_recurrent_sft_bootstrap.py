@@ -129,6 +129,30 @@ def test_v3_phase_machine_resets_only_after_measured_structural_target() -> None
         trainer._next_training_phase(config, [incomplete] * 4)
 
 
+def test_trainer_releases_materialized_graphs_before_the_next_objective() -> None:
+    source = Path(trainer.__file__).read_text(encoding="utf-8")
+    resume_load = source.index("loaded = load_checkpoint(")
+    resume_release = source.index("del loaded", resume_load)
+    training_loop = source.index("while step < config.max_steps", resume_release)
+    objective = source.index(
+        "result = generated_rollin_specialization_value_and_grad(",
+        training_loop,
+    )
+    optimizer_update = source.index("optimizer.update(model, result.gradients)", objective)
+    result_release = source.index("del result", optimizer_update)
+    adapter_snapshot = source.index("adapter = adapter_tensor_dict(model)", result_release)
+    checkpoint = source.index("save_checkpoint(", adapter_snapshot)
+    adapter_release = source.index("del adapter", checkpoint)
+
+    assert resume_load < resume_release < training_loop
+    assert optimizer_update < result_release < adapter_snapshot
+    assert checkpoint < adapter_release
+    assert source.index("mx.clear_cache()", result_release) < adapter_snapshot
+    assert source.index("mx.clear_cache()", adapter_release) < source.index(
+        "if terminal:", adapter_release
+    )
+
+
 def test_state_document_is_accepted_by_durable_state_contract() -> None:
     rows = _rows()
     config = _config()

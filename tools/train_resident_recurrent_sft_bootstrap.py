@@ -925,6 +925,13 @@ def _run(args: argparse.Namespace) -> int:
                 mx.eval(model.trainable_parameters(), optimizer.state)
                 if adapter_tensor_fingerprint(adapter_tensor_dict(model)) != loaded_adapter_sha:
                     _fail("resident_sft_trainer_loaded_adapter_drift")
+                # The loaded checkpoint mappings alias the tensors now owned by the
+                # model and optimizer.  Keeping the aggregate object alive also keeps
+                # MLX's file-backed load graph reachable during the first resumed
+                # objective, which is catastrophic at resident-model scale.
+                del loaded
+                mx.synchronize()
+                mx.clear_cache()
                 if state["terminal"]:
                     required_end_step = (
                         config.max_steps if required_end_step_arg is None else required_end_step_arg
@@ -1014,6 +1021,13 @@ def _run(args: argparse.Namespace) -> int:
                 out_custody.verify()
                 sequence = 1
 
+            # Identity is represented by scalar fingerprints from here onward.  The
+            # initial tensor mapping otherwise pins the pre-load adapter generation
+            # across every subsequent optimizer update.
+            del expected_adapter
+            mx.synchronize()
+            mx.clear_cache()
+
             invocation_started_step = step
             required_end_step = (
                 min(config.max_steps, step + invocation_step_budget)
@@ -1059,6 +1073,8 @@ def _run(args: argparse.Namespace) -> int:
                 training_phase = _next_training_phase(config, loss_trail)
                 if training_phase != optimizer_phase:
                     del optimizer
+                    mx.synchronize()
+                    mx.clear_cache()
                     optimizer = _make_optimizer(config, training_phase, optim)
                     optimizer.init(model.trainable_parameters())
                     mx.eval(optimizer.state)
@@ -1203,8 +1219,17 @@ def _run(args: argparse.Namespace) -> int:
                     or not math.isfinite(result.value)
                 ):
                     _fail("resident_sft_trainer_objective_identity_drift")
+                objective_value = float(result.value)
                 optimizer.update(model, result.gradients)
                 mx.eval(model.trainable_parameters(), optimizer.state)
+                # MLX expressions are lazy.  The result owns the complete gradient
+                # graph even after optimizer.update(), so allowing it to survive to
+                # the next loop iteration makes Python evaluate the next objective
+                # while the previous graph is still resident.  The 32B campaign was
+                # repeatedly jetsammed at that exact boundary.
+                del result
+                mx.synchronize()
+                mx.clear_cache()
                 adapter = adapter_tensor_dict(model)
                 after_update = adapter_tensor_fingerprint(adapter)
                 if after_update == before_update:
@@ -1221,6 +1246,9 @@ def _run(args: argparse.Namespace) -> int:
                         branch_indices=config.branch_indices,
                     )
                     separations_after = list(post_update.separations)
+                    del post_update
+                    mx.synchronize()
+                    mx.clear_cache()
                     warmup_target_reached = min(separations_after) >= float(
                         config.branch_specialization.target_separation
                     )
@@ -1238,7 +1266,7 @@ def _run(args: argparse.Namespace) -> int:
                     "epoch": epoch,
                     "cursor": cursor,
                     "example_id": row["example_id"],
-                    "loss": result.value,
+                    "loss": objective_value,
                     "branch_values": branch_values,
                     "requested_recurrent_depth": row["depth"],
                     "executed_recurrent_depth": row_spec.recurrent_steps,
@@ -1332,6 +1360,9 @@ def _run(args: argparse.Namespace) -> int:
                     custody=out_custody,
                 )
                 out_custody.verify()
+                del adapter
+                mx.synchronize()
+                mx.clear_cache()
                 if terminal:
                     halt_reason = str(halt)
                     break
