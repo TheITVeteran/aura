@@ -55,6 +55,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     detached_monotonicity_penalty,
     exact_adjoint_composite_live_path_value_and_grad,
     exact_adjoint_trajectory_live_path_value_and_grad,
+    generate_cached_live_path_rollin,
     live_path_forward,
     live_path_loss,
     prepare_final_recurrent_transition,
@@ -298,6 +299,112 @@ def test_cached_supervised_evaluation_matches_gradient_objective_without_mutatio
     assert evaluation.answer_tokens_sha256 == objective.answer_tokens_sha256
     assert evaluation.bridge_tokens_sha256 == objective.bridge_tokens_sha256
     after = tuple(tree_flatten(model.trainable_parameters()))
+    assert tuple(path for path, _value in before) == tuple(path for path, _value in after)
+    assert all(
+        bool(mx.array_equal(before_value, after_value))
+        for (_path, before_value), (_after_path, after_value) in zip(
+            before,
+            after,
+            strict=True,
+        )
+    )
+
+
+def test_cached_rollin_equal_to_labels_is_exact_teacher_forcing():
+    model = _model()
+    spec = _spec()
+
+    teacher_forced = cached_live_path_token_logprobs(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        branch_index=0,
+    )
+    explicit_rollin = cached_live_path_token_logprobs(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        branch_index=0,
+        rollin_tokens=ANSWER,
+    )
+    mx.eval(teacher_forced, explicit_rollin)
+
+    assert bool(mx.array_equal(teacher_forced, explicit_rollin))
+
+
+def test_cached_rollin_changes_future_context_without_relabeling_current_token():
+    model = _model()
+    spec = _spec()
+    alternative = [31, ANSWER[1], ANSWER[2]]
+
+    teacher_forced = cached_live_path_token_logprobs(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        branch_index=0,
+    )
+    student_forced = cached_live_path_token_logprobs(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        branch_index=0,
+        rollin_tokens=alternative,
+    )
+    mx.eval(teacher_forced, student_forced)
+
+    assert float(student_forced[0]) == pytest.approx(float(teacher_forced[0]), abs=0.0)
+    assert float(student_forced[1]) != pytest.approx(float(teacher_forced[1]), abs=1e-7)
+    with pytest.raises(ValueError, match="answer-aligned"):
+        cached_live_path_token_logprobs(
+            model,
+            PROMPT,
+            ANSWER,
+            spec=spec,
+            branch_index=0,
+            rollin_tokens=alternative[:-1],
+        )
+
+
+def test_cached_generated_rollin_is_seeded_source_bound_and_nonmutating():
+    model = _model()
+    spec = _spec()
+    before = tuple(
+        (path, mx.array(value))
+        for path, value in tree_flatten(model.parameters())
+    )
+    mx.eval([value for _path, value in before])
+
+    first = generate_cached_live_path_rollin(
+        model,
+        PROMPT,
+        spec=spec,
+        branch_index=0,
+        token_count=len(ANSWER),
+        seed=718,
+        temperature=0.8,
+    )
+    second = generate_cached_live_path_rollin(
+        model,
+        PROMPT,
+        spec=spec,
+        branch_index=0,
+        token_count=len(ANSWER),
+        seed=718,
+        temperature=0.8,
+    )
+
+    assert first == second
+    assert first.execution_spec_sha256 == spec.sha256
+    assert first.prompt_tokens_sha256 == hashlib.sha256(
+        json.dumps(PROMPT, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    assert len(first.tokens) == len(first.behavior_logprobs) == len(ANSWER)
+    assert all(value <= 0.0 for value in first.behavior_logprobs)
+    after = tuple(tree_flatten(model.parameters()))
     assert tuple(path for path, _value in before) == tuple(path for path, _value in after)
     assert all(
         bool(mx.array_equal(before_value, after_value))

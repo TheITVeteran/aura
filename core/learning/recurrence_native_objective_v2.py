@@ -922,6 +922,20 @@ class CachedSupervisedLivePathEvaluation:
     bridge_tokens_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class CachedLivePathRollin:
+    """Deterministic generated prefix from one resident cached branch."""
+
+    tokens: tuple[int, ...]
+    behavior_logprobs: tuple[float, ...]
+    branch_index: int
+    seed: int
+    temperature: float
+    execution_spec_sha256: str
+    prompt_tokens_sha256: str
+    tokens_sha256: str
+
+
 @dataclass(frozen=True)
 class _PreparedLivePath:
     prompt_embeddings: Any
@@ -1759,34 +1773,97 @@ def cached_live_path_token_logprobs(
     branch_index: int,
     bridge_tokens: Sequence[int] = (),
     adapters_on: bool = True,
+    rollin_tokens: Sequence[int] | None = None,
 ) -> Any:
-    """Score fixed tokens through the resident KV-cached recurrent policy.
+    """Score fixed labels through the resident KV-cached recurrent policy.
 
     Quantized matrix kernels can produce materially different logits for a
     batched no-cache forward and token-at-a-time KV decoding. PPO behavior
     probabilities must therefore be recomputed by the exact backend that
     generated them. This path remains differentiable through the recurrent
     states, persisted slot window, cache prefill, and lexical decode.
+
+    ``rollin_tokens`` separates labels from decoder inputs. When omitted, this
+    is the historical teacher-forced objective. When supplied, answer token
+    ``i`` is still the label at position ``i`` while roll-in token ``i`` is fed
+    to produce the next position. This is the exact cached scheduled-sampling
+    primitive; no generated token is silently relabeled as correct.
     """
 
     import mlx.core as mx
+
+    answer = tuple(answer_tokens)
+    bridge = tuple(bridge_tokens)
+    rollin = answer if rollin_tokens is None else tuple(rollin_tokens)
+    if not answer or any(type(token) is not int or token < 0 for token in answer):
+        raise ValueError("answer_tokens must contain non-negative integers")
+    if any(type(token) is not int or token < 0 for token in bridge):
+        raise ValueError("bridge_tokens must contain non-negative integers")
+    if (
+        len(rollin) != len(answer)
+        or any(type(token) is not int or token < 0 for token in rollin)
+    ):
+        raise ValueError("rollin_tokens must be non-negative and answer-aligned")
+    if spec.decode_bridge_policy == "none" and bridge:
+        raise ValueError("bridge tokens supplied while decode bridge is disabled")
+    if spec.decode_bridge_policy != "none" and not bridge:
+        raise ValueError("execution spec requires decode bridge tokens")
+
+    layers, cache, logits = _cached_live_path_initial_logits(
+        model,
+        prompt_tokens,
+        spec=spec,
+        branch_index=branch_index,
+        decode_token_budget=len(bridge) + len(answer),
+        adapters_on=adapters_on,
+    )
+    from mlx_lm.models.base import create_attention_mask
+
+    targets = (*bridge, *answer)
+    decoder_inputs = (*bridge, *rollin)
+    answer_logprobs: list[Any] = []
+    for position, (target, decoder_input) in enumerate(
+        zip(targets, decoder_inputs, strict=True)
+    ):
+        logprob = logits[target].astype(mx.float32) - mx.logsumexp(
+            logits.astype(mx.float32)
+        )
+        if position >= len(bridge):
+            answer_logprobs.append(logprob)
+        if position + 1 == len(targets):
+            continue
+        hidden = model.model.embed_tokens(mx.array([[decoder_input]]))
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(layers):
+            hidden = layer(hidden, mask, cache[index])
+        logits = _logits(model, hidden)[0, -1]
+    if len(answer_logprobs) != len(answer):
+        raise RuntimeError("cached answer log-probabilities do not align")
+    return mx.stack(answer_logprobs)
+
+
+def _cached_live_path_initial_logits(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    decode_token_budget: int,
+    adapters_on: bool,
+) -> tuple[tuple[Any, ...], list[Any], Any]:
+    """Create the exact resident cache and first lexical distribution."""
+
     from mlx_lm.models.base import create_attention_mask
     from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex.recurrence import WindowRunner
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
-    answer = tuple(answer_tokens)
-    bridge = tuple(bridge_tokens)
-    if not answer or any(type(token) is not int or token < 0 for token in answer):
-        raise ValueError("answer_tokens must contain non-negative integers")
-    if any(type(token) is not int or token < 0 for token in bridge):
-        raise ValueError("bridge_tokens must contain non-negative integers")
-    if spec.decode_bridge_policy == "none" and bridge:
-        raise ValueError("bridge tokens supplied while decode bridge is disabled")
-    if spec.decode_bridge_policy != "none" and not bridge:
-        raise ValueError("execution spec requires decode bridge tokens")
-
+    if (
+        type(decode_token_budget) is not int
+        or not 1 <= decode_token_budget <= 32_768
+    ):
+        raise ValueError("decode_token_budget must be inside [1, 32768]")
     boundary = nullcontext() if adapters_on else recurrence_adapter_disabled()
     with boundary:
         (
@@ -1820,11 +1897,14 @@ def cached_live_path_token_logprobs(
         for index, layer in enumerate(layers):
             hidden = layer(hidden, mask, cache[index])
 
-        tail = (*bridge, *answer)
         budget = ComputeBudget(
             max_layer_apps=max(
                 1,
-                (len(prompt_tokens) + 2 * int(seeds[branch_index].shape[1]) + len(tail))
+                (
+                    len(prompt_tokens)
+                    + 2 * int(seeds[branch_index].shape[1])
+                    + decode_token_budget
+                )
                 * len(layers),
             ),
             wall_clock_s=600.0,
@@ -1846,23 +1926,101 @@ def cached_live_path_token_logprobs(
             persist=True,
         )
         logits = _logits(model, output)[0, -1]
-        answer_logprobs: list[Any] = []
-        for position, token in enumerate(tail):
-            logprob = logits[token].astype(mx.float32) - mx.logsumexp(
-                logits.astype(mx.float32)
-            )
-            if position >= len(bridge):
-                answer_logprobs.append(logprob)
-            if position + 1 == len(tail):
-                continue
-            hidden = model.model.embed_tokens(mx.array([[token]]))
-            mask = create_attention_mask(hidden, cache)
-            for index, layer in enumerate(layers):
-                hidden = layer(hidden, mask, cache[index])
-            logits = _logits(model, hidden)[0, -1]
-    if len(answer_logprobs) != len(answer):
-        raise RuntimeError("cached answer log-probabilities do not align")
-    return mx.stack(answer_logprobs)
+    return layers, cache, logits
+
+
+def generate_cached_live_path_rollin(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    token_count: int,
+    seed: int,
+    temperature: float = 1.0,
+    bridge_tokens: Sequence[int] = (),
+) -> CachedLivePathRollin:
+    """Generate a deterministic branch-local roll-in on the resident backend."""
+
+    import mlx.core as mx
+    from mlx_lm.models.base import create_attention_mask
+
+    bridge = tuple(bridge_tokens)
+    if type(token_count) is not int or not 1 <= token_count <= 32_768:
+        raise ValueError("token_count must be inside [1, 32768]")
+    if type(seed) is not int or not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("seed must be inside [0, 2^32-1]")
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(float(temperature))
+        or not 0.0 <= float(temperature) <= 10.0
+    ):
+        raise ValueError("temperature must be inside [0, 10]")
+    if any(type(token) is not int or token < 0 for token in bridge):
+        raise ValueError("bridge_tokens must contain non-negative integers")
+    if spec.decode_bridge_policy == "none" and bridge:
+        raise ValueError("bridge tokens supplied while decode bridge is disabled")
+    if spec.decode_bridge_policy != "none" and not bridge:
+        raise ValueError("execution spec requires decode bridge tokens")
+
+    layers, cache, logits = _cached_live_path_initial_logits(
+        model,
+        prompt_tokens,
+        spec=spec,
+        branch_index=branch_index,
+        decode_token_budget=len(bridge) + token_count,
+        adapters_on=True,
+    )
+    for token in bridge:
+        hidden = model.model.embed_tokens(mx.array([[token]]))
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(layers):
+            hidden = layer(hidden, mask, cache[index])
+        logits = _logits(model, hidden)[0, -1]
+
+    tokens: list[int] = []
+    behavior_logprobs: list[float] = []
+    for draw in range(token_count):
+        detached_logits = mx.stop_gradient(logits.astype(mx.float32))
+        if float(temperature) == 0.0:
+            token = int(mx.argmax(detached_logits))
+            logprob = mx.array(0.0, dtype=mx.float32)
+        else:
+            key = mx.random.key((seed + draw * 0x9E3779B1) & 0x7FFFFFFF)
+            sampling_logits = detached_logits / float(temperature)
+            token = int(mx.random.categorical(sampling_logits, key=key))
+            logprob = sampling_logits[token] - mx.logsumexp(sampling_logits)
+        mx.eval(logprob)
+        tokens.append(token)
+        behavior_logprobs.append(float(logprob))
+        if draw + 1 == token_count:
+            continue
+        hidden = model.model.embed_tokens(mx.array([[token]]))
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(layers):
+            hidden = layer(hidden, mask, cache[index])
+        logits = _logits(model, hidden)[0, -1]
+    normalized = tuple(tokens)
+    result = CachedLivePathRollin(
+        tokens=normalized,
+        behavior_logprobs=tuple(behavior_logprobs),
+        branch_index=branch_index,
+        seed=seed,
+        temperature=float(temperature),
+        execution_spec_sha256=spec.sha256,
+        prompt_tokens_sha256=_canonical_tokens_sha256(
+            prompt_tokens,
+            role="prompt_tokens",
+        ),
+        tokens_sha256=_canonical_tokens_sha256(
+            normalized,
+            role="rollin_tokens",
+        ),
+    )
+    del layers, cache, logits
+    mx.clear_cache()
+    return result
 
 
 def cached_supervised_live_path_value_and_grad(
@@ -2922,6 +3080,7 @@ def depth_curriculum_loss_v2(
 
 
 __all__ = [
+    "CachedLivePathRollin",
     "CachedSupervisedLivePathEvaluation",
     "CachedSupervisedLivePathResult",
     "EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA",
@@ -2945,6 +3104,7 @@ __all__ = [
     "exact_adjoint_composite_live_path_value_and_grad",
     "exact_adjoint_live_path_value_and_grad",
     "exact_adjoint_trajectory_live_path_value_and_grad",
+    "generate_cached_live_path_rollin",
     "live_path_branch_answer_ce_trail",
     "live_path_forward",
     "live_path_loss",
