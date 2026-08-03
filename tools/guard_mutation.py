@@ -126,8 +126,40 @@ def run_tests(selector: str, timeout: int) -> tuple[bool, list[str], str]:
     return proc.returncode == 0, failed, ""
 
 
+def _git_dirty(module: str) -> str:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "--", module],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    return proc.stdout.strip()
+
+
+def assert_pristine(module: str) -> None:
+    """Refuse to mutate a file that is not already git-clean.
+
+    Learned by causing it, on this tool's own sweep. A run that outlived its
+    shell kept mutating in the background; a later chunk then read one of those
+    mutated files, captured it as "original", and faithfully restored it TO THE
+    MUTATED STATE. Three files were left with their guards replaced by `pass`,
+    and every individual probe had restored exactly what it read, so nothing
+    reported a failure.
+
+    "Original" is only trustworthy if the file was clean when it was read, and
+    git is the one source of truth that survives a killed process.
+    """
+    dirty = _git_dirty(module)
+    if dirty:
+        raise SystemExit(
+            f"REFUSING to mutate {module}: it is not git-clean.\n"
+            f"  {dirty}\n"
+            "A previous run may have died mid-probe. Restore it first:\n"
+            f"  git checkout -- {module}"
+        )
+
+
 def probe(module: str, function: str, selector: str, timeout: int) -> Result:
     path = REPO / module
+    assert_pristine(module)
     original = path.read_bytes()
     original_hash = hashlib.sha256(original).hexdigest()
     try:
@@ -155,6 +187,14 @@ def probe(module: str, function: str, selector: str, timeout: int) -> Result:
         restored = hashlib.sha256(path.read_bytes()).hexdigest()
         if restored != original_hash:
             sys.stderr.write(f"\n!!! FAILED TO RESTORE {module} — ABORTING\n")
+            raise SystemExit(2)
+        # Belt and braces: a restore that faithfully rewrote the bytes we held
+        # is still wrong if the bytes we held were already mutated.
+        if _git_dirty(module):
+            sys.stderr.write(
+                f"\n!!! {module} IS DIRTY AFTER RESTORE — ABORTING\n"
+                f"    run: git checkout -- {module}\n"
+            )
             raise SystemExit(2)
 
 
