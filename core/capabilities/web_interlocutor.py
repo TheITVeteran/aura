@@ -98,7 +98,40 @@ class BrowserPageSnapshot:
 
     @property
     def text_hash(self) -> str:
-        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()[:16]
+        # CP126 a3474c19: this was truncated to 16 hex characters (64 bits) and
+        # then used as page IDENTITY in causal comparisons. Truncation buys
+        # nothing here — the value is compared, never displayed — and a
+        # shortened identity is a collision surface for free.
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+
+
+#: How a reply was tied to the turn that supposedly caused it, strongest first.
+#: Only the anchored grades establish that the text FOLLOWED Aura's message
+#: rather than merely appearing on the page after it (CP126 ff18e5ee).
+REPLY_PROVENANCE_ROLE_SEGMENTS = "role_segments"
+REPLY_PROVENANCE_SENT_MARKER = "sent_marker"
+REPLY_PROVENANCE_UNANCHORED_DELTA = "unanchored_delta"
+REPLY_PROVENANCE_CHANGED_TEXT = "changed_relevant_text"
+REPLY_PROVENANCE_NONE = "none"
+
+_ANCHORED_REPLY_PROVENANCE = frozenset(
+    {REPLY_PROVENANCE_ROLE_SEGMENTS, REPLY_PROVENANCE_SENT_MARKER}
+)
+
+
+@dataclass
+class ObservedReply:
+    """Reply text plus how it was bound to the sent turn."""
+
+    text: str = ""
+    provenance: str = REPLY_PROVENANCE_NONE
+
+    def __bool__(self) -> bool:
+        return bool(self.text)
+
+    @property
+    def anchored(self) -> bool:
+        return self.provenance in _ANCHORED_REPLY_PROVENANCE
 
 
 @dataclass
@@ -112,6 +145,8 @@ class WebInterlocutorTurn:
     observed_at: float
     effect_verified: bool
     verification: str
+    #: CP126 ff18e5ee / a3474c19: which evidence tied this reply to this turn.
+    reply_provenance: str = REPLY_PROVENANCE_NONE
 
 
 @dataclass
@@ -1950,17 +1985,26 @@ class WebInterlocutorSession:
                 turn = WebInterlocutorTurn(
                     index=index,
                     sent=next_message,
-                    observed_reply=observed,
+                    observed_reply=observed.text,
                     before_hash=before.text_hash,
                     after_hash=after.text_hash,
                     sent_at=sent_at,
                     observed_at=time.time(),
-                    effect_verified=bool(observed and before.text_hash != after.text_hash),
-                    verification=(
-                        "Page text changed and yielded stable new interlocutor text."
-                        if observed
-                        else "No stable new interlocutor text appeared before timeout."
+                    # CP126 a3474c19 / ff18e5ee: a changed page hash proves the
+                    # page changed — streaming UI, an ad rotation, a clock, a
+                    # background thread — not that Aura's message caused it.
+                    # A verified effect needs the reply to be ANCHORED: found
+                    # in a role-labelled segment after Aura's turn, or after
+                    # her message as a visible marker in the transcript. An
+                    # unanchored delta is still recorded, and still summarized,
+                    # but it is not a causal claim.
+                    effect_verified=bool(
+                        observed
+                        and observed.anchored
+                        and before.text_hash != after.text_hash
                     ),
+                    reply_provenance=observed.provenance,
+                    verification=_describe_reply_evidence(observed, before, after),
                 )
                 result.diagnostics[f"turn_{index}_send_receipts"] = send_receipts
                 result.turns.append(turn)
@@ -2081,12 +2125,12 @@ class WebInterlocutorSession:
         sent_text: str,
         timeout_s: float,
         progress_source: str = "web_interlocutor.wait_for_reply",
-    ) -> tuple[BrowserPageSnapshot, str]:
+    ) -> tuple[BrowserPageSnapshot, ObservedReply]:
         deadline = time.time() + timeout_s
         stable_count = 0
         last_hash = ""
         best = before
-        best_delta = ""
+        best_delta = ObservedReply()
         snapshot_failures = 0
         sent_seen = False
         while time.time() < deadline:
@@ -2122,11 +2166,12 @@ class WebInterlocutorSession:
                 stable_count = 0
                 last_hash = ""
                 best = snap
-                best_delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text) or best_delta
+                streaming = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text)
+                best_delta = streaming if streaming else best_delta
                 continue
             delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text)
             if delta:
-                delta_hash = hashlib.sha256(delta.encode("utf-8")).hexdigest()[:16]
+                delta_hash = hashlib.sha256(delta.text.encode("utf-8")).hexdigest()
                 if delta_hash == last_hash:
                     stable_count += 1
                 else:
@@ -2682,17 +2727,22 @@ def _normalize_accessibility_transcript(text: str) -> str:
     raw = re.sub(r"\b(Ask anything|Message ChatGPT|Message Gemini|ChatGPT can make mistakes)\b", r"\n\1\n", raw, flags=re.I)
 
     lines: list[str] = []
-    seen: set[str] = set()
+    previous_norm = ""
     for chunk in raw.splitlines():
         cleaned = re.sub(r"\s+", " ", chunk).strip()
         if not cleaned:
             continue
         norm = _normalize_line(cleaned)
-        # AX often repeats the same button/label many times. Do not dedupe
-        # long prose because repeated concepts can be meaningful dialogue.
-        if len(cleaned) < 120 and norm in seen:
+        # CP126 3403ebb3: this deduped every short line against everything seen
+        # anywhere in the window, so a legitimate repeated answer — "Yes.",
+        # "OK", an acknowledgement, a turn label — was deleted the second time
+        # it was said, changing the order and multiplicity of the dialogue
+        # before segment extraction and causal comparison ever saw it. What AX
+        # actually repeats is the same control rendered over and over, which is
+        # ADJACENT repetition. Collapsing that leaves real dialogue intact.
+        if len(cleaned) < 120 and norm == previous_norm:
             continue
-        seen.add(norm)
+        previous_norm = norm
         lines.append(cleaned)
     return "\n".join(lines)[-_MAX_PAGE_TEXT_CHARS:]
 
@@ -2754,12 +2804,55 @@ def _accessibility_chat_segments(text: str) -> list[dict[str, Any]]:
     return segments
 
 
-def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> str:
+def _describe_reply_evidence(
+    observed: "ObservedReply",
+    before: "BrowserPageSnapshot",
+    after: "BrowserPageSnapshot",
+) -> str:
+    """Say what the evidence actually was, in the receipt the user may read."""
+    if not observed:
+        return "No stable new interlocutor text appeared before timeout."
+    changed = before.text_hash != after.text_hash
+    if observed.provenance == REPLY_PROVENANCE_ROLE_SEGMENTS:
+        return (
+            "Reply read from a role-labelled segment following Aura's turn in "
+            "the page transcript."
+        )
+    if observed.provenance == REPLY_PROVENANCE_SENT_MARKER:
+        return (
+            "Reply read from the transcript after Aura's own message appeared "
+            "in it."
+        )
+    if observed.provenance == REPLY_PROVENANCE_UNANCHORED_DELTA:
+        return (
+            "New page text appeared after the send, but Aura's message was not "
+            "visible in the transcript, so this text is NOT proven to be a "
+            "reply to it."
+        )
+    if observed.provenance == REPLY_PROVENANCE_CHANGED_TEXT:
+        return (
+            "The page's relevant text changed after the send; nothing ties the "
+            "new text to Aura's message."
+        )
+    return "Page changed." if changed else "Page did not change."
+
+
+def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> ObservedReply:
+    """Text that appeared after Aura's turn, and how strongly it is tied to it.
+
+    CP126 ff18e5ee. When no sent marker was visible this fell through to a raw
+    line delta, so any sufficiently novel page line — an ad, a banner, a
+    navigation change, an account notice — became "the interlocutor's reply"
+    after coarse UI filtering, with nothing recording that it never followed a
+    proven turn. The delta is still captured (it is often the real reply on
+    sites that do not echo the sent message), but it is now labelled, and the
+    caller decides what an unanchored observation is worth.
+    """
     post_sent_reply = _extract_reply_after_sent_marker(after, sent_text)
     if post_sent_reply:
-        return post_sent_reply
+        return ObservedReply(post_sent_reply, REPLY_PROVENANCE_SENT_MARKER)
     if _sent_marker_seen(after, sent_text):
-        return ""
+        return ObservedReply("", REPLY_PROVENANCE_NONE)
     before_lines = _normalized_lines(before)
     after_lines = _normalized_lines(after)
     sent_norm = _normalize_line(sent_text)
@@ -2777,25 +2870,33 @@ def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> s
     if not new_lines:
         if after.startswith(before):
             tail = after[len(before) :].strip()
-            return _meaningful_reply_or_empty(_trim_reply_text(tail, sent_text), sent_text)
-        return ""
-    return _meaningful_reply_or_empty(_trim_reply_text("\n".join(new_lines[-24:]), sent_text), sent_text)
+            return ObservedReply(
+                _meaningful_reply_or_empty(_trim_reply_text(tail, sent_text), sent_text),
+                REPLY_PROVENANCE_UNANCHORED_DELTA,
+            )
+        return ObservedReply("", REPLY_PROVENANCE_NONE)
+    return ObservedReply(
+        _meaningful_reply_or_empty(
+            _trim_reply_text("\n".join(new_lines[-24:]), sent_text), sent_text
+        ),
+        REPLY_PROVENANCE_UNANCHORED_DELTA,
+    )
 
 
 def _extract_new_interlocutor_text_from_snapshots(
     before: BrowserPageSnapshot,
     after: BrowserPageSnapshot,
     sent_text: str,
-) -> str:
+) -> ObservedReply:
     segment_delta = _extract_reply_from_segments(
         before.relevant_segments,
         after.relevant_segments,
         sent_text,
     )
     if segment_delta:
-        return segment_delta
+        return ObservedReply(segment_delta, REPLY_PROVENANCE_ROLE_SEGMENTS)
     if after.relevant_segments:
-        return ""
+        return ObservedReply("", REPLY_PROVENANCE_NONE)
     before_relevant = str(before.relevant_text or "")
     after_relevant = str(after.relevant_text or "")
     if after_relevant:
@@ -2805,7 +2906,9 @@ def _extract_new_interlocutor_text_from_snapshots(
         if _normalize_line(before_relevant) != _normalize_line(after_relevant):
             candidate = _meaningful_reply_or_empty(_trim_reply_text(after_relevant, sent_text), sent_text)
             if candidate and not _rough_text_contains(candidate, sent_text):
-                return candidate
+                # The weakest evidence in the module: the page changed and this
+                # is what it now says. It is not tied to the sent turn at all.
+                return ObservedReply(candidate, REPLY_PROVENANCE_CHANGED_TEXT)
     return _extract_new_interlocutor_text(before.text, after.text, sent_text)
 
 
@@ -2826,12 +2929,15 @@ def _extract_reply_from_segments(
     if not segments:
         return ""
     sent_index = -1
+    best_tier = -1
     for idx, segment in enumerate(segments):
         role = _normalize_line(segment.get("role") or "")
         text = str(segment.get("text") or "")
         if role not in {"user", "human"}:
             continue
-        if _line_matches_sent_marker(text, sent_text):
+        tier = _sent_marker_match_tier(text, sent_text)
+        if tier >= best_tier and tier >= 0:
+            best_tier = tier
             sent_index = idx
     if sent_index < 0:
         return ""
@@ -2866,9 +2972,15 @@ def _extract_reply_after_sent_marker(text: str, sent_text: str) -> str:
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
     if not lines:
         return ""
+    # Anchor on the STRONGEST match, and among equals the latest — so an exact
+    # occurrence of this turn always beats a rough word-overlap hit on an older
+    # one (CP126 2184463d).
     sent_index = -1
+    best_tier = -1
     for idx, line in enumerate(lines):
-        if _line_matches_sent_marker(line, sent_text):
+        tier = _sent_marker_match_tier(line, sent_text)
+        if tier >= best_tier and tier >= 0:
+            best_tier = tier
             sent_index = idx
     if sent_index < 0:
         return ""
@@ -2891,19 +3003,35 @@ def _sent_marker_seen(text: str, sent_text: str) -> bool:
     return any(_line_matches_sent_marker(line, sent_text) for line in str(text or "").splitlines())
 
 
-def _line_matches_sent_marker(line: str, sent_text: str) -> bool:
+def _sent_marker_match_tier(line: str, sent_text: str) -> int:
+    """How strongly a transcript line matches the message Aura sent.
+
+    3 = the line IS the message, 2 = it contains it, 1 = a substantial prefix
+    of it, 0 = only rough word overlap, -1 = no match.
+
+    CP126 2184463d. Every tier used to collapse into one boolean, so the
+    weakest one — ``_rough_text_contains``, which counts occurrences of up to
+    eighteen words anywhere in the line — decided the anchor as readily as an
+    exact match. Repeated topical prompts and older turns satisfy that, and
+    extraction then anchored after the wrong message and reported an earlier
+    reply as the answer to the current one.
+    """
     norm = _normalize_line(line)
     sent_norm = _normalize_line(sent_text)
     if not norm or not sent_norm:
-        return False
+        return -1
     role_stripped = re.sub(r"^(user|human|you|aura)\s*:\s*", "", norm).strip()
     if role_stripped == sent_norm:
-        return True
+        return 3
     if sent_norm in role_stripped:
-        return True
+        return 2
     if role_stripped and role_stripped in sent_norm and len(role_stripped) >= 32:
-        return True
-    return _rough_text_contains(role_stripped or norm, sent_text)
+        return 1
+    return 0 if _rough_text_contains(role_stripped or norm, sent_text) else -1
+
+
+def _line_matches_sent_marker(line: str, sent_text: str) -> bool:
+    return _sent_marker_match_tier(line, sent_text) >= 0
 
 
 def _normalized_lines(text: str) -> list[str]:

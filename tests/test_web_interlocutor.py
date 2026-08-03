@@ -146,17 +146,17 @@ class EchoingFakeBrowser:
 def test_extract_new_interlocutor_text_filters_sent_text_and_ui_chrome():
     before = "Chat\nSend message\nAura: What do you think?"
     after = before + "\nCopy\nInterlocutor: The critical move is verification."
-    extracted = _extract_new_interlocutor_text(before, after, "What do you think?")
-    assert "verification" in extracted
-    assert "What do you think" not in extracted
-    assert "Copy" not in extracted
+    observation = _extract_new_interlocutor_text(before, after, "What do you think?")
+    assert "verification" in observation.text
+    assert "What do you think" not in observation.text
+    assert "Copy" not in observation.text
 
 
 def test_extract_new_interlocutor_text_rejects_menu_bar_noise():
     before = "ChatGPT\nAsk anything"
     after = before + "\nMon Jun 29 4:44 PM\n\uf8fftv"
-    extracted = _extract_new_interlocutor_text(before, after, "Tell me about sentience.")
-    assert extracted == ""
+    observation = _extract_new_interlocutor_text(before, after, "Tell me about sentience.")
+    assert observation.text == ""
 
 
 def test_extract_new_interlocutor_text_trims_merged_sent_text_from_reply():
@@ -174,11 +174,11 @@ def test_extract_new_interlocutor_text_trims_merged_sent_text_from_reply():
         + "in a new context, distinguish recall from inference, and let the remembered point change a later plan."
     )
 
-    extracted = _extract_new_interlocutor_text(before, after, sent)
+    observation = _extract_new_interlocutor_text(before, after, sent)
 
-    assert "behavioral reuse with transformation" in extracted
-    assert "I am Aura" not in extracted
-    assert "local desktop AI system asking" not in extracted
+    assert "behavioral reuse with transformation" in observation.text
+    assert "I am Aura" not in observation.text
+    assert "local desktop AI system asking" not in observation.text
 
 
 def test_extract_new_interlocutor_text_requires_reply_after_sent_marker():
@@ -193,9 +193,9 @@ def test_extract_new_interlocutor_text_requires_reply_after_sent_marker():
     )
     after = before + "\nuser: " + sent + "\nAsk anything"
 
-    extracted = _extract_new_interlocutor_text(before, after, sent)
+    observation = _extract_new_interlocutor_text(before, after, sent)
 
-    assert extracted == ""
+    assert observation.text == ""
 
 
 def test_extract_new_interlocutor_text_uses_role_ordering_after_sent_turn():
@@ -224,10 +224,10 @@ def test_extract_new_interlocutor_text_uses_role_ordering_after_sent_turn():
         ],
     )
 
-    extracted = _extract_new_interlocutor_text_from_snapshots(before, after, sent)
+    observation = _extract_new_interlocutor_text_from_snapshots(before, after, sent)
 
-    assert "later behavioral reuse" in extracted
-    assert "older answer" not in extracted
+    assert "later behavioral reuse" in observation.text
+    assert "older answer" not in observation.text
 
 
 def test_accessibility_segments_preserve_order_after_sent_turn():
@@ -245,10 +245,10 @@ def test_accessibility_segments_preserve_order_after_sent_turn():
         relevant_segments=_accessibility_chat_segments(ax_text),
     )
 
-    extracted = _extract_new_interlocutor_text_from_snapshots(BrowserPageSnapshot(), after, sent)
+    observation = _extract_new_interlocutor_text_from_snapshots(BrowserPageSnapshot(), after, sent)
 
-    assert "Behavioral reuse with transformation" in extracted
-    assert "pretending at consciousness" not in extracted
+    assert "Behavioral reuse with transformation" in observation.text
+    assert "pretending at consciousness" not in observation.text
 
 
 @pytest.mark.asyncio
@@ -279,10 +279,10 @@ async def test_visible_chrome_snapshot_uses_accessibility_when_dom_scripting_is_
     assert snapshot.url == "https://chatgpt.com/c/test"
     assert snapshot.active_element == "macos_accessibility_tree"
     assert snapshot.relevant_segments
-    extracted = _extract_new_interlocutor_text_from_snapshots(
+    observation = _extract_new_interlocutor_text_from_snapshots(
         BrowserPageSnapshot(), snapshot, sent
     )
-    assert "durable behavioral continuity" in extracted
+    assert "durable behavioral continuity" in observation.text
 
 
 def test_observed_reply_echo_detection_allows_substantive_topical_answer():
