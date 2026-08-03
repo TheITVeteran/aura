@@ -3,6 +3,7 @@
 Re-exports the core AuditLog and coordinates adversarial self-audits.
 """
 from __future__ import annotations
+from core.runtime.lockdep import checked_lock
 
 import hashlib
 import json
@@ -111,7 +112,7 @@ class AuditLog:
         # CP126 48b8237f: check_same_thread=False permitted concurrent
         # callers while connection creation, execute, commit, heal, close
         # and query were all unsynchronised.
-        self._lock = threading.RLock()
+        self._lock = checked_lock("audit", reentrant=True)
         self._unavailable = False
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init()
@@ -542,7 +543,7 @@ class AuditLog:
 
 
 _audit: Optional[AuditLog] = None
-_audit_lock = threading.Lock()
+_audit_lock = checked_lock("audit")
 
 
 def get_audit() -> AuditLog:

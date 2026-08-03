@@ -43,6 +43,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 import sys
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "RuntimeProfile",
@@ -85,7 +86,7 @@ class RuntimeProfile(str, enum.Enum):
 #: everything goes through ``state_root()`` so the profile can intercept.
 _LIVE_ROOT_NAME = ".aura"
 
-_LOCK = threading.RLock()
+_LOCK = checked_lock("state_ownership", reentrant=True)
 _INSTANCE_ID: str | None = None
 _PROFILE: RuntimeProfile | None = None
 _ROOT: Path | None = None

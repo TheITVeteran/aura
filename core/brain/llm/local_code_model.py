@@ -32,6 +32,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
 )
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ class _FairAsyncGate:
     """FIFO cross-event-loop gate with cancellation-safe waiter removal."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = checked_lock("local_code_model")
         self._waiters: deque[tuple[object, threading.Event]] = deque()
         self._owner: object | None = None
 
@@ -642,7 +643,7 @@ class LocalCodeModel:
         self.model_path = model_path or _resolve_model_path()
         self._readiness = ReadinessReceipt(ReadinessState.UNVERIFIED, "not_probed")
         self._last_result: CodeGenerationResult | None = None
-        self._state_lock = threading.Lock()
+        self._state_lock = checked_lock("local_code_model")
 
     def readiness(self) -> ReadinessReceipt:
         with self._state_lock:

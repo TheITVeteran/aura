@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Memory.Vector")
 
@@ -99,7 +100,7 @@ class VectorMemory:
     ):
         self.collection_name = collection_name
         self._fallback_mode = False
-        self._mutation_lock = threading.RLock()
+        self._mutation_lock = checked_lock("vector_memory", reentrant=True)
         self.single_principal_collection = True
         self.embedding_metric = AuraEmbeddingFunction.METRIC
         self.embedding_version = AuraEmbeddingFunction.VERSION

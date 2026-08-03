@@ -735,6 +735,71 @@ class CheckedAsyncLock:
         return self._lock.locked()
 
 
+class CheckedSemaphore:
+    """Drop-in for ``asyncio.Semaphore`` with a bounded acquire.
+
+    A counting semaphore is NOT a mutex, and this deliberately does not pretend
+    otherwise: it registers no lock ordering, because N simultaneous holders
+    have no ordering to violate and feeding them to the ABBA validator would
+    manufacture false cycles out of ordinary fan-out.
+
+    What it does give is the property the raw primitive cannot: an acquire that
+    is BOUNDED. `await semaphore.acquire()` with no timeout is exactly the
+    silent wedge lockdep exists to surface — a fan-out limiter whose permits
+    are never returned stalls forever and looks identical to slow work. Here it
+    times out, and the timeout is reported rather than swallowed.
+    """
+
+    __slots__ = ("_budget_s", "_name", "_semaphore")
+
+    def __init__(self, name: str, value: int = 1, *, budget_s: float = ACQUIRE_BUDGET_S):
+        if value < 1:
+            raise ValueError("semaphore value must be at least 1")
+        self._name = str(name)
+        self._budget_s = float(budget_s)
+        self._semaphore = asyncio.Semaphore(value)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def acquire(self) -> bool:
+        try:
+            await asyncio.wait_for(self._semaphore.acquire(), timeout=self._budget_s)
+        except TimeoutError:
+            _VALIDATOR.report_external(
+                kind="semaphore_timeout",
+                signature=f"semaphore:{self._name}",
+                message=(
+                    f"semaphore {self._name} not acquired within "
+                    f"{self._budget_s:.1f}s; permits are being held longer "
+                    "than the budget allows"
+                ),
+                held=[],
+            )
+            raise
+        return True
+
+    def release(self) -> None:
+        self._semaphore.release()
+
+    def locked(self) -> bool:
+        return self._semaphore.locked()
+
+    async def __aenter__(self) -> CheckedSemaphore:
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        self.release()
+
+
+def checked_semaphore(
+    name: str, value: int = 1, *, budget_s: float = ACQUIRE_BUDGET_S
+) -> CheckedSemaphore:
+    return CheckedSemaphore(name, value, budget_s=budget_s)
+
+
 def checked_lock(
     name: str, *, rank: LockRank = LockRank.UNRANKED, reentrant: bool = False
 ) -> CheckedLock:
@@ -825,6 +890,7 @@ __all__ = [
     "SANCTIONED_BLOCKING_LOCKS",
     "CheckedAsyncLock",
     "CheckedLock",
+    "CheckedSemaphore",
     "LockHeldError",
     "LockRank",
     "LockdepValidator",
@@ -832,6 +898,7 @@ __all__ = [
     "assert_no_locks_held",
     "checked_async_lock",
     "checked_lock",
+    "checked_semaphore",
     "get_validator",
     "instrument",
     "lockdep_clean",

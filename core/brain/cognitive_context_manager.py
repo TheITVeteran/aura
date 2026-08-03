@@ -26,6 +26,7 @@ from core.runtime.principal_context import (
 )
 from core.runtime.runtime_settings import get_runtime_setting
 from core.security.structural_redaction import redact_structure, redact_text
+from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.ContextManager")
 
@@ -179,7 +180,7 @@ class CognitiveContextManager:
         self.stale_source_ttl_s = max(0.0, float(stale_source_ttl_s))
         self._last_snapshot: dict[str, Any] | None = None
         self._last_success: dict[str, tuple[float, Any]] = {}
-        self._snapshot_lock = asyncio.Lock()
+        self._snapshot_lock = checked_async_lock("cognitive_context_manager")
 
     async def start(self) -> None:
         logger.info("CognitiveContextManager service started")

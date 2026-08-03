@@ -27,6 +27,7 @@ from core.runtime.principal_context import (
     relational_principal_scope_is_bound,
 )
 from core.security.structural_redaction import redact_structure, redact_text
+from core.runtime.lockdep import checked_async_lock, checked_lock
 
 logger = logging.getLogger("Aura.CuriosityExplorer")
 
@@ -242,8 +243,8 @@ class CuriosityExplorer:
         self._failures: list[dict[str, Any]] = []
         self._total_explorations = 0
         self._total_attempts = 0
-        self._state_lock = threading.RLock()
-        self._run_lock = asyncio.Lock()
+        self._state_lock = checked_lock("curiosity_explorer", reentrant=True)
+        self._run_lock = checked_async_lock("curiosity_explorer")
         logger.info("CuriosityExplorer online - curiosity now drives governed learning.")
 
     def tick(
@@ -844,7 +845,7 @@ class CuriosityExplorer:
 
 
 _explorer: CuriosityExplorer | None = None
-_explorer_lock = threading.Lock()
+_explorer_lock = checked_lock("curiosity_explorer")
 
 
 def get_curiosity_explorer() -> CuriosityExplorer:

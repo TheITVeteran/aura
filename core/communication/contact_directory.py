@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.security.zenith_secrets import KeychainBackend, require_keychain_backend
+from core.runtime.lockdep import checked_lock
 
 DEFAULT_MESSAGES_CONTACT_ALIAS = "primary_operator"
 _KEYCHAIN_SERVICE = "AuraMessagesContacts.v1"
@@ -144,7 +145,7 @@ class KeychainContactDirectory:
         self._backend = backend
         self._backend_factory = backend_factory
         self._clock = clock
-        self._lock = threading.RLock()
+        self._lock = checked_lock("contact_directory", reentrant=True)
 
     def _resolved_backend(self) -> KeychainBackend:
         if self._backend is None:

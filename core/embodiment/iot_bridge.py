@@ -53,6 +53,7 @@ from core.reality_reach.body_projection import (
 )
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.IoTBridge")
 
@@ -192,7 +193,7 @@ class IoTBridge:
         self._observation_router: Any | None = None
         self._attachment_broker: Any | None = None
         self._home_assistant_connector: HomeAssistantConnector | None = None
-        self._adapter_lock = asyncio.Lock()
+        self._adapter_lock = checked_async_lock("iot_bridge")
         self._task: asyncio.Task[Any] | None = None
         self._running = False
         try:

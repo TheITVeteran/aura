@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.AppDictionary")
 
@@ -108,7 +109,7 @@ _NEVER_A_DOCUMENT: frozenset[str] = frozenset(
 #: Reading an sdef forks a process; it is worth remembering the answer.
 _DICTIONARY_TTL_S = 900.0
 _APP_LIST_TTL_S = 120.0
-_CACHE_LOCK = threading.Lock()
+_CACHE_LOCK = checked_lock("app_dictionary")
 _DICTIONARY_CACHE: dict[str, tuple[float, "AppFacts"]] = {}
 _APP_LIST_CACHE: tuple[float, tuple[str, ...]] | None = None
 

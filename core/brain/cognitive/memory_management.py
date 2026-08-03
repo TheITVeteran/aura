@@ -27,6 +27,7 @@ import numpy as np
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Kernel.MemoryConsolidator")
 
@@ -143,7 +144,7 @@ class MemoryConsolidator:
             if allow_unscoped is None
             else bool(allow_unscoped)
         )
-        self._run_lock = threading.Lock()
+        self._run_lock = checked_lock("memory_management")
 
     async def consolidate(self) -> ConsolidationReport:
         """Run blocking storage and similarity work outside the event loop."""
@@ -209,7 +210,7 @@ class MemoryConsolidator:
     def _backend_lock(self) -> threading.RLock:
         lock = getattr(self.vector_memory, "_mutation_lock", None)
         if lock is None:
-            lock = threading.RLock()
+            lock = checked_lock("memory_management._backend_lock", reentrant=True)
             try:
                 self.vector_memory._mutation_lock = lock
             except (AttributeError, TypeError):

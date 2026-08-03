@@ -56,6 +56,7 @@ from core.autonomy.reflection_loop import ReflectionLoop, ReflectionRecord
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import Severity, record_degradation
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.AutonomousResearchOrchestrator")
 
@@ -193,7 +194,7 @@ class AutonomousResearchOrchestrator:
         # could pick the SAME item and then race the shared scheduler, progress
         # log, cache, queue, and memory state. The lock is what makes the
         # documented guarantee true.
-        self._engagement_lock = asyncio.Lock()
+        self._engagement_lock = checked_async_lock("autonomous_research_orchestrator")
         self._scheduler = scheduler or CuriosityScheduler()
         self._router = router or MethodRouter()
         self._fetcher = fetcher or ContentFetcher()

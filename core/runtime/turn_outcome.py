@@ -51,6 +51,7 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 from core.runtime.errors import record_degradation
 from core.security.structural_redaction import redact_structure, redact_text
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "OutcomeStatus",
@@ -330,7 +331,7 @@ class TurnOutcome:
         self.turn_id = str(turn_id or uuid.uuid4().hex)
         self.origin = str(origin or "unknown")
         self.started_at = time.time()
-        self._lock = threading.RLock()
+        self._lock = checked_lock("turn_outcome", reentrant=True)
         self._candidates: list[Candidate] = []
         self._effects: dict[str, EffectClaim] = {}
         self._receipts: list[dict[str, Any]] = []

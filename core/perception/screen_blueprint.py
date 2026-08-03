@@ -44,6 +44,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.ScreenBlueprint")
 
@@ -74,7 +75,7 @@ _DOCUMENT_READ_TIMEOUT_S = 8.0
 #: times. One capture serves a burst; anything older is re-measured.
 _CACHE_TTL_S = 1.5
 
-_CACHE_LOCK = threading.Lock()
+_CACHE_LOCK = checked_lock("screen_blueprint")
 _CACHED: tuple[float, "ScreenBlueprint"] | None = None
 
 #: Set to "0" to make every capture report itself unavailable.

@@ -40,6 +40,7 @@ import numpy as np
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.state_ownership import state_root
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.MetaLearner")
 
@@ -250,7 +251,7 @@ class MetaLearner:
         # Task registry, RNG, parameters, history and persistence move together.
         # Concurrent dream/adaptation calls previously interleaved evaluations
         # and overwrote each other's meta state.
-        self._lock = threading.RLock()
+        self._lock = checked_lock("meta_learner", reentrant=True)
 
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load()

@@ -28,6 +28,7 @@ from core.container import ServiceContainer
 from core.phases.action_intent import detect_action_intent
 from core.runtime.turn_analysis import analyze_turn, canonical_turn_text
 from core.security.structural_redaction import redact_text
+from core.runtime.lockdep import checked_lock
 
 MAX_OBJECTIVE_SCAN_CHARS = 8192
 MAX_OBJECTIVE_PREVIEW_CHARS = 300
@@ -60,7 +61,7 @@ _GOVERNANCE = MappingProxyType(
     }
 )
 _FRAME_KEY = secrets.token_bytes(32)
-_SINGLETON_LOCK = threading.Lock()
+_SINGLETON_LOCK = checked_lock("bicameral_advisory")
 
 _WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}")
 _DIRECTED_ACTION_RE = re.compile(
@@ -412,7 +413,7 @@ class BicameralAdvisory:
 
     def __init__(self, history_limit: int = 128):
         bounded_limit = max(1, min(MAX_HISTORY_LIMIT, int(history_limit)))
-        self._lock = threading.RLock()
+        self._lock = checked_lock("bicameral_advisory", reentrant=True)
         self._history: deque[dict[str, Any]] = deque(maxlen=bounded_limit)
         self._issued_frames: dict[str, BicameralFrame] = {}
         self._feedback_applied: set[str] = set()

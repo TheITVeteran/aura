@@ -20,13 +20,14 @@ from core.reality_reach.contracts import (
     RealityLayer,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.lockdep import checked_lock
 
 
 class ChannelRegistry:
     """Thread-safe inventory of immutable, explicitly declared channels."""
 
     def __init__(self, channels: Iterable[ChannelDeclaration] = ()) -> None:
-        self._lock = threading.RLock()
+        self._lock = checked_lock("reachability", reentrant=True)
         self._channels: dict[str, ChannelDeclaration] = {}
         for channel in channels:
             self.register(channel)

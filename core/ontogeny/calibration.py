@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.ontogeny.experience import Episode, OutcomeKind
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.Ontogeny.Calibration")
 
@@ -207,7 +208,7 @@ class CalibrationMonitor:
         self._active: dict[str, str] = {}
         self._baselines: dict[str, float] = {}
         self._legacy_sequence = 0
-        self._lock = threading.RLock()
+        self._lock = checked_lock("calibration", reentrant=True)
 
     @staticmethod
     def cohort_id(*, provenance: str, runtime_revision: str, head_version: int) -> str:

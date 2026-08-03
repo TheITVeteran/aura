@@ -41,6 +41,7 @@ from core.governance.capability_chain import CapabilityViolation, enforce_capabi
 from core.governance_context import governed_scope, require_governance
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import SubprocessGateway, get_subprocess_gateway
+from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.MessagesTransport")
 
@@ -404,7 +405,7 @@ class MessagesTransport:
         self._last_outbound_at = 0.0
         self._processed_inbound = 0
         self._accepted_outbound = 0
-        self._send_lock = asyncio.Lock()
+        self._send_lock = checked_async_lock("messages_transport")
 
     async def start(self, *, task_factory: TaskFactory | None = None) -> None:
         if self._task is not None and not self._task.done():

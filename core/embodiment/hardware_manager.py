@@ -16,6 +16,7 @@ from core.runtime.errors import FallbackClassification, Severity, record_degrada
 
 from .base_device import BaseHardwareDevice
 from .reality_adapter import HardwareRealityAdapter, HardwareRealityManifest
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Embodiment.Manager")
 
@@ -403,7 +404,7 @@ class HardwareManager(AuraBaseModule):  # type: ignore[misc]  # skipped import i
 
 
 _HARDWARE_MANAGER: HardwareManager | None = None
-_HARDWARE_MANAGER_LOCK = threading.Lock()
+_HARDWARE_MANAGER_LOCK = checked_lock("hardware_manager")
 
 
 def get_hardware_manager() -> HardwareManager:

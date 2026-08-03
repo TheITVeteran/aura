@@ -51,6 +51,7 @@ from typing import Any, Iterable, Mapping
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
 from core.runtime.turn_outcome import VerificationGrade
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "ClaimClass",
@@ -481,7 +482,7 @@ def adjudicate(bundle: EvidenceBundle) -> Verdict:
 # Verdict signing. A verdict that can be edited into a pass is a suggestion.
 # --------------------------------------------------------------------------
 
-_KEY_LOCK = threading.Lock()
+_KEY_LOCK = checked_lock("independent_evidence")
 _KEY: bytes | None = None
 
 

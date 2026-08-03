@@ -52,6 +52,7 @@ from core.memory.associative_entity_memory import (
     normalize_name,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.EntityIntroduction")
 
@@ -391,7 +392,7 @@ class DiscourseSalience:
         self._capacity = max(4, int(capacity))
         self._entities: dict[str, _SalientEntity] = {}
         self._turn = 0
-        self._lock = threading.RLock()
+        self._lock = checked_lock("entity_introduction", reentrant=True)
 
     def begin_turn(self) -> None:
         with self._lock:
@@ -470,7 +471,7 @@ class DiscourseSalience:
 
 
 _SALIENCE: DiscourseSalience | None = None
-_SALIENCE_LOCK = threading.Lock()
+_SALIENCE_LOCK = checked_lock("entity_introduction")
 
 
 def get_discourse_salience() -> DiscourseSalience:

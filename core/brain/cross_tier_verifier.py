@@ -57,6 +57,7 @@ from typing import Any, Awaitable, Callable
 
 from core.runtime.errors import record_degradation
 from core.runtime.turn_outcome import VerificationGrade
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.CrossTier")
 
@@ -373,7 +374,7 @@ class CrossTierVerifier:
 
 
 _instance: CrossTierVerifier | None = None
-_instance_lock = threading.Lock()
+_instance_lock = checked_lock("cross_tier_verifier")
 
 
 def get_cross_tier_verifier() -> CrossTierVerifier:

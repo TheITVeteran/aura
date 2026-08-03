@@ -47,7 +47,7 @@ from core.reality_reach.trust_custody import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
-from core.runtime.lockdep import checked_async_lock, checked_lock
+from core.runtime.lockdep import checked_async_lock, checked_lock, checked_semaphore
 from core.utils.task_tracker import get_task_tracker
 
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
@@ -495,7 +495,7 @@ class DeviceAttachmentBroker:
         await self._reconcile_digital_twin()
         with self._lock:
             connectors = tuple(self._connectors.values())
-        semaphore = asyncio.Semaphore(8)
+        semaphore = checked_semaphore("attachments", 8)
 
         async def _one(
             connector: DeviceConnector,

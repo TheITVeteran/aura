@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "AdmissionDecision",
@@ -213,7 +214,7 @@ class ThroughputEstimator:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock = checked_lock("measured_admission", reentrant=True)
         self._shapes: dict[str, _Samples] = {}
 
     def record(
@@ -302,7 +303,7 @@ class ThroughputEstimator:
 
 
 _ESTIMATOR: ThroughputEstimator | None = None
-_ESTIMATOR_LOCK = threading.Lock()
+_ESTIMATOR_LOCK = checked_lock("measured_admission")
 
 
 def get_throughput_estimator() -> ThroughputEstimator:

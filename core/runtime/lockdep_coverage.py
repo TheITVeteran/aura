@@ -40,7 +40,7 @@ _RAW_LOCK_MODULES = frozenset({"threading", "asyncio"})
 
 #: The wrapped lane. Constructing through these IS lockdep coverage.
 _CHECKED_CONSTRUCTORS = frozenset({
-    "checked_lock", "checked_async_lock", "instrument",
+    "checked_lock", "checked_async_lock", "checked_semaphore", "instrument",
 })
 
 _DEFAULT_ROOTS = ("core", "interface")
@@ -49,6 +49,14 @@ _SKIP_PARTS = frozenset({
     "__pycache__", ".venv", "node_modules", ".git", "build", "dist",
     ".claude", "artifacts", "tests",
 })
+
+#: lockdep's own module. The raw primitives inside CheckedLock,
+#: CheckedAsyncLock and CheckedSemaphore ARE the wrappers — reporting them as
+#: "locks lockdep cannot see" is the abstraction accusing its own
+#: implementation. They were carried as four baseline entries instead, which
+#: meant every new wrapper had to grow a baseline that is only allowed to
+#: shrink. Excluded structurally, so the baseline shrank by those four.
+_SKIP_FILES = frozenset({"core/runtime/lockdep.py"})
 
 
 @dataclass(frozen=True)
@@ -175,6 +183,8 @@ def scan_lock_coverage(
             # would be skipped, the scan would find nothing, and the ratchet
             # would read that as "the whole baseline was migrated".
             if _SKIP_PARTS.intersection(rel.parts):
+                continue
+            if rel.as_posix() in _SKIP_FILES:
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))

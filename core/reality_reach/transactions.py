@@ -36,6 +36,7 @@ from core.runtime.atomic_writer import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.skill_contract import ActionExpectation
+from core.runtime.lockdep import checked_lock
 
 TRANSACTION_SCHEMA = "aura.reality-reach-actuation-transaction.v1"
 _TERMINAL = frozenset(
@@ -860,7 +861,7 @@ class RealityActuationCoordinator:
 
 
 _COORDINATOR: RealityActuationCoordinator | None = None
-_COORDINATOR_LOCK = threading.Lock()
+_COORDINATOR_LOCK = checked_lock("transactions")
 
 
 def get_reality_actuation_coordinator(

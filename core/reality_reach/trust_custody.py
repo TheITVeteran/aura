@@ -30,6 +30,7 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.security.zenith_secrets import KeychainBackend, require_keychain_backend
+from core.runtime.lockdep import checked_lock
 
 TRUST_ENVELOPE_SCHEMA = "aura.reality-attachment-trust.envelope.v2"
 TRUST_BODY_SCHEMA = "aura.reality-attachment-trust.body.v2"
@@ -160,7 +161,7 @@ class KeychainAttachmentTrustStore:
         self._service = service
         self._keyring_account = keyring_account
         self._anchor_account = anchor_account
-        self._thread_lock = threading.RLock()
+        self._thread_lock = checked_lock("trust_custody", reentrant=True)
         self._closed = False
         self._last_error = ""
         self._recovered_commits = 0

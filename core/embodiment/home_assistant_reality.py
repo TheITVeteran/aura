@@ -39,6 +39,7 @@ from core.reality_reach.contracts import (
 from core.reality_reach.live import ChannelReading, ReadingStatus
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.lockdep import checked_async_lock
 
 _ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
@@ -1099,7 +1100,7 @@ class HomeAssistantRealityAdapter:
         self._prepared: dict[str, dict[str, Any]] = {}
         self._dispatch_times: deque[float] = deque()
         self._last_dispatch_monotonic = 0.0
-        self._lock = asyncio.Lock()
+        self._lock = checked_async_lock("home_assistant_reality")
 
     @property
     def adapter_id(self) -> str:

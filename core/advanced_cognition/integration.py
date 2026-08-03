@@ -17,6 +17,7 @@ from .social_cognition import SocialCognitionLayer
 from .tiered_action import TieredActionController
 from .world_model import MultiDomainWorldModel
 from .zero_shot_transfer import ZeroShotTransferEngine
+from core.runtime.lockdep import checked_lock
 
 
 class AdvancedCognitionRuntime:
@@ -33,7 +34,7 @@ class AdvancedCognitionRuntime:
         self.social = SocialCognitionLayer()
         self.tiers = TieredActionController()
         self._recent_predictions: dict[str, dict[str, Any]] = {}
-        self._observation_lock = threading.RLock()
+        self._observation_lock = checked_lock("integration", reentrant=True)
         self._observation_receipts: OrderedDict[
             str,
             tuple[str, dict[str, Any]],

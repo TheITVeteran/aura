@@ -55,6 +55,7 @@ from typing import Any
 
 from core.knowledge.atomspace import TruthValue
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.AssociativeEntityMemory")
 
@@ -389,7 +390,7 @@ class AssociativeEntityMemory:
         self._db_path = Path(db_path)
         self._cal = calibration or Calibration()
         self._attachment = attachment_system
-        self._lock = threading.RLock()
+        self._lock = checked_lock("associative_entity_memory", reentrant=True)
         self._conn: sqlite3.Connection | None = None
         self._degraded = False
         self._init_db()
@@ -1084,7 +1085,7 @@ class AssociativeEntityMemory:
 # ── singleton ───────────────────────────────────────────────────────────────
 
 _INSTANCE: AssociativeEntityMemory | None = None
-_INSTANCE_LOCK = threading.Lock()
+_INSTANCE_LOCK = checked_lock("associative_entity_memory")
 
 
 def get_associative_entity_memory() -> AssociativeEntityMemory:

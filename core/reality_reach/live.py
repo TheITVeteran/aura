@@ -28,6 +28,7 @@ from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.resource_observation import ObservationSource, get_resource_observer
 from core.runtime.service_registry import register_runtime_service
+from core.runtime.lockdep import checked_lock
 
 _SQLITE_INT_MAX = (1 << 63) - 1
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -374,8 +375,8 @@ class RealityReachService:
         monotonic_clock_ns: Any = time.monotonic_ns,
         session_id: str | None = None,
     ) -> None:
-        self._lock = threading.RLock()
-        self._refresh_lock = threading.Lock()
+        self._lock = checked_lock("live", reentrant=True)
+        self._refresh_lock = checked_lock("live")
         self._clock_ns = clock_ns
         self._monotonic_clock_ns = monotonic_clock_ns
         self._session_id = session_id or str(uuid.uuid4())
@@ -963,7 +964,7 @@ class RealityReachService:
 
 
 _SERVICE: RealityReachService | None = None
-_SERVICE_LOCK = threading.Lock()
+_SERVICE_LOCK = checked_lock("live")
 
 
 def get_reality_reach_service() -> RealityReachService:

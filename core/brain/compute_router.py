@@ -33,6 +33,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.ComputeRouter")
 
@@ -139,7 +140,7 @@ class ComputeRouter:
         # concurrent routes all observed the same spend below budget, all
         # issued cloud calls, and each incremented afterwards. The budget was
         # a suggestion under any concurrency at all.
-        self._spend_lock = asyncio.Lock()
+        self._spend_lock = checked_async_lock("compute_router")
         
         if self.cloud_config.enabled:
             logger.info("☁️  ComputeRouter online (cloud: %s, budget: $%.2f/mo)",

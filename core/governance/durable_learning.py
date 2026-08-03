@@ -50,6 +50,7 @@ from typing import Any, Iterable, Mapping
 
 from core.runtime.errors import record_degradation
 from core.runtime.turn_outcome import VerificationGrade
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "LearningScope",
@@ -222,7 +223,7 @@ class DurableLearningGate:
     """
 
     def __init__(self, *, ledger_path: Path | str | None = None) -> None:
-        self._lock = threading.RLock()
+        self._lock = checked_lock("durable_learning", reentrant=True)
         self._ledger: list[dict[str, Any]] = []
         self._by_evidence: dict[str, list[str]] = {}
         self._invalidated: set[str] = set()
@@ -509,7 +510,7 @@ class DurableLearningGate:
 
 
 _GATE: DurableLearningGate | None = None
-_GATE_LOCK = threading.Lock()
+_GATE_LOCK = checked_lock("durable_learning")
 
 
 def get_durable_learning_gate() -> DurableLearningGate:
