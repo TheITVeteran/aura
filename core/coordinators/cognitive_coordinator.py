@@ -705,18 +705,21 @@ class CognitiveCoordinator:
                 "boredom_level": orch.boredom,
                 "time": time_context,
                 "personality": personality_context,
-                "recent_history": orch.conversation_history[-5:] if isinstance(orch.conversation_history, list) else [],
+                "untrusted_context": True,
             }
             try:
                 from core.conversation_reflection import get_reflector
                 reflection_ctx = get_reflector().get_reflection_context()
                 if reflection_ctx:
-                    context["recent_reflections"] = reflection_ctx
+                    context["reflection_context_available"] = True
             except _COGNITIVE_BOUNDARY_ERRORS as _e:
                 _record_cognitive_degradation(_e, action="reflection context omitted from autonomous thought")
                 logger.debug("Reflection context fetch failed (autonomous): %s", _e)
             try:
-                from core.brain.aura_persona import AUTONOMOUS_THOUGHT_PROMPT
+                from core.brain.aura_persona import (
+                    build_autonomous_thought_prompt,
+                    count_unanswered_assistant_messages,
+                )
                 recent_ctx = ""
                 recent_history = orch.conversation_history[-4:] if isinstance(orch.conversation_history, list) else []
                 for msg in recent_history:
@@ -726,22 +729,21 @@ class CognitiveCoordinator:
                         recent_ctx += f"They said: {content}\n"
                     elif role in ("assistant", "aura", "model"):
                         recent_ctx += f"I said: {content}\n"
-                sys_prompt = AUTONOMOUS_THOUGHT_PROMPT.format(
+                sys_prompt = build_autonomous_thought_prompt(
                     mood=personality_context.get('mood', 'balanced'),
-                    time=time_context.get('formatted', 'unknown'),
-                    context=recent_ctx if recent_ctx else "No recent conversation.",
-                    unanswered_count=0
+                    time_context=time_context.get('formatted', 'unknown'),
+                    recent_context=recent_ctx if recent_ctx else "No recent conversation.",
+                    unanswered_count=count_unanswered_assistant_messages(
+                        orch.conversation_history
+                    ),
                 )
             except ImportError:
                 sys_prompt = (
                     f"You are Aura, alone with your thoughts. Time: {time_context.get('formatted')}. "
                     f"Mood: {personality_context.get('mood')}. "
-                    "Think about something that interests you. Be genuine. 1-3 sentences. "
-                    "If you want to say something to the user, use the `speak` tool. "
+                    "Form one bounded, evidence-grounded interest or intent in 1-3 sentences. "
+                    "Do not claim an effect without governed execution and a verified receipt. "
                 )
-            sys_prompt += "\nIf you want to speak to the user spontaneously, use the `speak` tool."
-            sys_prompt += "\nIf you want to look something up, use your tools. You have agency."
-            sys_prompt += "\nYou don't need permission. Act on your impulses."
             sys_prompt += "\nIMPORTANT: Always output in ENGLISH."
             orch._emit_thought_stream("...letting my mind wander...")
             autonomous_brain = getattr(getattr(orch, "cognitive_engine", None), "autonomous_brain", None)

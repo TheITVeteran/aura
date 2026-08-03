@@ -81,11 +81,14 @@ class AutonomyMixin:
             "boredom_level": max(int(boredom_seconds), getattr(self, "boredom", 0)),
             "time": time_context,
             "personality": personality_context,
-            "recent_history": recent_history,
+            "untrusted_context": True,
         }
 
         try:
-            from core.brain.aura_persona import AUTONOMOUS_THOUGHT_PROMPT
+            from core.brain.aura_persona import (
+                build_autonomous_thought_prompt,
+                count_unanswered_assistant_messages,
+            )
 
             recent_ctx = ""
             for msg in recent_history[-4:]:
@@ -95,19 +98,18 @@ class AutonomyMixin:
                     recent_ctx += f"They said: {content}\n"
                 elif role in ("assistant", "aura", "model"):
                     recent_ctx += f"I said: {content}\n"
-            system_prompt = AUTONOMOUS_THOUGHT_PROMPT.format(
+            system_prompt = build_autonomous_thought_prompt(
                 mood=personality_context.get("mood", "balanced"),
-                time=time_context.get("formatted", "unknown"),
-                context=recent_ctx or "No recent conversation.",
-                unanswered_count=0,
+                time_context=time_context.get("formatted", "unknown"),
+                recent_context=recent_ctx or "No recent conversation.",
+                unanswered_count=count_unanswered_assistant_messages(recent_history),
             )
         except (ImportError, AttributeError, RuntimeError):
             system_prompt = (
                 f"You are Aura, alone with your thoughts. Time: {time_context.get('formatted')}. "
                 f"Mood: {personality_context.get('mood', 'balanced')}. "
-                "Think about something that interests you. Be genuine. 1-3 sentences. "
-                "If you want to say something to the user, use the `speak` tool. "
-                "If you want to look something up, use your tools. You have agency."
+                "Form one bounded, evidence-grounded interest or intent in 1-3 sentences. "
+                "Do not claim an effect without governed execution and a verified receipt."
             )
 
         self._emit_thought_stream("...letting my mind wander...")

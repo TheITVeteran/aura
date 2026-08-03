@@ -379,8 +379,9 @@ class ConversationReflector:
                 "phrasing; the excerpt is fenced and marked untrusted."
             )
 
-        from core.brain.aura_persona import REFLECTION_PROMPT
-        prompt = REFLECTION_PROMPT.format(conversation_excerpt=fenced_excerpt)
+        from core.brain.aura_persona import build_reflection_prompt
+
+        prompt = build_reflection_prompt(fenced_excerpt)
 
         # Use brain to generate reflection
         # Try autonomous_brain first, fall back to think()

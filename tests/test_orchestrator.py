@@ -574,6 +574,7 @@ async def test_process_user_input_complex(orchestrator):
         mock_tt = _CallRecorder()
         mock_tt.track_task.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
         mock_tt.create_task.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
+        mock_tt.bounded_track.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
         mock_get_tracker.return_value = mock_tt
 
         # Ensure intent_router is truthy for the call
@@ -2326,15 +2327,19 @@ async def test_finalize_response_with_meta_learning(orchestrator):
     orchestrator._meta_learning_override = mock_ml
     orchestrator._apply_constitutional_guard = _AsyncCallRecorder(return_value="Done!")
 
-    with swap("core.utils.task_tracker.task_tracker.track_task"):
-        with swap("asyncio.create_task"):
-            result = await orchestrator._finalize_response(
-                message="Do something",
-                response="Done!",
-                origin="user",
-                trace=_CallRecorder(),
-                successful_tools=["web_search"],
-            )
+    def _close_background(awaitable, **_kwargs):
+        awaitable.close()
+        return None
+
+    orchestrator._fire_and_forget = _CallRecorder(side_effect=_close_background)
+
+    result = await orchestrator._finalize_response(
+        message="Do something",
+        response="Done!",
+        origin="user",
+        trace=_CallRecorder(),
+        successful_tools=["web_search"],
+    )
     assert result is not None
 
 
