@@ -348,6 +348,18 @@ def test_recomputed_adjoint_transition_is_exact_hash_bound() -> None:
             "ac6dbff3fa3d05b946bc94a73081f182ca6146caf88b379853fb92be6c9481a5",
             "exact_layer_rematerialized_adjoint_v3",
         ),
+        (
+            "objective",
+            "30ac036e37ad1e77b80a0d64db5ad3f0329a09c7e00e916249511a5d88a7f147",
+            "dec1d4f54761c99416e61440a08191157a5f29b3ea8f6274be0380da1e89bef4",
+            "nested_transition_layer_rematerialization_v2",
+        ),
+        (
+            "objective_policy",
+            "5ad187adb9e5c6d0e8e5cfc2abb33c7ee53f7b4ba867a752a188661459f1d321",
+            "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",
+            "cached_generated_rollin_rematerialization_v1",
+        ),
     ),
 )
 def test_layer_rematerialization_transitions_are_exact_hash_bound(

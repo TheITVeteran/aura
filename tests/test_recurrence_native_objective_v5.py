@@ -205,6 +205,27 @@ def test_single_branch_zero_student_forcing_is_exact_v2_gradient():
     assert _tree_max_difference(current.gradients, legacy.gradients) < 1e-6
 
 
+def test_generated_rollin_gradient_uses_nested_rematerialization(monkeypatch):
+    original = mx.checkpoint
+    checkpointed: list[object] = []
+
+    def observed_checkpoint(function):
+        checkpointed.append(function)
+        return original(function)
+
+    monkeypatch.setattr(mx, "checkpoint", observed_checkpoint)
+    generated_rollin_live_path_value_and_grad(
+        _model(),
+        PROMPT,
+        ANSWER,
+        spec=_spec(),
+        base_seed=23,
+        config=GeneratedRollinSelectionConfig(student_forcing_probability=1.0),
+    )
+
+    assert checkpointed
+
+
 def test_multi_branch_gradient_is_detached_softmin_combination():
     model = _model()
     spec = _spec(branches=("constructive_solution", "critical_audit"))
@@ -240,10 +261,7 @@ def test_multi_branch_gradient_is_detached_softmin_combination():
         branch_indices=(1,),
     )
     expected = tree_map(
-        lambda left, right: (
-            combined.branch_weights[0] * left
-            + combined.branch_weights[1] * right
-        ),
+        lambda left, right: combined.branch_weights[0] * left + combined.branch_weights[1] * right,
         branch_zero.gradients,
         branch_one.gradients,
     )
@@ -301,8 +319,7 @@ def test_evaluation_matches_gradient_receipt_and_rejects_resealed_arithmetic():
         branch_softmin_temperature=0.8,
     )
     before = tuple(
-        (path, mx.array(value))
-        for path, value in tree_flatten(model.trainable_parameters())
+        (path, mx.array(value)) for path, value in tree_flatten(model.trainable_parameters())
     )
     mx.eval([value for _path, value in before])
 

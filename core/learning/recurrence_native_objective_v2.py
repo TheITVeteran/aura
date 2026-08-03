@@ -1369,22 +1369,22 @@ def _checkpointed_recurrent_transition(
             prompts = values[:branch_count]
             current_states = values[branch_count : 2 * branch_count]
             current_anchors = values[2 * branch_count :]
-            token = _LAYER_CHECKPOINTS.set(None)
-            try:
-                return tuple(
-                    _advance_recurrent_states(
-                        checkpointed.model,
-                        prompts,
-                        current_states,
-                        current_anchors,
-                        spec,
-                        step,
-                        prelude_end,
-                        coda_start,
-                    )
+            # Keep layer checkpointing active inside the transition
+            # checkpoint. The outer boundary bounds recurrence-depth
+            # residency; the nested layer boundaries bound each transformer's
+            # activation residency during backward replay.
+            return tuple(
+                _advance_recurrent_states(
+                    checkpointed.model,
+                    prompts,
+                    current_states,
+                    current_anchors,
+                    spec,
+                    step,
+                    prelude_end,
+                    coda_start,
                 )
-            finally:
-                _LAYER_CHECKPOINTS.reset(token)
+            )
 
         call = mx.checkpoint(transition)
         checkpointed.transition_wrappers[step] = call

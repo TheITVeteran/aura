@@ -25,14 +25,13 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_native_objective_v2 import (
     cached_live_path_token_logprobs,
     generate_cached_live_path_rollin,
+    transformer_layer_group_checkpointing,
 )
 
 RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA = "aura.recurrence_native_objective.v5"
 GENERATED_ROLLIN_CONFIG_SCHEMA = "aura.generated_rollin_selection_config.v1"
 GENERATED_ROLLIN_RECEIPT_SCHEMA = "aura.generated_rollin_selection_receipt.v1"
-GENERATED_ROLLIN_TRUST_BOUNDARY = (
-    "producer_sealed_tokens_external_policy_replay_required"
-)
+GENERATED_ROLLIN_TRUST_BOUNDARY = "producer_sealed_tokens_external_policy_replay_required"
 _ROLLIN_SEED_DOMAIN = b"aura.generated_rollin.branch_seed.v1\0"
 _MIX_MASK_DOMAIN = b"aura.generated_rollin.mix_mask.v1\0"
 _EXAMPLE_SEED_DOMAIN = b"aura.generated_rollin.example_seed.v1\0"
@@ -40,9 +39,8 @@ _EXAMPLE_SEED_DOMAIN = b"aura.generated_rollin.example_seed.v1\0"
 
 def _sha256_tokens(tokens: Sequence[int], *, allow_empty: bool = False) -> str:
     normalized = list(tokens)
-    if (
-        (not allow_empty and not normalized)
-        or any(type(token) is not int or token < 0 for token in normalized)
+    if (not allow_empty and not normalized) or any(
+        type(token) is not int or token < 0 for token in normalized
     ):
         raise ValueError("tokens must contain non-negative integers")
     return hashlib.sha256(
@@ -105,13 +103,9 @@ class GeneratedRollinSelectionConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema,
-            "student_forcing_probability": float(
-                self.student_forcing_probability
-            ),
+            "student_forcing_probability": float(self.student_forcing_probability),
             "sampling_temperature": float(self.sampling_temperature),
-            "branch_softmin_temperature": float(
-                self.branch_softmin_temperature
-            ),
+            "branch_softmin_temperature": float(self.branch_softmin_temperature),
         }
 
     @property
@@ -304,10 +298,7 @@ def derive_rollin_seed(
     if (
         not isinstance(execution_spec_sha256, str)
         or len(execution_spec_sha256) != 64
-        or any(
-            character not in "0123456789abcdef"
-            for character in execution_spec_sha256
-        )
+        or any(character not in "0123456789abcdef" for character in execution_spec_sha256)
     ):
         raise ValueError("execution_spec_sha256 is invalid")
     payload = {
@@ -434,16 +425,13 @@ def _inputs(
     if type(base_seed) is not int or not 0 <= base_seed <= 0xFFFFFFFF:
         raise ValueError("base_seed must be inside [0, 2^32-1]")
     indices = (
-        tuple(range(len(spec.branch_roles)))
-        if branch_indices is None
-        else tuple(branch_indices)
+        tuple(range(len(spec.branch_roles))) if branch_indices is None else tuple(branch_indices)
     )
     if (
         not indices
         or len(indices) != len(set(indices))
         or any(
-            type(index) is not int or not 0 <= index < len(spec.branch_roles)
-            for index in indices
+            type(index) is not int or not 0 <= index < len(spec.branch_roles) for index in indices
         )
     ):
         raise ValueError("branch indices must be unique members of the live branch set")
@@ -486,6 +474,40 @@ def _branch_rollin(
         branch_index=branch_index,
     )
     return mixed, positions, seed, generated.tokens_sha256
+
+
+def _rematerialized_branch_loss(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    bridge_tokens: Sequence[int],
+    rollin_tokens: Sequence[int],
+    weight_tensor: Any,
+    weight_total: float,
+) -> Any:
+    """Return the canonical branch loss with nested activation rematerialization."""
+
+    import mlx.core as mx
+
+    with transformer_layer_group_checkpointing(
+        model,
+        model.trainable_parameters(),
+        group_size=1,
+    ):
+        logprobs = cached_live_path_token_logprobs(
+            model,
+            prompt_tokens,
+            answer_tokens,
+            spec=spec,
+            branch_index=branch_index,
+            bridge_tokens=bridge_tokens,
+            adapters_on=True,
+            rollin_tokens=rollin_tokens,
+        )
+    return -mx.sum(logprobs * weight_tensor) / weight_total
 
 
 def generated_rollin_live_path_value_and_grad(
@@ -549,32 +571,46 @@ def generated_rollin_live_path_value_and_grad(
             _branch_index: int = branch_index,
             _rollin: tuple[int, ...] = rollin,
         ) -> Any:
-            logprobs = cached_live_path_token_logprobs(
+            return _rematerialized_branch_loss(
                 current_model,
                 prompt_tokens,
                 answer,
                 spec=spec,
                 branch_index=_branch_index,
                 bridge_tokens=bridge,
-                adapters_on=True,
                 rollin_tokens=_rollin,
+                weight_tensor=weight_tensor,
+                weight_total=weight_total,
             )
-            return -mx.sum(logprobs * weight_tensor) / weight_total
 
         value, gradients = nn.value_and_grad(model, objective)(model)
         finite_flags = [
-            mx.all(mx.isfinite(gradient))
-            for _path, gradient in tree_flatten(gradients)
+            mx.all(mx.isfinite(gradient)) for _path, gradient in tree_flatten(gradients)
         ]
         mx.eval(value, gradients, finite_flags)
-        branch_value = float(value)
+        gradient_value = float(value)
         if (
-            not math.isfinite(branch_value)
-            or branch_value < 0.0
+            not math.isfinite(gradient_value)
+            or gradient_value < 0.0
             or not finite_flags
             or not all(bool(flag) for flag in finite_flags)
         ):
             raise FloatingPointError("generated roll-in branch gradient is non-finite")
+
+        canonical_value = _rematerialized_branch_loss(
+            model,
+            prompt_tokens,
+            answer,
+            spec=spec,
+            branch_index=branch_index,
+            bridge_tokens=bridge,
+            rollin_tokens=rollin,
+            weight_tensor=weight_tensor,
+            weight_total=weight_total,
+        )
+        mx.eval(canonical_value)
+        branch_value = float(canonical_value)
+        del canonical_value
 
         if reference is None:
             reference = branch_value
@@ -721,20 +757,20 @@ def generated_rollin_live_path_loss(
             base_seed=base_seed,
             config=resolved,
         )
-        logprobs = cached_live_path_token_logprobs(
+        value = _rematerialized_branch_loss(
             model,
             prompt_tokens,
             answer,
             spec=spec,
             branch_index=branch_index,
             bridge_tokens=bridge,
-            adapters_on=True,
             rollin_tokens=rollin,
+            weight_tensor=weight_tensor,
+            weight_total=weight_total,
         )
-        value = -mx.sum(logprobs * weight_tensor) / weight_total
         mx.eval(value)
         branch_value = float(value)
-        del value, logprobs
+        del value
         mx.clear_cache()
         if not math.isfinite(branch_value) or branch_value < 0.0:
             raise FloatingPointError("generated roll-in branch loss is non-finite")

@@ -33,7 +33,13 @@ MIGRATION_SCHEMA: Final = "aura.resident_recurrent_sft_checkpoint_migration.v1"
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 COPY_CHUNK_BYTES: Final = 4 * 1024 * 1024
 ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset(
-    {"trainer", "controller", "objective", "specialization_objective"}
+    {
+        "trainer",
+        "controller",
+        "objective",
+        "objective_policy",
+        "specialization_objective",
+    }
 )
 APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
     (
@@ -56,6 +62,16 @@ APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
         "8299def67d36726a4c82601210ef20ca530aef0ab7f5cb0691d5fbcacdd8b165",
         "ac6dbff3fa3d05b946bc94a73081f182ca6146caf88b379853fb92be6c9481a5",
     ): "exact_layer_rematerialized_adjoint_v3",
+    (
+        "objective",
+        "30ac036e37ad1e77b80a0d64db5ad3f0329a09c7e00e916249511a5d88a7f147",
+        "dec1d4f54761c99416e61440a08191157a5f29b3ea8f6274be0380da1e89bef4",
+    ): "nested_transition_layer_rematerialization_v2",
+    (
+        "objective_policy",
+        "5ad187adb9e5c6d0e8e5cfc2abb33c7ee53f7b4ba867a752a188661459f1d321",
+        "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",
+    ): "cached_generated_rollin_rematerialization_v1",
 }
 
 
