@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -203,6 +204,33 @@ def test_single_branch_zero_student_forcing_is_exact_v2_gradient():
     assert current.branch_values == pytest.approx(legacy.branch_values, abs=1e-6)
     assert current.branch_weights == (1.0,)
     assert _tree_max_difference(current.gradients, legacy.gradients) < 1e-6
+
+
+def test_decoder_adjoint_matches_full_tail_with_bridge_and_long_answer():
+    model = _model()
+    spec = replace(_spec(), decode_bridge_policy="assistant_answer")
+    bridge = [13, 29]
+    answer = [7, 11, 23, 31, 5, 17, 41, 3, 19, 37, 43, 2]
+    legacy = cached_supervised_live_path_value_and_grad(
+        model,
+        PROMPT,
+        answer,
+        spec=spec,
+        bridge_tokens=bridge,
+    )
+    streamed = generated_rollin_live_path_value_and_grad(
+        model,
+        PROMPT,
+        answer,
+        spec=spec,
+        base_seed=91,
+        config=GeneratedRollinSelectionConfig(student_forcing_probability=0.0),
+        bridge_tokens=bridge,
+    )
+
+    assert streamed.value == pytest.approx(legacy.value, abs=1e-6)
+    assert streamed.branch_values == pytest.approx(legacy.branch_values, abs=1e-6)
+    assert _tree_max_difference(streamed.gradients, legacy.gradients) < 5e-6
 
 
 def test_generated_rollin_gradient_uses_nested_rematerialization(monkeypatch):

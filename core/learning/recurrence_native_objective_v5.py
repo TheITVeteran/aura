@@ -640,6 +640,158 @@ def _cached_branch_loss_from_final_states(
     return -mx.sum(logprobs * weight_tensor) / weight_total
 
 
+def _cache_from_state(state: tuple[tuple[Any, Any], ...]) -> list[Any]:
+    from mlx_lm.models.cache import KVCache
+
+    cache = [KVCache() for _entry in state]
+    for entry, (keys, values) in zip(cache, state, strict=True):
+        entry.state = (keys, values)
+    return cache
+
+
+def _initial_decoder_state(
+    model: Any,
+    parameter_tree: Any,
+    prompt_embeddings: Any,
+    seeds: tuple[Any, ...],
+    final_states: tuple[Any, ...],
+    *,
+    branch_index: int,
+    prelude_end: int,
+    coda_start: int,
+) -> tuple[tuple[tuple[Any, Any], ...], Any]:
+    """Build the cache and logits that predict the first tail token."""
+
+    from mlx_lm.models.cache import KVCache
+
+    model.update(parameter_tree)
+    layers = tuple(model.model.layers)
+    cache = [KVCache() for _layer in layers]
+    _cached_causal_layers(model, prompt_embeddings, cache)
+    with recurrent_branch_index(branch_index), recurrence_adapter_scope():
+        _cached_causal_layers(
+            model,
+            seeds[branch_index],
+            cache,
+            start=0,
+            end=prelude_end,
+        )
+        persisted = _cached_causal_layers(
+            model,
+            final_states[branch_index],
+            cache,
+            start=prelude_end,
+            end=coda_start,
+        )
+        output = _cached_causal_layers(
+            model,
+            persisted,
+            cache,
+            start=coda_start,
+            end=len(layers),
+        )
+    return tuple(entry.state for entry in cache), _logits(model, output)[0, -1]
+
+
+def _decoder_transition(
+    model: Any,
+    parameter_tree: Any,
+    cache_state: tuple[tuple[Any, Any], ...],
+    token: int,
+) -> tuple[tuple[tuple[Any, Any], ...], Any]:
+    """Advance one ordinary decode token from an explicit KV boundary."""
+
+    import mlx.core as mx
+
+    model.update(parameter_tree)
+    cache = _cache_from_state(cache_state)
+    hidden = model.model.embed_tokens(mx.array([[token]]))
+    hidden = _cached_causal_layers(model, hidden, cache)
+    return tuple(entry.state for entry in cache), _logits(model, hidden)[0, -1]
+
+
+def _detached_decoder_trajectory(
+    model: Any,
+    parameters: Any,
+    prompt_embeddings: Any,
+    seeds: tuple[Any, ...],
+    final_states: tuple[Any, ...],
+    decoder_inputs: tuple[int, ...],
+    *,
+    branch_index: int,
+    prelude_end: int,
+    coda_start: int,
+) -> tuple[tuple[tuple[tuple[Any, Any], ...], Any], ...]:
+    """Materialize every decoder boundary without retaining producer graphs."""
+
+    import mlx.core as mx
+
+    cache_state, logits = _initial_decoder_state(
+        model,
+        parameters,
+        prompt_embeddings,
+        seeds,
+        final_states,
+        branch_index=branch_index,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+    )
+    cache_state = tuple(
+        (mx.stop_gradient(keys), mx.stop_gradient(values))
+        for keys, values in cache_state
+    )
+    logits = mx.stop_gradient(logits)
+    mx.eval(cache_state, logits)
+    mx.synchronize()
+    mx.clear_cache()
+    trajectory = [(cache_state, logits)]
+    for token in decoder_inputs[:-1]:
+        cache_state, logits = _decoder_transition(
+            model,
+            parameters,
+            cache_state,
+            token,
+        )
+        cache_state = tuple(
+            (mx.stop_gradient(keys), mx.stop_gradient(values))
+            for keys, values in cache_state
+        )
+        logits = mx.stop_gradient(logits)
+        mx.eval(cache_state, logits)
+        mx.synchronize()
+        mx.clear_cache()
+        trajectory.append((cache_state, logits))
+    return tuple(trajectory)
+
+
+def _tree_inner_product(left: Any, right: Any) -> Any:
+    import mlx.core as mx
+    from mlx.utils import tree_flatten
+
+    left_items = tree_flatten(left)
+    right_items = tree_flatten(right)
+    if [path for path, _value in left_items] != [path for path, _value in right_items]:
+        raise RuntimeError("decoder adjoint cache topology drift")
+    return sum(
+        mx.sum(left_value * right_value)
+        for (_path, left_value), (_other, right_value) in zip(
+            left_items,
+            right_items,
+            strict=True,
+        )
+    )
+
+
+def _weighted_token_loss(logits: Any, target: int, weight: float) -> Any:
+    import mlx.core as mx
+
+    if weight == 0.0:
+        return mx.array(0.0, dtype=mx.float32)
+    return -float(weight) * (
+        logits[target].astype(mx.float32) - mx.logsumexp(logits.astype(mx.float32))
+    )
+
+
 def _exact_adjoint_branch_value_and_grad(
     model: Any,
     prompt_tokens: Sequence[int],
@@ -655,7 +807,7 @@ def _exact_adjoint_branch_value_and_grad(
     """Differentiate one cached branch with O(1) recurrent-depth residency."""
 
     import mlx.core as mx
-    from mlx.utils import tree_map
+    from mlx.utils import tree_flatten, tree_map
 
     parameters = model.trainable_parameters()
     (
@@ -678,32 +830,107 @@ def _exact_adjoint_branch_value_and_grad(
         coda_start=coda_start,
     )
 
-    def tail_objective(parameter_tree: Any, states: tuple[Any, ...]) -> Any:
-        model.update(parameter_tree)
+    targets = (*bridge_tokens, *answer_tokens)
+    decoder_inputs = (*bridge_tokens, *rollin_tokens)
+    position_weights = (
+        *(0.0 for _token in bridge_tokens),
+        *(float(weight) / weight_total for weight in weight_tensor.tolist()),
+    )
+    if len(targets) != len(decoder_inputs) or len(targets) != len(position_weights):
+        raise RuntimeError("decoder adjoint token alignment drift")
+
+    trajectory = _detached_decoder_trajectory(
+        model,
+        parameters,
+        prompt_embeddings,
+        seeds,
+        final_states,
+        decoder_inputs,
+        branch_index=branch_index,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+    )
+    if len(trajectory) != len(targets):
+        raise RuntimeError("decoder adjoint trajectory length drift")
+    token_losses = tuple(
+        _weighted_token_loss(logits, target, weight)
+        for (_cache, logits), target, weight in zip(
+            trajectory,
+            targets,
+            position_weights,
+            strict=True,
+        )
+    )
+    mx.eval(token_losses)
+    value_total = sum(float(loss) for loss in token_losses)
+    final_cache = trajectory[-1][0]
+    cache_cotangents = tuple(
+        (mx.zeros_like(keys), mx.zeros_like(values)) for keys, values in final_cache
+    )
+    mx.eval(cache_cotangents)
+    for position in range(len(targets) - 1, 0, -1):
+        prior_cache = trajectory[position - 1][0]
+
+        def decoder_pullback(
+            cache_state: tuple[tuple[Any, Any], ...],
+            _token: int = decoder_inputs[position - 1],
+            _target: int = targets[position],
+            _weight: float = position_weights[position],
+            _cotangents: tuple[tuple[Any, Any], ...] = cache_cotangents,
+        ) -> Any:
+            with transformer_layer_group_checkpointing(model, parameters, group_size=1):
+                next_cache, logits = _decoder_transition(
+                    model,
+                    parameters,
+                    cache_state,
+                    _token,
+                )
+            return _weighted_token_loss(logits, _target, _weight) + _tree_inner_product(
+                next_cache,
+                _cotangents,
+            )
+
+        decoder_value, incoming_cache = mx.value_and_grad(decoder_pullback)(prior_cache)
+        mx.eval(decoder_value, incoming_cache)
+        cache_cotangents = tree_map(mx.stop_gradient, incoming_cache)
+        mx.eval(cache_cotangents)
+        mx.synchronize()
+        del prior_cache, incoming_cache, decoder_value
+        mx.clear_cache()
+
+    def initial_tail_pullback(parameter_tree: Any, states: tuple[Any, ...]) -> Any:
         with transformer_layer_group_checkpointing(model, parameter_tree, group_size=1):
-            return _cached_branch_loss_from_final_states(
+            cache_state, logits = _initial_decoder_state(
                 model,
+                parameter_tree,
                 prompt_embeddings,
                 seeds,
                 states,
-                answer_tokens,
                 branch_index=branch_index,
-                bridge_tokens=bridge_tokens,
-                rollin_tokens=rollin_tokens,
                 prelude_end=prelude_end,
                 coda_start=coda_start,
-                weight_tensor=weight_tensor,
-                weight_total=weight_total,
             )
+        return _weighted_token_loss(
+            logits,
+            targets[0],
+            position_weights[0],
+        ) + _tree_inner_product(cache_state, cache_cotangents)
 
-    value, (accumulated, cotangents) = mx.value_and_grad(
-        tail_objective,
+    initial_value, (accumulated, cotangents) = mx.value_and_grad(
+        initial_tail_pullback,
         argnums=(0, 1),
     )(parameters, final_states)
-    mx.eval(value, accumulated, cotangents)
+    mx.eval(initial_value, accumulated, cotangents)
+    value = mx.array(value_total, dtype=mx.float32)
+    mx.eval(value)
     cotangents = tuple(mx.stop_gradient(item) for item in cotangents)
     mx.eval(cotangents)
-    del final_states
+    finite = [mx.all(mx.isfinite(item)) for _path, item in tree_flatten(accumulated)]
+    mx.eval(finite)
+    if not finite or not all(bool(flag) for flag in finite):
+        raise FloatingPointError("decoder adjoint parameter gradient is non-finite")
+    del final_states, trajectory, token_losses
+    mx.synchronize()
     mx.clear_cache()
 
     for step in range(spec.recurrent_steps - 1, -1, -1):
