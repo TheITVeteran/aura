@@ -203,7 +203,15 @@ def test_hebbian_projection_updates(base_modulation, monkeypatch):
 
     projection = ProjectionFixture()
 
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda name, default=None: substrate))
+    # The loop resolves through get_runtime_service, not ServiceContainer.get.
+    # Patching the latter meant NO substrate was found, and this test was
+    # passing on the synthetic zero-vector/arousal-0.5 default that CP126
+    # 3c46ea8c identified — it was asserting the defect. It now supplies a
+    # real substrate, so lr == 0.003 comes from an observed arousal of 0.5.
+    monkeypatch.setattr(
+        "core.brain.inference_feedback.get_runtime_service",
+        lambda name, default=None: substrate if name == "liquid_substrate" else default,
+    )
     loop.process_output(
         output_text="test resolved",
         token_ids=[42, 43],
