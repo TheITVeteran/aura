@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import threading
+import re
 import time
 from collections.abc import Mapping
 from contextvars import ContextVar
@@ -1121,6 +1122,19 @@ class HealthMonitorShim:
         if not ep:
             return False
         return ep.peek_available()
+
+
+
+#: Strips live measurements out of a deferral reason so repeats can be
+#: recognised as repeats. "headroom:Reflex:66.6%/21.3GB(need <66.0% ...)" and
+#: the same line at 66.5% are ONE ongoing condition, not two events.
+_DEFERRAL_MEASUREMENT_RE = re.compile(r"[-+]?\d+(?:\.\d+)?\s*(?:%|GB|MB|gb|mb|s\b)?")
+
+
+def _deferral_reason_kind(reason: str) -> str:
+    """The stable identity of a deferral reason, with the numbers removed."""
+    return _DEFERRAL_MEASUREMENT_RE.sub("#", str(reason or "")).strip()
+
 
 class HealthAwareLLMRouter:
     """
@@ -2599,7 +2613,20 @@ class HealthAwareLLMRouter:
             key,
             ("", 0.0, 0),
         )
-        if reason == previous_reason and (now - previous_at) < 30.0:
+        # Compare the CAUSE, not the instantaneous measurement. The reason
+        # carries live numbers —
+        # "desktop_background_headroom:Reflex:66.6%/21.3GB(need <66.0% ...)" —
+        # so 66.6 vs 66.5 vs 66.4 made every sample a "new" reason and the
+        # suppression below essentially never fired. Measured live in the
+        # neural feed: roughly forty lines a minute of one deferral, drowning
+        # out every actual thought, with an occasional "after suppressing 1"
+        # on the rare tick where two samples rounded identically.
+        #
+        # The numbers still appear in the message; they just no longer decide
+        # whether it is the same event.
+        reason_kind = _deferral_reason_kind(reason)
+        previous_kind = _deferral_reason_kind(previous_reason)
+        if reason_kind == previous_kind and (now - previous_at) < 30.0:
             self._background_deferral_log_state[key] = (previous_reason, previous_at, suppressed + 1)
             logger.debug(
                 "Router: repeated background deferral suppressed scope=%s endpoint=%s origin=%s reason=%s.",

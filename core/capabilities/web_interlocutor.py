@@ -1862,6 +1862,60 @@ class WebInterlocutorSession:
         context: dict[str, Any] | None = None,
         progress_callback: Any | None = None,
     ) -> WebInterlocutorResult:
+        """Hold the exchange, and keep what was observed however it ends.
+
+        The persist-on-failure decision was made on 2026-07-27 and applied at
+        ONE early return. There are six. Live on 2026-08-03 Bryan watched Aura
+        hold a ChatGPT conversation, hit
+        "sent_message_not_visible_after_dom_submit ... Observed 7/8 turns;
+        memory=none", and then had nothing to tell him about it — that exit
+        was one of the five still dropping everything it had read.
+
+        So the persist happens HERE, in a finally, rather than before each
+        return. A rule applied per-exit is a rule the next exit will not have,
+        and this file has now proved that twice.
+
+        Refusing to CLAIM a completed proof stays exactly as it was. What is
+        kept is marked unproven; observation and proof are different things.
+        """
+        result = await self._run_exchange(
+            objective=objective,
+            url=url,
+            opening_message=opening_message,
+            max_turns=max_turns,
+            wait_timeout_s=wait_timeout_s,
+            persist_memory=persist_memory,
+            context=context,
+            progress_callback=progress_callback,
+        )
+        try:
+            if persist_memory and not getattr(result, "memory_record_id", ""):
+                await self._persist_observed_transcript(
+                    result,
+                    dict(context or {}),
+                    persist_memory,
+                    proven=bool(getattr(result, "ok", False)),
+                )
+        except Exception as exc:  # noqa: BLE001 — salvage must not break the turn
+            record_degradation(
+                "web_interlocutor.run.persist_on_exit",
+                exc,
+                action="kept the exchange result after the retention pass failed",
+            )
+        return result
+
+    async def _run_exchange(
+        self,
+        *,
+        objective: str,
+        url: str = "",
+        opening_message: str = "",
+        max_turns: int = 3,
+        wait_timeout_s: float = _DEFAULT_WAIT_S,
+        persist_memory: bool = True,
+        context: dict[str, Any] | None = None,
+        progress_callback: Any | None = None,
+    ) -> WebInterlocutorResult:
         objective = str(objective or "").strip()
         # The governed skill gateway may coerce blank optional fields through
         # bool-ish sentinels such as "False". Treat those as absent; otherwise
