@@ -1,102 +1,88 @@
+"""The deprecated self-modification engine is gone, and must stay gone.
+
+``core/self_modification_engine.py`` was a duplicate of
+``core/self_modification/self_modification_engine.py`` — one character
+apart in import path, 1493 lines and a 37-module package apart in
+substance. It had:
+
+* zero importers anywhere in the repo;
+* its own docstring declaring it superseded;
+* direct application already disabled behind
+  ``_LEGACY_DIRECT_APPLICATION_ERROR``;
+* a ``verify_changes`` whose sandbox import (``..security.code_sandbox``,
+  which resolves ABOVE the ``core`` package) could never succeed, so
+  verification always failed closed and nothing it certified was real;
+* a ``_rollback`` that copied every file under any supplied directory into
+  the code base, with no manifest, no expected hashes, no binding to a
+  proposal and no symlink rejection.
+
+This file used to hold four tests proving that engine could not mutate
+source. Deleting the module makes that guarantee absolute rather than
+maintained: there is no engine left to keep disabled.
+
+What remains is the guarantee itself, in its strongest form — a
+plausible-looking self-modification API must not reappear at the old
+import path, where a future wiring could reach it by typo.
+"""
+from __future__ import annotations
+
 import importlib
-import time
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+LEGACY_MODULE = "core.self_modification_engine"
+LEGACY_PATH = ROOT / "core" / "self_modification_engine.py"
+LIVE_MODULE = "core.self_modification.self_modification_engine"
 
 
-def _legacy_proposal(module, target):
-    change = module.CodeChange(
-        target_file=target,
-        target_line=1,
-        original_code="value = 1\n",
-        modified_code="value = 2",
-        change_type="modify",
-        description="legacy write attempt",
-        security_level=module.SecurityLevel.LOW,
-        checksum="",
-    )
-    return module.ModificationProposal(
-        id="legacy-direct-write",
-        changes=[change],
-        justification="prove deprecated path cannot mutate source",
-        confidence=1.0,
-        expected_impact="none",
-        rollback_plan={},
-        created_at=time.time(),
+def test_the_legacy_module_file_is_gone():
+    assert not LEGACY_PATH.exists(), (
+        "core/self_modification_engine.py is back. It is a near-namesake of the "
+        "live engine with a rollback that wrote anything handed to it; if this "
+        "is intentional, it needs the review the original never had."
     )
 
 
-def test_deprecated_self_modification_engine_blocks_public_source_mutation(tmp_path):
-    legacy = importlib.import_module("core.self_modification_engine")
-    target = tmp_path / "module.py"
-    target.write_text("value = 1\n", encoding="utf-8")
-    proposal = _legacy_proposal(legacy, target)
-    engine = legacy.SelfModificationEngine(
-        str(tmp_path),
-        backup_dir=str(tmp_path / "backups"),
-        require_human_approval=False,
-    )
-
-    result = engine.apply_proposal(proposal, force=True)
-
-    assert result["success"] is False
-    assert result["error"] == "legacy_self_modification_engine_direct_application_disabled"
-    assert result["requires"] == "core.self_modification.safe_modification.SafeSelfModification"
-    assert target.read_text(encoding="utf-8") == "value = 1\n"
-    assert engine.change_history == []
-    assert engine.state is legacy.ModificationState.BLOCKED
-    assert engine.audit_log[-1]["error"] == result["error"]
+def test_the_legacy_import_path_does_not_resolve():
+    """Import path, not just the file: a package or shim would also resolve."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(LEGACY_MODULE)
 
 
-def test_deprecated_self_modification_engine_never_leaves_default_approval_path_applying(tmp_path):
-    legacy = importlib.import_module("core.self_modification_engine")
-    target = tmp_path / "module.py"
-    target.write_text("value = 1\n", encoding="utf-8")
-    proposal = _legacy_proposal(legacy, target)
-    engine = legacy.SelfModificationEngine(str(tmp_path), backup_dir=str(tmp_path / "backups"))
-
-    result = engine.apply_proposal(proposal)
-
-    assert result["success"] is False
-    assert result["error"] == "human_approval_required"
-    assert result["requires"] == "core.self_modification.safe_modification.SafeSelfModification"
-    assert target.read_text(encoding="utf-8") == "value = 1\n"
-    assert engine.active_proposal is None
-    assert engine.state is legacy.ModificationState.IDLE
-
-
-def test_deprecated_self_modification_engine_dry_run_is_analysis_only(tmp_path):
-    legacy = importlib.import_module("core.self_modification_engine")
-    target = tmp_path / "module.py"
-    target.write_text("value = 1\n", encoding="utf-8")
-    proposal = _legacy_proposal(legacy, target)
-    engine = legacy.SelfModificationEngine(str(tmp_path), backup_dir=str(tmp_path / "backups"))
-
-    result = engine.apply_proposal(proposal, dry_run=True)
-
-    assert result == {"success": True, "dry_run": True}
-    assert target.read_text(encoding="utf-8") == "value = 1\n"
-    assert engine.change_history == []
-    assert engine.active_proposal is None
-    assert engine.state is legacy.ModificationState.IDLE
-    assert engine.audit_log[-1]["dry_run"] is True
+def test_nothing_in_the_tree_imports_the_legacy_path():
+    offenders: list[str] = []
+    for directory in ("core", "interface", "tools", "tests"):
+        base = ROOT / directory
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.py"):
+            if "__pycache__" in path.parts or path == Path(__file__):
+                continue
+            text = path.read_text("utf-8", errors="ignore")
+            for needle in (
+                "from core.self_modification_engine import",
+                "import core.self_modification_engine",
+            ):
+                if needle in text:
+                    offenders.append(str(path.relative_to(ROOT)))
+    assert not offenders, f"legacy self-modification engine imported by: {offenders}"
 
 
-def test_deprecated_self_modification_engine_private_apply_is_dry_run_only(tmp_path):
-    legacy = importlib.import_module("core.self_modification_engine")
-    target = tmp_path / "module.py"
-    target.write_text("value = 1\n", encoding="utf-8")
-    proposal = _legacy_proposal(legacy, target)
-    engine = legacy.SelfModificationEngine(
-        str(tmp_path),
-        backup_dir=str(tmp_path / "backups"),
-        require_human_approval=False,
-    )
-    change = proposal.changes[0]
+def test_the_live_engine_is_still_there():
+    """The control: deleting the duplicate must not have taken the real one."""
+    module = importlib.import_module(LIVE_MODULE)
+    assert hasattr(module, "AutonomousSelfModificationEngine")
 
-    dry_run = engine._apply_change(change, dry_run=True)
-    blocked = engine._apply_change(change, dry_run=False)
 
-    assert dry_run["success"] is True
-    assert dry_run["dry_run"] is True
-    assert blocked["success"] is False
-    assert blocked["error"] == "legacy_self_modification_engine_direct_application_disabled"
-    assert target.read_text(encoding="utf-8") == "value = 1\n"
+def test_the_service_name_resolves_to_the_live_engine():
+    """`self_modification_engine` is a SERVICE name; it must point at the package.
+
+    The two shared this name, which is how a typo could have become a
+    wiring. Pinned so the registration cannot drift back.
+    """
+    provider = (ROOT / "core" / "providers" / "ops_provider.py").read_text("utf-8")
+    assert "from core.self_modification.self_modification_engine import" in provider
+    assert "from core.self_modification_engine import" not in provider
