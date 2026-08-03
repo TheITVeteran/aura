@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .scorer import ArchitectureQualityReport, score_codebase
+from .models import SCHEMA_VERSION, ArchitectureQualityReport, normalize_repository_path
+from .scorer import score_codebase
 
 
 @dataclass(frozen=True)
@@ -16,10 +17,15 @@ class ArchitectureQualityPolicy:
 
     allowed_score_drop: float = 1.0
     max_new_dependency_edges: int = 20
+    max_new_executable_dependency_edges: int = 20
     max_line_growth_for_large_file: int = 120
+    max_architecture_debt_growth: float = 1.0
     block_new_cycles: bool = True
+    block_new_executable_cycles: bool = True
     block_new_god_files: bool = True
     block_growth_of_existing_large_files: bool = True
+    require_complete_evidence: bool = True
+    block_new_unresolved_local_imports: bool = True
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,15 @@ class ArchitectureQualityGate:
         *,
         changed_paths: Iterable[str],
     ) -> ArchitectureQualityResult:
+        overlay_paths = tuple(
+            sorted(normalize_repository_path(path, label="overlay path") for path in overlay_content)
+        )
+        changed_tuple = tuple(sorted(_normalize_path(path) for path in changed_paths))
+        if set(overlay_paths) != set(changed_tuple):
+            raise ValueError(
+                "changed_paths must exactly match overlay paths "
+                f"(overlay={overlay_paths}, changed={changed_tuple})"
+            )
         before = self.score_current()
         after = score_codebase(
             self.root,
@@ -83,7 +98,7 @@ class ArchitectureQualityGate:
             overlay_content=overlay_content,
             god_file_threshold=self.god_file_threshold,
         )
-        return self.evaluate_reports(before, after, changed_paths=changed_paths)
+        return self.evaluate_reports(before, after, changed_paths=overlay_paths)
 
     def evaluate_reports(
         self,
@@ -95,14 +110,61 @@ class ArchitectureQualityGate:
         changed_tuple = tuple(_normalize_path(path) for path in changed_paths)
         reasons: list[str] = []
         policy = self.policy
-        cycle_decomposition_improved = _cycle_decomposition_improved(before, after)
-
+        if before.include_roots != after.include_roots:
+            reasons.append(
+                f"analysis include roots differ ({before.include_roots!r}->{after.include_roots!r})"
+            )
+        if before.exclude_parts != after.exclude_parts:
+            reasons.append("analysis exclusion scope differs")
+        if before.god_file_threshold != after.god_file_threshold:
+            reasons.append(
+                "god-file threshold differs "
+                f"({before.god_file_threshold}->{after.god_file_threshold})"
+            )
+        if before.schema_version != after.schema_version:
+            reasons.append(
+                "architecture report schema mismatch "
+                f"({before.schema_version}->{after.schema_version}); run a reviewed baseline migration"
+            )
+        if after.schema_version != SCHEMA_VERSION:
+            reasons.append(
+                f"unsupported architecture report schema {after.schema_version} "
+                f"(expected {SCHEMA_VERSION})"
+            )
+        if policy.require_complete_evidence and not after.findings_complete:
+            reasons.append(
+                f"architecture evidence is incomplete ({after.findings_omitted} findings omitted)"
+            )
+        if after.metrics.parse_error_count:
+            syntax_paths = sorted(
+                finding.path or "<unknown>"
+                for finding in after.findings
+                if finding.code in {"syntax_error", "source_decode_error"}
+            )
+            sample = ", ".join(syntax_paths[:3])
+            reasons.append(
+                f"candidate contains {after.metrics.parse_error_count} unparseable source module(s): {sample}"
+            )
         if (
-            after.score < before.score - policy.allowed_score_drop
-            and not cycle_decomposition_improved
+            policy.block_new_unresolved_local_imports
+            and after.metrics.unresolved_local_imports
+            > before.metrics.unresolved_local_imports
         ):
+            new_missing = after.metrics.unresolved_local_imports - before.metrics.unresolved_local_imports
+            reasons.append(f"candidate introduces {new_missing} unresolved local import(s)")
+
+        if after.score < before.score - policy.allowed_score_drop:
             reasons.append(
                 f"quality score dropped from {before.score:.1f} to {after.score:.1f}"
+            )
+
+        debt_growth = (
+            after.metrics.architecture_debt - before.metrics.architecture_debt
+        )
+        if debt_growth > policy.max_architecture_debt_growth:
+            reasons.append(
+                f"architecture debt grew by {debt_growth:.2f} "
+                f"(limit {policy.max_architecture_debt_growth:.2f})"
             )
 
         edge_growth = after.metrics.dependency_edges - before.metrics.dependency_edges
@@ -112,11 +174,19 @@ class ArchitectureQualityGate:
                 f"(limit {policy.max_new_dependency_edges})"
             )
 
+        executable_edge_growth = (
+            after.metrics.executable_dependency_edges
+            - before.metrics.executable_dependency_edges
+        )
+        if executable_edge_growth > policy.max_new_executable_dependency_edges:
+            reasons.append(
+                f"executable dependency edges grew by {executable_edge_growth} "
+                f"(limit {policy.max_new_executable_dependency_edges})"
+            )
+
         if policy.block_new_cycles:
-            cycle_count_grew = after.metrics.cycle_count > before.metrics.cycle_count
-            largest_cycle_grew = after.metrics.largest_cycle_size > before.metrics.largest_cycle_size
-            if largest_cycle_grew or (cycle_count_grew and not cycle_decomposition_improved):
-                new_cycles = _new_cycles(before.cycles, after.cycles)
+            new_cycles = _new_cycles(before.cycles, after.cycles)
+            if new_cycles and not _cycles_are_decomposition(before.cycles, new_cycles):
                 changed_modules = _changed_modules(after, changed_tuple)
                 relevant_new_cycles = [
                     cycle for cycle in new_cycles
@@ -125,16 +195,54 @@ class ArchitectureQualityGate:
                 if relevant_new_cycles:
                     sample = ", ".join(" -> ".join(cycle) for cycle in relevant_new_cycles[:3])
                     reasons.append(f"new import cycle(s): {sample}")
-                else:
+                elif (
+                    after.metrics.cycle_count > before.metrics.cycle_count
+                    or after.metrics.largest_cycle_size > before.metrics.largest_cycle_size
+                ):
                     reasons.append(
                         "import-cycle metrics regressed "
                         f"(count {before.metrics.cycle_count}->{after.metrics.cycle_count}, "
                         f"largest {before.metrics.largest_cycle_size}->{after.metrics.largest_cycle_size})"
                     )
 
-        god_growth = after.metrics.god_file_count - before.metrics.god_file_count
-        if policy.block_new_god_files and god_growth > 0:
-            reasons.append(f"new oversized module count grew by {god_growth}")
+        if policy.block_new_executable_cycles:
+            new_executable_cycles = _new_cycles(
+                before.executable_cycles,
+                after.executable_cycles,
+            )
+            if new_executable_cycles and not _cycles_are_decomposition(
+                before.executable_cycles,
+                new_executable_cycles,
+            ):
+                sample = ", ".join(
+                    " -> ".join(cycle) for cycle in new_executable_cycles[:3]
+                )
+                reasons.append(f"new executable dependency cycle(s): {sample}")
+
+        before_oversized = _finding_paths(before, "structurally_oversized_module")
+        after_oversized = _finding_paths(after, "structurally_oversized_module")
+        new_oversized = sorted(after_oversized - before_oversized)
+        if policy.block_new_god_files and new_oversized:
+            reasons.append(
+                "new oversized module(s): " + ", ".join(new_oversized[:5])
+            )
+
+        ignored_identity_codes = {
+            "import_cycle",
+            "executable_import_cycle",
+            "structurally_oversized_module",
+        }
+        new_serious = sorted(
+            _finding_identities(after, minimum_severity={"critical", "high"})
+            - _finding_identities(before, minimum_severity={"critical", "high"})
+        )
+        new_serious = [item for item in new_serious if item[0] not in ignored_identity_codes]
+        if new_serious:
+            sample = ", ".join(
+                f"{code}:{path or '/'.join(modules)}"
+                for code, path, modules in new_serious[:5]
+            )
+            reasons.append(f"new high-severity architecture finding(s): {sample}")
 
         if policy.block_growth_of_existing_large_files:
             for path in changed_tuple:
@@ -168,24 +276,36 @@ def _new_cycles(
     return [cycle for cycle in after_cycles if tuple(sorted(cycle)) not in before]
 
 
-def _cycle_decomposition_improved(
-    before: ArchitectureQualityReport,
-    after: ArchitectureQualityReport,
+def _cycles_are_decomposition(
+    before_cycles: tuple[tuple[str, ...], ...],
+    new_cycles: Iterable[tuple[str, ...]],
 ) -> bool:
-    """Return True when a giant SCC was split into smaller cycles.
+    before_sets = [set(cycle) for cycle in before_cycles]
+    new_sets = [set(cycle) for cycle in new_cycles]
+    return bool(new_sets) and all(
+        any(new_cycle < before_cycle for before_cycle in before_sets)
+        for new_cycle in new_sets
+    )
 
-    During architecture-debt reduction, breaking a very large import cycle may
-    temporarily increase the raw SCC count because one giant cycle becomes
-    several small cycles. That is still progress when the largest cycle shrinks
-    materially and no largest-cycle regression occurs.
-    """
 
-    cycle_count_growth = after.metrics.cycle_count - before.metrics.cycle_count
-    largest_cycle_shrink = before.metrics.largest_cycle_size - after.metrics.largest_cycle_size
-    if cycle_count_growth <= 0:
-        return largest_cycle_shrink > 0
-    required_shrink = max(2, cycle_count_growth * 2)
-    return largest_cycle_shrink >= required_shrink
+def _finding_paths(report: ArchitectureQualityReport, code: str) -> set[str]:
+    return {
+        finding.path
+        for finding in report.findings
+        if finding.code == code and finding.path is not None
+    }
+
+
+def _finding_identities(
+    report: ArchitectureQualityReport,
+    *,
+    minimum_severity: set[str],
+) -> set[tuple[str, str, tuple[str, ...]]]:
+    return {
+        (finding.code, finding.path or "", tuple(sorted(finding.modules)))
+        for finding in report.findings
+        if finding.severity in minimum_severity
+    }
 
 
 def _changed_modules(report: ArchitectureQualityReport, changed_paths: tuple[str, ...]) -> set[str]:
@@ -198,4 +318,4 @@ def _changed_modules(report: ArchitectureQualityReport, changed_paths: tuple[str
 
 
 def _normalize_path(path: str | Path) -> str:
-    return str(path).replace("\\", "/").lstrip("./")
+    return normalize_repository_path(path, label="changed path")

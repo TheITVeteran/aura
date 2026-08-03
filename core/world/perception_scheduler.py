@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from core.runtime.errors import record_degradation
 from core.runtime.task_ownership import create_tracked_task
-from core.world.perception_hub import get_perception_hub
+from core.world.perception_hub import PerceptionHub
 
 logger = logging.getLogger("Aura.PerceptionScheduler")
 _PERCEPTION_SCHEDULER_RECOVERABLE_ERRORS = (
@@ -23,9 +22,15 @@ _PERCEPTION_SCHEDULER_RECOVERABLE_ERRORS = (
 class PerceptionScheduler:
     """Schedules and runs background perception sweeps."""
 
-    def __init__(self, interval_seconds: float = 3600.0) -> None:
+    def __init__(
+        self,
+        interval_seconds: float = 3600.0,
+        *,
+        perception_hub: PerceptionHub | None = None,
+    ) -> None:
         self.interval = interval_seconds
-        self._task: Optional[asyncio.Task] = None
+        self._perception_hub = perception_hub or PerceptionHub()
+        self._task: asyncio.Task[None] | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -46,11 +51,12 @@ class PerceptionScheduler:
         logger.info("⏱️  Perception Scheduler stopped.")
 
     async def _loop(self) -> None:
-        hub = get_perception_hub()
         while self._running:
             try:
                 # Periodic general intelligence sweep
-                await hub.perceive(query="AI agents, sovereign runtime, model councils")
+                await self._perception_hub.perceive(
+                    query="AI agents, sovereign runtime, model councils"
+                )
             except _PERCEPTION_SCHEDULER_RECOVERABLE_ERRORS as e:
                 record_degradation(
                     "perception_scheduler",

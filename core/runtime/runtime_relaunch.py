@@ -25,7 +25,7 @@ import sys
 import time
 from typing import Any
 
-from core.observability.degradation import record_degradation
+from core.runtime.errors import record_degradation
 
 _SUBSYSTEM = "runtime.relaunch"
 

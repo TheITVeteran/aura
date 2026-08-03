@@ -4,22 +4,21 @@ Extracts structured beliefs from LLM outputs for integration
 into the BeliefSystem.
 """
 
-from core.runtime.errors import record_degradation
-import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
 
-from core.epistemics.belief_revision import BeliefDomain, BeliefSystem
+from core.epistemics.belief_revision import BeliefDomain, BeliefRevisionEngine
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.BeliefExtractor")
+
 
 class BeliefExtractor:
     """Parses LLM responses to identify new claims or observations
     that should be integrated into the belief graph.
     """
 
-    def __init__(self, belief_system: BeliefSystem):
+    def __init__(self, belief_system: BeliefRevisionEngine):
         self.belief_system = belief_system
         # Patterns to look for in LLM "thoughts" or responses
         self.belief_patterns = [
@@ -27,9 +26,8 @@ class BeliefExtractor:
             r"FACT: (.*?) \[Domain: (.*?)\]",
         ]
 
-    async def extract_and_integrate(self, text: str, source: str = "llm_extraction"):
-        """Scans text for structured belief patterns and integrates them.
-        """
+    async def extract_and_integrate(self, text: str, source: str = "llm_extraction") -> int:
+        """Scan text for structured belief patterns and integrate them."""
         extracted_count = 0
         
         # 1. Search for explicit tags
@@ -41,7 +39,12 @@ class BeliefExtractor:
                     domain = match.group(2).strip().lower()
                     
                     # Validate domain
-                    if domain not in [BeliefDomain.TASK, BeliefDomain.SELF, BeliefDomain.WORLD, BeliefDomain.USER]:
+                    if domain not in {
+                        BeliefDomain.TASK,
+                        BeliefDomain.SELF,
+                        BeliefDomain.WORLD,
+                        BeliefDomain.USER,
+                    }:
                         domain = BeliefDomain.WORLD
                     
                     confidence = 0.5
@@ -52,11 +55,11 @@ class BeliefExtractor:
                         claim=content,
                         domain=domain,
                         source=source,
-                        confidence=confidence
+                        confidence=confidence,
                     )
                     extracted_count += 1
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('belief_extractor', e)
+                    record_degradation("belief_extractor", e)
                     logger.warning("Failed to parse belief match: %s", e)
 
         # 2. Heuristic extraction (optional, can be more complex)

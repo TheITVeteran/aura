@@ -1,11 +1,14 @@
-from core.runtime.errors import record_degradation
-import time
-import logging
 import asyncio
-from typing import Optional, Dict, Any, Callable
+import logging
+import random
+import time
+from collections.abc import Awaitable, Callable
+
 from core.container import ServiceContainer
+from core.event_bus import EventPriority, get_event_bus
+from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_tracked_task
 from core.state.aura_state import AuraState, CognitiveMode
-from core.bus.event_bus import get_event_bus, EventPriority
 
 logger = logging.getLogger("Aura.WillEngine")
 
@@ -19,16 +22,23 @@ class WillEngine:
     def __init__(self, tick_interval: float = 60.0):
         self._bus = get_event_bus()
         self._is_active = False
-        self._tick_task: Optional[asyncio.Task] = None
+        self._tick_task: asyncio.Task[None] | None = None
         self._tick_interval = tick_interval
-        self._evolution_registry: Dict[str, Callable] = {}
+        self._evolution_registry: dict[
+            str,
+            Callable[[AuraState, float], Awaitable[None]],
+        ] = {}
         
-    def register_evolution_handler(self, name: str, handler: Callable):
+    def register_evolution_handler(
+        self,
+        name: str,
+        handler: Callable[[AuraState, float], Awaitable[None]],
+    ) -> None:
         """Register a subsystem handler for autonomous evolution."""
         self._evolution_registry[name] = handler
         logger.debug("🧬 [WILL] Registered evolution handler: %s", name)
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Start the metabolic loop (if not managed by scheduler)."""
         if self._is_active:
             return
@@ -36,18 +46,13 @@ class WillEngine:
         self._is_active = True
         # Note: If the scheduler in main.py takes over, we might not need this task.
         # But for robustness, we keep it as a fallback or if not registered with scheduler.
-        try:
-            from core.utils.task_tracker import get_task_tracker
-
-            self._tick_task = get_task_tracker().create_task(
-                self._metabolic_loop(),
-                name="aura.will_engine",
-            )
-        except (ImportError, AttributeError, RuntimeError):
-            self._tick_task = get_task_tracker().create_task(self._metabolic_loop(), name="aura.will_engine")
+        self._tick_task = create_tracked_task(
+            self._metabolic_loop(),
+            name="aura.will_engine",
+        )
         logger.info("☘️ [WILL] Metabolic Loop active (interval=%.1fs).", self._tick_interval)
         
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         """Cleanly terminate the loop."""
         self._is_active = False
         if self._tick_task:
@@ -58,7 +63,7 @@ class WillEngine:
                 logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
         logger.info("☘️ [WILL] Metabolic Loop offline.")
             
-    async def _metabolic_loop(self):
+    async def _metabolic_loop(self) -> None:
         """Periodic update of metabolic drives and reflex triggers."""
         while self._is_active:
             try:
@@ -71,7 +76,7 @@ class WillEngine:
                 logger.error("🛑 [WILL] Error in metabolic loop: %s", e)
                 await asyncio.sleep(5.0)
 
-    async def process_cycle(self):
+    async def process_cycle(self) -> None:
         """Standard scheduler entry point for metabolic evolution."""
         try:
             repo = ServiceContainer.get("state_repository")
@@ -96,8 +101,7 @@ class WillEngine:
             old_energy = motivation.budgets.get("energy", {}).get("level", 100.0) / 100.0
             old_curiosity = motivation.budgets.get("curiosity", {}).get("level", 50.0) / 100.0
             
-            import random
-            I_ext = 0.5   # Base external stimulus (in full version driven by user interaction density)
+            external_stimulus = 0.5
             tau = 12.5    # Energy recovery time constant
             
             # Tier 4 Hardening: Temporal Dilation (Biological Time vs Wall Time)
@@ -119,7 +123,7 @@ class WillEngine:
             w = old_energy
             
             # Fast dynamics (curiosity) and Slow dynamics (energy)
-            dv = v - (v**3 / 3.0) - w + I_ext
+            dv = v - (v**3 / 3.0) - w + external_stimulus
             dw = (v + 0.7 - 0.8 * w) / tau
             
             # Stochastic biological variability
@@ -238,6 +242,6 @@ class WillEngine:
 
         return changes
 
-    def get_drive_status(self, state: AuraState) -> Dict[str, float]:
+    def get_drive_status(self, state: AuraState) -> dict[str, float]:
         """Utility for UI/Expositor to show current 'organism health'."""
         return {k: v["level"] for k, v in state.motivation.budgets.items()}
