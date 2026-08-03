@@ -31,9 +31,10 @@ Design:
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Iterator
+from typing import Any
 
 DEPTH_CONDITIONED_SCHEMA = "aura.depth_conditioned_lora.v1"
 
@@ -83,13 +84,21 @@ class DepthConditionedLoRA:
         self.scoped = scoped
         self.depths = depths
         self.delta_scale = float(delta_scale)
-        # Zero deltas => exact parity with the shared adapter at init.
-        self.depth_a = [
-            mx.zeros_like(scoped.lora_a) for _ in range(depths)
-        ]
-        self.depth_b = [
-            mx.zeros_like(scoped.lora_b) for _ in range(depths)
-        ]
+        if any(
+            hasattr(scoped, name)
+            for name in ("depth_a", "depth_b", "depth_conditioned_steps")
+        ):
+            raise ValueError("scoped adapter already has a depth-conditioned bank")
+        # These tensors live directly on the MLX Module. A plain helper object
+        # is not traversed by ``trainable_parameters()``, which made the former
+        # bank visible to the forward pass but invisible to the optimizer and
+        # checkpoint writer. Zero deltas preserve exact shared-adapter parity.
+        scoped.depth_a = [mx.zeros_like(scoped.lora_a) for _ in range(depths)]
+        scoped.depth_b = [mx.zeros_like(scoped.lora_b) for _ in range(depths)]
+        scoped.depth_conditioned_steps = depths
+        scoped.depth_delta_scale = self.delta_scale
+        self.depth_a = scoped.depth_a
+        self.depth_b = scoped.depth_b
 
     def factors_for(self, step: int) -> tuple[Any, Any]:
         """Effective (A, B) at a recurrent step.

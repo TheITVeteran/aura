@@ -30,7 +30,8 @@ from core.runtime.secure_path_custody import (
     validate_directory_identity,
 )
 
-AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v1"
+LEGACY_AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v1"
+AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v2"
 DATASET_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_dataset.v1"
 TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
@@ -38,7 +39,7 @@ CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
-REQUIRED_SOURCE_ROLES: Final = frozenset(
+LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
     {
         "authority",
         "state",
@@ -66,6 +67,28 @@ REQUIRED_SOURCE_ROLES: Final = frozenset(
         "mlx_memory_guard",
     }
 )
+REQUIRED_SOURCE_ROLES: Final = LEGACY_REQUIRED_SOURCE_ROLES | frozenset(
+    {
+        "scoped_recurrence_adapter",
+        "depth_conditioning",
+        "loop_core",
+        "adapter_package_identity",
+        "adapter_materializer",
+        "paired_campaign_loader",
+    }
+)
+
+
+def required_source_roles(authority: Mapping[str, Any]) -> frozenset[str]:
+    """Return the exact source closure required by an authority version."""
+
+    schema = authority.get("schema") if isinstance(authority, Mapping) else None
+    if schema == LEGACY_AUTHORITY_SCHEMA:
+        return LEGACY_REQUIRED_SOURCE_ROLES
+    if schema == AUTHORITY_SCHEMA:
+        return REQUIRED_SOURCE_ROLES
+    _fail("resident_sft_authority_schema_invalid")
+
 
 CLAIMS_NOT_SUPPORTED: Final = (
     "reasoning_gain",
@@ -807,7 +830,7 @@ def validate_authority(
     ):
         _fail("resident_sft_authority_identity_mismatch")
     if (
-        record.get("schema") != AUTHORITY_SCHEMA
+        record.get("schema") not in {LEGACY_AUTHORITY_SCHEMA, AUTHORITY_SCHEMA}
         or record.get("training_authority") != TRAINING_AUTHORITY
         or not str(record.get("campaign_id", "")).startswith(
             "resident-32b-recurrent-sft-bootstrap-cp"
@@ -833,12 +856,13 @@ def validate_authority(
             or binding["size_bytes"] != dataset[f"{split}_size_bytes"]
         ):
             _fail(f"resident_sft_{split}_artifact_binding_mismatch")
+    source_roles = required_source_roles(record)
     sources = record.get("sources")
-    if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
+    if not isinstance(sources, Mapping) or set(sources) != source_roles:
         _fail("resident_sft_source_roles_invalid")
     normalized_sources = {
         role: artifact_binding(sources[role], role=f"source_{role}")
-        for role in sorted(REQUIRED_SOURCE_ROLES)
+        for role in sorted(source_roles)
     }
     model = _exact(
         record.get("model"),
@@ -981,9 +1005,10 @@ def authorize_bound_artifacts(
         binding = validated["dataset_artifacts"][split]
         if len(payload) != binding["size_bytes"] or sha256_bytes(payload) != binding["sha256"]:
             _fail(f"resident_sft_{split}_artifact_binding_drift")
-    if set(source_payloads) != REQUIRED_SOURCE_ROLES:
+    source_roles = required_source_roles(validated)
+    if set(source_payloads) != source_roles:
         _fail("resident_sft_source_payload_roles_invalid")
-    for role in sorted(REQUIRED_SOURCE_ROLES):
+    for role in sorted(source_roles):
         payload = source_payloads[role]
         binding = validated["sources"][role]
         if (
@@ -1000,6 +1025,8 @@ __all__ = [
     "CAMPAIGN_SCOPES",
     "CLAIMS_NOT_SUPPORTED",
     "DATASET_SCHEMA",
+    "LEGACY_AUTHORITY_SCHEMA",
+    "LEGACY_REQUIRED_SOURCE_ROLES",
     "OBJECTIVE_NAME",
     "REQUIRED_SOURCE_ROLES",
     "ResidentSFTBootstrapAuthorityError",
@@ -1012,6 +1039,7 @@ __all__ = [
     "build_authority",
     "build_dataset_commitment",
     "canonical_dataset_payloads",
+    "required_source_roles",
     "sha256_bytes",
     "sha256_json",
     "validate_authority",

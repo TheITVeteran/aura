@@ -20,6 +20,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     model_behavior_bundle_identity,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+    MANIFEST_SCHEMA,
     declared_bindings,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
@@ -98,13 +99,18 @@ def _runtime_identities() -> tuple[dict[str, Any], dict[str, Any]]:
     return training, evaluation
 
 
-def _adapter_tensors(value: float) -> dict[str, Any]:
+def _adapter_tensors(value: float, *, depth_bank_size: int = 0) -> dict[str, Any]:
     tensors: dict[str, Any] = {}
     for layer in range(40, 48):
         for target in ("q_proj", "v_proj", "o_proj"):
             projection = f"model.layers.{layer}.self_attn.{target}"
             tensors[f"{projection}.lora_a"] = mx.full((2, 8), value)
             tensors[f"{projection}.lora_b"] = mx.full((8, 2), value + 0.25)
+            for depth in range(depth_bank_size):
+                tensors[f"{projection}.depth_a.{depth}"] = mx.full((2, 8), value)
+                tensors[f"{projection}.depth_b.{depth}"] = mx.full(
+                    (8, 2), value + 0.25
+                )
     return tensors
 
 
@@ -163,7 +169,7 @@ def _state(
     }
 
 
-def _build_campaign(tmp_path: Path) -> CampaignFixture:
+def _build_campaign(tmp_path: Path, *, depth_bank_size: int = 0) -> CampaignFixture:
     capsule = tmp_path / "capsule"
     campaign = capsule / "artifacts" / "cp796"
     training = campaign / "training"
@@ -251,8 +257,8 @@ def _build_campaign(tmp_path: Path) -> CampaignFixture:
     )
     _write(inputs / "authority.json", canonical_json_bytes(authority))
 
-    initial = _adapter_tensors(0.0)
-    terminal = _adapter_tensors(1.0)
+    initial = _adapter_tensors(0.0, depth_bank_size=depth_bank_size)
+    terminal = _adapter_tensors(1.0, depth_bank_size=depth_bank_size)
     initial_sha = adapter_tensor_fingerprint(initial)
     terminal_sha = adapter_tensor_fingerprint(terminal)
     topology = adapter_topology_sha256(initial)
@@ -514,6 +520,25 @@ def test_materializes_validated_atomic_package_and_adjacent_admission(
     assert claimed == sha256_json(body)
     assert result["checkpoint_generation_count"] == 2
     assert len(manifest["tensors"]) == 48
+
+
+def test_materializes_depth_conditioned_tensor_bank_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _build_campaign(tmp_path, depth_bank_size=2)
+    _materialize(fixture, monkeypatch)
+
+    manifest = json.loads(
+        (fixture.destination / "recurrence_adapter_manifest.json").read_bytes()
+    )
+
+    assert manifest["schema"] == MANIFEST_SCHEMA
+    assert manifest["lora"]["depth_bank_size"] == 2
+    assert manifest["lora"]["conditioning_schema"] == "aura.depth_conditioned_lora.v1"
+    assert len(manifest["tensors"]) == 144
+    assert any(record["key"].endswith(".depth_a.1") for record in manifest["tensors"])
+    assert any(record["key"].endswith(".depth_b.1") for record in manifest["tensors"])
 
 
 def test_refuses_existing_destination_or_admission(

@@ -226,14 +226,49 @@ def assert_adapter_tensor_topology(
 ) -> None:
     """Require exactly the slot-scoped LoRA tensor names and no base weights."""
 
-    if (
-        not expected
-        or set(expected) != set(observed)
-        or any(
-            not (key.endswith(".lora_a") or key.endswith(".lora_b"))
-            for key in observed
-        )
-    ):
+    def inventory(tensors: Mapping[str, Any]) -> dict[str, tuple[int, ...]]:
+        projections: dict[str, dict[str, set[int]]] = {}
+        for key in tensors:
+            projection = ""
+            role = ""
+            depth: int | None = None
+            if key.endswith(".lora_a") or key.endswith(".lora_b"):
+                projection, role = key.rsplit(".", 1)
+            else:
+                prefix, separator, index_text = key.rpartition(".")
+                if separator and index_text.isdecimal() and (
+                    prefix.endswith(".depth_a") or prefix.endswith(".depth_b")
+                ):
+                    projection, role = prefix.rsplit(".", 1)
+                    depth = int(index_text)
+            if not projection or role not in {"lora_a", "lora_b", "depth_a", "depth_b"}:
+                _fail("recurrent_sft_adapter_tensor_topology_invalid")
+            record = projections.setdefault(
+                projection,
+                {"lora_a": set(), "lora_b": set(), "depth_a": set(), "depth_b": set()},
+            )
+            record[role].add(-1 if depth is None else depth)
+        normalized: dict[str, tuple[int, ...]] = {}
+        depth_counts: set[int] = set()
+        for projection, record in projections.items():
+            if (
+                record["lora_a"] != {-1}
+                or record["lora_b"] != {-1}
+                or record["depth_a"] != record["depth_b"]
+            ):
+                _fail("recurrent_sft_adapter_tensor_topology_invalid")
+            depths = tuple(sorted(record["depth_a"]))
+            if depths and depths != tuple(range(len(depths))):
+                _fail("recurrent_sft_adapter_tensor_topology_invalid")
+            depth_counts.add(len(depths))
+            normalized[projection] = depths
+        if not normalized or len(depth_counts) != 1:
+            _fail("recurrent_sft_adapter_tensor_topology_invalid")
+        return normalized
+
+    if not expected or set(expected) != set(observed):
+        _fail("recurrent_sft_adapter_tensor_topology_invalid")
+    if inventory(expected) != inventory(observed):
         _fail("recurrent_sft_adapter_tensor_topology_invalid")
 
 

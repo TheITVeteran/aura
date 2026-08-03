@@ -11,8 +11,11 @@ from __future__ import annotations
 import pytest
 
 mx = pytest.importorskip("mlx.core")
+nn = pytest.importorskip("mlx.nn")
+optim = pytest.importorskip("mlx.optimizers")
 pytest.importorskip("mlx_lm")
 
+from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
@@ -89,12 +92,11 @@ def test_depth_beyond_the_bank_reuses_the_last_operator():
 
 
 def test_delta_scale_modulates_differentiation():
-    scoped = _scoped()
-    strong = DepthConditionedLoRA(scoped, depths=2, delta_scale=1.0)
-    weak = DepthConditionedLoRA(scoped, depths=2, delta_scale=0.1)
+    strong = DepthConditionedLoRA(_scoped(), depths=2, delta_scale=1.0)
+    weak = DepthConditionedLoRA(_scoped(), depths=2, delta_scale=0.1)
     for conditioned in (strong, weak):
-        conditioned.depth_a[1] = mx.ones_like(scoped.lora_a) * 0.5
-        conditioned.depth_b[1] = mx.ones_like(scoped.lora_b) * 0.5
+        conditioned.depth_a[1] = mx.ones_like(conditioned.scoped.lora_a) * 0.5
+        conditioned.depth_b[1] = mx.ones_like(conditioned.scoped.lora_b) * 0.5
     assert strong.differentiation()[1] > weak.differentiation()[1]
 
 
@@ -142,6 +144,63 @@ def test_trainable_parameters_are_exposed_per_depth():
     parameters = conditioned.trainable()
     assert len(parameters) == 6
     assert "depth_2.lora_b" in parameters
+
+
+def test_wrapped_depth_tensors_are_optimizer_and_checkpoint_visible():
+    model = _model()
+    wrap_depth_conditioned(model, depths=3)
+
+    names = {name for name, _value in tree_flatten(model.trainable_parameters())}
+
+    for layer_index in (1, 2):
+        prefix = f"model.layers.{layer_index}.self_attn.o_proj"
+        assert f"{prefix}.lora_a" in names
+        assert f"{prefix}.lora_b" in names
+        for depth in range(3):
+            assert f"{prefix}.depth_a.{depth}" in names
+            assert f"{prefix}.depth_b.{depth}" in names
+
+
+def test_optimizer_updates_only_the_executed_depth_bank():
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    model = _model()
+    wrap_depth_conditioned(model, depths=3)
+    projection = model.model.layers[1].self_attn.o_proj
+    # Make both factor gradients observable on the first measured update.
+    projection.lora_b = mx.ones_like(projection.lora_b) * 0.1
+    before_a = [value + 0 for value in projection.depth_a]
+    before_b = [value + 0 for value in projection.depth_b]
+    mx.eval(before_a, before_b)
+    inputs = mx.ones((1, 4, projection.lora_a.shape[0]))
+
+    def loss_fn(active_model):
+        active = active_model.model.layers[1].self_attn.o_proj
+        with recurrence_adapter_scope(start=0, stop=4):
+            with recurrent_depth_index(1):
+                output = active(inputs)
+        return mx.mean(output * output)
+
+    value, gradients = nn.value_and_grad(model, loss_fn)(model)
+    flat_gradients = dict(tree_flatten(gradients))
+    mx.eval(value, gradients)
+    prefix = "model.layers.1.self_attn.o_proj"
+    assert float(mx.max(mx.abs(flat_gradients[f"{prefix}.depth_a.1"]))) > 0.0
+    assert float(mx.max(mx.abs(flat_gradients[f"{prefix}.depth_b.1"]))) > 0.0
+    for depth in (0, 2):
+        assert float(mx.max(mx.abs(flat_gradients[f"{prefix}.depth_a.{depth}"]))) == 0.0
+        assert float(mx.max(mx.abs(flat_gradients[f"{prefix}.depth_b.{depth}"]))) == 0.0
+
+    optimizer = optim.SGD(learning_rate=0.01)
+    optimizer.update(model, gradients)
+    mx.eval(model.trainable_parameters())
+    assert not bool(mx.array_equal(projection.depth_a[1], before_a[1]))
+    assert not bool(mx.array_equal(projection.depth_b[1], before_b[1]))
+    for depth in (0, 2):
+        assert bool(mx.array_equal(projection.depth_a[depth], before_a[depth]))
+        assert bool(mx.array_equal(projection.depth_b[depth], before_b[depth]))
 
 
 def test_invalid_configuration_is_refused():

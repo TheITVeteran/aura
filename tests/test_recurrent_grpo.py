@@ -209,6 +209,28 @@ def test_proof_campaign_adapter_honors_bound_scale_and_dropout():
     assert adapter.scale == 7.5
 
 
+def test_proof_campaign_depth_banks_are_trainable_and_reconstructable():
+    first = _model(seed=408)
+    second = _model(seed=408)
+    kwargs = {
+        "lora_rank": 2,
+        "lora_layers": 1,
+        "lora_targets": ("q_proj", "o_proj"),
+        "initialization_seed": 29,
+        "depth_conditioned_steps": 4,
+    }
+
+    attach_recurrent_policy_adapters(first, _spec(), **kwargs)
+    attach_recurrent_policy_adapters(second, _spec(), **kwargs)
+    first_names = {name for name, _value in tree_flatten(first.trainable_parameters())}
+
+    assert any(name.endswith(".depth_a.3") for name in first_names)
+    assert any(name.endswith(".depth_b.3") for name in first_names)
+    assert recurrent_policy_sha256(first, _spec()) == recurrent_policy_sha256(
+        second, _spec()
+    )
+
+
 def test_proof_campaign_adapter_topology_preflight_prevents_partial_mutation():
     model = _model(seed=403)
 

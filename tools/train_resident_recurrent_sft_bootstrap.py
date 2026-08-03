@@ -41,7 +41,6 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
     assert_adapter_tensor_topology,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
-    REQUIRED_SOURCE_ROLES,
     ResidentSFTBootstrapConfig,
     authorize_bound_artifacts,
     sha256_bytes,
@@ -276,7 +275,7 @@ def _load_dataset_and_sources(
         _fail("resident_sft_trainer_dataset_invalid")
     sources = {
         role: _bound_bytes(authority["sources"][role], role=f"source_{role}")
-        for role in sorted(REQUIRED_SOURCE_ROLES)
+        for role in sorted(authority["sources"])
     }
     authorize_bound_artifacts(
         authority,
@@ -648,6 +647,9 @@ def _run(args: argparse.Namespace) -> int:
                 initialization_seed=config.lora_initialization_seed,
                 lora_dropout=config.lora_dropout,
                 lora_scale=config.lora_scale,
+                depth_conditioned_steps=max(
+                    row["depth"] for row in (*projected_train, *projected_validation)
+                ),
             )
             if len(attached) != config.lora_layers * len(config.lora_targets):
                 _fail("resident_sft_trainer_adapter_attachment_count_drift")

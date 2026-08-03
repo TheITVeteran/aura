@@ -23,7 +23,6 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
     strict_json_loads,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
-    REQUIRED_SOURCE_ROLES,
     TRAINING_AUTHORITY,
     sha256_json,
     validate_authority,
@@ -35,7 +34,9 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (
     validate_checkpoint_state,
 )
 
-MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v1"
+LEGACY_MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v1"
+MANIFEST_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_manifest.v2"
+MANIFEST_SCHEMAS: Final = frozenset({LEGACY_MANIFEST_SCHEMA, MANIFEST_SCHEMA})
 IDENTITY_RECEIPT_SCHEMA: Final = "aura.resident_recurrent_sft_adapter_identity_receipt.v1"
 CONTROLLER_COMPLETION_SCHEMA: Final = "aura.resident_recurrent_sft_controller_completion.v1"
 INVOCATION_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_invocation.v1"
@@ -124,19 +125,23 @@ def _identity(value: Any, *, role: str, digest_key: str) -> dict[str, Any]:
     return record
 
 
-def _lora(value: Any) -> dict[str, Any]:
+def _lora(value: Any, *, manifest_schema: str) -> dict[str, Any]:
+    depth_conditioned = manifest_schema == MANIFEST_SCHEMA
+    keys = {
+        "rank",
+        "scale",
+        "dropout",
+        "layers",
+        "targets",
+        "wrapped_projections",
+        "projection_paths",
+        "trainable_params",
+    }
+    if depth_conditioned:
+        keys.update({"conditioning_schema", "depth_bank_size"})
     record = _exact(
         value,
-        {
-            "rank",
-            "scale",
-            "dropout",
-            "layers",
-            "targets",
-            "wrapped_projections",
-            "projection_paths",
-            "trainable_params",
-        },
+        keys,
         role="lora",
     )
     rank = _positive_int(record["rank"], role="lora_rank", maximum=1 << 20)
@@ -177,7 +182,7 @@ def _lora(value: Any) -> dict[str, Any]:
         or not 0.0 <= float(dropout) <= 0.5
     ):
         _fail("resident_sft_adapter_lora_numeric_invalid")
-    return {
+    normalized = {
         "rank": rank,
         "scale": float(scale),
         "dropout": float(dropout),
@@ -187,6 +192,20 @@ def _lora(value: Any) -> dict[str, Any]:
         "projection_paths": list(paths),
         "trainable_params": trainable,
     }
+    if depth_conditioned:
+        if record.get("conditioning_schema") != "aura.depth_conditioned_lora.v1":
+            _fail("resident_sft_adapter_depth_conditioning_schema_invalid")
+        normalized.update(
+            {
+                "conditioning_schema": record["conditioning_schema"],
+                "depth_bank_size": _positive_int(
+                    record.get("depth_bank_size"),
+                    role="depth_bank_size",
+                    maximum=64,
+                ),
+            }
+        )
+    return normalized
 
 
 def _tensor_inventory(
@@ -207,12 +226,17 @@ def _tensor_inventory(
     if expected_rows != actual_rows:
         _fail("resident_sft_adapter_tensor_inventory_mismatch")
     keys = [row.key for row in expected_rows]
-    projections = sorted({key.removesuffix(".lora_a").removesuffix(".lora_b") for key in keys})
-    if projections != sorted(lora["projection_paths"]):
-        _fail("resident_sft_adapter_tensor_projection_mismatch")
+    depth_bank_size = int(lora.get("depth_bank_size", 0))
+    projections = sorted(lora["projection_paths"])
     expected_keys = {
         f"{projection}.{suffix}" for projection in projections for suffix in ("lora_a", "lora_b")
     }
+    expected_keys.update(
+        f"{projection}.{suffix}.{depth}"
+        for projection in projections
+        for suffix in ("depth_a", "depth_b")
+        for depth in range(depth_bank_size)
+    )
     if set(keys) != expected_keys:
         _fail("resident_sft_adapter_tensor_pair_mismatch")
     trainable = sum(dimension_product(row.shape) for row in expected_rows)
@@ -302,7 +326,8 @@ def validate_resident_recurrent_sft_adapter_identity(
             role="manifest",
         )
     )
-    if record.get("schema") != MANIFEST_SCHEMA or record.get("adapter_id") != adapter_id:
+    manifest_schema = record.get("schema")
+    if manifest_schema not in MANIFEST_SCHEMAS or record.get("adapter_id") != adapter_id:
         _fail("resident_sft_adapter_manifest_identity_invalid")
     if record.get("training_protocol") != TRAINING_AUTHORITY:
         _fail("resident_sft_adapter_training_protocol_invalid")
@@ -363,7 +388,7 @@ def validate_resident_recurrent_sft_adapter_identity(
             or binding["size_bytes"] != expected["size_bytes"]
         ):
             _fail(f"resident_sft_adapter_{split}_dataset_mismatch")
-    for role in REQUIRED_SOURCE_ROLES:
+    for role in authority["sources"]:
         expected = authority["sources"][role]
         binding = bindings[f"source_{role}"]
         if (
@@ -458,7 +483,11 @@ def validate_resident_recurrent_sft_adapter_identity(
     ):
         _fail("resident_sft_adapter_completion_evidence_invalid")
 
-    lora = _lora(record["lora"])
+    lora = _lora(record["lora"], manifest_schema=str(manifest_schema))
+    if manifest_schema == MANIFEST_SCHEMA and lora["depth_bank_size"] != max(
+        authority["dataset"]["depths"]
+    ):
+        _fail("resident_sft_adapter_depth_bank_authority_mismatch")
     trainer = authority["trainer"]
     if (
         lora["rank"] != trainer["lora_rank"]
@@ -554,7 +583,9 @@ def validate_resident_recurrent_sft_adapter_identity(
 
 __all__ = [
     "IDENTITY_RECEIPT_SCHEMA",
+    "LEGACY_MANIFEST_SCHEMA",
     "MANIFEST_SCHEMA",
+    "MANIFEST_SCHEMAS",
     "PACKAGE_COMPLETION_SCHEMA",
     "ResidentRecurrentSFTAdapterIdentityError",
     "declared_bindings",

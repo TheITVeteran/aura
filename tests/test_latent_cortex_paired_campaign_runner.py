@@ -37,6 +37,7 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     ResourceLedger,
     build_information_receipt,
 )
+from core.learning.recurrent_grpo import attach_recurrent_policy_adapters
 from tools import run_latent_cortex_paired_campaign as runner
 
 
@@ -56,6 +57,97 @@ def test_resident_sft_absent_personality_identity_is_semantically_bound() -> Non
             plain_absence
         ),
     }
+
+
+def test_depth_conditioned_adapter_load_reconstructs_and_reads_back_bank(
+    tmp_path: Path,
+) -> None:
+    mx = pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    from mlx.utils import tree_flatten
+    from mlx_lm.models.qwen2 import Model, ModelArgs
+
+    def model() -> Model:
+        return Model(
+            ModelArgs(
+                model_type="qwen2",
+                hidden_size=32,
+                num_hidden_layers=4,
+                intermediate_size=64,
+                num_attention_heads=4,
+                rms_norm_eps=1e-6,
+                vocab_size=64,
+                num_key_value_heads=2,
+                max_position_embeddings=128,
+                rope_theta=10000.0,
+            )
+        )
+
+    spec = RLCExecutionSpec(
+        n_slots=2,
+        branch_roles=("constructive_solution",),
+        recurrent_steps=2,
+        prelude_frac=0.25,
+        coda_frac=0.25,
+    )
+    source = model()
+    attach_recurrent_policy_adapters(
+        source,
+        spec,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("q_proj", "o_proj"),
+        initialization_seed=41,
+        depth_conditioned_steps=2,
+    )
+    source.model.layers[2].self_attn.q_proj.depth_a[1] = mx.ones(
+        source.model.layers[2].self_attn.q_proj.depth_a[1].shape
+    )
+    tensors = dict(tree_flatten(source.trainable_parameters()))
+    mx.eval(tensors)
+    adapter_path = tmp_path / "adapter.safetensors"
+    mx.save_safetensors(str(adapter_path), tensors)
+    payload = adapter_path.read_bytes()
+    projections = [
+        "model.layers.2.self_attn.o_proj",
+        "model.layers.2.self_attn.q_proj",
+    ]
+    manifest = {
+        "schema": runner.resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA,
+        "lora": {
+            "rank": 2,
+            "scale": 20.0,
+            "dropout": 0.0,
+            "targets": ["q_proj", "o_proj"],
+            "wrapped_projections": 2,
+            "projection_paths": projections,
+            "conditioning_schema": "aura.depth_conditioned_lora.v1",
+            "depth_bank_size": 2,
+        },
+        "tensors": [
+            {"key": key, "shape": list(value.shape), "dtype": str(value.dtype)}
+            for key, value in sorted(tensors.items())
+        ],
+        "bindings": {
+            "adapter": {
+                "path": adapter_path.name,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        },
+    }
+    target = model()
+
+    loaded_count = runner._load_adapter(target, tmp_path, manifest)
+    loaded = dict(tree_flatten(target.parameters()))
+    mx.eval(*(loaded[key] for key in sorted(tensors)))
+
+    assert loaded_count == 2
+    assert set(tensors).issubset(loaded)
+    assert all(bool(mx.array_equal(loaded[key], value)) for key, value in tensors.items())
+    assert bool(
+        mx.all(target.model.layers[2].self_attn.q_proj.depth_a[1] == 1.0)
+    )
 
 
 def _synthetic_claim_plan_for_nonstatistical_contract(

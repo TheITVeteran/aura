@@ -558,9 +558,8 @@ def _resolve_campaign_personality(
                     "recurrent GRPO bundle does not carry a loadable personality path"
                 )
             configured = "none"
-        elif (
-            adapter_manifest.get("schema")
-            == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+        elif adapter_manifest.get("schema") in (
+            resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS
         ):
             personality = adapter_manifest.get("personality_adapter")
             if not isinstance(personality, Mapping):
@@ -761,7 +760,7 @@ def _identity_material(
                 personality_identity=personality_identity,
                 runtime_environment=runtime_environment,
             )
-        elif schema == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+        elif schema in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS:
             manifest, receipt = _validate_resident_recurrent_sft_adapter_dir(
                 adapter_dir,
                 adapter_manifest_bytes,
@@ -775,7 +774,7 @@ def _identity_material(
             raise CampaignProducerError("adapter manifest schema is unsupported")
         execution_binding = (
             manifest["bindings"]["execution_spec"]
-            if schema == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+            if schema in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS
             else manifest["execution_spec"]
         )
         execution_payload = _read_stable_bytes(
@@ -889,7 +888,7 @@ def _adapter_load_boundary_identity(
         if parsed != manifest:
             raise CampaignProducerError("recurrent GRPO adapter manifest differs from frozen plan")
         return receipt
-    if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+    if manifest.get("schema") in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS:
         manifest_bytes = _read_stable_bytes(
             adapter_dir / V2_MANIFEST_FILE,
             max_bytes=16 * 1024 * 1024,
@@ -995,7 +994,7 @@ def _adapter_dataset_manifest_sha256(
     manifest = adapter_identity.get("manifest")
     if not isinstance(manifest, Mapping):
         return None
-    if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA:
+    if manifest.get("schema") in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS:
         receipt = adapter_identity.get("identity_receipt")
         digest = receipt.get("dataset_sha256") if isinstance(receipt, Mapping) else None
         return digest if isinstance(digest, str) and len(digest) == 64 else None
@@ -1705,7 +1704,7 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     is_scoped = manifest.get("schema") in {
         MANIFEST_SCHEMA_V2,
         recurrent_grpo_adapter_identity.MANIFEST_SCHEMA,
-        resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA,
+        *resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS,
     }
     expected = int(
         manifest["lora"]["wrapped_projections" if is_scoped else "wrapped_projection_count"]
@@ -1714,9 +1713,17 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
     lora_scale = float(manifest["lora"].get("scale", 20.0))
     lora_dropout = float(manifest["lora"].get("dropout", 0.0))
     wrapper_type = ScopedLoRALinear if is_scoped else LoRALinear
-    projections = sorted(
-        {key.removesuffix(".lora_a").removesuffix(".lora_b") for key in tensor_records}
-    )
+    def projection_for_tensor(key: str) -> str:
+        if key.endswith(".lora_a") or key.endswith(".lora_b"):
+            return key.rsplit(".", 1)[0]
+        prefix, separator, depth = key.rpartition(".")
+        if separator and depth.isdecimal() and (
+            prefix.endswith(".depth_a") or prefix.endswith(".depth_b")
+        ):
+            return prefix.rsplit(".", 1)[0]
+        raise CampaignProducerError(f"adapter tensor key is invalid: {key}")
+
+    projections = sorted({projection_for_tensor(key) for key in tensor_records})
     if is_scoped and projections != sorted(manifest["lora"]["projection_paths"]):
         raise CampaignProducerError("scoped adapter projection inventory differs")
     if len(projections) != expected:
@@ -1759,9 +1766,18 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
                 wrapped = wrapper_type.from_base(original, r=rank)
             setattr(parent, leaf, wrapped)
 
+        depth_bank_size = int(manifest["lora"].get("depth_bank_size", 0))
+        if depth_bank_size:
+            from core.learning.depth_conditioned_lora import wrap_depth_conditioned
+
+            banks = wrap_depth_conditioned(model, depths=depth_bank_size)
+            if sorted(banks) != projections:
+                raise CampaignProducerError("depth-conditioned adapter inventory differs")
+
         adapter_binding = (
             manifest["bindings"]["adapter"]
-            if manifest.get("schema") == resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMA
+            if manifest.get("schema")
+            in resident_recurrent_sft_adapter_identity.MANIFEST_SCHEMAS
             else manifest["adapter"]
         )
         weights_path = adapter_dir / adapter_binding["path"]

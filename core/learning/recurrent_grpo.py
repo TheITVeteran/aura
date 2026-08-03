@@ -431,6 +431,7 @@ def attach_recurrent_policy_adapters(
     initialization_seed: int,
     lora_dropout: float = 0.0,
     lora_scale: float = 20.0,
+    depth_conditioned_steps: int | None = None,
 ) -> tuple[str, ...]:
     """Attach the exact proof-campaign adapter topology to a frozen model.
 
@@ -461,6 +462,13 @@ def attach_recurrent_policy_adapters(
         or not 0.0 < float(lora_scale) <= 1024.0
         or not isinstance(lora_targets, Sequence)
         or isinstance(lora_targets, (str, bytes, bytearray))
+        or (
+            depth_conditioned_steps is not None
+            and (
+                type(depth_conditioned_steps) is not int
+                or not 1 <= depth_conditioned_steps <= 64
+            )
+        )
     ):
         raise ValueError("recurrent policy adapter configuration is invalid")
     targets = tuple(lora_targets)
@@ -532,6 +540,12 @@ def attach_recurrent_policy_adapters(
                 site=site,
             ),
         )
+    if depth_conditioned_steps is not None:
+        from core.learning.depth_conditioned_lora import wrap_depth_conditioned
+
+        banks = wrap_depth_conditioned(model, depths=depth_conditioned_steps)
+        if set(banks) != {site for *_identity, site in planned}:
+            raise RuntimeError("depth-conditioned adapter topology drift")
     return tuple(site for _parent, _target, _projection, _index, site in planned)
 
 

@@ -8,7 +8,10 @@ import pytest
 
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
+    AUTHORITY_SCHEMA,
     CLAIMS_NOT_SUPPORTED,
+    LEGACY_AUTHORITY_SCHEMA,
+    LEGACY_REQUIRED_SOURCE_ROLES,
     REQUIRED_SOURCE_ROLES,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
@@ -139,6 +142,47 @@ def test_resident_authority_binds_nonpromotable_cached_bootstrap() -> None:
     assert validated["post_training_gate"]["grpo_admission_before_gate"] is False
     assert validated["claims_not_supported"] == list(CLAIMS_NOT_SUPPORTED)
     assert validated["claim_state"]["promotion_allowed"] is False
+
+
+def test_current_authority_requires_depth_conditioned_source_closure() -> None:
+    authority, _train, _validation, _sources = _authority()
+
+    assert authority["schema"] == AUTHORITY_SCHEMA
+    assert set(authority["sources"]) == REQUIRED_SOURCE_ROLES
+    assert {
+        "scoped_recurrence_adapter",
+        "depth_conditioning",
+        "loop_core",
+        "adapter_package_identity",
+        "adapter_materializer",
+        "paired_campaign_loader",
+    } <= set(authority["sources"])
+
+    authority["sources"].pop("depth_conditioning")
+    _recompute_authority_sha256(authority)
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="source_roles_invalid"):
+        validate_authority(authority)
+
+
+def test_historical_v1_authority_retains_its_original_source_closure() -> None:
+    authority, train, validation, sources = _authority()
+    authority["schema"] = LEGACY_AUTHORITY_SCHEMA
+    authority["sources"] = {
+        role: authority["sources"][role] for role in sorted(LEGACY_REQUIRED_SOURCE_ROLES)
+    }
+    legacy_sources = {role: sources[role] for role in LEGACY_REQUIRED_SOURCE_ROLES}
+    _recompute_authority_sha256(authority)
+
+    validated = authorize_bound_artifacts(
+        authority,
+        train_payload=train,
+        validation_payload=validation,
+        source_payloads=legacy_sources,
+        expected_authority_sha256=authority["authority_sha256"],
+    )
+
+    assert validated["schema"] == LEGACY_AUTHORITY_SCHEMA
+    assert set(validated["sources"]) == LEGACY_REQUIRED_SOURCE_ROLES
 
 
 def test_resident_authority_derives_complete_checkpoint_bindings() -> None:

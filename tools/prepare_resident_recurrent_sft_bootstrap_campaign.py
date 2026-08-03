@@ -82,7 +82,15 @@ SOURCE_PATHS: Final[dict[str, str]] = {
     "recurrent_sft_execution": "core/learning/recurrent_sft_execution.py",
     "execution_spec": "core/brain/llm/latent_cortex/execution_spec.py",
     "recurrence_adapter": "core/learning/recurrent_grpo.py",
+    "scoped_recurrence_adapter": "core/brain/llm/latent_cortex/recurrence_adapter.py",
+    "depth_conditioning": "core/learning/depth_conditioned_lora.py",
+    "loop_core": "core/brain/llm/latent_cortex/recurrence.py",
     "adapter_identity": ("core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"),
+    "adapter_package_identity": (
+        "core/brain/llm/latent_cortex/resident_recurrent_sft_adapter_identity.py"
+    ),
+    "adapter_materializer": "tools/materialize_resident_recurrent_sft_adapter.py",
+    "paired_campaign_loader": "tools/run_latent_cortex_paired_campaign.py",
     "bootstrap_identity": "tools/resident_recurrent_sft_bootstrap_identity.py",
     "curriculum": "core/learning/recurrence_curriculum.py",
     "tokenizer_validator": "tools/validate_structured_sft_tokenization.py",

@@ -38,6 +38,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     strict_json_loads,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
+    LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     declared_bindings,
     topology_sha256,
@@ -47,7 +48,6 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_fingerprint,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
-    REQUIRED_SOURCE_ROLES,
     authorize_bound_artifacts,
     sha256_bytes,
     sha256_json,
@@ -511,13 +511,22 @@ def _lora_metadata(
     expected_projections = [
         f"model.layers.{index}.self_attn.{target}" for index in indices for target in targets
     ]
+    actual_keys = {tensor.key for tensor in tensors}
+    has_depth_bank = any(".depth_a." in key or ".depth_b." in key for key in actual_keys)
+    depth_bank_size = max(authority["dataset"]["depths"]) if has_depth_bank else 0
     expected_keys = {
         f"{projection}.{suffix}"
         for projection in expected_projections
         for suffix in ("lora_a", "lora_b")
     }
-    actual_keys = {tensor.key for tensor in tensors}
-    if len(tensors) != 48 or len(expected_projections) != 24 or actual_keys != expected_keys:
+    expected_keys.update(
+        f"{projection}.{suffix}.{depth}"
+        for projection in expected_projections
+        for suffix in ("depth_a", "depth_b")
+        for depth in range(depth_bank_size)
+    )
+    expected_tensor_count = len(expected_projections) * (2 + 2 * depth_bank_size)
+    if len(tensors) != expected_tensor_count or actual_keys != expected_keys:
         _fail("resident_sft_materialize_exact_lora_topology_mismatch")
     rank = trainer["lora_rank"]
     for tensor in tensors:
@@ -526,7 +535,7 @@ def _lora_metadata(
     trainable = sum(
         dimension for tensor in tensors for dimension in [tensor.shape[0] * tensor.shape[1]]
     )
-    return {
+    metadata = {
         "rank": rank,
         "scale": float(trainer["lora_scale"]),
         "dropout": float(trainer["lora_dropout"]),
@@ -536,6 +545,14 @@ def _lora_metadata(
         "projection_paths": expected_projections,
         "trainable_params": trainable,
     }
+    if depth_bank_size:
+        metadata.update(
+            {
+                "conditioning_schema": "aura.depth_conditioned_lora.v1",
+                "depth_bank_size": depth_bank_size,
+            }
+        )
+    return metadata
 
 
 def _package_artifacts(root: Path, manifest: Mapping[str, Any]) -> dict[str, bytes]:
@@ -687,7 +704,7 @@ def materialize_resident_recurrent_sft_adapter(
     validation_payload = _stable_bytes(validation_path, role="validation_dataset")
     source_paths = {
         role: _contained(capsule, authority["sources"][role]["path"], role=f"source_{role}")
-        for role in REQUIRED_SOURCE_ROLES
+        for role in authority["sources"]
     }
     source_payloads = {
         role: _stable_bytes(path, role=f"source_{role}") for role, path in source_paths.items()
@@ -878,7 +895,7 @@ def materialize_resident_recurrent_sft_adapter(
                 terminal_payload,
             )
             source_bindings: dict[str, Any] = {}
-            for role in sorted(REQUIRED_SOURCE_ROLES):
+            for role in sorted(authority["sources"]):
                 source_bindings[role] = _copy_into(
                     staging,
                     f"evidence/sources/{role}.snapshot",
@@ -897,7 +914,9 @@ def materialize_resident_recurrent_sft_adapter(
             loader_payload = canonical_json_bytes(loader_config)
             bindings["loader_config"] = _copy_into(staging, "adapter_config.json", loader_payload)
             manifest = {
-                "schema": MANIFEST_SCHEMA,
+                "schema": (
+                    MANIFEST_SCHEMA if lora.get("depth_bank_size") else LEGACY_MANIFEST_SCHEMA
+                ),
                 "adapter_id": adapter_id,
                 "training_protocol": authority["training_authority"],
                 "base_checkpoint": base_identity,

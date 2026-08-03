@@ -18,6 +18,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
     CONTROLLER_COMPLETION_SCHEMA,
     INVOCATION_SCHEMA,
+    LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     PACKAGE_COMPLETION_SCHEMA,
     ResidentRecurrentSFTAdapterIdentityError,
@@ -137,7 +138,7 @@ def _row(task_id: str, prompt: str) -> dict[str, Any]:
     }
 
 
-def _bundle() -> _Bundle:
+def _bundle(*, manifest_schema: str = MANIFEST_SCHEMA) -> _Bundle:
     spec = RLCExecutionSpec(recurrent_steps=2)
     spec_payload = _json(spec.to_dict())
     train_rows = [_row("train.1", "Solve the training recurrence.")]
@@ -214,6 +215,22 @@ def _bundle() -> _Bundle:
             "dtype": "float32",
         },
     ]
+    if manifest_schema == MANIFEST_SCHEMA:
+        for depth in range(2):
+            tensors.extend(
+                [
+                    {
+                        "key": f"model.layers.1.self_attn.o_proj.depth_a.{depth}",
+                        "shape": [4, 2],
+                        "dtype": "float32",
+                    },
+                    {
+                        "key": f"model.layers.1.self_attn.o_proj.depth_b.{depth}",
+                        "shape": [2, 4],
+                        "dtype": "float32",
+                    },
+                ]
+            )
     adapter_payload = b"synthetic-adapter-safetensors"
     optimizer_payload = b"synthetic-optimizer-safetensors"
     state = {
@@ -321,8 +338,29 @@ def _bundle() -> _Bundle:
             for role, payload in source_payloads.items()
         },
     }
+    lora = {
+        "rank": 2,
+        "scale": 20.0,
+        "dropout": 0.0,
+        "layers": 1,
+        "targets": ["o_proj"],
+        "wrapped_projections": 1,
+        "projection_paths": ["model.layers.1.self_attn.o_proj"],
+        "trainable_params": sum(
+            dimension
+            for tensor in tensors
+            for dimension in [tensor["shape"][0] * tensor["shape"][1]]
+        ),
+    }
+    if manifest_schema == MANIFEST_SCHEMA:
+        lora.update(
+            {
+                "conditioning_schema": "aura.depth_conditioned_lora.v1",
+                "depth_bank_size": 2,
+            }
+        )
     manifest = {
-        "schema": MANIFEST_SCHEMA,
+        "schema": manifest_schema,
         "adapter_id": "resident-sft-test",
         "training_protocol": TRAINING_AUTHORITY,
         "base_checkpoint": base,
@@ -330,16 +368,7 @@ def _bundle() -> _Bundle:
         "personality_adapter": personality,
         "training_runtime": training_runtime,
         "bindings": bindings,
-        "lora": {
-            "rank": 2,
-            "scale": 20.0,
-            "dropout": 0.0,
-            "layers": 1,
-            "targets": ["o_proj"],
-            "wrapped_projections": 1,
-            "projection_paths": ["model.layers.1.self_attn.o_proj"],
-            "trainable_params": 16,
-        },
+        "lora": lora,
         "tensors": copy.deepcopy(tensors),
         "claim_boundary": {
             "training_objective_learned": True,
@@ -370,6 +399,13 @@ def test_exact_resident_sft_package_is_accepted() -> None:
     assert receipt["training_objective_learned"] is True
     assert receipt["reasoning_gain_proven"] is False
     assert receipt["promotion_allowed"] is False
+
+
+def test_legacy_shared_operator_package_remains_verifiable() -> None:
+    receipt = _bundle(manifest_schema=LEGACY_MANIFEST_SCHEMA).validate()
+
+    assert receipt["complete"] is True
+    assert receipt["reasoning_gain_proven"] is False
 
 
 @pytest.mark.parametrize(
