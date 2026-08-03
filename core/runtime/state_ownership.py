@@ -288,7 +288,15 @@ def is_live_state_path(path: Path | str) -> bool:
         candidate = Path(path).expanduser().resolve(strict=False)
         live = live_state_root()
     except (OSError, RuntimeError, ValueError):
-        return False
+        # Fail CLOSED. This used to return False, which reads as "not live
+        # state" and lets the write through — but a path that cannot be
+        # resolved has not been shown to be outside the live root, it has
+        # only refused to answer. Treating "I could not check" as "it is
+        # safe" is the exact inversion this module exists to prevent, and
+        # nothing noticed it because no test exercised the branch (found by
+        # tools/guard_mutation.py). A pathological path losing a write is a
+        # far cheaper outcome than a non-live runtime reaching live state.
+        return True
     if candidate == live:
         return True
     return live in candidate.parents

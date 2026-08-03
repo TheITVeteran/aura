@@ -284,3 +284,26 @@ def test_a_spawned_child_is_not_a_test_runtime_just_because_it_inherited_env():
         "runtime; it is an ordinary program"
     )
     assert result["root"].endswith("/.aura"), result["root"]
+
+
+def test_an_unresolvable_path_is_treated_as_live_state():
+    """"I could not check" must never read as "it is safe".
+
+    Found by tools/guard_mutation.py: this branch had no test, and it returned
+    False — which callers read as "not live state" and allow. A path that
+    cannot be resolved has not been shown to be outside the live root; it has
+    only declined to answer. Fail closed.
+
+    A null byte makes Path.resolve raise ValueError, which is the cheapest way
+    to reach the branch without depending on filesystem state.
+    """
+    assert is_live_state_path("/tmp/\x00/definitely-not-resolvable")
+
+
+def test_an_unresolvable_path_is_refused_by_the_guard(monkeypatch):
+    """And the refusal actually reaches the enforcement point."""
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "probe")
+    if runtime_profile().may_touch_live_state:
+        pytest.skip("a LIVE runtime is permitted to touch live state")
+    with pytest.raises(StateOwnershipViolation):
+        assert_state_path_allowed("/tmp/\x00/unresolvable", source="probe")
