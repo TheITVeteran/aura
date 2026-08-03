@@ -64,6 +64,11 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     validate_verified_trajectory_group_receipt,
     verifier_group_objective,
 )
+from core.learning.recurrent_sft_execution import (  # noqa: E402
+    RecurrentSFTExecutionError,
+    adapter_tensor_dict,
+    assert_adapter_tensor_topology,
+)
 from core.learning.verified_recurrent_transition_evidence import (  # noqa: E402
     VerifiedRecurrentTransitionEvidenceError,
     build_verified_recurrent_transition_evidence,
@@ -247,7 +252,8 @@ def test_proof_campaign_role_banks_are_trainable_and_reconstructable():
 
     attach_recurrent_policy_adapters(first, spec, **kwargs)
     attach_recurrent_policy_adapters(second, spec, **kwargs)
-    first_names = {name for name, _value in tree_flatten(first.trainable_parameters())}
+    first_tensors = adapter_tensor_dict(first)
+    first_names = set(first_tensors)
 
     assert any(name.endswith(".role_a.1") for name in first_names)
     assert any(name.endswith(".role_b.1") for name in first_names)
@@ -255,6 +261,10 @@ def test_proof_campaign_role_banks_are_trainable_and_reconstructable():
         second,
         spec,
     )
+    malformed = dict(first_tensors)
+    malformed.pop(next(name for name in malformed if name.endswith(".role_b.1")))
+    with pytest.raises(RecurrentSFTExecutionError, match="topology_invalid"):
+        assert_adapter_tensor_topology(first_tensors, malformed)
     with pytest.raises(ValueError, match="configuration"):
         attach_recurrent_policy_adapters(
             _model(seed=410),

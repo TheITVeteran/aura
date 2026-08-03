@@ -226,43 +226,72 @@ def assert_adapter_tensor_topology(
 ) -> None:
     """Require exactly the slot-scoped LoRA tensor names and no base weights."""
 
-    def inventory(tensors: Mapping[str, Any]) -> dict[str, tuple[int, ...]]:
+    def inventory(
+        tensors: Mapping[str, Any],
+    ) -> dict[str, tuple[tuple[int, ...], tuple[int, ...]]]:
         projections: dict[str, dict[str, set[int]]] = {}
         for key in tensors:
             projection = ""
             role = ""
-            depth: int | None = None
+            bank_index: int | None = None
             if key.endswith(".lora_a") or key.endswith(".lora_b"):
                 projection, role = key.rsplit(".", 1)
             else:
                 prefix, separator, index_text = key.rpartition(".")
                 if separator and index_text.isdecimal() and (
-                    prefix.endswith(".depth_a") or prefix.endswith(".depth_b")
+                    prefix.endswith(".depth_a")
+                    or prefix.endswith(".depth_b")
+                    or prefix.endswith(".role_a")
+                    or prefix.endswith(".role_b")
                 ):
                     projection, role = prefix.rsplit(".", 1)
-                    depth = int(index_text)
-            if not projection or role not in {"lora_a", "lora_b", "depth_a", "depth_b"}:
+                    bank_index = int(index_text)
+            if not projection or role not in {
+                "lora_a",
+                "lora_b",
+                "depth_a",
+                "depth_b",
+                "role_a",
+                "role_b",
+            }:
                 _fail("recurrent_sft_adapter_tensor_topology_invalid")
             record = projections.setdefault(
                 projection,
-                {"lora_a": set(), "lora_b": set(), "depth_a": set(), "depth_b": set()},
+                {
+                    "lora_a": set(),
+                    "lora_b": set(),
+                    "depth_a": set(),
+                    "depth_b": set(),
+                    "role_a": set(),
+                    "role_b": set(),
+                },
             )
-            record[role].add(-1 if depth is None else depth)
-        normalized: dict[str, tuple[int, ...]] = {}
-        depth_counts: set[int] = set()
+            record[role].add(-1 if bank_index is None else bank_index)
+        normalized: dict[
+            str,
+            tuple[tuple[int, ...], tuple[int, ...]],
+        ] = {}
+        bank_counts: set[tuple[int, int]] = set()
         for projection, record in projections.items():
             if (
                 record["lora_a"] != {-1}
                 or record["lora_b"] != {-1}
                 or record["depth_a"] != record["depth_b"]
+                or record["role_a"] != record["role_b"]
             ):
                 _fail("recurrent_sft_adapter_tensor_topology_invalid")
             depths = tuple(sorted(record["depth_a"]))
+            roles = tuple(sorted(record["role_a"]))
             if depths and depths != tuple(range(len(depths))):
                 _fail("recurrent_sft_adapter_tensor_topology_invalid")
-            depth_counts.add(len(depths))
-            normalized[projection] = depths
-        if not normalized or len(depth_counts) != 1:
+            if roles and (
+                len(roles) < 2
+                or roles != tuple(range(len(roles)))
+            ):
+                _fail("recurrent_sft_adapter_tensor_topology_invalid")
+            bank_counts.add((len(depths), len(roles)))
+            normalized[projection] = (depths, roles)
+        if not normalized or len(bank_counts) != 1:
             _fail("recurrent_sft_adapter_tensor_topology_invalid")
         return normalized
 
