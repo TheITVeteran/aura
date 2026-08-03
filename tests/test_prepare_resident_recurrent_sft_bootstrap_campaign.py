@@ -233,6 +233,61 @@ def test_prepare_accepts_clean_published_worktree_branch(
     }
 
 
+def test_prepare_accepts_clean_published_detached_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    head = "a" * 40
+
+    def run(command: list[str], **_kwargs: Any) -> Result:
+        args = command[1:]
+        if args[:3] == ["diff", "--name-only", "HEAD"]:
+            return Result("")
+        if args in (["rev-parse", "HEAD"], ["rev-parse", "origin/main"]):
+            return Result(f"{head}\n")
+        if args == ["branch", "--show-current"]:
+            return Result("")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(prepare.subprocess, "run", run)
+
+    assert prepare._git_source_state() == {
+        "branch": "",
+        "commit": head,
+        "origin_main": head,
+    }
+
+
+def test_invalid_campaign_id_is_rejected_before_any_artifact_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(prepare, "REPO_ROOT", tmp_path)
+    output = tmp_path / "artifacts" / "invalid"
+
+    with pytest.raises(
+        prepare.ResidentSFTCampaignPreparationError,
+        match="campaign_identity_invalid",
+    ):
+        prepare.prepare_campaign(
+            profile="full",
+            campaign_id="role-v6-full",
+            model="missing-model",
+            execution_spec="missing-spec.json",
+            artifact_root="artifacts/invalid",
+            seed=19,
+            committed_at=datetime(2026, 8, 2, tzinfo=UTC),
+        )
+
+    assert not output.exists()
+
+
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
     assert config.objective == prepare.OBJECTIVE_NAME_V3

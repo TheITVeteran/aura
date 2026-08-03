@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import stat
 import subprocess
 import sys
@@ -78,6 +79,8 @@ DEFAULT_MODEL: Final = "training/fused-model/Aura-32B-crsm-closeout-jul1-2026070
 DEFAULT_SPEC: Final = "config/latent_cortex/resident_32b_recurrent_grpo_execution_spec.json"
 MAX_INPUT_BYTES: Final = 512 * 1024 * 1024
 PREPARATION_INTENT_SCHEMA: Final = "aura.resident_recurrent_sft_preparation_intent.v1"
+_CAMPAIGN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_CAMPAIGN_PREFIX: Final = "resident-32b-recurrent-sft-bootstrap-cp"
 
 SOURCE_PATHS: Final[dict[str, str]] = {
     "authority": "core/learning/resident_recurrent_sft_bootstrap_authority.py",
@@ -133,6 +136,16 @@ def _fail(code: str) -> Never:
 def _canonical(value: Any) -> bytes:
     payload: bytes = canonical_json_bytes(value)
     return payload
+
+
+def _validate_campaign_id(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or _CAMPAIGN_ID.fullmatch(value) is None
+        or not value.startswith(_CAMPAIGN_PREFIX)
+    ):
+        _fail("resident_sft_campaign_identity_invalid")
+    return value
 
 
 def _repo_path(value: str, *, role: str, directory: bool | None = None) -> Path:
@@ -534,6 +547,7 @@ def prepare_campaign(
         _fail("resident_sft_prepare_profile_invalid")
     if committed_at.tzinfo is None:
         _fail("resident_sft_prepare_committed_at_naive")
+    campaign_id = _validate_campaign_id(campaign_id)
     source_state = _git_source_state()
     model_path = _repo_path(model, role="model", directory=True)
     spec_path = _repo_path(execution_spec, role="execution_spec", directory=False)

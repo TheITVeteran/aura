@@ -448,7 +448,6 @@ def _load_config(path: Path) -> dict[str, Any]:
         not isinstance(source, Mapping)
         or set(source) != {"branch", "commit", "origin_main"}
         or not isinstance(source.get("branch"), str)
-        or not source["branch"]
         or len(source["branch"]) > 255
         or any(ord(character) < 32 for character in source["branch"])
         or any(
