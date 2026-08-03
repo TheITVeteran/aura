@@ -183,6 +183,33 @@ def test_initial_checkpoint_accepts_only_the_exact_verified_migration_step() -> 
     )
 
 
+def test_verified_migration_commits_covered_cells_before_partial_resume(tmp_path) -> None:
+    config = _config()
+    plan = _plan(config)
+    journal_path = tmp_path / "campaign.journal.jsonl"
+    snapshot = _snapshot(2)
+
+    with CampaignJournal(journal_path, plan) as journal:
+        first = plan.cell_ids[0]
+        first_definition = plan.cell_definition(first)
+        controller._commit_migration_covered_cell(
+            journal,
+            cell_id=first,
+            required_start=int(first_definition["expected_start_step"]),
+            required_end=int(first_definition["required_end_step"]),
+            migration_start=2,
+            snapshot=snapshot,
+        )
+        assert journal.resume().committed_cell_ids == (first,)
+        second = plan.cell_ids[1]
+        attempt_id = journal.start_cell(second)
+        assert journal.attempt_status(second)["active_attempt_id"] == attempt_id
+
+    with CampaignJournal(journal_path, plan) as recovered:
+        assert recovered.resume().committed_cell_ids == (plan.cell_ids[0],)
+        assert recovered.attempt_status(plan.cell_ids[1])["active_attempt_id"] is not None
+
+
 def test_verified_migration_start_rejects_invalid_receipt(monkeypatch, tmp_path) -> None:
     receipt = tmp_path / "checkpoint-migration.json"
     receipt.write_text("{}", encoding="ascii")

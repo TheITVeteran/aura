@@ -798,6 +798,58 @@ def _initial_checkpoint_matches_plan(
     )
 
 
+def _commit_migration_covered_cell(
+    journal: CampaignJournal,
+    *,
+    cell_id: str,
+    required_start: int,
+    required_end: int,
+    migration_start: int,
+    snapshot: Mapping[str, Any],
+) -> None:
+    """Record a plan cell already covered by one verified migrated checkpoint."""
+
+    if (
+        migration_start != int(snapshot.get("step", -1))
+        or required_start < 0
+        or required_end <= required_start
+        or required_end > migration_start
+        or snapshot.get("present") is not True
+    ):
+        _fail("resident_sft_controller_migration_covered_cell_invalid")
+    evidence = {
+        "schema": "aura.resident_recurrent_sft_migration_covered_cell.v1",
+        "migration_start_step": migration_start,
+        "required_start_step": required_start,
+        "required_end_step": required_end,
+        "checkpoint_sequence": int(snapshot["checkpoint_sequence"]),
+        "checkpoint_complete_sha256": str(snapshot["complete_sha256"]),
+    }
+    attempt_id = journal.start_cell(cell_id)
+    result_sha = journal.record_arm_result(
+        cell_id,
+        attempt_id,
+        {**evidence, "result": "covered_by_verified_migration"},
+    )
+    verification_sha = journal.record_verified(
+        cell_id,
+        attempt_id,
+        {
+            **evidence,
+            "verified": True,
+            "result_event_sha256": result_sha,
+        },
+    )
+    journal.commit_cell(
+        cell_id,
+        attempt_id,
+        {
+            **evidence,
+            "verification_event_sha256": verification_sha,
+        },
+    )
+
+
 def _invocation_receipt(
     authority: Mapping[str, Any], snapshot: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1362,6 +1414,7 @@ def _run_controller_custodied(
             custody=(custodies[-1] if custodies else None),
         ) as journal:
             _reconcile_staged_results(journal, root, plan, authority)
+            migration_start = _verified_migration_start_step(authority)
             for ordinal, cell_id in enumerate(plan.cell_ids, start=1):
                 if cell_id in journal.resume().committed_cell_ids:
                     continue
@@ -1373,11 +1426,21 @@ def _run_controller_custodied(
                 required_end = int(definition["required_end_step"])
                 before = _checkpoint_snapshot(authority)
                 initial_attempt_status = journal.attempt_status(cell_id)
-                migration_start = (
-                    _verified_migration_start_step(authority)
-                    if ordinal == 1
-                    else None
-                )
+                if migration_start is not None and required_end <= migration_start:
+                    if (
+                        initial_attempt_status["active_attempt_id"] is not None
+                        or int(initial_attempt_status["attempt_count"]) != 0
+                    ):
+                        _fail("resident_sft_controller_migration_covered_cell_not_fresh")
+                    _commit_migration_covered_cell(
+                        journal,
+                        cell_id=cell_id,
+                        required_start=required_start,
+                        required_end=required_end,
+                        migration_start=migration_start,
+                        snapshot=before,
+                    )
+                    continue
                 fresh_start_valid = _initial_checkpoint_matches_plan(
                     observed_step=int(before["step"]),
                     required_start=required_start,
