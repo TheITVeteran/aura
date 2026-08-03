@@ -42,6 +42,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (
 )
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
+from core.learning.role_conditioned_lora import recurrent_branch_index
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
@@ -1275,18 +1276,20 @@ def _advance_recurrent_states(
 ) -> list[Any]:
     updated: list[Any] = []
     alpha = _alpha_at(spec, step)
-    for prompt_at_window, state, anchor in zip(
-        prompts_at_window,
-        states,
-        anchors,
-        strict=True,
+    for branch_index, (prompt_at_window, state, anchor) in enumerate(
+        zip(
+            prompts_at_window,
+            states,
+            anchors,
+            strict=True,
+        )
     ):
         # Publish the recurrent step so any attached depth-conditioned
         # operator bank selects this step's effective transform. A no-op
         # when no bank is attached.
         from core.learning.depth_conditioned_lora import recurrent_depth_index
 
-        with recurrent_depth_index(step):
+        with recurrent_branch_index(branch_index), recurrent_depth_index(step):
             candidate = _window_pass(
                 model,
                 prompt_at_window,
@@ -1377,6 +1380,7 @@ def _persist_and_score(
     final_slots: Any,
     tail_embeddings: Any,
     *,
+    branch_index: int = 0,
     bridge_count: int,
     answer_count: int,
     prelude_end: int,
@@ -1394,7 +1398,10 @@ def _persist_and_score(
         [hidden[:, :slot_start, :], final_slots, hidden[:, slot_stop:, :]],
         axis=1,
     )
-    with recurrence_adapter_scope(start=slot_start, stop=slot_stop):
+    with recurrent_branch_index(branch_index), recurrence_adapter_scope(
+        start=slot_start,
+        stop=slot_stop,
+    ):
         hidden = _causal_layers(model.model.layers[prelude_end:coda_start], hidden)
     hidden = _causal_layers(model.model.layers[coda_start:], hidden)
     all_logits = _logits(model, hidden)
@@ -1735,12 +1742,15 @@ def live_path_forward(
             seed,
             state,
             prepared.tail_embeddings,
+            branch_index=branch_index,
             bridge_count=prepared.bridge_count,
             answer_count=prepared.answer_count,
             prelude_end=prepared.prelude_end,
             coda_start=prepared.coda_start,
         )
-        for seed, state in zip(prepared.seeds, states, strict=True)
+        for branch_index, (seed, state) in enumerate(
+            zip(prepared.seeds, states, strict=True)
+        )
     )
     return LivePathForward(
         branch_logits=branch_logits,
@@ -1864,8 +1874,12 @@ def _cached_live_path_initial_logits(
         or not 1 <= decode_token_budget <= 32_768
     ):
         raise ValueError("decode_token_budget must be inside [1, 32768]")
+    if type(branch_index) is not int or not 0 <= branch_index < len(
+        spec.branch_roles
+    ):
+        raise ValueError("branch_index is outside the live-path branch set")
     boundary = nullcontext() if adapters_on else recurrence_adapter_disabled()
-    with boundary:
+    with boundary, recurrent_branch_index(branch_index):
         (
             prompt_embeddings,
             seeds,
@@ -1875,7 +1889,7 @@ def _cached_live_path_initial_logits(
             prelude_end,
             coda_start,
         ) = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
-        if type(branch_index) is not int or not 0 <= branch_index < len(seeds):
+        if not 0 <= branch_index < len(seeds):
             raise ValueError("branch_index is outside the live-path branch set")
         states = list(initial_states)
         for step in range(spec.recurrent_steps):
@@ -2279,6 +2293,7 @@ def live_path_branch_answer_ce_trail(
             prepared.seeds[branch_index],
             states[branch_index],
             prepared.tail_embeddings,
+            branch_index=branch_index,
             bridge_count=prepared.bridge_count,
             answer_count=prepared.answer_count,
             prelude_end=prepared.prelude_end,
@@ -2451,6 +2466,7 @@ def _exact_adjoint_live_path_result(
             parameter_tree: Any,
             final_state: Any,
             _seed: Any = seed,
+            _branch_index: int = selected_index,
         ) -> Any:
             model.update(parameter_tree)
             logits = _persist_and_score(
@@ -2459,6 +2475,7 @@ def _exact_adjoint_live_path_result(
                 _seed,
                 final_state,
                 tail_embeddings,
+                branch_index=_branch_index,
                 bridge_count=prepared.bridge_count,
                 answer_count=prepared.answer_count,
                 prelude_end=prepared.prelude_end,
@@ -2564,6 +2581,7 @@ def _exact_adjoint_live_path_result(
                 parameter_tree: Any,
                 state: Any,
                 _seed: Any = seed,
+                _branch_index: int = selected_index,
             ) -> Any:
                 model.update(parameter_tree)
                 logits = _persist_and_score(
@@ -2572,6 +2590,7 @@ def _exact_adjoint_live_path_result(
                     _seed,
                     state,
                     tail_embeddings,
+                    branch_index=_branch_index,
                     bridge_count=prepared.bridge_count,
                     answer_count=prepared.answer_count,
                     prelude_end=prepared.prelude_end,
@@ -2756,6 +2775,7 @@ def _exact_adjoint_live_path_result(
                         seeds[selected_index],
                         lesion_states[selected_index],
                         tail_embeddings,
+                        branch_index=selected_index,
                         bridge_count=prepared.bridge_count,
                         answer_count=prepared.answer_count,
                         prelude_end=prepared.prelude_end,

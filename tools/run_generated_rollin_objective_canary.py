@@ -29,12 +29,15 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     full_weight_checkpoint_identity,
 )
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
-    RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA,
     GeneratedRollinSelectionConfig,
     derive_rollin_seed,
-    generated_rollin_live_path_loss,
-    generated_rollin_live_path_value_and_grad,
-    validate_generated_rollin_receipt,
+)
+from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
+    RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
+    BranchSpecializationConfig,
+    generated_rollin_specialization_loss,
+    generated_rollin_specialization_value_and_grad,
+    validate_generated_rollin_specialization_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
@@ -52,6 +55,8 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
     "core/learning/recurrence_native_objective_v4.py",
+    "core/learning/recurrence_native_objective_v6.py",
+    "core/learning/role_conditioned_lora.py",
     "core/learning/recurrent_grpo.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
@@ -129,7 +134,8 @@ def _evaluate(
     row: dict[str, Any],
     *,
     spec: RLCExecutionSpec,
-    config: GeneratedRollinSelectionConfig,
+    generated_config: GeneratedRollinSelectionConfig,
+    specialization_config: BranchSpecializationConfig,
     campaign_seed: int,
 ) -> dict[str, Any]:
     seed = derive_rollin_seed(
@@ -139,18 +145,24 @@ def _evaluate(
         sample_ordinal=0,
         execution_spec_sha256=spec.sha256,
     )
-    evaluation = generated_rollin_live_path_loss(
+    evaluation = generated_rollin_specialization_loss(
         model,
         row["prompt_tokens"],
         row["answer_tokens"],
         spec=spec,
         base_seed=seed,
-        config=config,
+        generated_config=generated_config,
+        specialization_config=specialization_config,
     )
-    receipt = validate_generated_rollin_receipt(evaluation.receipt())
+    receipt = validate_generated_rollin_specialization_receipt(
+        evaluation.receipt()
+    )
     return {
         "task_id": row["task_id"],
         "loss": evaluation.value,
+        "lexical_loss": evaluation.generated.value,
+        "specialization_loss": evaluation.specialization.value,
+        "branch_separations": list(evaluation.specialization.separations),
         "branch_values": list(evaluation.branch_values),
         "branch_weights": list(evaluation.branch_weights),
         "rollin_base_seed": seed,
@@ -194,10 +206,14 @@ def _branch_specialization_gates(
                 len(
                     {
                         branch["generated_tokens_sha256"]
-                        for branch in entry["objective_receipt"]["branches"]
+                        for branch in entry["objective_receipt"][
+                            "generated_receipt"
+                        ]["branches"]
                     }
                 )
-                == len(entry["objective_receipt"]["branches"])
+                == len(
+                    entry["objective_receipt"]["generated_receipt"]["branches"]
+                )
                 for entry in loss_trail
             )
         ),
@@ -216,6 +232,7 @@ def run_canary(
     memory_fraction: float,
     student_forcing_probability: float,
     sampling_temperature: float,
+    specialization_weight: float,
 ) -> dict[str, Any]:
     import mlx.core as mx
     import mlx.optimizers as optim
@@ -240,6 +257,10 @@ def run_canary(
         student_forcing_probability=student_forcing_probability,
         sampling_temperature=sampling_temperature,
         branch_softmin_temperature=0.5,
+    )
+    specialization_config = BranchSpecializationConfig(
+        weight=specialization_weight,
+        target_separation=0.30,
     )
     with (
         standalone_model_lane(
@@ -267,6 +288,7 @@ def run_canary(
             initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
             lora_scale=1.0,
             depth_conditioned_steps=spec.recurrent_steps,
+            role_conditioned_branches=len(spec.branch_roles),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
         tasks = task_battery(["boolean"], [2], 2, seed=seed)
@@ -291,7 +313,8 @@ def run_canary(
             model,
             validation_row,
             spec=spec,
-            config=objective_config,
+            generated_config=objective_config,
+            specialization_config=specialization_config,
             campaign_seed=seed,
         )
         separation_before = _branch_separations(
@@ -310,15 +333,16 @@ def run_canary(
                 sample_ordinal=step,
                 execution_spec_sha256=spec.sha256,
             )
-            result = generated_rollin_live_path_value_and_grad(
+            result = generated_rollin_specialization_value_and_grad(
                 model,
                 training_row["prompt_tokens"],
                 training_row["answer_tokens"],
                 spec=spec,
                 base_seed=rollin_seed,
-                config=objective_config,
+                generated_config=objective_config,
+                specialization_config=specialization_config,
             )
-            receipt = validate_generated_rollin_receipt(
+            receipt = validate_generated_rollin_specialization_receipt(
                 result.evaluation.receipt()
             )
             optimizer.update(model, result.gradients)
@@ -327,6 +351,11 @@ def run_canary(
                 {
                     "step": step,
                     "loss": result.value,
+                    "lexical_loss": result.evaluation.generated.value,
+                    "specialization_loss": result.evaluation.specialization.value,
+                    "branch_separations": list(
+                        result.evaluation.specialization.separations
+                    ),
                     "branch_values": list(result.branch_values),
                     "branch_weights": list(result.branch_weights),
                     "rollin_base_seed": rollin_seed,
@@ -340,7 +369,8 @@ def run_canary(
             model,
             validation_row,
             spec=spec,
-            config=objective_config,
+            generated_config=objective_config,
+            specialization_config=specialization_config,
             campaign_seed=seed,
         )
         separation_after = _branch_separations(
@@ -369,7 +399,9 @@ def run_canary(
         "generated_prefix_exercised": all(
             any(
                 branch["student_forced_positions"]
-                for branch in entry["objective_receipt"]["branches"]
+                for branch in entry["objective_receipt"]["generated_receipt"][
+                    "branches"
+                ]
             )
             for entry in loss_trail
         ),
@@ -383,10 +415,12 @@ def run_canary(
             for entry in loss_trail
         ),
         **_branch_specialization_gates(loss_trail, separation_after),
+        "heldout_lexical_non_regression": after["lexical_loss"]
+        <= before["lexical_loss"] + 1e-6,
     }
     body = {
         "schema": CANARY_SCHEMA,
-        "objective_schema": RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA,
+        "objective_schema": RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
         "source_commit": source_commit,
         "source_bindings": source_bindings,
         "model_path": str(model_path),
@@ -394,7 +428,10 @@ def run_canary(
         "base_after": base_after,
         "execution_spec": spec.to_dict(),
         "execution_spec_sha256": spec.sha256,
-        "objective_config": objective_config.to_dict(),
+        "objective_config": {
+            "generated": objective_config.to_dict(),
+            "specialization": specialization_config.to_dict(),
+        },
         "seed": seed,
         "steps": steps,
         "adapter_before_sha256": adapter_before,
@@ -407,6 +444,9 @@ def run_canary(
         "validation_after": after,
         "branch_separation_after": separation_after,
         "validation_loss_delta": after["loss"] - before["loss"],
+        "validation_lexical_loss_delta": (
+            after["lexical_loss"] - before["lexical_loss"]
+        ),
         "gates": gates,
         "passed": all(gates.values()),
         "claim_state": {
@@ -438,6 +478,7 @@ def main() -> int:
     parser.add_argument("--memory-fraction", type=float, default=0.35)
     parser.add_argument("--student-forcing-probability", type=float, default=0.5)
     parser.add_argument("--sampling-temperature", type=float, default=0.8)
+    parser.add_argument("--specialization-weight", type=float, default=8.0)
     args = parser.parse_args()
     receipt = run_canary(
         model_path=args.model.expanduser().resolve(strict=True),
@@ -447,6 +488,7 @@ def main() -> int:
         memory_fraction=args.memory_fraction,
         student_forcing_probability=args.student_forcing_probability,
         sampling_temperature=args.sampling_temperature,
+        specialization_weight=args.specialization_weight,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt["passed"] else 2

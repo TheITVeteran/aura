@@ -267,6 +267,15 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
             from core.learning.depth_conditioned_lora import current_depth_index
 
             lora_a, lora_b = bank.factors_for(current_depth_index())
+        role_bank = getattr(self, "role_bank", None)
+        if role_bank is not None:
+            from core.learning.role_conditioned_lora import current_branch_index
+
+            lora_a, lora_b = role_bank.factors_for(
+                lora_a,
+                lora_b,
+                current_branch_index(),
+            )
         z = (self.dropout(x) @ lora_a) @ lora_b
         block_index = getattr(self, "recurrence_block_index", None)
         site = getattr(self, "recurrence_site", None)

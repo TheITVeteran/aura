@@ -432,6 +432,7 @@ def attach_recurrent_policy_adapters(
     lora_dropout: float = 0.0,
     lora_scale: float = 20.0,
     depth_conditioned_steps: int | None = None,
+    role_conditioned_branches: int | None = None,
 ) -> tuple[str, ...]:
     """Attach the exact proof-campaign adapter topology to a frozen model.
 
@@ -467,6 +468,14 @@ def attach_recurrent_policy_adapters(
             and (
                 type(depth_conditioned_steps) is not int
                 or not 1 <= depth_conditioned_steps <= 64
+            )
+        )
+        or (
+            role_conditioned_branches is not None
+            and (
+                type(role_conditioned_branches) is not int
+                or not 2 <= role_conditioned_branches <= 32
+                or role_conditioned_branches != len(spec.branch_roles)
             )
         )
     ):
@@ -546,6 +555,15 @@ def attach_recurrent_policy_adapters(
         banks = wrap_depth_conditioned(model, depths=depth_conditioned_steps)
         if set(banks) != {site for *_identity, site in planned}:
             raise RuntimeError("depth-conditioned adapter topology drift")
+    if role_conditioned_branches is not None:
+        from core.learning.role_conditioned_lora import wrap_role_conditioned
+
+        role_banks = wrap_role_conditioned(
+            model,
+            branches=role_conditioned_branches,
+        )
+        if set(role_banks) != {site for *_identity, site in planned}:
+            raise RuntimeError("role-conditioned adapter topology drift")
     return tuple(site for _parent, _target, _projection, _index, site in planned)
 
 

@@ -2124,9 +2124,30 @@ class LatentCortexEngine:
         """
         import mlx.core as mx
 
-        runner.run(branch.workspace.seed_z, cache, 0, self.prelude_end, persist=True)
-        z_fin = runner.run(branch.z, cache, self.prelude_end, self.coda_start, persist=True)
-        z_out = runner.run(z_fin, cache, self.coda_start, self.n_layers, persist=True)
+        from core.learning.role_conditioned_lora import recurrent_branch_index
+
+        with recurrent_branch_index(branch.index):
+            runner.run(
+                branch.workspace.seed_z,
+                cache,
+                0,
+                self.prelude_end,
+                persist=True,
+            )
+            z_fin = runner.run(
+                branch.z,
+                cache,
+                self.prelude_end,
+                self.coda_start,
+                persist=True,
+            )
+            z_out = runner.run(
+                z_fin,
+                cache,
+                self.coda_start,
+                self.n_layers,
+                persist=True,
+            )
         logits = self._logits(
             z_out[:, -1:, :],
             budget=budget,
@@ -5822,7 +5843,10 @@ class LatentCortexEngine:
                 )
 
                 def fw_loss():
-                    z_pass = self._nocache_window_pass(winner.z)
+                    z_pass = self._nocache_window_pass(
+                        winner.z,
+                        branch_index=winner.index,
+                    )
                     return loss_fn(z_pass)
 
                 fast_weights.optimize(
@@ -5862,7 +5886,10 @@ class LatentCortexEngine:
                 )
 
                 def fw_sham_loss():
-                    z_pass = self._nocache_window_pass(winner.z)
+                    z_pass = self._nocache_window_pass(
+                        winner.z,
+                        branch_index=winner.index,
+                    )
                     return sham_loss_fn(z_pass)
 
                 fast_weights.optimize(
@@ -7138,15 +7165,16 @@ class LatentCortexEngine:
         mx.eval(logits)
         return logits
 
-    def _nocache_window_pass(self, z):
+    def _nocache_window_pass(self, z, *, branch_index: int):
         """Window pass with no cache (grad-safe: zero side effects)."""
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             recurrence_adapter_scope,
         )
+        from core.learning.role_conditioned_lora import recurrent_branch_index
 
         inner = self.model.model
         h = z
-        with recurrence_adapter_scope():
+        with recurrent_branch_index(branch_index), recurrence_adapter_scope():
             for i in range(self.prelude_end, self.coda_start):
                 h = inner.layers[i](h, None, None)
         return h

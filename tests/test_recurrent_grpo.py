@@ -231,6 +231,43 @@ def test_proof_campaign_depth_banks_are_trainable_and_reconstructable():
     )
 
 
+def test_proof_campaign_role_banks_are_trainable_and_reconstructable():
+    spec = _spec(
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    first = _model(seed=409)
+    second = _model(seed=409)
+    kwargs = {
+        "lora_rank": 2,
+        "lora_layers": 1,
+        "lora_targets": ("q_proj", "o_proj"),
+        "initialization_seed": 31,
+        "role_conditioned_branches": 2,
+    }
+
+    attach_recurrent_policy_adapters(first, spec, **kwargs)
+    attach_recurrent_policy_adapters(second, spec, **kwargs)
+    first_names = {name for name, _value in tree_flatten(first.trainable_parameters())}
+
+    assert any(name.endswith(".role_a.1") for name in first_names)
+    assert any(name.endswith(".role_b.1") for name in first_names)
+    assert recurrent_policy_sha256(first, spec) == recurrent_policy_sha256(
+        second,
+        spec,
+    )
+    with pytest.raises(ValueError, match="configuration"):
+        attach_recurrent_policy_adapters(
+            _model(seed=410),
+            spec,
+            role_conditioned_branches=3,
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key != "role_conditioned_branches"
+            },
+        )
+
+
 def test_proof_campaign_adapter_topology_preflight_prevents_partial_mutation():
     model = _model(seed=403)
 

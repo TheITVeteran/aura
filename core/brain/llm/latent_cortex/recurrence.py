@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -608,6 +608,7 @@ def recurrence_step(
     *,
     anchor=None,
     alpha_override: float | None = None,
+    branch_index: int | None = None,
 ):
     """One controlled update: window pass (rewound) + anchored RMSMatch + α-blend.
 
@@ -624,8 +625,14 @@ def recurrence_step(
     # cached engine.  Without this scope, a trained bank could pass offline
     # objectives while live inference silently used its default depth.
     from core.learning.depth_conditioned_lora import recurrent_depth_index
+    from core.learning.role_conditioned_lora import recurrent_branch_index
 
-    with recurrent_depth_index(step):
+    branch_scope = (
+        recurrent_branch_index(branch_index)
+        if branch_index is not None
+        else nullcontext()
+    )
+    with branch_scope, recurrent_depth_index(step):
         z_raw = runner.run(z, cache, start, end, persist=False)
     alpha = alpha_override if alpha_override is not None else alpha_at(config, step)
     reference = anchor if anchor is not None else z

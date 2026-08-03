@@ -695,6 +695,7 @@ class BranchEnsemble:
                     branch.steps,
                     anchor=branch.anchor,
                     alpha_override=alpha_override,
+                    branch_index=branch.index,
                 )
             proposal = branch.workspace.restore_context_evidence(proposal)
             proposal_evidence_post = _tensor_sha256(

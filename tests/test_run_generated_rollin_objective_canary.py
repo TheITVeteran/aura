@@ -75,10 +75,12 @@ def test_branch_specialization_gate_rejects_rng_or_state_collapse() -> None:
     collapsed = [
         {
             "objective_receipt": {
-                "branches": [
-                    {"generated_tokens_sha256": "a" * 64},
-                    {"generated_tokens_sha256": "a" * 64},
-                ]
+                "generated_receipt": {
+                    "branches": [
+                        {"generated_tokens_sha256": "a" * 64},
+                        {"generated_tokens_sha256": "a" * 64},
+                    ]
+                }
             }
         }
     ]
@@ -91,10 +93,12 @@ def test_branch_specialization_gate_rejects_rng_or_state_collapse() -> None:
     specialized = [
         {
             "objective_receipt": {
-                "branches": [
-                    {"generated_tokens_sha256": "a" * 64},
-                    {"generated_tokens_sha256": "b" * 64},
-                ]
+                "generated_receipt": {
+                    "branches": [
+                        {"generated_tokens_sha256": "a" * 64},
+                        {"generated_tokens_sha256": "b" * 64},
+                    ]
+                }
             }
         }
     ]
