@@ -103,6 +103,26 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+// The shell is served by a runtime on this same machine, so a shell asset
+// that has not answered in this long means the runtime is not serving it —
+// not that the network is slow. Past that point the cached copy is the better
+// answer and waiting only delays the window coming up.
+const SHELL_NETWORK_BUDGET_MS = 2000;
+
+const fetchWithinShellBudget = async (requestUrl) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SHELL_NETWORK_BUDGET_MS);
+  try {
+    return await fetch(requestUrl, {
+      cache: 'reload',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // ── Fetch: Network-first with cache fallback ──
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
@@ -139,11 +159,35 @@ self.addEventListener('fetch', (event) => {
     );
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_NAME);
+      // Network first — what the heading above this listener has always said,
+      // and what the code below it did not do.
+      //
+      // Cache-first pinned a window to one revision permanently. This worker
+      // is bound to the revision in its own script URL, and the only thing
+      // that could move a tab onto a newer worker was page JS that this same
+      // worker was serving out of that frozen cache. Reloading could not
+      // escape it: the reload was answered from the same cache. Measured live
+      // 2026-08-03 — a desktop window sat on a revision from hours earlier
+      // through four runtime restarts and three revision changes, showing
+      // "Conversation lane initializing" while /api/health reported
+      // conversation_ready: true.
+      //
+      // The server ignores the _aura_runtime query, so this returns what the
+      // runtime is serving NOW even when this worker is an old one. That is
+      // the property that makes the pin escapable.
+      try {
+        const response = await fetchWithinShellBudget(revisionUrl);
+        if (response && response.ok) {
+          await cache.put(revisionUrl, response.clone());
+          return response;
+        }
+      } catch (_err) {
+        // Offline, aborted, or the runtime is down. Fall through to cache —
+        // a stale shell beats no shell.
+      }
       const cachedResponse = await cache.match(revisionUrl);
       if (cachedResponse) return cachedResponse;
-      const response = await fetch(revisionUrl, { cache: 'reload', credentials: 'same-origin' });
-      if (response.ok) await cache.put(revisionUrl, response.clone());
-      return response;
+      return fetch(revisionUrl, { cache: 'reload', credentials: 'same-origin' });
     })());
     return;
   }
