@@ -36,21 +36,11 @@ from core.learning.recurrence_native_objective_v5 import (
     validate_generated_rollin_receipt,
 )
 
-RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA: Final = (
-    "aura.recurrence_native_objective.v6"
-)
-BRANCH_SPECIALIZATION_CONFIG_SCHEMA: Final = (
-    "aura.branch_specialization_config.v1"
-)
-BRANCH_SPECIALIZATION_RECEIPT_SCHEMA: Final = (
-    "aura.branch_specialization_receipt.v1"
-)
-COMPOSITE_RECEIPT_SCHEMA: Final = (
-    "aura.generated_rollin_specialization_receipt.v1"
-)
-EXACT_ADJOINT_ALGORITHM: Final = (
-    "materialized_recurrent_states_single_transition_reverse_v1"
-)
+RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA: Final = "aura.recurrence_native_objective.v6"
+BRANCH_SPECIALIZATION_CONFIG_SCHEMA: Final = "aura.branch_specialization_config.v1"
+BRANCH_SPECIALIZATION_RECEIPT_SCHEMA: Final = "aura.branch_specialization_receipt.v1"
+COMPOSITE_RECEIPT_SCHEMA: Final = "aura.generated_rollin_specialization_receipt.v1"
+EXACT_ADJOINT_ALGORITHM: Final = "recomputed_recurrent_states_single_transition_reverse_v2"
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -270,11 +260,7 @@ def _branch_indices(
     *,
     branch_count: int,
 ) -> tuple[int, ...]:
-    indices = (
-        tuple(range(branch_count))
-        if requested is None
-        else tuple(requested)
-    )
+    indices = tuple(range(branch_count)) if requested is None else tuple(requested)
     if (
         len(indices) < 2
         or len(indices) != len(set(indices))
@@ -305,8 +291,7 @@ def _weighted_penalty(
     if not separations:
         raise RuntimeError("branch specialization produced no branch pairs")
     raw = sum(
-        mx.maximum(float(config.target_separation) - separation, 0.0)
-        for separation in separations
+        mx.maximum(float(config.target_separation) - separation, 0.0) for separation in separations
     ) / len(separations)
     return float(config.weight) * raw
 
@@ -333,8 +318,7 @@ def _evaluation(
     mx.eval(measured)
     separations = tuple(float(value) for value in measured)
     raw = sum(
-        max(float(config.target_separation) - separation, 0.0)
-        for separation in separations
+        max(float(config.target_separation) - separation, 0.0) for separation in separations
     ) / len(separations)
     return BranchSpecializationEvaluation(
         value=float(config.weight) * raw,
@@ -351,7 +335,7 @@ def _evaluation(
     )
 
 
-def _materialized_recurrent_history(
+def _frozen_recurrent_prefix(
     model: Any,
     prompt_tokens: Sequence[int],
     *,
@@ -360,7 +344,6 @@ def _materialized_recurrent_history(
     tuple[Any, ...],
     tuple[Any, ...],
     tuple[Any, ...],
-    list[tuple[Any, ...]],
     int,
     int,
 ]:
@@ -383,29 +366,53 @@ def _materialized_recurrent_history(
 
     frozen_prompts = detached(prompts)
     frozen_anchors = detached(anchors)
-    history = [detached(initial_states)]
-    for step in range(spec.recurrent_steps):
+    frozen_initial_states = detached(initial_states)
+    return (
+        frozen_prompts,
+        frozen_anchors,
+        frozen_initial_states,
+        prelude_end,
+        coda_start,
+    )
+
+
+def _recomputed_recurrent_state(
+    model: Any,
+    prompts: tuple[Any, ...],
+    anchors: tuple[Any, ...],
+    initial_states: tuple[Any, ...],
+    *,
+    spec: RLCExecutionSpec,
+    recurrent_steps: int,
+    prelude_end: int,
+    coda_start: int,
+) -> tuple[Any, ...]:
+    """Replay a detached state with O(1) recurrent-state residency."""
+
+    import mlx.core as mx
+
+    if not 0 <= recurrent_steps <= spec.recurrent_steps:
+        raise ValueError("recurrent replay step is outside the execution spec")
+    states = initial_states
+    for step in range(recurrent_steps):
         outputs = _advance_recurrent_states(
             model,
-            frozen_prompts,
-            history[-1],
-            frozen_anchors,
+            prompts,
+            states,
+            anchors,
             spec,
             step,
             prelude_end,
             coda_start,
         )
-        history.append(detached(outputs))
+        next_states = tuple(mx.stop_gradient(value) for value in outputs)
+        mx.eval(next_states)
+        if states is not initial_states:
+            del states
         del outputs
+        states = next_states
         mx.clear_cache()
-    return (
-        frozen_prompts,
-        frozen_anchors,
-        history[0],
-        history,
-        prelude_end,
-        coda_start,
-    )
+    return states
 
 
 def branch_specialization_live_path_value_and_grad(
@@ -427,11 +434,10 @@ def branch_specialization_live_path_value_and_grad(
     (
         prompts,
         anchors,
-        _initial,
-        history,
+        initial_states,
         prelude_end,
         coda_start,
-    ) = _materialized_recurrent_history(
+    ) = _frozen_recurrent_prefix(
         model,
         prompt_tokens,
         spec=spec,
@@ -439,12 +445,19 @@ def branch_specialization_live_path_value_and_grad(
     layer_pattern = re.compile(r"model\.layers\.(\d+)\.")
     for path, _value in tree_flatten(parameters):
         match = layer_pattern.match(path)
-        if match is None or not (
-            prelude_end <= int(match.group(1)) < coda_start
-        ):
+        if match is None or not (prelude_end <= int(match.group(1)) < coda_start):
             raise RuntimeError("branch_specialization_requires_window_only_trainables")
 
-    final_states = history[-1]
+    final_states = _recomputed_recurrent_state(
+        model,
+        prompts,
+        anchors,
+        initial_states,
+        spec=spec,
+        recurrent_steps=spec.recurrent_steps,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+    )
 
     def final_objective(states: tuple[Any, ...]) -> Any:
         return _weighted_penalty(
@@ -456,9 +469,27 @@ def branch_specialization_live_path_value_and_grad(
 
     value, cotangents = mx.value_and_grad(final_objective)(final_states)
     mx.eval(value, cotangents)
+    evaluation = _evaluation(
+        final_states,
+        prompt_tokens=prompt_tokens,
+        spec=spec,
+        indices=indices,
+        config=resolved,
+    )
+    del final_states
+    mx.clear_cache()
     accumulated: Any | None = None
     for step in range(spec.recurrent_steps - 1, -1, -1):
-        prior_states = history[step]
+        prior_states = _recomputed_recurrent_state(
+            model,
+            prompts,
+            anchors,
+            initial_states,
+            spec=spec,
+            recurrent_steps=step,
+            prelude_end=prelude_end,
+            coda_start=coda_start,
+        )
 
         def transition_pullback(
             parameter_tree: Any,
@@ -499,6 +530,8 @@ def branch_specialization_live_path_value_and_grad(
         mx.eval(accumulated)
         cotangents = tuple(mx.stop_gradient(value) for value in incoming)
         mx.eval(cotangents)
+        if prior_states is not initial_states:
+            del prior_states
         del parameter_gradient, incoming
         mx.clear_cache()
 
@@ -508,13 +541,6 @@ def branch_specialization_live_path_value_and_grad(
     mx.eval(finite)
     if not finite or not all(bool(flag) for flag in finite):
         raise FloatingPointError("branch specialization gradient is non-finite")
-    evaluation = _evaluation(
-        final_states,
-        prompt_tokens=prompt_tokens,
-        spec=spec,
-        indices=indices,
-        config=resolved,
-    )
     if not math.isclose(
         evaluation.value,
         float(value),
@@ -540,13 +566,23 @@ def branch_specialization_live_path_loss(
 
     resolved = config or BranchSpecializationConfig()
     indices = _branch_indices(branch_indices, branch_count=len(spec.branch_roles))
-    *_prefix, history, _prelude_end, _coda_start = _materialized_recurrent_history(
+    prompts, anchors, initial_states, prelude_end, coda_start = _frozen_recurrent_prefix(
         model,
         prompt_tokens,
         spec=spec,
     )
+    final_states = _recomputed_recurrent_state(
+        model,
+        prompts,
+        anchors,
+        initial_states,
+        spec=spec,
+        recurrent_steps=spec.recurrent_steps,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+    )
     return _evaluation(
-        history[-1],
+        final_states,
         prompt_tokens=prompt_tokens,
         spec=spec,
         indices=indices,
@@ -588,9 +624,7 @@ def generated_rollin_specialization_value_and_grad(
     )
     mx.eval(specialization.gradients)
     specialization_evaluation = specialization.evaluation
-    structural_host = tree_map(
-        lambda value: np.array(value, copy=True), specialization.gradients
-    )
+    structural_host = tree_map(lambda value: np.array(value, copy=True), specialization.gradients)
     del specialization
     mx.synchronize()
     gc.collect()
@@ -735,8 +769,7 @@ def validate_branch_specialization_receipt(value: Mapping[str, Any]) -> dict[str
     ):
         raise ValueError("branch specialization comm slot is invalid")
     raw = sum(
-        max(float(config.target_separation) - float(item), 0.0)
-        for item in separations
+        max(float(config.target_separation) - float(item), 0.0) for item in separations
     ) / len(separations)
     weighted = float(config.weight) * raw
     for role, actual, expected in (
@@ -778,9 +811,7 @@ def validate_generated_rollin_specialization_receipt(
     ):
         raise ValueError("generated specialization receipt identity is invalid")
     generated = validate_generated_rollin_receipt(receipt["generated_receipt"])
-    specialization = validate_branch_specialization_receipt(
-        receipt["specialization_receipt"]
-    )
+    specialization = validate_branch_specialization_receipt(receipt["specialization_receipt"])
     expected = float(generated["value"]) + float(specialization["value"])
     for role, actual, target in (
         ("generated value", receipt["generated_value"], generated["value"]),
@@ -799,9 +830,9 @@ def validate_generated_rollin_specialization_receipt(
         ):
             raise ValueError(f"generated specialization {role} does not replay")
     body = {key: item for key, item in receipt.items() if key != "receipt_sha256"}
-    if not _valid_digest(receipt["receipt_sha256"]) or receipt[
-        "receipt_sha256"
-    ] != _sha256_json(body):
+    if not _valid_digest(receipt["receipt_sha256"]) or receipt["receipt_sha256"] != _sha256_json(
+        body
+    ):
         raise ValueError("generated specialization receipt commitment mismatch")
     return receipt
 

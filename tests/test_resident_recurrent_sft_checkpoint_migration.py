@@ -27,9 +27,7 @@ def _bindings(prefix: str) -> dict[str, str]:
     return {role: _sha(f"{prefix}:{role}") for role in BINDING_ROLES}
 
 
-def _state(
-    bindings: dict[str, str], *, sequence: int = 3, step: int = 2
-) -> dict[str, Any]:
+def _state(bindings: dict[str, str], *, sequence: int = 3, step: int = 2) -> dict[str, Any]:
     order = [2, 0, 1]
     losses = [{"step": 1, "loss": 2.0}, {"step": 2, "loss": 1.5}]
     return {
@@ -81,9 +79,9 @@ def _authority(root: Path, *, campaign: str, trainer_sha: str) -> dict[str, Any]
         "training_only": True,
         "gain_claim_allowed": False,
     }
-    trust_payload = json.dumps(
-        trust_document, sort_keys=True, separators=(",", ":")
-    ).encode("ascii")
+    trust_payload = json.dumps(trust_document, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    )
     trust_path.write_bytes(trust_payload)
     return {
         "authority_sha256": _sha(campaign),
@@ -126,9 +124,7 @@ def _authority(root: Path, *, campaign: str, trainer_sha: str) -> dict[str, Any]
 
 
 def _write_authority(path: Path, authority: dict[str, Any]) -> None:
-    path.write_bytes(
-        json.dumps(authority, sort_keys=True, separators=(",", ":")).encode("ascii")
-    )
+    path.write_bytes(json.dumps(authority, sort_keys=True, separators=(",", ":")).encode("ascii"))
 
 
 def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch, tmp_path):
@@ -153,6 +149,7 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
     _write_authority(destination_authority_path, destination_authority)
 
     monkeypatch.setattr(migration, "validate_authority", lambda value, **_kwargs: dict(value))
+
     def authority_bindings(authority):
         assert "_artifact_binding" not in authority
         return (
@@ -175,9 +172,7 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         destination_authority=destination_authority,
     )
     source_loaded = load_checkpoint(source_root, expected_bindings=source_bindings)
-    destination_loaded = load_checkpoint(
-        destination_root, expected_bindings=destination_bindings
-    )
+    destination_loaded = load_checkpoint(destination_root, expected_bindings=destination_bindings)
 
     assert receipt["changed_source_roles"] == ["trainer"]
     assert verified["migration_sha256"] == receipt["migration_sha256"]
@@ -188,14 +183,8 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         "loss_or_validation_history_reset": False,
     }
     assert {
-        key: value
-        for key, value in source_loaded.state.items()
-        if key not in BINDING_ROLES
-    } == {
-        key: value
-        for key, value in destination_loaded.state.items()
-        if key not in BINDING_ROLES
-    }
+        key: value for key, value in source_loaded.state.items() if key not in BINDING_ROLES
+    } == {key: value for key, value in destination_loaded.state.items() if key not in BINDING_ROLES}
     assert all(
         bool(mx.array_equal(source_loaded.adapter_tensors[key], value))
         for key, value in destination_loaded.adapter_tensors.items()
@@ -204,9 +193,10 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         bool(mx.array_equal(source_loaded.optimizer_tensors[key], value))
         for key, value in destination_loaded.optimizer_tensors.items()
     )
-    assert inspect_checkpoint(
-        destination_root, expected_bindings=destination_bindings
-    ).state["step"] == 2
+    assert (
+        inspect_checkpoint(destination_root, expected_bindings=destination_bindings).state["step"]
+        == 2
+    )
 
     source_optimizer = source_loaded.checkpoint_dir / "optimizer.safetensors"
     source_optimizer.write_bytes(source_optimizer.read_bytes() + b"drift")
@@ -229,9 +219,7 @@ def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):
     source_bindings = _bindings("source")
     _seed_checkpoint(source_root, source_bindings)
     source = _authority(source_root, campaign="source", trainer_sha=_sha("old"))
-    destination = _authority(
-        destination_root, campaign="destination", trainer_sha=_sha("fixed")
-    )
+    destination = _authority(destination_root, campaign="destination", trainer_sha=_sha("fixed"))
     destination["trainer"]["max_steps"] = 5
     source_path = tmp_path / "source.json"
     destination_path = tmp_path / "destination.json"
@@ -258,9 +246,7 @@ def test_source_transition_attestation_is_exact_hash_bound() -> None:
     source = {role: {"sha256": source_sha}}
     destination = {role: {"sha256": destination_sha}}
 
-    assert migration._source_transition_attestations(
-        source, destination, (role,)
-    ) == {
+    assert migration._source_transition_attestations(source, destination, (role,)) == {
         role: {
             "source_sha256": source_sha,
             "destination_sha256": destination_sha,
@@ -273,3 +259,19 @@ def test_source_transition_attestation_is_exact_hash_bound() -> None:
         match="source_change_not_authorized",
     ):
         migration._source_transition_attestations(source, destination, (role,))
+
+
+def test_recomputed_adjoint_transition_is_exact_hash_bound() -> None:
+    role = "specialization_objective"
+    source_sha = "8299def67d36726a4c82601210ef20ca530aef0ab7f5cb0691d5fbcacdd8b165"
+    destination_sha = "46ffabd2f81547b08a4353276014d4fd3159c0ca3249d9f6aa596782d03dc185"
+    source = {role: {"sha256": source_sha}}
+    destination = {role: {"sha256": destination_sha}}
+
+    assert migration._source_transition_attestations(source, destination, (role,)) == {
+        role: {
+            "source_sha256": source_sha,
+            "destination_sha256": destination_sha,
+            "attestation": "exact_recomputed_adjoint_v2",
+        }
+    }
