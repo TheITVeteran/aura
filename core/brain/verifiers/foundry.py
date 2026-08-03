@@ -806,3 +806,28 @@ def get_verifier_foundry() -> VerifierFoundry:
             if _foundry is None:
                 _foundry = VerifierFoundry()
     return _foundry
+
+
+def boot_verifier_foundry() -> VerifierFoundry:
+    """Build the foundry and publish it on the service spine.
+
+    aura_main has imported this name since the foundry landed, and it was
+    never defined — so every boot logged "Verifier Foundry boot failed:
+    cannot import name 'boot_verifier_foundry'", degraded, and carried on
+    without it. The failure was recorded honestly and still meant the
+    foundry had never once been live. Mirrors boot_verifier_curriculum.
+    """
+
+    foundry = get_verifier_foundry()
+    try:
+        from core.container import ServiceContainer
+
+        ServiceContainer.register_instance("verifier_foundry", foundry, required=False)
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "verifier_foundry",
+            exc,
+            severity="warning",
+            action="foundry built but not registered on the service container",
+        )
+    return foundry
