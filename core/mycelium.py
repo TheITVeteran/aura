@@ -1,12 +1,22 @@
 """
-Mycelial Network v3.0 — Enterprise-Grade Unblockable Root System
-================================================================
+Mycelial Network v3.0 — Direct Root System
+==========================================
 
 Inspired by Physarum polycephalum (slime mold), this module provides:
 
 1. **HardwiredPathways**: Regex-based intent→skill mappings with parameter extraction.
-   These are the "direct roots" — unblockable, priority-#1 connections that bypass
-   the LLM reasoning loop entirely.
+   These are the "direct roots": they skip the LLM reasoning loop, not the
+   constitutional effect boundary. A matched pathway is a ROUTING proposal.
+   Every consumer that turns one into an effect passes it through the same
+   authority gate as any other action — ``allow_direct_user_shortcut`` for the
+   incoming lane, ``approve_response`` for a direct reflex — and a pathway that
+   the gate declines yields to the governed path.
+
+   This file used to call them "unblockable" and say they "bypass the LLM
+   reasoning loop entirely". The runtime never granted the first and the second
+   was read as licence for the first (CP126 39f4805f). The description is now
+   the contract, and ``tests/test_mycelium_roots_are_governed.py`` holds every
+   effect-producing consumer to it.
 
 2. **Physarum Reinforcement**: Pathways strengthen on success, weaken on failure.
    Conductivity naturally converges to the most reliable routes.
@@ -186,6 +196,34 @@ _TOPOLOGY_EVIDENCE_DISCLOSURE = {
         "declared": "named in configuration, never exercised",
     },
 }
+
+#: What may precede an instruction and still leave it an instruction: an address
+#: to Aura, an interjection, a courtesy. Anything else before the verb means the
+#: verb is being talked about rather than issued (CP126 961f7fae).
+_ROUTE_UTTERANCE_PREFIX = (
+    r"^\s*(?:(?:hey|hi|hello|ok|okay|yo)\b[\s,]*)?"
+    r"(?:aura\b[\s,:]*)?"
+    r"(?:(?:can|could|would|will)\s+you\s+)?"
+    r"(?:please\s+)?"
+    r"(?:go\s+(?:ahead\s+)?and\s+)?"
+    r"(?:just\s+)?"
+)
+
+
+def _unit_reading(value: Any) -> float | None:
+    """A telemetry reading in [0, 1], or None when there isn't one.
+
+    None covers absent, non-numeric, non-finite and out-of-range alike, because
+    the caller's only correct response to any of them is the same: do not act on
+    a number you did not get (CP126 d926886e).
+    """
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    reading = float(value)
+    if not math.isfinite(reading) or not 0.0 <= reading <= 1.0:
+        return None
+    return reading
+
 
 _MODULE_NAME_SEPARATORS = re.compile(r"[./\\_]+")
 
@@ -394,7 +432,12 @@ _FOREGROUND_MAPPING_QUIET_FLAG = declare(
 # ---------------------------------------------------------------------------
 
 class HardwiredPathway(BaseModel):
-    """A direct, unblockable connection from an intent pattern to a skill."""
+    """A direct connection from an intent pattern to a skill.
+
+    Direct means it skips intent classification, not that it skips governance:
+    a match is a routing proposal that the caller's authority gate still has to
+    admit (CP126 39f4805f).
+    """
     pathway_id: str
     pattern: Any  # Union[str, re.Pattern]
     skill_name: str
@@ -944,17 +987,25 @@ class MycelialNetwork:
 
     def _apply_session_reinforcement_locked(self, pathway_id: str, success: bool) -> None:
         """Move this session's view of a pathway without touching the vault."""
+        self._apply_session_confidence_delta_locked(
+            pathway_id,
+            HardwiredPathway.UNVERIFIED_REINFORCE_DELTA
+            if success
+            else -HardwiredPathway.WEAKEN_DELTA,
+        )
+
+    def _apply_session_confidence_delta_locked(
+        self, pathway_id: str, delta: float
+    ) -> None:
+        """Accumulate a session-only confidence adjustment, bounded."""
+        if not math.isfinite(delta):
+            return
         deltas = getattr(self, "_session_confidence", None)
         if deltas is None:
             deltas = {}
             object.__setattr__(self, "_session_confidence", deltas)
-        delta = (
-            HardwiredPathway.UNVERIFIED_REINFORCE_DELTA
-            if success
-            else -HardwiredPathway.WEAKEN_DELTA
-        )
         current = float(deltas.get(pathway_id, 0.0))
-        deltas[pathway_id] = max(-1.0, min(1.0, current + delta))
+        deltas[pathway_id] = max(-1.0, min(1.0, current + float(delta)))
         if len(deltas) > self._MAX_SESSION_CONFIDENCE_ENTRIES:
             for stale in list(deltas)[: len(deltas) - self._MAX_SESSION_CONFIDENCE_ENTRIES]:
                 deltas.pop(stale, None)
@@ -984,17 +1035,34 @@ class MycelialNetwork:
             self._publish_topology_read_models_locked()
 
     def _setup_default_pathways(self):
-        """Register action routes; conversation remains owned by CognitiveEngine."""
+        """Register action routes; conversation remains owned by CognitiveEngine.
+
+        CP126 961f7fae. These patterns were unanchored, and routing searches
+        rather than matches — so ``system check`` fired the self-repair action
+        from "what does a system check actually do?", "don't run a system check
+        yet" and "IT already did a system check", and ``google`` fired a web
+        search from "my google account password". An action dispatched from a
+        substring of a sentence that was not a request for it is the whole
+        defect.
+
+        Each pattern is now anchored to the start of the utterance, past an
+        optional address or courtesy lead-in, so it fires on an instruction and
+        not on a mention. ``tests/test_mycelium_default_route_precision.py``
+        carries the negative controls.
+        """
         self.register_pathway(
             "direct_web_search",
-            r"(?:search (?:the web )?for|look up|google|find info on)\s+(.+)",
+            _ROUTE_UTTERANCE_PREFIX
+            + r"(?:search (?:the web )?for|look up|google|find info on)\s+(.+)",
             "search_web",
             priority=1.5,
             activity_label="🔍 Searching the Intelligence Web"
         )
         self.register_pathway(
             "direct_self_repair",
-            r"(?:run a self-diag|diagnose yourself|system check|repair yourself|fix system)",
+            _ROUTE_UTTERANCE_PREFIX
+            + r"(?:run a self-diag|diagnose yourself|repair yourself"
+            r"|(?:run|do) a system check|system check\b|fix system\b)",
             "self_repair",
             priority=1.5,
             activity_label="🧬 Running Self-Diagnostics"
@@ -1910,38 +1978,59 @@ class MycelialNetwork:
                 self._apply_session_reinforcement_locked(str(pathway_id), success)
                 pw.record_unverified_reinforcement()
 
-        # --- QUALIA-WEIGHTED REINFORCEMENT ---
-        # If consciousness is "resonating" during this execution,
-        # apply an extra confidence boost (or penalty) to the pathway.
+        # --- QUALIA-WEIGHTED REINFORCEMENT (session lane only) ---
+        # CP126 d926886e. Phenomenal intensity says how vividly Aura was
+        # experiencing when a route fired. It says nothing about whether the
+        # route worked, so it is not evidence about the route — and this block
+        # was writing pw.confidence directly, straight past the evidence gate
+        # the code above had just applied. An ASSERTED-only outcome that the
+        # gate had confined to this session became durable anyway, as long as
+        # q_norm happened to be high.
+        #
+        # Two further defects made it worse. Neither q_norm nor arousal was
+        # validated — an out-of-range or non-finite reading scaled the bonus
+        # without limit, and a missing experiencer substituted 0.5 as though an
+        # unmeasured arousal were a measured middling one. And the clamps were
+        # min(10.0)/max(0.1) while a pathway's declared range is
+        # [MIN_CONFIDENCE, MAX_CONFIDENCE] = [0.05, 1.0], so qualia could push
+        # a route to ten times its own ceiling and permanently distort is_weak,
+        # cohesion and routing rank.
+        #
+        # It now modulates only the session view, within the declared range,
+        # and only from readings that are actually present and in range.
         try:
             from core.container import ServiceContainer
             qualia = ServiceContainer.get("qualia_synthesizer", default=None)
-            if qualia and qualia.q_norm > 0.5:
-                # Evolution 8: Weight by Phenomenological Arousal
-                experiencer = ServiceContainer.get("phenomenological_experiencer", default=None)
-                arousal = getattr(experiencer, 'current_arousal', 0.5) if experiencer else 0.5
-                
-                # Scale bonus by how far above threshold
-                qualia_bonus = (qualia.q_norm - 0.5) * 0.1 * (arousal * 2.0)
-                with MycelialNetwork._lock:
-                    if self._active_owner_locked() is not self:
-                        return
-                    current = self.pathways.get(pathway_id)
-                    if current is None:
-                        return
-                    pw = current
-                    if success:
-                        pw.confidence = min(10.0, pw.confidence + qualia_bonus)
-                    else:
-                        pw.confidence = max(
-                            0.1,
-                            pw.confidence - qualia_bonus * 0.5,
-                        )
-                    self._mark_topology_mutated_locked()
-                logger.debug(
-                    "🍄 [MYCELIUM] 🧠 Qualia-weighted reinforcement: '%s' ±%.3f (q=%.2f, a=%.2f)",
-                    pathway_id, qualia_bonus, qualia.q_norm, arousal
+            q_norm = _unit_reading(getattr(qualia, "q_norm", None))
+            if q_norm is not None and q_norm > 0.5:
+                experiencer = ServiceContainer.get(
+                    "phenomenological_experiencer", default=None
                 )
+                arousal = _unit_reading(getattr(experiencer, "current_arousal", None))
+                if arousal is None:
+                    # Unmeasured arousal is not middling arousal. Skip the
+                    # weighting rather than inventing the missing half of it.
+                    logger.debug(
+                        "🍄 [MYCELIUM] Qualia weighting skipped for '%s': arousal "
+                        "is unmeasured.",
+                        pathway_id,
+                    )
+                else:
+                    qualia_bonus = (q_norm - 0.5) * 0.1 * (arousal * 2.0)
+                    with MycelialNetwork._lock:
+                        if self._active_owner_locked() is not self:
+                            return
+                        if self.pathways.get(pathway_id) is None:
+                            return
+                        self._apply_session_confidence_delta_locked(
+                            str(pathway_id),
+                            qualia_bonus if success else -qualia_bonus * 0.5,
+                        )
+                    logger.debug(
+                        "🍄 [MYCELIUM] 🧠 Qualia-weighted session adjustment: "
+                        "'%s' ±%.3f (q=%.2f, a=%.2f)",
+                        pathway_id, qualia_bonus, q_norm, arousal
+                    )
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('mycelium', e)
             capture_and_log(e, {'module': __name__})

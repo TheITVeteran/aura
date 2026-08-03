@@ -145,3 +145,125 @@ def test_the_call_site_no_longer_hardcodes_success():
     source = inspect.getsource(response_processing)
     assert "mycelium.reinforce(pw.pathway_id, success=True)" not in source
     assert "_tool_result_succeeded(result)" in source
+
+
+# ── Phenomenal telemetry is not evidence about a route (CP126 d926886e) ──
+
+
+class _Qualia:
+    def __init__(self, q_norm):
+        self.q_norm = q_norm
+
+
+class _Experiencer:
+    def __init__(self, arousal):
+        self.current_arousal = arousal
+
+
+@pytest.fixture()
+def network():
+    from core.mycelium import MycelialNetwork
+
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+    net = MycelialNetwork()
+    net.register_pathway(pathway_id="p", pattern=r"go", skill_name="s")
+    yield net
+    MycelialNetwork._instance = None
+    MycelialNetwork._initialized = False
+
+
+@pytest.fixture()
+def resonating(monkeypatch):
+    """Install a high-intensity qualia reading the routing lane can see."""
+    def _install(q_norm=0.9, arousal=0.8):
+        from core.container import ServiceContainer
+
+        services = {
+            "qualia_synthesizer": _Qualia(q_norm),
+            "phenomenological_experiencer": _Experiencer(arousal),
+        }
+        monkeypatch.setattr(
+            ServiceContainer,
+            "get",
+            classmethod(lambda cls, name, default=None: services.get(name, default)),
+        )
+    return _install
+
+
+def test_qualia_cannot_write_durable_confidence(network, resonating):
+    """The block wrote pw.confidence directly, straight past the evidence gate
+    the reinforcement path had just applied."""
+    resonating()
+    before = network.pathways["p"].confidence
+
+    network.reinforce("p", success=True)  # asserted only — not durable
+
+    assert network.pathways["p"].confidence == before
+
+
+def test_qualia_still_moves_the_session_view(network, resonating):
+    resonating()
+    before = network.effective_confidence("p")
+
+    network.reinforce("p", success=True)
+
+    assert network.effective_confidence("p") > before
+
+
+def test_qualia_cannot_exceed_the_declared_confidence_ceiling(network, resonating):
+    """The old clamp was min(10.0, ...) against a declared ceiling of 1.0."""
+    from core.mycelium import HardwiredPathway
+
+    resonating(q_norm=1.0, arousal=1.0)
+    for _ in range(200):
+        network.reinforce("p", success=True)
+
+    assert network.pathways["p"].confidence <= HardwiredPathway.MAX_CONFIDENCE
+    assert network.effective_confidence("p") <= HardwiredPathway.MAX_CONFIDENCE
+
+
+def _unweighted_delta(network):
+    """The ordinary unverified session step, with no qualia weighting at all.
+
+    The comparison has to be against this rather than against "did not move":
+    an unverified success moves the session view on its own, and the question
+    here is only whether a bad phenomenal reading added anything on top.
+    """
+    before = network.effective_confidence("p")
+    network.reinforce("p", success=True)
+    return network.effective_confidence("p") - before
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, 42.0, "0.9", None])
+def test_an_out_of_range_qualia_reading_is_not_acted_on(network, resonating, bad):
+    control = _unweighted_delta(network)  # no qualia service installed yet
+    resonating(q_norm=bad)
+
+    assert _unweighted_delta(network) == pytest.approx(control)
+
+
+def test_unmeasured_arousal_is_not_treated_as_half(network, resonating):
+    """The old code defaulted a missing arousal to 0.5 and weighted with it."""
+    control = _unweighted_delta(network)
+    resonating(q_norm=0.9, arousal=None)
+
+    assert _unweighted_delta(network) == pytest.approx(control)
+
+
+def test_a_valid_reading_does_add_on_top_of_the_ordinary_step(network, resonating):
+    """The guard must not have simply disabled the feature."""
+    control = _unweighted_delta(network)
+    resonating(q_norm=0.9, arousal=0.8)
+
+    assert _unweighted_delta(network) > control
+
+
+def test_the_unit_reading_guard_rejects_what_it_should():
+    from core.mycelium import _unit_reading
+
+    assert _unit_reading(0.0) == 0.0
+    assert _unit_reading(1.0) == 1.0
+    assert _unit_reading(0.5) == 0.5
+    for bad in (None, True, False, "0.5", float("nan"), float("inf"), -0.1, 1.1):
+        assert _unit_reading(bad) is None
