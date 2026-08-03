@@ -38,6 +38,14 @@ from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     generated_rollin_live_path_value_and_grad,
     validate_generated_rollin_receipt,
 )
+from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
+    branch_specialization_live_path_loss,
+    branch_specialization_live_path_value_and_grad,
+    generated_rollin_specialization_loss,
+    generated_rollin_specialization_value_and_grad,
+    validate_branch_specialization_receipt,
+    validate_generated_rollin_specialization_receipt,
+)
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
 )
@@ -49,6 +57,7 @@ from core.learning.recurrent_sft_execution import (  # noqa: E402
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
     OBJECTIVE_NAME,
     OBJECTIVE_NAME_V2,
+    OBJECTIVE_NAME_V3,
     ResidentSFTBootstrapConfig,
     authorize_bound_artifacts,
     sha256_bytes,
@@ -96,6 +105,8 @@ STATUS_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_status.v1"
 RESUME_POLICIES: Final = frozenset({"never", "auto", "required"})
 MAX_DOCUMENT_BYTES: Final = 256 * 1024 * 1024
 INTERRUPTED = False
+STRUCTURAL_WARMUP_PHASE: Final = "structural_warmup"
+JOINT_PHASE: Final = "joint"
 
 
 class ResidentSFTBootstrapTrainingError(RuntimeError):
@@ -327,7 +338,7 @@ def _validation_summary(
             branch_weights: list[float] | None = None
             objective_receipt: dict[str, Any] | None = None
             rollin_base_seed: int | None = None
-        elif objective_name == OBJECTIVE_NAME_V2:
+        elif objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3}:
             if config.generated_rollin is None:
                 _fail("resident_sft_trainer_rollin_config_missing")
             rollin_base_seed = derive_rollin_seed(
@@ -337,20 +348,54 @@ def _validation_summary(
                 sample_ordinal=sample_ordinal,
                 execution_spec_sha256=row_spec.sha256,
             )
-            result = generated_rollin_live_path_loss(
-                model,
-                row["prompt_tokens"],
-                row["answer_tokens"],
-                spec=row_spec,
-                base_seed=rollin_base_seed,
-                config=config.generated_rollin,
-                bridge_tokens=row["bridge_tokens"],
-                branch_indices=config.branch_indices,
-            )
-            branch_weights = list(result.branch_weights)
-            objective_receipt = validate_generated_rollin_receipt(result.receipt())
+            if objective_name == OBJECTIVE_NAME_V2:
+                result = generated_rollin_live_path_loss(
+                    model,
+                    row["prompt_tokens"],
+                    row["answer_tokens"],
+                    spec=row_spec,
+                    base_seed=rollin_base_seed,
+                    config=config.generated_rollin,
+                    bridge_tokens=row["bridge_tokens"],
+                    branch_indices=config.branch_indices,
+                )
+                branch_weights = list(result.branch_weights)
+                objective_receipt = validate_generated_rollin_receipt(
+                    result.receipt()
+                )
+                answer_token_count = result.answer_token_count
+                lexical_loss = result.value
+                specialization_loss = None
+                branch_separations: list[float] | None = None
+            else:
+                if config.branch_specialization is None:
+                    _fail("resident_sft_trainer_specialization_config_missing")
+                result = generated_rollin_specialization_loss(
+                    model,
+                    row["prompt_tokens"],
+                    row["answer_tokens"],
+                    spec=row_spec,
+                    base_seed=rollin_base_seed,
+                    generated_config=config.generated_rollin,
+                    specialization_config=config.branch_specialization,
+                    bridge_tokens=row["bridge_tokens"],
+                    branch_indices=config.branch_indices,
+                )
+                branch_weights = list(result.branch_weights)
+                objective_receipt = validate_generated_rollin_specialization_receipt(
+                    result.receipt()
+                )
+                answer_token_count = result.generated.answer_token_count
+                lexical_loss = result.generated.value
+                specialization_loss = result.specialization.value
+                branch_separations = list(result.specialization.separations)
         else:
             _fail("resident_sft_trainer_objective_unsupported")
+        if objective_name == OBJECTIVE_NAME:
+            answer_token_count = result.answer_token_count
+            lexical_loss = result.value
+            specialization_loss = None
+            branch_separations = None
         if (
             result.execution_spec_sha256 != row_spec.sha256
             or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
@@ -362,7 +407,7 @@ def _validation_summary(
             "example_id": row["example_id"],
             "loss": result.value,
             "branch_values": list(result.branch_values),
-            "answer_token_count": result.answer_token_count,
+            "answer_token_count": answer_token_count,
             "requested_recurrent_depth": row["depth"],
             "executed_recurrent_depth": row_spec.recurrent_steps,
             "execution_spec_sha256": row_spec.sha256,
@@ -380,6 +425,16 @@ def _validation_summary(
                     "objective_receipt": objective_receipt,
                 }
             )
+        if objective_name == OBJECTIVE_NAME_V3:
+            assert specialization_loss is not None
+            assert branch_separations is not None
+            record.update(
+                {
+                    "lexical_loss": lexical_loss,
+                    "specialization_loss": specialization_loss,
+                    "branch_separations": branch_separations,
+                }
+            )
         records.append(record)
     mean = sum(record["loss"] for record in records) / len(records)
     body = {
@@ -395,9 +450,58 @@ def _validation_summary(
         ),
         "branch_indices": list(config.branch_indices),
     }
-    if objective_name == OBJECTIVE_NAME_V2:
+    if objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3}:
         body["objective"] = objective_name
     return {**body, "receipt_sha256": sha256_json(body)}
+
+
+def _optimizer_phase_from_checkpoint(
+    config: ResidentSFTBootstrapConfig,
+    loss_trail: Sequence[Mapping[str, Any]],
+) -> str:
+    if config.objective != OBJECTIVE_NAME_V3:
+        return JOINT_PHASE
+    if not loss_trail:
+        return STRUCTURAL_WARMUP_PHASE
+    phase = loss_trail[-1].get("phase")
+    if phase not in {STRUCTURAL_WARMUP_PHASE, JOINT_PHASE}:
+        _fail("resident_sft_trainer_optimizer_phase_missing")
+    return str(phase)
+
+
+def _next_training_phase(
+    config: ResidentSFTBootstrapConfig,
+    loss_trail: Sequence[Mapping[str, Any]],
+) -> str:
+    if config.objective != OBJECTIVE_NAME_V3:
+        return JOINT_PHASE
+    warmup = [
+        record
+        for record in loss_trail
+        if record.get("phase") == STRUCTURAL_WARMUP_PHASE
+    ]
+    if any(record.get("warmup_target_reached") is True for record in warmup):
+        return JOINT_PHASE
+    if len(warmup) >= config.structural_warmup_steps:
+        _fail("resident_sft_trainer_structural_warmup_target_not_reached")
+    return STRUCTURAL_WARMUP_PHASE
+
+
+def _make_optimizer(config: ResidentSFTBootstrapConfig, phase: str, optim: Any) -> Any:
+    if phase == STRUCTURAL_WARMUP_PHASE:
+        if config.objective != OBJECTIVE_NAME_V3:
+            _fail("resident_sft_trainer_structural_optimizer_unsupported")
+        learning_rate = config.structural_warmup_learning_rate
+        weight_decay = 0.0
+    elif phase == JOINT_PHASE:
+        learning_rate = config.learning_rate
+        weight_decay = config.weight_decay
+    else:
+        _fail("resident_sft_trainer_optimizer_phase_invalid")
+    return optim.AdamW(
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+    )
 
 
 def _publish_sampling_receipt(
@@ -701,6 +805,11 @@ def _run(args: argparse.Namespace) -> int:
                 depth_conditioned_steps=max(
                     row["depth"] for row in (*projected_train, *projected_validation)
                 ),
+                role_conditioned_branches=(
+                    config.role_conditioned_branches
+                    if config.objective == OBJECTIVE_NAME_V3
+                    else None
+                ),
             )
             if len(attached) != config.lora_layers * len(config.lora_targets):
                 _fail("resident_sft_trainer_adapter_attachment_count_drift")
@@ -708,10 +817,12 @@ def _run(args: argparse.Namespace) -> int:
             mx.eval(expected_adapter)
             initial_adapter_sha = adapter_tensor_fingerprint(expected_adapter)
             topology_sha = adapter_topology_sha256(expected_adapter)
-            optimizer = optim.AdamW(
-                learning_rate=config.learning_rate,
-                weight_decay=config.weight_decay,
+            optimizer_phase = (
+                STRUCTURAL_WARMUP_PHASE
+                if config.objective == OBJECTIVE_NAME_V3
+                else JOINT_PHASE
             )
+            optimizer = _make_optimizer(config, optimizer_phase, optim)
             optimizer.init(model.trainable_parameters())
 
             step = 0
@@ -754,6 +865,11 @@ def _run(args: argparse.Namespace) -> int:
                     _fail("resident_sft_trainer_resume_adapter_identity_drift")
                 loaded_adapter_sha = adapter_tensor_fingerprint(loaded.adapter_tensors)
                 model.load_weights(list(loaded.adapter_tensors.items()), strict=False)
+                optimizer_phase = _optimizer_phase_from_checkpoint(
+                    config,
+                    state["loss_trail"],
+                )
+                optimizer = _make_optimizer(config, optimizer_phase, optim)
                 optimizer.state = tree_unflatten(list(loaded.optimizer_tensors.items()))
                 optimizer.init(model.trainable_parameters())
                 mx.eval(model.trainable_parameters(), optimizer.state)
@@ -890,6 +1006,13 @@ def _run(args: argparse.Namespace) -> int:
                     out_custody.verify()
                 row = projected_train[order[cursor]]
                 row_spec = execution_spec_for_projected_row(row, base_spec=spec)
+                training_phase = _next_training_phase(config, loss_trail)
+                if training_phase != optimizer_phase:
+                    del optimizer
+                    optimizer = _make_optimizer(config, training_phase, optim)
+                    optimizer.init(model.trainable_parameters())
+                    mx.eval(optimizer.state)
+                    optimizer_phase = training_phase
                 before_update = adapter_tensor_fingerprint(adapter_tensor_dict(model))
                 if config.objective == OBJECTIVE_NAME:
                     result = cached_supervised_live_path_value_and_grad(
@@ -902,6 +1025,16 @@ def _run(args: argparse.Namespace) -> int:
                     )
                     rollin_base_seed = None
                     objective_receipt = None
+                    objective_execution_spec_sha256 = result.execution_spec_sha256
+                    objective_prompt_tokens_sha256 = result.prompt_tokens_sha256
+                    objective_answer_tokens_sha256: str | None = (
+                        result.answer_tokens_sha256
+                    )
+                    branch_values = list(result.branch_values)
+                    branch_weights: list[float] | None = None
+                    lexical_loss = result.value
+                    specialization_loss: float | None = None
+                    branch_separations: list[float] | None = None
                 elif config.objective == OBJECTIVE_NAME_V2:
                     if config.generated_rollin is None:
                         _fail("resident_sft_trainer_rollin_config_missing")
@@ -925,12 +1058,98 @@ def _run(args: argparse.Namespace) -> int:
                     objective_receipt = validate_generated_rollin_receipt(
                         result.evaluation.receipt()
                     )
+                    objective_execution_spec_sha256 = result.execution_spec_sha256
+                    objective_prompt_tokens_sha256 = result.prompt_tokens_sha256
+                    objective_answer_tokens_sha256 = result.answer_tokens_sha256
+                    branch_values = list(result.branch_values)
+                    branch_weights = list(result.branch_weights)
+                    lexical_loss = result.value
+                    specialization_loss = None
+                    branch_separations = None
+                elif config.objective == OBJECTIVE_NAME_V3:
+                    if config.branch_specialization is None:
+                        _fail("resident_sft_trainer_specialization_config_missing")
+                    if training_phase == STRUCTURAL_WARMUP_PHASE:
+                        rollin_base_seed = None
+                        result = branch_specialization_live_path_value_and_grad(
+                            model,
+                            row["prompt_tokens"],
+                            spec=row_spec,
+                            config=config.branch_specialization,
+                            branch_indices=config.branch_indices,
+                        )
+                        objective_receipt = validate_branch_specialization_receipt(
+                            result.evaluation.receipt()
+                        )
+                        objective_execution_spec_sha256 = (
+                            result.evaluation.execution_spec_sha256
+                        )
+                        objective_prompt_tokens_sha256 = (
+                            result.evaluation.prompt_tokens_sha256
+                        )
+                        objective_answer_tokens_sha256 = None
+                        branch_values = []
+                        branch_weights = None
+                        lexical_loss = None
+                        specialization_loss = result.value
+                        branch_separations = list(
+                            result.evaluation.separations
+                        )
+                    else:
+                        if config.generated_rollin is None:
+                            _fail("resident_sft_trainer_rollin_config_missing")
+                        rollin_base_seed = derive_rollin_seed(
+                            campaign_seed=config.seed,
+                            phase="train",
+                            example_id=row["example_id"],
+                            sample_ordinal=step + 1,
+                            execution_spec_sha256=row_spec.sha256,
+                        )
+                        result = generated_rollin_specialization_value_and_grad(
+                            model,
+                            row["prompt_tokens"],
+                            row["answer_tokens"],
+                            spec=row_spec,
+                            base_seed=rollin_base_seed,
+                            generated_config=config.generated_rollin,
+                            specialization_config=config.branch_specialization,
+                            bridge_tokens=row["bridge_tokens"],
+                            branch_indices=config.branch_indices,
+                        )
+                        objective_receipt = (
+                            validate_generated_rollin_specialization_receipt(
+                                result.evaluation.receipt()
+                            )
+                        )
+                        objective_execution_spec_sha256 = (
+                            result.execution_spec_sha256
+                        )
+                        objective_prompt_tokens_sha256 = (
+                            result.prompt_tokens_sha256
+                        )
+                        objective_answer_tokens_sha256 = (
+                            result.answer_tokens_sha256
+                        )
+                        branch_values = list(result.branch_values)
+                        branch_weights = list(result.branch_weights)
+                        lexical_loss = result.evaluation.generated.value
+                        specialization_loss = (
+                            result.evaluation.specialization.value
+                        )
+                        branch_separations = list(
+                            result.evaluation.specialization.separations
+                        )
                 else:
                     _fail("resident_sft_trainer_objective_unsupported")
                 if (
-                    result.execution_spec_sha256 != row_spec.sha256
-                    or result.prompt_tokens_sha256 != sha256_json(row["prompt_tokens"])
-                    or result.answer_tokens_sha256 != sha256_json(row["answer_tokens"])
+                    objective_execution_spec_sha256 != row_spec.sha256
+                    or objective_prompt_tokens_sha256
+                    != sha256_json(row["prompt_tokens"])
+                    or (
+                        objective_answer_tokens_sha256 is not None
+                        and objective_answer_tokens_sha256
+                        != sha256_json(row["answer_tokens"])
+                    )
                     or not math.isfinite(result.value)
                 ):
                     _fail("resident_sft_trainer_objective_identity_drift")
@@ -940,6 +1159,21 @@ def _run(args: argparse.Namespace) -> int:
                 after_update = adapter_tensor_fingerprint(adapter)
                 if after_update == before_update:
                     _fail("resident_sft_trainer_optimizer_update_noop")
+                warmup_target_reached: bool | None = None
+                separations_after: list[float] | None = None
+                if training_phase == STRUCTURAL_WARMUP_PHASE:
+                    assert config.branch_specialization is not None
+                    post_update = branch_specialization_live_path_loss(
+                        model,
+                        row["prompt_tokens"],
+                        spec=row_spec,
+                        config=config.branch_specialization,
+                        branch_indices=config.branch_indices,
+                    )
+                    separations_after = list(post_update.separations)
+                    warmup_target_reached = min(separations_after) >= float(
+                        config.branch_specialization.target_separation
+                    )
                 step += 1
                 cursor += 1
                 sample_history = advance_sample_history(
@@ -955,7 +1189,7 @@ def _run(args: argparse.Namespace) -> int:
                     "cursor": cursor,
                     "example_id": row["example_id"],
                     "loss": result.value,
-                    "branch_values": list(result.branch_values),
+                    "branch_values": branch_values,
                     "requested_recurrent_depth": row["depth"],
                     "executed_recurrent_depth": row_spec.recurrent_steps,
                     "execution_spec_sha256": row_spec.sha256,
@@ -963,17 +1197,42 @@ def _run(args: argparse.Namespace) -> int:
                     "adapter_after_sha256": after_update,
                 }
                 if objective_receipt is not None:
-                    assert rollin_base_seed is not None
                     loss_record.update(
                         {
-                            "branch_weights": list(result.branch_weights),
-                            "rollin_base_seed": rollin_base_seed,
                             "objective_receipt_sha256": objective_receipt[
                                 "receipt_sha256"
                             ],
                             "objective_receipt": objective_receipt,
                         }
                     )
+                if branch_weights is not None:
+                    assert rollin_base_seed is not None
+                    loss_record.update(
+                        {
+                            "branch_weights": branch_weights,
+                            "rollin_base_seed": rollin_base_seed,
+                        }
+                    )
+                if config.objective == OBJECTIVE_NAME_V3:
+                    assert specialization_loss is not None
+                    assert branch_separations is not None
+                    loss_record.update(
+                        {
+                            "phase": training_phase,
+                            "lexical_loss": lexical_loss,
+                            "specialization_loss": specialization_loss,
+                            "branch_separations": branch_separations,
+                        }
+                    )
+                    if training_phase == STRUCTURAL_WARMUP_PHASE:
+                        assert warmup_target_reached is not None
+                        assert separations_after is not None
+                        loss_record.update(
+                            {
+                                "separations_after": separations_after,
+                                "warmup_target_reached": warmup_target_reached,
+                            }
+                        )
                 loss_trail.append(loss_record)
                 reached_max = step >= config.max_steps
                 reached_wall = elapsed() >= config.max_minutes * 60.0

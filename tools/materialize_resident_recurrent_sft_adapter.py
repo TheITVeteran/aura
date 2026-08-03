@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -47,12 +48,17 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     validate_generated_rollin_receipt,
 )
+from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
+    validate_branch_specialization_receipt,
+    validate_generated_rollin_specialization_receipt,
+)
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_fingerprint,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
     OBJECTIVE_NAME,
     OBJECTIVE_NAME_V2,
+    OBJECTIVE_NAME_V3,
     authorize_bound_artifacts,
     sha256_bytes,
     sha256_json,
@@ -341,7 +347,7 @@ def _adapter_value_identity(path: Path, *, role: str) -> tuple[str, str]:
     return adapter_tensor_fingerprint(tensors), adapter_topology_sha256(tensors)
 
 
-def _verify_objective_record(record: Mapping[str, Any]) -> None:
+def _verify_generated_rollin_record(record: Mapping[str, Any]) -> None:
     receipt = record.get("objective_receipt")
     if not isinstance(receipt, Mapping):
         _fail("resident_sft_materialize_objective_receipt_missing")
@@ -366,6 +372,80 @@ def _verify_objective_record(record: Mapping[str, Any]) -> None:
         _fail("resident_sft_materialize_objective_receipt_drift")
 
 
+def _verify_objective_record(record: Mapping[str, Any]) -> None:
+    """Compatibility entrypoint for replaying the historical v2 objective."""
+
+    _verify_generated_rollin_record(record)
+
+
+def _verify_specialization_record(
+    record: Mapping[str, Any],
+    *,
+    validation: bool,
+) -> None:
+    receipt = record.get("objective_receipt")
+    if not isinstance(receipt, Mapping):
+        _fail("resident_sft_materialize_objective_receipt_missing")
+    phase = record.get("phase")
+    try:
+        if phase == "structural_warmup":
+            if validation:
+                _fail("resident_sft_materialize_validation_phase_invalid")
+            validated = validate_branch_specialization_receipt(receipt)
+            separations_after = record.get("separations_after")
+            target = float(validated["config"]["target_separation"])
+            if (
+                record.get("objective_receipt_sha256")
+                != validated["receipt_sha256"]
+                or record.get("execution_spec_sha256")
+                != validated["execution_spec_sha256"]
+                or record.get("loss") != validated["value"]
+                or record.get("branch_values") != []
+                or record.get("lexical_loss") is not None
+                or record.get("specialization_loss") != validated["value"]
+                or record.get("branch_separations") != validated["separations"]
+                or not isinstance(separations_after, list)
+                or len(separations_after) != len(validated["separations"])
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    or not 0.0 <= float(value) <= 2.0
+                    for value in separations_after
+                )
+                or record.get("warmup_target_reached")
+                is not (min(float(value) for value in separations_after) >= target)
+                or "rollin_base_seed" in record
+                or "branch_weights" in record
+            ):
+                _fail("resident_sft_materialize_objective_receipt_drift")
+            return
+        if phase not in {None, "joint"} or (phase is None) != validation:
+            _fail("resident_sft_materialize_objective_phase_invalid")
+        validated = validate_generated_rollin_specialization_receipt(receipt)
+    except (TypeError, ValueError) as exc:
+        raise ResidentRecurrentSFTMaterializationError(
+            "resident_sft_materialize_objective_receipt_invalid"
+        ) from exc
+    generated = validated["generated_receipt"]
+    specialization = validated["specialization_receipt"]
+    if (
+        record.get("objective_receipt_sha256") != validated["receipt_sha256"]
+        or record.get("rollin_base_seed") != generated["base_seed"]
+        or record.get("execution_spec_sha256")
+        != generated["execution_spec_sha256"]
+        or record.get("loss") != validated["value"]
+        or record.get("lexical_loss") != validated["generated_value"]
+        or record.get("specialization_loss") != validated["specialization_value"]
+        or record.get("branch_values")
+        != [branch["loss"] for branch in generated["branches"]]
+        or record.get("branch_weights")
+        != [branch["selection_weight"] for branch in generated["branches"]]
+        or record.get("branch_separations") != specialization["separations"]
+    ):
+        _fail("resident_sft_materialize_objective_receipt_drift")
+
+
 def _verify_objective_evidence(
     state: Mapping[str, Any],
     *,
@@ -379,9 +459,24 @@ def _verify_objective_evidence(
             _fail("resident_sft_materialize_legacy_objective_receipt_unexpected")
         return
     if objective != OBJECTIVE_NAME_V2:
-        _fail("resident_sft_materialize_objective_unsupported")
+        if objective != OBJECTIVE_NAME_V3:
+            _fail("resident_sft_materialize_objective_unsupported")
+        for record in state["loss_trail"]:
+            _verify_specialization_record(record, validation=False)
+        summaries = [state["baseline_validation"], *state["validation_trail"]]
+        for summary in summaries:
+            if summary.get("objective") != OBJECTIVE_NAME_V3:
+                _fail("resident_sft_materialize_validation_objective_drift")
+            records = summary.get("records")
+            if not isinstance(records, list) or not records:
+                _fail("resident_sft_materialize_validation_records_invalid")
+            for record in records:
+                if not isinstance(record, Mapping):
+                    _fail("resident_sft_materialize_validation_records_invalid")
+                _verify_specialization_record(record, validation=True)
+        return
     for record in state["loss_trail"]:
-        _verify_objective_record(record)
+        _verify_generated_rollin_record(record)
     summaries = [state["baseline_validation"], *state["validation_trail"]]
     for summary in summaries:
         if summary.get("objective") != OBJECTIVE_NAME_V2:
@@ -392,7 +487,7 @@ def _verify_objective_evidence(
         for record in records:
             if not isinstance(record, Mapping):
                 _fail("resident_sft_materialize_validation_records_invalid")
-            _verify_objective_record(record)
+            _verify_generated_rollin_record(record)
 
 
 def _verify_checkpoint_chain(
@@ -577,6 +672,14 @@ def _lora_metadata(
     actual_keys = {tensor.key for tensor in tensors}
     has_depth_bank = any(".depth_a." in key or ".depth_b." in key for key in actual_keys)
     depth_bank_size = max(authority["dataset"]["depths"]) if has_depth_bank else 0
+    has_role_bank = any(".role_a." in key or ".role_b." in key for key in actual_keys)
+    configured_role_bank_size = authority["trainer"].get(
+        "role_conditioned_branches",
+        0,
+    )
+    if bool(configured_role_bank_size) is not has_role_bank:
+        _fail("resident_sft_materialize_role_lora_topology_mismatch")
+    role_bank_size = configured_role_bank_size
     expected_keys = {
         f"{projection}.{suffix}"
         for projection in expected_projections
@@ -588,7 +691,15 @@ def _lora_metadata(
         for suffix in ("depth_a", "depth_b")
         for depth in range(depth_bank_size)
     )
-    expected_tensor_count = len(expected_projections) * (2 + 2 * depth_bank_size)
+    expected_keys.update(
+        f"{projection}.{suffix}.{role}"
+        for projection in expected_projections
+        for suffix in ("role_a", "role_b")
+        for role in range(role_bank_size)
+    )
+    expected_tensor_count = len(expected_projections) * (
+        2 + 2 * depth_bank_size + 2 * role_bank_size
+    )
     if len(tensors) != expected_tensor_count or actual_keys != expected_keys:
         _fail("resident_sft_materialize_exact_lora_topology_mismatch")
     rank = trainer["lora_rank"]
@@ -613,6 +724,13 @@ def _lora_metadata(
             {
                 "conditioning_schema": "aura.depth_conditioned_lora.v1",
                 "depth_bank_size": depth_bank_size,
+            }
+        )
+    if role_bank_size:
+        metadata.update(
+            {
+                "role_conditioning_schema": "aura.role_conditioned_lora.v1",
+                "role_bank_size": role_bank_size,
             }
         )
     return metadata

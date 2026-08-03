@@ -39,10 +39,13 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     GeneratedRollinSelectionConfig,
 )
+from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
+    BranchSpecializationConfig,
+)
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
-    OBJECTIVE_NAME_V2,
+    OBJECTIVE_NAME_V3,
     REQUIRED_SOURCE_ROLES,
-    TRAINER_CONFIG_SCHEMA_V2,
+    TRAINER_CONFIG_SCHEMA_V3,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -85,11 +88,13 @@ SOURCE_PATHS: Final[dict[str, str]] = {
     "controller": "tools/run_resident_recurrent_sft_bootstrap_campaign.py",
     "objective": "core/learning/recurrence_native_objective_v2.py",
     "objective_policy": "core/learning/recurrence_native_objective_v5.py",
+    "specialization_objective": "core/learning/recurrence_native_objective_v6.py",
     "recurrent_sft_execution": "core/learning/recurrent_sft_execution.py",
     "execution_spec": "core/brain/llm/latent_cortex/execution_spec.py",
     "recurrence_adapter": "core/learning/recurrent_grpo.py",
     "scoped_recurrence_adapter": "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "depth_conditioning": "core/learning/depth_conditioned_lora.py",
+    "role_conditioned_adapter": "core/learning/role_conditioned_lora.py",
     "loop_core": "core/brain/llm/latent_cortex/recurrence.py",
     "adapter_identity": ("core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"),
     "adapter_package_identity": (
@@ -328,11 +333,18 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V2,
-                objective=OBJECTIVE_NAME_V2,
+                schema=TRAINER_CONFIG_SCHEMA_V3,
+                objective=OBJECTIVE_NAME_V3,
                 generated_rollin=GeneratedRollinSelectionConfig(),
+                branch_specialization=BranchSpecializationConfig(
+                    weight=8.0,
+                    target_separation=0.30,
+                ),
+                structural_warmup_steps=4,
+                structural_warmup_learning_rate=1e-4,
+                role_conditioned_branches=2,
                 lora_initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
-                max_steps=2,
+                max_steps=5,
                 max_invocation_steps=1,
                 max_minutes=120.0,
                 learning_rate=5e-6,
@@ -355,11 +367,18 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V2,
-                objective=OBJECTIVE_NAME_V2,
+                schema=TRAINER_CONFIG_SCHEMA_V3,
+                objective=OBJECTIVE_NAME_V3,
                 generated_rollin=GeneratedRollinSelectionConfig(),
+                branch_specialization=BranchSpecializationConfig(
+                    weight=8.0,
+                    target_separation=0.30,
+                ),
+                structural_warmup_steps=8,
+                structural_warmup_learning_rate=1e-4,
+                role_conditioned_branches=2,
                 lora_initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
-                max_steps=96,
+                max_steps=104,
                 max_invocation_steps=4,
                 max_minutes=1_440.0,
                 learning_rate=5e-6,

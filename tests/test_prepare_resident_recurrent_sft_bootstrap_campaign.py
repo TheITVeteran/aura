@@ -125,7 +125,7 @@ def test_load_spec_rejects_duplicate_keys(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("profile", "steps", "invocations", "train_count", "validation_count"),
-    [("canary", 2, 2, 12, 12), ("full", 96, 24, 144, 72)],
+    [("canary", 5, 5, 12, 12), ("full", 104, 26, 144, 72)],
 )
 def test_prepare_campaign_freezes_disjoint_profile_and_claim_boundary(
     monkeypatch: pytest.MonkeyPatch,
@@ -202,10 +202,19 @@ def test_prepare_refuses_dirty_or_unpublished_main(monkeypatch: pytest.MonkeyPat
 
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
-    assert config.objective == prepare.OBJECTIVE_NAME_V2
+    assert config.objective == prepare.OBJECTIVE_NAME_V3
     assert config.generated_rollin is not None
+    assert config.branch_specialization is not None
+    assert config.role_conditioned_branches == 2
+    assert config.structural_warmup_steps == 8
     assert prepare.SOURCE_PATHS["objective_policy"].endswith(
         "recurrence_native_objective_v5.py"
+    )
+    assert prepare.SOURCE_PATHS["specialization_objective"].endswith(
+        "recurrence_native_objective_v6.py"
+    )
+    assert prepare.SOURCE_PATHS["role_conditioned_adapter"].endswith(
+        "role_conditioned_lora.py"
     )
     plan = prepare._build_plan(
         campaign_id="resident-32b-recurrent-sft-bootstrap-cp-test-full",
@@ -222,7 +231,7 @@ def test_profile_plan_covers_exact_steps_without_gaps() -> None:
         for cell in plan.cell_ids
     ]
     assert ranges[0] == (0, 4)
-    assert ranges[-1] == (92, 96)
+    assert ranges[-1] == (100, 104)
     assert all(left[1] == right[0] for left, right in zip(ranges, ranges[1:], strict=False))
     assert plan.to_dict()["metadata"]["claim_eligible"] is False
 

@@ -17,11 +17,14 @@ from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
+from core.learning.recurrence_native_objective_v6 import BranchSpecializationConfig
 from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     OBJECTIVE_NAME_V2,
+    OBJECTIVE_NAME_V3,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
+    TRAINER_CONFIG_SCHEMA_V3,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -79,6 +82,50 @@ def test_canonical_reader_rejects_equivalent_noncanonical_json() -> None:
 
     with pytest.raises(trainer.ResidentSFTBootstrapTrainingError, match="noncanonical"):
         trainer._read_json_bytes(b'{"b": 2, "a": 1}', role="test")
+
+
+def test_v3_phase_machine_resets_only_after_measured_structural_target() -> None:
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        max_steps=5,
+        max_invocation_steps=1,
+        evaluate_every=1,
+        schema=TRAINER_CONFIG_SCHEMA_V3,
+        objective=OBJECTIVE_NAME_V3,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(
+            weight=8.0,
+            target_separation=0.3,
+        ),
+        structural_warmup_steps=4,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+    )
+    incomplete = {
+        "phase": trainer.STRUCTURAL_WARMUP_PHASE,
+        "warmup_target_reached": False,
+    }
+    complete = {
+        "phase": trainer.STRUCTURAL_WARMUP_PHASE,
+        "warmup_target_reached": True,
+    }
+
+    assert trainer._next_training_phase(config, []) == trainer.STRUCTURAL_WARMUP_PHASE
+    assert (
+        trainer._next_training_phase(config, [incomplete])
+        == trainer.STRUCTURAL_WARMUP_PHASE
+    )
+    assert trainer._next_training_phase(config, [complete]) == trainer.JOINT_PHASE
+    assert (
+        trainer._optimizer_phase_from_checkpoint(config, [complete])
+        == trainer.STRUCTURAL_WARMUP_PHASE
+    )
+    with pytest.raises(
+        trainer.ResidentSFTBootstrapTrainingError,
+        match="warmup_target_not_reached",
+    ):
+        trainer._next_training_phase(config, [incomplete] * 4)
 
 
 def test_state_document_is_accepted_by_durable_state_contract() -> None:
@@ -277,7 +324,7 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
         )
 
 
-@pytest.mark.parametrize("objective_version", ("v1", "v2"))
+@pytest.mark.parametrize("objective_version", ("v1", "v2", "v3"))
 def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     monkeypatch,
     tmp_path: Path,
@@ -290,7 +337,11 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
 
     spec = RLCExecutionSpec(
         n_slots=2,
-        branch_roles=("constructive_solution",),
+        branch_roles=(
+            ("constructive_solution", "critical_audit")
+            if objective_version == "v3"
+            else ("constructive_solution",)
+        ),
         recurrent_steps=1,
         exchange_interval=1,
         prelude_frac=0.25,
@@ -371,6 +422,23 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
                 ),
             }
             if objective_version == "v2"
+            else {
+                "schema": TRAINER_CONFIG_SCHEMA_V3,
+                "objective": OBJECTIVE_NAME_V3,
+                "generated_rollin": GeneratedRollinSelectionConfig(
+                    student_forcing_probability=1.0,
+                    sampling_temperature=0.0,
+                    branch_softmin_temperature=0.5,
+                ),
+                "branch_specialization": BranchSpecializationConfig(
+                    weight=8.0,
+                    target_separation=0.15,
+                ),
+                "structural_warmup_steps": 1,
+                "structural_warmup_learning_rate": 1e-2,
+                "role_conditioned_branches": 2,
+            }
+            if objective_version == "v3"
             else {}
         ),
         lora_initialization_seed=23,
@@ -387,7 +455,7 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
         validation_examples=1,
         max_seq_length=128,
         memory_fraction=0.2,
-        branch_indices=(0,),
+        branch_indices=((0, 1) if objective_version == "v3" else (0,)),
     )
     now = datetime.now(UTC)
     run_root = tmp_path / "artifacts" / "run"
@@ -651,6 +719,19 @@ def test_tiny_real_mlx_training_exactly_resumes_cached_update(
                 [branch["selection_weight"] for branch in validated["branches"]],
                 abs=1e-12,
             )
+    elif objective_version == "v3":
+        assert [entry["phase"] for entry in resumed.state["loss_trail"]] == [
+            trainer.STRUCTURAL_WARMUP_PHASE,
+            trainer.JOINT_PHASE,
+        ]
+        warmup, joint = resumed.state["loss_trail"]
+        assert warmup["warmup_target_reached"] is True
+        trainer.validate_branch_specialization_receipt(
+            warmup["objective_receipt"]
+        )
+        trainer.validate_generated_rollin_specialization_receipt(
+            joint["objective_receipt"]
+        )
 
 
 def test_execution_spec_reader_accepts_pretty_strict_json() -> None:

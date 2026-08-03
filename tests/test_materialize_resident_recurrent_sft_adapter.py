@@ -10,6 +10,7 @@ from typing import Any
 import mlx.core as mx
 import pytest
 
+from core.brain.llm.latent_cortex.adapter_identity import TensorIdentity
 from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignJournal,
     CampaignPlan,
@@ -29,6 +30,11 @@ from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinBranchEvidence,
     GeneratedRollinLivePathEvaluation,
     GeneratedRollinSelectionConfig,
+)
+from core.learning.recurrence_native_objective_v6 import (
+    BranchSpecializationConfig,
+    BranchSpecializationEvaluation,
+    GeneratedRollinSpecializationEvaluation,
 )
 from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
@@ -665,6 +671,189 @@ def test_materializer_replays_embedded_generated_rollin_evidence() -> None:
         match="objective_receipt_drift",
     ):
         materializer._verify_objective_record(record)
+
+
+def test_materializer_replays_structural_warmup_and_target_measurement() -> None:
+    config = BranchSpecializationConfig(weight=8.0, target_separation=0.3)
+    evaluation = BranchSpecializationEvaluation(
+        value=1.6,
+        raw_penalty=0.2,
+        separations=(0.1,),
+        branch_indices=(0, 1),
+        execution_spec_sha256="5" * 64,
+        prompt_tokens_sha256="6" * 64,
+        prompt_token_count=2,
+        recurrent_depth=2,
+        execution_branch_count=2,
+        comm_slot=0,
+        config=config,
+    )
+    receipt = evaluation.receipt()
+    record = {
+        "phase": "structural_warmup",
+        "loss": receipt["value"],
+        "branch_values": [],
+        "lexical_loss": None,
+        "specialization_loss": receipt["value"],
+        "branch_separations": receipt["separations"],
+        "separations_after": [0.31],
+        "warmup_target_reached": True,
+        "execution_spec_sha256": receipt["execution_spec_sha256"],
+        "objective_receipt_sha256": receipt["receipt_sha256"],
+        "objective_receipt": receipt,
+    }
+
+    materializer._verify_specialization_record(record, validation=False)
+
+    record["warmup_target_reached"] = False
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="objective_receipt_drift",
+    ):
+        materializer._verify_specialization_record(record, validation=False)
+
+
+def test_materializer_replays_composite_specialization_receipt() -> None:
+    generated_record = _objective_record()
+    generated = GeneratedRollinLivePathEvaluation(
+        value=generated_record["objective_receipt"]["value"],
+        branches=tuple(
+            GeneratedRollinBranchEvidence(
+                branch_index=branch["branch_index"],
+                branch_seed=branch["branch_seed"],
+                loss=branch["loss"],
+                selection_weight=branch["selection_weight"],
+                generated_tokens_sha256=branch["generated_tokens_sha256"],
+                effective_rollin_sha256=branch["effective_rollin_sha256"],
+                student_forced_positions=tuple(branch["student_forced_positions"]),
+            )
+            for branch in generated_record["objective_receipt"]["branches"]
+        ),
+        answer_token_count=generated_record["objective_receipt"]["answer_token_count"],
+        execution_spec_sha256=generated_record["objective_receipt"][
+            "execution_spec_sha256"
+        ],
+        prompt_tokens_sha256=generated_record["objective_receipt"][
+            "prompt_tokens_sha256"
+        ],
+        answer_tokens_sha256=generated_record["objective_receipt"][
+            "answer_tokens_sha256"
+        ],
+        bridge_tokens_sha256=generated_record["objective_receipt"][
+            "bridge_tokens_sha256"
+        ],
+        config=GeneratedRollinSelectionConfig.from_dict(
+            generated_record["objective_receipt"]["config"]
+        ),
+        base_seed=generated_record["objective_receipt"]["base_seed"],
+    )
+    specialization = BranchSpecializationEvaluation(
+        value=0.8,
+        raw_penalty=0.1,
+        separations=(0.2,),
+        branch_indices=(0, 1),
+        execution_spec_sha256=generated.execution_spec_sha256,
+        prompt_tokens_sha256=generated.prompt_tokens_sha256,
+        prompt_token_count=2,
+        recurrent_depth=2,
+        execution_branch_count=2,
+        comm_slot=0,
+        config=BranchSpecializationConfig(weight=8.0, target_separation=0.3),
+    )
+    evaluation = GeneratedRollinSpecializationEvaluation(
+        generated=generated,
+        specialization=specialization,
+    )
+    receipt = evaluation.receipt()
+    record = {
+        "phase": "joint",
+        "loss": receipt["value"],
+        "lexical_loss": receipt["generated_value"],
+        "specialization_loss": receipt["specialization_value"],
+        "branch_values": [
+            branch["loss"] for branch in receipt["generated_receipt"]["branches"]
+        ],
+        "branch_weights": [
+            branch["selection_weight"]
+            for branch in receipt["generated_receipt"]["branches"]
+        ],
+        "branch_separations": receipt["specialization_receipt"]["separations"],
+        "rollin_base_seed": receipt["generated_receipt"]["base_seed"],
+        "execution_spec_sha256": receipt["generated_receipt"][
+            "execution_spec_sha256"
+        ],
+        "objective_receipt_sha256": receipt["receipt_sha256"],
+        "objective_receipt": receipt,
+    }
+
+    materializer._verify_specialization_record(record, validation=False)
+
+    record["lexical_loss"] += 0.01
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="objective_receipt_drift",
+    ):
+        materializer._verify_specialization_record(record, validation=False)
+
+
+def test_lora_metadata_requires_and_describes_exact_role_bank() -> None:
+    spec = RLCExecutionSpec(recurrent_steps=2)
+    projections = [
+        f"model.layers.{layer}.self_attn.{target}"
+        for layer in range(40, 48)
+        for target in ("q_proj", "v_proj", "o_proj")
+    ]
+    tensors = [
+        TensorIdentity(
+            key=f"{projection}.{suffix}",
+            shape=((2, 8) if suffix == "lora_a" else (8, 2)),
+            dtype="float32",
+        )
+        for projection in projections
+        for suffix in ("lora_a", "lora_b")
+    ]
+    tensors.extend(
+        TensorIdentity(
+            key=f"{projection}.{suffix}.{role}",
+            shape=((2, 8) if suffix == "role_a" else (8, 2)),
+            dtype="float32",
+        )
+        for projection in projections
+        for suffix in ("role_a", "role_b")
+        for role in range(2)
+    )
+    authority = {
+        "trainer": {
+            "lora_layers": 8,
+            "lora_targets": ["q_proj", "v_proj", "o_proj"],
+            "lora_rank": 8,
+            "lora_scale": 20.0,
+            "lora_dropout": 0.0,
+            "role_conditioned_branches": 2,
+        },
+        "dataset": {"depths": [2]},
+    }
+
+    metadata = materializer._lora_metadata(
+        tensors=tensors,
+        authority=authority,
+        spec=spec,
+        model_config={"num_hidden_layers": 64},
+    )
+
+    assert metadata["role_bank_size"] == 2
+    assert metadata["role_conditioning_schema"] == "aura.role_conditioned_lora.v1"
+    without_role = [tensor for tensor in tensors if ".role_" not in tensor.key]
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="role_lora_topology_mismatch",
+    ):
+        materializer._lora_metadata(
+            tensors=without_role,
+            authority=authority,
+            spec=spec,
+            model_config={"num_hidden_layers": 64},
+        )
 
 
 def test_refuses_rehashed_historical_prefix_drift(

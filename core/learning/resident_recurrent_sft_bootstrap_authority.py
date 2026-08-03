@@ -28,6 +28,9 @@ from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
+from core.learning.recurrence_native_objective_v6 import (
+    BranchSpecializationConfig,
+)
 from core.runtime.secure_path_custody import (
     SecurePathCustodyError,
     validate_directory_identity,
@@ -35,14 +38,19 @@ from core.runtime.secure_path_custody import (
 
 LEGACY_AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v1"
 PREVIOUS_AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v2"
-AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v3"
+GENERATED_ROLLIN_AUTHORITY_SCHEMA: Final = (
+    "aura.resident_recurrent_sft_bootstrap_authority.v3"
+)
+AUTHORITY_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_authority.v4"
 DATASET_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_dataset.v1"
 TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
 TRAINER_CONFIG_SCHEMA_V2: Final = "aura.resident_recurrent_sft_bootstrap_config.v2"
+TRAINER_CONFIG_SCHEMA_V3: Final = "aura.resident_recurrent_sft_bootstrap_config.v3"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
 CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
 OBJECTIVE_NAME_V2: Final = "generated_rollin_branch_softmin_cached_ce.v2"
+OBJECTIVE_NAME_V3: Final = "generated_rollin_role_specialized_cached_ce.v3"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
 LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
@@ -83,8 +91,11 @@ PREVIOUS_REQUIRED_SOURCE_ROLES: Final = LEGACY_REQUIRED_SOURCE_ROLES | frozenset
         "paired_campaign_loader",
     }
 )
-REQUIRED_SOURCE_ROLES: Final = PREVIOUS_REQUIRED_SOURCE_ROLES | frozenset(
+GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES: Final = PREVIOUS_REQUIRED_SOURCE_ROLES | frozenset(
     {"objective_policy"}
+)
+REQUIRED_SOURCE_ROLES: Final = GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES | frozenset(
+    {"specialization_objective", "role_conditioned_adapter"}
 )
 
 
@@ -96,6 +107,8 @@ def required_source_roles(authority: Mapping[str, Any]) -> frozenset[str]:
         return LEGACY_REQUIRED_SOURCE_ROLES
     if schema == PREVIOUS_AUTHORITY_SCHEMA:
         return PREVIOUS_REQUIRED_SOURCE_ROLES
+    if schema == GENERATED_ROLLIN_AUTHORITY_SCHEMA:
+        return GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES
     if schema == AUTHORITY_SCHEMA:
         return REQUIRED_SOURCE_ROLES
     _fail("resident_sft_authority_schema_invalid")
@@ -236,19 +249,27 @@ class ResidentSFTBootstrapConfig:
     branch_indices: tuple[int, ...] = (0, 1)
     objective: str = OBJECTIVE_NAME
     generated_rollin: GeneratedRollinSelectionConfig | None = None
+    branch_specialization: BranchSpecializationConfig | None = None
+    structural_warmup_steps: int = 0
+    structural_warmup_learning_rate: float = 0.0
+    role_conditioned_branches: int = 0
     optimizer: str = "adamw"
     sampler: str = SAMPLER_NAME
     token_weighting: str = "uniform_nonnegative_normalized"
     schema: str = TRAINER_CONFIG_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema not in {TRAINER_CONFIG_SCHEMA, TRAINER_CONFIG_SCHEMA_V2}:
+        if self.schema not in {
+            TRAINER_CONFIG_SCHEMA,
+            TRAINER_CONFIG_SCHEMA_V2,
+            TRAINER_CONFIG_SCHEMA_V3,
+        }:
             _fail("resident_sft_config_schema_invalid")
-        expected_objective = (
-            OBJECTIVE_NAME
-            if self.schema == TRAINER_CONFIG_SCHEMA
-            else OBJECTIVE_NAME_V2
-        )
+        expected_objective = {
+            TRAINER_CONFIG_SCHEMA: OBJECTIVE_NAME,
+            TRAINER_CONFIG_SCHEMA_V2: OBJECTIVE_NAME_V2,
+            TRAINER_CONFIG_SCHEMA_V3: OBJECTIVE_NAME_V3,
+        }[self.schema]
         if self.objective != expected_objective:
             _fail("resident_sft_config_objective_invalid")
         if self.schema == TRAINER_CONFIG_SCHEMA:
@@ -256,6 +277,39 @@ class ResidentSFTBootstrapConfig:
                 _fail("resident_sft_config_rollin_not_supported")
         elif not isinstance(self.generated_rollin, GeneratedRollinSelectionConfig):
             _fail("resident_sft_config_rollin_required")
+        if self.schema != TRAINER_CONFIG_SCHEMA_V3:
+            if (
+                self.branch_specialization is not None
+                or self.structural_warmup_steps != 0
+                or self.structural_warmup_learning_rate != 0.0
+                or self.role_conditioned_branches != 0
+            ):
+                _fail("resident_sft_config_specialization_not_supported")
+        else:
+            if not isinstance(self.branch_specialization, BranchSpecializationConfig):
+                _fail("resident_sft_config_specialization_required")
+            _integer(
+                self.structural_warmup_steps,
+                role="resident_sft_structural_warmup_steps",
+                minimum=1,
+                maximum=64,
+            )
+            if self.structural_warmup_steps >= self.max_steps:
+                _fail("resident_sft_structural_warmup_consumes_campaign")
+            _finite(
+                self.structural_warmup_learning_rate,
+                role="resident_sft_structural_warmup_learning_rate",
+                minimum=1e-9,
+                maximum=1e-2,
+            )
+            _integer(
+                self.role_conditioned_branches,
+                role="resident_sft_role_conditioned_branches",
+                minimum=2,
+                maximum=32,
+            )
+            if self.role_conditioned_branches != len(self.branch_indices):
+                _fail("resident_sft_role_conditioned_branch_count_mismatch")
         if self.optimizer != "adamw":
             _fail("resident_sft_config_optimizer_invalid")
         if self.sampler != SAMPLER_NAME:
@@ -394,9 +448,21 @@ class ResidentSFTBootstrapConfig:
             "memory_fraction": self.memory_fraction,
             "branch_indices": list(self.branch_indices),
         }
-        if self.schema == TRAINER_CONFIG_SCHEMA_V2:
+        if self.schema in {TRAINER_CONFIG_SCHEMA_V2, TRAINER_CONFIG_SCHEMA_V3}:
             assert self.generated_rollin is not None
             result["generated_rollin"] = self.generated_rollin.to_dict()
+        if self.schema == TRAINER_CONFIG_SCHEMA_V3:
+            assert self.branch_specialization is not None
+            result.update(
+                {
+                    "branch_specialization": self.branch_specialization.to_dict(),
+                    "structural_warmup_steps": self.structural_warmup_steps,
+                    "structural_warmup_learning_rate": (
+                        self.structural_warmup_learning_rate
+                    ),
+                    "role_conditioned_branches": self.role_conditioned_branches,
+                }
+            )
         return result
 
     @classmethod
@@ -413,6 +479,22 @@ class ResidentSFTBootstrapConfig:
                     schema=TRAINER_CONFIG_SCHEMA_V2,
                     objective=OBJECTIVE_NAME_V2,
                     generated_rollin=GeneratedRollinSelectionConfig(),
+                ).to_dict()
+            )
+        elif schema == TRAINER_CONFIG_SCHEMA_V3:
+            expected = set(
+                cls(
+                    seed=0,
+                    max_steps=2,
+                    max_invocation_steps=1,
+                    evaluate_every=1,
+                    schema=TRAINER_CONFIG_SCHEMA_V3,
+                    objective=OBJECTIVE_NAME_V3,
+                    generated_rollin=GeneratedRollinSelectionConfig(),
+                    branch_specialization=BranchSpecializationConfig(),
+                    structural_warmup_steps=1,
+                    structural_warmup_learning_rate=1e-4,
+                    role_conditioned_branches=2,
                 ).to_dict()
             )
         else:
@@ -447,8 +529,30 @@ class ResidentSFTBootstrapConfig:
                     GeneratedRollinSelectionConfig.from_dict(
                         record["generated_rollin"]
                     )
-                    if schema == TRAINER_CONFIG_SCHEMA_V2
+                    if schema in {TRAINER_CONFIG_SCHEMA_V2, TRAINER_CONFIG_SCHEMA_V3}
                     else None
+                ),
+                branch_specialization=(
+                    BranchSpecializationConfig.from_dict(
+                        record["branch_specialization"]
+                    )
+                    if schema == TRAINER_CONFIG_SCHEMA_V3
+                    else None
+                ),
+                structural_warmup_steps=(
+                    record["structural_warmup_steps"]
+                    if schema == TRAINER_CONFIG_SCHEMA_V3
+                    else 0
+                ),
+                structural_warmup_learning_rate=(
+                    record["structural_warmup_learning_rate"]
+                    if schema == TRAINER_CONFIG_SCHEMA_V3
+                    else 0.0
+                ),
+                role_conditioned_branches=(
+                    record["role_conditioned_branches"]
+                    if schema == TRAINER_CONFIG_SCHEMA_V3
+                    else 0
                 ),
             )
         except (TypeError, ValueError, KeyError) as exc:
@@ -882,6 +986,7 @@ def validate_authority(
         not in {
             LEGACY_AUTHORITY_SCHEMA,
             PREVIOUS_AUTHORITY_SCHEMA,
+            GENERATED_ROLLIN_AUTHORITY_SCHEMA,
             AUTHORITY_SCHEMA,
         }
         or record.get("training_authority") != TRAINING_AUTHORITY
@@ -1078,10 +1183,13 @@ __all__ = [
     "CAMPAIGN_SCOPES",
     "CLAIMS_NOT_SUPPORTED",
     "DATASET_SCHEMA",
+    "GENERATED_ROLLIN_AUTHORITY_SCHEMA",
+    "GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES",
     "LEGACY_AUTHORITY_SCHEMA",
     "LEGACY_REQUIRED_SOURCE_ROLES",
     "OBJECTIVE_NAME",
     "OBJECTIVE_NAME_V2",
+    "OBJECTIVE_NAME_V3",
     "PREVIOUS_AUTHORITY_SCHEMA",
     "PREVIOUS_REQUIRED_SOURCE_ROLES",
     "REQUIRED_SOURCE_ROLES",
@@ -1090,6 +1198,7 @@ __all__ = [
     "SAMPLER_NAME",
     "TRAINER_CONFIG_SCHEMA",
     "TRAINER_CONFIG_SCHEMA_V2",
+    "TRAINER_CONFIG_SCHEMA_V3",
     "TRAINING_AUTHORITY",
     "artifact_binding",
     "authorize_bound_artifacts",

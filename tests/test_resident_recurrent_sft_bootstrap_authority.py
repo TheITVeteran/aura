@@ -10,16 +10,21 @@ from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
+from core.learning.recurrence_native_objective_v6 import BranchSpecializationConfig
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     AUTHORITY_SCHEMA,
     CLAIMS_NOT_SUPPORTED,
+    GENERATED_ROLLIN_AUTHORITY_SCHEMA,
+    GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES,
     LEGACY_AUTHORITY_SCHEMA,
     LEGACY_REQUIRED_SOURCE_ROLES,
     OBJECTIVE_NAME_V2,
+    OBJECTIVE_NAME_V3,
     PREVIOUS_AUTHORITY_SCHEMA,
     PREVIOUS_REQUIRED_SOURCE_ROLES,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
+    TRAINER_CONFIG_SCHEMA_V3,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
     ResidentSFTBootstrapConfig,
@@ -123,7 +128,18 @@ def _authority() -> tuple[dict[str, object], bytes, bytes, dict[str, bytes]]:
         },
         artifact_root="artifacts/cp782",
         artifact_root_identity={"st_dev": 1, "st_ino": 2},
-        config=ResidentSFTBootstrapConfig(seed=2026080107),
+        config=ResidentSFTBootstrapConfig(
+            seed=2026080107,
+            max_steps=9,
+            schema=TRAINER_CONFIG_SCHEMA_V3,
+            objective=OBJECTIVE_NAME_V3,
+            generated_rollin=GeneratedRollinSelectionConfig(),
+            branch_specialization=BranchSpecializationConfig(),
+            structural_warmup_steps=4,
+            structural_warmup_learning_rate=1e-4,
+            role_conditioned_branches=2,
+            branch_indices=(0, 1),
+        ),
     )
     return authority, train_payload, validation_payload, sources
 
@@ -144,7 +160,7 @@ def test_resident_authority_binds_nonpromotable_cached_bootstrap() -> None:
 
     assert validated["training_authority"] == TRAINING_AUTHORITY
     assert validated["campaign_scope"] == "full_bootstrap"
-    assert validated["trainer"]["objective"] == "cached_supervised_live_path_ce.v1"
+    assert validated["trainer"]["objective"] == OBJECTIVE_NAME_V3
     assert validated["model"]["base_checkpoint_immutable"] is True
     assert validated["post_training_gate"]["grpo_admission_before_gate"] is False
     assert validated["claims_not_supported"] == list(CLAIMS_NOT_SUPPORTED)
@@ -164,6 +180,8 @@ def test_current_authority_requires_depth_conditioned_source_closure() -> None:
         "adapter_materializer",
         "paired_campaign_loader",
         "objective_policy",
+        "specialization_objective",
+        "role_conditioned_adapter",
     } <= set(authority["sources"])
 
     authority["sources"].pop("depth_conditioning")
@@ -204,6 +222,82 @@ def test_v2_trainer_config_requires_and_binds_generated_rollin_policy() -> None:
             seed=17,
             generated_rollin=rollin,
         )
+
+
+def test_v3_trainer_config_binds_role_specialization_and_warmup() -> None:
+    specialization = BranchSpecializationConfig(
+        weight=8.0,
+        target_separation=0.3,
+    )
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        max_steps=9,
+        schema=TRAINER_CONFIG_SCHEMA_V3,
+        objective=OBJECTIVE_NAME_V3,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=specialization,
+        structural_warmup_steps=4,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+    )
+
+    assert ResidentSFTBootstrapConfig.from_dict(config.to_dict()) == config
+    assert config.to_dict()["branch_specialization"] == specialization.to_dict()
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="specialization_required",
+    ):
+        ResidentSFTBootstrapConfig(
+            seed=17,
+            max_steps=9,
+            schema=TRAINER_CONFIG_SCHEMA_V3,
+            objective=OBJECTIVE_NAME_V3,
+            generated_rollin=GeneratedRollinSelectionConfig(),
+            structural_warmup_steps=4,
+            structural_warmup_learning_rate=1e-4,
+            role_conditioned_branches=2,
+            branch_indices=(0, 1),
+        )
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="branch_count_mismatch",
+    ):
+        ResidentSFTBootstrapConfig(
+            seed=17,
+            max_steps=9,
+            schema=TRAINER_CONFIG_SCHEMA_V3,
+            objective=OBJECTIVE_NAME_V3,
+            generated_rollin=GeneratedRollinSelectionConfig(),
+            branch_specialization=specialization,
+            structural_warmup_steps=4,
+            structural_warmup_learning_rate=1e-4,
+            role_conditioned_branches=3,
+            branch_indices=(0, 1),
+        )
+
+
+def test_historical_v3_authority_retains_generated_rollin_source_closure() -> None:
+    authority, train, validation, sources = _authority()
+    authority["schema"] = GENERATED_ROLLIN_AUTHORITY_SCHEMA
+    authority["sources"] = {
+        role: authority["sources"][role]
+        for role in sorted(GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES)
+    }
+    historical_sources = {
+        role: sources[role] for role in GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES
+    }
+    _recompute_authority_sha256(authority)
+
+    validated = validate_authority(authority)
+    assert set(validated["sources"]) == GENERATED_ROLLIN_REQUIRED_SOURCE_ROLES
+    authorize_bound_artifacts(
+        validated,
+        train_payload=train,
+        validation_payload=validation,
+        source_payloads=historical_sources,
+        expected_authority_sha256=validated["authority_sha256"],
+    )
 
 
 def test_historical_v2_authority_retains_pre_policy_source_closure() -> None:
