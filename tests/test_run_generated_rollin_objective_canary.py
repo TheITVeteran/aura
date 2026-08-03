@@ -70,3 +70,32 @@ def test_source_state_rejects_unpublished_commit(
     with pytest.raises(RuntimeError, match="not published"):
         canary._source_state()
 
+
+def test_branch_specialization_gate_rejects_rng_or_state_collapse() -> None:
+    collapsed = [
+        {
+            "objective_receipt": {
+                "branches": [
+                    {"generated_tokens_sha256": "a" * 64},
+                    {"generated_tokens_sha256": "a" * 64},
+                ]
+            }
+        }
+    ]
+    gates = canary._branch_specialization_gates(collapsed, [0.08])
+    assert gates == {
+        "branch_generated_prefix_distinct": False,
+        "branch_state_specialized": False,
+    }
+
+    specialized = [
+        {
+            "objective_receipt": {
+                "branches": [
+                    {"generated_tokens_sha256": "a" * 64},
+                    {"generated_tokens_sha256": "b" * 64},
+                ]
+            }
+        }
+    ]
+    assert all(canary._branch_specialization_gates(specialized, [0.31]).values())

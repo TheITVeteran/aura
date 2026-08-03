@@ -51,6 +51,7 @@ CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v1"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
+    "core/learning/recurrence_native_objective_v4.py",
     "core/learning/recurrent_grpo.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
@@ -157,6 +158,55 @@ def _evaluate(
     }
 
 
+def _branch_separations(
+    model: Any,
+    row: dict[str, Any],
+    *,
+    spec: RLCExecutionSpec,
+) -> list[float]:
+    import mlx.core as mx
+
+    from core.learning.recurrence_native_objective_v2 import live_path_forward
+    from core.learning.recurrence_native_objective_v4 import pairwise_separations
+
+    forward = live_path_forward(
+        model,
+        row["prompt_tokens"],
+        row["answer_tokens"],
+        spec=spec,
+    )
+    values = pairwise_separations(forward, comm_slot=spec.comm_slot)
+    mx.eval(values)
+    result = [float(value) for value in values]
+    del forward, values
+    mx.clear_cache()
+    return result
+
+
+def _branch_specialization_gates(
+    loss_trail: list[dict[str, Any]],
+    separation_after: list[float],
+) -> dict[str, bool]:
+    return {
+        "branch_generated_prefix_distinct": bool(
+            loss_trail
+            and all(
+                len(
+                    {
+                        branch["generated_tokens_sha256"]
+                        for branch in entry["objective_receipt"]["branches"]
+                    }
+                )
+                == len(entry["objective_receipt"]["branches"])
+                for entry in loss_trail
+            )
+        ),
+        "branch_state_specialized": bool(
+            separation_after and min(separation_after) >= 0.30
+        ),
+    }
+
+
 def run_canary(
     *,
     model_path: Path,
@@ -164,6 +214,8 @@ def run_canary(
     steps: int,
     seed: int,
     memory_fraction: float,
+    student_forcing_probability: float,
+    sampling_temperature: float,
 ) -> dict[str, Any]:
     import mlx.core as mx
     import mlx.optimizers as optim
@@ -185,8 +237,8 @@ def run_canary(
         exchange_interval=1,
     )
     objective_config = GeneratedRollinSelectionConfig(
-        student_forcing_probability=1.0,
-        sampling_temperature=0.0,
+        student_forcing_probability=student_forcing_probability,
+        sampling_temperature=sampling_temperature,
         branch_softmin_temperature=0.5,
     )
     with (
@@ -242,6 +294,11 @@ def run_canary(
             config=objective_config,
             campaign_seed=seed,
         )
+        separation_before = _branch_separations(
+            model,
+            validation_row,
+            spec=spec,
+        )
         optimizer = optim.AdamW(learning_rate=1e-4, weight_decay=0.0)
         optimizer.init(model.trainable_parameters())
         loss_trail: list[dict[str, Any]] = []
@@ -286,6 +343,11 @@ def run_canary(
             config=objective_config,
             campaign_seed=seed,
         )
+        separation_after = _branch_separations(
+            model,
+            validation_row,
+            spec=spec,
+        )
         adapter = adapter_tensor_dict(model)
         adapter_after = adapter_tensor_fingerprint(adapter)
         out_dir.mkdir(parents=True, exist_ok=False)
@@ -320,6 +382,7 @@ def run_canary(
             )
             for entry in loss_trail
         ),
+        **_branch_specialization_gates(loss_trail, separation_after),
     }
     body = {
         "schema": CANARY_SCHEMA,
@@ -339,8 +402,10 @@ def run_canary(
         "training_task_id": training_row["task_id"],
         "validation_task_id": validation_row["task_id"],
         "validation_before": before,
+        "branch_separation_before": separation_before,
         "loss_trail": loss_trail,
         "validation_after": after,
+        "branch_separation_after": separation_after,
         "validation_loss_delta": after["loss"] - before["loss"],
         "gates": gates,
         "passed": all(gates.values()),
@@ -371,6 +436,8 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=2)
     parser.add_argument("--seed", type=int, default=2026080207)
     parser.add_argument("--memory-fraction", type=float, default=0.35)
+    parser.add_argument("--student-forcing-probability", type=float, default=0.5)
+    parser.add_argument("--sampling-temperature", type=float, default=0.8)
     args = parser.parse_args()
     receipt = run_canary(
         model_path=args.model.expanduser().resolve(strict=True),
@@ -378,6 +445,8 @@ def main() -> int:
         steps=args.steps,
         seed=args.seed,
         memory_fraction=args.memory_fraction,
+        student_forcing_probability=args.student_forcing_probability,
+        sampling_temperature=args.sampling_temperature,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt["passed"] else 2
