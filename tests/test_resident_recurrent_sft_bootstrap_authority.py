@@ -25,6 +25,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
     TRAINER_CONFIG_SCHEMA_V3,
+    TRAINER_CONFIG_SCHEMA_V4,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
     ResidentSFTBootstrapConfig,
@@ -165,6 +166,32 @@ def test_resident_authority_binds_nonpromotable_cached_bootstrap() -> None:
     assert validated["post_training_gate"]["grpo_admission_before_gate"] is False
     assert validated["claims_not_supported"] == list(CLAIMS_NOT_SUPPORTED)
     assert validated["claim_state"]["promotion_allowed"] is False
+
+
+def test_v4_config_binds_rotating_intermediate_validation_budget() -> None:
+    config = ResidentSFTBootstrapConfig(
+        seed=2026080206,
+        max_steps=104,
+        schema=TRAINER_CONFIG_SCHEMA_V4,
+        objective=OBJECTIVE_NAME_V3,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(),
+        structural_warmup_steps=8,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+        validation_examples=24,
+        intermediate_validation_examples=4,
+    )
+
+    assert ResidentSFTBootstrapConfig.from_dict(config.to_dict()) == config
+    with pytest.raises(
+        ResidentSFTBootstrapAuthorityError,
+        match="intermediate_validation_examples_invalid",
+    ):
+        invalid = config.to_dict()
+        invalid["intermediate_validation_examples"] = 25
+        ResidentSFTBootstrapConfig.from_dict(invalid)
 
 
 def test_current_authority_requires_depth_conditioned_source_closure() -> None:

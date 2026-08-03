@@ -295,6 +295,8 @@ def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     assert config.branch_specialization is not None
     assert config.role_conditioned_branches == 2
     assert config.structural_warmup_steps == 8
+    assert config.validation_examples == 24
+    assert config.intermediate_validation_examples == 4
     assert prepare.SOURCE_PATHS["objective_policy"].endswith(
         "recurrence_native_objective_v5.py"
     )

@@ -58,6 +58,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     OBJECTIVE_NAME,
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
+    TRAINER_CONFIG_SCHEMA_V4,
     ResidentSFTBootstrapConfig,
     authorize_bound_artifacts,
     sha256_bytes,
@@ -306,12 +307,41 @@ def _load_dataset_and_sources(
     return list(train), list(validation), sources
 
 
+def _validation_selection(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    config: ResidentSFTBootstrapConfig,
+    intermediate_cycle: int | None,
+) -> tuple[tuple[int, int], ...]:
+    order = family_depth_balanced_order(
+        rows,
+        seed=config.seed ^ 0x5A17,
+        epoch=0,
+    )
+    if config.validation_examples > len(order):
+        _fail("resident_sft_trainer_validation_budget_exceeds_split")
+    panel = order[: config.validation_examples]
+    if intermediate_cycle is None:
+        return tuple(enumerate(panel))
+    if config.schema != TRAINER_CONFIG_SCHEMA_V4:
+        _fail("resident_sft_trainer_intermediate_validation_not_supported")
+    if type(intermediate_cycle) is not int or intermediate_cycle < 0:
+        _fail("resident_sft_trainer_intermediate_validation_cycle_invalid")
+    count = config.intermediate_validation_examples
+    start = (intermediate_cycle * count) % len(panel)
+    return tuple(
+        ((start + offset) % len(panel), panel[(start + offset) % len(panel)])
+        for offset in range(count)
+    )
+
+
 def _validation_summary(
     model: Any,
     rows: Sequence[Mapping[str, Any]],
     *,
     spec: RLCExecutionSpec,
     config: ResidentSFTBootstrapConfig,
+    intermediate_cycle: int | None = None,
 ) -> dict[str, Any]:
     order = family_depth_balanced_order(
         rows,
@@ -320,10 +350,15 @@ def _validation_summary(
     )
     if config.validation_examples > len(order):
         _fail("resident_sft_trainer_validation_budget_exceeds_split")
-    selected = order[: config.validation_examples]
+    panel = order[: config.validation_examples]
+    selected = _validation_selection(
+        rows,
+        config=config,
+        intermediate_cycle=intermediate_cycle,
+    )
     objective_name = getattr(config, "objective", OBJECTIVE_NAME)
     records: list[dict[str, Any]] = []
-    for sample_ordinal, index in enumerate(selected):
+    for sample_ordinal, index in selected:
         row = rows[index]
         row_spec = execution_spec_for_projected_row(row, base_spec=spec)
         if objective_name == OBJECTIVE_NAME:
@@ -452,6 +487,21 @@ def _validation_summary(
     }
     if objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3}:
         body["objective"] = objective_name
+    if config.schema == TRAINER_CONFIG_SCHEMA_V4:
+        body["validation_window"] = {
+            "schema": "aura.resident_recurrent_sft_validation_window.v1",
+            "panel_examples": len(panel),
+            "selected_examples": len(selected),
+            "selection_start": selected[0][0],
+            "intermediate_cycle": intermediate_cycle,
+            "complete_panel": intermediate_cycle is None,
+            "panel_example_ids_sha256": sha256_json(
+                [rows[index]["example_id"] for index in panel]
+            ),
+            "selected_example_ids_sha256": sha256_json(
+                [rows[index]["example_id"] for _position, index in selected]
+            ),
+        }
     return {**body, "receipt_sha256": sha256_json(body)}
 
 
@@ -1239,11 +1289,17 @@ def _run(args: argparse.Namespace) -> int:
                 terminal = reached_max or reached_wall
                 halt = "max_steps" if reached_max else "wall_clock" if reached_wall else None
                 if step % config.evaluate_every == 0 or terminal:
+                    intermediate_cycle = (
+                        None
+                        if terminal or config.schema != TRAINER_CONFIG_SCHEMA_V4
+                        else step // config.evaluate_every - 1
+                    )
                     validation = _validation_summary(
                         model,
                         projected_validation,
                         spec=spec,
                         config=config,
+                        intermediate_cycle=intermediate_cycle,
                     )
                     validation_trail.append({"step": step, **validation})
                 sequence += 1

@@ -25,6 +25,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
     TRAINER_CONFIG_SCHEMA_V3,
+    TRAINER_CONFIG_SCHEMA_V4,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -201,6 +202,58 @@ def test_validation_summary_binds_exact_objective_results(monkeypatch) -> None:
     assert result["receipt_sha256"] == sha256_json(
         {key: value for key, value in result.items() if key != "receipt_sha256"}
     )
+
+
+def test_v4_intermediate_validation_rotates_over_bound_panel() -> None:
+    rows = [
+        {
+            "example_id": sha256_json(f"validation:{index}"),
+            "family": "logic",
+            "depth": 2,
+            "prompt_tokens": [10 + index],
+            "answer_tokens": [30 + index],
+            "bridge_tokens": [],
+        }
+        for index in range(8)
+    ]
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        max_steps=8,
+        max_invocation_steps=2,
+        evaluate_every=2,
+        validation_examples=8,
+        intermediate_validation_examples=2,
+        schema=TRAINER_CONFIG_SCHEMA_V4,
+        objective=OBJECTIVE_NAME_V3,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(),
+        structural_warmup_steps=2,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+    )
+
+    full = trainer._validation_selection(
+        rows,
+        config=config,
+        intermediate_cycle=None,
+    )
+    windows = [
+        trainer._validation_selection(
+            rows,
+            config=config,
+            intermediate_cycle=cycle,
+        )
+        for cycle in range(4)
+    ]
+
+    assert [position for position, _index in full] == list(range(8))
+    assert [position for window in windows for position, _index in window] == list(
+        range(8)
+    )
+    assert {index for window in windows for _position, index in window} == {
+        index for _position, index in full
+    }
 
 
 def test_validation_summary_rejects_objective_identity_drift(monkeypatch) -> None:

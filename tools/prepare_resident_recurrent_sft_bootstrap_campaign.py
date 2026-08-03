@@ -47,6 +47,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     OBJECTIVE_NAME_V3,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V3,
+    TRAINER_CONFIG_SCHEMA_V4,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -380,7 +381,7 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V3,
+                schema=TRAINER_CONFIG_SCHEMA_V4,
                 objective=OBJECTIVE_NAME_V3,
                 generated_rollin=GeneratedRollinSelectionConfig(),
                 branch_specialization=BranchSpecializationConfig(
@@ -402,6 +403,7 @@ def _profile_config(
                 lora_layers=8,
                 evaluate_every=8,
                 validation_examples=24,
+                intermediate_validation_examples=4,
                 max_seq_length=512,
                 memory_fraction=0.42,
                 branch_indices=(0, 1),
