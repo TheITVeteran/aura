@@ -39,6 +39,9 @@ def _worker_identity():
         "worker_affective_steering_active": True,
         "worker_affective_steering_alpha": 0.30,
         "worker_action_capture_identity": capture_identity.public_identity,
+        "worker_recurrent_adapter_activation": (
+            runtime_identity.inactive_worker_recurrent_adapter_activation()
+        ),
         **complete_serving_stack(),
     }
 
@@ -56,7 +59,7 @@ def test_worker_identity_rejects_every_mismatch():
     assert "worker_source_sha256_mismatch" in errors
 
 
-def test_v2_worker_identity_requires_same_boot_capture_identity():
+def test_current_worker_identity_requires_same_boot_capture_identity():
     missing = _worker_identity()
     missing.pop("worker_action_capture_identity")
     mismatched = _worker_identity()
@@ -70,6 +73,33 @@ def test_v2_worker_identity_requires_same_boot_capture_identity():
     )
     assert "worker_action_capture_identity_mismatch" in (
         runtime_identity.worker_identity_errors(mismatched)
+    )
+
+
+def test_v3_worker_identity_requires_positive_evidence_for_active_adapter():
+    identity = _worker_identity()
+    activation = dict(identity["worker_recurrent_adapter_activation"])
+    activation.update(
+        {
+            "configured": True,
+            "active": True,
+            "reason": "certified_gain_proven",
+            "receipt_sha256": "a" * 64,
+            "activation_sha256": "b" * 64,
+            "adapter_composite_identity_sha256": "c" * 64,
+            "campaign_name": "resident-32b-role-v6",
+            "claim_tier": "PROVEN",
+            "verified_verdict": "gain_proven",
+            "loaded_projection_count": 24,
+        }
+    )
+    identity["worker_recurrent_adapter_activation"] = activation
+
+    assert runtime_identity.worker_identity_errors(identity) == []
+
+    activation["verified_verdict"] = "gain_preverified"
+    assert "worker_recurrent_adapter_positive_evidence_incomplete" in (
+        runtime_identity.worker_identity_errors(identity)
     )
 
 

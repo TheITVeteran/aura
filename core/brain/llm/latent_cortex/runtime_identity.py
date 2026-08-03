@@ -12,7 +12,10 @@ from typing import Any
 
 from core.runtime.file_read_gateway import read_stable_bytes
 
-WORKER_IDENTITY_SCHEMA = "aura.latent_cortex.worker_identity.v2"
+WORKER_IDENTITY_SCHEMA = "aura.latent_cortex.worker_identity.v3"
+WORKER_ACTIVATION_SCHEMA = (
+    "aura.latent_cortex.worker_recurrent_adapter_activation.v1"
+)
 RUNTIME_IDENTITY_SCHEMA = "aura.latent_cortex.runtime_identity.v1"
 MAX_AFFECTIVE_STEERING_ALPHA = 50.0
 
@@ -212,6 +215,7 @@ def build_worker_identity(
     tokenizer: Any = None,
     affective_steering_active: bool = False,
     affective_steering_alpha: float = 0.0,
+    recurrent_adapter_activation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     boot_id = str(worker_boot_id or "").strip().lower()
     if len(boot_id) != 32 or any(character not in "0123456789abcdef" for character in boot_id):
@@ -235,6 +239,19 @@ def build_worker_identity(
         raise ValueError(
             "worker action-capture identity does not belong to this worker boot"
         )
+    activation = (
+        inactive_worker_recurrent_adapter_activation()
+        if recurrent_adapter_activation is None
+        else dict(recurrent_adapter_activation)
+    )
+    activation_errors = worker_recurrent_adapter_activation_errors(
+        activation
+    )
+    if activation_errors:
+        raise ValueError(
+            "invalid worker recurrent-adapter activation: "
+            + ",".join(activation_errors)
+        )
     return {
         "schema": WORKER_IDENTITY_SCHEMA,
         "worker_boot_id": boot_id,
@@ -247,6 +264,7 @@ def build_worker_identity(
         "worker_affective_steering_active": bool(affective_steering_active),
         "worker_affective_steering_alpha": float(affective_steering_alpha),
         "worker_action_capture_identity": capture_identity,
+        "worker_recurrent_adapter_activation": activation,
         # CP126 866530f6. Model path plus a parameter count cannot tell two
         # runtimes apart when the difference is WHICH adapter is attached,
         # which tokenizer resolved the text, or how the weights are
@@ -260,6 +278,92 @@ def build_worker_identity(
             tokenizer=tokenizer,
         ),
     }
+
+
+def inactive_worker_recurrent_adapter_activation(
+    *,
+    reason: str = "no_certified_activation",
+) -> dict[str, Any]:
+    """Canonical evidence that no trained recurrent adapter is serving."""
+
+    return {
+        "schema": WORKER_ACTIVATION_SCHEMA,
+        "configured": False,
+        "active": False,
+        "reason": str(reason),
+        "receipt_sha256": "",
+        "activation_sha256": "",
+        "adapter_composite_identity_sha256": "",
+        "campaign_name": "",
+        "claim_tier": "NONE",
+        "verified_verdict": "none",
+        "loaded_projection_count": 0,
+    }
+
+
+def worker_recurrent_adapter_activation_errors(value: Any) -> list[str]:
+    """Validate the proof-bearing live recurrent-adapter state."""
+
+    if not isinstance(value, Mapping):
+        return ["worker_recurrent_adapter_activation_not_mapping"]
+    expected = {
+        "schema",
+        "configured",
+        "active",
+        "reason",
+        "receipt_sha256",
+        "activation_sha256",
+        "adapter_composite_identity_sha256",
+        "campaign_name",
+        "claim_tier",
+        "verified_verdict",
+        "loaded_projection_count",
+    }
+    if set(value) != expected:
+        return ["invalid_worker_recurrent_adapter_activation_fields"]
+    errors: list[str] = []
+    if value.get("schema") != WORKER_ACTIVATION_SCHEMA:
+        errors.append("invalid_worker_recurrent_adapter_activation_schema")
+    configured = value.get("configured")
+    active = value.get("active")
+    if type(configured) is not bool or type(active) is not bool:
+        errors.append("invalid_worker_recurrent_adapter_activation_state")
+        return errors
+    if not isinstance(value.get("reason"), str) or not value["reason"]:
+        errors.append("invalid_worker_recurrent_adapter_activation_reason")
+    count = value.get("loaded_projection_count")
+    if type(count) is not int or count < 0:
+        errors.append("invalid_worker_recurrent_adapter_projection_count")
+    if active:
+        if not configured:
+            errors.append("active_worker_recurrent_adapter_not_configured")
+        for key in (
+            "receipt_sha256",
+            "activation_sha256",
+            "adapter_composite_identity_sha256",
+        ):
+            if not _sha256(value.get(key)):
+                errors.append(f"invalid_{key}")
+        if (
+            not str(value.get("campaign_name") or "")
+            or value.get("claim_tier") != "PROVEN"
+            or value.get("verified_verdict") != "gain_proven"
+            or type(count) is not int
+            or count <= 0
+        ):
+            errors.append("worker_recurrent_adapter_positive_evidence_incomplete")
+    elif (
+        configured
+        or value.get("receipt_sha256") != ""
+        or value.get("activation_sha256") != ""
+        or value.get("adapter_composite_identity_sha256") != ""
+        or value.get("campaign_name") != ""
+        or value.get("claim_tier") != "NONE"
+        or value.get("verified_verdict") != "none"
+        or count != 0
+    ):
+        errors.append("inactive_worker_recurrent_adapter_claims_evidence")
+    return errors
 
 
 def serving_stack_identity(
@@ -610,6 +714,7 @@ def worker_identity_errors(
     schema = receipt.get("schema")
     if schema not in {
         "aura.latent_cortex.worker_identity.v1",
+        "aura.latent_cortex.worker_identity.v2",
         WORKER_IDENTITY_SCHEMA,
     }:
         errors.append("invalid_worker_identity_schema")
@@ -662,7 +767,10 @@ def worker_identity_errors(
         or not 0.0 <= float(steering_alpha) <= MAX_AFFECTIVE_STEERING_ALPHA
     ):
         errors.append("invalid_worker_affective_steering_alpha")
-    if schema == WORKER_IDENTITY_SCHEMA:
+    if schema in {
+        "aura.latent_cortex.worker_identity.v2",
+        WORKER_IDENTITY_SCHEMA,
+    }:
         try:
             from core.brain.llm.latent_cortex.worker_capture_identity import (
                 validate_worker_capture_identity,
@@ -691,6 +799,12 @@ def worker_identity_errors(
             )
         }
         errors.extend(serving_stack_identity_errors(stack))
+    if schema == WORKER_IDENTITY_SCHEMA:
+        errors.extend(
+            worker_recurrent_adapter_activation_errors(
+                receipt.get("worker_recurrent_adapter_activation")
+            )
+        )
     if expected is not None:
         for key in (
             "worker_boot_id",
@@ -703,6 +817,7 @@ def worker_identity_errors(
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
             "worker_action_capture_identity",
+            "worker_recurrent_adapter_activation",
             "worker_adapters",
             "worker_adapter_stack_sha256",
             "worker_tokenizer",
@@ -852,14 +967,17 @@ def collect_latent_runtime_identity(
 __all__ = [
     "MAX_AFFECTIVE_STEERING_ALPHA",
     "RUNTIME_IDENTITY_SCHEMA",
+    "WORKER_ACTIVATION_SCHEMA",
     "WORKER_IDENTITY_SCHEMA",
     "build_worker_identity",
     "canonical_model_path",
     "collect_latent_runtime_identity",
     "latent_request_payload_sha256",
+    "inactive_worker_recurrent_adapter_activation",
     "logical_model_parameter_count",
     "model_parameter_count",
     "serving_stack_identity",
     "serving_stack_identity_errors",
     "worker_identity_errors",
+    "worker_recurrent_adapter_activation_errors",
 ]

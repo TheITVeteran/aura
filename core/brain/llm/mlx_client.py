@@ -2689,6 +2689,7 @@ class MLXLocalClient:
         self._current_first_token_hard_ceiling_s = 0.0
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
+        self._recurrent_adapter_activation: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -4079,6 +4080,9 @@ class MLXLocalClient:
             "current_first_token_at": self._current_first_token_at,
             "current_request_prompt_chars": self._current_request_prompt_chars,
             "recurrent_depth": recurrent_depth_status,
+            "recurrent_adapter_activation": dict(
+                self._recurrent_adapter_activation
+            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5125,6 +5129,7 @@ class MLXLocalClient:
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
             "worker_action_capture_identity",
+            "worker_recurrent_adapter_activation",
             "worker_tokenizer",
             "worker_runtime_tokenizer",
             "worker_quantization",
@@ -5184,6 +5189,14 @@ class MLXLocalClient:
                 self.model_path
             ):
                 errors.append("worker_model_path_mismatch")
+            if identity.get("schema") == "aura.latent_cortex.worker_identity.v3":
+                activation = res.get("recurrent_adapter_activation")
+                if not isinstance(activation, Mapping):
+                    errors.append("missing_recurrent_adapter_activation_receipt")
+                elif activation != identity.get(
+                    "worker_recurrent_adapter_activation"
+                ):
+                    errors.append("recurrent_adapter_activation_receipt_mismatch")
 
         # Recurrence: if this lane requires depth, the receipt must prove it.
         required_loops = _expected_recurrent_loops_from_model_path(self.model_path)
@@ -7875,6 +7888,7 @@ class MLXLocalClient:
                             self._init_done = False
                             self._worker_identity = {}
                             self._recurrent_depth_status = {}
+                            self._recurrent_adapter_activation = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -7894,6 +7908,14 @@ class MLXLocalClient:
                         # reported recurrence.
                         self._recurrent_depth_status = (
                             recurrent_status if isinstance(recurrent_status, dict) else {}
+                        )
+                        recurrent_adapter_activation = res.get(
+                            "recurrent_adapter_activation"
+                        )
+                        self._recurrent_adapter_activation = (
+                            dict(recurrent_adapter_activation)
+                            if isinstance(recurrent_adapter_activation, Mapping)
+                            else {}
                         )
                         if not isinstance(recurrent_status, dict):
                             _record_mlx_degradation(

@@ -30,9 +30,9 @@ from core.conversation.user_surface_contract import (
 )
 from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import shared_asset_root, state_root
 
 from .model_registry import resolve_personality_adapter
-from core.runtime.state_ownership import shared_asset_root, state_root
 
 logger = logging.getLogger("MLXWorker")
 
@@ -3330,6 +3330,100 @@ def _clear_mlx_cache(mx_module: Any) -> None:
             logger.debug("Suppressed Exception: %s", _exc)
 
 
+def _attach_certified_recurrent_adapter(
+    model: Any,
+    *,
+    model_path: str,
+    personality_adapter_path: str | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach the certified recurrent adapter configured for this live state.
+
+    An absent default pointer means no adapter has earned promotion yet. Once
+    an operator explicitly configures a pointer, every missing, stale,
+    untrusted, identity-mismatched, or unloadable artifact is fatal to worker
+    initialization; serving the base path while claiming trained recurrence
+    would invalidate both runtime truth and the scientific certificate.
+    """
+
+    from core.brain.llm.latent_cortex.runtime_identity import (
+        WORKER_ACTIVATION_SCHEMA,
+        inactive_worker_recurrent_adapter_activation,
+    )
+
+    configured_pointer = os.environ.get(
+        "AURA_RLC_ACTIVATION_POINTER",
+        "",
+    ).strip()
+    activation_root = (
+        state_root() / "data/adapters/latent-cortex"
+    )
+    pointer_path = (
+        Path(configured_pointer).expanduser()
+        if configured_pointer
+        else activation_root / "active.json"
+    )
+    if not pointer_path.exists():
+        if configured_pointer:
+            raise RuntimeError(
+                f"configured_recurrent_adapter_pointer_missing:{pointer_path}"
+            )
+        return inactive_worker_recurrent_adapter_activation(), None
+
+    configured_trust_root = os.environ.get(
+        "AURA_RLC_ACTIVATION_TRUST_ROOT",
+        "",
+    ).strip()
+    trust_root_path = (
+        Path(configured_trust_root).expanduser()
+        if configured_trust_root
+        else activation_root / "trust-root.pem"
+    )
+    try:
+        from core.brain.llm.latent_cortex.live_adapter_activation import (
+            read_live_adapter_trust_root,
+        )
+
+        trusted_root = read_live_adapter_trust_root(trust_root_path)
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(
+            f"recurrent_adapter_trust_root_unreadable:{trust_root_path}"
+        ) from exc
+
+    approved_root = activation_root / "releases"
+    from core.brain.llm.latent_cortex.live_adapter_activation import (
+        attach_certified_live_adapter,
+    )
+
+    receipt = attach_certified_live_adapter(
+        model,
+        model_path=model_path,
+        personality_adapter_path=personality_adapter_path,
+        pointer_path=pointer_path,
+        trusted_root_public_key_pem=trusted_root,
+        approved_adapter_roots=(approved_root,),
+        now_unix=int(time.time()),
+    )
+    identity = receipt.get("adapter_identity")
+    if not isinstance(identity, Mapping):
+        raise RuntimeError("recurrent_adapter_identity_receipt_missing")
+    activation = {
+        "schema": WORKER_ACTIVATION_SCHEMA,
+        "configured": True,
+        "active": True,
+        "reason": "certified_gain_proven",
+        "receipt_sha256": receipt["receipt_sha256"],
+        "activation_sha256": receipt["activation_sha256"],
+        "adapter_composite_identity_sha256": identity[
+            "composite_identity_sha256"
+        ],
+        "campaign_name": receipt["campaign_name"],
+        "claim_tier": receipt["claim_tier"],
+        "verified_verdict": receipt["verified_verdict"],
+        "loaded_projection_count": receipt["loaded_projection_count"],
+    }
+    return activation, receipt
+
+
 # ── expert adapter hot attach/detach (in-worker, no model reload) ────────────
 # The expert-LoRA library keeps domain-specialist adapters on disk and swaps
 # them onto the RESIDENT model. Attach wraps target linears with LoRA layers
@@ -4601,6 +4695,30 @@ def _mlx_worker_loop(
             )
             logger.warning("Recurrent depth not applied: %s", rd_exc)
 
+        (
+            recurrent_adapter_activation,
+            recurrent_adapter_activation_receipt,
+        ) = _attach_certified_recurrent_adapter(
+            model,
+            model_path=str(model_path),
+            personality_adapter_path=(
+                personality_adapter_status["applied"] or None
+            ),
+        )
+        if recurrent_adapter_activation["active"]:
+            logger.info(
+                "🧠 Certified recurrent adapter ACTIVE — campaign=%s "
+                "projections=%d receipt=%s",
+                recurrent_adapter_activation["campaign_name"],
+                recurrent_adapter_activation["loaded_projection_count"],
+                recurrent_adapter_activation["receipt_sha256"],
+            )
+        else:
+            logger.info(
+                "Certified recurrent adapter inactive: %s",
+                recurrent_adapter_activation["reason"],
+            )
+
         from core.brain.llm.latent_cortex.runtime_identity import (
             build_worker_identity,
         )
@@ -4621,6 +4739,7 @@ def _mlx_worker_loop(
                 affective_steering_alpha=float(
                     getattr(engine, "_alpha", 0.0) or 0.0
                 ),
+                recurrent_adapter_activation=recurrent_adapter_activation,
             )
 
         # Measure after personality adaptation, affective steering, and
@@ -4635,6 +4754,14 @@ def _mlx_worker_loop(
                 "device": device,
                 "steering_active": bool(_steering_active),
                 "recurrent_depth": recurrent_depth_status,
+                "recurrent_adapter_activation": dict(
+                    recurrent_adapter_activation
+                ),
+                "recurrent_adapter_activation_receipt": (
+                    dict(recurrent_adapter_activation_receipt)
+                    if recurrent_adapter_activation_receipt is not None
+                    else None
+                ),
                 "personality_adapter": dict(personality_adapter_status),
                 "worker_identity": dict(worker_identity),
             }

@@ -259,6 +259,40 @@ class TestReadyRequiresAValidatedReceipt:
         errors = self._client()._init_receipt_errors({"status": "ok"})
         assert not any("recurrent_depth" in e for e in errors)
 
+    def test_v3_identity_requires_matching_recurrent_adapter_receipt(
+        self,
+        monkeypatch,
+    ):
+        from core.brain.llm.latent_cortex import runtime_identity
+
+        monkeypatch.setattr(
+            runtime_identity,
+            "worker_identity_errors",
+            lambda _identity: [],
+        )
+        activation = runtime_identity.inactive_worker_recurrent_adapter_activation()
+        identity = {
+            "schema": runtime_identity.WORKER_IDENTITY_SCHEMA,
+            "worker_model_path": "/models/aura-32b",
+            "worker_recurrent_adapter_activation": activation,
+        }
+        missing = self._client()._init_receipt_errors(
+            {"status": "ok", "worker_identity": identity},
+        )
+        mismatched = self._client()._init_receipt_errors(
+            {
+                "status": "ok",
+                "worker_identity": identity,
+                "recurrent_adapter_activation": {
+                    **activation,
+                    "reason": "forged",
+                },
+            },
+        )
+
+        assert "missing_recurrent_adapter_activation_receipt" in missing
+        assert "recurrent_adapter_activation_receipt_mismatch" in mismatched
+
     def test_validation_precedes_the_ready_commit(self):
         source = inspect.getsource(mlx_client.MLXLocalClient._ensure_worker_alive_inner)
         block = source.split("READINESS IS EARNED", 1)[1]
@@ -269,6 +303,7 @@ class TestReadyRequiresAValidatedReceipt:
         block = source.split("refused READY on an unvalidated worker init receipt", 1)[1][:600]
         assert "self._worker_identity = {}" in block
         assert "self._recurrent_depth_status = {}" in block
+        assert "self._recurrent_adapter_activation = {}" in block
 
     def test_a_missing_validator_is_not_a_pass(self):
         source = inspect.getsource(
