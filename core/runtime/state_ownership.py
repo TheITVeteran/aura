@@ -300,7 +300,26 @@ def is_live_state_path(path: Path | str) -> bool:
         return True
     if candidate == live:
         return True
-    return live in candidate.parents
+    if live not in candidate.parents:
+        return False
+
+    # Inside the live root — but the SOURCE CHECKOUT lives there too. This
+    # repo sits at ~/.aura/live-source/, so every repo-relative path
+    # (<repo>/data/..., <repo>/artifacts/...) resolved as "the live
+    # instance's state" and the guard refused ordinary writes into the
+    # working tree. That is not what it protects: the live instance's state
+    # is ~/.aura/data, ~/.aura/run, ~/.aura/logs — not the code, and not a
+    # worktree under it.
+    #
+    # A checkout is identified by its own location rather than by name, so a
+    # worktree beneath .claude/worktrees/ is covered without listing it.
+    try:
+        source_root = Path(__file__).resolve().parent.parent.parent
+    except (OSError, RuntimeError, ValueError):
+        return True
+    if candidate == source_root or source_root in candidate.parents:
+        return False
+    return True
 
 
 def assert_state_path_allowed(path: Path | str, *, source: str = "unknown") -> None:
