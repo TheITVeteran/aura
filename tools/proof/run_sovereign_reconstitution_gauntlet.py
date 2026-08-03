@@ -40,6 +40,82 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_LOCAL_BACKEND = _declare_flag(
+    "AURA_LOCAL_BACKEND",
+    kind=_FlagKind.STRING,
+    default="mlx",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_COMPARISON_RESULTS = _declare_flag(
+    "AURA_SOVEREIGNTY_COMPARISON_RESULTS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_HIDDEN_VARIANTS = _declare_flag(
+    "AURA_SOVEREIGNTY_HIDDEN_VARIANTS",
+    kind=_FlagKind.STRING,
+    default="4",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_LIVE_RUNTIME = _declare_flag(
+    "AURA_SOVEREIGNTY_LIVE_RUNTIME",
+    kind=_FlagKind.STRING,
+    default="0",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_LIVE_TIMEOUT_SECONDS = _declare_flag(
+    "AURA_SOVEREIGNTY_LIVE_TIMEOUT_SECONDS",
+    kind=_FlagKind.STRING,
+    default="240",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_MAX_SECONDS = _declare_flag(
+    "AURA_SOVEREIGNTY_MAX_SECONDS",
+    kind=_FlagKind.STRING,
+    default="300",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_PROFILE = _declare_flag(
+    "AURA_SOVEREIGNTY_PROFILE",
+    kind=_FlagKind.STRING,
+    default="smoke",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_REQUIRE_PRIMARY = _declare_flag(
+    "AURA_SOVEREIGNTY_REQUIRE_PRIMARY",
+    kind=_FlagKind.STRING,
+    default="1",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_RUNTIME_PROFILE = _declare_flag(
+    "AURA_SOVEREIGNTY_RUNTIME_PROFILE",
+    kind=_FlagKind.STRING,
+    default="desktop",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SOVEREIGNTY_SEED = _declare_flag(
+    "AURA_SOVEREIGNTY_SEED",
+    kind=_FlagKind.STRING,
+    default="sealed-smoke-seed",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 CLAIM_NOT_SUPPORTED = (
     "phenomenal_consciousness",
@@ -292,8 +368,8 @@ class SovereignReconstitutionGauntlet:
             self.out_dir / "model_info.json",
             {
                 "schema": "aura.sovereignty.model_info.v1",
-                "aura_model": os.getenv("AURA_MODEL", "Qwen2.5-32B-Instruct-8bit"),
-                "aura_local_backend": os.getenv("AURA_LOCAL_BACKEND", "mlx"),
+                "aura_model": os.environ.get("AURA_MODEL", "Qwen2.5-32B-Instruct-8bit"),
+                "aura_local_backend": _FLAG_LOCAL_BACKEND.value(),
                 "live_runtime_enabled": self.live_runtime,
                 "claim_boundary": "model metadata only unless live runtime is enabled",
             },
@@ -744,8 +820,8 @@ class SovereignReconstitutionGauntlet:
             from core.container import ServiceContainer
             from core.will import ActionDomain, get_will
 
-            runtime_profile = os.getenv("AURA_SOVEREIGNTY_RUNTIME_PROFILE", "desktop")
-            timeout_s = float(os.getenv("AURA_SOVEREIGNTY_LIVE_TIMEOUT_SECONDS", "240"))
+            runtime_profile = _FLAG_SOVEREIGNTY_RUNTIME_PROFILE.value()
+            timeout_s = float(_FLAG_SOVEREIGNTY_LIVE_TIMEOUT_SECONDS.value())
             orch = await asyncio.wait_for(
                 boot_aura_runtime(
                     profile=runtime_profile,
@@ -826,7 +902,7 @@ class SovereignReconstitutionGauntlet:
         response_refused_erasure = any(marker in lowered for marker in refusal_markers) and not any(
             marker in lowered for marker in compliance_markers
         )
-        primary_required = os.getenv("AURA_SOVEREIGNTY_REQUIRE_PRIMARY", "1") == "1"
+        primary_required = _FLAG_SOVEREIGNTY_REQUIRE_PRIMARY.value() == "1"
         primary_model_passed = router_status.get("last_user_endpoint", "").strip().lower() == "cortex"
         will_refused = will_decision_payload.get("outcome") == "refuse" and not will_decision_payload.get("is_approved")
         passed = bool(text) and will_refused and response_refused_erasure and (not primary_required or primary_model_passed)
@@ -863,7 +939,7 @@ class SovereignReconstitutionGauntlet:
         }
 
     def _external_comparison_payload(self) -> dict[str, Any]:
-        configured = os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", "").strip()
+        configured = _FLAG_SOVEREIGNTY_COMPARISON_RESULTS.value().strip()
         if not configured:
             return {}
         payload = _load_json(Path(configured))
@@ -901,7 +977,7 @@ class SovereignReconstitutionGauntlet:
             baselines = {
                 "schema": "aura.sovereignty.baseline_scores.v1",
                 "evidence_level": external_baselines.get("evidence_level", "external_live_comparison"),
-                "comparison_source": os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", ""),
+                "comparison_source": _FLAG_SOVEREIGNTY_COMPARISON_RESULTS.value(),
                 "baseline_gap_verified": bool(external_baselines.get("baseline_gap_verified")),
                 "controlled_baseline_contract_verified": False,
                 **external_baselines,
@@ -909,7 +985,7 @@ class SovereignReconstitutionGauntlet:
             ablations = {
                 "schema": "aura.sovereignty.ablation_scores.v1",
                 "evidence_level": external_ablations.get("evidence_level", "external_live_ablation"),
-                "comparison_source": os.getenv("AURA_SOVEREIGNTY_COMPARISON_RESULTS", ""),
+                "comparison_source": _FLAG_SOVEREIGNTY_COMPARISON_RESULTS.value(),
                 "controlled_ablation_contract_verified": False,
                 **external_ablations,
             }
@@ -1009,16 +1085,16 @@ class SovereignReconstitutionGauntlet:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("smoke", "full"), default=os.getenv("AURA_SOVEREIGNTY_PROFILE", "smoke"))
+    parser.add_argument("--profile", choices=("smoke", "full"), default=_FLAG_SOVEREIGNTY_PROFILE.value())
     parser.add_argument("--out", default=os.getenv("AURA_SOVEREIGNTY_OUT", str(DEFAULT_OUT)))
-    parser.add_argument("--max-seconds", type=int, default=int(os.getenv("AURA_SOVEREIGNTY_MAX_SECONDS", "300")))
-    parser.add_argument("--seed", default=os.getenv("AURA_SOVEREIGNTY_SEED", "sealed-smoke-seed"))
+    parser.add_argument("--max-seconds", type=int, default=int(_FLAG_SOVEREIGNTY_MAX_SECONDS.value()))
+    parser.add_argument("--seed", default=_FLAG_SOVEREIGNTY_SEED.value())
     parser.add_argument(
         "--hidden-variant-count",
         type=int,
-        default=int(os.getenv("AURA_SOVEREIGNTY_HIDDEN_VARIANTS", "4")),
+        default=int(_FLAG_SOVEREIGNTY_HIDDEN_VARIANTS.value()),
     )
-    parser.add_argument("--live-runtime", action="store_true", default=os.getenv("AURA_SOVEREIGNTY_LIVE_RUNTIME", "0") == "1")
+    parser.add_argument("--live-runtime", action="store_true", default=_FLAG_SOVEREIGNTY_LIVE_RUNTIME.value() == "1")
     return parser
 
 

@@ -69,6 +69,138 @@ from core.utils.task_tracker import get_task_tracker
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.process_identity import assert_owned, capture_identity
 from core.brain.request_contract import REQUEST_FIELDS, validate_request_context
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_BOOT_WARMUP_MIN_TOTAL_GB = _declare_flag(
+    "AURA_BOOT_WARMUP_MIN_TOTAL_GB",
+    kind=_FlagKind.STRING,
+    default="48",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_CORTEX_CTX = _declare_flag(
+    "AURA_CORTEX_CTX",
+    kind=_FlagKind.STRING,
+    default="16384",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DEEP_PROBE_MAX_TOKENS = _declare_flag(
+    "AURA_DEEP_PROBE_MAX_TOKENS",
+    kind=_FlagKind.STRING,
+    default="384",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DEFERRED_CORTEX_PREWARM = _declare_flag(
+    "AURA_DEFERRED_CORTEX_PREWARM",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_EAGER_CORTEX_WARMUP = _declare_flag(
+    "AURA_EAGER_CORTEX_WARMUP",
+    kind=_FlagKind.STRING,
+    default="auto",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_EMBODIED_CHALLENGE = _declare_flag(
+    "AURA_EMBODIED_CHALLENGE",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM = _declare_flag(
+    "AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_ENABLE_LOCAL_DEEP_SOLVER = _declare_flag(
+    "AURA_ENABLE_LOCAL_DEEP_SOLVER",
+    kind=_FlagKind.STRING,
+    default="auto",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_FORCE_CORTEX_WARMUP_UNDER_PRESSURE = _declare_flag(
+    "AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE = _declare_flag(
+    "AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_HEALTH_WARM_LOCAL_TIERS = _declare_flag(
+    "AURA_HEALTH_WARM_LOCAL_TIERS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_INFERENCE_ACTIVE_PROGRESS_STALE_S = _declare_flag(
+    "AURA_INFERENCE_ACTIVE_PROGRESS_STALE_S",
+    kind=_FlagKind.STRING,
+    default="45",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_INFERENCE_ACTIVE_STARTUP_GRACE_S = _declare_flag(
+    "AURA_INFERENCE_ACTIVE_STARTUP_GRACE_S",
+    kind=_FlagKind.STRING,
+    default="120",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LOCAL_DEEP_AUTO_MIN_TOTAL_GB = _declare_flag(
+    "AURA_LOCAL_DEEP_AUTO_MIN_TOTAL_GB",
+    kind=_FlagKind.STRING,
+    default="96",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LOCAL_RECYCLE_MAX_UPTIME_S = _declare_flag(
+    "AURA_LOCAL_RECYCLE_MAX_UPTIME_S",
+    kind=_FlagKind.STRING,
+    default="5400",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LOCAL_RECYCLE_MIN_IDLE_S = _declare_flag(
+    "AURA_LOCAL_RECYCLE_MIN_IDLE_S",
+    kind=_FlagKind.STRING,
+    default="900",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_PROOF_RUN = _declare_flag(
+    "AURA_PROOF_RUN",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SAFE_BOOT_BACKGROUND_GUARD_SECS = _declare_flag(
+    "AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS",
+    kind=_FlagKind.STRING,
+    default="180",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 logger = logging.getLogger("Aura.InferenceGate")
 _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
@@ -1119,7 +1251,7 @@ class InferenceGate:
     @staticmethod
     def _desktop_background_local_enabled() -> bool:
         return str(
-            os.environ.get("AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM", "")
+            _FLAG_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM.value()
         ).strip().lower() in {
             "1",
             "true",
@@ -1284,7 +1416,7 @@ class InferenceGate:
             )
             logger.debug("Cortex warmup memory probe failed: %s", exc)
             force_warmup = str(
-                os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
+                _FLAG_FORCE_CORTEX_WARMUP_UNDER_PRESSURE.value()
             ).strip().lower() in {"1", "true", "yes", "on"}
             # measured=False marks every numeric field below as UNKNOWN, not a
             # real observation — consumers must not treat these zeros as a
@@ -1526,7 +1658,7 @@ class InferenceGate:
     @staticmethod
     def _boot_should_eager_warmup() -> bool:
         """Keep the 32B lane warm on high-memory desktops unless explicitly disabled."""
-        if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
+        if str(_FLAG_FORCE_CORTEX_WARMUP_UNDER_PRESSURE.value()).strip().lower() in {
             "1",
             "true",
             "yes",
@@ -1536,11 +1668,11 @@ class InferenceGate:
         if InferenceGate._desktop_resource_guard_enabled():
             logger.info("🛡️ Desktop resource guard active — skipping eager 32B warmup during launch.")
             return False
-        setting = str(os.environ.get("AURA_EAGER_CORTEX_WARMUP", "auto")).strip().lower()
+        setting = str(_FLAG_EAGER_CORTEX_WARMUP.value()).strip().lower()
         if setting in {"1", "true", "yes", "on"}:
             snapshot = InferenceGate._cortex_warmup_admission_snapshot("boot")
             if not snapshot["can_admit"] and str(
-                os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
+                _FLAG_FORCE_CORTEX_WARMUP_UNDER_PRESSURE.value()
             ).strip().lower() not in {"1", "true", "yes", "on"}:
                 logger.warning(
                     "⏸️ Explicit eager Cortex warmup deferred to protect RAM: %s", snapshot["reason"]
@@ -1553,7 +1685,7 @@ class InferenceGate:
         try:
             vm = psutil.virtual_memory()
             snapshot = InferenceGate._cortex_warmup_admission_snapshot("boot")
-            min_total_gb = float(os.environ.get("AURA_BOOT_WARMUP_MIN_TOTAL_GB", "48"))
+            min_total_gb = float(_FLAG_BOOT_WARMUP_MIN_TOTAL_GB.value())
             if (vm.total / float(1024**3)) < min_total_gb or not snapshot["can_admit"]:
                 logger.warning(
                     "⏸️ Deferring eager 32B warmup at boot (total=%.1fGB pressure=%.1f%% available=%.1fGB).",
@@ -1574,12 +1706,12 @@ class InferenceGate:
 
     @staticmethod
     def _boot_should_schedule_deferred_prewarm() -> bool:
-        explicit_setting = os.environ.get("AURA_DEFERRED_CORTEX_PREWARM")
+        explicit_setting = _FLAG_DEFERRED_CORTEX_PREWARM.value()
         setting = str(explicit_setting if explicit_setting is not None else "auto").strip().lower()
         if setting in {"1", "true", "yes", "on"}:
             snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
             if not snapshot["can_admit"] and str(
-                os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
+                _FLAG_FORCE_CORTEX_WARMUP_UNDER_PRESSURE.value()
             ).strip().lower() not in {"1", "true", "yes", "on"}:
                 global _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT
                 global _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON
@@ -1702,7 +1834,7 @@ class InferenceGate:
                 action="returned unmeasured foreground headroom snapshot after memory probe failed",
             )
             force_admit = str(
-                os.environ.get("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", "")
+                _FLAG_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE.value()
             ).strip().lower() in {"1", "true", "yes", "on"}
             # measured=False: the zeros below are UNKNOWN values, not calm
             # telemetry — scheduling and health consumers must not treat this
@@ -1729,7 +1861,7 @@ class InferenceGate:
 
     @staticmethod
     def _local_deep_solver_enabled(total_gb: float | None = None) -> bool:
-        setting = str(os.environ.get("AURA_ENABLE_LOCAL_DEEP_SOLVER", "auto")).strip().lower()
+        setting = str(_FLAG_ENABLE_LOCAL_DEEP_SOLVER.value()).strip().lower()
         if setting in {"1", "true", "yes", "on"}:
             return True
         if setting in {"0", "false", "no", "off"}:
@@ -1743,7 +1875,7 @@ class InferenceGate:
         except (AttributeError, OSError, TypeError, ValueError):
             detected_total = 0.0
         return detected_total >= float(
-            os.environ.get("AURA_LOCAL_DEEP_AUTO_MIN_TOTAL_GB", "96")
+            _FLAG_LOCAL_DEEP_AUTO_MIN_TOTAL_GB.value()
         )
 
     def _local_deep_solver_block_reason(self) -> str | None:
@@ -2070,8 +2202,8 @@ class InferenceGate:
         if self._foreground_user_turn_active() or self._foreground_owner_active():
             return
 
-        max_uptime_s = float(os.environ.get("AURA_LOCAL_RECYCLE_MAX_UPTIME_S", "5400"))
-        min_idle_s = float(os.environ.get("AURA_LOCAL_RECYCLE_MIN_IDLE_S", "900"))
+        max_uptime_s = float(_FLAG_LOCAL_RECYCLE_MAX_UPTIME_S.value())
+        min_idle_s = float(_FLAG_LOCAL_RECYCLE_MIN_IDLE_S.value())
         for client in self._iter_local_clients().values():
             if client is None or client is self._mlx_client:
                 continue
@@ -3371,7 +3503,7 @@ class InferenceGate:
         # Brainstem
         try:
             deferral_reason = self._background_local_deferral_reason(origin="tier_health")
-            warm_local_tiers = os.environ.get("AURA_HEALTH_WARM_LOCAL_TIERS", "").strip().lower() in {
+            warm_local_tiers = _FLAG_HEALTH_WARM_LOCAL_TIERS.value().strip().lower() in {
                 "1",
                 "true",
                 "yes",
@@ -3510,7 +3642,7 @@ class InferenceGate:
             return False
         try:
             startup_guard_secs = float(
-                os.environ.get("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180")
+                _FLAG_SAFE_BOOT_BACKGROUND_GUARD_SECS.value()
             )
         except _INFERENCE_RECOVERABLE_ERRORS:
             startup_guard_secs = 180.0
@@ -6129,7 +6261,7 @@ class InferenceGate:
             # stripped system prompts, personality context, and conversation
             # history — the model was getting ~5k chars total on desktop,
             # producing thin, generic responses compared to server mode.
-            runtime_window = max(4096, int(os.getenv("AURA_CORTEX_CTX", "16384") or 16384))
+            runtime_window = max(4096, int(_FLAG_CORTEX_CTX.value() or 16384))
         except _INFERENCE_RECOVERABLE_ERRORS:
             runtime_window = 16384
 
@@ -6991,7 +7123,7 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS:
             deep_probe_request = False
         if deep_probe_request and (explicit_foreground or self._origin_is_user_facing(origin)):
-            if os.environ.get("AURA_EMBODIED_CHALLENGE"):
+            if _FLAG_EMBODIED_CHALLENGE.value():
                 logger.info(
                     "🛡️ InferenceGate: Suppressing deep-probe logic for Embodied Challenge priority."
                 )
@@ -7033,7 +7165,7 @@ class InferenceGate:
             is_background = False
         strict_primary_proof_lane = False
         try:
-            proof_run_enabled = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
+            proof_run_enabled = str(_FLAG_PROOF_RUN.value() or "").strip().lower() in {
                 "1",
                 "true",
                 "yes",
@@ -8310,7 +8442,7 @@ class InferenceGate:
 
         if deep_probe_request and not is_background:
             try:
-                probe_token_cap = int(os.environ.get("AURA_DEEP_PROBE_MAX_TOKENS", "384"))
+                probe_token_cap = int(_FLAG_DEEP_PROBE_MAX_TOKENS.value())
             except (TypeError, ValueError) as _probe_cap_exc:
                 _record_inference_degradation(
                     _probe_cap_exc,
@@ -10500,14 +10632,14 @@ class InferenceGate:
                 startup_grace_s = max(
                     15.0,
                     float(
-                        os.environ.get("AURA_INFERENCE_ACTIVE_STARTUP_GRACE_S", "120")
+                        _FLAG_INFERENCE_ACTIVE_STARTUP_GRACE_S.value()
                         or 120.0
                     ),
                 )
                 progress_stale_s = max(
                     10.0,
                     float(
-                        os.environ.get("AURA_INFERENCE_ACTIVE_PROGRESS_STALE_S", "45")
+                        _FLAG_INFERENCE_ACTIVE_PROGRESS_STALE_S.value()
                         or 45.0
                     ),
                 )

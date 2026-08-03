@@ -29,6 +29,75 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.task_ownership import create_tracked_task
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_EXTERNAL_GUI_OWNER = _declare_flag(
+    "AURA_EXTERNAL_GUI_OWNER",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LIVENESS_HEARTBEAT_FILE = _declare_flag(
+    "AURA_LIVENESS_HEARTBEAT_FILE",
+    kind=_FlagKind.STRING,
+    default="data/runtime/liveness_heartbeat.json",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LOG_DIR = _declare_flag(
+    "AURA_LOG_DIR",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SAFE_BOOT_DESKTOP = _declare_flag(
+    "AURA_SAFE_BOOT_DESKTOP",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_WATCHDOG_CANCEL_HUNG_TASKS = _declare_flag(
+    "AURA_WATCHDOG_CANCEL_HUNG_TASKS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_WATCHDOG_FOREGROUND_GRACE_S = _declare_flag(
+    "AURA_WATCHDOG_FOREGROUND_GRACE_S",
+    kind=_FlagKind.STRING,
+    default="75",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_WATCHDOG_HARD_EXIT_BOOT_GRACE_S = _declare_flag(
+    "AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_WATCHDOG_SERVICE_PROOF_GRACE_S = _declare_flag(
+    "AURA_WATCHDOG_SERVICE_PROOF_GRACE_S",
+    kind=_FlagKind.STRING,
+    default="240",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S = _declare_flag(
+    "AURA_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S",
+    kind=_FlagKind.STRING,
+    default="60",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 logger = logging.getLogger("Aura.Resilience.Watchdog")
 
@@ -49,7 +118,7 @@ def _forensics_root() -> Path:
     honoring it keeps hermetic runs from salting the real forensic record
     (58 test-driver dumps polluted a triage ranking on 2026-07-10).
     """
-    override = str(os.environ.get("AURA_LOG_DIR", "") or "").strip()
+    override = str(_FLAG_LOG_DIR.value() or "").strip()
     if override:
         return Path(override) / "error_logs"
     return Path("data/error_logs")
@@ -159,7 +228,7 @@ class StallWatchdog(threading.Thread):
 
     @staticmethod
     def _resolve_heartbeat_file() -> Path | None:
-        raw = os.getenv("AURA_LIVENESS_HEARTBEAT_FILE", "data/runtime/liveness_heartbeat.json")
+        raw = _FLAG_LIVENESS_HEARTBEAT_FILE.value()
         if not str(raw).strip():
             return None
         try:
@@ -202,7 +271,7 @@ class StallWatchdog(threading.Thread):
     @staticmethod
     def _suppression_log_interval_s() -> float:
         try:
-            return max(5.0, float(os.getenv("AURA_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S", "60") or 60))
+            return max(5.0, float(_FLAG_WATCHDOG_SUPPRESSION_LOG_INTERVAL_S.value() or 60))
         except (TypeError, ValueError):
             return 60.0
 
@@ -362,7 +431,7 @@ class StallWatchdog(threading.Thread):
         startup before the watched loop has a stable heartbeat. A stale first
         sample must not kill the process and create the white-screen boot loop.
         """
-        explicit = os.getenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S")
+        explicit = _FLAG_WATCHDOG_HARD_EXIT_BOOT_GRACE_S.value()
         if explicit is not None:
             try:
                 return max(0.0, float(explicit or 0.0))
@@ -373,7 +442,7 @@ class StallWatchdog(threading.Thread):
                 inherited = max(0.0, float(os.getenv("AURA_WATCHDOG_BOOT_GRACE_S") or 0.0))
             except (TypeError, ValueError):
                 inherited = 0.0
-            if os.getenv("AURA_SAFE_BOOT_DESKTOP") == "1" or os.getenv("AURA_EXTERNAL_GUI_OWNER") == "1":
+            if _FLAG_SAFE_BOOT_DESKTOP.value() == "1" or _FLAG_EXTERNAL_GUI_OWNER.value() == "1":
                 return max(inherited, 1200.0)
             return inherited
         return 1200.0
@@ -383,7 +452,7 @@ class StallWatchdog(threading.Thread):
         try:
             return max(
                 0.0,
-                float(os.getenv("AURA_WATCHDOG_SERVICE_PROOF_GRACE_S", "240") or 240),
+                float(_FLAG_WATCHDOG_SERVICE_PROOF_GRACE_S.value() or 240),
             )
         except (TypeError, ValueError):
             return 240.0
@@ -485,7 +554,7 @@ class StallWatchdog(threading.Thread):
             )
             return True
         try:
-            foreground_grace = float(os.getenv("AURA_WATCHDOG_FOREGROUND_GRACE_S", "75") or 75)
+            foreground_grace = float(_FLAG_WATCHDOG_FOREGROUND_GRACE_S.value() or 75)
         except (TypeError, ValueError):
             foreground_grace = 75.0
         if foreground_grace > 0 and elapsed <= foreground_grace:
@@ -755,7 +824,7 @@ class StallWatchdog(threading.Thread):
         except RuntimeError:
             return
 
-        aggressive_cancel = os.getenv("AURA_WATCHDOG_CANCEL_HUNG_TASKS", "").strip().lower() in {
+        aggressive_cancel = _FLAG_WATCHDOG_CANCEL_HUNG_TASKS.value().strip().lower() in {
             "1",
             "true",
             "yes",

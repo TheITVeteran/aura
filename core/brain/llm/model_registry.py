@@ -17,11 +17,94 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_BRAINSTEM_MODEL = _declare_flag(
+    "AURA_BRAINSTEM_MODEL",
+    kind=_FlagKind.STRING,
+    default="Qwen2.5-7B-Instruct-4bit",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DEEP_MODEL = _declare_flag(
+    "AURA_DEEP_MODEL",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_FALLBACK_MODEL = _declare_flag(
+    "AURA_FALLBACK_MODEL",
+    kind=_FlagKind.STRING,
+    default="Qwen2.5-1.5B-Instruct-4bit",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LANE_AUDIT_CACHE_TTL_S = _declare_flag(
+    "AURA_LANE_AUDIT_CACHE_TTL_S",
+    kind=_FlagKind.STRING,
+    default="30",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LLM__MLX_BRAINSTEM_PATH = _declare_flag(
+    "AURA_LLM__MLX_BRAINSTEM_PATH",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LLM__MLX_DEEP_MODEL_PATH = _declare_flag(
+    "AURA_LLM__MLX_DEEP_MODEL_PATH",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LLM__MLX_MODEL_PATH = _declare_flag(
+    "AURA_LLM__MLX_MODEL_PATH",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LOCAL_BACKEND = _declare_flag(
+    "AURA_LOCAL_BACKEND",
+    kind=_FlagKind.STRING,
+    default="mlx",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LORA_PATH = _declare_flag(
+    "AURA_LORA_PATH",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_LORA_TARGET_MODEL = _declare_flag(
+    "AURA_LORA_TARGET_MODEL",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_MODEL = _declare_flag(
+    "AURA_MODEL",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 logger = logging.getLogger("Aura.ModelRegistry")
 
 BASE_DIR = Path(os.getenv("AURA_ROOT", Path(__file__).resolve().parents[3]))
-LOCAL_BACKEND = str(os.getenv("AURA_LOCAL_BACKEND", "mlx")).strip().lower()
+LOCAL_BACKEND = str(_FLAG_LOCAL_BACKEND.value()).strip().lower()
 
 PRIMARY_ENDPOINT = "Cortex"
 DEEP_ENDPOINT = "Solver"
@@ -109,12 +192,12 @@ def _default_deep_model_name(*, backend: str | None = None) -> str:
 # Re-quantized fused models degrade quality (repetition loops, wrong answers).
 # The separate adapter has intermittent float32 errors but most generations
 # succeed — the worker catches and retries on failure.
-ACTIVE_MODEL = os.getenv("AURA_MODEL") or "Qwen2.5-32B-Instruct-8bit"
+ACTIVE_MODEL = _FLAG_MODEL.value() or "Qwen2.5-32B-Instruct-8bit"
 DEEP_MODEL = normalize_runtime_model_name(
-    os.getenv("AURA_DEEP_MODEL") or _default_deep_model_name()
+    _FLAG_DEEP_MODEL.value() or _default_deep_model_name()
 )
-BRAINSTEM_MODEL = os.getenv("AURA_BRAINSTEM_MODEL", "Qwen2.5-7B-Instruct-4bit")
-FALLBACK_MODEL = os.getenv("AURA_FALLBACK_MODEL", "Qwen2.5-1.5B-Instruct-4bit")
+BRAINSTEM_MODEL = _FLAG_BRAINSTEM_MODEL.value()
+FALLBACK_MODEL = _FLAG_FALLBACK_MODEL.value()
 
 # Env-override for the primary (Cortex), solver, and brainstem model paths so
 # a .env swap actually takes effect.  This is how we point Aura at the fused
@@ -163,7 +246,7 @@ def _current_cortex_path() -> Path:
     if _cortex_path_cache is not None and (now - _cortex_path_cache[0]) < _CORTEX_MANIFEST_TTL_S:
         return _cortex_path_cache[1]
     resolved = Path(
-        os.getenv("AURA_LLM__MLX_MODEL_PATH")
+        _FLAG_LLM__MLX_MODEL_PATH.value()
         or _resolve_active_fused_model()
         or str(BASE_DIR / "models" / _CORTEX_NAME)
     )
@@ -173,11 +256,11 @@ def _current_cortex_path() -> Path:
 
 _CORTEX_PATH = _current_cortex_path()  # legacy import-time view; do not add consumers
 _SOLVER_PATH = Path(
-    os.getenv("AURA_LLM__MLX_DEEP_MODEL_PATH")
+    _FLAG_LLM__MLX_DEEP_MODEL_PATH.value()
     or str(BASE_DIR / "models" / "Qwen2.5-72B-Instruct-4bit")
 )
 _BRAINSTEM_PATH = Path(
-    os.getenv("AURA_LLM__MLX_BRAINSTEM_PATH")
+    _FLAG_LLM__MLX_BRAINSTEM_PATH.value()
     or str(BASE_DIR / "models" / "Qwen2.5-7B-Instruct-4bit")
 )
 
@@ -637,7 +720,7 @@ def reset_model_registry_caches_for_test() -> None:
 
 def _lane_audit_cache_ttl_s() -> float:
     try:
-        return max(0.0, float(os.getenv("AURA_LANE_AUDIT_CACHE_TTL_S", "30") or 30))
+        return max(0.0, float(_FLAG_LANE_AUDIT_CACHE_TTL_S.value() or 30))
     except (TypeError, ValueError):
         return 30.0
 
@@ -794,7 +877,7 @@ def resolve_personality_adapter(
     if _personality_lora_disabled(normalized_backend):
         return None
 
-    adapter_dir = os.getenv("AURA_LORA_PATH", "").strip()
+    adapter_dir = _FLAG_LORA_PATH.value().strip()
     if not adapter_dir:
         if not _default_personality_lora_enabled(normalized_backend):
             return None
@@ -805,7 +888,7 @@ def resolve_personality_adapter(
         return None
 
     configured_target = (
-        os.getenv("AURA_LORA_TARGET_MODEL", "").strip()
+        _FLAG_LORA_TARGET_MODEL.value().strip()
         or _read_adapter_target_model(Path(adapter_dir))
         or ACTIVE_MODEL
     )

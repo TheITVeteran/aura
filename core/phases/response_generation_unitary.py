@@ -58,6 +58,75 @@ from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.prompt_compression import compress_system_prompt
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_AGI_MAX_TASKS = _declare_flag(
+    "AURA_AGI_MAX_TASKS",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_ALLOW_PRE_MODEL_STATE_ONLY_REPLY = _declare_flag(
+    "AURA_ALLOW_PRE_MODEL_STATE_ONLY_REPLY",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_AMPLIFIER_ESCALATE_CLOUD = _declare_flag(
+    "AURA_AMPLIFIER_ESCALATE_CLOUD",
+    kind=_FlagKind.STRING,
+    default="0",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_AMPLIFIER_TIER_ESCALATION = _declare_flag(
+    "AURA_AMPLIFIER_TIER_ESCALATION",
+    kind=_FlagKind.STRING,
+    default="0",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_CONVERSATIONAL_AMPLIFIER_LIVE = _declare_flag(
+    "AURA_CONVERSATIONAL_AMPLIFIER_LIVE",
+    kind=_FlagKind.STRING,
+    default="0",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_EMBODIED_CHALLENGE = _declare_flag(
+    "AURA_EMBODIED_CHALLENGE",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_REASONING_AMPLIFIER_V2 = _declare_flag(
+    "AURA_REASONING_AMPLIFIER_V2",
+    kind=_FlagKind.STRING,
+    default="1",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_STRICT_PROOF_TIMEOUT_SECONDS = _declare_flag(
+    "AURA_STRICT_PROOF_TIMEOUT_SECONDS",
+    kind=_FlagKind.STRING,
+    default="60",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_TESTING = _declare_flag(
+    "AURA_TESTING",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -713,7 +782,7 @@ class UnitaryResponsePhase(Phase):
         than inheriting the broad live-chat foreground budget.
         """
 
-        raw = os.environ.get("AURA_STRICT_PROOF_TIMEOUT_SECONDS", "60")
+        raw = _FLAG_STRICT_PROOF_TIMEOUT_SECONDS.value()
         try:
             value = float(raw)
         except (TypeError, ValueError):
@@ -1974,7 +2043,7 @@ class UnitaryResponsePhase(Phase):
         """
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
-        if str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() in {"0", "false", "off", "no"}:
+        if str(_FLAG_REASONING_AMPLIFIER_V2.value()).strip().lower() in {"0", "false", "off", "no"}:
             return draft
         try:
             from core.brain.reasoning_amplifier_v2 import amplify_turn, is_amplifiable
@@ -2009,8 +2078,8 @@ class UnitaryResponsePhase(Phase):
         # Off by default so the running foreground lane keeps its latency contract;
         # opt in with AURA_AMPLIFIER_TIER_ESCALATION=1. Cloud is a separate opt-in.
         escalate_gen = None
-        if str(os.getenv("AURA_AMPLIFIER_TIER_ESCALATION", "0")).strip().lower() in {"1", "true", "on", "yes"}:
-            allow_cloud = str(os.getenv("AURA_AMPLIFIER_ESCALATE_CLOUD", "0")).strip().lower() in {"1", "true", "on", "yes"}
+        if str(_FLAG_AMPLIFIER_TIER_ESCALATION.value()).strip().lower() in {"1", "true", "on", "yes"}:
+            allow_cloud = str(_FLAG_AMPLIFIER_ESCALATE_CLOUD.value()).strip().lower() in {"1", "true", "on", "yes"}
             escalate_gen = _make_gen("deep", allow_cloud)
 
         budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.8)))
@@ -2054,7 +2123,7 @@ class UnitaryResponsePhase(Phase):
         """
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
-        live_flag = str(os.getenv("AURA_CONVERSATIONAL_AMPLIFIER_LIVE", "0")).strip().lower()
+        live_flag = str(_FLAG_CONVERSATIONAL_AMPLIFIER_LIVE.value()).strip().lower()
         if live_flag not in {"1", "true", "on", "yes"}:
             return draft
         try:
@@ -3968,7 +4037,7 @@ class UnitaryResponsePhase(Phase):
     def _allow_pre_model_state_only_reply() -> bool:
         """Explicit escape hatch for deterministic live-voice replies before LLM inference."""
         try:
-            return str(os.environ.get("AURA_ALLOW_PRE_MODEL_STATE_ONLY_REPLY", "")).strip().lower() in {
+            return str(_FLAG_ALLOW_PRE_MODEL_STATE_ONLY_REPLY.value()).strip().lower() in {
                 "1",
                 "true",
                 "yes",
@@ -4309,7 +4378,7 @@ class UnitaryResponsePhase(Phase):
             is_deep_probe_objective = bool(
                 is_user_facing
                 and self._is_deep_mind_probe_objective(objective)
-                and not os.environ.get("AURA_EMBODIED_CHALLENGE")
+                and not _FLAG_EMBODIED_CHALLENGE.value()
             )
             if is_deep_probe_objective:
                 try:
@@ -5059,8 +5128,8 @@ class UnitaryResponsePhase(Phase):
                 is_test_run = (
                     routing_origin == "test"
                     or routing_origin == "benchmark"
-                    or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-                    or os.environ.get("AURA_TESTING") is not None
+                    or _FLAG_AGI_MAX_TASKS.value() is not None
+                    or _FLAG_TESTING.value() is not None
                     or os.environ.get("AURA_PROOF_RUN") is not None
                 )
                 background_reason = None if is_test_run else response_policy.background_response_suppression_reason(
@@ -5442,7 +5511,7 @@ class UnitaryResponsePhase(Phase):
             # [PERF] In embodied challenges, long history is a liability that causes
             # 80s+ inference stalls. We aggressively shed to the bare minimum.
             history_limit = 12
-            if os.environ.get("AURA_EMBODIED_CHALLENGE"):
+            if _FLAG_EMBODIED_CHALLENGE.value():
                 history_limit = (
                     6  # [STABILITY] Increased from 2 to 6. 2 turns causes total context collapse.
                 )

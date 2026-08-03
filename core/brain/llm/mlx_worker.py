@@ -33,6 +33,117 @@ from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import shared_asset_root, state_root
 
 from .model_registry import resolve_personality_adapter
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_ALLOW_UNSAFE_MEMORY_LIMITS = _declare_flag(
+    "AURA_ALLOW_UNSAFE_MEMORY_LIMITS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_CONTRASTIVE_ALPHA = _declare_flag(
+    "AURA_CONTRASTIVE_ALPHA",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_CONTRASTIVE_BETA = _declare_flag(
+    "AURA_CONTRASTIVE_BETA",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_EXPERT_ADAPTER_ROOTS = _declare_flag(
+    "AURA_EXPERT_ADAPTER_ROOTS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_MLX_NUM_THREADS = _declare_flag(
+    "AURA_MLX_NUM_THREADS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_MLX_WORKER_RSS_LIMIT_GB = _declare_flag(
+    "AURA_MLX_WORKER_RSS_LIMIT_GB",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_REASONING_STEERING = _declare_flag(
+    "AURA_REASONING_STEERING",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_REASONING_STEERING_SCALE = _declare_flag(
+    "AURA_REASONING_STEERING_SCALE",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_RECURRENT_LOOPS = _declare_flag(
+    "AURA_RECURRENT_LOOPS",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_RECURRENT_LOOPS_32B = _declare_flag(
+    "AURA_RECURRENT_LOOPS_32B",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SDK_PATH = _declare_flag(
+    "AURA_SDK_PATH",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SPECULATIVE_DECODING = _declare_flag(
+    "AURA_SPECULATIVE_DECODING",
+    kind=_FlagKind.STRING,
+    default="1",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_SURFACE_RETRY_WALL_S = _declare_flag(
+    "AURA_SURFACE_RETRY_WALL_S",
+    kind=_FlagKind.STRING,
+    default="20",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_USER_SURFACE_RECURRENT_LOOPS = _declare_flag(
+    "AURA_USER_SURFACE_RECURRENT_LOOPS",
+    kind=_FlagKind.STRING,
+    default="1",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_USER_SURFACE_RECURRENT_MAX_LOOPS = _declare_flag(
+    "AURA_USER_SURFACE_RECURRENT_MAX_LOOPS",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 logger = logging.getLogger("MLXWorker")
 
@@ -332,14 +443,14 @@ _LIVE_RECURRENT_CEILING_DEFAULT = 1
 
 
 def _live_recurrent_ceiling() -> int:
-    return max(1, _safe_int(os.environ.get("AURA_USER_SURFACE_RECURRENT_MAX_LOOPS"),
+    return max(1, _safe_int(_FLAG_USER_SURFACE_RECURRENT_MAX_LOOPS.value(),
                             _LIVE_RECURRENT_CEILING_DEFAULT))
 
 
 def _surface_control_recurrent_loops(job: dict[str, Any]) -> int:
     configured = job.get(
         "clean_user_surface_recurrent_loops",
-        os.environ.get("AURA_USER_SURFACE_RECURRENT_LOOPS", "1"),
+        _FLAG_USER_SURFACE_RECURRENT_LOOPS.value(),
     )
     return max(1, min(_safe_int(configured, 1), _live_recurrent_ceiling()))
 
@@ -3074,14 +3185,14 @@ class WorkerMemorySentinel(threading.Thread):
             return min(24.0, max(10.0, total_gb * 0.45))
 
         default_limit = _default_limit()
-        configured = os.environ.get("AURA_MLX_WORKER_RSS_LIMIT_GB")
+        configured = _FLAG_MLX_WORKER_RSS_LIMIT_GB.value()
         if configured:
             try:
                 configured_limit = max(4.0, float(configured))
                 from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
                 safe_boot = desktop_resource_guard_enabled()
-                unsafe_allowed = str(os.environ.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS", "")).strip().lower() in {
+                unsafe_allowed = str(_FLAG_ALLOW_UNSAFE_MEMORY_LIMITS.value()).strip().lower() in {
                     "1",
                     "true",
                     "yes",
@@ -3231,7 +3342,7 @@ def _setup_worker_env():
     # existence alone let a stale or injected env var redirect compilation to
     # an arbitrary directory.
     _sdk_allowed_prefixes = ("/Library/", "/Applications/Xcode", "/usr/")
-    cached_sdk = os.environ.get("AURA_SDK_PATH")
+    cached_sdk = _FLAG_SDK_PATH.value()
     if (
         cached_sdk
         and os.path.exists(cached_sdk)
@@ -3296,7 +3407,7 @@ def _setup_worker_env():
     # profile: hard-coding 10 oversubscribed smaller machines and stacked
     # multi-worker deployments. Explicit env wins; otherwise leave 2 cores
     # for the parent runtime and IPC threads, floor 4 for decode throughput.
-    configured_threads = os.environ.get("AURA_MLX_NUM_THREADS", "").strip()
+    configured_threads = _FLAG_MLX_NUM_THREADS.value().strip()
     if configured_threads.isdigit() and int(configured_threads) > 0:
         mlx_threads = int(configured_threads)
     else:
@@ -3455,7 +3566,7 @@ def _expert_adapter_approved_roots() -> list[Path]:
         roots.append(Path(__file__).resolve().parents[3] / "artifacts")
     except (OSError, IndexError):
         logger.debug("Repo artifacts root unavailable for adapter policy.")
-    configured = os.environ.get("AURA_EXPERT_ADAPTER_ROOTS", "")
+    configured = _FLAG_EXPERT_ADAPTER_ROOTS.value()
     for extra in configured.split(os.pathsep):
         extra = extra.strip()
         if extra:
@@ -4275,7 +4386,7 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
     Returns None (never raises) when disabled, missing, or incompatible —
     generation falls back to the normal path.
     """
-    enabled = str(os.environ.get("AURA_SPECULATIVE_DECODING", "1")).strip().lower() in {
+    enabled = str(_FLAG_SPECULATIVE_DECODING.value()).strip().lower() in {
         "1", "true", "yes", "on",
     }
     if not enabled:
@@ -4677,8 +4788,8 @@ def _mlx_worker_loop(
                     severity="warning",
                 )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as rd_exc:
-            explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
-            size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
+            explicit_disable = str(_FLAG_RECURRENT_LOOPS.value()).strip() == "0"
+            size_disable = str(_FLAG_RECURRENT_LOOPS_32B.value()).strip() == "0"
             from core.brain.llm.model_artifact_profile import model_size_class as _msc
 
             recurrent_depth_status["required"] = (
@@ -5150,7 +5261,7 @@ def _mlx_worker_loop(
                 #    real dual-model contrastive decoding against a small same-family
                 #    amateur (e.g. Qwen2.5-1.5B vs the 32B cortex), subtracting the
                 #    amateur's lazy preferences within the cortex's plausible set.
-                _steer_on = os.environ.get("AURA_REASONING_STEERING", "").strip().lower() in {"1", "true", "on", "yes"}
+                _steer_on = _FLAG_REASONING_STEERING.value().strip().lower() in {"1", "true", "on", "yes"}
                 _cd_on = os.environ.get("AURA_CONTRASTIVE_DECODING", "").strip().lower() in {"1", "true", "on", "yes"}
                 _amateur_path = os.environ.get("AURA_CONTRASTIVE_AMATEUR_MODEL", "").strip()
                 if _steer_on or (_cd_on and _amateur_path):
@@ -5163,9 +5274,9 @@ def _mlx_worker_loop(
                             tokenizer,
                             enable_steering=_steer_on,
                             amateur_model_path=_amateur_path if (_cd_on and _amateur_path) else None,
-                            alpha=_safe_float(os.environ.get("AURA_CONTRASTIVE_ALPHA"), 0.5),
-                            beta=_safe_float(os.environ.get("AURA_CONTRASTIVE_BETA"), 0.1),
-                            steering_scale=_safe_float(os.environ.get("AURA_REASONING_STEERING_SCALE"), 1.0),
+                            alpha=_safe_float(_FLAG_CONTRASTIVE_ALPHA.value(), 0.5),
+                            beta=_safe_float(_FLAG_CONTRASTIVE_BETA.value(), 0.1),
+                            steering_scale=_safe_float(_FLAG_REASONING_STEERING_SCALE.value(), 1.0),
                         )
                         if reasoning_procs:
                             logits_processors.extend(reasoning_procs)
@@ -5295,7 +5406,7 @@ def _mlx_worker_loop(
                             # drafting again for a user who has stopped waiting.
                             surface_retry_started = time.monotonic()
                             surface_retry_wall_s = _safe_float(
-                                os.getenv("AURA_SURFACE_RETRY_WALL_S", "20"), 20.0
+                                _FLAG_SURFACE_RETRY_WALL_S.value(), 20.0
                             )
                             ontology_retry_count = 0
                             schema_validation_failed = ""

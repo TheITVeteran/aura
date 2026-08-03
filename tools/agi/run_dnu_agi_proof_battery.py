@@ -38,6 +38,82 @@ from core.runtime.resource_observation import (  # noqa: E402
     ResourceObserver,
     get_resource_observer,
 )
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_AGI_MAX_TASKS = _declare_flag(
+    "AURA_AGI_MAX_TASKS",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_BASELINE_MAX_TOKENS = _declare_flag(
+    "AURA_DNU_BASELINE_MAX_TOKENS",
+    kind=_FlagKind.STRING,
+    default="2048",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_BASELINE_TIMEOUT_SECONDS = _declare_flag(
+    "AURA_DNU_BASELINE_TIMEOUT_SECONDS",
+    kind=_FlagKind.STRING,
+    default="90",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_COMPARISON_TASK_LIMIT = _declare_flag(
+    "AURA_DNU_COMPARISON_TASK_LIMIT",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS = _declare_flag(
+    "AURA_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS",
+    kind=_FlagKind.STRING,
+    default="90",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_MODEL_RECYCLE_INTERVAL = _declare_flag(
+    "AURA_DNU_MODEL_RECYCLE_INTERVAL",
+    kind=_FlagKind.STRING,
+    default=None,
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_POST_TASK_HEALTH_RECOVERY_S = _declare_flag(
+    "AURA_DNU_POST_TASK_HEALTH_RECOVERY_S",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_DNU_TASK_WALL_CAP_S = _declare_flag(
+    "AURA_DNU_TASK_WALL_CAP_S",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_ENABLE_STRUCTURED_PROOF_SOLVER = _declare_flag(
+    "AURA_ENABLE_STRUCTURED_PROOF_SOLVER",
+    kind=_FlagKind.STRING,
+    default="",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S = _declare_flag(
+    "AURA_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S",
+    kind=_FlagKind.STRING,
+    default="60.0",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 _GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _DNU_RUN_RECOVERABLE_ERRORS = (
@@ -567,7 +643,7 @@ async def wait_for_proof_runtime_health(
 
 def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: bool) -> int:
     """Return the task interval for primary-lane model-worker recycling."""
-    raw = os.environ.get("AURA_DNU_MODEL_RECYCLE_INTERVAL")
+    raw = _FLAG_DNU_MODEL_RECYCLE_INTERVAL.value()
     if raw is not None:
         try:
             return max(0, int(raw))
@@ -1354,7 +1430,7 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
     strict_answer_ok = False
     strict_answer_source = ""
     structured_solver_enabled = (
-        str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
+        str(_FLAG_ENABLE_STRUCTURED_PROOF_SOLVER.value() or "").strip().lower()
         in {"1", "true", "yes", "on"}
     )
     if structured_solver_enabled:
@@ -1731,7 +1807,7 @@ async def shutdown_proof_runtime(orchestrator) -> None:
     request_shutdown("dnu_agi_proof_battery_complete")
     orchestrator_shutdown_timeout_s = max(
         60.0,
-        float(os.environ.get("AURA_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S", "60.0") or 60.0),
+        float(_FLAG_PROOF_ORCHESTRATOR_SHUTDOWN_TIMEOUT_S.value() or 60.0),
     )
 
     async def _bounded_call(label: str, callback, *, timeout_s: float = 8.0) -> None:
@@ -1946,7 +2022,7 @@ def _comparison_task_limit(default: int = 12) -> int:
     real without letting baseline calls dominate the regression budget.
     """
 
-    raw = os.environ.get("AURA_DNU_COMPARISON_TASK_LIMIT")
+    raw = _FLAG_DNU_COMPARISON_TASK_LIMIT.value()
     if raw is None:
         return default
     try:
@@ -1962,7 +2038,7 @@ def _comparison_task_limit(default: int = 12) -> int:
 
 def _baseline_timeout_seconds() -> float:
     """Bound comparison baselines so final-proof cannot hang behind Aura's live run."""
-    raw = os.environ.get("AURA_DNU_BASELINE_TIMEOUT_SECONDS", "90")
+    raw = _FLAG_DNU_BASELINE_TIMEOUT_SECONDS.value()
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -1973,7 +2049,7 @@ def _baseline_timeout_seconds() -> float:
 def _live_task_attempt_timeout_seconds() -> float:
     """Bound one live-path proof attempt so exact tasks cannot stall the run."""
 
-    raw = os.environ.get("AURA_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS", "90")
+    raw = _FLAG_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS.value()
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -1996,7 +2072,7 @@ def _dnu_baseline_max_tokens() -> int:
     reasoning budget and no architecture. Default raised to 2048; override with
     AURA_DNU_BASELINE_MAX_TOKENS. See docs/DNU_BASELINE_FAIRNESS_AUDIT.md.
     """
-    raw = os.environ.get("AURA_DNU_BASELINE_MAX_TOKENS", "2048")
+    raw = _FLAG_DNU_BASELINE_MAX_TOKENS.value()
     try:
         return max(160, int(raw))
     except (TypeError, ValueError):
@@ -2722,7 +2798,7 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
 
     def _prompt_derived_strict_answer_repair(reason: str) -> tuple[str, dict[str, Any]] | None:
         structured_solver_enabled = (
-            str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "")
+            str(_FLAG_ENABLE_STRUCTURED_PROOF_SOLVER.value() or "")
             .strip()
             .lower()
             in {"1", "true", "yes", "on"}
@@ -2826,7 +2902,7 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
         result["extracted_answer"] = extracted
         result["normalized_answer"] = normalize_answer(extracted)
         structured_solver_enabled = (
-            str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "")
+            str(_FLAG_ENABLE_STRUCTURED_PROOF_SOLVER.value() or "")
             .strip()
             .lower()
             in {"1", "true", "yes", "on"}
@@ -3369,7 +3445,7 @@ async def main():
     commit_sha = get_git_commit()
     os.environ.setdefault("AURA_PROOF_RUN", "1")
     env_system2_enabled = str(
-        os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or ""
+        _FLAG_ENABLE_STRUCTURED_PROOF_SOLVER.value() or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     structured_solver_enabled_for_run = bool(
         not args.disable_structured_proof_solver
@@ -3625,7 +3701,7 @@ async def main():
         print("  [LIMIT] Smoke run enabled: limiting execution to first 1 task.")
         all_tasks = all_tasks[:1]
     else:
-        max_tasks_env = os.environ.get("AURA_AGI_MAX_TASKS")
+        max_tasks_env = _FLAG_AGI_MAX_TASKS.value()
         if max_tasks_env:
             try:
                 max_tasks = int(max_tasks_env)
@@ -3906,7 +3982,7 @@ async def main():
             # wedge does not bleed into the next task, and continue.
             _task_budget_s = max(240, task.get("time_budget_s", 240))
             _task_wall_cap_s = float(
-                os.environ.get("AURA_DNU_TASK_WALL_CAP_S", "")
+                _FLAG_DNU_TASK_WALL_CAP_S.value()
                 or max(420.0, 1.5 * _task_budget_s)
             )
             try:
@@ -4021,7 +4097,7 @@ async def main():
                     task_index=i,
                     task_id=tid,
                     timeout_s=float(
-                        os.environ.get("AURA_DNU_POST_TASK_HEALTH_RECOVERY_S", "")
+                        _FLAG_DNU_POST_TASK_HEALTH_RECOVERY_S.value()
                         or 90.0
                     ),
                     allow_important_only_degraded=allow_important_only_degraded,

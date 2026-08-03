@@ -32,6 +32,33 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.utils.exceptions import capture_and_log
+from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+
+# Declared flags (migrated from raw os.environ reads so the knobs are
+# inventoried and reportable). STRING kind with the original literal
+# default keeps read semantics byte-identical to os.environ.get.
+_FLAG_GEMINI_CHAT_MODEL = _declare_flag(
+    "AURA_GEMINI_CHAT_MODEL",
+    kind=_FlagKind.STRING,
+    default="gemini-3.5-flash",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_GEMINI_DEEP_MODEL = _declare_flag(
+    "AURA_GEMINI_DEEP_MODEL",
+    kind=_FlagKind.STRING,
+    default="gemini-3.5-flash",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+_FLAG_GEMINI_THINKING_MODEL = _declare_flag(
+    "AURA_GEMINI_THINKING_MODEL",
+    kind=_FlagKind.STRING,
+    default="gemini-3.5-pro",
+    description="Migrated from a raw environment read; see owner for the lane.",
+    owner="flag-migration",
+)
+
 
 logger = logging.getLogger("Brain.Gemini")
 
@@ -329,9 +356,9 @@ class GeminiAdapter:
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     
     # Gemini 3.5 family: Flash for speed and deep, Pro for thinking/advanced reasoning
-    CHAT_MODEL = os.environ.get("AURA_GEMINI_CHAT_MODEL", "gemini-3.5-flash")
-    DEEP_MODEL = os.environ.get("AURA_GEMINI_DEEP_MODEL", "gemini-3.5-flash")
-    THINKING_MODEL = os.environ.get("AURA_GEMINI_THINKING_MODEL", "gemini-3.5-pro")
+    CHAT_MODEL = _FLAG_GEMINI_CHAT_MODEL.value()
+    DEEP_MODEL = _FLAG_GEMINI_DEEP_MODEL.value()
+    THINKING_MODEL = _FLAG_GEMINI_THINKING_MODEL.value()
     
     def __init__(self, api_key: str, model: str = None, 
                  rate_limiter: DailyRateLimiter | None = None,
