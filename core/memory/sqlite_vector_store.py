@@ -11,9 +11,10 @@ import json
 import logging
 import sqlite3
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any
 
 import numpy as np
 
@@ -109,7 +110,7 @@ class SQLiteVectorStore:
         return np.ascontiguousarray(arr, dtype=np.float32)
 
     @staticmethod
-    def _metadata_json(metadata: Optional[dict[str, Any]]) -> str:
+    def _metadata_json(metadata: dict[str, Any] | None) -> str:
         return json.dumps(dict(metadata or {}), sort_keys=True, default=str)
 
     def upsert(
@@ -118,8 +119,8 @@ class SQLiteVectorStore:
         content: str,
         embedding: Iterable[float] | np.ndarray,
         *,
-        metadata: Optional[dict[str, Any]] = None,
-        collection: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        collection: str | None = None,
     ) -> None:
         vector = self._as_float32(embedding)
         now = time.time()
@@ -153,7 +154,7 @@ class SQLiteVectorStore:
         self,
         records: Iterable[tuple[str, str, Iterable[float] | np.ndarray, dict[str, Any]]],
         *,
-        collection: Optional[str] = None,
+        collection: str | None = None,
     ) -> int:
         rows: list[tuple[Any, ...]] = []
         coll = collection or self.collection_name
@@ -191,7 +192,7 @@ class SQLiteVectorStore:
             conn.close()
 
     # ------------------------------------------------------------------
-    def count(self, *, collection: Optional[str] = None) -> int:
+    def count(self, *, collection: str | None = None) -> int:
         coll = collection or self.collection_name
         conn = self._connect()
         try:
@@ -203,13 +204,13 @@ class SQLiteVectorStore:
         finally:
             conn.close()
 
-    def iter_records(self, *, collection: Optional[str] = None, batch_size: int = 512) -> Iterator[dict[str, Any]]:
+    def iter_records(self, *, collection: str | None = None, batch_size: int = 512) -> Iterator[dict[str, Any]]:
         coll = collection or self.collection_name
         conn = self._connect()
         try:
             cursor = conn.execute(
                 """
-                SELECT id, content, metadata, embedding, dim
+                SELECT id, content, metadata, embedding, dim, timestamp, updated_at
                 FROM vector_records
                 WHERE collection = ?
                 ORDER BY timestamp DESC
@@ -224,11 +225,13 @@ class SQLiteVectorStore:
                         "metadata": _safe_json(row["metadata"]),
                         "embedding": row["embedding"],
                         "dim": int(row["dim"]),
+                        "timestamp": float(row["timestamp"]),
+                        "updated_at": float(row["updated_at"]),
                     }
         finally:
             conn.close()
 
-    def list_records(self, *, collection: Optional[str] = None, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    def list_records(self, *, collection: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         for row in self.iter_records(collection=collection):
             records.append(
@@ -247,7 +250,7 @@ class SQLiteVectorStore:
         embedding: Iterable[float] | np.ndarray,
         *,
         limit: int = 5,
-        collection: Optional[str] = None,
+        collection: str | None = None,
         min_score: float = -1.0,
     ) -> list[VectorRecord]:
         query = self._as_float32(embedding)
@@ -279,7 +282,7 @@ class SQLiteVectorStore:
         scored.sort(key=lambda item: item.score, reverse=True)
         return scored[: max(0, int(limit))]
 
-    def clear(self, *, collection: Optional[str] = None) -> None:
+    def clear(self, *, collection: str | None = None) -> None:
         coll = collection or self.collection_name
         conn = self._connect()
         try:
@@ -288,12 +291,150 @@ class SQLiteVectorStore:
         finally:
             conn.close()
 
+    def merge_records_atomic(
+        self,
+        *,
+        winner_id: str,
+        loser_ids: Iterable[str],
+        content: str,
+        embedding: Iterable[float] | np.ndarray,
+        metadata: dict[str, Any],
+        expected_updated_at: dict[str, float],
+        collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare-and-swap one consolidation cluster in a single SQLite transaction."""
+        coll = collection or self.collection_name
+        winner = str(winner_id)
+        losers = sorted({str(item) for item in loser_ids if str(item) != winner})
+        ids = [winner, *losers]
+        if not losers:
+            raise ValueError("atomic merge requires at least one loser")
+        if set(expected_updated_at) != set(ids):
+            raise ValueError("atomic merge revision set does not match cluster")
+
+        vector = self._as_float32(embedding)
+        now = time.time()
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"SELECT id, updated_at FROM vector_records "
+                f"WHERE collection = ? AND id IN ({placeholders})",
+                (coll, *ids),
+            ).fetchall()
+            observed = {str(row["id"]): float(row["updated_at"]) for row in rows}
+            if set(observed) != set(ids):
+                raise RuntimeError("memory cluster changed before atomic merge")
+            for record_id, expected in expected_updated_at.items():
+                if observed[record_id] != float(expected):
+                    raise RuntimeError(f"memory revision changed before merge: {record_id}")
+
+            winner_timestamp = float(metadata.get("timestamp") or now)
+            updated = conn.execute(
+                """
+                UPDATE vector_records
+                SET content = ?, metadata = ?, embedding = ?, dim = ?, dtype = 'float32',
+                    timestamp = ?, updated_at = ?
+                WHERE collection = ? AND id = ?
+                """,
+                (
+                    str(content),
+                    self._metadata_json(metadata),
+                    sqlite3.Binary(vector.tobytes(order="C")),
+                    int(vector.size),
+                    winner_timestamp,
+                    now,
+                    coll,
+                    winner,
+                ),
+            ).rowcount
+            deleted = conn.execute(
+                f"DELETE FROM vector_records WHERE collection = ? AND id IN "
+                f"({','.join('?' for _ in losers)})",
+                (coll, *losers),
+            ).rowcount
+            if updated != 1 or deleted != len(losers):
+                raise RuntimeError(
+                    f"atomic merge postcondition failed: updated={updated} deleted={deleted}"
+                )
+            remaining = conn.execute(
+                f"SELECT id FROM vector_records WHERE collection = ? AND id IN ({placeholders})",
+                (coll, *ids),
+            ).fetchall()
+            if [str(row["id"]) for row in remaining] != [winner]:
+                raise RuntimeError("atomic merge verification did not leave exactly the winner")
+            conn.commit()
+            return {
+                "winner_id": winner,
+                "loser_ids": losers,
+                "updated_at": now,
+                "deleted": deleted,
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def delete_records_atomic(
+        self,
+        *,
+        record_ids: Iterable[str],
+        expected_updated_at: dict[str, float],
+        collection: str | None = None,
+    ) -> int:
+        """Delete an exact, revision-bound record set in one transaction."""
+        coll = collection or self.collection_name
+        ids = sorted({str(item) for item in record_ids})
+        if not ids:
+            return 0
+        if set(expected_updated_at) != set(ids):
+            raise ValueError("atomic delete revision set does not match record set")
+
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"SELECT id, updated_at FROM vector_records "
+                f"WHERE collection = ? AND id IN ({placeholders})",
+                (coll, *ids),
+            ).fetchall()
+            observed = {str(row["id"]): float(row["updated_at"]) for row in rows}
+            if set(observed) != set(ids):
+                raise RuntimeError("memory record set changed before atomic delete")
+            for record_id, expected in expected_updated_at.items():
+                if observed[record_id] != float(expected):
+                    raise RuntimeError(f"memory revision changed before delete: {record_id}")
+
+            deleted = conn.execute(
+                f"DELETE FROM vector_records WHERE collection = ? AND id IN ({placeholders})",
+                (coll, *ids),
+            ).rowcount
+            remaining = conn.execute(
+                f"SELECT COUNT(*) AS n FROM vector_records "
+                f"WHERE collection = ? AND id IN ({placeholders})",
+                (coll, *ids),
+            ).fetchone()
+            if deleted != len(ids) or int(remaining["n"] if remaining else -1) != 0:
+                raise RuntimeError(
+                    f"atomic delete postcondition failed: expected={len(ids)} deleted={deleted}"
+                )
+            conn.commit()
+            return deleted
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     # ------------------------------------------------------------------
     def migrate_legacy_json(
         self,
         json_path: str | Path,
         *,
-        collection: Optional[str] = None,
+        collection: str | None = None,
         remove_source: bool = False,
     ) -> int:
         """Migrate legacy ``[{id,text,vector,...}]`` JSON into BLOB storage."""

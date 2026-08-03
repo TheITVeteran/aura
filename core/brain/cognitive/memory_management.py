@@ -1,19 +1,67 @@
-"""Memory Consolidator — Long-Term Potentiation
+"""Transactional, evidence-bound vector-memory consolidation.
 
-Scans the vector store for near-duplicate memories (cosine sim > threshold)
-and merges them into a single, strengthened memory.
-
-Prevents memory bloat and mimics biological long-term potentiation.
-Runs as the final maintenance step in the Dreamer sleep cycle.
+The consolidator scans one complete storage namespace, forms deterministic
+connected components under proved cosine embeddings, preserves every distinct
+source text and provenance record, and commits each component with compare-and-
+swap semantics. SQLite uses one database transaction. Chroma uses a durable
+rollback journal plus a backend mutation lock and verified postconditions.
 """
-from core.runtime.errors import record_degradation
-import logging
-import time
+
+from __future__ import annotations
+
 import asyncio
+import hashlib
+import json
+import logging
+import math
+import threading
+import time
+from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Kernel.MemoryConsolidator")
+
+_STORAGE_ERRORS = (
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+)
+_SENSITIVE_CLASSES = {"credential", "credentials", "secret", "restricted", "legal_hold"}
+_PRINCIPAL_KEYS = ("principal_id", "user_id", "owner_id", "tenant_id")
+_NAMESPACE_KEYS = ("memory_namespace", "namespace")
+_CLASS_KEYS = ("memory_class", "memory_type", "type", "node_type")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRecord:
+    id: str
+    content: str
+    metadata: dict[str, Any]
+    embedding: tuple[float, ...]
+    metric: str
+    embedding_version: str
+    scope: tuple[str, str, str]
+    revision: str
+    backend_revision: float | None = None
+
+
+class ClusterMergeError(RuntimeError):
+    def __init__(self, message: str, *, rolled_back: bool = False) -> None:
+        super().__init__(message)
+        self.rolled_back = rolled_back
 
 
 @dataclass
@@ -21,207 +69,720 @@ class ConsolidationReport:
     memories_scanned: int = 0
     duplicates_merged: int = 0
     clusters_found: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     duration_s: float = 0.0
+    pages_scanned: int = 0
+    records_skipped: int = 0
+    skipped_reasons: dict[str, int] = field(default_factory=dict)
+    transactions_committed: int = 0
+    transactions_rolled_back: int = 0
+    scan_complete: bool = False
+    backend: str = "unknown"
+    receipts: list[dict[str, Any]] = field(default_factory=list)
 
     def __str__(self) -> str:
         return (
             f"Consolidation: scanned={self.memories_scanned}, "
-            f"merged={self.duplicates_merged}, "
-            f"clusters={self.clusters_found} ({self.duration_s:.1f}s)"
+            f"merged={self.duplicates_merged}, clusters={self.clusters_found}, "
+            f"committed={self.transactions_committed}, complete={self.scan_complete} "
+            f"({self.duration_s:.1f}s)"
         )
 
 
+class _UnionFind:
+    def __init__(self, size: int) -> None:
+        self.parent = list(range(size))
+        self.rank = [0] * size
+
+    def find(self, item: int) -> int:
+        while self.parent[item] != item:
+            self.parent[item] = self.parent[self.parent[item]]
+            item = self.parent[item]
+        return item
+
+    def union(self, left: int, right: int) -> None:
+        left_root = self.find(left)
+        right_root = self.find(right)
+        if left_root == right_root:
+            return
+        if self.rank[left_root] < self.rank[right_root]:
+            left_root, right_root = right_root, left_root
+        self.parent[right_root] = left_root
+        if self.rank[left_root] == self.rank[right_root]:
+            self.rank[left_root] += 1
+
+
 class MemoryConsolidator:
-    """Merges near-duplicate memory vectors.
-    Keeps the richest (longest content) and deletes duplicates.
-    Works with both ChromaDB-backed and JSON-fallback vector stores.
-    """
+    """Consolidate duplicate memories without crossing evidence or owner boundaries."""
+
+    JOURNAL_SCHEMA = "aura.memory.consolidation.rollback.v1"
+    MAX_BATCH_SIZE = 10_000
 
     def __init__(
         self,
         vector_memory: Any = None,
         similarity_threshold: float = 0.97,
         batch_size: int = 100,
-    ):
+        *,
+        principal_id: str | None = None,
+        namespace: str | None = None,
+        allow_unscoped: bool | None = None,
+    ) -> None:
+        threshold = float(similarity_threshold)
+        if not math.isfinite(threshold) or not 0.5 <= threshold <= 1.0:
+            raise ValueError("similarity_threshold must be finite and within [0.5, 1]")
+        if isinstance(batch_size, bool) or not 1 <= int(batch_size) <= self.MAX_BATCH_SIZE:
+            raise ValueError(f"batch_size must be within [1, {self.MAX_BATCH_SIZE}]")
         self.vector_memory = vector_memory
-        self.similarity_threshold = similarity_threshold
-        self.batch_size = batch_size
+        self.similarity_threshold = threshold
+        self.batch_size = int(batch_size)
+        self.principal_id = str(principal_id or "").strip()
+        self.namespace = str(namespace or "").strip()
+        self.allow_unscoped = (
+            bool(getattr(vector_memory, "single_principal_collection", False))
+            if allow_unscoped is None
+            else bool(allow_unscoped)
+        )
+        self._run_lock = threading.Lock()
 
     async def consolidate(self) -> ConsolidationReport:
-        """Scan for near-duplicate memories and merge them."""
-        report = ConsolidationReport()
-        t0 = time.monotonic()
-        logger.info("🧠 Memory consolidation starting...")
+        """Run blocking storage and similarity work outside the event loop."""
+        report = await asyncio.to_thread(self._consolidate_sync)
+        try:
+            from core.thought_stream import get_emitter
 
-        if not self.vector_memory:
-            logger.warning("No vector memory available — skipping consolidation.")
+            get_emitter().emit("Memory Consolidation", str(report), level="info")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("memory_management", exc)
+            logger.debug("Memory consolidation thought-stream emit skipped: %s", exc)
+        return report
+
+    def _consolidate_sync(self) -> ConsolidationReport:
+        report = ConsolidationReport()
+        started = time.monotonic()
+        if self.vector_memory is None:
             report.errors.append("no_vector_memory")
-            report.duration_s = time.monotonic() - t0
+            report.duration_s = time.monotonic() - started
+            return report
+        if not self._run_lock.acquire(blocking=False):
+            report.errors.append("consolidation_already_running")
+            report.duration_s = time.monotonic() - started
             return report
 
         try:
-            memories = self._fetch_memories()
-            report.memories_scanned = len(memories)
-            if len(memories) < 2:
-                logger.info("🧠 Not enough memories to consolidate.")
-                report.duration_s = time.monotonic() - t0
+            lock = self._backend_lock()
+            with lock:
+                if not self._recover_pending_journal(report):
+                    return report
+                records = self._fetch_memories(report)
+            report.memories_scanned = len(records) + report.records_skipped
+            if not report.scan_complete or len(records) < 2:
                 return report
 
-            clusters = self._find_duplicate_clusters(memories)
+            clusters = self._find_duplicate_clusters(records)
             report.clusters_found = len(clusters)
             for cluster in clusters:
-                self._merge_cluster(cluster, report)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('memory_management', exc)
-            msg = f"Consolidation error: {exc}"
-            logger.error(msg, exc_info=True)
-            report.errors.append(msg)
-
-        report.duration_s = time.monotonic() - t0
-        logger.info("🧠 %s", report)
-
-        try:
-            from core.thought_stream import get_emitter
-            get_emitter().emit("Memory Consolidation 🧠", str(report), level="info")
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('memory_management', exc)
-            logger.debug("Suppressed thought-stream emit: %s", exc)
-
+                try:
+                    receipt = self._merge_cluster(cluster)
+                except ClusterMergeError as exc:
+                    record_degradation("memory_management", exc)
+                    if exc.rolled_back:
+                        report.transactions_rolled_back += 1
+                    report.errors.append(f"cluster_merge_failed:{type(exc).__name__}:{exc}")
+                    continue
+                except _STORAGE_ERRORS as exc:
+                    record_degradation("memory_management", exc)
+                    report.errors.append(f"cluster_merge_failed:{type(exc).__name__}:{exc}")
+                    continue
+                report.transactions_committed += 1
+                report.duplicates_merged += len(receipt["loser_ids"])
+                report.receipts.append(receipt)
+        except _STORAGE_ERRORS as exc:
+            record_degradation("memory_management", exc)
+            report.errors.append(f"consolidation_failed:{type(exc).__name__}:{exc}")
+        finally:
+            self._run_lock.release()
+            report.duration_s = time.monotonic() - started
+            logger.info("%s", report)
         return report
 
-    # ------------------------------------------------------------------
-    def _fetch_memories(self) -> List[Dict]:
-        try:
-            if hasattr(self.vector_memory, "_collection") and self.vector_memory._collection:
-                result = self.vector_memory._collection.get(
-                    limit=self.batch_size,
-                    include=["documents", "metadatas", "embeddings"],
-                )
-                memories = []
-                ids = result.get("ids", [])
-                docs = result.get("documents", [])
-                metas = result.get("metadatas", [])
-                embeddings = result.get("embeddings", [])
-                for i, mid in enumerate(ids):
-                    memories.append({
-                        "id": mid,
-                        "content": docs[i] if i < len(docs) else "",
-                        "metadata": metas[i] if i < len(metas) else {},
-                        "embedding": embeddings[i] if embeddings and i < len(embeddings) else None,
-                    })
-                return memories
-            if hasattr(self.vector_memory, "_memories"):
-                # Use slice explicitly to satisfy linter
-                all_items = list(self.vector_memory._memories.items())
-                items = all_items[0:self.batch_size]
-                return [
-                    {"id": mid, "content": data.get("content", ""), "metadata": data.get("metadata", {})}
-                    for mid, data in items
-                ]
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('memory_management', exc)
-            logger.warning("Failed to fetch memories: %s", exc)
-        return []
-
-    def _find_duplicate_clusters(self, memories: List[Dict]) -> List[List[Dict]]:
-        """Find duplicate memory clusters using vectorized cosine similarity (OPT-03)."""
-        # Batch embed all memories if embeddings are pre-fetched
-        embeddings = [m.get("embedding") for m in memories]
-        if all(e is not None for e in embeddings) and len(embeddings) > 1:
+    def _backend_lock(self) -> threading.RLock:
+        lock = getattr(self.vector_memory, "_mutation_lock", None)
+        if lock is None:
+            lock = threading.RLock()
             try:
-                import numpy as np
-                emb_matrix = np.array(embeddings, dtype=np.float32)
-                # Normalize for cosine similarity calculation
-                norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
-                normalized = emb_matrix / (norms + 1e-8)
-                sim_matrix = normalized @ normalized.T  # Cosine similarity matrix
-                
-                merged_ids: set = set()
-                clusters: List[List[Dict]] = []
-                for i, mem in enumerate(memories):
-                    if mem["id"] in merged_ids:
-                        continue
-                    cluster = [mem]
-                    for j in range(i + 1, len(memories)):
-                        if memories[j]["id"] not in merged_ids and sim_matrix[i, j] >= self.similarity_threshold:
-                            cluster.append(memories[j])
-                            merged_ids.add(memories[j]["id"])
-                    if len(cluster) > 1:
-                        merged_ids.add(mem["id"])
-                        clusters.append(cluster)
-                return clusters
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('memory_management', e)
-                logger.debug("Vectorized similarity check failed: %s", e)
+                self.vector_memory._mutation_lock = lock
+            except (AttributeError, TypeError):
+                pass
+        return lock
 
-        # Fallback to existing search_similar path (O(n) search calls)
-        merged_ids: set = set()
-        clusters: List[List[Dict]] = []
-        for mem in memories:
-            if mem["id"] in merged_ids:
-                continue
-            cluster = [mem]
-            content = mem.get("content", "")
-            if not content:
-                continue
-            try:
-                similar = self.vector_memory.search_similar(content, limit=5)
-                for result in similar:
-                    result_id = result.get("id", "")
-                    if result_id and result_id != mem["id"] and result_id not in merged_ids:
-                        score = result.get("score", result.get("similarity", 0))
-                        if score >= self.similarity_threshold:
-                            cluster.append(result)
-                            merged_ids.add(result_id)
-            except (OSError, ConnectionError, TimeoutError) as exc:
-                record_degradation('memory_management', exc)
-                logger.debug("Similarity search failed for %s: %s", mem["id"], exc)
-            if len(cluster) > 1:
-                merged_ids.add(mem["id"])
-                clusters.append(cluster)
-        return clusters
+    def _backend_kind(self) -> str:
+        if getattr(self.vector_memory, "_sqlite_vectors", None) is not None:
+            return "sqlite"
+        if getattr(self.vector_memory, "_collection", None) is not None:
+            return "chroma"
+        return "unsupported"
 
-    def _merge_cluster(self, cluster: List[Dict], report: ConsolidationReport) -> None:
-        """Merge a cluster of memories into a single strengthened one."""
-        cluster.sort(key=lambda m: len(m.get("content", "")), reverse=True)
-        winner = cluster[0]
-        winner_id = winner.get("id")
-        
-        # Strengthen the winner's metadata (Long-Term Potentiation)
-        combined_importance = max(
-            (m.get("metadata", {}).get("importance", 0.5) for m in cluster),
-            default=0.5
-        )
-        if hasattr(self.vector_memory, "_collection") and self.vector_memory._collection:
+    def _fetch_memories(self, report: ConsolidationReport) -> list[MemoryRecord]:
+        report.backend = self._backend_kind()
+        if report.backend == "sqlite":
+            raw, complete = self._fetch_sqlite(report)
+        elif report.backend == "chroma":
+            raw, complete = self._fetch_chroma(report)
+        else:
+            report.errors.append("unsupported_memory_backend")
+            report.scan_complete = False
+            return []
+
+        report.scan_complete = complete
+        skipped: Counter[str] = Counter()
+        records: list[MemoryRecord] = []
+        for item in raw:
             try:
-                # Up-voted metadata for potentiation
-                new_meta = {
-                    **winner.get("metadata", {}),
-                    "importance": min(1.0, combined_importance * 1.1),
-                    "merged_count": (winner.get("metadata", {}).get("merged_count", 0) or 0) + len(cluster) - 1
+                records.append(self._validated_record(item, report.backend))
+            except ValueError as exc:
+                skipped[str(exc)] += 1
+        report.records_skipped = sum(skipped.values())
+        report.skipped_reasons = dict(sorted(skipped.items()))
+        return sorted(records, key=lambda item: item.id)
+
+    def _fetch_sqlite(self, report: ConsolidationReport) -> tuple[list[dict[str, Any]], bool]:
+        store = self.vector_memory._sqlite_vectors
+        collection = self._collection_name()
+        expected = int(store.count(collection=collection))
+        rows: list[dict[str, Any]] = []
+        for row in store.iter_records(collection=collection, batch_size=self.batch_size):
+            rows.append(dict(row))
+            if len(rows) % self.batch_size == 1:
+                report.pages_scanned += 1
+        observed_after = int(store.count(collection=collection))
+        complete = expected == observed_after == len(rows)
+        if not complete:
+            report.errors.append(
+                f"scan_changed_during_read:before={expected}:read={len(rows)}:after={observed_after}"
+            )
+        return rows, complete
+
+    def _fetch_chroma(self, report: ConsolidationReport) -> tuple[list[dict[str, Any]], bool]:
+        collection = self.vector_memory._collection
+        expected = int(collection.count())
+        by_id: dict[str, dict[str, Any]] = {}
+        offset = 0
+        while offset < expected:
+            result = collection.get(
+                limit=min(self.batch_size, expected - offset),
+                offset=offset,
+                include=["documents", "metadatas", "embeddings"],
+            )
+            ids = list(result.get("ids") or [])
+            if not ids:
+                break
+            docs = list(result.get("documents") or [])
+            metas = list(result.get("metadatas") or [])
+            embeddings = result.get("embeddings")
+            embeddings = list(embeddings) if embeddings is not None else []
+            for index, record_id in enumerate(ids):
+                by_id[str(record_id)] = {
+                    "id": record_id,
+                    "content": docs[index] if index < len(docs) else "",
+                    "metadata": metas[index] if index < len(metas) else {},
+                    "embedding": embeddings[index] if index < len(embeddings) else None,
                 }
-                self.vector_memory._collection.update(
-                    ids=[winner_id],
-                    metadatas=[new_meta]
-                )
-            except (OSError, ConnectionError, TimeoutError) as _e:
-                record_degradation('memory_management', _e)
-                logger.debug('Ignored Exception in memory_management.py: %s', _e)
+            offset += len(ids)
+            report.pages_scanned += 1
+        observed_after = int(collection.count())
+        complete = expected == observed_after == len(by_id)
+        if not complete:
+            report.errors.append(
+                f"scan_changed_or_incomplete:before={expected}:unique={len(by_id)}:after={observed_after}"
+            )
+        return list(by_id.values()), complete
 
-        for loser in cluster[1:]:
-            loser_id = loser.get("id")
-            if not loser_id:
-                continue
+    def _validated_record(self, raw: Mapping[str, Any], backend: str) -> MemoryRecord:
+        record_id = str(raw.get("id") or "").strip()
+        if not record_id:
+            raise ValueError("missing_id")
+        metadata_raw = raw.get("metadata")
+        if not isinstance(metadata_raw, Mapping):
+            raise ValueError("invalid_metadata")
+        metadata = dict(metadata_raw)
+        if metadata.get("legal_hold") is True or metadata.get("consolidation_allowed") is False:
+            raise ValueError("governance_hold")
+        memory_class = self._metadata_value(metadata, _CLASS_KEYS) or "general"
+        sensitivity = str(metadata.get("sensitivity") or "").strip().casefold()
+        if memory_class.casefold() in _SENSITIVE_CLASSES or sensitivity in _SENSITIVE_CLASSES:
+            raise ValueError("sensitive_memory_class")
+
+        collection = self._collection_name()
+        record_namespace = self._metadata_value(metadata, _NAMESPACE_KEYS)
+        if self.namespace and record_namespace and self.namespace != record_namespace:
+            raise ValueError("namespace_scope_mismatch")
+        namespace = self.namespace or record_namespace or collection
+        record_principal = self._metadata_value(metadata, _PRINCIPAL_KEYS)
+        if self.principal_id and record_principal and self.principal_id != record_principal:
+            raise ValueError("principal_scope_mismatch")
+        principal = self.principal_id or record_principal
+        if not principal:
+            if not self.allow_unscoped:
+                raise ValueError("principal_scope_missing")
+            principal = f"single-principal-collection:{collection}"
+        scope = (principal, namespace, memory_class)
+
+        metric = str(
+            metadata.get("embedding_metric")
+            or getattr(self.vector_memory, "embedding_metric", "")
+            or self._collection_metric()
+        ).strip().casefold()
+        if metric != "cosine":
+            raise ValueError("unproved_cosine_metric")
+        version = str(
+            metadata.get("embedding_version")
+            or getattr(self.vector_memory, "embedding_version", "")
+        ).strip()
+        if not version:
+            raise ValueError("embedding_version_missing")
+
+        embedding = self._coerce_embedding(raw.get("embedding"), raw.get("dim"))
+        content = str(raw.get("content") or "")
+        revision = self._revision(record_id, content, metadata, embedding)
+        backend_revision = raw.get("updated_at") if backend == "sqlite" else None
+        return MemoryRecord(
+            id=record_id,
+            content=content,
+            metadata=metadata,
+            embedding=embedding,
+            metric=metric,
+            embedding_version=version,
+            scope=scope,
+            revision=revision,
+            backend_revision=float(backend_revision) if backend_revision is not None else None,
+        )
+
+    @staticmethod
+    def _metadata_value(metadata: Mapping[str, Any], keys: Sequence[str]) -> str:
+        for key in keys:
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _collection_name(self) -> str:
+        return str(getattr(self.vector_memory, "collection_name", "default") or "default")
+
+    def _collection_metric(self) -> str:
+        collection = getattr(self.vector_memory, "_collection", None)
+        metadata = getattr(collection, "metadata", None)
+        if isinstance(metadata, Mapping):
+            return str(metadata.get("hnsw:space") or "")
+        return ""
+
+    @staticmethod
+    def _coerce_embedding(value: Any, dim: Any = None) -> tuple[float, ...]:
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            array = np.frombuffer(value, dtype=np.float32)
+            if dim is not None and int(dim) != int(array.size):
+                raise ValueError("embedding_dimension_mismatch")
+        else:
             try:
-                if hasattr(self.vector_memory, "_collection") and self.vector_memory._collection:
-                    self.vector_memory._collection.delete(ids=[loser_id])
-                elif hasattr(self.vector_memory, "_memories") and loser_id in self.vector_memory._memories:
-                    del self.vector_memory._memories[loser_id]
-                    if hasattr(self.vector_memory, "_save_fallback"):
-                        self.vector_memory._save_fallback()
-                report.duplicates_merged += 1
-                logger.debug("Merged memory %s into %s", loser_id[:12], winner_id[:12])
-            except (RuntimeError, AttributeError, TypeError) as exc:
-                record_degradation('memory_management', exc)
-                report.errors.append(f"merge delete {loser_id}: {exc}")
+                array = np.asarray(value, dtype=np.float32)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid_embedding") from exc
+            if array.ndim != 1:
+                raise ValueError("ragged_or_nondimensional_embedding")
+        if array.size == 0 or not np.isfinite(array).all():
+            raise ValueError("nonfinite_or_empty_embedding")
+        norm = float(np.linalg.norm(array))
+        if not math.isfinite(norm) or norm <= 1e-12:
+            raise ValueError("zero_norm_embedding")
+        return tuple(float(item) for item in array)
+
+    @staticmethod
+    def _revision(
+        record_id: str,
+        content: str,
+        metadata: Mapping[str, Any],
+        embedding: Sequence[float],
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(record_id.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(json.dumps(metadata, sort_keys=True, default=str).encode("utf-8"))
+        digest.update(np.asarray(embedding, dtype=np.float32).tobytes())
+        return digest.hexdigest()
+
+    def _find_duplicate_clusters(self, records: list[MemoryRecord]) -> list[list[MemoryRecord]]:
+        grouped: dict[tuple[tuple[str, str, str], str, int], list[MemoryRecord]] = defaultdict(list)
+        for record in records:
+            grouped[(record.scope, record.embedding_version, len(record.embedding))].append(record)
+
+        clusters: list[list[MemoryRecord]] = []
+        block_size = min(self.batch_size, 512)
+        for group in grouped.values():
+            if len(group) < 2:
+                continue
+            matrix = np.asarray([record.embedding for record in group], dtype=np.float32)
+            norms = np.linalg.norm(matrix, axis=1)
+            normalized = matrix / norms[:, None]
+            union = _UnionFind(len(group))
+            for left_start in range(0, len(group), block_size):
+                left_end = min(left_start + block_size, len(group))
+                for right_start in range(left_start, len(group), block_size):
+                    right_end = min(right_start + block_size, len(group))
+                    similarities = (
+                        normalized[left_start:left_end]
+                        @ normalized[right_start:right_end].T
+                    )
+                    matches = np.argwhere(similarities >= self.similarity_threshold)
+                    for left_offset, right_offset in matches:
+                        left = left_start + int(left_offset)
+                        right = right_start + int(right_offset)
+                        if left < right:
+                            union.union(left, right)
+            components: dict[int, list[MemoryRecord]] = defaultdict(list)
+            for index, record in enumerate(group):
+                components[union.find(index)].append(record)
+            clusters.extend(
+                sorted(component, key=lambda item: item.id)
+                for component in components.values()
+                if len(component) > 1
+            )
+        return sorted(clusters, key=lambda cluster: tuple(item.id for item in cluster))
+
+    def _merge_cluster(self, cluster: list[MemoryRecord]) -> dict[str, Any]:
+        winner = max(cluster, key=self._winner_rank)
+        losers = sorted((item for item in cluster if item.id != winner.id), key=lambda item: item.id)
+        receipt_id = hashlib.sha256(
+            "|".join(sorted(item.revision for item in cluster)).encode("ascii")
+        ).hexdigest()
+        merged_content = self._merged_content(winner, losers)
+        merged_embedding = self._embed_merged_content(merged_content, winner)
+        merged_metadata = self._merged_metadata(winner, losers, receipt_id)
+
+        backend = self._backend_kind()
+        with self._backend_lock():
+            if backend == "sqlite":
+                self._commit_sqlite(
+                    winner,
+                    losers,
+                    merged_content,
+                    merged_embedding,
+                    merged_metadata,
+                )
+            elif backend == "chroma":
+                self._commit_chroma(
+                    winner,
+                    losers,
+                    merged_content,
+                    merged_embedding,
+                    merged_metadata,
+                    receipt_id,
+                )
+            else:
+                raise RuntimeError("unsupported_memory_backend")
+
+        return {
+            "receipt_id": receipt_id,
+            "backend": backend,
+            "winner_id": winner.id,
+            "loser_ids": [item.id for item in losers],
+            "source_revisions": [item.revision for item in sorted(cluster, key=lambda item: item.id)],
+            "content_sha256": hashlib.sha256(merged_content.encode("utf-8")).hexdigest(),
+            "verified": True,
+        }
+
+    @staticmethod
+    def _winner_rank(record: MemoryRecord) -> tuple[int, float, float, str]:
+        importance = MemoryConsolidator._finite_number(record.metadata.get("importance"), 0.5)
+        timestamp = MemoryConsolidator._finite_number(record.metadata.get("timestamp"), 0.0)
+        return (len(record.content), importance, timestamp, record.id)
+
+    @staticmethod
+    def _finite_number(value: Any, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return number if math.isfinite(number) else default
+
+    @staticmethod
+    def _merged_content(winner: MemoryRecord, losers: list[MemoryRecord]) -> str:
+        parts = [winner.content]
+        seen = {" ".join(winner.content.split()).casefold()}
+        for loser in losers:
+            normalized = " ".join(loser.content.split()).casefold()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            parts.append(f"[Additional preserved context]\n{loser.content}")
+        return "\n\n".join(parts)
+
+    def _embed_merged_content(
+        self,
+        content: str,
+        winner: MemoryRecord,
+    ) -> tuple[float, ...]:
+        if content == winner.content:
+            return winner.embedding
+        if getattr(self.vector_memory, "_fallback_mode", False):
+            from core.memory.vector_memory import AuraEmbeddingFunction
+
+            embedded = AuraEmbeddingFunction()._pseudo_embed(content)
+        else:
+            embedder = getattr(self.vector_memory, "_embed_fn", None)
+            if not callable(embedder):
+                raise RuntimeError("merged_content_embedding_unavailable")
+            result = embedder([content])
+            if not isinstance(result, Sequence) or not result:
+                raise RuntimeError("merged_content_embedding_failed")
+            embedded = result[0]
+        coerced = self._coerce_embedding(embedded)
+        if len(coerced) != len(winner.embedding):
+            raise RuntimeError("merged_content_embedding_dimension_changed")
+        return coerced
+
+    def _merged_metadata(
+        self,
+        winner: MemoryRecord,
+        losers: list[MemoryRecord],
+        receipt_id: str,
+    ) -> dict[str, Any]:
+        records = [winner, *losers]
+        provenance = []
+        for record in sorted(records, key=lambda item: item.id):
+            source_metadata = deepcopy(record.metadata)
+            prior_raw = source_metadata.pop("consolidation_provenance_json", "")
+            prior: list[Any] = []
+            if prior_raw:
+                try:
+                    parsed = json.loads(str(prior_raw))
+                    if isinstance(parsed, list):
+                        prior = parsed
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    prior = [
+                        {
+                            "unparseable_prior_provenance_sha256": hashlib.sha256(
+                                str(prior_raw).encode("utf-8")
+                            ).hexdigest()
+                        }
+                    ]
+            provenance.append(
+                {
+                    "id": record.id,
+                    "content_sha256": hashlib.sha256(
+                        record.content.encode("utf-8")
+                    ).hexdigest(),
+                    "metadata": source_metadata,
+                    "metadata_sha256": hashlib.sha256(
+                        json.dumps(record.metadata, sort_keys=True, default=str).encode(
+                            "utf-8"
+                        )
+                    ).hexdigest(),
+                    "revision": record.revision,
+                    "prior_provenance": prior,
+                }
+            )
+        importance = max(
+            self._finite_number(record.metadata.get("importance"), 0.5)
+            for record in records
+        )
+        previous_merged = int(max(0.0, self._finite_number(winner.metadata.get("merged_count"), 0.0)))
+        metadata = deepcopy(winner.metadata)
+        metadata.update(
+            {
+                "importance": min(1.0, importance * 1.1),
+                "merged_count": previous_merged + len(losers),
+                "consolidation_receipt_id": receipt_id,
+                "consolidated_at": time.time(),
+                "consolidation_provenance_json": json.dumps(
+                    provenance, sort_keys=True, separators=(",", ":"), default=str
+                ),
+                "embedding_metric": winner.metric,
+                "embedding_version": winner.embedding_version,
+            }
+        )
+        return metadata
+
+    def _commit_sqlite(
+        self,
+        winner: MemoryRecord,
+        losers: list[MemoryRecord],
+        content: str,
+        embedding: tuple[float, ...],
+        metadata: dict[str, Any],
+    ) -> None:
+        revisions = {item.id: item.backend_revision for item in [winner, *losers]}
+        if any(value is None for value in revisions.values()):
+            raise RuntimeError("sqlite_revision_missing")
+        result = self.vector_memory._sqlite_vectors.merge_records_atomic(
+            winner_id=winner.id,
+            loser_ids=[item.id for item in losers],
+            content=content,
+            embedding=embedding,
+            metadata=metadata,
+            expected_updated_at={key: float(value) for key, value in revisions.items()},
+            collection=self._collection_name(),
+        )
+        if result.get("deleted") != len(losers):
+            raise RuntimeError("sqlite_merge_postcondition_failed")
+        store = getattr(self.vector_memory, "_store", None)
+        if isinstance(store, list):
+            try:
+                self.vector_memory._store = self.vector_memory._sqlite_vectors.list_records(
+                    collection=self._collection_name()
+                )
+            except _STORAGE_ERRORS as exc:
+                record_degradation(
+                    "memory_management",
+                    exc,
+                    action="durable SQLite merge committed; in-memory cache refresh deferred",
+                )
+                logger.warning("SQLite memory cache refresh failed after commit: %s", exc)
+
+    def _commit_chroma(
+        self,
+        winner: MemoryRecord,
+        losers: list[MemoryRecord],
+        content: str,
+        embedding: tuple[float, ...],
+        metadata: dict[str, Any],
+        receipt_id: str,
+    ) -> None:
+        collection = self.vector_memory._collection
+        originals = self._get_chroma_records([winner.id, *(item.id for item in losers)])
+        expected = {item.id: item.revision for item in [winner, *losers]}
+        if set(originals) != set(expected):
+            raise RuntimeError("chroma_cluster_changed_before_merge")
+        for record_id, record in originals.items():
+            if record.revision != expected[record_id]:
+                raise RuntimeError(f"chroma_revision_changed_before_merge:{record_id}")
+
+        journal_path = self._journal_path()
+        if journal_path is None:
+            raise RuntimeError("chroma_rollback_journal_path_unavailable")
+        self._write_journal(journal_path, receipt_id, list(originals.values()))
+        try:
+            collection.update(
+                ids=[winner.id],
+                documents=[content],
+                metadatas=[metadata],
+                embeddings=[list(embedding)],
+            )
+            strengthened = self._get_chroma_records([winner.id]).get(winner.id)
+            if strengthened is None or strengthened.metadata.get("consolidation_receipt_id") != receipt_id:
+                raise RuntimeError("chroma_winner_update_not_verified")
+            collection.delete(ids=[item.id for item in losers])
+            final = self._get_chroma_records([winner.id, *(item.id for item in losers)])
+            if set(final) != {winner.id}:
+                raise RuntimeError("chroma_delete_postcondition_failed")
+            journal_path.unlink()
+        except _STORAGE_ERRORS as exc:
+            self._restore_chroma_records(list(originals.values()))
+            restored = self._get_chroma_records(list(originals))
+            if set(restored) != set(originals) or any(
+                restored[key].revision != originals[key].revision for key in originals
+            ):
+                raise RuntimeError("chroma_rollback_verification_failed") from exc
+            journal_path.unlink(missing_ok=True)
+            raise ClusterMergeError(
+                f"chroma transaction rolled back after {type(exc).__name__}: {exc}",
+                rolled_back=True,
+            ) from exc
+
+    def _get_chroma_records(self, ids: Sequence[str]) -> dict[str, MemoryRecord]:
+        result = self.vector_memory._collection.get(
+            ids=list(ids),
+            include=["documents", "metadatas", "embeddings"],
+        )
+        raw_ids = list(result.get("ids") or [])
+        docs = list(result.get("documents") or [])
+        metas = list(result.get("metadatas") or [])
+        raw_embeddings = result.get("embeddings")
+        embeddings = list(raw_embeddings) if raw_embeddings is not None else []
+        records: dict[str, MemoryRecord] = {}
+        for index, record_id in enumerate(raw_ids):
+            raw = {
+                "id": record_id,
+                "content": docs[index] if index < len(docs) else "",
+                "metadata": metas[index] if index < len(metas) else {},
+                "embedding": embeddings[index] if index < len(embeddings) else None,
+            }
+            record = self._validated_record(raw, "chroma")
+            records[record.id] = record
+        return records
+
+    def _journal_path(self) -> Path | None:
+        root = getattr(self.vector_memory, "persist_directory", None)
+        if root is None:
+            return None
+        return Path(root) / f".{self._collection_name()}.consolidation-rollback.json"
+
+    def _write_journal(
+        self,
+        path: Path,
+        receipt_id: str,
+        records: list[MemoryRecord],
+    ) -> None:
+        payload = {
+            "schema": self.JOURNAL_SCHEMA,
+            "receipt_id": receipt_id,
+            "collection": self._collection_name(),
+            "records": [
+                {
+                    "id": record.id,
+                    "content": record.content,
+                    "metadata": record.metadata,
+                    "embedding": list(record.embedding),
+                    "revision": record.revision,
+                }
+                for record in records
+            ],
+        }
+        atomic_write_text(
+            path,
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+            durable=True,
+            mode=0o600,
+        )
+
+    def _recover_pending_journal(self, report: ConsolidationReport) -> bool:
+        if self._backend_kind() != "chroma":
+            return True
+        path = self._journal_path()
+        if path is None or not path.exists():
+            return True
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("schema") != self.JOURNAL_SCHEMA:
+                raise ValueError("unknown consolidation journal schema")
+            records = [self._validated_record(item, "chroma") for item in payload["records"]]
+            self._restore_chroma_records(records)
+            restored = self._get_chroma_records([item.id for item in records])
+            if len(restored) != len(records) or any(
+                restored[item.id].revision != item.revision for item in records
+            ):
+                raise RuntimeError("journal_recovery_verification_failed")
+            path.unlink()
+            report.transactions_rolled_back += 1
+            report.receipts.append(
+                {
+                    "receipt_id": payload.get("receipt_id"),
+                    "backend": "chroma",
+                    "recovered": True,
+                    "verified": True,
+                }
+            )
+            return True
+        except _STORAGE_ERRORS as exc:
+            record_degradation("memory_management", exc, severity="critical")
+            report.errors.append(f"rollback_journal_recovery_failed:{type(exc).__name__}:{exc}")
+            return False
+
+    def _restore_chroma_records(self, records: list[MemoryRecord]) -> None:
+        self.vector_memory._collection.upsert(
+            ids=[item.id for item in records],
+            documents=[item.content for item in records],
+            metadatas=[item.metadata for item in records],
+            embeddings=[list(item.embedding) for item in records],
+        )

@@ -34,6 +34,10 @@ except _CHROMA_IMPORT_ERRORS as e:
 
 class AuraEmbeddingFunction:
     """Consolidated embedding function using Aura's internal LLMs."""
+
+    VERSION = "aura-embedding-function-v1"
+    METRIC = "cosine"
+
     def __call__(self, input: list[str]) -> list[list[float]]:
         try:
             from core.container import ServiceContainer
@@ -95,6 +99,10 @@ class VectorMemory:
     ):
         self.collection_name = collection_name
         self._fallback_mode = False
+        self._mutation_lock = threading.RLock()
+        self.single_principal_collection = True
+        self.embedding_metric = AuraEmbeddingFunction.METRIC
+        self.embedding_version = AuraEmbeddingFunction.VERSION
 
         if persist_directory is None:
             from core.utils.paths import DATA_DIR
@@ -176,10 +184,12 @@ class VectorMemory:
 
         return memories
 
-    def _upsert_fallback_batch(self, memories: list[dict[str, Any]]):
+    def _upsert_fallback_batch(self, memories: list[dict[str, Any]]) -> bool:
         """Persist a batch of entries to SQLite fallback efficiently."""
-        if not memories or self._sqlite_vectors is None:
-            return
+        if not memories:
+            return True
+        if self._sqlite_vectors is None:
+            return False
         try:
             records = []
             embedder = AuraEmbeddingFunction()
@@ -191,20 +201,24 @@ class VectorMemory:
                     vector = embedder._pseudo_embed(content)
                 records.append((memory["id"], content, vector, metadata))
             self._sqlite_vectors.upsert_many(records)
+            return True
         except _SQLITE_FALLBACK_ERRORS as e:
             record_degradation('vector_memory', e)
             logger.error("Failed to batch upsert fallback memories to DB: %s", e)
+            return False
 
-    def _upsert_fallback(self, doc_id: str, content: str, metadata: dict[str, Any]):
+    def _upsert_fallback(self, doc_id: str, content: str, metadata: dict[str, Any]) -> bool:
         """Persist a single entry to SQLite fallback."""
         if self._sqlite_vectors is None:
-            return
+            return False
         try:
             vector = AuraEmbeddingFunction()._pseudo_embed(content)
             self._sqlite_vectors.upsert(doc_id, content, vector, metadata=metadata)
+            return True
         except _SQLITE_FALLBACK_ERRORS as e:
             record_degradation('vector_memory', e)
             logger.error("Failed to upsert fallback memory to DB: %s", e)
+            return False
 
     def _fallback_keyword_search(self, query: str, limit: int) -> list[dict[str, Any]]:
         """Compatibility path for tests that inject ``_store`` directly."""
@@ -252,7 +266,12 @@ class VectorMemory:
                     documents = [i[1] for i in batch]
                     metadatas = [i[2] for i in batch]
                     try:
-                        self._collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+                        with self._mutation_lock:
+                            self._collection.upsert(
+                                ids=ids,
+                                documents=documents,
+                                metadatas=metadatas,
+                            )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('vector_memory', e)
                         logger.error("Async Chroma upsert failed: %s", e)
@@ -302,8 +321,11 @@ class VectorMemory:
             return False
 
         doc_id = _id or hashlib.sha256(content.encode()).hexdigest()[:16] + uuid.uuid4().hex[:8]
-        meta = metadata or {}
+        meta = dict(metadata or {})
         meta.setdefault("timestamp", time.time())
+        meta.setdefault("memory_namespace", self.collection_name)
+        meta.setdefault("embedding_metric", self.embedding_metric)
+        meta.setdefault("embedding_version", self.embedding_version)
         
         # ── Pillar 4: Emotional Salience (Stamping) ──
         try:
@@ -327,8 +349,10 @@ class VectorMemory:
             logger.debug("Emotional salience stamping failed: %s", e)
 
         if self._fallback_mode:
-            self._store.append({"id": doc_id, "content": content, "metadata": meta})
-            self._upsert_fallback(doc_id, content, meta)
+            with self._mutation_lock:
+                if not self._upsert_fallback(doc_id, content, meta):
+                    return False
+                self._store.append({"id": doc_id, "content": content, "metadata": meta})
             logger.debug("VectorMemory: Saved to fallback: %s...", content[:60])
             return True
         
@@ -360,29 +384,31 @@ class VectorMemory:
                 try:
                     embedder = AuraEmbeddingFunction()
                     query_vector = embedder._pseudo_embed(query)
-                    results = self._sqlite_vectors.query(query_vector, limit=limit)
-                    if results:
-                        now = time.time()
-                        out = []
-                        for record in results:
-                            metadata = dict(record.metadata)
-                            metadata["last_accessed"] = now
-                            self._sqlite_vectors.upsert(
-                                record.id,
-                                record.content,
-                                embedder._pseudo_embed(record.content),
-                                metadata=metadata,
-                            )
-                            out.append(
-                                {
-                                    "id": record.id,
-                                    "content": record.content,
-                                    "metadata": metadata,
-                                    "score": record.score,
-                                    "distance": record.distance,
-                                }
-                            )
-                        return out
+                    with self._mutation_lock:
+                        results = self._sqlite_vectors.query(query_vector, limit=limit)
+                        if results:
+                            now = time.time()
+                            out = []
+                            for record in results:
+                                metadata = dict(record.metadata)
+                                metadata["last_accessed"] = now
+                                self._sqlite_vectors.upsert(
+                                    record.id,
+                                    record.content,
+                                    embedder._pseudo_embed(record.content),
+                                    metadata=metadata,
+                                )
+                                out.append(
+                                    {
+                                        "id": record.id,
+                                        "content": record.content,
+                                        "metadata": metadata,
+                                        "score": record.score,
+                                        "distance": record.distance,
+                                    }
+                                )
+                            self._store = self._sqlite_vectors.list_records()
+                            return out
                 except _SQLITE_FALLBACK_ERRORS as e:
                     record_degradation('vector_memory', e)
                     logger.error("SQLite vector fallback search failed: %s", e)
@@ -455,20 +481,22 @@ class VectorMemory:
                 try:
                     # ChromaDB doesn't allow bulk metadata update by ID in the same way as SQL
                     # We have to fetch and update or use a loop for small sets
-                    for tid in top_ids:
-                        idx = ids.index(tid)
-                        m = metas[idx]
-                        m["last_accessed"] = time.time()
-                        self._collection.update(ids=[tid], metadatas=[m])
+                    with self._mutation_lock:
+                        for tid in top_ids:
+                            idx = ids.index(tid)
+                            m = metas[idx]
+                            m["last_accessed"] = time.time()
+                            self._collection.update(ids=[tid], metadatas=[m])
                 except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('vector_memory', e)
                     logger.debug("Failed to update last_accessed: %s", e)
             elif self._fallback_mode:
-                for tid in top_ids:
-                    for m in self._store:
-                        if m["id"] == tid:
-                            m["metadata"]["last_accessed"] = time.time()
-                            self._upsert_fallback(m["id"], m["content"], m["metadata"])
+                with self._mutation_lock:
+                    for tid in top_ids:
+                        for m in self._store:
+                            if m["id"] == tid:
+                                m["metadata"]["last_accessed"] = time.time()
+                                self._upsert_fallback(m["id"], m["content"], m["metadata"])
 
             return scored_results[:limit]
 
@@ -508,14 +536,16 @@ class VectorMemory:
     def clear(self):
         """Delete all vectors in the collection."""
         if self._fallback_mode:
-            self._store.clear()
-            if self._sqlite_vectors is not None:
-                self._sqlite_vectors.clear()
+            with self._mutation_lock:
+                if self._sqlite_vectors is not None:
+                    self._sqlite_vectors.clear()
+                self._store.clear()
             return
         try:
-            ids = self._collection.get()["ids"]
-            if ids:
-                self._collection.delete(ids=ids)
+            with self._mutation_lock:
+                ids = self._collection.get()["ids"]
+                if ids:
+                    self._collection.delete(ids=ids)
             logger.info("VectorMemory: cleared collection '%s'", self.collection_name)
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('vector_memory', e)
@@ -533,49 +563,55 @@ class VectorMemory:
         ids_to_prune = []
 
         if self._fallback_mode:
-            initial_count = len(self._store)
-            self._store = [
-                m for m in self._store
-                if not (
-                    (
-                        (now - m["metadata"].get("last_accessed", m["metadata"].get("timestamp", 0)) > expiry_seconds)
-                        and (m["metadata"].get("valence", 0.0) < min_salience)
-                    )
-                    or (
-                        (now - m["metadata"].get("last_accessed", m["metadata"].get("timestamp", 0)) > neutral_expiry_seconds)
-                        and (m["metadata"].get("valence", 0.0) <= 0.05)
-                    )
-                )
-            ]
-            final_count = len(self._store)
-            if initial_count != final_count:
-                if self._sqlite_vectors is not None:
-                    self._sqlite_vectors.clear()
-                    self._upsert_fallback_batch(self._store)
-            return initial_count - final_count
+            if self._sqlite_vectors is None:
+                return 0
+            try:
+                with self._mutation_lock:
+                    rows = list(self._sqlite_vectors.iter_records())
+                    expected_revisions: dict[str, float] = {}
+                    for row in rows:
+                        meta = dict(row.get("metadata") or {})
+                        last_access = meta.get("last_accessed", meta.get("timestamp", 0))
+                        valence = meta.get("valence", 0.0)
+                        if (
+                            ((now - last_access > expiry_seconds) and (valence < min_salience))
+                            or ((now - last_access > neutral_expiry_seconds) and (valence <= 0.05))
+                        ):
+                            expected_revisions[str(row["id"])] = float(row["updated_at"])
+                    if expected_revisions:
+                        self._sqlite_vectors.delete_records_atomic(
+                            record_ids=expected_revisions,
+                            expected_updated_at=expected_revisions,
+                        )
+                    self._store = self._sqlite_vectors.list_records()
+                return len(expected_revisions)
+            except _SQLITE_FALLBACK_ERRORS as e:
+                record_degradation('vector_memory', e)
+                logger.error("SQLite vector fallback prune failed: %s", e)
+                return 0
 
         try:
             # We can't easily query by metadata logic 'AND' in all ChromaDB versions
             # So we fetch all metadatas and filter client-side (safe for < 100k records)
-            results = self._collection.get(include=["metadatas"])
-            ids = results.get("ids", [])
-            metas = results.get("metadatas", [])
+            with self._mutation_lock:
+                results = self._collection.get(include=["metadatas"])
+                ids = results.get("ids", [])
+                metas = results.get("metadatas", [])
 
-            for _id, meta in zip(ids, metas, strict=False):
-                last_access = meta.get("last_accessed", meta.get("timestamp", 0))
-                valence = meta.get("valence", 0.0)
-                
-                # Expiry condition: Old unaccessed AND low salience
-                if (
-                    ((now - last_access > expiry_seconds) and (valence < min_salience))
-                    or ((now - last_access > neutral_expiry_seconds) and (valence <= 0.05))
-                ):
-                    ids_to_prune.append(_id)
+                for _id, meta in zip(ids, metas, strict=False):
+                    last_access = meta.get("last_accessed", meta.get("timestamp", 0))
+                    valence = meta.get("valence", 0.0)
 
+                    if (
+                        ((now - last_access > expiry_seconds) and (valence < min_salience))
+                        or ((now - last_access > neutral_expiry_seconds) and (valence <= 0.05))
+                    ):
+                        ids_to_prune.append(_id)
+
+                if ids_to_prune:
+                    for i in range(0, len(ids_to_prune), 100):
+                        self._collection.delete(ids=ids_to_prune[i:i+100])
             if ids_to_prune:
-                # Delete in chunks to avoid overwhelming the DB
-                for i in range(0, len(ids_to_prune), 100):
-                    self._collection.delete(ids=ids_to_prune[i:i+100])
                 logger.info("✅ Pruned %s low-salience vectors.", len(ids_to_prune))
             
             return len(ids_to_prune)
