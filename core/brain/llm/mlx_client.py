@@ -15,6 +15,7 @@ import queue
 import re
 import stat
 import subprocess
+import platform
 import sys
 import threading as _threading
 import time
@@ -284,6 +285,31 @@ _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "checked_at": 0.0,
 }
 _MLX_RUNTIME_PROBE_CACHE_PATH = state_root() / "data" / "mlx_runtime_probe.json"
+
+#: Bumped whenever the probe's MEANING changes. A cache written by an older
+#: probe answered a different question — the import-only probe this one
+#: replaced would have cached "ok" on a host whose Metal device cannot
+#: evaluate a tensor — so it must not be read as if it answered this one.
+_MLX_RUNTIME_PROBE_SCHEMA = 2
+
+
+def _probe_cache_identity() -> dict[str, str]:
+    """What this cached verdict is actually a verdict ABOUT.
+
+    The cache is a plain file under the state root, and it gates whether Aura
+    believes local inference works at all. Nothing bound it to the environment
+    it was measured in, so a verdict could outlive the thing it described: a
+    venv rebuilt with a different mlx wheel, a checkout run under another
+    interpreter, or a state directory copied between machines all keep reading
+    a verdict that was never true for them. A stale "ok" is the dangerous
+    direction — it sends real user turns to a lane that cannot serve them.
+    """
+    return {
+        # The interpreter IS the mlx installation for this purpose: a different
+        # venv is a different set of wheels.
+        "executable": str(sys.executable),
+        "platform": f"{platform.system()}/{platform.machine()}",
+    }
 
 # Visible conversation-readiness probe. The lane may only claim "ready" after
 # this exact question comes back with an answer that actually responds to it.
@@ -1951,6 +1977,41 @@ def force_clear_foreground_owner(
                 "age_s": round(age, 3),
                 "detail": "owner_younger_than_min_age",
             }
+        acquired_at = _FOREGROUND_OWNER_ACQUIRED_AT
+
+    # Ask the wedged generation to stop BEFORE releasing ownership, not after.
+    # Clearing first opened a window where a new foreground turn could acquire
+    # ownership while the old decode still held the GPU — exactly the
+    # contention the owner gate exists to prevent, and worst precisely when
+    # recovery fires because the machine is already struggling.
+    #
+    # The cancel runs outside _FOREGROUND_OWNER_LOCK on purpose: it reaches
+    # into every client and takes their locks, and holding the owner lock
+    # across that is an ABBA deadlock waiting to happen.
+    soft_cancel = soft_cancel_active_generations(reason=f"owner_cleared:{reason}")
+
+    with _FOREGROUND_OWNER_LOCK:
+        # Compare-and-clear. Releasing the lock above means the world may have
+        # moved: the wedged owner could have finished and a legitimate new turn
+        # taken ownership. Clearing unconditionally would evict that innocent
+        # owner and hand its GPU to whoever raced in next.
+        if _FOREGROUND_OWNER_NAME != holder or _FOREGROUND_OWNER_ACQUIRED_AT != acquired_at:
+            current = _FOREGROUND_OWNER_NAME
+            logger.info(
+                "♻️ [MLX] Foreground owner changed during cancel (%s → %s); "
+                "leaving the new owner alone.",
+                holder,
+                current,
+            )
+            return {
+                "cleared": False,
+                "reason": reason,
+                "holder": holder,
+                "age_s": round(age, 3),
+                "detail": "owner_changed_during_cancel",
+                "current_holder": current,
+                "soft_cancel": soft_cancel,
+            }
         _FOREGROUND_OWNER_NAME = None
         _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
 
@@ -1960,10 +2021,6 @@ def force_clear_foreground_owner(
         age,
         reason,
     )
-    # Ownership is released, but the wedged generation may still be decoding
-    # and holding the GPU. Ask it to stop between tokens so the incoming turn
-    # gets compute within one decode step — without killing the warm worker.
-    soft_cancel = soft_cancel_active_generations(reason=f"owner_cleared:{reason}")
     return {
         "cleared": True,
         "reason": reason,
@@ -2355,6 +2412,18 @@ def _load_probe_cache_from_disk() -> tuple[bool | None, str, float]:
     ok = payload.get("ok")
     if not isinstance(ok, bool):
         return None, "", 0.0
+
+    # A verdict is only about the environment it was measured in. An older
+    # schema answered a different question; another interpreter or machine
+    # measured a different installation. Either way this file describes
+    # something that is not this process, and a stale "ok" would route real
+    # user turns to a lane that cannot serve them.
+    if payload.get("schema") != _MLX_RUNTIME_PROBE_SCHEMA:
+        return None, "", 0.0
+    identity = _probe_cache_identity()
+    if {k: str(payload.get(k, "")) for k in identity} != identity:
+        return None, "", 0.0
+
     detail = str(payload.get("detail", "") or "")
     try:
         checked_at = float(payload.get("checked_at", 0.0) or 0.0)
@@ -2375,9 +2444,11 @@ def _store_probe_cache_to_disk(ok: bool, detail: str) -> None:
             _MLX_RUNTIME_PROBE_CACHE_PATH,
             json.dumps(
                 {
+                    "schema": _MLX_RUNTIME_PROBE_SCHEMA,
                     "ok": bool(ok),
                     "detail": str(detail or ""),
                     "checked_at": time.time(),
+                    **_probe_cache_identity(),
                 }
             ),
         )
