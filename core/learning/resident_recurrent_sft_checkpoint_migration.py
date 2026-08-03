@@ -92,6 +92,11 @@ APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
         "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",
         "2642c39ec7b351c5662d858505430ee7dd5bd8e1e3ee198f6d3794a159737e42",
     ): "exact_cached_lexical_adjoint_v2",
+    (
+        "objective_policy",
+        "2642c39ec7b351c5662d858505430ee7dd5bd8e1e3ee198f6d3794a159737e42",
+        "0bcb27c3820b0c7f8518ed81925b51586aa301fddb2c672bf6108037e9ba2389",
+    ): "exact_decoder_kv_adjoint_v3",
 }
 
 
