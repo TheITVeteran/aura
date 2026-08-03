@@ -2766,7 +2766,6 @@ class MLXLocalClient:
         self._current_first_token_hard_ceiling_s = 0.0
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
-        self._recurrent_adapter_activation: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -4157,9 +4156,6 @@ class MLXLocalClient:
             "current_first_token_at": self._current_first_token_at,
             "current_request_prompt_chars": self._current_request_prompt_chars,
             "recurrent_depth": recurrent_depth_status,
-            "recurrent_adapter_activation": dict(
-                self._recurrent_adapter_activation
-            ),
             "request_age_s": (
                 max(0.0, time.time() - self._current_request_started_at)
                 if self._current_request_started_at
@@ -5206,7 +5202,6 @@ class MLXLocalClient:
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
             "worker_action_capture_identity",
-            "worker_recurrent_adapter_activation",
             "worker_tokenizer",
             "worker_runtime_tokenizer",
             "worker_quantization",
@@ -5266,14 +5261,6 @@ class MLXLocalClient:
                 self.model_path
             ):
                 errors.append("worker_model_path_mismatch")
-            if identity.get("schema") == "aura.latent_cortex.worker_identity.v3":
-                activation = res.get("recurrent_adapter_activation")
-                if not isinstance(activation, Mapping):
-                    errors.append("missing_recurrent_adapter_activation_receipt")
-                elif activation != identity.get(
-                    "worker_recurrent_adapter_activation"
-                ):
-                    errors.append("recurrent_adapter_activation_receipt_mismatch")
 
         # Recurrence: if this lane requires depth, the receipt must prove it.
         required_loops = _expected_recurrent_loops_from_model_path(self.model_path)
@@ -7965,7 +7952,6 @@ class MLXLocalClient:
                             self._init_done = False
                             self._worker_identity = {}
                             self._recurrent_depth_status = {}
-                            self._recurrent_adapter_activation = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -7985,14 +7971,6 @@ class MLXLocalClient:
                         # reported recurrence.
                         self._recurrent_depth_status = (
                             recurrent_status if isinstance(recurrent_status, dict) else {}
-                        )
-                        recurrent_adapter_activation = res.get(
-                            "recurrent_adapter_activation"
-                        )
-                        self._recurrent_adapter_activation = (
-                            dict(recurrent_adapter_activation)
-                            if isinstance(recurrent_adapter_activation, Mapping)
-                            else {}
                         )
                         if not isinstance(recurrent_status, dict):
                             _record_mlx_degradation(
@@ -8343,18 +8321,54 @@ class MLXLocalClient:
                         or elapsed_without_token > hard_first_token_ceiling
                     )
                 ):
-                    logger.error(
-                        "🛑 [MLX] First-token %s for %s (%.1fs elapsed, sla=%.1fs, hard=%.1fs).",
-                        (
-                            "HARD CEILING exceeded (livelocked: heartbeats but zero tokens)"
-                            if elapsed_without_token > hard_first_token_ceiling
-                            else "SLA exceeded"
-                        ),
-                        os.path.basename(self.model_path),
-                        elapsed_without_token,
-                        first_token_sla,
-                        hard_first_token_ceiling,
-                    )
+                    # Which ceiling fired decides what this line is allowed to
+                    # claim. hard_first_token_ceiling is min(livelock, the
+                    # caller's deadline), so exceeding it usually means the
+                    # TURN ran out of budget, not that the worker is wedged.
+                    # The branch below already tested the two apart correctly
+                    # and kept the warm lane; only this message did not, and
+                    # it is the one a person reads. Live 2026-08-03, two
+                    # consecutive lines:
+                    #
+                    #   🛑 HARD CEILING exceeded (livelocked: heartbeats but
+                    #      zero tokens) ... 18.4s elapsed, hard=16.8s
+                    #   ⏱️ ...but is healthy (heartbeat 0.7s ago, livelock
+                    #      ceiling 20.0s). KEEPING the warm lane.
+                    #
+                    # 18.4s was under the 20.0s livelock ceiling. Nothing was
+                    # livelocked. Reporting a budget overrun as a wedged
+                    # worker sends someone hunting a fault that did not
+                    # happen — and at error severity it recruits the incident
+                    # machinery to hunt it too.
+                    livelocked = elapsed_without_token > livelock_ceiling
+                    if livelocked:
+                        logger.error(
+                            "🛑 [MLX] First-token LIVELOCK for %s: heartbeats but zero tokens "
+                            "in %.1fs (livelock ceiling %.1fs, sla=%.1fs).",
+                            os.path.basename(self.model_path),
+                            elapsed_without_token,
+                            livelock_ceiling,
+                            first_token_sla,
+                        )
+                    elif elapsed_without_token > hard_first_token_ceiling:
+                        logger.warning(
+                            "⏱️ [MLX] First-token deadline exceeded for %s (%.1fs elapsed, "
+                            "turn budget %.1fs, sla=%.1fs). The worker is not wedged — the "
+                            "livelock ceiling is %.1fs.",
+                            os.path.basename(self.model_path),
+                            elapsed_without_token,
+                            hard_first_token_ceiling,
+                            first_token_sla,
+                            livelock_ceiling,
+                        )
+                    else:
+                        logger.warning(
+                            "⏱️ [MLX] First-token SLA exceeded for %s (%.1fs elapsed, "
+                            "sla=%.1fs) with no runtime progress.",
+                            os.path.basename(self.model_path),
+                            elapsed_without_token,
+                            first_token_sla,
+                        )
                     self._pending_generations.pop(req_id, None)
                     self._record_degraded_event(
                         "first_token_sla_exceeded",
@@ -8362,7 +8376,10 @@ class MLXLocalClient:
                             f"{os.path.basename(self.model_path)}>{first_token_sla:.1f}s"
                             f"{self._pressure_receipt_suffix()}"
                         ),
-                        severity="error",
+                        # A healthy worker that ran past this turn's budget is
+                        # expected backpressure, which CLAUDE.md says to record
+                        # below error. Only a real livelock is an error.
+                        severity="error" if livelocked else "warning",
                         foreground_request=foreground_request,
                     )
                     # If we abandon a foreground generation, its eventual
@@ -8397,7 +8414,9 @@ class MLXLocalClient:
                     # no longer matches, and the worker is soft-cancelled
                     # between tokens. Destroying a warm 20GB model was never
                     # what kept late text out of the next turn.
-                    livelocked = elapsed_without_token > livelock_ceiling
+                    #
+                    # `livelocked` is computed once above, where it also picks
+                    # the wording of the line the operator reads.
                     if heartbeat_age > 30.0:
                         self._deferred_reboot_reason = "first_token_sla_exceeded"
                     elif livelocked:
