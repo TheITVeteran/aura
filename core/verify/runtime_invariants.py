@@ -126,16 +126,16 @@ def _dependency_graph_acyclic() -> Iterator[Violation]:
         for name, desc in services.items()
     }
 
-    WHITE, GREY, BLACK = 0, 1, 2
-    colour = dict.fromkeys(graph, WHITE)
+    white, grey, black = 0, 1, 2
+    colour = dict.fromkeys(graph, white)
     reported: set[frozenset[str]] = set()
 
     def walk(node: str, path: list[str]) -> Iterator[Violation]:
-        colour[node] = GREY
+        colour[node] = grey
         for nxt in graph.get(node, ()):
             if nxt not in colour:
                 continue
-            if colour[nxt] == GREY:
+            if colour[nxt] == grey:
                 cycle = path[path.index(nxt):] + [nxt] if nxt in path else [node, nxt]
                 key = frozenset(cycle)
                 if key not in reported:
@@ -148,12 +148,12 @@ def _dependency_graph_acyclic() -> Iterator[Violation]:
                         ),
                         remedy="break the cycle with a lazy accessor on one edge",
                     )
-            elif colour[nxt] == WHITE:
+            elif colour[nxt] == white:
                 yield from walk(nxt, path + [nxt])
-        colour[node] = BLACK
+        colour[node] = black
 
     for node in list(graph):
-        if colour.get(node) == WHITE:
+        if colour.get(node) == white:
             yield from walk(node, [node])
 
 
@@ -1082,6 +1082,44 @@ def _commands_have_handlers() -> Iterator[Violation]:
 # ══════════════════════════════════════════════════════════════════════
 # Cognition: rewriting and self-validation
 # ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "curiosity.queue_is_transactional",
+    scope="cognition",
+    owner=_OWNER,
+    description="curiosity owns one bounded queue with unique active claims",
+)
+def _curiosity_queue_is_transactional() -> Iterator[Violation]:
+    from core.container import ServiceContainer
+
+    explorer = ServiceContainer.get("curiosity_explorer", default=None)
+    if explorer is None:
+        return
+    status = explorer.get_status() if hasattr(explorer, "get_status") else None
+    if not isinstance(status, dict):
+        yield Violation(
+            subject="curiosity_explorer",
+            message="registered curiosity explorer exposes no inspectable queue receipt",
+            remedy="provide get_status() with bounded queue and attempt evidence",
+        )
+        return
+    queue = status.get("queue") if isinstance(status.get("queue"), list) else []
+    pending = int(status.get("pending", -1) or 0)
+    active = [item for item in queue if item.get("status") in {"pending", "running"}]
+    if pending != len(active) or pending > 10:
+        yield Violation(
+            subject="curiosity_explorer.queue",
+            message=f"queue receipt says pending={pending}, observed active={len(active)}",
+            remedy="repair queue accounting before admitting more autonomous work",
+        )
+    hashes = [str(item.get("question_hash") or "") for item in active]
+    if any(not value for value in hashes) or len(hashes) != len(set(hashes)):
+        yield Violation(
+            subject="curiosity_explorer.queue",
+            message="active curiosity claims are missing identity or contain duplicates",
+            remedy="deduplicate under the queue owner lock before enqueue",
+        )
+
 
 @invariant(
     "claims.every_claim_has_a_passing_test",
