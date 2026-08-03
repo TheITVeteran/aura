@@ -32,6 +32,7 @@ from core.learning.recurrence_native_objective_v4 import (  # noqa: E402
 )
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     GeneratedRollinSelectionConfig,
+    generated_rollin_live_path_value_and_grad,
 )
 from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     BranchSpecializationConfig,
@@ -235,6 +236,40 @@ def test_composite_receipt_binds_generated_and_structural_objectives():
     assert result.value == pytest.approx(
         result.evaluation.generated.value
         + result.evaluation.specialization.value
+    )
+
+    generated = generated_rollin_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=_spec(),
+        base_seed=90210,
+        config=GeneratedRollinSelectionConfig(
+            student_forcing_probability=0.5,
+            sampling_temperature=0.8,
+            branch_softmin_temperature=0.5,
+        ),
+    )
+    specialization = branch_specialization_live_path_value_and_grad(
+        model,
+        PROMPT,
+        spec=_spec(),
+        config=BranchSpecializationConfig(weight=2.0),
+    )
+    composite_flat = dict(tree_flatten(result.gradients))
+    generated_flat = dict(tree_flatten(generated.gradients))
+    specialization_flat = dict(tree_flatten(specialization.gradients))
+    assert composite_flat.keys() == generated_flat.keys() == specialization_flat.keys()
+    assert all(
+        bool(
+            mx.allclose(
+                composite_flat[path],
+                generated_flat[path] + specialization_flat[path],
+                rtol=1e-5,
+                atol=1e-6,
+            )
+        )
+        for path in composite_flat
     )
 
     attacked = copy.deepcopy(receipt)

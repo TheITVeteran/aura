@@ -8,7 +8,7 @@ import os
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Never
 
@@ -32,7 +32,16 @@ from core.runtime.atomic_writer import (
 MIGRATION_SCHEMA: Final = "aura.resident_recurrent_sft_checkpoint_migration.v1"
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 COPY_CHUNK_BYTES: Final = 4 * 1024 * 1024
-ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset({"trainer", "controller"})
+ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset(
+    {"trainer", "controller", "specialization_objective"}
+)
+APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
+    (
+        "specialization_objective",
+        "9d9e12f64bf6edb6ac6c9695b2c0e63cf57a377c2e598dfca9be4cdf9fae8f6e",
+        "8299def67d36726a4c82601210ef20ca530aef0ab7f5cb0691d5fbcacdd8b165",
+    ): "exact_composite_gradient_host_spill_v1",
+}
 
 
 class ResidentSFTCheckpointMigrationError(RuntimeError):
@@ -154,6 +163,32 @@ def _changed_source_roles(
     )
 
 
+def _source_transition_attestations(
+    source: Mapping[str, Any],
+    destination: Mapping[str, Any],
+    changed_roles: Sequence[str],
+) -> dict[str, dict[str, str]]:
+    attestations: dict[str, dict[str, str]] = {}
+    for role in changed_roles:
+        if role not in ALLOWED_CHANGED_SOURCE_ROLES:
+            _fail("resident_sft_migration_source_change_not_authorized")
+        if role in {"trainer", "controller"}:
+            continue
+        source_sha = str(source[role]["sha256"])
+        destination_sha = str(destination[role]["sha256"])
+        attestation = APPROVED_SEMANTICS_PRESERVING_TRANSITIONS.get(
+            (role, source_sha, destination_sha)
+        )
+        if attestation is None:
+            _fail("resident_sft_migration_source_change_not_authorized")
+        attestations[role] = {
+            "source_sha256": source_sha,
+            "destination_sha256": destination_sha,
+            "attestation": attestation,
+        }
+    return attestations
+
+
 def _copy_exact(source: Path, destination: Path) -> dict[str, Any]:
     source_binding = _binding(source)
     ensure_private_directory(destination.parent)
@@ -216,8 +251,13 @@ def migrate_checkpoint(
     changed_roles = _changed_source_roles(
         source_authority["sources"], destination_authority["sources"]
     )
-    if not changed_roles or not set(changed_roles) <= ALLOWED_CHANGED_SOURCE_ROLES:
+    if not changed_roles:
         _fail("resident_sft_migration_source_change_not_authorized")
+    transition_attestations = _source_transition_attestations(
+        source_authority["sources"],
+        destination_authority["sources"],
+        changed_roles,
+    )
 
     source_bindings = authority_state_bindings(source_authority)
     destination_bindings = authority_state_bindings(destination_authority)
@@ -285,6 +325,7 @@ def migrate_checkpoint(
         "scientific_identity": scientific_identity,
         "trust_policy_identity_sha256": source_trust_identity,
         "changed_source_roles": list(changed_roles),
+        "source_transition_attestations": transition_attestations,
         "migration_implementation": _binding(Path(__file__).resolve()),
         "preserved_state_sha256": _sha(canonical_json_bytes(preserved_state)),
         "preservation": {
@@ -357,7 +398,6 @@ def verify_migration(
         or not isinstance(changed_roles, list)
         or not changed_roles
         or "trainer" not in changed_roles
-        or set(changed_roles) - ALLOWED_CHANGED_SOURCE_ROLES
         or not isinstance(implementation, Mapping)
     ):
         _fail("resident_sft_migration_receipt_invalid")
@@ -410,12 +450,21 @@ def verify_migration(
     source_authority = _read_authority(source_authority_path)
     source_repo_root = Path(source_repo_root_value)
     source_root = _resolve_artifact_root(source_repo_root, source_authority)
+    observed_changed_roles = _changed_source_roles(
+        source_authority["sources"], validated_authority["sources"]
+    )
+    observed_transition_attestations = _source_transition_attestations(
+        source_authority["sources"],
+        validated_authority["sources"],
+        observed_changed_roles,
+    )
     if (
         receipt.get("scientific_identity") != _identity(source_authority)
         or receipt.get("trust_policy_identity_sha256")
         != _trust_policy_identity(source_repo_root, source_authority)
-        or tuple(changed_roles)
-        != _changed_source_roles(source_authority["sources"], validated_authority["sources"])
+        or tuple(changed_roles) != observed_changed_roles
+        or receipt.get("source_transition_attestations")
+        != observed_transition_attestations
     ):
         _fail("resident_sft_migration_source_identity_drift")
     try:
@@ -493,6 +542,7 @@ def verify_migration(
 
 __all__ = [
     "ALLOWED_CHANGED_SOURCE_ROLES",
+    "APPROVED_SEMANTICS_PRESERVING_TRANSITIONS",
     "MIGRATION_SCHEMA",
     "ResidentSFTCheckpointMigrationError",
     "migrate_checkpoint",

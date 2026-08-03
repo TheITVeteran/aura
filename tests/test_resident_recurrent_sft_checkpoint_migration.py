@@ -249,3 +249,27 @@ def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):
             destination_repo_root=tmp_path,
             destination_authority_path=destination_path,
         )
+
+
+def test_source_transition_attestation_is_exact_hash_bound() -> None:
+    role, source_sha, destination_sha = next(
+        iter(migration.APPROVED_SEMANTICS_PRESERVING_TRANSITIONS)
+    )
+    source = {role: {"sha256": source_sha}}
+    destination = {role: {"sha256": destination_sha}}
+
+    assert migration._source_transition_attestations(
+        source, destination, (role,)
+    ) == {
+        role: {
+            "source_sha256": source_sha,
+            "destination_sha256": destination_sha,
+            "attestation": "exact_composite_gradient_host_spill_v1",
+        }
+    }
+    destination[role]["sha256"] = _sha("unreviewed-change")
+    with pytest.raises(
+        migration.ResidentSFTCheckpointMigrationError,
+        match="source_change_not_authorized",
+    ):
+        migration._source_transition_attestations(source, destination, (role,))

@@ -9,6 +9,7 @@ communication slot is excluded because consensus there is intentional.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
@@ -569,7 +570,31 @@ def generated_rollin_specialization_value_and_grad(
     """Compose lexical and structural gradients without co-resident graphs."""
 
     import mlx.core as mx
+    import numpy as np
     from mlx.utils import tree_map
+
+    # The structural adjoint is the higher peak at deep recurrence.  Evaluate
+    # it first while the MLX allocator is clean, spill only its small adapter
+    # gradient to host memory, and destroy the full graph before constructing
+    # the generated-rollin objective.  Both gradients are still evaluated at
+    # the same unchanged parameters, so their sum is the exact composite
+    # gradient rather than a sequential-optimizer approximation.
+    specialization = branch_specialization_live_path_value_and_grad(
+        model,
+        prompt_tokens,
+        spec=spec,
+        config=specialization_config,
+        branch_indices=branch_indices,
+    )
+    mx.eval(specialization.gradients)
+    specialization_evaluation = specialization.evaluation
+    structural_host = tree_map(
+        lambda value: np.array(value, copy=True), specialization.gradients
+    )
+    del specialization
+    mx.synchronize()
+    gc.collect()
+    mx.clear_cache()
 
     generated = generated_rollin_live_path_value_and_grad(
         model,
@@ -582,24 +607,15 @@ def generated_rollin_specialization_value_and_grad(
         token_loss_weights=token_loss_weights,
         branch_indices=branch_indices,
     )
-    mx.eval(generated.gradients)
-    mx.clear_cache()
-    specialization = branch_specialization_live_path_value_and_grad(
-        model,
-        prompt_tokens,
-        spec=spec,
-        config=specialization_config,
-        branch_indices=branch_indices,
-    )
     gradients = tree_map(
-        lambda lexical, structural: lexical + structural,
+        lambda lexical, structural: lexical + mx.array(structural),
         generated.gradients,
-        specialization.gradients,
+        structural_host,
     )
     mx.eval(gradients)
     evaluation = GeneratedRollinSpecializationEvaluation(
         generated=generated.evaluation,
-        specialization=specialization.evaluation,
+        specialization=specialization_evaluation,
     )
     return GeneratedRollinSpecializationResult(
         evaluation=evaluation,
