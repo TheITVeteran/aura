@@ -35,8 +35,11 @@ from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
 from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
     BranchSpecializationConfig,
+    branch_specialization_live_path_loss,
+    branch_specialization_live_path_value_and_grad,
     generated_rollin_specialization_loss,
     generated_rollin_specialization_value_and_grad,
+    validate_branch_specialization_receipt,
     validate_generated_rollin_specialization_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
@@ -233,6 +236,9 @@ def run_canary(
     student_forcing_probability: float,
     sampling_temperature: float,
     specialization_weight: float,
+    warmup_steps: int,
+    warmup_learning_rate: float,
+    joint_learning_rate: float,
 ) -> dict[str, Any]:
     import mlx.core as mx
     import mlx.optimizers as optim
@@ -242,8 +248,21 @@ def run_canary(
 
     if type(steps) is not int or not 1 <= steps <= 8:
         raise ValueError("steps must be inside [1, 8]")
+    if type(warmup_steps) is not int or not 1 <= warmup_steps <= 8:
+        raise ValueError("warmup_steps must be inside [1, 8]")
     if type(seed) is not int or not 0 <= seed <= 2**63 - 1:
         raise ValueError("seed must be inside [0, 2^63-1]")
+    for name, value in (
+        ("warmup_learning_rate", warmup_learning_rate),
+        ("joint_learning_rate", joint_learning_rate),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 1e-6 <= float(value) <= 1e-2
+        ):
+            raise ValueError(f"{name} must be inside [1e-6, 1e-2]")
     started = time.time()
     source_commit, source_bindings = _source_state()
     base_before = full_weight_checkpoint_identity(model_path)
@@ -322,7 +341,66 @@ def run_canary(
             validation_row,
             spec=spec,
         )
-        optimizer = optim.AdamW(learning_rate=1e-4, weight_decay=0.0)
+        warmup_optimizer = optim.AdamW(
+            learning_rate=warmup_learning_rate,
+            weight_decay=0.0,
+        )
+        warmup_optimizer.init(model.trainable_parameters())
+        warmup_trail: list[dict[str, Any]] = []
+        for warmup_step in range(1, warmup_steps + 1):
+            result = branch_specialization_live_path_value_and_grad(
+                model,
+                training_row["prompt_tokens"],
+                spec=spec,
+                config=specialization_config,
+            )
+            structural_receipt = validate_branch_specialization_receipt(
+                result.evaluation.receipt()
+            )
+            optimizer_before = adapter_tensor_fingerprint(
+                adapter_tensor_dict(model)
+            )
+            warmup_optimizer.update(model, result.gradients)
+            mx.eval(model.trainable_parameters(), warmup_optimizer.state)
+            post_update = branch_specialization_live_path_loss(
+                model,
+                training_row["prompt_tokens"],
+                spec=spec,
+                config=specialization_config,
+            )
+            warmup_trail.append(
+                {
+                    "step": warmup_step,
+                    "loss_before": result.value,
+                    "separations_before": list(
+                        result.evaluation.separations
+                    ),
+                    "separations_after": list(post_update.separations),
+                    "objective_receipt": structural_receipt,
+                    "adapter_before_sha256": optimizer_before,
+                    "adapter_after_sha256": adapter_tensor_fingerprint(
+                        adapter_tensor_dict(model)
+                    ),
+                }
+            )
+            if min(post_update.separations) >= float(
+                specialization_config.target_separation
+            ):
+                break
+        warmup_validation = _evaluate(
+            model,
+            validation_row,
+            spec=spec,
+            generated_config=objective_config,
+            specialization_config=specialization_config,
+            campaign_seed=seed,
+        )
+        # Reset momentum when the structural constraint is met. Continuing an
+        # Adam trajectory after the hinge reaches zero overshoots the target.
+        optimizer = optim.AdamW(
+            learning_rate=joint_learning_rate,
+            weight_decay=0.0,
+        )
         optimizer.init(model.trainable_parameters())
         loss_trail: list[dict[str, Any]] = []
         for step in range(1, steps + 1):
@@ -386,7 +464,9 @@ def run_canary(
     base_after = full_weight_checkpoint_identity(model_path)
     finite_losses = [
         before["loss"],
+        warmup_validation["loss"],
         after["loss"],
+        *(entry["loss_before"] for entry in warmup_trail),
         *(entry["loss"] for entry in loss_trail),
     ]
     gates = {
@@ -414,6 +494,11 @@ def run_canary(
             )
             for entry in loss_trail
         ),
+        "warmup_target_reached": bool(
+            warmup_trail
+            and min(warmup_trail[-1]["separations_after"])
+            >= float(specialization_config.target_separation)
+        ),
         **_branch_specialization_gates(loss_trail, separation_after),
         "heldout_lexical_non_regression": after["lexical_loss"]
         <= before["lexical_loss"] + 1e-6,
@@ -431,6 +516,9 @@ def run_canary(
         "objective_config": {
             "generated": objective_config.to_dict(),
             "specialization": specialization_config.to_dict(),
+            "warmup_steps": warmup_steps,
+            "warmup_learning_rate": float(warmup_learning_rate),
+            "joint_learning_rate": float(joint_learning_rate),
         },
         "seed": seed,
         "steps": steps,
@@ -440,6 +528,8 @@ def run_canary(
         "validation_task_id": validation_row["task_id"],
         "validation_before": before,
         "branch_separation_before": separation_before,
+        "warmup_trail": warmup_trail,
+        "validation_after_warmup": warmup_validation,
         "loss_trail": loss_trail,
         "validation_after": after,
         "branch_separation_after": separation_after,
@@ -479,6 +569,9 @@ def main() -> int:
     parser.add_argument("--student-forcing-probability", type=float, default=0.5)
     parser.add_argument("--sampling-temperature", type=float, default=0.8)
     parser.add_argument("--specialization-weight", type=float, default=8.0)
+    parser.add_argument("--warmup-steps", type=int, default=8)
+    parser.add_argument("--warmup-learning-rate", type=float, default=1e-3)
+    parser.add_argument("--joint-learning-rate", type=float, default=1e-4)
     args = parser.parse_args()
     receipt = run_canary(
         model_path=args.model.expanduser().resolve(strict=True),
@@ -489,6 +582,9 @@ def main() -> int:
         student_forcing_probability=args.student_forcing_probability,
         sampling_temperature=args.sampling_temperature,
         specialization_weight=args.specialization_weight,
+        warmup_steps=args.warmup_steps,
+        warmup_learning_rate=args.warmup_learning_rate,
+        joint_learning_rate=args.joint_learning_rate,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt["passed"] else 2
