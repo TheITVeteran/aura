@@ -148,10 +148,31 @@ _PAST_SCREEN_NARRATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Surfaces that mean "the thing Bryan is looking at".
+_SCREEN_SURFACE = r"(?:screen|display|monitor)"
+
+#: Ways of asking to be told what is there. Deliberately a CUE class rather
+#: than a phrase list.
+#:
+#: The phrase-list approach has now failed twice on the same request, weeks
+#: apart. First "the screen" missed a list wanting "my screen". Then, live on
+#: 2026-08-03, "can you tell me what you see on my screen currently?" missed
+#: this regex, because it accepted "what DO YOU see" but not "what you see" —
+#: one auxiliary verb away from a flat "I can't see your screen", which is
+#: worse than a refusal because it is false.
+#:
+#: An enumeration of phrasings will always be one phrasing behind. The rule is
+#: structural instead: a perception or report cue anywhere near a screen noun.
+_PERCEPTION_CUE = (
+    r"(?:read|look(?:ing)?\s+at|inspect|describe|check|examine|capture|view"
+    r"|see|seeing|watch|showing|shows|shown|display(?:ed|ing)?|tell\s+me|what)"
+)
+
 _SCREEN_OBSERVATION_RE = re.compile(
-    r"\b(?:read|look\s+at|inspect|describe|check|examine|capture|view)\b"
-    r"[^.?!]{0,40}\bscreen\b"
-    r"|\bwhat(?:'s|\s+is|\s+are|\s+do\s+you\s+see)\b[^.?!]{0,40}\bscreen\b"
+    # cue ... screen  ("tell me what you see on my screen", "what's on screen")
+    rf"\b{_PERCEPTION_CUE}\b[^.?!]{{0,60}}\b{_SCREEN_SURFACE}\b"
+    # screen ... cue  ("my screen — what do you see", "the display shows what?")
+    rf"|\b{_SCREEN_SURFACE}\b[^.?!]{{0,60}}\b{_PERCEPTION_CUE}\b"
     r"|\bscreenshot\b",
     re.IGNORECASE,
 )

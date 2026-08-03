@@ -99,3 +99,65 @@ class TestConversationAboutTheScreenIsNotALook:
     @pytest.mark.parametrize("message", NARRATION)
     def test_recounting_is_not_a_request_to_look(self, message):
         assert looks_like_screen_observation(message) is False
+
+
+class TestThePhrasingsBryanActuallyUsed:
+    """Regression pins, one per live failure.
+
+    This request has now failed live twice, weeks apart, both times because the
+    matcher enumerated phrasings and the next phrasing fell outside. Each entry
+    below is a sentence a real person actually typed, kept verbatim.
+
+    The failure mode is worse than a refusal: Aura answers "I can't see your
+    screen — I don't have that kind of access", which is FALSE. She has the
+    capability; the router never offered her the chance to use it, so she
+    explained the absence as a limitation and then as a preference.
+    """
+
+    def test_the_2026_08_03_1328_phrasing(self):
+        from core.runtime.desktop_objective_intent import looks_like_screen_observation
+
+        # "what you see", not "what DO you see" — one auxiliary verb away from
+        # a false denial.
+        assert looks_like_screen_observation(
+            "Hey, Aura can you tell me what you see on my screen currently?"
+        )
+
+    def test_the_earlier_the_screen_phrasing_still_matches(self):
+        from core.runtime.desktop_objective_intent import looks_like_screen_observation
+
+        assert looks_like_screen_observation(
+            "Can you see what's on the screen and tell me what you see?"
+        )
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "what's on my screen",
+            "what do you see on screen right now",
+            "can you see my monitor?",
+            "describe my display",
+            "read the screen and tell me",
+            "take a screenshot",
+            "my screen — what do you see?",
+        ],
+    )
+    def test_ordinary_ways_of_asking(self, message):
+        from core.runtime.desktop_objective_intent import looks_like_screen_observation
+
+        assert looks_like_screen_observation(message), message
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "close the window on my screen",
+            "open Chrome and look at the screen",
+            "earlier my screen showed an error",
+            "what should we talk about",
+        ],
+    )
+    def test_still_not_an_observation(self, message):
+        """Widening the cue must not swallow actuation or ordinary talk."""
+        from core.runtime.desktop_objective_intent import looks_like_screen_observation
+
+        assert not looks_like_screen_observation(message), message
