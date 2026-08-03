@@ -438,7 +438,25 @@ class ChromeCDPDialogueBrowser:
     try {
       const sb = document.querySelector('button[aria-label*="scroll to bottom" i], button[aria-label*="Scroll to bottom" i]');
       if (sb) sb.click();
-      if (msgs.length) msgs[msgs.length-1].scrollIntoView({block:'end'});
+      // Find the ACTUAL scrolling ancestor by walking up from the last
+      // message and testing computed overflow. Guessing the container by CSS
+      // class ('overflow-y-auto') breaks every time ChatGPT reshuffles its
+      // markup, and when it breaks the thread silently stops following the
+      // conversation — Bryan is left looking at the middle of an exchange
+      // while Aura reports it complete.
+      if (msgs.length) {
+        const last = msgs[msgs.length-1];
+        let node = last.parentElement;
+        while (node && node !== document.body) {
+          const st = getComputedStyle(node);
+          if (/(auto|scroll)/.test(st.overflowY) && node.scrollHeight > node.clientHeight) {
+            node.scrollTop = node.scrollHeight;
+          }
+          node = node.parentElement;
+        }
+        document.scrollingElement && (document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight);
+        last.scrollIntoView({block:'end'});
+      }
     } catch(e) {}
     const submitBtn = document.querySelector('#composer-submit-button, [data-testid="send-button"], [data-testid="stop-button"]');
     const submitLabel = submitBtn ? (submitBtn.getAttribute('aria-label') || '').toLowerCase() : '';
@@ -757,12 +775,25 @@ class ChromeVisibleDialogueBrowser:
     try {
       const sb = document.querySelector('button[aria-label*="scroll to bottom" i], button[aria-label*="Scroll to bottom" i]');
       if (sb) sb.click();
-      const thread = document.querySelector('main');
-      if (thread) {
-        const sc = thread.querySelector('[class*="overflow-y-auto"], [class*="overflow-y-scroll"]') || thread;
-        sc.scrollTop = sc.scrollHeight;
+      // Find the ACTUAL scrolling ancestor by walking up from the last
+      // message and testing computed overflow. Guessing the container by CSS
+      // class ('overflow-y-auto') breaks every time ChatGPT reshuffles its
+      // markup, and when it breaks the thread silently stops following the
+      // conversation — Bryan is left looking at the middle of an exchange
+      // while Aura reports it complete.
+      if (msgs.length) {
+        const last = msgs[msgs.length-1];
+        let node = last.parentElement;
+        while (node && node !== document.body) {
+          const st = getComputedStyle(node);
+          if (/(auto|scroll)/.test(st.overflowY) && node.scrollHeight > node.clientHeight) {
+            node.scrollTop = node.scrollHeight;
+          }
+          node = node.parentElement;
+        }
+        document.scrollingElement && (document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight);
+        last.scrollIntoView({block:'end'});
       }
-      if (msgs.length) msgs[msgs.length-1].scrollIntoView({block:'end'});
     } catch(e) {}
     // ChatGPT is still streaming while the composer button is in its STOP state
     // (its aria-label toggles Send prompt <-> Stop streaming) or a streaming node
