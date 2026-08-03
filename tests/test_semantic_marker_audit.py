@@ -73,11 +73,83 @@ class TestFakeBehaviorDetection:
     def _has_docstring(self, node):
         if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
             doc = str(node.body[0].value.value)
+            lowered = doc.lower()
+            # A docstring that explicitly documents None as a valid answer is
+            # not promising behaviour it fails to deliver — it is declaring an
+            # opt-in default. `reality_manifest` says "if this device has one"
+            # and returns None precisely because hardware authority must never
+            # be inferred; flagging that taught the opposite lesson.
+            if "none" in lowered:
+                return False
             # Must promise behavior (not just a label)
             action_words = {"return", "compute", "calculate", "process", "validate",
                            "check", "verify", "run", "execute", "perform", "apply",
                            "update", "write", "send", "emit", "create", "build"}
-            return any(w in doc.lower() for w in action_words)
+            return any(w in lowered for w in action_words)
+        return False
+
+    @staticmethod
+    def _returns_optional(node) -> bool:
+        """Whether the SIGNATURE declares None a valid return.
+
+        `def reality_manifest(self) -> HardwareRealityManifest | None` with a
+        body of `return None` is a declared opt-in default, not an
+        unfinished implementation — a device is inventory-only until it
+        deliberately provides a manifest, and hardware authority must never
+        be inferred.
+
+        Type-driven rather than prose-driven on purpose: the previous
+        heuristic read the docstring, so whether a deliberate default was
+        flagged depended on whether its author happened to write the word
+        "None". The annotation says it unambiguously.
+        """
+        annotation = node.returns
+        if annotation is None:
+            return False
+        if isinstance(annotation, ast.Constant) and annotation.value is None:
+            return True
+        # `X | None`
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            for side in (annotation.left, annotation.right):
+                if isinstance(side, ast.Constant) and side.value is None:
+                    return True
+        # `Optional[X]` / `Union[X, None]`
+        if isinstance(annotation, ast.Subscript):
+            base = annotation.value
+            name = getattr(base, "id", getattr(base, "attr", ""))
+            if name == "Optional":
+                return True
+            if name == "Union":
+                inner = annotation.slice
+                elements = inner.elts if isinstance(inner, ast.Tuple) else [inner]
+                for element in elements:
+                    if isinstance(element, ast.Constant) and element.value is None:
+                        return True
+        # String annotations, e.g. "-> 'Thing | None'"
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            return "None" in annotation.value
+        return False
+
+    @staticmethod
+    def _is_protocol_member(tree, node) -> bool:
+        """Whether this function is declared on a typing.Protocol.
+
+        A Protocol member's body IS the declaration — there is nothing to
+        implement. The scan already skips @abstractmethod and @property for
+        the same reason; Protocol members carry no decorator to skip on, so
+        the enclosing class has to be inspected.
+        """
+        for parent in ast.walk(tree):
+            if not isinstance(parent, ast.ClassDef) or node not in parent.body:
+                continue
+            for base in parent.bases:
+                name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+                if name == "Protocol":
+                    return True
+                if isinstance(base, ast.Subscript):
+                    inner = base.value
+                    if getattr(inner, "id", getattr(inner, "attr", "")) == "Protocol":
+                        return True
         return False
 
     def test_no_promising_noops_in_production(self):
@@ -98,6 +170,10 @@ class TestFakeBehaviorDetection:
                     continue
                 decorators = [_decorator_name(d) for d in node.decorator_list]
                 if "abstractmethod" in decorators or "property" in decorators:
+                    continue
+                if self._is_protocol_member(tree, node):
+                    continue
+                if self._returns_optional(node):
                     continue
                 if self._has_docstring(node) and self._is_noop_body(node.body):
                     findings.append(f"{rel}:{node.lineno} {node.name}()")
@@ -233,3 +309,79 @@ def _decorator_name(node):
     if isinstance(node, ast.Call):
         return _decorator_name(node.func)
     return ""
+
+
+class TestTheNoopDetectorStillDetects:
+    """The exclusions above must narrow the scan, not disarm it.
+
+    Three were added so deliberate opt-in defaults stop being reported as
+    unfinished work: Protocol members (whose body IS the declaration),
+    signatures that declare None a valid return, and docstrings that say so.
+    Each of those could hide a real stub if it were loose, so this pins that
+    a genuine promising no-op is still caught.
+    """
+
+    def _scan(self, source: str) -> bool:
+        """True when the detector would flag something in this source."""
+        detector = TestFakeBehaviorDetection()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name.startswith("_"):
+                continue
+            decorators = [_decorator_name(d) for d in node.decorator_list]
+            if "abstractmethod" in decorators or "property" in decorators:
+                continue
+            if detector._is_protocol_member(tree, node):
+                continue
+            if detector._returns_optional(node):
+                continue
+            if detector._has_docstring(node) and detector._is_noop_body(node.body):
+                return True
+        return False
+
+    def test_a_real_promising_stub_is_still_caught(self):
+        assert self._scan(
+            "def compute_risk(self) -> float:\n"
+            '    """Compute and return the risk score for this action."""\n'
+            "    return 0\n"
+        )
+
+    def test_a_stub_returning_an_empty_dict_is_still_caught(self):
+        assert self._scan(
+            "def build_report(self) -> dict:\n"
+            '    """Build the diagnostic report."""\n'
+            "    return {}\n"
+        )
+
+    def test_an_optional_return_does_not_excuse_a_non_none_stub(self):
+        """The exclusion is for `return None`, not for any weak body."""
+        assert self._scan(
+            "def summarize(self) -> str:\n"
+            '    """Return a summary of the episode."""\n'
+            "    return ''\n"
+        )
+
+    def test_a_protocol_member_is_a_declaration_not_a_stub(self):
+        assert not self._scan(
+            "class Resolver(Protocol):\n"
+            "    def resolve(self, episode) -> object:\n"
+            '        """Return the outcome for this episode."""\n'
+        )
+
+    def test_a_declared_optional_default_is_not_a_stub(self):
+        assert not self._scan(
+            "def reality_manifest(self) -> Manifest | None:\n"
+            '    """Return the capability contract, if this device has one."""\n'
+            "    return None\n"
+        )
+
+    def test_a_non_protocol_class_member_is_still_scanned(self):
+        """Only Protocol is excused; an ordinary class is not."""
+        assert self._scan(
+            "class Thing:\n"
+            "    def compute_risk(self) -> float:\n"
+            '        """Compute and return the risk score."""\n'
+            "        return 0\n"
+        )

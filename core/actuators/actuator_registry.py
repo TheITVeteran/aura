@@ -196,7 +196,15 @@ class BaseActuator(ABC):
         pass
 
     def immune_rule_seed_params(self) -> dict[str, Any] | None:
-        """Return a valid bounded parameter seed for immune simulation."""
+        """A bounded parameter seed for immune simulation, or None.
+
+        None is the base default and the honest answer for most actuators:
+        an actuator opts in by returning a seed, and immune simulation must
+        never infer one from an actuator that never offered it. The previous
+        docstring promised a seed unconditionally while the body returned
+        None, which reads as an unfinished implementation rather than a
+        deliberate opt-in.
+        """
         return None
 
 

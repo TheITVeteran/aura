@@ -57,6 +57,29 @@ class AsyncCallProbe:
         return self.result
 
 
+@pytest.fixture
+def approval_overlay_off(monkeypatch):
+    """Pin the operator-confirmation overlay OFF for token-issuance tests.
+
+    These tests are about capability tokens, not the confirmation prompt —
+    and the overlay "never weakens Constitution, Will, standing authority,
+    capability tokens, or Conscience", so switching it off leaves what they
+    actually assert intact.
+
+    They used to pass by INHERITING the developer's live
+    `governance.approval_mode`. Once test runs stopped reading the live
+    ~/.aura state, the setting resolved to its real default of
+    "destructive", and an unknown tool's effect scope is "unknown", which
+    is in the destructive set — so the gateway correctly required
+    confirmation and the tests failed. A test whose outcome depends on the
+    machine's configuration is not testing what it claims to; it now
+    declares the mode it needs.
+    """
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.runtime_approval_mode", lambda: "none"
+    )
+
+
 def _reset_authority_runtime() -> None:
     ServiceContainer.clear()
     ServiceContainer._registration_locked = False
@@ -682,7 +705,9 @@ def test_service_container_require_fails_loudly_for_missing_service():
 
 
 @pytest.mark.asyncio
-async def test_authority_gateway_generates_and_revokes_tool_capability_token():
+async def test_authority_gateway_generates_and_revokes_tool_capability_token(
+    approval_overlay_off,
+):
     _reset_authority_runtime()
 
     gateway = get_authority_gateway()
@@ -710,7 +735,9 @@ async def test_authority_gateway_generates_and_revokes_tool_capability_token():
 
 
 @pytest.mark.asyncio
-async def test_constitution_tool_handle_carries_capability_token_and_revokes_it():
+async def test_constitution_tool_handle_carries_capability_token_and_revokes_it(
+    approval_overlay_off,
+):
     _reset_authority_runtime()
 
     constitution = get_constitutional_core()
@@ -1048,3 +1075,32 @@ def test_identity_prompt_surface_prefers_package_identity_over_promptless_legacy
 
     assert surface is not None
     assert hasattr(surface, "get_full_system_prompt")
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_tool_requires_confirmation_by_default(monkeypatch):
+    """The behaviour that surfaced when tests stopped reading live settings.
+
+    `governance.approval_mode` defaults to "destructive", and an unknown
+    tool's effect scope is "unknown", which is IN the destructive set. So a
+    tool nobody has classified requires operator confirmation — fail-closed,
+    and exactly right.
+
+    Two tests above had been passing only because they inherited a developer
+    machine where the overlay was switched off. Pinned here so the default
+    cannot quietly become permissive.
+    """
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.runtime_approval_mode", lambda: "destructive"
+    )
+    _reset_authority_runtime()
+
+    decision = await get_authority_gateway().authorize_tool_execution(
+        "a_tool_nobody_has_classified",
+        {"value": 1},
+        source="user",
+    )
+
+    assert decision.approved is False
+    assert decision.outcome == "approval_required"
+    assert decision.constraints.get("requires_user_confirmation") is True
