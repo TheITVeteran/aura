@@ -13,12 +13,12 @@ import subprocess
 import sys
 import threading
 import time
-from _thread import RLock as RLockType
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import CheckedLock, LockRank, checked_lock
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -28,6 +28,22 @@ logger = logging.getLogger("core.capability_engine")
 _TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS = 0.05
 _TOOL_AFFORDANCE_SCAN_LIMIT = 192
 _CATALOG_LOCK_BOOTSTRAP = threading.Lock()
+
+# Catalog lock order, innermost last. Every acquisition must be strictly
+# increasing; the ranks below are enforced by lockdep, not by convention.
+#
+#   catalog_load (LANE) -> catalog_mutation (RESOURCE) -> catalog (LEAF)
+#
+# The rule that matters at every call site: the ``skills`` and ``instances``
+# properties lazily take ``catalog_load``, so reading them while holding
+# ``catalog`` inverts the order. Inside a ``_catalog_guard()`` block, read the
+# ``_skills`` / ``_instances`` attributes instead, and call
+# ``_ensure_catalog_loaded()`` *before* taking the guard when the catalog has
+# to be populated. Getting this wrong once wedged the boot loop and the health
+# probe against each other until the reaper killed the kernel.
+_CATALOG_LOAD_LOCK_RANK = LockRank.LANE
+_CATALOG_MUTATION_LOCK_RANK = LockRank.RESOURCE
+_CATALOG_LOCK_RANK = LockRank.LEAF
 _VERIFIED_STANDING_AUTHORITY = object()
 
 try:
@@ -1263,12 +1279,18 @@ class CapabilityEngine(AuraBaseModule):
         """
         super().__init__("CapabilityEngine")
         self.orchestrator = orchestrator
-        self._catalog_lock = threading.RLock()
-        self._catalog_mutation_lock = threading.RLock()
+        self._catalog_lock = checked_lock(
+            "capability.catalog", rank=_CATALOG_LOCK_RANK, reentrant=True
+        )
+        self._catalog_mutation_lock = checked_lock(
+            "capability.catalog_mutation", rank=_CATALOG_MUTATION_LOCK_RANK, reentrant=True
+        )
         self._skills: dict[str, SkillMetadata] = {}
         self._instances: dict[str, Any] = {}
         self._catalog_loaded = False
-        self._catalog_load_lock = threading.RLock()
+        self._catalog_load_lock = checked_lock(
+            "capability.catalog_load", rank=_CATALOG_LOAD_LOCK_RANK, reentrant=True
+        )
         self.quarantined_skills: dict[str, dict[str, Any]] = {}
         self.catalog_exclusions: list[dict[str, Any]] = []
         self.catalog_health: dict[str, Any] = {
@@ -1392,7 +1414,22 @@ class CapabilityEngine(AuraBaseModule):
         """Load the skill catalog once, on whoever asks for it first."""
         if self._catalog_loaded:
             return
-        with self._catalog_load_lock:
+        if self._catalog_guard().held_by_current_thread():
+            # Loading takes catalog_load, which outranks the catalog guard this
+            # thread already holds. Blocking here is the boot deadlock: the
+            # loader waits for the guard while the guard's owner waits for the
+            # loader. Serve the generation we have and say so, rather than
+            # wedging the process.
+            record_degradation(
+                "capability_engine",
+                RuntimeError(
+                    "catalog load requested while the catalog guard was held; "
+                    "call _ensure_catalog_loaded() before taking the guard"
+                ),
+                action="served the current catalog generation instead of inverting the lock order",
+            )
+            return
+        with self._catalog_load_guard():
             if self._catalog_loaded:
                 return
             self.reload_skills()
@@ -1422,26 +1459,37 @@ class CapabilityEngine(AuraBaseModule):
     def instances(self, value: dict[str, Any]) -> None:
         self._instances = value
 
-    def _catalog_guard(self) -> RLockType:
-        lock = getattr(self, "_catalog_lock", None)
-        if isinstance(lock, RLockType):
-            return lock
-        with _CATALOG_LOCK_BOOTSTRAP:
-            lock = getattr(self, "_catalog_lock", None)
-            if not isinstance(lock, RLockType):
-                lock = threading.RLock()
-                self._catalog_lock = lock
-            return lock
+    def _catalog_guard(self) -> CheckedLock:
+        return self._lock_guard("_catalog_lock", "capability.catalog", _CATALOG_LOCK_RANK)
 
-    def _catalog_mutation_guard(self) -> RLockType:
-        lock = getattr(self, "_catalog_mutation_lock", None)
-        if isinstance(lock, RLockType):
+    def _catalog_mutation_guard(self) -> CheckedLock:
+        return self._lock_guard(
+            "_catalog_mutation_lock",
+            "capability.catalog_mutation",
+            _CATALOG_MUTATION_LOCK_RANK,
+        )
+
+    def _catalog_load_guard(self) -> CheckedLock:
+        return self._lock_guard(
+            "_catalog_load_lock", "capability.catalog_load", _CATALOG_LOAD_LOCK_RANK
+        )
+
+    def _lock_guard(self, attribute: str, name: str, rank: LockRank) -> CheckedLock:
+        """Return one of the catalog locks, creating it if construction skipped it.
+
+        Subclasses and unpickled instances have reached the catalog without
+        running ``__init__``; the bootstrap keeps that from racing two callers
+        into two different locks for the same attribute.
+        """
+
+        lock = getattr(self, attribute, None)
+        if isinstance(lock, CheckedLock):
             return lock
         with _CATALOG_LOCK_BOOTSTRAP:
-            lock = getattr(self, "_catalog_mutation_lock", None)
-            if not isinstance(lock, RLockType):
-                lock = threading.RLock()
-                self._catalog_mutation_lock = lock
+            lock = getattr(self, attribute, None)
+            if not isinstance(lock, CheckedLock):
+                lock = checked_lock(name, rank=rank, reentrant=True)
+                setattr(self, attribute, lock)
             return lock
 
     def _load_default_trigger_patterns(self) -> None:
@@ -1899,8 +1947,9 @@ class CapabilityEngine(AuraBaseModule):
             ]
 
         def _promote(skill_name: str) -> None:
+            self._ensure_catalog_loaded()
             with self._catalog_guard():
-                skill_registered = skill_name in self.skills
+                skill_registered = skill_name in self._skills
             if not skill_registered:
                 return
             if skill_name in triggered:
@@ -2279,8 +2328,8 @@ class CapabilityEngine(AuraBaseModule):
                     "ready": False,
                     "reason": "catalog_build_failed",
                     "error": f"{type(exc).__name__}: {exc}"[:1200],
-                    "live_count": len(self.skills),
-                    "serving_last_known_good": bool(self.skills),
+                    "live_count": len(self._skills),
+                    "serving_last_known_good": bool(self._skills),
                 }
             return
 
@@ -2422,7 +2471,7 @@ class CapabilityEngine(AuraBaseModule):
             self._catalog_digest = catalog.digest
             self.catalog_health = next_catalog_health
             self._refresh_active_skills()
-            live_count = len(self.skills)
+            live_count = len(self._skills)
             quarantined_count = len(self.quarantined_skills)
             exclusion_count = len(self.catalog_exclusions)
 
@@ -2451,12 +2500,12 @@ class CapabilityEngine(AuraBaseModule):
     def _refresh_active_skills(self) -> None:
         """Treat enabled, registered skills as active unless explicitly deactivated."""
         with self._catalog_guard():
-            if not self.skills:
+            if not self._skills:
                 self.active_skills = set()
                 return
 
-            registered = set(self.skills)
-            enabled = {name for name, meta in self.skills.items() if bool(meta.enabled)}
+            registered = set(self._skills)
+            enabled = {name for name, meta in self._skills.items() if bool(meta.enabled)}
             sticky_active = {name for name in self.active_skills if name in registered}
             self.active_skills = (enabled | sticky_active) - self._explicitly_deactivated_skills
 
@@ -2645,15 +2694,17 @@ class CapabilityEngine(AuraBaseModule):
 
     def get_available_skills(self) -> list[str]:
         """Returns a list of all registered skill names."""
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            return list(self.skills)
+            return list(self._skills)
 
     @property
     def skills_loaded(self) -> int:
         """Compatibility count backed by the canonical live registry."""
 
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            return len(self.skills)
+            return len(self._skills)
 
     def discover_skills(self) -> list[str]:
         """Compatibility entry point that performs the full catalog transaction."""
@@ -2683,8 +2734,9 @@ class CapabilityEngine(AuraBaseModule):
     def dry_run_catalog(self) -> dict[str, Any]:
         """Prove every live declaration can be routed without executing effects."""
 
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            skills = dict(self.skills)
+            skills = dict(self._skills)
             catalog_ready = bool(self.catalog_health.get("ready"))
             catalog_digest = self._catalog_digest
             quarantined_count = len(self.quarantined_skills)
@@ -2727,8 +2779,9 @@ class CapabilityEngine(AuraBaseModule):
         if not raw:
             return ""
 
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            skill_names = tuple(self.skills)
+            skill_names = tuple(self._skills)
         if raw in skill_names:
             return raw
 
@@ -4277,8 +4330,9 @@ class CapabilityEngine(AuraBaseModule):
         """
 
         resolved = self.resolve_skill_name(skill_name)
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            return resolved in self.skills
+            return resolved in self._skills
 
     @staticmethod
     def _normalize_execution_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -4521,8 +4575,9 @@ class CapabilityEngine(AuraBaseModule):
                     }
 
             # 1. Verification
+            self._ensure_catalog_loaded()
             with self._catalog_guard():
-                skill_registered = skill_name in self.skills
+                skill_registered = skill_name in self._skills
             if not skill_registered:
                 # ── Pillar 2: Hephaestus (Autonomous Forge) ──
                 hephaestus = optional_service("hephaestus_engine", default=None)
@@ -4535,8 +4590,9 @@ class CapabilityEngine(AuraBaseModule):
                     forge_result = await hephaestus.synthesize_skill(skill_name, objective)
                     if forge_result.get("ok"):
                         # Skill should now be registered via discovery in synthesize_skill
+                        self._ensure_catalog_loaded()
                         with self._catalog_guard():
-                            skill_registered = skill_name in self.skills
+                            skill_registered = skill_name in self._skills
                         if skill_registered:
                             self.logger.info("✅ Skill '%s' forged successfully.", skill_name)
                         else:
@@ -4555,9 +4611,10 @@ class CapabilityEngine(AuraBaseModule):
                         "error": f"Skill '{skill_name}' not found and forge unavailable.",
                     }
 
+            self._ensure_catalog_loaded()
             with self._catalog_guard():
-                meta = self.skills.get(skill_name)
-                instances = self.instances
+                meta = self._skills.get(skill_name)
+                instances = self._instances
                 skill_last_errors = self.skill_last_errors
                 catalog_digest = str(getattr(self, "_catalog_digest", ""))
             if meta is None:
@@ -6497,8 +6554,9 @@ class CapabilityEngine(AuraBaseModule):
         """Provides extended health data for the capability system."""
         raw_report = super().get_health()
         report: dict[str, Any] = dict(raw_report) if isinstance(raw_report, dict) else {}
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            skills = dict(self.skills)
+            skills = dict(self._skills)
         report["skills_total"] = len(skills)
         report["skills_ready"] = sum(
             1
@@ -6511,8 +6569,9 @@ class CapabilityEngine(AuraBaseModule):
 
     def is_ready(self) -> bool:
         """Deep readiness probe for runtime tool-governance health."""
+        self._ensure_catalog_loaded()
         with self._catalog_guard():
-            skills = dict(self.skills)
+            skills = dict(self._skills)
             active_skills = set(self.active_skills)
             catalog_ready = bool(self.catalog_health.get("ready"))
         if not skills:

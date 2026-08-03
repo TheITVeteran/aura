@@ -663,6 +663,19 @@ class CheckedLock:
             return False
         return True
 
+    def held_by_current_thread(self) -> bool:
+        """True when *this* thread already owns the lock.
+
+        Callers use it to refuse an inverted acquisition before it blocks,
+        rather than discovering the inversion as a hang. Only a reentrant
+        lock can answer: a plain ``threading.Lock`` records no owner.
+        """
+
+        owned = getattr(self._lock, "_is_owned", None)
+        if owned is None:
+            return False
+        return bool(owned())
+
 
 class CheckedAsyncLock:
     """Drop-in for ``asyncio.Lock`` with validation."""
