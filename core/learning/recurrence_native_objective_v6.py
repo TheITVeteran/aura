@@ -23,6 +23,7 @@ from core.learning.recurrence_native_objective_v2 import (
     LivePathForward,
     _advance_recurrent_states,
     _prepare_recurrent_prefix,
+    transformer_layer_group_checkpointing,
 )
 from core.learning.recurrence_native_objective_v4 import (
     DEFAULT_TARGET_SEPARATION,
@@ -40,7 +41,8 @@ RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA: Final = "aura.recurrence_native_objective
 BRANCH_SPECIALIZATION_CONFIG_SCHEMA: Final = "aura.branch_specialization_config.v1"
 BRANCH_SPECIALIZATION_RECEIPT_SCHEMA: Final = "aura.branch_specialization_receipt.v1"
 COMPOSITE_RECEIPT_SCHEMA: Final = "aura.generated_rollin_specialization_receipt.v1"
-EXACT_ADJOINT_ALGORITHM: Final = "recomputed_recurrent_states_single_transition_reverse_v2"
+EXACT_ADJOINT_ALGORITHM: Final = "layer_rematerialized_recomputed_states_reverse_v3"
+EXACT_ADJOINT_LAYER_GROUP_SIZE: Final = 1
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -498,16 +500,21 @@ def branch_specialization_live_path_value_and_grad(
             _cotangents: tuple[Any, ...] = cotangents,
         ) -> Any:
             model.update(parameter_tree)
-            outputs = _advance_recurrent_states(
+            with transformer_layer_group_checkpointing(
                 model,
-                prompts,
-                states,
-                anchors,
-                spec,
-                _step,
-                prelude_end,
-                coda_start,
-            )
+                parameter_tree,
+                group_size=EXACT_ADJOINT_LAYER_GROUP_SIZE,
+            ):
+                outputs = _advance_recurrent_states(
+                    model,
+                    prompts,
+                    states,
+                    anchors,
+                    spec,
+                    _step,
+                    prelude_end,
+                    coda_start,
+                )
             return sum(
                 mx.sum(output * cotangent)
                 for output, cotangent in zip(outputs, _cotangents, strict=True)

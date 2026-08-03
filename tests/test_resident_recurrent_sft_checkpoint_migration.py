@@ -331,3 +331,35 @@ def test_recomputed_adjoint_transition_is_exact_hash_bound() -> None:
             "attestation": "exact_recomputed_adjoint_v2",
         }
     }
+
+
+@pytest.mark.parametrize(
+    ("role", "source_sha", "destination_sha", "attestation"),
+    (
+        (
+            "objective",
+            "30ac036e37ad1e77b80a0d64db5ad3f0329a09c7e00e916249511a5d88a7f147",
+            "8244952d64d76301e8ff08f6323948f7ac0db4cf5063a9c3c132ed6183ac92f4",
+            "context_bound_layer_rematerialization_v1",
+        ),
+        (
+            "specialization_objective",
+            "8299def67d36726a4c82601210ef20ca530aef0ab7f5cb0691d5fbcacdd8b165",
+            "ac6dbff3fa3d05b946bc94a73081f182ca6146caf88b379853fb92be6c9481a5",
+            "exact_layer_rematerialized_adjoint_v3",
+        ),
+    ),
+)
+def test_layer_rematerialization_transitions_are_exact_hash_bound(
+    role: str,
+    source_sha: str,
+    destination_sha: str,
+    attestation: str,
+) -> None:
+    observed = migration._source_transition_attestations(
+        {role: {"sha256": source_sha}},
+        {role: {"sha256": destination_sha}},
+        (role,),
+    )
+
+    assert observed[role]["attestation"] == attestation

@@ -86,9 +86,7 @@ def _spec() -> RLCExecutionSpec:
 def _tree_max_difference(left, right) -> float:
     left_flat = tree_flatten(left)
     right_flat = tree_flatten(right)
-    assert [path for path, _value in left_flat] == [
-        path for path, _value in right_flat
-    ]
+    assert [path for path, _value in left_flat] == [path for path, _value in right_flat]
     differences = [
         mx.max(mx.abs(left_value - right_value))
         for (_path, left_value), (_other_path, right_value) in zip(
@@ -156,15 +154,38 @@ def test_exact_adjoint_matches_full_unroll_gradient():
             bridge_tokens=0,
         )
         separations = pairwise_separations(forward, comm_slot=spec.comm_slot)
-        return config.weight * sum(
-            mx.maximum(config.target_separation - value, 0.0)
-            for value in separations
-        ) / len(separations)
+        return (
+            config.weight
+            * sum(mx.maximum(config.target_separation - value, 0.0) for value in separations)
+            / len(separations)
+        )
 
     full_value, full_gradients = nn.value_and_grad(model, full_objective)(model)
     mx.eval(full_value, full_gradients)
     assert exact.value == pytest.approx(float(full_value), rel=2e-5, abs=2e-6)
     assert _tree_max_difference(exact.gradients, full_gradients) < 2e-4
+
+
+def test_exact_adjoint_uses_context_bound_layer_rematerialization(monkeypatch):
+    original = mx.checkpoint
+    checkpointed: list[object] = []
+
+    def observed_checkpoint(function):
+        checkpointed.append(function)
+        return original(function)
+
+    monkeypatch.setattr(mx, "checkpoint", observed_checkpoint)
+    result = branch_specialization_live_path_value_and_grad(
+        _model(),
+        PROMPT,
+        spec=_spec(),
+    )
+
+    assert checkpointed
+    assert (
+        result.evaluation.receipt()["algorithm"]
+        == "layer_rematerialized_recomputed_states_reverse_v3"
+    )
 
 
 def test_structural_update_moves_collapsed_branches_apart():
@@ -229,13 +250,9 @@ def test_composite_receipt_binds_generated_and_structural_objectives():
         specialization_config=BranchSpecializationConfig(weight=2.0),
     )
     receipt = result.evaluation.receipt()
-    assert (
-        validate_generated_rollin_specialization_receipt(receipt)
-        == receipt
-    )
+    assert validate_generated_rollin_specialization_receipt(receipt) == receipt
     assert result.value == pytest.approx(
-        result.evaluation.generated.value
-        + result.evaluation.specialization.value
+        result.evaluation.generated.value + result.evaluation.specialization.value
     )
 
     generated = generated_rollin_live_path_value_and_grad(

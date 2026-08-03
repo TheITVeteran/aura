@@ -42,7 +42,14 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (
 )
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
-from core.learning.role_conditioned_lora import recurrent_branch_index
+from core.learning.depth_conditioned_lora import (
+    current_depth_index,
+    recurrent_depth_index,
+)
+from core.learning.role_conditioned_lora import (
+    current_branch_index,
+    recurrent_branch_index,
+)
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
@@ -1057,11 +1064,19 @@ def _causal_layers(layers: Sequence[Any], hidden: Any) -> Any:
     activation = current_recurrence_adapter_scope()
     start = activation.start if activation is not None else None
     stop = activation.stop if activation is not None else None
+    branch_index = current_branch_index()
+    depth_index = current_depth_index()
     import mlx.core as mx
 
     for offset in range(0, len(layer_sequence), checkpointed.group_size):
         group = layer_sequence[offset : offset + checkpointed.group_size]
-        key = (tuple(id(layer) for layer in group), start, stop)
+        key = (
+            tuple(id(layer) for layer in group),
+            start,
+            stop,
+            branch_index,
+            depth_index,
+        )
         call = checkpointed.wrappers.get(key)
         if call is None:
 
@@ -1071,6 +1086,8 @@ def _causal_layers(layers: Sequence[Any], hidden: Any) -> Any:
                 _group: tuple[Any, ...] = group,
                 _start: int | None = start,
                 _stop: int | None = stop,
+                _branch_index: int | None = branch_index,
+                _depth_index: int = depth_index,
             ) -> Any:
                 checkpointed.model.update(all_parameters)
 
@@ -1083,9 +1100,17 @@ def _causal_layers(layers: Sequence[Any], hidden: Any) -> Any:
                         )
                     return current
 
-                if _start is None or _stop is None:
-                    return run(value)
-                with recurrence_adapter_scope(start=_start, stop=_stop):
+                adapter_scope = (
+                    nullcontext()
+                    if _start is None or _stop is None
+                    else recurrence_adapter_scope(start=_start, stop=_stop)
+                )
+                branch_scope = (
+                    nullcontext()
+                    if _branch_index is None
+                    else recurrent_branch_index(_branch_index)
+                )
+                with adapter_scope, branch_scope, recurrent_depth_index(_depth_index):
                     return run(value)
 
             call = mx.checkpoint(layer_group_call)
@@ -1398,9 +1423,12 @@ def _persist_and_score(
         [hidden[:, :slot_start, :], final_slots, hidden[:, slot_stop:, :]],
         axis=1,
     )
-    with recurrent_branch_index(branch_index), recurrence_adapter_scope(
-        start=slot_start,
-        stop=slot_stop,
+    with (
+        recurrent_branch_index(branch_index),
+        recurrence_adapter_scope(
+            start=slot_start,
+            stop=slot_stop,
+        ),
     ):
         hidden = _causal_layers(model.model.layers[prelude_end:coda_start], hidden)
     hidden = _causal_layers(model.model.layers[coda_start:], hidden)
@@ -1748,9 +1776,7 @@ def live_path_forward(
             prelude_end=prepared.prelude_end,
             coda_start=prepared.coda_start,
         )
-        for branch_index, (seed, state) in enumerate(
-            zip(prepared.seeds, states, strict=True)
-        )
+        for branch_index, (seed, state) in enumerate(zip(prepared.seeds, states, strict=True))
     )
     return LivePathForward(
         branch_logits=branch_logits,
@@ -1809,10 +1835,7 @@ def cached_live_path_token_logprobs(
         raise ValueError("answer_tokens must contain non-negative integers")
     if any(type(token) is not int or token < 0 for token in bridge):
         raise ValueError("bridge_tokens must contain non-negative integers")
-    if (
-        len(rollin) != len(answer)
-        or any(type(token) is not int or token < 0 for token in rollin)
-    ):
+    if len(rollin) != len(answer) or any(type(token) is not int or token < 0 for token in rollin):
         raise ValueError("rollin_tokens must be non-negative and answer-aligned")
     if spec.decode_bridge_policy == "none" and bridge:
         raise ValueError("bridge tokens supplied while decode bridge is disabled")
@@ -1832,12 +1855,8 @@ def cached_live_path_token_logprobs(
     targets = (*bridge, *answer)
     decoder_inputs = (*bridge, *rollin)
     answer_logprobs: list[Any] = []
-    for position, (target, decoder_input) in enumerate(
-        zip(targets, decoder_inputs, strict=True)
-    ):
-        logprob = logits[target].astype(mx.float32) - mx.logsumexp(
-            logits.astype(mx.float32)
-        )
+    for position, (target, decoder_input) in enumerate(zip(targets, decoder_inputs, strict=True)):
+        logprob = logits[target].astype(mx.float32) - mx.logsumexp(logits.astype(mx.float32))
         if position >= len(bridge):
             answer_logprobs.append(logprob)
         if position + 1 == len(targets):
@@ -1869,14 +1888,9 @@ def _cached_live_path_initial_logits(
     from core.brain.llm.latent_cortex.recurrence import WindowRunner
     from core.brain.llm.latent_cortex.types import ComputeBudget
 
-    if (
-        type(decode_token_budget) is not int
-        or not 1 <= decode_token_budget <= 32_768
-    ):
+    if type(decode_token_budget) is not int or not 1 <= decode_token_budget <= 32_768:
         raise ValueError("decode_token_budget must be inside [1, 32768]")
-    if type(branch_index) is not int or not 0 <= branch_index < len(
-        spec.branch_roles
-    ):
+    if type(branch_index) is not int or not 0 <= branch_index < len(spec.branch_roles):
         raise ValueError("branch_index is outside the live-path branch set")
     boundary = nullcontext() if adapters_on else recurrence_adapter_disabled()
     with boundary, recurrent_branch_index(branch_index):
@@ -1914,11 +1928,7 @@ def _cached_live_path_initial_logits(
         budget = ComputeBudget(
             max_layer_apps=max(
                 1,
-                (
-                    len(prompt_tokens)
-                    + 2 * int(seeds[branch_index].shape[1])
-                    + decode_token_budget
-                )
+                (len(prompt_tokens) + 2 * int(seeds[branch_index].shape[1]) + decode_token_budget)
                 * len(layers),
             ),
             wall_clock_s=600.0,
@@ -2088,13 +2098,14 @@ def cached_supervised_live_path_value_and_grad(
 
         value, gradients = nn.value_and_grad(model, objective)(model)
         finite_flags = [
-            mx.all(mx.isfinite(gradient))
-            for _path, gradient in tree_flatten(gradients)
+            mx.all(mx.isfinite(gradient)) for _path, gradient in tree_flatten(gradients)
         ]
         mx.eval(value, gradients, finite_flags)
         branch_value = float(value)
-        if not math.isfinite(branch_value) or not finite_flags or not all(
-            bool(flag) for flag in finite_flags
+        if (
+            not math.isfinite(branch_value)
+            or not finite_flags
+            or not all(bool(flag) for flag in finite_flags)
         ):
             raise FloatingPointError("cached supervised live-path gradient is non-finite")
         scaled = tree_map(lambda gradient: branch_scale * gradient, gradients)
@@ -2220,20 +2231,15 @@ def _cached_supervised_inputs(
         or any(not math.isfinite(value) or value < 0.0 for value in weights)
         or weight_total <= 0.0
     ):
-        raise ValueError(
-            "token loss weights must be finite, non-negative, and token-aligned"
-        )
+        raise ValueError("token loss weights must be finite, non-negative, and token-aligned")
     indices = (
-        tuple(range(len(spec.branch_roles)))
-        if branch_indices is None
-        else tuple(branch_indices)
+        tuple(range(len(spec.branch_roles))) if branch_indices is None else tuple(branch_indices)
     )
     if (
         not indices
         or len(set(indices)) != len(indices)
         or any(
-            type(index) is not int or not 0 <= index < len(spec.branch_roles)
-            for index in indices
+            type(index) is not int or not 0 <= index < len(spec.branch_roles) for index in indices
         )
     ):
         raise ValueError("branch indices must be unique members of the live branch set")
