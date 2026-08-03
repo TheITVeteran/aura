@@ -2145,11 +2145,12 @@ async def test_an_edited_vault_is_refused_rather_than_restored(
 
 
 @pytest.mark.asyncio
-async def test_a_vault_written_before_attestation_restores_but_says_so(
+async def test_a_vault_written_before_attestation_seeds_a_fresh_network(
     network, monkeypatch, tmp_path
 ):
-    """Absent evidence is neither verified nor forged. It restores — refusing
-    would strand every existing install — and reports itself unattested."""
+    """Absent evidence is neither verified nor forged. It restores into a
+    network that has learned nothing — refusing would strand every install
+    whose vault predates attestation — and reports itself unattested."""
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
@@ -2162,6 +2163,91 @@ async def test_a_vault_written_before_attestation_restores_but_says_so(
     restore = network.get_infrastructure_report()["vault_restore"]
     assert restore["attested"] is False
     assert restore["restored_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_an_unattested_vault_cannot_overwrite_learned_routing(
+    network, monkeypatch, tmp_path
+):
+    """CP126 2f6e7791: one accepted generation replaced the live routing table
+    wholesale. Attestation says the bytes are Aura's; it does not license
+    overwriting state she has actually earned."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    assert await network.vault_sync() is True
+    vault_path = tmp_path / "data" / "mycelium_vault.db"
+    with sqlite3.connect(vault_path) as connection:
+        connection.execute("DROP TABLE aegis_vault_attestation")
+        connection.commit()
+
+    # Verified, so it is DURABLE learning — an asserted-only outcome lives in
+    # the session lane and is deliberately not "earned" for this purpose.
+    network.reinforce(
+        "direct_web_search",
+        success=True,
+        evidence={"ok": True, "grade": "postcondition_verified"},
+    )
+    before = network.get_graph_snapshot()
+
+    assert await MycelialNetwork.restore_from_vault() is False
+    assert network.get_graph_snapshot() == before
+
+
+@pytest.mark.asyncio
+async def test_an_attested_vault_may_overwrite_learned_routing(
+    network, monkeypatch, tmp_path
+):
+    """The refusal is about missing evidence, not about learned state."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    assert await network.vault_sync() is True
+    network.reinforce(
+        "direct_web_search",
+        success=True,
+        evidence={"ok": True, "grade": "postcondition_verified"},
+    )
+
+    assert await MycelialNetwork.restore_from_vault() is True
+
+
+@pytest.mark.asyncio
+async def test_a_route_whose_skill_is_gone_is_dropped_not_published(
+    network, monkeypatch, tmp_path
+):
+    """A restored route pointing at a skill this build lacks is a dead route
+    that fails one user request at a time."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    network.register_pathway(
+        pathway_id="removed", pattern=r"^do the removed thing", skill_name="gone_skill"
+    )
+    assert await network.vault_sync() is True
+
+    monkeypatch.setattr(
+        "core.mycelium._live_skill_names",
+        lambda: {"search_web", "self_repair"},
+    )
+
+    assert await MycelialNetwork.restore_from_vault() is True
+
+    assert "removed" not in network.pathways
+    assert "direct_web_search" in network.pathways
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_skill_registry_does_not_delete_routes(
+    network, monkeypatch, tmp_path
+):
+    """No registry means the question was not answered. A restore must not
+    drop routes on the strength of a question it could not ask."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    network.register_pathway(
+        pathway_id="kept", pattern=r"^keep me", skill_name="some_skill"
+    )
+    assert await network.vault_sync() is True
+
+    monkeypatch.setattr("core.mycelium._live_skill_names", lambda: None)
+
+    assert await MycelialNetwork.restore_from_vault() is True
+
+    assert "kept" in network.pathways
 
 
 @pytest.mark.asyncio
@@ -2433,3 +2519,82 @@ def test_a_partial_name_no_longer_claims_a_skill(network, tmp_path):
     assert network.map_infrastructure(str(tmp_path), force=True) is True
 
     assert network.pathways["ws"].source_file is None
+
+
+# ── Mapping admission contract (CP126 a56e4c5d, 53f15b88) ────────────
+
+
+def test_a_scan_that_exceeds_its_module_ceiling_is_refused(
+    network, monkeypatch, tmp_path
+):
+    """A base_dir with a large vendored tree under it turned a maintenance
+    sweep into an unbounded read-and-parse of everything reachable."""
+    from core import mycelium as module
+
+    monkeypatch.setattr(module, "_MAPPING_MAX_MODULES", 3)
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    for i in range(8):
+        (core_dir / f"m{i}.py").write_text("X = 1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exceeds 3 modules"):
+        network.map_infrastructure(str(tmp_path), force=True)
+
+    # The previous generation stands rather than a partial one being published.
+    assert network.infrastructure_mapped is False
+
+
+def test_a_scan_that_exceeds_its_time_budget_is_refused(
+    network, monkeypatch, tmp_path
+):
+    from core import mycelium as module
+
+    monkeypatch.setattr(module, "_MAPPING_BUDGET_S", -1.0)
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "alpha.py").write_text("X = 1\n", encoding="utf-8")
+
+    with pytest.raises(TimeoutError, match="budget"):
+        network.map_infrastructure(str(tmp_path), force=True)
+
+
+def test_a_normal_repository_scan_is_well_inside_the_ceiling(network, tmp_path):
+    """A limit a real scan can trip is a limit that breaks maintenance."""
+    from core import mycelium as module
+
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "alpha.py").write_text("import core.beta\n", encoding="utf-8")
+    (core_dir / "beta.py").write_text("X = 1\n", encoding="utf-8")
+
+    assert network.map_infrastructure(str(tmp_path), force=True) is True
+    assert len(network.get_mapped_files_snapshot()) < module._MAPPING_MAX_MODULES
+
+
+def test_shutdown_reports_a_mapper_that_outlived_it(network, monkeypatch):
+    """CP126 53f15b88: state is cleared whether or not the mapper drained, and
+    a log line is not something the runtime can see."""
+    from core import mycelium as module
+
+    monkeypatch.setattr(module, "_MAPPER_DRAIN_BUDGET_S", 0.01)
+    stop = threading.Event()
+    worker = threading.Thread(target=lambda: stop.wait(timeout=5.0), daemon=True)
+    worker.start()
+    try:
+        with MycelialNetwork._lock:
+            network._mapping_thread = worker
+
+        network.shutdown()
+
+        assert network.get_infrastructure_report()["shutdown_left_mapper_running"] is True
+    finally:
+        stop.set()
+        worker.join(timeout=2.0)
+
+
+def test_shutdown_does_not_claim_a_stuck_mapper_when_there_is_none(network):
+    network.shutdown()
+
+    assert (
+        network.get_infrastructure_report()["shutdown_left_mapper_running"] is False
+    )

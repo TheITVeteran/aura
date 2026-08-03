@@ -210,6 +210,25 @@ _ROUTE_UTTERANCE_PREFIX = (
 )
 
 
+def _live_skill_names() -> set[str] | None:
+    """Skill names this build provides, or None when the registry can't be asked.
+
+    None and an empty set are different answers: no registry means the question
+    was not answered, and a restore must not delete routes on the strength of a
+    question it could not ask (CP126 2f6e7791).
+    """
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        registry = get_runtime_service("skill_registry", default=None)
+        skills = getattr(registry, "skills", None)
+        if not isinstance(skills, dict):
+            return None
+        return {str(name) for name in skills}
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        return None
+
+
 def _unit_reading(value: Any) -> float | None:
     """A telemetry reading in [0, 1], or None when there isn't one.
 
@@ -411,6 +430,15 @@ _VAULT_MAX_MODULE_IMPORTS = 2_000
 _VAULT_MAX_HYPHA_TRACE = 100
 #: Serialized bytes accepted from the vault row before any decoding.
 _VAULT_MAX_ENCODED_BYTES = 64 * 1024 * 1024
+
+# CP126 a56e4c5d: the mapping admission contract. The module ceiling matches the
+# vault's, since a generation that cannot be persisted is not worth building.
+# The budget is wall-clock across discovery and parsing: this is maintenance
+# work, and maintenance that runs unbounded is not maintenance.
+_MAPPING_MAX_MODULES = _VAULT_MAX_MAPPED_FILES
+_MAPPING_BUDGET_S = 120.0
+#: How long shutdown waits for a running mapper before clearing state anyway.
+_MAPPER_DRAIN_BUDGET_S = 3.0
 _ALLOW_FOREGROUND_MAPPING_FLAG = declare(
     "AURA_ALLOW_FOREGROUND_INFRASTRUCTURE_MAPPING",
     kind=FlagKind.BOOL,
@@ -895,6 +923,9 @@ class MycelialNetwork:
             #: without tamper evidence".
             self._restored_from_vault_at: float | None = None
             self._restored_generation_attested: bool | None = None
+            #: True when shutdown cleared topology state while the mapper was
+            #: still running (CP126 53f15b88).
+            self._shutdown_left_mapper_running: bool = False
 
             # --- Props ---
             self.ui_callback: Callable[[str], Coroutine] | None = None
@@ -1067,24 +1098,47 @@ class MycelialNetwork:
             priority=1.5,
             activity_label="🧬 Running Self-Diagnostics"
         )
+    #: Container attributes that may not be REBOUND once the network is live.
+    _AEGIS_PROTECTED_ATTRS: ClassVar[frozenset[str]] = frozenset(
+        {"pathways", "hyphae", "_pathway_order"}
+    )
+
     def __setattr__(self, name: str, value: Any) -> None:
-        """Pillar 1: Singleton True-Lock (Memory Protection).
-        
-        Prevents rogue reassignment of core structures. Once booted,
-        'pathways' and 'hyphae' dictionaries cannot be replaced.
+        """Refuse to rebind the live topology containers.
+
+        CP126 1947a19c. This was documented as "Singleton True-Lock (Memory
+        Protection)", which reads as a guarantee that the topology cannot be
+        altered. It is not that and cannot be: routing LEARNS, so the contents
+        of ``pathways`` and ``hyphae`` are mutated constantly and by design.
+        What the guard actually does is narrower and still worth having — it
+        stops the container itself being swapped out from under live readers
+        holding a reference to it.
+
+        Sanctioned replacement (vault restore, shutdown, generation publish)
+        goes through :meth:`_aegis_replace`, so the guard has one named door
+        rather than being ambiently side-stepped with ``object.__setattr__``.
+        ``tests/test_mycelium_aegis_scope.py`` holds the door count down.
         """
         # Allow initialization to proceed naturally
         if not getattr(self, "_aegis_locked", False):
             super().__setattr__(name, value)
             return
-            
-        protected_attrs = {"pathways", "hyphae", "_pathway_order"}
-        
-        if name in protected_attrs:
+
+        if name in self._AEGIS_PROTECTED_ATTRS:
             logger.critical("🛡️ AEGIS: Unauthorized attempt to overwrite %s!", name)
             raise PermissionError(f"Aegis True-Lock: Cannot overwrite core Mycelial attribute '{name}'")
-            
+
         super().__setattr__(name, value)
+
+    def _aegis_replace(self, name: str, value: Any) -> None:
+        """Replace a protected container from a sanctioned publication path.
+
+        The one door through the Aegis rebinding guard. Callers must already
+        hold ``MycelialNetwork._lock``: the point of the guard is that no reader
+        observes a half-swapped topology, and that only holds if the swap
+        happens under the same lock readers take.
+        """
+        object.__setattr__(self, name, value)
 
     def _active_owner_locked(self) -> Optional["MycelialNetwork"]:
         """Resolve stale references to the one currently published singleton."""
@@ -1251,9 +1305,8 @@ class MycelialNetwork:
                 )
             self.pathways[pathway_id] = pw
 
-            # Maintain sorted order (Bypass Aegis lock for internal update)
-            object.__setattr__(
-                self,
+            # Sanctioned rebinding: under MycelialNetwork._lock, via the one door.
+            self._aegis_replace(
                 "_pathway_order",
                 sorted(
                     self.pathways.keys(),
@@ -2252,8 +2305,31 @@ class MycelialNetwork:
             and mapping_thread.is_alive()
             and mapping_thread is not threading.current_thread()
         ):
-            mapping_thread.join(timeout=3.0)
+            mapping_thread.join(timeout=_MAPPER_DRAIN_BUDGET_S)
             if mapping_thread.is_alive():
+                # CP126 53f15b88: the state below is cleared whether or not the
+                # mapper drained, and a thread that outlives shutdown still
+                # holds references to the dicts being emptied. The clear is safe
+                # — the mapper re-checks ownership and the stop event under the
+                # topology lock before it publishes, so it cannot write into a
+                # torn-down network — but "shutdown finished with a worker still
+                # running" is a fact the runtime has to be able to see, not a
+                # warning in a log nobody is reading.
+                self._shutdown_left_mapper_running = True
+                record_degradation(
+                    "mycelium",
+                    RuntimeError(
+                        f"infrastructure mapper did not drain within "
+                        f"{_MAPPER_DRAIN_BUDGET_S:.0f}s of shutdown"
+                    ),
+                    severity="error",
+                    action=(
+                        "cleared topology state with the mapper thread still "
+                        "alive; its publication is latched closed and will be "
+                        "discarded"
+                    ),
+                    enforce_failure_policy=False,
+                )
                 logger.warning(
                     "🍄 [MYCELIUM] Mapper did not drain within shutdown budget; "
                     "the publication latch remains closed."
@@ -2272,7 +2348,7 @@ class MycelialNetwork:
             with _ABSORBED_FLOW_LOCK:
                 self._absorbed_flows = []
             self.pathways.clear()
-            object.__setattr__(self, "_pathway_order", [])
+            self._aegis_replace("_pathway_order", [])
             self.direct_roots.clear()
             self.hyphae.clear()
             self.mapped_files.clear()
@@ -2548,6 +2624,12 @@ class MycelialNetwork:
             for py_file in base.glob("*.py"):
                 if not py_file.name.startswith("__"):
                     all_files[py_file.stem] = py_file
+        # CP126 a56e4c5d: discovery and AST parsing had cancellation but no
+        # budget and no ceiling, so a base_dir with a large vendored or
+        # generated tree under it turned a maintenance sweep into an unbounded
+        # read-and-parse of everything reachable. The generation is refused
+        # rather than truncated — half a dependency graph published as a whole
+        # one is worse than the previous generation standing.
         for subdir in scan_dirs:
             scan_root = base / subdir
             if not scan_root.exists():
@@ -2557,6 +2639,16 @@ class MycelialNetwork:
                 if self._stop_event.is_set():
                     logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during discovery.")
                     return False
+                if len(all_files) >= _MAPPING_MAX_MODULES:
+                    raise ValueError(
+                        f"infrastructure scan exceeds {_MAPPING_MAX_MODULES} modules; "
+                        "refusing to publish a partial generation"
+                    )
+                if time.monotonic() - start_time_map > _MAPPING_BUDGET_S:
+                    raise TimeoutError(
+                        f"infrastructure discovery exceeded its {_MAPPING_BUDGET_S:.0f}s "
+                        "budget"
+                    )
                 if py_file.name.startswith("__"):
                     continue
                 try:
@@ -2575,6 +2667,11 @@ class MycelialNetwork:
             if self._stop_event.is_set():
                 logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during parsing.")
                 return False
+            if time.monotonic() - start_time_map > _MAPPING_BUDGET_S:
+                raise TimeoutError(
+                    f"infrastructure parsing exceeded its {_MAPPING_BUDGET_S:.0f}s budget "
+                    f"after {len(dependency_graph)} of {len(all_files)} modules"
+                )
             deps, source_sha256 = self._extract_imports(file_path, base)
             dependency_graph[module_key] = deps
 
@@ -2831,7 +2928,7 @@ class MycelialNetwork:
 
                 next_hyphae = dict(current_logical)
                 next_hyphae.update(physical_hyphae)
-                object.__setattr__(self, "hyphae", next_hyphae)
+                self._aegis_replace("hyphae", next_hyphae)
                 self.mapped_files = mapped_files
                 self._centrality = centrality
                 self._critical_modules = critical_modules
@@ -3154,6 +3251,7 @@ class MycelialNetwork:
                 "committed_at": self._last_vault_sync_at,
                 "lag_revisions_at_commit": self._last_vault_sync_lag_revisions,
             },
+            "shutdown_left_mapper_running": self._shutdown_left_mapper_running,
             "vault_restore": {
                 "restored_at": self._restored_from_vault_at,
                 # None = never restored. False = restored from a generation
@@ -3928,6 +4026,85 @@ class MycelialNetwork:
         return restored
 
     @staticmethod
+    def _stage_restored_generation(
+        topology: dict[str, Any],
+        target: "MycelialNetwork",
+        *,
+        attested: bool,
+    ) -> None:
+        """Check a decoded generation against the running system before publishing.
+
+        CP126 2f6e7791. One accepted generation replaced the live routing table
+        wholesale — no deployment decision, no compatibility check. Attestation
+        (3901c6f3) established that the bytes are the ones Aura wrote; it says
+        nothing about whether they still fit the build that is about to run
+        them.
+
+        Two staged checks, both about the thing that actually goes wrong:
+
+        1. An unattested generation may SEED a network that has not learned
+           anything yet, but may not overwrite one that has. The test is
+           earned state — routes with recorded outcomes, or a completed
+           infrastructure map — not merely "populated": a freshly booted
+           network already carries its default routes, and refusing on those
+           would strand every install whose vault predates attestation. Once
+           such an install syncs once, its vault is attested and the question
+           stops arising.
+        2. A route whose skill this build no longer has is a dead route that
+           fails at dispatch. Those are dropped here with a named count, rather
+           than published and discovered one failed user request at a time.
+        """
+        pathways = topology.get("pathways") or {}
+        with MycelialNetwork._lock:
+            earned = sum(
+                pathway.hit_count + pathway.miss_count
+                for pathway in target.pathways.values()
+            )
+            mapped = target.infrastructure_mapped
+        if not attested and (earned or mapped):
+            raise ValueError(
+                f"refusing to overwrite learned routing state ({earned} recorded "
+                f"outcomes, mapped={mapped}) with an unattested vault generation"
+            )
+
+        known_skills = _live_skill_names()
+        if known_skills is None:
+            # No registry to ask. Publishing unchecked is the historical
+            # behaviour and the right one here — an unavailable registry is not
+            # evidence that a skill is missing.
+            logger.info(
+                "🛡️ AEGIS: Skill registry unavailable; restoring %d routes "
+                "without a compatibility check.",
+                len(pathways),
+            )
+            return
+
+        stale = [
+            key
+            for key, pathway in pathways.items()
+            if pathway.skill_name not in known_skills
+        ]
+        for key in stale:
+            pathways.pop(key, None)
+        if stale:
+            logger.warning(
+                "🛡️ AEGIS: Dropped %d restored route(s) whose skill this build "
+                "does not have: %s",
+                len(stale),
+                ", ".join(sorted(stale)[:10]),
+            )
+            record_degradation(
+                "mycelium",
+                ValueError(
+                    f"{len(stale)} restored routes reference skills this build "
+                    "does not provide"
+                ),
+                severity="warning",
+                action="dropped the stale routes instead of publishing dead ones",
+                enforce_failure_policy=False,
+            )
+
+    @staticmethod
     def _verify_vault_attestation(
         encoded: str, attestation_row: Any, *, base_dir: Path
     ) -> bool:
@@ -4433,6 +4610,9 @@ class MycelialNetwork:
                     encoded, attestation_row, base_dir=config.paths.base_dir
                 )
                 topology = cls._decode_vault_topology(json.loads(encoded))
+                cls._stage_restored_generation(
+                    topology, target_instance, attested=attested
+                )
 
                 with cls._lock:
                     instance = cls._instance
@@ -4451,10 +4631,9 @@ class MycelialNetwork:
                         raise RuntimeError(
                             "vault restoration raced a newer in-memory topology revision"
                         )
-                    object.__setattr__(instance, "pathways", topology["pathways"])
-                    object.__setattr__(instance, "hyphae", topology["hyphae"])
-                    object.__setattr__(
-                        instance,
+                    instance._aegis_replace("pathways", topology["pathways"])
+                    instance._aegis_replace("hyphae", topology["hyphae"])
+                    instance._aegis_replace(
                         "_pathway_order",
                         sorted(
                             topology["pathways"],
