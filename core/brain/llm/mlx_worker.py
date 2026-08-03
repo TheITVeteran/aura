@@ -814,6 +814,19 @@ def _surface_generation_control_receipt(
         "surface_quality_gate_passed",
         "surface_quality_gate_attempts",
         "surface_quality_gate_reasons",
+        # The draft the gate rejected, carried rather than destroyed.
+        #
+        # Blanking it turned "I wrote something a heuristic disliked" into
+        # "the client returned no text", which opened the Cortex circuit,
+        # tripped the sovereign no-fallback policy, and served Bryan a canned
+        # apology while the turn was holding an answer. core/runtime/
+        # turn_outcome.py states the rule this restores: a gate ANNOTATES or
+        # TRANSFORMS a candidate, it does not destroy one.
+        #
+        # Carrying it does NOT make it servable. It travels marked as
+        # suppressed, and only the caller's recovery path — when the
+        # alternative is nothing at all — may serve it.
+        "surface_quality_rejected_text",
         "surface_quality_gate_error",
         "surface_quality_gate_exemption",
         "surface_quality_gate_waived_reasons",
@@ -6449,6 +6462,14 @@ def _mlx_worker_loop(
                                         if rejection_reasons:
                                             surface_control_state["surface_quality_gate_passed"] = False
                                             surface_control_state["surface_quality_gate_reasons"] = rejection_reasons[:8]
+                                            # Keep the draft. It is suppressed,
+                                            # not deleted — the caller decides
+                                            # whether serving it beats serving
+                                            # nothing, and it cannot make that
+                                            # judgement about text it never saw.
+                                            surface_control_state[
+                                                "surface_quality_rejected_text"
+                                            ] = str(response_text or "")[:8000]
                                             validation_resolution = _surface_prompt_resolution(job)
                                             logger.warning(
                                                 "⚠️ [WORKER] Rejected live user-surface draft "

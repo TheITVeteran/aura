@@ -1717,6 +1717,13 @@ def _surface_quality_rejection_reasons(value: Any) -> tuple[str, ...]:
     return tuple(str(reason).strip()[:120] for reason in raw_reasons if str(reason).strip())[:8]
 
 
+def _rejected_surface_draft(value: Any) -> str:
+    """The draft the worker's quality gate rejected, if it carried one."""
+    receipt = value if isinstance(value, dict) else {}
+    text = receipt.get("surface_quality_rejected_text")
+    return str(text).strip() if isinstance(text, str) else ""
+
+
 def _coerce_timeout_seconds(value: Any) -> float | None:
     """Normalize public timeout kwargs into positive request deadlines.
 
@@ -3439,6 +3446,43 @@ class MLXLocalClient:
         self._set_task_surface_control_receipt(receipt)
         if receipt:
             self._last_surface_control_receipt = receipt
+
+    def _record_suppressed_draft(
+        self, text: str, reasons: tuple[str, ...] | list[str]
+    ) -> None:
+        """Put a gate-rejected draft on the bound turn, marked suppressed.
+
+        Recoverable on purpose. These reasons are heuristics about SHAPE —
+        "runtime_boilerplate", "too_thin_for_status_turn" — not findings of
+        unsafety, and the recovery path only reaches for a suppressed draft
+        when the turn would otherwise end with nothing. Between a draft a
+        heuristic disliked and an apology that says nothing, the draft is the
+        better answer, and the person can judge it themselves.
+
+        Never raises: this is a salvage path, and a salvage path that can
+        break the turn it is salvaging is worse than none.
+        """
+        if not text:
+            return
+        try:
+            from core.runtime.turn_outcome import current_turn
+
+            outcome = current_turn()
+            if outcome is None:
+                return
+            candidate_id = outcome.record_candidate(
+                text,
+                source="mlx_worker.surface_quality_rejected",
+                metadata={"worker_quality_reasons": list(reasons)[:8]},
+            )
+            outcome.suppress_candidate(
+                candidate_id,
+                gate="mlx_worker.surface_quality",
+                reasons=list(reasons)[:8],
+                recoverable=True,
+            )
+        except Exception:  # noqa: BLE001 — salvage must never break the turn
+            logger.debug("could not record suppressed worker draft", exc_info=True)
 
     def _preserve_lane_after_surface_quality_rejection(self) -> None:
         """Clear empty-decode pressure while keeping the healthy worker resident."""
@@ -9477,6 +9521,22 @@ class MLXLocalClient:
                         # receipt and leave the lane resident for the caller's
                         # typed recovery policy instead.
                         self._preserve_lane_after_surface_quality_rejection()
+                        # Hand the rejected draft to the turn before giving up
+                        # on it. Returning None alone reads downstream as
+                        # "client returned no text", which opens the Cortex
+                        # circuit and — for a sovereign turn, where lower-lane
+                        # fallback is refused — ends the turn with a canned
+                        # apology while an answer existed the whole time.
+                        #
+                        # Recorded as SUPPRESSED, so the gates still hold: it
+                        # is served only by the recovery path, only when the
+                        # alternative is nothing at all.
+                        self._record_suppressed_draft(
+                            _rejected_surface_draft(
+                                self.get_last_surface_control_receipt()
+                            ),
+                            quality_rejection_reasons,
+                        )
                         logger.warning(
                             "🛡️ [MLX] Worker rejected the visible draft for semantic "
                             "quality (%s); preserving the resident lane.",
