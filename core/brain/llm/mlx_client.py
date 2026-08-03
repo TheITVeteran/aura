@@ -313,6 +313,12 @@ def _probe_cache_identity() -> dict[str, str]:
 
 # Visible conversation-readiness probe. The lane may only claim "ready" after
 # this exact question comes back with an answer that actually responds to it.
+#: Hard ceiling on think_and_act turns. Each turn is a full generation plus a
+#: tool execution on the resident model, so an unbounded budget lets a single
+#: objective hold the foreground lane for as long as it keeps emitting tool
+#: calls — including a model looping on the same failing call forever.
+_AGENT_MAX_TURNS_CEILING = 32
+
 _READINESS_PROBE_PROMPT = "Reply exactly: ready"
 _READINESS_EXPECTED_TOKEN = "ready"
 _READINESS_ANSWER_MAX_CHARS = 200
@@ -9673,6 +9679,17 @@ class MLXLocalClient:
         Returns:
             {"content": str, "turns": int, "tool_calls": List[Dict]}
         """
+        # Bound the turn budget before it is used OR reported. An unvalidated
+        # max_turns let a caller pass 0 or a negative value, execute no turns
+        # at all, and still receive `"turns": max_turns` — a report of work
+        # that provably did not happen. A huge value let one objective occupy
+        # the lane indefinitely.
+        try:
+            max_turns = int(max_turns)
+        except (TypeError, ValueError):
+            max_turns = 5
+        max_turns = max(1, min(_AGENT_MAX_TURNS_CEILING, max_turns))
+
         template_tools = self._normalize_tool_definitions_for_template(tools)
         tool_block = ""
         if tools and not template_tools:
@@ -9798,7 +9815,15 @@ class MLXLocalClient:
                     "result": tool_result,
                 }
             )
-            logger.info("[think_and_act] turn=%d tool=%s ok", turn + 1, tool_name)
+            # Report what actually happened. This line said "ok" for every
+            # outcome — a missing capability engine, a caught exception, and a
+            # governance DENIAL encoded as a normal result all logged
+            # identically to a success. Telemetry that cannot tell refusal from
+            # execution is worse than absent: it reads as proof the tool ran.
+            outcome = _tool_turn_outcome(raw_result)
+            logger.info(
+                "[think_and_act] turn=%d tool=%s %s", turn + 1, tool_name, outcome
+            )
 
             # ── Feed result back into history ─────────────────────────
             messages.append(
@@ -10765,6 +10790,31 @@ def _tool_arguments_schema_error(definition: Any, args: Any) -> str:
         if isinstance(enum, list) and enum and value not in enum:
             return f"argument '{name}' is not one of its allowed values"
     return ""
+
+
+def _tool_turn_outcome(raw_result: Any) -> str:
+    """Classify a tool result for telemetry: ok, denied, or error.
+
+    Denial is kept DISTINCT from error on purpose. A capability refusing an
+    action is the governance layer working, and folding it into "error" hides
+    exactly the signal an operator needs to see when Aura is being stopped from
+    acting — while folding it into "ok" claims an action happened that did not.
+    """
+    if not isinstance(raw_result, Mapping):
+        # A bare value carries no outcome contract; say so rather than guess.
+        return "ok" if raw_result else "unknown"
+
+    status = str(raw_result.get("status", "") or "").strip().lower()
+    ok = raw_result.get("ok")
+
+    if status in {"denied", "refused", "blocked", "forbidden", "unauthorized"}:
+        return f"denied:{status}"
+    if ok is False or status in {"error", "failed", "failure"}:
+        reason = str(raw_result.get("error", "") or status or "unspecified")
+        return f"error:{reason[:80]}"
+    if ok is True or status in {"ok", "success", "succeeded", "completed"}:
+        return "ok"
+    return "unknown"
 
 
 def _truncate_tool_result(result: Any, *, limit: int = 4000) -> str:
