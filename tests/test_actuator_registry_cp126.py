@@ -8,12 +8,14 @@ business dict, a token check that bound no parameters, unbounded results, and
 3737739b 894bf628 a1ec1e8a e2148790 4eaaca21 0a7f6c74 f80cc444 e19cb515
 2d127a7f a3b58be8 7fe2e1b7 436f7e9a acf1e08c 6424c991 1159a34f.
 """
+
 from __future__ import annotations
 
 import asyncio
 import inspect
 import math
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,9 +124,7 @@ def test_the_digest_is_stable_and_effect_sensitive():
 
 
 def _synth(**kwargs):
-    return SandboxedSynthesizedActuator(
-        name="s", description="d", source_code="x = 1", **kwargs
-    )
+    return SandboxedSynthesizedActuator(name="s", description="d", source_code="x = 1", **kwargs)
 
 
 def test_the_structural_floor_applies_with_no_declared_schema():
@@ -198,6 +198,80 @@ def test_validate_params_is_no_longer_an_isinstance_check():
     assert source.strip().splitlines()[-1].strip() != "return isinstance(params, dict)"
 
 
+def _sandbox_result(monkeypatch, details):
+    from core.actuators.actuator_validator import ActuatorCodeValidator
+
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "execute_sandboxed",
+        staticmethod(
+            lambda _source, _params: SimpleNamespace(success=True, error=None, details=details)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("details", "reason"),
+    [
+        ({}, "no update payload"),
+        ({"updates": {}}, "no updates"),
+        ({"updates": []}, "malformed update payload"),
+    ],
+)
+def test_sandbox_completion_without_an_effect_is_not_success(monkeypatch, details, reason):
+    _sandbox_result(monkeypatch, details)
+
+    result = _synth().execute({})
+
+    assert result.success is False
+    assert reason in result.message
+
+
+def test_sandbox_updates_that_cannot_reach_an_entity_are_not_success(monkeypatch):
+    _sandbox_result(
+        monkeypatch,
+        {"message": "claimed success", "updates": {"missing": {"load": 1.0}}},
+    )
+    monkeypatch.setattr(
+        "core.world.world_model.get_physics_world_model",
+        lambda: SimpleNamespace(get_entity=lambda _entity_id: None),
+    )
+
+    result = _synth().execute({})
+
+    assert result.success is False
+    assert "no valid updates" in result.message
+
+
+def test_sandbox_success_requires_a_mutation_in_the_world_model(monkeypatch):
+    entity = SimpleNamespace(
+        capacity=10.0,
+        load=1.0,
+        flow_rate=1.0,
+        max_flow_rate=5.0,
+        latency=0.0,
+        coordinates=(0.0, 0.0),
+        attributes={},
+        enforce_constraints=lambda: None,
+    )
+    _sandbox_result(
+        monkeypatch,
+        {"message": "load changed", "updates": {"target": {"load": 4.0}}},
+    )
+    monkeypatch.setattr(
+        "core.world.world_model.get_physics_world_model",
+        lambda: SimpleNamespace(
+            get_entity=lambda entity_id: entity if entity_id == "target" else None
+        ),
+    )
+
+    result = _synth().execute({})
+
+    assert result.success is True
+    assert result.updates == {"target": {"load": 4.0}}
+    assert entity.load == 4.0
+
+
 # --- f80cc444: synthesized registration carries provenance --------------
 
 
@@ -229,7 +303,9 @@ def test_a_matching_validator_receipt_earns_the_trust(registry):
     actuator = _synth()
 
     registry.register_synthesized(
-        actuator, code, trust_score=0.3,
+        actuator,
+        code,
+        trust_score=0.3,
         validation_receipt={"passed": True, "source_digest": digest, "validator": "V"},
         registered_by="test",
     )
@@ -240,11 +316,42 @@ def test_a_matching_validator_receipt_earns_the_trust(registry):
     assert actuator.provenance["source_digest"] == digest
 
 
+@pytest.mark.parametrize("bad_trust", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_registered_trust_is_floored_even_with_a_valid_receipt(registry, bad_trust):
+    import hashlib
+
+    code = "x = 1"
+    digest = hashlib.sha256(code.encode()).hexdigest()
+    actuator = _synth()
+
+    registry.register_synthesized(
+        actuator,
+        code,
+        trust_score=bad_trust,
+        validation_receipt={"passed": True, "source_digest": digest, "validator": "V"},
+    )
+
+    assert actuator.trust_score == 0.0
+    assert registry._preflight_actuator(actuator, "s", {"a": 1}) is not None
+
+
+@pytest.mark.parametrize("bad_trust", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_runtime_trust_cannot_bypass_preflight(bad_trust):
+    actuator = _synth(trust_score=bad_trust)
+
+    refusal = ActuatorRegistry._preflight_actuator(actuator, "s", {"a": 1})
+
+    assert refusal is not None and refusal.success is False
+    assert "non-finite trust score" in refusal.message
+
+
 def test_a_receipt_for_different_source_is_worse_than_none(registry):
     actuator = _synth()
 
     registry.register_synthesized(
-        actuator, "x = 1", trust_score=0.3,
+        actuator,
+        "x = 1",
+        trust_score=0.3,
         validation_receipt={"passed": True, "source_digest": "a" * 64, "validator": "V"},
     )
 
@@ -259,7 +366,9 @@ def test_a_failing_receipt_is_not_a_pass(registry):
     actuator = _synth()
 
     registry.register_synthesized(
-        actuator, "x = 1", validation_receipt={"passed": False, "source_digest": digest},
+        actuator,
+        "x = 1",
+        validation_receipt={"passed": False, "source_digest": digest},
     )
 
     assert actuator.trust_score == 0.0
@@ -306,7 +415,9 @@ def test_a_caller_cannot_smuggle_a_capability_token_id(registry):
 
 def test_the_stripped_keys_are_the_registry_owned_ones():
     assert set(module._REGISTRY_OWNED_PARAM_KEYS) == {
-        "_aura_authorized", "_capability_token_id", "_params_digest",
+        "_aura_authorized",
+        "_capability_token_id",
+        "_params_digest",
     }
 
 
@@ -314,7 +425,8 @@ def test_the_stripped_keys_are_the_registry_owned_ones():
 
 
 @pytest.mark.parametrize(
-    "key", ["principal", "authenticated", "approved", "signed_capability", "bypass_authority"],
+    "key",
+    ["principal", "authenticated", "approved", "signed_capability", "bypass_authority"],
 )
 def test_a_caller_cannot_assert_the_verdict(key):
     clean = ActuatorRegistry._sanitize_context({key: "me", "source": "x"})
@@ -327,15 +439,17 @@ def test_legitimate_governance_context_survives():
     """The overt-action loop forwards structured policy data; dropping it
     would break governance rather than protect it."""
     orchestrator = object()
-    clean = ActuatorRegistry._sanitize_context({
-        "source": "overt_action_loop",
-        "priority": 0.45,
-        "requested_authority_scope": "overt_action_loop:abc:skill",
-        "authorization": "governed_autonomous_overt_action",
-        "will_receipt_id": "will-1",
-        "action_expectation": {"a": 1},
-        "orchestrator": orchestrator,
-    })
+    clean = ActuatorRegistry._sanitize_context(
+        {
+            "source": "overt_action_loop",
+            "priority": 0.45,
+            "requested_authority_scope": "overt_action_loop:abc:skill",
+            "authorization": "governed_autonomous_overt_action",
+            "will_receipt_id": "will-1",
+            "action_expectation": {"a": 1},
+            "orchestrator": orchestrator,
+        }
+    )
 
     assert clean["requested_authority_scope"] == "overt_action_loop:abc:skill"
     assert clean["authorization"] == "governed_autonomous_overt_action"
@@ -391,6 +505,7 @@ def test_binding_fails_when_the_digest_cannot_be_computed():
 
 def test_a_presented_capability_that_does_not_verify_refuses(registry, monkeypatch):
     """A capability that IS presented and fails is a refusal, not a fallback."""
+
     class _Decision:
         approved = True
         capability_token_id = "cap-1"
@@ -530,6 +645,7 @@ def test_a_full_transfer_is_not_marked_partial():
 
 def _flow_world(*, source_load, target_load, target_capacity):
     """A physics world stub whose simulate() moves the requested amount."""
+
     class _Entity:
         def __init__(self, load, capacity):
             self.load = load
@@ -695,7 +811,8 @@ def test_a_missing_required_capability_records_a_degradation(monkeypatch):
     import core.runtime.errors as errors
 
     monkeypatch.setattr(
-        errors, "record_degradation",
+        errors,
+        "record_degradation",
         lambda *a, **k: recorded.append((a, k)) or object(),
     )
     monkeypatch.setattr(

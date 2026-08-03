@@ -243,14 +243,23 @@ try:
         print({{"success": False, "error": "Parameter validation failed"}})
     else:
         result = inst.execute(PARAMS)
-        updates = getattr(result, "updates", {{}})
+        updates = getattr(result, "updates", None)
         if not isinstance(updates, dict):
-            updates = {{}}
-        print({{
-            "success": bool(getattr(result, "success", False)),
-            "message": str(getattr(result, "message", "")),
-            "updates": updates,
-        }})
+            print({{
+                "success": False,
+                "error": "Actuator returned a malformed update payload",
+            }})
+        elif not updates:
+            print({{
+                "success": False,
+                "error": "Actuator returned no updates",
+            }})
+        else:
+            print({{
+                "success": bool(getattr(result, "success", False)),
+                "message": str(getattr(result, "message", "")),
+                "updates": updates,
+            }})
 except ACTUATOR_RUNTIME_ERRORS as e:
     print({{"success": False, "error": "Execution error: " + str(e)}})
 """
@@ -289,6 +298,8 @@ except ACTUATOR_RUNTIME_ERRORS as e:
             updates = exec_res.details.get("updates", {})
             if not isinstance(updates, dict):
                 return ValidationResult(False, "Actuator returned non-dict updates")
+            if not updates:
+                return ValidationResult(False, "Actuator returned no causal updates")
             for entity_id, fields in updates.items():
                 if not isinstance(entity_id, str) or not isinstance(fields, dict):
                     return ValidationResult(False, "Actuator returned malformed update payload")

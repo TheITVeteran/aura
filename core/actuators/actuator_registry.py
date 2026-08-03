@@ -19,6 +19,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.runtime.task_ownership import (
+    drain_owned_awaitable,
+    runtime_shutdown_blocks_new_work,
+)
+
 # Bounds for synthesized world-model mutations. LLM-generated actuator output
 # is untrusted, so both the fan-out (how many entities/fields it can touch)
 # and individual values are capped to protect the live world model.
@@ -53,11 +58,21 @@ NONBLOCKING_BUDGET_S = 0.25
 #: reaches. A caller supplying one is claiming the answer to the question it is
 #: asking. (``will_receipt_id`` is deliberately absent — it is a reference the
 #: Will itself validates, not a self-asserted verdict.)
-_FORBIDDEN_CONTEXT_KEYS = frozenset({
-    "principal", "identity", "authenticated", "approved", "verified",
-    "capability", "capability_token_id", "signed_capability",
-    "_aura_authorized", "_capability_token_id", "bypass_authority",
-})
+_FORBIDDEN_CONTEXT_KEYS = frozenset(
+    {
+        "principal",
+        "identity",
+        "authenticated",
+        "approved",
+        "verified",
+        "capability",
+        "capability_token_id",
+        "signed_capability",
+        "_aura_authorized",
+        "_capability_token_id",
+        "bypass_authority",
+    }
+)
 #: Bounds on caller context: a governance decision input must not also be a
 #: memory or log bomb.
 MAX_CONTEXT_KEYS = 64
@@ -65,11 +80,6 @@ MAX_CONTEXT_STRING_CHARS = 4096
 #: Authorization fields the REGISTRY owns. A caller that supplies them is
 #: attempting to forge authorization, so they are stripped on entry.
 _REGISTRY_OWNED_PARAM_KEYS = ("_aura_authorized", "_capability_token_id", "_params_digest")
-
-from core.runtime.task_ownership import (
-    drain_owned_awaitable,
-    runtime_shutdown_blocks_new_work,
-)
 
 logger = logging.getLogger("Aura.Actuators")
 
@@ -111,7 +121,8 @@ class ActuatorResult:
             kept = dict(list(self.updates.items())[:MAX_RESULT_UPDATE_KEYS])
             logger.warning(
                 "Actuator result carried %d update keys; bounded to %d",
-                len(self.updates), MAX_RESULT_UPDATE_KEYS,
+                len(self.updates),
+                MAX_RESULT_UPDATE_KEYS,
             )
             self.updates = kept
             self.updates_truncated = True
@@ -361,7 +372,8 @@ class SandboxedSynthesizedActuator(BaseActuator):
             if wanted and not isinstance(value, wanted):
                 return False, f"parameter '{name}' must be {spec.get('type')}"
             if isinstance(value, bool) and wanted in (
-                self._SCHEMA_TYPES["number"], self._SCHEMA_TYPES["integer"],
+                self._SCHEMA_TYPES["number"],
+                self._SCHEMA_TYPES["integer"],
             ):
                 return False, f"parameter '{name}' must be {spec.get('type')}, not a boolean"
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -390,12 +402,30 @@ class SandboxedSynthesizedActuator(BaseActuator):
             sandbox_result = ActuatorCodeValidator.execute_sandboxed(self.source_code or "", params)
             if not sandbox_result.success:
                 return ActuatorResult(False, sandbox_result.error or "Sandbox execution failed", {})
-            updates = sandbox_result.details.get("updates", {})
+            if "updates" not in sandbox_result.details:
+                return ActuatorResult(
+                    False,
+                    "Sandboxed actuator produced no update payload; no world-model change applied",
+                    {},
+                )
+            updates = sandbox_result.details["updates"]
+            if not isinstance(updates, dict):
+                return ActuatorResult(
+                    False,
+                    "Sandboxed actuator produced a malformed update payload; "
+                    "no world-model change applied",
+                    {},
+                )
+            if not updates:
+                return ActuatorResult(
+                    False,
+                    "Sandboxed actuator produced no updates; no world-model change applied",
+                    {},
+                )
             applied_updates = self._apply_bounded_updates(updates)
-            # Delivery truth: if the sandbox proposed updates but none survived
-            # validation, the world did NOT change — do not report success.
-            requested = bool(isinstance(updates, dict) and updates)
-            if requested and not applied_updates:
+            # Delivery truth: sandbox completion is not an effect. Success
+            # requires at least one validated mutation to reach the live model.
+            if not applied_updates:
                 return ActuatorResult(
                     False,
                     "Sandboxed actuator produced no valid updates; no world-model change applied",
@@ -446,7 +476,14 @@ class SandboxedSynthesizedActuator(BaseActuator):
             # Snapshot the fields this update may touch so a constraint failure
             # or an invalid later field rolls THIS entity back to its prior
             # state instead of leaving a half-applied mutation committed.
-            snapshot_fields = ("capacity", "load", "flow_rate", "max_flow_rate", "latency", "coordinates")
+            snapshot_fields = (
+                "capacity",
+                "load",
+                "flow_rate",
+                "max_flow_rate",
+                "latency",
+                "coordinates",
+            )
             before = {f: getattr(entity, f, None) for f in snapshot_fields}
             before_attrs = dict(getattr(entity, "attributes", {}) or {})
 
@@ -623,10 +660,8 @@ class ReallocateFlowActuator(BaseActuator):
                 entity
                 for entity in entities
                 if str(getattr(entity, "kind", "")) == "node"
-                and _finite_float(getattr(entity, "capacity", None), minimum=1e-9)
-                is not None
-                and _finite_float(getattr(entity, "load", None), minimum=0.0)
-                is not None
+                and _finite_float(getattr(entity, "capacity", None), minimum=1e-9) is not None
+                and _finite_float(getattr(entity, "load", None), minimum=0.0) is not None
             ]
             if len(nodes) < 2:
                 return None
@@ -742,8 +777,7 @@ class ReallocateFlowActuator(BaseActuator):
                 target_id,
             )
             message = (
-                f"Flow of {moved} successfully reallocated from '{source_id}' "
-                f"to '{target_id}'."
+                f"Flow of {moved} successfully reallocated from '{source_id}' to '{target_id}'."
             )
             partial = moved + 1e-9 < requested
             if partial:
@@ -775,6 +809,7 @@ class SandboxActuator(BaseActuator):
 
     def __init__(self) -> None:
         from core.actuators.sandbox_operator import SandboxOperator
+
         self.operator = SandboxOperator()
 
     @property
@@ -801,7 +836,9 @@ class SandboxActuator(BaseActuator):
         if not authorized:
             return ActuatorResult(False, reason, {})
         if not self.validate_params(params):
-            return ActuatorResult(False, "Parameter validation failed: 'code' string parameter is required.", {})
+            return ActuatorResult(
+                False, "Parameter validation failed: 'code' string parameter is required.", {}
+            )
 
         code = params["code"]
         # Bound the sandbox timeout: an unbounded or non-finite value could
@@ -815,16 +852,12 @@ class SandboxActuator(BaseActuator):
             timeout_s = 10.0
 
         res = self.operator.execute_synthesized_tool(code, timeout_s=timeout_s)
-        
+
         msg = f"Execution completed with exit code {res['exit_code']}."
         if not res["success"]:
             msg = f"Execution failed (exit code {res['exit_code']}): {res['stderr']}"
-            
-        return ActuatorResult(
-            success=res["success"],
-            message=msg,
-            updates={"sandbox_result": res}
-        )
+
+        return ActuatorResult(success=res["success"], message=msg, updates={"sandbox_result": res})
 
 
 def _log_late_actuator(name: str, finished: Any) -> None:
@@ -838,7 +871,9 @@ def _log_late_actuator(name: str, finished: Any) -> None:
         late = drained.task.result()
         logger.warning(
             "Actuator '%s' finished AFTER its deadline: success=%s (%s)",
-            name, getattr(late, "success", None), getattr(late, "message", "")[:200],
+            name,
+            getattr(late, "success", None),
+            getattr(late, "message", "")[:200],
         )
     except asyncio.CancelledError:
         logger.warning("Actuator '%s' was cancelled after its deadline", name)
@@ -893,30 +928,33 @@ class ActuatorRegistry:
                         enforce_failure_policy=False,
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
-                    logger.error(
-                        "Could not record the '%s' capability degradation", capability
-                    )
+                    logger.error("Could not record the '%s' capability degradation", capability)
 
         def _code() -> None:
             from core.actuators.code_execution_actuator import CodeExecutionActuator
+
             self.register(CodeExecutionActuator())
 
         def _web() -> None:
             from core.actuators.web_actuators import WebFetchActuator, WebSearchActuator
+
             self.register(WebSearchActuator())
             self.register(WebFetchActuator())
 
         def _git_pkg() -> None:
             from core.actuators.git_pkg_actuators import GitActuator, PackageInstallActuator
+
             self.register(GitActuator())
             self.register(PackageInstallActuator())
 
         def _process() -> None:
             from core.actuators.process_supervisor import ProcessSupervisorActuator
+
             self.register(ProcessSupervisorActuator())
 
         def _doc() -> None:
             from core.actuators.doc_ingest import DocumentIngestActuator
+
             self.register(DocumentIngestActuator())
 
         _register_required(_code, "code_execution")
@@ -1002,13 +1040,16 @@ class ActuatorRegistry:
         if validated:
             logger.info(
                 "Registered synthesized actuator: %s (trust=%.2f, digest=%s)",
-                actuator.name, actuator.trust_score, digest[:12],
+                actuator.name,
+                actuator.trust_score,
+                digest[:12],
             )
         else:
             logger.warning(
                 "Registered UNVALIDATED synthesized actuator '%s' at trust 0.00 "
                 "(%s); it will be refused at execution until validated",
-                actuator.name, why,
+                actuator.name,
+                why,
             )
 
     @staticmethod
@@ -1213,12 +1254,15 @@ class ActuatorRegistry:
         # any direct caller could set (CP126 8900fa05 / 27651212 / 9f94bf4d /
         # 251ada47 / bdb4255d / 5ce6b589 …). ContextVars propagate into
         # asyncio.to_thread, which is where blocking actuator bodies run.
-        with actuator_authorization(
-            name,
-            capability_token_id=params.get("_capability_token_id"),
-            decision_reason=str(getattr(authority_decision, "reason", "") or ""),
-            principal=str(getattr(authority_decision, "principal", "") or ""),
-        ), governed_scope_sync(authority_decision):
+        with (
+            actuator_authorization(
+                name,
+                capability_token_id=params.get("_capability_token_id"),
+                decision_reason=str(getattr(authority_decision, "reason", "") or ""),
+                principal=str(getattr(authority_decision, "principal", "") or ""),
+            ),
+            governed_scope_sync(authority_decision),
+        ):
             return actuator.execute(params)
 
     @staticmethod
@@ -1279,7 +1323,8 @@ class ActuatorRegistry:
         logger.error(
             "Actuator '%s' declared non-blocking but held the owner loop for %.3fs; "
             "demoted to threaded execution for subsequent calls",
-            name, elapsed,
+            name,
+            elapsed,
         )
         try:
             from core.runtime.errors import record_degradation
@@ -1323,7 +1368,8 @@ class ActuatorRegistry:
         if forged:
             logger.warning(
                 "Discarded caller-supplied authorization field(s) %s for actuator '%s'",
-                ", ".join(forged), name,
+                ", ".join(forged),
+                name,
             )
         safe_context = self._sanitize_context(context)
         authority_decision = None
@@ -1397,14 +1443,13 @@ class ActuatorRegistry:
                     if getattr(authority_decision, "signed_capability", None) is not None:
                         # A capability was presented and did NOT verify. That is
                         # a refusal, not a degraded path.
-                        return ActuatorResult(
-                            False, f"Actuator '{name}' refused: {why}", {}
-                        )
+                        return ActuatorResult(False, f"Actuator '{name}' refused: {why}", {})
                     # No capability was minted at all. Record the weaker
                     # guarantee rather than pretending the strong one held.
                     logger.warning(
                         "Actuator '%s' proceeding on the legacy opaque token only: %s",
-                        name, why,
+                        name,
+                        why,
                     )
                 exec_params["_aura_authorized"] = True
                 exec_params["_capability_token_id"] = capability_token_id
@@ -1476,7 +1521,8 @@ class ActuatorRegistry:
                     logger.error(
                         "Actuator '%s' exceeded its %.1fs deadline; the worker thread "
                         "is STILL RUNNING and its effect is unknown",
-                        name, budget,
+                        name,
+                        budget,
                     )
                     observer.add_done_callback(
                         lambda finished, actuator_name=name: _log_late_actuator(
@@ -1533,7 +1579,11 @@ class ActuatorRegistry:
         finally:
             if authority_decision is not None:
                 success = bool(result and result.success)
-                update_keys = sorted(result.updates.keys()) if result and isinstance(result.updates, dict) else []
+                update_keys = (
+                    sorted(result.updates.keys())
+                    if result and isinstance(result.updates, dict)
+                    else []
+                )
                 # CP126 6424c991: a receipt that records only a boolean cannot
                 # be reconciled against what actually happened. It now carries
                 # the result digest, duration, error class, and — the field the
@@ -1574,7 +1624,9 @@ class ActuatorRegistry:
                     # A successful external effect whose authority closure could
                     # not be recorded is NOT a clean success — surface the
                     # uncertain audit state instead of returning bare success.
-                    logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
+                    logger.error(
+                        "Failed to finalize actuator authority receipt for %s: %s", name, exc
+                    )
                     if result is not None and result.success:
                         result = ActuatorResult(
                             False,
@@ -1611,13 +1663,10 @@ class ActuatorRegistry:
             asyncio.get_running_loop()
         except RuntimeError:
             return _bridge_loop().run(
-                self.execute_action_async(
-                    name, params, context=context, deadline_s=deadline_s
-                )
+                self.execute_action_async(name, params, context=context, deadline_s=deadline_s)
             )
         raise RuntimeError(
-            "execute_action cannot run on an active event loop; "
-            "await execute_action_async instead"
+            "execute_action cannot run on an active event loop; await execute_action_async instead"
         )
 
 

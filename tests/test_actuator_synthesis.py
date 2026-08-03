@@ -1,8 +1,9 @@
 import json
+
 import pytest
 
-from core.actuators.actuator_validator import ActuatorCodeValidator, ValidationResult
 from core.actuators.actuator_synthesis import ActuatorSynthesizer
+from core.actuators.actuator_validator import ActuatorCodeValidator, ValidationResult
 
 
 class RunUntrustedProbe:
@@ -149,11 +150,13 @@ def test_validate_sandbox_timeout_or_error(monkeypatch):
     monkeypatch.setattr(
         sandbox_runner,
         "run_untrusted",
-        RunUntrustedProbe({
-            "status": "timeout",
-            "stderr": "Execution timed out",
-            "stdout": "",
-        }),
+        RunUntrustedProbe(
+            {
+                "status": "timeout",
+                "stderr": "Execution timed out",
+                "stdout": "",
+            }
+        ),
     )
 
     res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
@@ -167,10 +170,12 @@ def test_validate_sandbox_json_decode_error(monkeypatch):
     monkeypatch.setattr(
         sandbox_runner,
         "run_untrusted",
-        RunUntrustedProbe({
-            "status": "completed",
-            "stdout": "Not JSON Output",
-        }),
+        RunUntrustedProbe(
+            {
+                "status": "completed",
+                "stdout": "Not JSON Output",
+            }
+        ),
     )
 
     res = ActuatorCodeValidator.validate_sandbox(SAFE_CODE)
@@ -201,7 +206,7 @@ def test_validate_causal_successful_compilation(monkeypatch):
                 {
                     "success": True,
                     "message": "Success",
-                    "updates": {},
+                    "updates": {"Port_East": {"load": 700.0}},
                 }
             ),
         },
@@ -219,6 +224,73 @@ def test_validate_causal_successful_compilation(monkeypatch):
     assert len(calls) == 2
 
 
+def test_validate_causal_rejects_an_actuator_with_no_effect(monkeypatch):
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "validate_sandbox",
+        classmethod(
+            lambda cls, source: ValidationResult(
+                True,
+                details={"test_params": {}},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "execute_sandboxed",
+        classmethod(
+            lambda cls, source, params: ValidationResult(
+                True,
+                details={"message": "ran", "updates": {}},
+            )
+        ),
+    )
+
+    res = ActuatorCodeValidator.validate_causal(SAFE_CODE)
+
+    assert res.success is False
+    assert res.error == "Actuator returned no causal updates"
+
+
+def test_sandbox_execution_rejects_empty_or_malformed_effects_before_return(monkeypatch):
+    import core.sandbox.runner as sandbox_runner
+
+    monkeypatch.setattr(
+        ActuatorCodeValidator,
+        "validate_ast",
+        classmethod(
+            lambda cls, source: ValidationResult(
+                True,
+                details={"class_name": "SafeActuator"},
+            )
+        ),
+    )
+    run_untrusted = RunUntrustedProbe(
+        {
+            "status": "completed",
+            "stdout": json.dumps(
+                {
+                    "success": False,
+                    "error": "Actuator returned no updates",
+                }
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        sandbox_runner,
+        "run_untrusted",
+        run_untrusted,
+    )
+
+    result = ActuatorCodeValidator.execute_sandboxed(SAFE_CODE, {})
+
+    assert result.success is False
+    assert result.error == "Actuator returned no updates"
+    executed_script = run_untrusted.calls[0]["script"]
+    assert "if not isinstance(updates, dict):" in executed_script
+    assert "elif not updates:" in executed_script
+
+
 @pytest.mark.asyncio
 async def test_actuator_synthesizer_synthesis(monkeypatch, tmp_path):
     import core.actuators.actuator_synthesis as synthesis_module
@@ -230,7 +302,9 @@ async def test_actuator_synthesizer_synthesis(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ActuatorCodeValidator,
         "validate_ast",
-        classmethod(lambda cls, source: ValidationResult(True, details={"class_name": "SafeActuator"})),
+        classmethod(
+            lambda cls, source: ValidationResult(True, details={"class_name": "SafeActuator"})
+        ),
     )
     monkeypatch.setattr(
         ActuatorCodeValidator,
