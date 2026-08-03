@@ -99,8 +99,19 @@ def test_controls_page_exists_and_is_plain_language():
     assert "/api/settings" in html
     assert "sessionStorage.getItem('api_token')" in html
     assert "method:'PATCH'" in html  # writes changes back
-    for cid in ("sw-safety.safe_mode", "seg-autonomy.level", "sw-permissions.camera"):
+    for cid in ("sw-safety.safe_mode", "sw-permissions.camera"):
         assert cid in html, f"controls.html missing control: {cid}"
+
+    # No control for autonomy.level, deliberately. It is declared
+    # mutable=False — a protected agency invariant read at the authority gate —
+    # so rendering a segmented control for it would put a widget on the page
+    # that cannot change anything. That is precisely the dead control
+    # test_settings_no_dead_controls exists to forbid, and offering it would be
+    # worse than omitting it: it would tell the operator they hold a lever they
+    # do not.
+    assert "seg-autonomy.level" not in html, (
+        "autonomy.level is immutable; a control for it would be a dead control"
+    )
     for human in ("Safe mode", "You're in charge", "What am I looking at?"):
         assert human in html, f"controls.html missing plain-language framing: {human}"
     for link in ("/mind", "/activity"):
