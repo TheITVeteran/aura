@@ -344,6 +344,18 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
             captured["timeout_seconds"] = timeout_seconds
             return await coroutine(*args, **kwargs)
 
+    # Same stale-assumption as the token-issuance tests (see
+    # approval_overlay_off in tests/test_forensic_audit_regressions.py): these
+    # used to pass by inheriting the developer's live
+    # governance.approval_mode. Once test runs stopped reading live ~/.aura
+    # state it resolves to its real default of "destructive", and a probe
+    # skill's effect scope is "unknown", which is in the destructive set — so
+    # the gateway correctly requires confirmation. This test is about the
+    # cognitive-governor timeout budget, not the confirmation overlay, so it declares the mode it needs
+    # instead of measuring the machine's configuration.
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.runtime_approval_mode", lambda: "none"
+    )
     engine = CapabilityEngine()
     engine.skills = {
         "slow_skill": SkillMetadata(

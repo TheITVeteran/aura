@@ -158,6 +158,63 @@ class WebInterlocutorJob:
         return asdict(self)
 
 
+def _clipboard_borrow_script(payload: str, body: str) -> str:
+    """AppleScript that borrows the clipboard and always gives it back.
+
+    CP126 297aa442. These paths put the outbound message — or the target URL —
+    on the system clipboard so it can be pasted. They saved the previous
+    contents and restored them at the end, but the restore was the LAST
+    statement with nothing guarding it: any error in the activate/keystroke
+    body aborted the script and left Aura's outbound text sitting in the user's
+    clipboard and clipboard history, readable by every other application.
+
+    The body now runs inside try/on error, so the restore happens on the
+    failure path too, and the original error is re-raised afterwards rather
+    than swallowed.
+
+    Known limit, stated rather than implied: ``the clipboard as text`` only
+    round-trips text. A clipboard holding an image or a file reference is
+    restored as the empty string. Borrowing it at all is a compromise this
+    fallback path makes because the alternative is not sending; it should not
+    be extended to new callers without revisiting that.
+    """
+    return f"""
+set aura_saved_clip to ""
+try
+    set aura_saved_clip to (the clipboard as text)
+end try
+set the clipboard to {payload}
+set aura_error to ""
+try
+{body}
+on error errMsg
+    set aura_error to errMsg
+end try
+delay 0.1
+set the clipboard to aura_saved_clip
+if aura_error is not "" then error aura_error
+"""
+
+
+def _origin_of(url: Any) -> str:
+    """scheme://host[:port] for a URL, or "" when there isn't one.
+
+    Comparing whole URLs would refuse a tab that merely moved to another
+    conversation on the same service; comparing origins catches the case that
+    matters — the tab is now a different site (CP126 d4d1b84d, 25c6379f).
+    """
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    try:
+        parts = urllib.parse.urlparse(text)
+    except (TypeError, ValueError):
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
 class CognitiveCompositionUnavailable(RuntimeError):
     """Raised when a visible dialogue turn cannot be authored by cognition."""
 
@@ -187,6 +244,12 @@ class ChromeCDPDialogueBrowser:
         self.endpoint = self._require_loopback_endpoint(endpoint)
         self.timeout = max(1.0, float(timeout or 5.0))
         self._target_ws_url: str = ""
+        # CP126 d4d1b84d / 25c6379f: the identity of the tab this adapter is
+        # allowed to type into. Sends re-check it, so a tab that navigates
+        # away or a target list that reorders cannot silently receive the
+        # message meant for somewhere else.
+        self._target_id: str = ""
+        self._target_origin: str = ""
 
     @staticmethod
     def _is_loopback_host(host: str) -> bool:
@@ -254,9 +317,44 @@ class ChromeCDPDialogueBrowser:
         if not ws_url:
             raise RuntimeError("Chrome CDP target did not expose a websocket debugger URL")
         self._target_ws_url = self._assert_loopback_ws(ws_url)
+        self._target_id = str(target.get("id") or "")
+        self._target_origin = _origin_of(target.get("url"))
         await asyncio.to_thread(self._cdp_call, "Page.bringToFront", {})
         await asyncio.sleep(1.0)
+        if url:
+            # CP126 25c6379f: navigation used to return a snapshot without
+            # asserting the requested page was the one that ended up active.
+            self._assert_attached_origin(expected=_origin_of(url))
         return await self.snapshot()
+
+    def _assert_attached_origin(self, *, expected: str = "") -> dict[str, Any]:
+        """Confirm the bound tab still exists and is still on its origin.
+
+        Called before any send. A tab that navigated away, was closed, or was
+        replaced in the target list is no longer the destination the caller
+        approved, and typing into it anyway is the failure this guards
+        (CP126 d4d1b84d, 25c6379f).
+        """
+        if not self._target_id:
+            return {}
+        current = next(
+            (t for t in self._page_targets() if str(t.get("id") or "") == self._target_id),
+            None,
+        )
+        if current is None:
+            raise RuntimeError(
+                "the browser tab this session attached to is gone; refusing to "
+                "send into a different one"
+            )
+        origin = _origin_of(current.get("url"))
+        wanted = expected or self._target_origin
+        if wanted and origin and origin != wanted:
+            raise RuntimeError(
+                f"the attached tab moved from {wanted} to {origin}; refusing to "
+                "send there"
+            )
+        self._target_origin = origin or self._target_origin
+        return current
 
     async def snapshot(self) -> BrowserPageSnapshot:
         self._ensure_target()
@@ -328,6 +426,9 @@ class ChromeCDPDialogueBrowser:
 
     async def send_message(self, text: str) -> dict[str, Any]:
         self._ensure_target()
+        # The destination is re-proved immediately before the effect, not once
+        # at attach time (CP126 d4d1b84d).
+        await asyncio.to_thread(self._assert_attached_origin)
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "empty_message"}
@@ -431,7 +532,7 @@ class ChromeCDPDialogueBrowser:
             )
         return dict(self._response_json(response, "Chrome CDP target creation") or {})
 
-    def _active_target(self) -> dict[str, Any]:
+    def _page_targets(self) -> list[dict[str, Any]]:
         response = get_network_gateway().request(
             "GET",
             f"{self.endpoint}/json",
@@ -443,10 +544,37 @@ class ChromeCDPDialogueBrowser:
         targets_payload = self._response_json(response, "Chrome CDP target list")
         if not isinstance(targets_payload, list):
             raise RuntimeError("Chrome CDP target list did not return a list")
-        targets = [target for target in targets_payload if isinstance(target, dict) and target.get("type") == "page"]
+        return [
+            dict(target)
+            for target in targets_payload
+            if isinstance(target, dict) and target.get("type") == "page"
+        ]
+
+    def _active_target(self) -> dict[str, Any]:
+        """The one page this adapter may type into, or a refusal.
+
+        CP126 d4d1b84d. This used to return ``targets[0]`` — not the frontmost
+        tab, not the requested one, not one anybody confirmed. Chrome's target
+        list is not ordered by visibility, so with several tabs open an empty
+        attach picked an arbitrary page and every subsequent send typed into
+        it. The text this adapter sends is a message to an external service on
+        the user's behalf; putting it in the wrong tab is not a degraded
+        outcome, it is a different action.
+
+        With no requested URL there is only one safe case: exactly one page
+        target exists, so there is nothing to pick wrong. Otherwise the caller
+        has to say where.
+        """
+        targets = self._page_targets()
         if not targets:
             return self._new_target("about:blank")
-        return dict(targets[0])
+        controllable = [t for t in targets if t.get("webSocketDebuggerUrl")]
+        if len(controllable) == 1:
+            return dict(controllable[0])
+        raise RuntimeError(
+            f"Chrome CDP has {len(controllable)} controllable page targets; "
+            "attach needs an explicit URL rather than an arbitrary tab"
+        )
 
     @staticmethod
     def _response_json(response: dict[str, Any], action: str) -> Any:
@@ -918,21 +1046,15 @@ class ChromeVisibleDialogueBrowser:
         return data if isinstance(data, dict) else {"ok": False, "error": "sent_message_verify_not_dict"}
 
     def _chatgpt_paste(self, text: str) -> dict[str, Any]:
-        script = f"""
-set aura_saved_clip to ""
-try
-    set aura_saved_clip to (the clipboard as text)
-end try
-set the clipboard to {_as_applescript_string(text)}
-tell application "{self.browser}" to activate
-delay 0.15
-tell application "System Events"
-    keystroke "v" using command down
-    delay 0.2
-end tell
-delay 0.1
-set the clipboard to aura_saved_clip
-"""
+        script = _clipboard_borrow_script(
+            _as_applescript_string(text),
+            f"""    tell application "{self.browser}" to activate
+    delay 0.15
+    tell application "System Events"
+        keystroke "v" using command down
+        delay 0.2
+    end tell""",
+        )
         result = _run_governed_applescript(script, source="web_interlocutor.chatgpt_paste", timeout=8.0)
         if not result.get("ok"):
             return {"ok": False, "error": str(result.get("stderr") or "chatgpt_paste_failed")}
@@ -983,24 +1105,18 @@ end tell
             raise RuntimeError(str(result.get("stderr") or "direct Chrome URL navigation failed"))
 
     def _open_url_keyboard(self, url: str) -> None:
-        script = f"""
-set aura_saved_clip to ""
-try
-    set aura_saved_clip to (the clipboard as text)
-end try
-set the clipboard to {_as_applescript_string(url)}
-tell application "{self.browser}" to activate
-delay 0.15
-tell application "System Events"
-    keystroke "l" using command down
-    delay 0.1
-    keystroke "v" using command down
-    delay 0.1
-    keystroke return
-end tell
-delay 0.1
-set the clipboard to aura_saved_clip
-"""
+        script = _clipboard_borrow_script(
+            _as_applescript_string(url),
+            f"""    tell application "{self.browser}" to activate
+    delay 0.15
+    tell application "System Events"
+        keystroke "l" using command down
+        delay 0.1
+        keystroke "v" using command down
+        delay 0.1
+        keystroke return
+    end tell""",
+        )
         result = _run_governed_applescript(
             script,
             source="web_interlocutor.open_url_keyboard",
@@ -1010,22 +1126,16 @@ set the clipboard to aura_saved_clip
             raise RuntimeError(str(result.get("stderr") or "keyboard Chrome URL navigation failed"))
 
     def _paste_and_submit(self, text: str) -> dict[str, Any]:
-        script = f"""
-set aura_saved_clip to ""
-try
-    set aura_saved_clip to (the clipboard as text)
-end try
-set the clipboard to {_as_applescript_string(text)}
-tell application "{self.browser}" to activate
-delay 0.15
-tell application "System Events"
-    keystroke "v" using command down
-    delay 0.1
-    keystroke return
-end tell
-delay 0.1
-set the clipboard to aura_saved_clip
-"""
+        script = _clipboard_borrow_script(
+            _as_applescript_string(text),
+            f"""    tell application "{self.browser}" to activate
+    delay 0.15
+    tell application "System Events"
+        keystroke "v" using command down
+        delay 0.1
+        keystroke return
+    end tell""",
+        )
         result = _run_governed_applescript(
             script,
             source="web_interlocutor.submit",
@@ -1408,24 +1518,25 @@ end tell
             raise RuntimeError(str(result.get("stderr") or "browser escape failed"))
 
     def _dismiss_common_popups(self) -> None:
+        """Clear a transient overlay without pressing a button we cannot identify.
+
+        CP126 7b616aa0. This used to click any visible "Cancel", "No thanks" or
+        "Not now" button in the front browser window. Those labels are not
+        specific to a dismissable overlay — they are the decline option in
+        consent flows, security prompts, upload and purchase confirmations, and
+        unsaved-edit warnings. Clicking "Cancel" on an unsaved-edit dialog
+        discards the user's work; clicking "No thanks" on a permission prompt
+        makes a security decision on their behalf. The code had no way to tell
+        which dialog it was pressing, and pressed anyway.
+
+        Escape dismisses an overlay WITHOUT activating a specific control, so
+        it cannot choose an option whose meaning is unknown. That is the whole
+        of what this step is entitled to do.
+        """
         script = f"""
 tell application "{self.browser}" to activate
 delay 0.15
 tell application "System Events"
-    tell process "{self.browser}"
-        try
-            click button "Cancel" of window 1
-            delay 0.1
-        end try
-        try
-            click button "No thanks" of window 1
-            delay 0.1
-        end try
-        try
-            click button "Not now" of window 1
-            delay 0.1
-        end try
-    end tell
     key code 53
     delay 0.12
     key code 53
@@ -2859,19 +2970,41 @@ def _looks_like_ui_chrome(norm: str) -> bool:
     return any(marker == norm or norm.startswith(marker + " ") or norm.startswith(marker + ".") for marker in markers)
 
 
+#: Placeholder phrases a chat composer actually renders. Each is an
+#: instruction to the user, not a noun that happens to appear near one.
+_COMPOSER_PLACEHOLDER_MARKERS = (
+    "ask anything",
+    "send a message",
+    "message chatgpt",
+    "message claude",
+    "ask gemini",
+    "ask copilot",
+    "enter a prompt",
+    "type a message",
+    "type your message",
+    "write a message",
+    "write a reply",
+    "type a reply",
+    "reply to",
+    "start typing",
+    "how can i help",
+)
+
+
 def _screen_text_suggests_chat_composer(text: str) -> bool:
+    """Whether visible screen text is evidence of a chat composer.
+
+    CP126 268fd6dc. The marker list contained the bare words ``message`` and
+    ``reply``, so an inbox, a settings page, an article about messaging, or the
+    transcript itself satisfied it. That "evidence" is what authorizes
+    coordinate-based typing and an external submit — the weakest possible
+    signal gating the least reversible action in this module.
+
+    A composer renders a placeholder that instructs the user. A page that
+    merely contains the noun does not.
+    """
     lowered = str(text or "").lower()
-    markers = (
-        "ask anything",
-        "message",
-        "send a message",
-        "message chatgpt",
-        "ask gemini",
-        "enter a prompt",
-        "type a message",
-        "reply",
-    )
-    return any(marker in lowered for marker in markers)
+    return any(marker in lowered for marker in _COMPOSER_PLACEHOLDER_MARKERS)
 
 
 def _screen_text_suggests_centered_chat_composer(text: str) -> bool:

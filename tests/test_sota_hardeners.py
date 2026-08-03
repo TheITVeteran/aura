@@ -278,7 +278,7 @@ def test_somatic_throttle_governance():
 
 # 6. TEST CAPABILITY ENGINE EXECUTE PYDANTIC RECOVERY
 @pytest.mark.asyncio
-async def test_capability_engine_execute_pydantic_recovery():
+async def test_capability_engine_execute_pydantic_recovery(monkeypatch):
     from core.capability_engine import CapabilityEngine, SkillMetadata
     from pydantic import BaseModel
     import logging
@@ -294,6 +294,18 @@ async def test_capability_engine_execute_pydantic_recovery():
         async def execute(self, required_field: str, optional_field: int = 42):
             return {"ok": True, "required": required_field, "optional": optional_field}
 
+    # Same stale-assumption as the token-issuance tests (see
+    # approval_overlay_off in tests/test_forensic_audit_regressions.py): these
+    # used to pass by inheriting the developer's live
+    # governance.approval_mode. Once test runs stopped reading live ~/.aura
+    # state it resolves to its real default of "destructive", and a probe
+    # skill's effect scope is "unknown", which is in the destructive set — so
+    # the gateway correctly requires confirmation. This test is about the
+    # pydantic input coercion, not the confirmation overlay, so it declares the mode it needs
+    # instead of measuring the machine's configuration.
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.runtime_approval_mode", lambda: "none"
+    )
     engine = CapabilityEngine()
     engine.logger = logging.getLogger("Test")
     
