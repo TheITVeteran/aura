@@ -4,6 +4,7 @@ All physical effects are delegated to the canonical WorldBridge and IoT
 transport stack. This module intentionally owns no network client, credential,
 permission, or receipt path of its own.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,6 @@ def _result_payload(result: WorldActionResult) -> dict[str, Any]:
     }
 
 
-
 def _hass_flag(name: str, description: str) -> str:
     """Non-secret HASS knobs read through the typed flag layer (C1).
     Tokens deliberately stay as raw env reads — credentials must never
@@ -38,12 +38,19 @@ def _hass_flag(name: str, description: str) -> str:
     try:
         from core.runtime.flags import FlagKind, declare
 
-        return str(declare(
-            name, kind=FlagKind.STRING, default="",
-            description=description, owner="core.autonomic.iot_bridge",
-        ).value() or "")
+        return str(
+            declare(
+                name,
+                kind=FlagKind.STRING,
+                default="",
+                description=description,
+                owner="core.autonomic.iot_bridge",
+            ).value()
+            or ""
+        )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return ""
+
 
 class PhysicalActuator:
     """Legacy affect API backed by the governed environmental-change channel."""
@@ -62,9 +69,7 @@ class PhysicalActuator:
         if self._configured:
             logger.info("Affect IoT adapter attached to the governed WorldBridge path.")
         else:
-            logger.info(
-                "Affect IoT adapter idle: Home Assistant transport is not configured."
-            )
+            logger.info("Affect IoT adapter idle: Home Assistant transport is not configured.")
 
     async def discover_devices(self) -> list[dict[str, Any]]:
         result = await get_world_bridge().call(
@@ -83,15 +88,30 @@ class PhysicalActuator:
         pad_vector: dict[str, float],
     ) -> dict[str, Any]:
         """Request a governed ambient-light update from a bounded PAD vector."""
+        if not self._configured:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "error": "home_assistant_transport_not_configured",
+                "transport_succeeded": False,
+                "effect_verified": False,
+                "manual_reconciliation_required": False,
+                "receipt_id": None,
+                "data": {},
+            }
         pleasure = max(-1.0, min(1.0, float(pad_vector.get("P", 0.0))))
         arousal = max(-1.0, min(1.0, float(pad_vector.get("A", 0.0))))
         brightness = max(50, min(255, int(((arousal + 1.0) / 2.0) * 255)))
         color_temp = 500 if pleasure < 0 else 250
-        target = str(
-            _hass_flag("AURA_HASS_LIGHT_ENTITY", "Default affect light entity id")
-            or os.getenv("HASS_LIGHT_ENTITY")
-            or DEFAULT_LIGHT_ENTITY
-        ).strip().lower()
+        target = (
+            str(
+                _hass_flag("AURA_HASS_LIGHT_ENTITY", "Default affect light entity id")
+                or os.getenv("HASS_LIGHT_ENTITY")
+                or DEFAULT_LIGHT_ENTITY
+            )
+            .strip()
+            .lower()
+        )
 
         result = await get_world_bridge().call(
             Channel.ENVIRONMENTAL_CHANGE,

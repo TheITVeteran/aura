@@ -406,16 +406,20 @@ class ConversationEngine:
             from core.container import ServiceContainer
             affect = ServiceContainer.get("affect_engine", default=None)
             if affect:
-                lowered_msg = message.lower()
-                # Check for positive indicators or check-in markers
-                if any(w in lowered_msg for w in ["thank", "awesome", "great", "love", "like", "friend", "happy", "wonder", "excellent", "fixed", "success", "work"]):
-                    stimulus = "positive_interaction"
-                elif context.turn_count > 5:
-                    stimulus = "extended_dialogue"
-                else:
-                    stimulus = "interaction"
-                
-                await affect.react(stimulus, {"intensity": 0.6})
+                stimulus = "extended_dialogue" if context.turn_count > 5 else "interaction"
+                await affect.react(
+                    stimulus,
+                    {
+                        "event_id": f"conversation:{context.conversation_id}:turn:{context.turn_count}",
+                        "source": "conversation_engine.user_turn",
+                        "intensity": 0.6,
+                        "evidence": {
+                            "kind": "observed_user_turn",
+                            "conversation_id": context.conversation_id,
+                            "turn": context.turn_count,
+                        },
+                    },
+                )
         except _ENGINE_RECOVERABLE_ERRORS as affect_exc:
             _emit_engine_fault(
                 affect_exc,

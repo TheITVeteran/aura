@@ -446,16 +446,16 @@ class PhenomenalNowEngine:
             affect_v2 = ServiceContainer.get("affect_engine_v2", default=None)
             if affect_v2 is not None and hasattr(affect_v2, "markers"):
                 m = affect_v2.markers
-                hr = float(getattr(m, "heart_rate", 72))
-                gsr = float(getattr(m, "gsr", 2.0))
+                activation = float(getattr(m, "activation_index", 0.0))
+                conductance = float(getattr(m, "conductance_index", 0.0))
                 heart_rate_feel = (
-                    "racing" if hr > 100 else
-                    "elevated" if hr > 85 else
+                    "racing" if activation > 0.75 else
+                    "elevated" if activation > 0.5 else
                     "resting"
                 )
                 gsr_feel = (
-                    "charged" if gsr > 4 else
-                    "damp" if gsr > 2.5 else
+                    "charged" if conductance > 0.65 else
+                    "damp" if conductance > 0.4 else
                     "dry"
                 )
                 # Secondary emotion from wheel

@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
@@ -78,10 +79,6 @@ class ProactiveInitiativeEngine:
     def register_user_interaction(self):
         """Call this from your WebSocket/Audio router whenever you speak to her."""
         self.last_interaction_time = time.time()
-        # Reset boredom when you interact
-        raw_state = self._affect_raw_state()
-        if "curiosity_metric" in raw_state:
-            raw_state["curiosity_metric"] = max(0, raw_state["curiosity_metric"] - 20)
 
     async def start_proactive_loop(self):
         """The background heartbeat that decides when Aura should speak up."""
@@ -106,7 +103,7 @@ class ProactiveInitiativeEngine:
                 # 2. Slowly increase curiosity/boredom over time if she's ignored
                 else:
                     if "curiosity_metric" in raw_state:
-                        raw_state["curiosity_metric"] += 1.5
+                        await self._set_curiosity_metric(float(raw_state["curiosity_metric"]) + 1.5)
             except asyncio.CancelledError:
                 raise
             except INITIATIVE_RECOVERABLE_ERRORS as e:
@@ -127,7 +124,20 @@ class ProactiveInitiativeEngine:
 
     def _affect_raw_state(self) -> dict[str, Any]:
         raw_state = getattr(self.affect, "_raw_state", None)
-        return raw_state if isinstance(raw_state, dict) else {}
+        return dict(raw_state) if isinstance(raw_state, Mapping) else {}
+
+    async def _set_curiosity_metric(self, target: float) -> None:
+        target = max(0.0, min(100.0, float(target)))
+        raw_state = getattr(self.affect, "_raw_state", None)
+        current = float(dict(raw_state).get("curiosity_metric", 0.0)) if isinstance(raw_state, Mapping) else 0.0
+        update = getattr(self.affect, "update", None)
+        if update is not None:
+            result = update(delta_curiosity=(target - current) / 100.0)
+            if inspect.isawaitable(result):
+                await result
+            return
+        if isinstance(raw_state, dict):
+            raw_state["curiosity_metric"] = target
 
     async def _notify_self_modifier(self, error: BaseException) -> None:
         try:
@@ -329,9 +339,8 @@ class ProactiveInitiativeEngine:
 
             # Reset the interaction clock so she doesn't spam you
             self.last_interaction_time = time.time()
-            raw_state = self._affect_raw_state()
-            if "curiosity_metric" in raw_state:
-                raw_state["curiosity_metric"] = 30.0 # Drop curiosity after speaking
+            if "curiosity_metric" in self._affect_raw_state():
+                await self._set_curiosity_metric(30.0)
 
         except INITIATIVE_RECOVERABLE_ERRORS as e:
             self._last_loop_error = f"{type(e).__name__}: {e}"

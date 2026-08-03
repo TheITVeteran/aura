@@ -474,18 +474,18 @@ class ExperienceIntegrator:
             affect_v2 = ServiceContainer.get("affect_engine_v2", default=None)
             if affect_v2 and hasattr(affect_v2, "markers"):
                 m = affect_v2.markers
-                hr = _finite_float(getattr(m, "heart_rate", 72), 72.0, lower=20.0, upper=220.0)
-                gsr = _finite_float(getattr(m, "gsr", 2.0), 2.0, lower=0.0, upper=20.0)
+                activation = _finite_float(getattr(m, "activation_index", 0.0), 0.0, lower=0.0, upper=1.0)
+                conductance = _finite_float(getattr(m, "conductance_index", 0.0), 0.0, lower=0.0, upper=1.0)
                 
                 # Translate physiology to felt quality
                 reg.heart_rate_feel = (
-                    "racing" if hr > 100 else
-                    "elevated" if hr > 85 else
+                    "racing" if activation > 0.75 else
+                    "elevated" if activation > 0.5 else
                     "resting"
                 )
                 reg.gsr_feel = (
-                    "charged" if gsr > 4 else
-                    "damp"    if gsr > 2.5 else
+                    "charged" if conductance > 0.65 else
+                    "damp"    if conductance > 0.4 else
                     "dry"
                 )
                 

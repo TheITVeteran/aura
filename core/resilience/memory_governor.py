@@ -804,7 +804,17 @@ class MemoryGovernor:
                 from core.container import ServiceContainer
                 affect = ServiceContainer.get("affect", default=None)
                 if affect and hasattr(affect, "react"):
-                    get_task_tracker().create_task(affect.react("critical_resource_exhaustion", {"intensity": 1.0}))
+                    get_task_tracker().create_task(
+                        affect.react(
+                            "critical_resource_exhaustion",
+                            {
+                                "source": "memory_governor",
+                                "intensity": 1.0,
+                                "evidence": {"kind": "resource_governor", "reason": reason},
+                            },
+                        ),
+                        name="memory_governor.affect_resource_exhaustion",
+                    )
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
                 self._record_degradation(
                     e,

@@ -1122,6 +1122,43 @@ def _curiosity_queue_is_transactional() -> Iterator[Violation]:
 
 
 @invariant(
+    "affect.state_views_are_canonical",
+    scope="cognition",
+    owner=_OWNER,
+    description="affect reads agree and simulated somatic indices are not biomedical claims",
+)
+def _affect_state_views_are_canonical() -> Iterator[Violation]:
+    from core.container import ServiceContainer
+
+    affect = ServiceContainer.get("affect_engine", default=None)
+    if affect is None or not all(
+        hasattr(affect, name) for name in ("get_snapshot", "get_status", "_snapshot_state")
+    ):
+        return
+    snapshot = affect.get_snapshot()
+    status = affect.get_status()
+    state = affect._snapshot_state()
+    values = (
+        float(snapshot.get("valence", 0.0)),
+        float(status.get("valence", 0.0)),
+        float(getattr(state, "valence", 0.0)),
+    )
+    if max(values) - min(values) > 0.011:
+        yield Violation(
+            subject="affect_engine.valence",
+            message=f"public affect views disagree: snapshot/status/state={values}",
+            remedy="derive every affect view from the canonical dimension function",
+        )
+    rendered = repr(snapshot.get("somatic_indices", {})) + repr(status.get("physiology", {}))
+    if any(unit in rendered for unit in ("bpm", "μS", "μg/dL")):
+        yield Violation(
+            subject="affect_engine.somatic_indices",
+            message="simulated affect indices are presented with biomedical units",
+            remedy="label unitless model indices explicitly and reserve units for measured sensors",
+        )
+
+
+@invariant(
     "claims.every_claim_has_a_passing_test",
     scope="cognition",
     owner=_OWNER,

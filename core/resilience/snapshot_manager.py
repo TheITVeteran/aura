@@ -215,12 +215,12 @@ class SnapshotManager:
                     markers = affect.markers
                     if "emotions" in a_state:
                         markers.emotions.update(a_state["emotions"])
-                    if "physiology" in a_state:
-                        p = a_state["physiology"]
-                        markers.heart_rate = p.get("heart_rate", markers.heart_rate)
-                        markers.gsr = p.get("gsr", markers.gsr)
-                        markers.cortisol = p.get("cortisol", markers.cortisol)
-                        markers.adrenaline = p.get("adrenaline", markers.adrenaline)
+                    if "somatic_indices" in a_state:
+                        indices = a_state["somatic_indices"]
+                        markers.activation_index = float(indices.get("activation", markers.activation_index))
+                        markers.conductance_index = float(indices.get("conductance", markers.conductance_index))
+                        markers.stress_index = float(indices.get("stress", markers.stress_index))
+                        markers.mobilization_index = float(indices.get("mobilization", markers.mobilization_index))
                     if "mood_baselines" in a_state:
                         markers.mood_baselines.update(a_state["mood_baselines"])
                 else:
