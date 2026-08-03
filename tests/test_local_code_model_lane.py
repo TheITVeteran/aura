@@ -42,6 +42,9 @@ async def test_local_code_model_holds_lane_lease_through_generation(
         def apply_chat_template(self, *_args, **_kwargs):
             return "formatted-code-prompt"
 
+        def encode(self, text):
+            return list(range(max(1, len(text.split()))))
+
     mlx_lm = ModuleType("mlx_lm")
     mlx_lm.load = lambda *_args, **_kwargs: (object(), _Tokenizer())
     mlx_lm.generate = lambda *_args, **_kwargs: "def answer():\n    return 42"
@@ -53,12 +56,29 @@ async def test_local_code_model_holds_lane_lease_through_generation(
     monkeypatch.setattr(local_code_model, "_model", None)
     monkeypatch.setattr(local_code_model, "_tokenizer", None)
     monkeypatch.setattr(local_code_model, "_loaded_path", None)
+    monkeypatch.setattr(local_code_model, "_loaded_identity", None)
     monkeypatch.setattr(local_code_model, "_lane_lease", None)
+    identity = local_code_model.TrustedModelIdentity(
+        real_path=str(model_path),
+        checkpoint_fingerprint="a" * 64,
+        checkpoint_files=1,
+        behavior_bundle_sha256="b" * 64,
+        architecture="Qwen2ForCausalLM",
+        max_context_tokens=4096,
+        trust_manifest_sha256="c" * 64,
+    )
+    monkeypatch.setattr(local_code_model, "_validate_model_trust", lambda _path: identity)
 
     model = local_code_model.LocalCodeModel(str(model_path))
     result = await model.think("write answer")
 
     assert "return 42" in result
+    receipt = model.last_receipt()
+    assert receipt is not None
+    assert receipt["route"] == "local_mlx_unsteered_no_cloud"
+    assert receipt["steering_hooks"] == ()
+    assert receipt["validation_status"] == "complete_nonempty"
+    assert receipt["checkpoint_fingerprint"] == "a" * 64
     assert captured[0]["purpose"] == "serve"
     assert captured[0]["preemptible"] is False
     assert captured[1] == {"activated_preemptible": True}
@@ -98,6 +118,9 @@ async def test_local_code_model_refuses_eviction_during_generation(
         def apply_chat_template(self, *_args, **_kwargs):
             return "formatted-code-prompt"
 
+        def encode(self, text):
+            return list(range(max(1, len(text.split()))))
+
     def _generate(*_args, **_kwargs):
         generation_started.set()
         assert finish_generation.wait(timeout=2.0)
@@ -114,9 +137,20 @@ async def test_local_code_model_refuses_eviction_during_generation(
     monkeypatch.setattr(local_code_model, "_model", None)
     monkeypatch.setattr(local_code_model, "_tokenizer", None)
     monkeypatch.setattr(local_code_model, "_loaded_path", None)
+    monkeypatch.setattr(local_code_model, "_loaded_identity", None)
     monkeypatch.setattr(local_code_model, "_lane_lease", None)
     monkeypatch.setattr(local_code_model, "_active_generations", 0)
     monkeypatch.setattr(local_code_model, "_eviction_in_progress", False)
+    identity = local_code_model.TrustedModelIdentity(
+        real_path=str(model_path),
+        checkpoint_fingerprint="a" * 64,
+        checkpoint_files=1,
+        behavior_bundle_sha256="b" * 64,
+        architecture="Qwen2ForCausalLM",
+        max_context_tokens=4096,
+        trust_manifest_sha256="c" * 64,
+    )
+    monkeypatch.setattr(local_code_model, "_validate_model_trust", lambda _path: identity)
 
     model = local_code_model.LocalCodeModel(str(model_path))
     generation = asyncio.create_task(model.think("hold"))
