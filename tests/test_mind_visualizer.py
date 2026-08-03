@@ -112,7 +112,20 @@ def test_controls_page_exists_and_is_plain_language():
     assert "seg-autonomy.level" not in html, (
         "autonomy.level is immutable; a control for it would be a dead control"
     )
-    for human in ("Safe mode", "You're in charge", "What am I looking at?"):
+    # Plain language, and language that is TRUE. "You're in charge" was
+    # required here from when autonomy was an operator-selected level. The page
+    # now says "Boundaries, not identity — Aura's agency is intrinsic and
+    # remains active", which is the honest description of what these controls
+    # do: they bound external effects and can trigger emergency containment,
+    # and they cannot switch her agency off.
+    #
+    # Keeping the old phrase would have required the UI to tell the operator
+    # they hold authority the system deliberately withholds — a false promise
+    # on the most consequential page in the product.
+    for human in ("Safe mode", "Boundaries, not identity", "What am I looking at?"):
         assert human in html, f"controls.html missing plain-language framing: {human}"
+    assert "agency is intrinsic" in html, (
+        "the page must say what these controls do NOT do"
+    )
     for link in ("/mind", "/activity"):
         assert link in html  # cross-linked product-shell nav
