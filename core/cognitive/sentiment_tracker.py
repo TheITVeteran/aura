@@ -22,17 +22,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import platform
 import re
 import time
+import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from functools import lru_cache
 
 logger = logging.getLogger("Aura.SentimentTracker")
 
 __all__ = [
     "SentimentTrajectoryTracker",
     "EmotionalVector",
+    "TextSentimentEvidence",
+    "analyze_text_sentiment",
     "get_sentiment_tracker",
 ]
 
@@ -81,6 +85,39 @@ class EmotionalVector:
             "urgency": round(self.urgency, 4),
             "warmth": round(self.warmth, 4),
             "frustration": round(self.frustration, 4),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TextSentimentEvidence:
+    """Stateless, provenance-bearing valence evidence for one text.
+
+    ``grounded`` means the score came from a supported local semantic model or
+    from explicit contextual lexical evidence.  Callers that can durably alter
+    state must check it; ``0.0`` alone is not evidence of neutrality.
+    """
+
+    valence: float
+    grounded: bool
+    method: str
+    backend_identity: str
+    evidence_units: int
+    total_units: int
+    coverage: float
+    truncated: bool = False
+    reason: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "valence": round(self.valence, 4),
+            "grounded": self.grounded,
+            "method": self.method,
+            "backend_identity": self.backend_identity,
+            "evidence_units": self.evidence_units,
+            "total_units": self.total_units,
+            "coverage": round(self.coverage, 4),
+            "truncated": self.truncated,
+            "reason": self.reason,
         }
 
 
@@ -206,6 +243,14 @@ _DIMINISHERS: dict[str, float] = {
     "fairly": 0.7, "rather": 0.7, "mildly": 0.5,
 }
 
+_CONTRAST_BOUNDARIES: set[str] = {
+    "but", "however", "although", "though", "yet", "except", "nevertheless",
+}
+
+_NATIVE_SENTIMENT_MAX_CHARS = 32_768
+_NATIVE_SENTIMENT_CHUNK_CHARS = 2_048
+_NATIVE_SENTIMENT_MIN_COVERAGE = 0.80
+
 # Warmth markers — words/phrases signaling friendliness and rapport
 _WARMTH_WORDS: set[str] = {
     "lol", "lmao", "haha", "hahaha", "hehe", "rofl", "xd",
@@ -267,24 +312,31 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def _compute_lexicon_valence(tokens: list[str]) -> float:
+def _compute_contextual_lexicon_valence(tokens: list[str]) -> tuple[float, int, int]:
     """Score text valence from the lexicon, respecting negation and intensifiers.
 
-    Walks the token list with a two-slot context window. Negators flip the
-    sign of the next scored word. Intensifiers/diminishers scale its magnitude.
-    Returns a normalized valence in [-1, 1].
+    Negation remains active for up to three content tokens and ends at an
+    explicit contrast boundary.  This handles constructions such as ``not
+    remotely safe, but stable`` without allowing the negation to leak into the
+    second clause.  Returns ``(valence, scored_terms, negated_terms)``.
     """
     if not tokens:
-        return 0.0
+        return 0.0, 0, 0
 
     total = 0.0
     count = 0
-    negate_next = False
+    negated_count = 0
+    negation_budget = 0
     intensity_multiplier = 1.0
 
     for token in tokens:
+        if token in _CONTRAST_BOUNDARIES:
+            negation_budget = 0
+            intensity_multiplier = 1.0
+            continue
+
         if token in _NEGATORS:
-            negate_next = True
+            negation_budget = 3
             continue
 
         if token in _INTENSIFIERS:
@@ -298,22 +350,30 @@ def _compute_lexicon_valence(tokens: list[str]) -> float:
         score = _LEXICON.get(token, 0.0)
         if score != 0.0:
             score *= intensity_multiplier
-            if negate_next:
+            if negation_budget > 0:
                 score *= -0.75  # Negation flips but slightly weaker
+                negated_count += 1
             total += score
             count += 1
+            negation_budget = 0
+        elif negation_budget > 0:
+            negation_budget -= 1
 
-        # Reset modifiers after consuming a scored or unscored content word
-        negate_next = False
+        # Intensity modifies one scored or intervening content token only.
         intensity_multiplier = 1.0
 
     if count == 0:
-        return 0.0
+        return 0.0, 0, 0
 
     # Normalize: average score mapped to [-1, 1] via tanh-like compression
     raw = total / count
     # Compress with a soft sigmoid so extreme texts don't saturate instantly
-    return _clamp(math.tanh(raw / 3.0), -1.0, 1.0)
+    return _clamp(math.tanh(raw / 3.0), -1.0, 1.0), count, negated_count
+
+
+def _compute_lexicon_valence(tokens: list[str]) -> float:
+    """Compatibility wrapper for the trajectory tracker."""
+    return _compute_contextual_lexicon_valence(tokens)[0]
 
 
 def _detect_sarcasm(text: str) -> float:
@@ -339,6 +399,250 @@ def _detect_sarcasm(text: str) -> float:
         hits += 0.5
 
     return _clamp(hits / 3.0, 0.0, 1.0)
+
+
+def _bounded_sentiment_chunks(text: str) -> tuple[list[str], int, bool]:
+    """Return bounded local-model chunks without splitting through words."""
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    if not normalized:
+        return [], 0, False
+    truncated = len(normalized) > _NATIVE_SENTIMENT_MAX_CHARS
+    bounded = normalized[:_NATIVE_SENTIMENT_MAX_CHARS]
+    chunks: list[str] = []
+    cursor = 0
+    while cursor < len(bounded):
+        end = min(len(bounded), cursor + _NATIVE_SENTIMENT_CHUNK_CHARS)
+        if end < len(bounded):
+            boundary = max(
+                bounded.rfind("\n", cursor, end),
+                bounded.rfind(". ", cursor, end),
+                bounded.rfind("! ", cursor, end),
+                bounded.rfind("? ", cursor, end),
+                bounded.rfind(" ", cursor, end),
+            )
+            if boundary > cursor:
+                end = boundary + 1
+        chunk = bounded[cursor:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        cursor = max(end, cursor + 1)
+    return chunks, len(normalized), truncated
+
+
+def _score_with_apple_natural_language(text: str) -> tuple[float | None, str, str]:
+    """Score one chunk and identify its language with Apple's local models."""
+    try:
+        from NaturalLanguage import (  # type: ignore[import-not-found]
+            NLLanguageRecognizer,
+            NLTagger,
+            NLTagSchemeSentimentScore,
+            NLTokenUnitParagraph,
+        )
+
+        tagger = NLTagger.alloc().initWithTagSchemes_([NLTagSchemeSentimentScore])
+        tagger.setString_(text)
+        raw = tagger.tagAtIndex_unit_scheme_tokenRange_(
+            0,
+            NLTokenUnitParagraph,
+            NLTagSchemeSentimentScore,
+            None,
+        )
+        score = float(raw)
+        if not math.isfinite(score):
+            return None, "", "native_non_finite"
+        language = str(NLLanguageRecognizer.dominantLanguageForString_(text) or "")
+        return _clamp(score, -1.0, 1.0), language, ""
+    except (ImportError, AttributeError):
+        return None, "", "native_unavailable"
+    except (TypeError, ValueError):
+        # Apple's classifier returns labels such as ``Other`` when the text or
+        # language is outside the model's supported sentiment surface.
+        return None, "", "native_unsupported"
+    except (RuntimeError, OSError) as exc:
+        return None, "", f"native_failed:{type(exc).__name__}"
+
+
+@lru_cache(maxsize=8)
+def _neutral_baseline_for_language(language: str) -> float | None:
+    """Measure the local model's language-specific neutral offset once.
+
+    Apple's English model on current macOS releases can assign a sizeable
+    negative prior to neutral technical prose. Subtracting a measured neutral
+    anchor prevents that backend prior from masquerading as output valence.
+    Unknown languages remain uncalibrated and are handled conservatively.
+    """
+    anchors = {
+        "en": "This is a factual statement.",
+        "es": "Esta es una afirmacion factual.",
+        "fr": "Ceci est une declaration factuelle.",
+        "de": "Dies ist eine sachliche Aussage.",
+    }
+    anchor = anchors.get(language)
+    if anchor is None:
+        return None
+    score, detected_language, _reason = _score_with_apple_natural_language(anchor)
+    if score is None or detected_language != language:
+        return None
+    return score
+
+
+def analyze_text_sentiment(text: str) -> TextSentimentEvidence:
+    """Return bounded local semantic valence evidence without mutating history.
+
+    The primary path is Apple's on-device learned Natural Language model.  No
+    prompt, response, or score crosses a network boundary.  A contextual
+    negation/intensity/sarcasm analyzer is the portable fallback.  When neither
+    path observes evidence, the function explicitly abstains rather than
+    manufacturing neutral sentiment.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return TextSentimentEvidence(
+            valence=0.0,
+            grounded=False,
+            method="unavailable",
+            backend_identity="none",
+            evidence_units=0,
+            total_units=0,
+            coverage=0.0,
+            reason="empty_or_invalid_text",
+        )
+
+    chunks, _total_chars, truncated = _bounded_sentiment_chunks(text)
+    tokens = _tokenize(text[:_NATIVE_SENTIMENT_MAX_CHARS])
+    contextual_valence, scored_terms, _negated_terms = _compute_contextual_lexicon_valence(
+        tokens
+    )
+    sarcasm = _detect_sarcasm(text[:_NATIVE_SENTIMENT_MAX_CHARS])
+    if sarcasm > 0.3 and contextual_valence > 0:
+        contextual_valence = _clamp(-contextual_valence * sarcasm, -1.0, 1.0)
+
+    weighted_score = 0.0
+    supported_chars = 0
+    supported_chunks = 0
+    native_languages: set[str] = set()
+    native_reason = "native_unavailable"
+    for chunk in chunks:
+        score, language, reason = _score_with_apple_natural_language(chunk)
+        if score is None:
+            native_reason = reason or native_reason
+            continue
+        supported_chars += len(chunk)
+        supported_chunks += 1
+        weighted_score += score * len(chunk)
+        if language:
+            native_languages.add(language)
+
+    analyzed_chars = sum(len(chunk) for chunk in chunks)
+    native_coverage = supported_chars / max(1, analyzed_chars)
+    native_complete = (
+        supported_chars > 0
+        and native_coverage >= _NATIVE_SENTIMENT_MIN_COVERAGE
+        and not truncated
+    )
+    raw_native_valence = (
+        _clamp(weighted_score / supported_chars, -1.0, 1.0)
+        if supported_chars
+        else 0.0
+    )
+    native_valence = raw_native_valence
+    if native_languages == {"en"}:
+        neutral_baseline = _neutral_baseline_for_language("en")
+        if neutral_baseline is None:
+            native_complete = False
+            native_reason = "native_neutral_calibration_unavailable"
+        else:
+            native_valence = _clamp(raw_native_valence - neutral_baseline, -1.0, 1.0)
+    non_english_native = bool(native_languages) and "en" not in native_languages
+    if native_complete and non_english_native:
+        return TextSentimentEvidence(
+            valence=native_valence,
+            grounded=True,
+            method="apple_natural_language_sentiment_v1",
+            backend_identity=(
+                f"macos:{platform.mac_ver()[0] or 'unknown'}:"
+                f"{','.join(sorted(native_languages))}"
+            ),
+            evidence_units=supported_chunks,
+            total_units=len(chunks),
+            coverage=native_coverage,
+            truncated=False,
+        )
+
+    if native_complete and scored_terms > 0:
+        conflict = (
+            native_valence * contextual_valence < 0.0
+            and abs(native_valence) >= 0.1
+            and abs(contextual_valence) >= 0.1
+        )
+        if conflict:
+            return TextSentimentEvidence(
+                valence=0.0,
+                grounded=False,
+                method="conflicting_semantic_evidence",
+                backend_identity=(
+                    f"macos:{platform.mac_ver()[0] or 'unknown'}:"
+                    "aura_contextual_lexicon_v2"
+                ),
+                evidence_units=supported_chunks + scored_terms,
+                total_units=len(chunks) + len(tokens),
+                coverage=min(native_coverage, scored_terms / max(1, len(tokens))),
+                reason="native_contextual_polarity_conflict",
+            )
+        consensus = _clamp(
+            native_valence * 0.65 + contextual_valence * 0.35,
+            -1.0,
+            1.0,
+        )
+        return TextSentimentEvidence(
+            valence=consensus,
+            grounded=True,
+            method="semantic_context_consensus_v1",
+            backend_identity=(
+                f"macos:{platform.mac_ver()[0] or 'unknown'}:"
+                "aura_contextual_lexicon_v2"
+            ),
+            evidence_units=supported_chunks + scored_terms,
+            total_units=len(chunks) + len(tokens),
+            coverage=min(native_coverage, scored_terms / max(1, len(tokens))),
+            truncated=False,
+        )
+
+    if scored_terms > 0 and not truncated:
+        return TextSentimentEvidence(
+            valence=contextual_valence,
+            grounded=True,
+            method="contextual_lexicon_sentiment_v2",
+            backend_identity="aura_contextual_lexicon_v2",
+            evidence_units=scored_terms,
+            total_units=len(tokens),
+            coverage=scored_terms / max(1, len(tokens)),
+            truncated=False,
+            reason=native_reason,
+        )
+
+    if native_complete:
+        return TextSentimentEvidence(
+            valence=0.0,
+            grounded=False,
+            method="unavailable",
+            backend_identity=f"macos:{platform.mac_ver()[0] or 'unknown'}",
+            evidence_units=supported_chunks,
+            total_units=len(chunks),
+            coverage=native_coverage,
+            reason="native_english_requires_contextual_support",
+        )
+
+    return TextSentimentEvidence(
+        valence=0.0,
+        grounded=False,
+        method="unavailable",
+        backend_identity="none",
+        evidence_units=0,
+        total_units=len(tokens),
+        coverage=0.0,
+        truncated=truncated,
+        reason="input_truncated" if truncated else native_reason,
+    )
 
 
 def _detect_urgency(text: str, tokens: list[str]) -> float:
@@ -927,7 +1231,7 @@ class SentimentTrajectoryTracker:
 # Module singleton
 # ---------------------------------------------------------------------------
 
-_tracker: Optional[SentimentTrajectoryTracker] = None
+_tracker: SentimentTrajectoryTracker | None = None
 
 
 def get_sentiment_tracker() -> SentimentTrajectoryTracker:

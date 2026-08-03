@@ -339,12 +339,38 @@ def test_the_lexical_fallback_actually_examines_punctuation(loop, monkeypatch):
 def test_text_with_no_valence_words_is_not_reported_as_measured_neutral(loop, monkeypatch):
     substrate = _Substrate()
     monkeypatch.setattr(
+        "core.cognitive.sentiment_tracker._score_with_apple_natural_language",
+        lambda _chunk: (None, "", "native_unsupported"),
+    )
+    monkeypatch.setattr(
         "core.brain.inference_feedback.get_runtime_service",
         lambda name, default=None: substrate if name == "liquid_substrate" else default,
     )
     result = _process(loop, _Projection(), text="the capital of france is paris")
     assert result["output_valence_grounded"] is False
     assert result["coherence_grounded"] is False
+
+
+def test_negated_semantic_valence_drives_coherence_in_the_correct_direction(
+    loop, monkeypatch
+):
+    substrate = _Substrate(valence=0.8)
+    monkeypatch.setattr(
+        "core.brain.inference_feedback.get_runtime_service",
+        lambda name, default=None: substrate if name == "liquid_substrate" else default,
+    )
+
+    result = _process(loop, _Projection(), text="This is not remotely safe.")
+
+    assert result["output_valence_grounded"] is True
+    assert result["output_valence"] < 0.0
+    assert result["coherence_grounded"] is True
+    assert result["coherence"] < 0.0
+    evidence = result["sentiment_evidence"]
+    assert evidence["method"] in {
+        "semantic_context_consensus_v1",
+        "contextual_lexicon_sentiment_v2",
+    }
 
 
 def test_the_modulation_that_caused_the_generation_is_recorded(loop, monkeypatch):

@@ -1,12 +1,11 @@
-from pathlib import Path
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from core.brain.homeostatic_modulator import InferenceModulation
 from core.brain.inference_feedback import InferenceFeedbackLoop
-from core.container import ServiceContainer
 
 
 class LiquidSubstrateFixture:
@@ -126,7 +125,7 @@ def test_coherence_calculation_valence_alignment(base_modulation, monkeypatch):
     monkeypatch.setattr("core.brain.inference_feedback.get_runtime_service", service_lookup)
     # 1. Output text with positive valence words (should align -> high coherence)
     metrics_pos = loop.process_output(
-        output_text="completed success stable resolved",
+        output_text="I love this excellent and stable result",
         token_ids=[1, 2],
         logprobs=None,
         modulation=base_modulation,
@@ -213,7 +212,7 @@ def test_hebbian_projection_updates(base_modulation, monkeypatch):
         lambda name, default=None: substrate if name == "liquid_substrate" else default,
     )
     loop.process_output(
-        output_text="test resolved",
+        output_text="I love this excellent result",
         token_ids=[42, 43],
         logprobs=[-0.05, -0.05],
         modulation=base_modulation,

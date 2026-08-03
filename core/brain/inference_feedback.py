@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 from typing import Any
 
 import numpy as np
 
 from core.brain.homeostatic_modulator import InferenceModulation
+from core.cognitive.sentiment_tracker import analyze_text_sentiment
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
@@ -123,18 +123,6 @@ class InferenceFeedbackLoop:
     """Computes feedback signals from LLM inference outputs and feeds them back into
     the homeostatic substrate and free energy engine.
     """
-
-    VALENCE_WORDS_POS = {
-        "success", "resolved", "repaired", "stable", "optimal", "clean", "healthy",
-        "recovered", "safe", "secured", "approved", "completed", "improved", "constructive",
-        "happy", "good", "benefit", "efficient", "orderly", "adaptive", "protect"
-    }
-
-    VALENCE_WORDS_NEG = {
-        "failed", "error", "degraded", "exhausted", "danger", "hazard", "threat",
-        "corrupted", "leaked", "unsafe", "denied", "broken", "critical", "unstable",
-        "stuck", "frustrated", "warning", "collision", "overload", "deficit", "harm"
-    }
 
     def __init__(self, substrate_dim: int = 512) -> None:
         # A genuine int, not merely something int-like. "512" and 512.0
@@ -307,20 +295,16 @@ class InferenceFeedbackLoop:
         substrate_available = substrate_state is not None and valence is not None
         receipt["substrate_available"] = bool(substrate_available)
 
-        # Lexical output valence.
-        clean_text = re.sub(r"[^\w\s]", "", output_text.lower())
-        tokens = set(clean_text.split())
-        pos_hits = sum(1 for tok in tokens if tok in self.VALENCE_WORDS_POS)
-        neg_hits = sum(1 for tok in tokens if tok in self.VALENCE_WORDS_NEG)
-        total_hits = pos_hits + neg_hits
-        output_valence = (pos_hits - neg_hits) / total_hits if total_hits > 0 else 0.0
-        # CP126 ddc503d3 / 83f97dc9: a set of exact words with no frequency,
-        # negation or scope. "not safe" scores POSITIVE, and text containing
-        # none of the listed words scores 0.0 — indistinguishable from
-        # genuinely neutral text. Reported so a consumer can tell "measured
-        # neutral" from "no evidence either way".
-        receipt["valence_evidence_hits"] = total_hits
-        receipt["output_valence_grounded"] = total_hits > 0
+        # Semantic output valence.  This is local-only and provenance-bearing:
+        # the on-device learned analyzer handles compositional language and the
+        # portable fallback handles negation, intensity, contrast and sarcasm.
+        # Unsupported text abstains, so it cannot become durable projection
+        # learning merely because a keyword happened to occur.
+        sentiment = analyze_text_sentiment(output_text)
+        output_valence = sentiment.valence
+        receipt["sentiment_evidence"] = sentiment.as_dict()
+        receipt["valence_evidence_hits"] = sentiment.evidence_units
+        receipt["output_valence_grounded"] = sentiment.grounded
 
         # CP126 3c46ea8c, the critical one: when the substrate was absent
         # this substituted a zero vector, valence 0.0 and arousal 0.5, then
@@ -330,7 +314,7 @@ class InferenceFeedbackLoop:
         # alignment with a state nobody had observed.
         #
         # No substrate, no coherence. None, not 1.0, and no training.
-        if substrate_available and total_hits > 0:
+        if substrate_available and sentiment.grounded:
             coherence = float(np.clip(((1.0 - abs(valence - output_valence)) * 2.0) - 1.0, -1.0, 1.0))
             coherence_grounded = True
         else:
