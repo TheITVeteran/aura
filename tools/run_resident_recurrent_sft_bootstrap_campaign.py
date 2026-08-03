@@ -280,8 +280,7 @@ def _verify_source_lineage(expected: Mapping[str, Any]) -> dict[str, str]:
     upstream = run("rev-parse", "origin/main").stdout.strip()
     frozen = expected.get("commit")
     if (
-        branch != "main"
-        or not isinstance(frozen, str)
+        not isinstance(frozen, str)
         or len(frozen) != 40
         or run("merge-base", "--is-ancestor", frozen, head).returncode != 0
         or run("merge-base", "--is-ancestor", frozen, upstream).returncode != 0
@@ -452,7 +451,10 @@ def _load_config(path: Path) -> dict[str, Any]:
     if (
         not isinstance(source, Mapping)
         or set(source) != {"branch", "commit", "origin_main"}
-        or source.get("branch") != "main"
+        or not isinstance(source.get("branch"), str)
+        or not source["branch"]
+        or len(source["branch"]) > 255
+        or any(ord(character) < 32 for character in source["branch"])
         or any(
             not isinstance(source.get(key), str)
             or len(source[key]) != 40

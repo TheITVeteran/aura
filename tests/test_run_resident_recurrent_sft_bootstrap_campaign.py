@@ -232,6 +232,50 @@ def test_config_rejects_nested_watchdog_or_launch_drift(tmp_path: Path) -> None:
         controller._load_config(path)
 
 
+def test_config_accepts_published_worktree_branch(tmp_path: Path) -> None:
+    config = _config()
+    config["source"]["branch"] = "codex/rlc-control-candidate"
+    body = dict(config)
+    body.pop("config_sha256")
+    config["config_sha256"] = sha256_json(body)
+    path = tmp_path / "config.json"
+    path.write_bytes(controller._canonical(config))
+
+    assert controller._load_config(path)["source"]["branch"] == (
+        "codex/rlc-control-candidate"
+    )
+
+
+def test_source_lineage_accepts_worktree_at_published_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen = "a" * 40
+
+    def run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        args = command[1:]
+        if args == ["branch", "--show-current"]:
+            stdout, returncode = "codex/rlc-control-candidate\n", 0
+        elif args in (["rev-parse", "HEAD"], ["rev-parse", "origin/main"]):
+            stdout, returncode = f"{frozen}\n", 0
+        elif args[:2] == ["merge-base", "--is-ancestor"]:
+            stdout, returncode = "", 0
+        elif args[:2] == ["diff", "--name-only"]:
+            stdout, returncode = "", 0
+        else:
+            raise AssertionError(args)
+        return subprocess.CompletedProcess(command, returncode, stdout, "")
+
+    monkeypatch.setattr(controller.subprocess, "run", run)
+    monkeypatch.setattr(controller, "_trainer_import_closure", lambda: frozenset())
+
+    assert controller._verify_source_lineage({"commit": frozen}) == {
+        "branch": "codex/rlc-control-candidate",
+        "frozen_commit": frozen,
+        "observed_head": frozen,
+        "observed_origin_main": frozen,
+    }
+
+
 def test_config_rejects_changed_path_custody_threat_model(tmp_path: Path) -> None:
     config = _config()
     config["path_custody_threat_model"]["excluded_adversary"] = "none"
