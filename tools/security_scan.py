@@ -15,9 +15,20 @@ ROOT = Path(__file__).resolve().parent.parent
 SCAN_ROOTS = ("core", "interface", "skills", "tools", "training")
 SKIP_PARTS = {"__pycache__", ".git", ".venv", ".venv_aura", "node_modules", "artifacts"}
 
+#: A key literal STARTS somewhere — after a quote, a space, an `=`. These
+#: used to match MID-WORD: the CLI flag `--task-issuer-signer-config`
+#: contains the OpenAI key prefix inside the word "task", followed by
+#: enough flag characters to satisfy the length, and was reported as a
+#: leaked key. The lookbehind costs nothing in true-positive coverage — a
+#: real key is never preceded by an identifier character — and removes a
+#: whole class of false positive that trains people to ignore this gate.
+#:
+#: (Deliberately described rather than quoted: an example of the matching
+#: string in this file would be flagged by this file, which is correct
+#: behaviour and exactly how the last false positive was found.)
 SECRET_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
-    re.compile(r"AIza[0-9A-Za-z_-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{20,}"),
 )
 REGEX_LITERAL_MARKERS = ("(?P<", "\\b", "\\s", "\\d", "[", "]", "|", "*", "+", "{", "}")
 CREDENTIAL_NAME_WORDS = {
@@ -137,6 +148,12 @@ def _scan_assignment(node: ast.Assign | ast.AnnAssign, rel: str) -> list[dict]:
         return []
     if _is_env_var_name_literal(names, literal):
         return []
+    if _is_schema_identifier_literal(names, literal):
+        return []
+    if _is_symbolic_word_literal(literal):
+        return []
+    if _is_cli_flag_literal(literal):
+        return []
     if _is_placeholder_literal(literal):
         return []
     if len(literal) < 20 or literal.startswith("$") or literal.startswith("<"):
@@ -184,6 +201,52 @@ def _is_parser_regex_constant(names: list[str], literal: str) -> bool:
 def _is_placeholder_literal(literal: str) -> bool:
     lowered = literal.lower()
     return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
+
+def _is_schema_identifier_literal(names: list[str], literal: str) -> bool:
+    """`BRIDGE_TOKEN_BINDING_SCHEMA = "aura.verified_transition...v1"` is a
+    schema NAME, not credential material.
+
+    Six of these were the entire standing output of this gate: versioned
+    schema identifiers flagged because the constant's name contains "token"
+    or "key". A gate whose only findings are false positives is a gate
+    people learn to skip, which costs more than the check is worth.
+
+    Deliberately narrow, so nothing real can hide behind it: the literal
+    must be a lowercase dotted identifier ending in an explicit version,
+    `something.something.v3`. That shape is a namespace, not entropy — a
+    credential is not lowercase-dotted-versioned, and one that were would
+    have to be chosen to look exactly like a schema id.
+
+    The constant's NAME is deliberately not part of the rule. Requiring
+    `*_SCHEMA` left `TOKEN_CODEC_ID = "aura.…recurrent_trace_codec.v1"`
+    flagged, which is the same kind of identifier under a different
+    suffix — and a rule that depends on naming convention fails again at
+    the next convention.
+    """
+    del names  # the literal's shape is what decides
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\.v\d+", literal))
+
+
+def _is_symbolic_word_literal(literal: str) -> bool:
+    """`token_weighting: str = "uniform_nonnegative_normalized"` is a MODE, not a key.
+
+    Lowercase words joined by underscores, no digits and no mixed case.
+    Credential material has entropy precisely because it is not made of
+    dictionary words in a fixed case — this shape cannot carry a usable
+    secret, and the field only tripped the scan because its NAME contains
+    "token".
+    """
+    return bool(re.fullmatch(r"[a-z]+(?:_[a-z]+)+", literal))
+
+
+def _is_cli_flag_literal(literal: str) -> bool:
+    """A long-form option name is published in --help; the opposite of secret.
+
+    Flags like --trust-root and --evidence-verifier-signer-config were
+    flagged for containing credential words in their names.
+    """
+    return bool(re.fullmatch(r"--[a-z0-9]+(?:-[a-z0-9]+)*", literal))
 
 
 def _is_env_var_name_literal(names: list[str], literal: str) -> bool:

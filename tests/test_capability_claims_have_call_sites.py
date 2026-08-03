@@ -192,3 +192,20 @@ def test_cross_tier_verifier_declares_that_it_is_not_wired():
             "neither get_cross_tier_verifier() nor CrossTierVerifier has a "
             "production caller, so cross-tier verification is not live."
         )
+
+
+def test_compute_router_declares_that_it_is_not_wired():
+    """It handles API keys and cloud spend, so an implied liveness is worse here."""
+    callers = _production_call_sites("ComputeRouter", "core/brain/compute_router.py")
+    module = (ROOT / "core" / "brain" / "compute_router.py").read_text("utf-8")
+    if callers:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" not in module, (
+            f"ComputeRouter now has production callers ({callers}); the module "
+            "still declares itself unwired."
+        )
+    else:
+        assert "NOT WIRED INTO THE LIVE RUNTIME" in module, (
+            "ComputeRouter has no production caller; live cloud fallback goes "
+            "through core/brain/llm_health_router.py. An unwired module that "
+            "looks live is how one gets adopted without review."
+        )

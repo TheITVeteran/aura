@@ -22,6 +22,23 @@ SHA_B = "b" * 64
 SHA_C = "c" * 64
 
 
+def _runner_sha256(value: Any) -> str:
+    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+
+    Reproduced here rather than imported so a drift in either canonicaliser
+    fails this test instead of cancelling out against itself.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _identified(body: dict[str, Any]) -> dict[str, Any]:
     return {**body, "identity_sha256": authority.sha256_json(body)}
 
@@ -753,13 +770,11 @@ def test_resume_verdict_is_attempt_bound_and_safe(tmp_path: Path) -> None:
     authority_path.write_bytes(authority.canonical_json_bytes(document))
     run_dir = tmp_path / "run"
     _write_checkpoint(run_dir, document=document, dataset=dataset)
-    evidence_path = tmp_path / "resume-evidence.json"
     context = {
         "plan_sha256": SHA_A,
         "command_sha256": SHA_B,
         "prior_attempt": 2,
         "prior_journal_head_sha256": SHA_C,
-        "evidence_path": evidence_path,
     }
     verdict = resume_verifier.build_verdict(
         authority_path=authority_path,
@@ -769,7 +784,19 @@ def test_resume_verdict_is_attempt_bound_and_safe(tmp_path: Path) -> None:
     )
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["checkpoint_sequence"] == 5
-    assert json.loads(evidence_path.read_text(encoding="ascii")) == verdict["evidence"]
+    # The runner carries evidence inline over stdout-v3; no evidence file exists.
+    assert verdict["schema"] == resume_verifier.VERDICT_SCHEMA
+    assert verdict["evidence"]["schema"] == resume_verifier.EVIDENCE_SCHEMA
+    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
+    assert verdict["checkpoint_identity"] == _runner_sha256(
+        {
+            "prior_attempt": 2,
+            "prior_journal_head_sha256": SHA_C,
+            "checkpoint_sequence": verdict["checkpoint_sequence"],
+            "evidence_sha256": verdict["evidence_sha256"],
+        }
+    )
+    assert not list(tmp_path.glob("*resume-evidence*"))
 
 
 def test_resume_verdict_rejects_dataset_digest_tamper(tmp_path: Path) -> None:
@@ -796,7 +823,6 @@ def test_resume_verdict_rejects_dataset_digest_tamper(tmp_path: Path) -> None:
                 "command_sha256": SHA_B,
                 "prior_attempt": 1,
                 "prior_journal_head_sha256": SHA_C,
-                "evidence_path": tmp_path / "evidence.json",
             },
         )
 
@@ -824,7 +850,6 @@ def test_resume_verdict_repairs_terminal_checkpoint_before_completion(
             "command_sha256": SHA_B,
             "prior_attempt": 1,
             "prior_journal_head_sha256": SHA_C,
-            "evidence_path": tmp_path / "evidence.json",
         },
     )
     assert verdict["verdict"] == "safe_to_resume"
@@ -883,7 +908,6 @@ def test_resume_verdict_marks_bound_terminal_completion_complete(
             "command_sha256": SHA_B,
             "prior_attempt": 2,
             "prior_journal_head_sha256": SHA_C,
-            "evidence_path": tmp_path / "evidence.json",
         },
     )
     assert verdict["verdict"] == "already_completed"
@@ -912,7 +936,6 @@ def test_resume_verdict_accepts_checkpoint_after_unfinished_model_bind(
             "command_sha256": SHA_B,
             "prior_attempt": 1,
             "prior_journal_head_sha256": SHA_C,
-            "evidence_path": tmp_path / "evidence.json",
         },
     )
     assert verdict["verdict"] == "safe_to_resume"
@@ -941,7 +964,6 @@ def test_resume_verdict_refuses_to_reset_total_wall_clock_budget(
             "command_sha256": SHA_B,
             "prior_attempt": 1,
             "prior_journal_head_sha256": SHA_C,
-            "evidence_path": tmp_path / "evidence.json",
         },
     )
     assert verdict["verdict"] == "indeterminate"

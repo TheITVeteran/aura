@@ -21,6 +21,23 @@ BASE_IDENTITY = {"method": "sha256", "fingerprint": "1" * 64, "files": 4}
 BEHAVIOR_IDENTITY = {"bundle_sha256": "2" * 64, "file_count": 1, "files": []}
 
 
+def _runner_sha256(value: object) -> str:
+    """Hash exactly as ``tools/run_detached_step.py`` does, independently.
+
+    Reproduced here rather than imported so a drift in either canonicaliser
+    fails this test instead of cancelling out against itself.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 @pytest.fixture(autouse=True)
 def _stub_fused_model_dir():
     """Hermetic model directory: these tests exercise contract logic only.
@@ -819,13 +836,12 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
-    evidence = tmp_path / "supervisor" / "resume.json"
     environment = {
         "AURA_DETACHED_PLAN_SHA256": "3" * 64,
         "AURA_DETACHED_COMMAND_SHA256": "4" * 64,
         "AURA_DETACHED_PRIOR_ATTEMPT": "1",
         "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256": "5" * 64,
-        "AURA_DETACHED_RESUME_EVIDENCE_PATH": str(evidence),
+        "AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT": "stdout-v3",
     }
 
     verdict = prereg.build_resume_verdict(
@@ -837,7 +853,27 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["checkpoint_sequence"] == 3
     assert verdict["evidence"]["adapter"]["sha256"] == hashlib.sha256(adapter).hexdigest()
-    assert json.loads(evidence.read_text(encoding="ascii")) == verdict["evidence"]
+    # The runner carries evidence inline over stdout-v3; no evidence file exists.
+    assert verdict["schema"] == "aura.detached_step.resume_verdict.v3"
+    assert verdict["evidence"]["schema"] == "aura.detached_step.resume_evidence.v2"
+    assert verdict["evidence_sha256"] == _runner_sha256(verdict["evidence"])
+    assert verdict["checkpoint_identity"] == _runner_sha256(
+        {
+            "prior_attempt": 1,
+            "prior_journal_head_sha256": "5" * 64,
+            "checkpoint_sequence": verdict["checkpoint_sequence"],
+            "evidence_sha256": verdict["evidence_sha256"],
+        }
+    )
+    assert not (tmp_path / "supervisor" / "resume.json").exists()
+
+    for absent in ("AURA_DETACHED_PLAN_SHA256", "AURA_DETACHED_RESUME_EVIDENCE_TRANSPORT"):
+        with pytest.raises(prereg.PreregistrationError, match="resume_environment_incomplete"):
+            prereg.build_resume_verdict(
+                contract,
+                environment={key: value for key, value in environment.items() if key != absent},
+                verify_model=False,
+            )
 
 
 def test_training_progress_accepts_full_campaign_sized_checkpoint_metadata(

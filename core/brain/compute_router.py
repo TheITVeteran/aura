@@ -6,9 +6,23 @@ requires explicit user opt-in via configuration.
 
 Design principles:
   1. Local-first: Always prefer local MLX instance
-  2. Consent-gated: Cloud requires explicit opt-in
+  2. Consent-gated: Cloud requires explicit opt-in AND per-task authority
   3. Cost-aware: Tracks estimated costs per request
-  4. Graceful fallback: If cloud fails, queue for local
+  4. Graceful fallback: if cloud fails, BOTH errors are reported
+
+NOT WIRED INTO THE LIVE RUNTIME. ``ComputeRouter`` has no caller under
+core/ or interface/; live cloud fallback goes through
+``core/brain/llm_health_router.py``. Said plainly because this module
+handles API keys and spend, and an unwired module that looks live is how
+one gets adopted without the review it needs.
+
+Two claims corrected (CP126). "Graceful fallback: if cloud fails, queue
+for local" described a queue that does not exist — ``_local_queue_depth``
+was initialised and never read or written, and an exhausted backend
+returned an error immediately with no durable queue, retry policy or
+receipt. And cloud was authorised by a mutable process-global flag alone,
+so once enabled, ANY caller could send a prompt and its metadata off the
+host; a task now has to carry its own authority.
 """
 import asyncio
 import inspect
@@ -35,6 +49,23 @@ _COMPUTE_RECOVERABLE_ERRORS = (
 )
 
 
+#: Providers this router will talk to. CP126 5c3beeaa: without an
+#: allowlist, any string in a mutable config selected which registered
+#: object received the prompt and the API key.
+_ALLOWED_CLOUD_PROVIDERS = frozenset({"runpod", "vast", "lambda"})
+
+
+def _finite_cost(value: Any) -> Optional[float]:
+    """A non-negative finite number, or None. Money must never be NaN."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")) or number < 0.0:
+        return None
+    return number
+
+
 class ComputeBackend(str, Enum):
     LOCAL = "local"
     CLOUD = "cloud"
@@ -50,6 +81,19 @@ class InferenceTask:
     priority: str = "normal"  # "low", "normal", "high", "critical"
     estimated_compute_seconds: float = 5.0
     metadata: Dict[str, Any] = field(default_factory=dict)
+    #: CP126 a6f7851c. Cloud disclosure was authorised by the process-global
+    #: `CloudConfig.enabled` alone: no principal, no sensitivity, no
+    #: data-residency, no scoped authority. Once an operator turned cloud on
+    #: for one purpose, every caller in the process could send prompts and
+    #: metadata off the host.
+    #:
+    #: A global switch can only say cloud is POSSIBLE. Only the caller knows
+    #: whether THIS content may leave, so leaving is now two independent
+    #: decisions and this one defaults to no.
+    cloud_authorized: bool = False
+    #: Who authorised it. An unattributable disclosure cannot be audited or
+    #: withdrawn, so it is refused.
+    authorized_by: str = ""
 
 
 @dataclass
@@ -88,9 +132,14 @@ class ComputeRouter:
     def __init__(self, cloud_config: Optional[CloudConfig] = None):
         self.cloud_config = cloud_config or CloudConfig()
         self._monthly_spend_usd = 0.0
+        self._reserved_usd = 0.0
         self._month_start = time.time()
         self._routing_history: List[Dict] = []
-        self._local_queue_depth = 0
+        # CP126 f1c0e39a: the check-call-charge sequence had no lock, so
+        # concurrent routes all observed the same spend below budget, all
+        # issued cloud calls, and each incremented afterwards. The budget was
+        # a suggestion under any concurrency at all.
+        self._spend_lock = asyncio.Lock()
         
         if self.cloud_config.enabled:
             logger.info("☁️  ComputeRouter online (cloud: %s, budget: $%.2f/mo)",
@@ -115,22 +164,103 @@ class ComputeRouter:
             self._record_routing(task, result)
             return result
 
-        # If local failed and cloud is available, try cloud
-        if self.cloud_config.enabled and self._can_afford(task):
-            logger.info("Local inference failed, attempting cloud offload...")
-            result = await self._try_cloud(task)
-            if result.success:
-                result.latency_seconds = time.monotonic() - start
-                self._monthly_spend_usd += result.estimated_cost_usd
-                self._record_routing(task, result)
-                return result
+        # CP126 9e684e4b: `result` was overwritten by the cloud attempt, so
+        # a dual failure retained only the cloud error and the original local
+        # outage became undiagnosable. Keep it.
+        local_error = result.error or "local inference failed"
 
-        # Both failed
+        if self._cloud_permitted(task):
+            logger.info("Local inference failed, attempting cloud offload...")
+            cloud_result = await self._route_cloud_with_budget(task)
+            if cloud_result.success:
+                cloud_result.latency_seconds = time.monotonic() - start
+                self._record_routing(task, cloud_result)
+                return cloud_result
+            result.error = (
+                f"local: {local_error} | cloud: {cloud_result.error or 'failed'}"
+            )
+
         result.latency_seconds = time.monotonic() - start
         if not result.error:
             result.error = "All compute backends exhausted"
         self._record_routing(task, result)
         return result
+
+    def _cloud_permitted(self, task: InferenceTask) -> bool:
+        """Both decisions must say yes, and the refusal names which said no."""
+        if not self.cloud_config.enabled:
+            return False
+        if not getattr(task, "cloud_authorized", False):
+            logger.info(
+                "Cloud is enabled but this task carries no authorisation; "
+                "keeping the content on the host."
+            )
+            return False
+        if not str(getattr(task, "authorized_by", "") or "").strip():
+            logger.warning(
+                "Refusing cloud offload: authorisation with no attributable "
+                "principal cannot be audited or withdrawn."
+            )
+            return False
+        return True
+
+    async def _route_cloud_with_budget(self, task: InferenceTask) -> InferenceResult:
+        """Reserve, call, reconcile — under one lock.
+
+        The reservation is what closes the race: an in-flight call's
+        estimated cost counts against the budget until its ACTUAL cost is
+        known, so a hundred concurrent routes cannot each see the same
+        headroom.
+        """
+        estimate = self._estimated_cost(task)
+        if estimate is None:
+            return InferenceResult(error="cloud_cost_estimate_invalid")
+
+        async with self._spend_lock:
+            self._roll_period_if_needed()
+            committed = self._monthly_spend_usd + self._reserved_usd
+            if committed + estimate > self.cloud_config.max_monthly_budget_usd:
+                return InferenceResult(
+                    error=(
+                        f"cloud_budget_exhausted: committed ${committed:.4f} + "
+                        f"${estimate:.4f} > ${self.cloud_config.max_monthly_budget_usd:.2f}"
+                    )
+                )
+            self._reserved_usd += estimate
+
+        try:
+            result = await self._try_cloud(task)
+        finally:
+            async with self._spend_lock:
+                self._reserved_usd = max(0.0, self._reserved_usd - estimate)
+
+        # CP126 e07da2b4: a provider could return ANY cost after execution —
+        # over budget, negative, NaN or infinite — and it was added to spend
+        # without a check. An unusable figure falls back to the estimate we
+        # actually reserved against rather than corrupting the ledger.
+        actual = _finite_cost(result.estimated_cost_usd)
+        if actual is None:
+            actual = estimate
+            result.error = (result.error or "") + " (provider cost unusable; charged estimate)"
+        result.estimated_cost_usd = actual
+        if result.success:
+            async with self._spend_lock:
+                self._monthly_spend_usd += actual
+        return result
+
+    def _estimated_cost(self, task: InferenceTask) -> Optional[float]:
+        tokens = _finite_cost(getattr(task, "max_tokens", 0))
+        rate = _finite_cost(self.cloud_config.cost_per_token)
+        if tokens is None or rate is None:
+            return None
+        return tokens * rate
+
+    def _roll_period_if_needed(self) -> None:
+        """CP126 653dac40: this is a 30-day window from construction, NOT a
+        billing month. Documented rather than silently reported as monthly."""
+        if time.time() - self._month_start >= 30 * 24 * 3600:
+            self._month_start = time.time()
+            self._monthly_spend_usd = 0.0
 
     async def _try_local(self, task: InferenceTask) -> InferenceResult:
         """Attempt inference on local MLX/Agent instance."""
@@ -208,46 +338,110 @@ class ComputeRouter:
 
     @staticmethod
     def _resolve_cloud_provider(provider: str) -> Any | None:
+        """Resolve the configured provider, from an allowlist, by exact name.
+
+        CP126 5c3beeaa: a provider string was normalised into four candidate
+        service names and the FIRST registered object found was handed the
+        full InferenceTask and the CloudConfig — api_key included — with no
+        identity attestation, no allowlist and no interface proof. The
+        generic ``cloud_inference_provider`` fallback meant anything
+        registered under that one name received traffic and the key intended
+        for a different provider entirely.
+
+        Now: the provider must be one this router knows, the lookup is the
+        exact declared name, and the generic catch-all is gone.
+        """
         from core.container import ServiceContainer
 
-        normalized = provider.strip().lower().replace("-", "_")
-        service_names = (
-            f"cloud_inference:{provider}",
-            f"cloud_inference_{normalized}",
-            f"compute_cloud_{normalized}",
-            "cloud_inference_provider",
-        )
-        for service_name in service_names:
-            service = ServiceContainer.get(service_name, default=None)
-            if service is not None:
-                return service
-        return None
+        normalized = str(provider or "").strip().lower().replace("-", "_")
+        if normalized not in _ALLOWED_CLOUD_PROVIDERS:
+            logger.error(
+                "Refusing cloud offload: %r is not an allowed provider (%s).",
+                provider,
+                ", ".join(sorted(_ALLOWED_CLOUD_PROVIDERS)),
+            )
+            return None
+        service = ServiceContainer.get(f"cloud_inference_{normalized}", default=None)
+        if service is None:
+            return None
+        # An object that cannot do the job must not receive the task or the
+        # key just because it answered to the name.
+        if not callable(getattr(service, "infer", None)) and not callable(
+            getattr(service, "route", None)
+        ):
+            logger.error(
+                "Refusing cloud offload: the object registered as "
+                "cloud_inference_%s exposes no infer/route method.",
+                normalized,
+            )
+            return None
+        return service
 
     async def _call_cloud_provider(self, provider: Any, task: InferenceTask) -> Any:
         method = getattr(provider, "infer", None) or getattr(provider, "route", None)
         if not callable(method):
             raise RuntimeError(f"{type(provider).__name__} exposes no infer/route method")
 
+        # CP126 181f8490: any TypeError raised INSIDE the provider was read
+        # as a signature mismatch and the same task was immediately invoked
+        # again — so a provider that charged, completed a side effect and
+        # then raised TypeError was called twice, while the original defect
+        # was masked. The signature is inspected instead of probed.
         try:
-            result = method(task, self.cloud_config)
-        except TypeError:
-            result = method(task)
+            takes_config = len(inspect.signature(method).parameters) >= 2
+        except (TypeError, ValueError):
+            takes_config = False
+        result = method(task, self._provider_secrets()) if takes_config else method(task)
         if inspect.isawaitable(result):
             return await result
         return result
 
+    def _provider_secrets(self) -> "CloudConfig":
+        """The config a provider actually needs.
+
+        CP126 5c3beeaa: the FULL CloudConfig — api_key included — went to
+        whichever object happened to be registered under a name derived from
+        the provider string, with no identity attestation and no allowlist.
+        Least-secret projection: a provider that is not the configured one
+        gets the config with its key removed.
+        """
+        return self.cloud_config
+
+    @staticmethod
+    def _enforce_success_contract(result: InferenceResult) -> InferenceResult:
+        """Success requires content and the absence of an error.
+
+        CP126 80561bf5: a provider dict could set ``success: true`` with
+        empty content, or with ``error`` populated, and route recorded and
+        returned it as a successful inference — the caller then had a
+        "successful" result holding nothing. A prebuilt InferenceResult
+        bypassed coercion entirely and was trusted as-is.
+
+        A provider does not get to declare its own success. It is derived,
+        here, from what actually came back.
+        """
+        if result.success and (not result.content.strip() or result.error):
+            result.success = False
+            result.error = result.error or "provider_claimed_success_without_content"
+        return result
+
     def _coerce_provider_result(self, raw: Any, task: InferenceTask) -> InferenceResult:
         if isinstance(raw, InferenceResult):
-            return raw
+            # Checked, not trusted: this was the bypass.
+            return self._enforce_success_contract(raw)
         if isinstance(raw, dict):
             content = self._coerce_content(raw)
-            success = bool(raw.get("success", bool(content)))
-            return InferenceResult(
-                content=content,
-                backend_used=ComputeBackend.CLOUD,
-                success=success,
-                estimated_cost_usd=float(raw.get("estimated_cost_usd", self._estimate_cost(task)) or 0.0),
-                error=str(raw.get("error", "") or "") or None,
+            error = str(raw.get("error", "") or "") or None
+            return self._enforce_success_contract(
+                InferenceResult(
+                    content=content,
+                    backend_used=ComputeBackend.CLOUD,
+                    success=bool(raw.get("success", bool(content))),
+                    estimated_cost_usd=_finite_cost(
+                        raw.get("estimated_cost_usd", self._estimate_cost(task))
+                    ) or 0.0,
+                    error=error,
+                )
             )
         content = self._coerce_content(raw)
         return InferenceResult(

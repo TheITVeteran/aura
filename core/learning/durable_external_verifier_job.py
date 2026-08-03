@@ -35,6 +35,7 @@ _DETACHED_PLAN_SCHEMA = "aura.detached_step.plan.v2"
 _DETACHED_LAUNCH_SCHEMA = "aura.detached_step.launch.v1"
 _DETACHED_INSPECTION_SCHEMA = "aura.detached_step.inspection.v1"
 _MAX_RUNNER_OUTPUT_BYTES = 1 << 20
+_MAX_RUNNER_DIAGNOSTIC_BYTES = 512
 _MAX_CONTRACT_BYTES = 1 << 20
 _MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
 _MAX_TIMEOUT_SECONDS = 93_600.0
@@ -43,13 +44,26 @@ _MAX_TIMEOUT_SECONDS = 93_600.0
 class DurableExternalVerifierJobError(RuntimeError):
     """A durable verifier job could not be proven valid or successful."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.detail = detail
 
 
-def _fail(code: str) -> Never:
-    raise DurableExternalVerifierJobError(code)
+def _fail(code: str, detail: str = "") -> Never:
+    raise DurableExternalVerifierJobError(code, detail)
+
+
+def _runner_diagnostic(completed: subprocess.CompletedProcess[bytes]) -> str:
+    """Name why one runner call was rejected, so the code alone is enough."""
+
+    tail = (completed.stderr or b"")[-_MAX_RUNNER_DIAGNOSTIC_BYTES:]
+    return (
+        f"returncode={completed.returncode} "
+        f"stdout_bytes={len(completed.stdout or b'')} "
+        f"stderr_bytes={len(completed.stderr or b'')} "
+        f"stderr_tail={tail.decode('utf-8', 'replace')!r}"
+    )
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -505,12 +519,19 @@ class DurableExternalVerifierJob:
             raise DurableExternalVerifierJobError(
                 "durable_verifier_detached_runner_failed"
             ) from exc
+        if completed.returncode != 0:
+            _fail(
+                "durable_verifier_detached_runner_failed",
+                _runner_diagnostic(completed),
+            )
         if (
-            completed.returncode != 0
-            or len(completed.stdout) > _MAX_RUNNER_OUTPUT_BYTES
+            len(completed.stdout) > _MAX_RUNNER_OUTPUT_BYTES
             or len(completed.stderr) > _MAX_RUNNER_OUTPUT_BYTES
         ):
-            _fail("durable_verifier_detached_runner_failed")
+            _fail(
+                "durable_verifier_detached_runner_output_too_large",
+                _runner_diagnostic(completed),
+            )
         try:
             payload = json.loads(completed.stdout)
         except (UnicodeError, json.JSONDecodeError) as exc:
