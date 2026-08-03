@@ -13,7 +13,10 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from core.dialogue.referents import resolve_second_person
-from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+from core.runtime.desktop_objective_intent import (
+    looks_like_desktop_objective,
+    looks_like_screen_observation,
+)
 from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
     DESKTOP_TASK_RETRY_SAFE_ACTIONS,
@@ -3933,20 +3936,16 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _objective_requests_observation_only(objective: str) -> bool:
-        lowered = str(objective or "").lower()
-        if not lowered:
-            return False
-        observation_markers = (
-            "what is on my screen",
-            "what's on my screen",
-            "read the screen",
-            "read my screen",
-            "inspect the screen",
-            "look at the screen",
-            "describe the screen",
-            "screenshot",
-        )
-        return any(marker in lowered for marker in observation_markers)
+        """Delegates to the one shared definition.
+
+        This was a literal-substring list, and it disagreed with the regex the
+        router already used. "Can you see what's on the screen and tell me what
+        you see?" said "the screen" where the list said "my screen", so a read
+        escalated into os_automation and came back refused for having no
+        observable acceptance contract. See looks_like_screen_observation.
+        """
+
+        return looks_like_screen_observation(objective)
 
     @staticmethod
     def _objective_needs_general_os_automation(objective: str) -> bool:

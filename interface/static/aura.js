@@ -1173,6 +1173,9 @@ function pruneVisibleMessages(messages) {
     while (messages && messages.children.length > MAX_VISIBLE_MESSAGES) {
         messages.removeChild(messages.firstChild);
     }
+    // Every append into the transcript funnels through here, so this is the
+    // one place that has to notice the transcript stopped being empty.
+    if (typeof updateLanePlaceholder === 'function') updateLanePlaceholder();
 }
 
 function renderRetryPanel(container, message, retryLabel, retryHandler) {
@@ -1279,25 +1282,41 @@ function conversationEntriesToMessages(entries) {
     return out;
 }
 
-// The placeholder the shell ships in index.html before any verified reply
-// path exists. Declared once here because two code paths test for it: a
-// prefix match in either of them would keep matching after the markup's
-// wording changed, so the pane would treat a DIFFERENT message as "still
-// just the placeholder" and clear a real transcript on top of it.
+// The lane-status text the shell ships in index.html before any verified
+// reply path exists. Declared once here because the markup and the tests both
+// pin the exact wording: a prefix match would keep matching after the wording
+// changed, so the pane would treat a DIFFERENT message as "still just the
+// placeholder" and clear a real transcript on top of it.
 const LANE_INITIALIZING_PLACEHOLDER =
     'Conversation lane initializing. Waiting for verified Aura reply path...';
 
+// True when the transcript holds no turns. Counts elements rather than reading
+// textContent: appendMsg appends an EMPTY div and types the text in
+// afterwards, so a pane that had just received a message read as empty for the
+// length of the animation — long enough for a poll to wipe it and re-hydrate
+// over the top of a live turn.
+function transcriptIsEmpty(messages) {
+    return !messages || messages.children.length === 0;
+}
+
+// The single owner of the lane-status element's visibility. It is an overlay
+// pinned above the transcript, never a member of it, so it cannot appear
+// between two turns; and it goes away as soon as there is anything real to
+// read, whatever the lane's state.
+function updateLanePlaceholder() {
+    const placeholder = $('lane-placeholder');
+    if (!placeholder) return;
+    const messages = DOM.messages || $('messages');
+    const show = transcriptIsEmpty(messages) && !state.conversationReady;
+    placeholder.hidden = !show;
+}
 
 function hydrateRecentConversation(entries) {
     const messages = DOM.messages || $('messages');
     if (!messages || !Array.isArray(entries) || !entries.length) return;
-    // Re-hydrate whenever the pane is showing nothing of the conversation:
-    // the placeholder, or genuinely empty. Requiring the placeholder alone
-    // meant a pane cleared to empty could never recover its own transcript.
-    const text = messages.textContent || '';
-    const isEmpty = messages.children.length === 0 || !text.trim();
-    const hasOnlyPlaceholder = messages.children.length === 1 && text.includes(LANE_INITIALIZING_PLACEHOLDER);
-    if (!hasOnlyPlaceholder && !isEmpty) return;
+    // Only ever hydrate into an empty transcript. Hydrating over a populated
+    // one duplicated and reordered turns.
+    if (!transcriptIsEmpty(messages)) return;
 
     const restored = conversationEntriesToMessages(entries.slice(-12));
     if (!restored.length) return;
@@ -1306,6 +1325,7 @@ function hydrateRecentConversation(entries) {
     for (const item of restored) {
         appendMsg(item.role, item.text, false, item.metadata);
     }
+    updateLanePlaceholder();
 }
 
 function applyVoiceSummary(voice) {
@@ -5247,6 +5267,7 @@ function applyConversationLane(lane, healthStatus = '') {
 
     state.conversationLane = effectiveLane;
     state.conversationReady = !!effectiveLane.conversation_ready;
+    updateLanePlaceholder();
 
     const laneText = conversationLaneStatusText(effectiveLane);
     const laneStandby = laneIsStandby(effectiveLane);
@@ -5264,13 +5285,6 @@ function applyConversationLane(lane, healthStatus = '') {
         if (typingInd) typingInd.classList.remove('show');
         setChatPanelState('idle');
 
-        const messages = DOM.messages || $('messages');
-        const hasOnlyInitializingPlaceholder = messages
-            && messages.children.length === 1
-            && messages.textContent.includes(LANE_INITIALIZING_PLACEHOLDER);
-        if (hasOnlyInitializingPlaceholder) {
-            messages.innerHTML = '';
-        }
         if (state.chatSendQueue.length) drainQueuedChatMessages();
     } else {
         updateTypingLabel(

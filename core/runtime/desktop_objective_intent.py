@@ -268,4 +268,46 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     return bool(_DIRECT_DESKTOP_ACTION_RE.search(sanitized_text))
 
 
-__all__ = ["looks_like_desktop_objective"]
+#: Verbs that change something. A screen request carrying one of these is
+#: "look, then act", not a read. Drawn from the action terms above, minus the
+#: ones that ARE ways of asking to be shown something.
+_MUTATING_ACTION_TERMS: tuple[str, ...] = tuple(
+    term
+    for term in _DESKTOP_OBJECTIVE_ACTION_TERMS
+    if term not in {"find", "search", "google", "look up", "show me", "tab", "pdf"}
+)
+
+
+def looks_like_screen_observation(user_message: str) -> bool:
+    """True when the request is to READ the screen and report, not to act on it.
+
+    Observation and actuation need different lanes. os_automation is the
+    actuation lane: it refuses any objective without an observable acceptance
+    contract, which is correct, because a description is not an effect it can
+    verify. Sending a read there produces "OS automation refused to act
+    because the objective has no complete observable acceptance contract" for
+    a question the perception lane answers in one screenshot.
+
+    This existed twice and the copies disagreed. desktop_task carried a
+    literal-substring list containing "what's on my screen" and "look at the
+    screen"; live on 2026-08-03, "Can you see what's on the screen and tell me
+    what you see?" matched none of them — "the screen", not "my screen" — so
+    the read escalated to os_automation and was refused. The regex here
+    already matched it. One definition now, shared by both callers.
+    """
+
+    text = normalize_memory_intent_text(user_message).lower()
+    if not text:
+        return False
+    sanitized_text = strip_negated_action_spans(text).lower()
+    if not _SCREEN_OBSERVATION_RE.search(sanitized_text):
+        return False
+    if _PAST_SCREEN_NARRATION_RE.search(sanitized_text):
+        # Recounting what was on screen earlier is conversation, not a look.
+        return False
+    # "Look at the screen and close the window" observes AND acts; only the
+    # actuation lane can finish it.
+    return not _contains_desktop_objective_term(sanitized_text, _MUTATING_ACTION_TERMS)
+
+
+__all__ = ["looks_like_desktop_objective", "looks_like_screen_observation"]

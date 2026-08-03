@@ -905,6 +905,24 @@ main {
     z-index: 1;
 }
 
+/* Lane status, pinned above the transcript rather than inside it. It sits in
+   the panel's normal flow at the top, so it can never be scrolled into the
+   middle of a conversation and can never be reordered by hydration. */
+.lane-placeholder {
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 2;
+    padding: 0 40px;
+}
+
+.lane-placeholder[hidden] {
+    display: none;
+}
+
+.lane-placeholder .sys-box {
+    margin: 20px auto 0;
+}
+
 .sys-box {
     border: 1px solid rgba(138, 43, 226, 0.4);
     padding: 20px 28px;

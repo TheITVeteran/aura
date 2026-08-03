@@ -444,11 +444,22 @@
     <main>
         <!-- Chat Column -->
         <section class="chat-panel">
-            <div id="messages">
+            <!-- Lane status is NOT a message. It lived inside #messages as a
+                 .sys-box, which made it a transcript entry: hydration and
+                 pruning moved it around, so it could surface between two real
+                 turns as though Aura had said it mid-conversation. It is a
+                 pinned overlay now — outside the list, so it cannot take a
+                 message slot, and hidden the moment a real transcript exists. -->
+            <!-- Visible at load on purpose: if the runtime never answers, this
+                 is the only thing that explains the empty panel. JS hides it
+                 the moment there is a transcript or a ready lane. -->
+            <div id="lane-placeholder" class="lane-placeholder" role="status" aria-live="polite">
                 <div class="sys-box">
                     Conversation lane initializing. Waiting for verified Aura reply path...
                 </div>
             </div>
+
+            <div id="messages"></div>
 
             <div class="voice-orb-wrap" id="voice-orb-wrap">
                 <div class="voice-orb" id="voice-orb"></div>
