@@ -106,9 +106,22 @@ class TestLogDirResolution:
         monkeypatch.setenv("AURA_LOG_DIR", str(tmp_path / "env"))
         assert _resolve_log_dir(None) == tmp_path / "env"
 
-    def test_default_is_live_home(self, monkeypatch):
+    def test_default_is_this_runtimes_own_log_dir(self, monkeypatch):
+        """Logs land under state_root(), not a hard-coded ~/.aura.
+
+        This asserted ``Path.home() / ".aura" / "logs"`` from before runtime
+        profiles existed. A TEST runtime resolves to ``.aura-test``, so the old
+        assertion demanded that a test run default its logs into the LIVE
+        instance's directory — the exact thing state_ownership.py exists to
+        prevent, and the thing the sibling test below checks conftest avoids.
+
+        state_root() is the same ~/.aura/logs for a live runtime, so this keeps
+        the original guarantee while no longer requiring the wrong one.
+        """
+        from core.runtime.state_ownership import state_root
+
         monkeypatch.delenv("AURA_LOG_DIR", raising=False)
-        assert _resolve_log_dir(None) == Path.home() / ".aura" / "logs"
+        assert _resolve_log_dir(None) == state_root() / "logs"
 
     def test_conftest_redirects_test_logs_away_from_live_home(self):
         import os

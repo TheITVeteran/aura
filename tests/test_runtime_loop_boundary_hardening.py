@@ -354,8 +354,15 @@ def test_research_trigger_default_path_is_runtime_state() -> None:
 
     path = research_triggers.DEFAULT_TRIGGER_PATH
 
+    # The point of this test is its name: the default is RUNTIME STATE, not a
+    # path inside the checkout. state_root() is what expresses that — it is
+    # ~/.aura for a live runtime and an isolated sibling for a test one, so
+    # pinning Path.home()/".aura" demanded that a TEST run default into the
+    # live instance's data directory.
+    from core.runtime.state_ownership import state_root
+
     assert "live-source" not in str(path)
-    assert path == Path.home() / ".aura" / "data" / "autonomy" / "research-triggers.jsonl"
+    assert path == state_root() / "data" / "autonomy" / "research-triggers.jsonl"
 
 
 def test_research_trigger_env_path_is_resolved_at_call_time(tmp_path, monkeypatch) -> None:
