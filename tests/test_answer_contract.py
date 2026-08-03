@@ -8,7 +8,9 @@ strict parser on validity so decode receipts and scoring share one truth.
 from __future__ import annotations
 
 from core.brain.llm.latent_cortex.answer_contract import (
+    ContractDecodeDisposition,
     contract_answer_state,
+    contract_decode_disposition,
     is_contract_complete,
 )
 
@@ -64,10 +66,10 @@ def test_multiple_markers_never_complete():
 def test_non_object_payload_never_completes():
     assert not is_contract_complete("FINAL_ANSWER: 42")
     assert not is_contract_complete('FINAL_ANSWER: [1, 2, 3]')
+    assert contract_answer_state("FINAL_ANSWER: 42")["reason"] == "payload_not_json_object"
     assert (
-        contract_answer_state("FINAL_ANSWER: 42")["reason"]
-        == "marker_line_has_no_object"
-        or not contract_answer_state("FINAL_ANSWER: 42")["complete"]
+        contract_decode_disposition("FINAL_ANSWER: 42")
+        is ContractDecodeDisposition.INVALID
     )
 
 
@@ -80,6 +82,8 @@ def test_trailing_content_after_object_is_complete_but_invalid():
     assert state["complete"] is True
     assert state["valid"] is False
     assert state["reason"].startswith("parser_rejected")
+    assert is_contract_complete(text) is False
+    assert contract_decode_disposition(text) is ContractDecodeDisposition.INVALID
 
 
 def test_invalid_json_in_closed_braces_does_not_complete():
@@ -116,3 +120,20 @@ def test_streaming_simulation_stops_exactly_once_at_completion():
     assert fire_points
     assert fire_points[0] == len(full)  # the final char IS the close brace
     assert fire_points == list(range(fire_points[0], len(full) + 1))
+
+
+def test_second_marker_is_irrecoverable_instead_of_consuming_the_token_cap():
+    text = 'FINAL_ANSWER: {broken\nFINAL_ANSWER: {"value":1}'
+
+    assert contract_decode_disposition(text) is ContractDecodeDisposition.INVALID
+
+
+def test_open_object_remains_recoverable_until_closed_or_refuted():
+    assert (
+        contract_decode_disposition('FINAL_ANSWER: {"value":')
+        is ContractDecodeDisposition.CONTINUE
+    )
+    assert (
+        contract_decode_disposition('FINAL_ANSWER: {"value":1}')
+        is ContractDecodeDisposition.COMPLETE
+    )

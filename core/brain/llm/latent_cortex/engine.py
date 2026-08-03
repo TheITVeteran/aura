@@ -1413,18 +1413,18 @@ class LatentCortexEngine:
         # The full-text check runs only when the newest piece could have
         # closed an object ("}") or on a periodic beat after the marker
         # might exist — text work, never model work.
-        def contract_complete_now() -> bool:
+        def contract_disposition_now():
             if force_exact_tokens or not contract_required:
-                return False
+                return None
             from core.brain.llm.latent_cortex.answer_contract import (
-                is_contract_complete,
+                contract_decode_disposition,
             )
 
             try:
                 text = self.tokenizer.decode(out)
             except (TypeError, ValueError, KeyError, AttributeError):
-                return False
-            return is_contract_complete(text)
+                return None
+            return contract_decode_disposition(text)
 
         token, token_logprob = sample_disciplined(initial_logits)
         termination = "token_limit"
@@ -1439,9 +1439,19 @@ class LatentCortexEngine:
             out.append(token)
             if token_logprobs_out is not None:
                 token_logprobs_out.append(token_logprob)
-            contract_satisfied = contract_complete_now()
+            contract_disposition = contract_disposition_now()
+            contract_satisfied = bool(
+                contract_disposition is not None
+                and contract_disposition.value == "complete"
+            )
             if contract_satisfied:
                 termination = "contract_complete"
+                break
+            if (
+                contract_disposition is not None
+                and contract_disposition.value == "invalid"
+            ):
+                termination = "contract_irrecoverable"
                 break
             newline_run = newline_run + 1 if self._is_pure_newline_token(token) else 0
             sentence_done = self.tokenizer is None or self._token_ends_sentence(token)

@@ -26,6 +26,7 @@ reject, this module reports as incomplete/invalid for the same reason.
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from typing import Any
 
 from core.brain.llm.latent_cortex.frontier_tasks import (
@@ -40,6 +41,24 @@ ANSWER_CONTRACT_SCHEMA = "aura.latent_cortex.answer_contract.v1"
 # A contract answer object is small (task payloads are bounded); a scan
 # bound keeps adversarial no-close-brace tails from consuming the decode.
 _MAX_PAYLOAD_SCAN_CHARS = 8_192
+
+
+class ContractDecodeDisposition(StrEnum):
+    CONTINUE = "continue"
+    COMPLETE = "complete"
+    INVALID = "invalid"
+
+
+_IRRECOVERABLE_REASONS = frozenset(
+    {
+        "response_too_large",
+        "multiple_markers",
+        "marker_line_has_no_object",
+        "payload_not_json_object",
+        "object_invalid_json",
+        "object_not_dict",
+    }
+)
 
 
 def _complete_json_object_span(tail: str) -> tuple[int, int] | None:
@@ -109,6 +128,12 @@ def contract_answer_state(text: Any) -> dict[str, Any]:
         # Marker line ended before any object began — parser would reject.
         state["reason"] = "marker_line_has_no_object"
         return state
+    stripped_tail = tail.lstrip(" \t")
+    if stripped_tail and not stripped_tail.startswith("{"):
+        # Once a non-whitespace character follows the marker, appending more
+        # tokens can never turn the payload into the required JSON object.
+        state["reason"] = "payload_not_json_object"
+        return state
     span = _complete_json_object_span(tail)
     if span is None:
         state["reason"] = "object_open"
@@ -143,11 +168,31 @@ def is_contract_complete(text: Any) -> bool:
     Stopping here makes the answer terminal by construction; identical for
     every arm, receipted by the caller as termination ``contract_complete``.
     """
-    return bool(contract_answer_state(text)["complete"])
+    return bool(contract_answer_state(text)["valid"])
+
+
+def contract_decode_disposition(text: Any) -> ContractDecodeDisposition:
+    """Classify a streaming prefix without pretending invalidity is retryable.
+
+    ``INVALID`` means no appended suffix can make the current transcript pass
+    the strict terminal parser.  Decoders should stop and expose the failure;
+    continuing only spends compute on a response that is already impossible to
+    repair without rewriting prior model output.
+    """
+
+    state = contract_answer_state(text)
+    if state["valid"]:
+        return ContractDecodeDisposition.COMPLETE
+    reason = str(state["reason"])
+    if reason in _IRRECOVERABLE_REASONS or reason.startswith("parser_rejected:"):
+        return ContractDecodeDisposition.INVALID
+    return ContractDecodeDisposition.CONTINUE
 
 
 __all__ = [
     "ANSWER_CONTRACT_SCHEMA",
+    "ContractDecodeDisposition",
     "contract_answer_state",
+    "contract_decode_disposition",
     "is_contract_complete",
 ]

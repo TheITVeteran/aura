@@ -1818,7 +1818,8 @@ def _vanilla_once(
     from mlx_lm import stream_generate
 
     from core.brain.llm.latent_cortex.answer_contract import (
-        is_contract_complete,
+        ContractDecodeDisposition,
+        contract_decode_disposition,
     )
 
     kwargs: dict[str, Any] = {}
@@ -1849,7 +1850,11 @@ def _vanilla_once(
     ):
         pieces.append(response.text)
         generated_tokens = int(response.generation_tokens)
-        if is_contract_complete("".join(pieces)):
+        disposition = contract_decode_disposition("".join(pieces))
+        if disposition in {
+            ContractDecodeDisposition.COMPLETE,
+            ContractDecodeDisposition.INVALID,
+        }:
             break
     text = "".join(pieces)
     prompt_tokens = len(prompt_token_ids)

@@ -156,6 +156,11 @@ class _CharacterTokenizer:
         return "".join(chr(int(token)) for token in ids if int(token) != 0)
 
 
+class _IrrecoverableContractTokenizer(_CharacterTokenizer):
+    def decode(self, ids):
+        return "FINAL_ANSWER: not-json" if ids else ""
+
+
 def test_contract_masks_early_eos_and_completes_inside_bounded_grace():
     text = 'FINAL_ANSWER: {"node":6}'
     engine = LatentCortexEngine(
@@ -233,6 +238,35 @@ def test_contract_incomplete_exhaustion_is_bounded_and_receipted():
     assert result.receipt.decode_contract_grace_used_tokens == 3
 
 
+def test_engine_stops_immediately_on_irrecoverable_contract_prefix():
+    engine = LatentCortexEngine(
+        _tiny_model(),
+        _IrrecoverableContractTokenizer(),
+        config=_config(
+            "final_answer_v1",
+            decode_max_tokens=48,
+            decode_contract_grace_tokens=48,
+        ),
+    )
+    sampled = {"count": 0}
+
+    def sample_once(logits, _temperature, _top_p, *, budget=None, random_key=None):
+        del logits, budget, random_key
+        sampled["count"] += 1
+        return 17
+
+    engine._sample = sample_once
+    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+
+    assert result.ok is False
+    assert result.reason == "decode_incomplete:contract_irrecoverable"
+    assert result.receipt.decode_termination == "contract_irrecoverable"
+    assert result.receipt.decode_generated_tokens == 1
+    assert result.receipt.decode_contract_satisfied is False
+    assert result.text == "FINAL_ANSWER: not-json"
+    assert sampled["count"] == 1
+
+
 def test_service_receipt_contract_accepts_contract_complete():
     from core.brain.latent_cortex_service import LatentCortexService
 
@@ -294,6 +328,33 @@ def test_service_rejects_forged_or_incomplete_contract_completion():
 
     assert "decode_contract_unsatisfied" in errors
     assert "decode_contract_grace_accounting_invalid" in errors
+
+
+def test_service_rejects_irrecoverable_contract_output_as_product_incomplete():
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    receipt = {
+        "decode_requested_tokens": 48,
+        "decode_generated_tokens": 1,
+        "decode_termination": "contract_irrecoverable",
+        "decode_contract_required": True,
+        "decode_contract_satisfied": False,
+        "decode_contract_grace_tokens": 48,
+        "decode_contract_grace_used_tokens": 0,
+    }
+    config = {
+        "n_slots": 4,
+        "n_branches": 1,
+        "decode_max_tokens": 48,
+        "decode_contract": "final_answer_v1",
+        "decode_contract_grace_tokens": 48,
+    }
+
+    errors = LatentCortexService._receipt_contract_errors(receipt, config)
+
+    assert "decode_contract_unsatisfied" in errors
+    assert "decode_contract_termination_mismatch" in errors
+    assert "decode_incomplete" in errors
 
 
 def test_campaign_vanilla_stream_stops_at_contract(monkeypatch):
@@ -365,6 +426,45 @@ def test_campaign_vanilla_without_contract_consumes_whole_stream(monkeypatch):
     )
     assert text == "no marker here just prose"
     assert layer_apps == (4 + 5) * 8
+
+
+def test_campaign_stream_stops_when_contract_is_irrecoverably_invalid(monkeypatch):
+    import mlx_lm
+
+    from tools import run_latent_cortex_paired_campaign as runner
+
+    consumed = {"count": 0}
+    segments = [
+        SimpleNamespace(text="FINAL_ANSWER: not-json", generation_tokens=4),
+        SimpleNamespace(text='\nFINAL_ANSWER: {"node":6}', generation_tokens=10),
+        SimpleNamespace(text=" runaway tail", generation_tokens=13),
+    ]
+
+    def scripted_stream(model, tokenizer, prompt, max_tokens, **kwargs):
+        for segment in segments:
+            consumed["count"] += 1
+            yield segment
+
+    monkeypatch.setattr(mlx_lm, "stream_generate", scripted_stream)
+    tokenizer = SimpleNamespace(encode=lambda text, **kw: [1] * 4)
+    model = _profiled_stub_model(8)
+    task = SimpleNamespace(
+        prompt="What node?",
+        domain="mathematics",
+        response_contract=None,
+    )
+
+    text, layer_apps, *_ = runner._vanilla_once(
+        model,
+        tokenizer,
+        task,
+        max_tokens=256,
+        accounting_engine=_AccountingEngine(4),
+    )
+
+    assert text == "FINAL_ANSWER: not-json"
+    assert consumed["count"] == 1
+    assert layer_apps == (4 + 3) * 8
 
 
 def test_branch_selection_receipts_contract_verdicts():
