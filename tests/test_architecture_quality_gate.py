@@ -11,7 +11,10 @@ from core.architecture_quality import scorer as scorer_module
 from core.architecture_quality.attestation import attest_payload
 from core.architecture_quality.gate import ArchitectureQualityGate, ArchitectureQualityPolicy
 from core.architecture_quality.scorer import _strongly_connected_components, score_codebase
-from tools.closeout.migrate_architecture_quality_baseline import verify_migration_receipt
+from tools.closeout.migrate_architecture_quality_baseline import (
+    _load_legacy_baseline,
+    verify_migration_receipt,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -330,6 +333,34 @@ def test_migration_receipt_is_pinned_and_tamper_evident(tmp_path: Path):
     receipt["phases"][0]["integrity"]["all_checks_passed"] = False
     with pytest.raises(ValueError, match="attestation mismatch"):
         verify_migration_receipt(receipt, trusted_public_key_pem=public_pem)
+
+
+def test_migration_reloads_legacy_baseline_from_its_commit(tmp_path: Path):
+    repo = tmp_path / "repo"
+    baseline = repo / "config" / "aura_architecture_quality_baseline.json"
+    _write(baseline, json.dumps({"score": 46.38, "metrics": {}, "include_roots": ["core"]}))
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "config/aura_architecture_quality_baseline.json"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "legacy"], cwd=repo, check=True)
+    legacy_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _write(baseline, json.dumps({"schema_version": 2, "score": 1.0}))
+
+    loaded = _load_legacy_baseline(
+        repo,
+        legacy_commit=legacy_commit,
+        baseline_path=baseline,
+    )
+
+    assert loaded["score"] == 46.38
+    assert "schema_version" not in loaded
 
 
 def test_self_modification_hook_rejects_architecture_regression(tmp_path: Path):

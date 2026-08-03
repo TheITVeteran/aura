@@ -61,7 +61,11 @@ def main() -> int:
         parser.error("--output is required unless --verify is used")
 
     root = Path(args.root).resolve(strict=True)
-    legacy_data = json.loads(Path(args.legacy_baseline).read_text(encoding="utf-8"))
+    legacy_data = _load_legacy_baseline(
+        root,
+        legacy_commit=args.legacy_commit,
+        baseline_path=Path(args.legacy_baseline),
+    )
     receipt = build_migration_receipt(
         root,
         legacy_data=legacy_data,
@@ -445,6 +449,35 @@ def _commit_identity(root: Path, revision: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _load_legacy_baseline(
+    root: Path,
+    *,
+    legacy_commit: str,
+    baseline_path: Path,
+) -> dict[str, Any]:
+    commit = _commit_identity(root, legacy_commit)
+    try:
+        relative = baseline_path.resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError("legacy baseline path must be inside the repository") from exc
+    try:
+        encoded = subprocess.run(
+            ["git", "show", f"{commit}:{relative}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(
+            f"legacy baseline {relative} is absent from commit {commit}"
+        ) from exc
+    data = json.loads(encoded)
+    if int(data.get("schema_version", 1)) != 1:
+        raise ValueError("historical baseline source is not the expected schema-1 evidence")
+    return data
 
 
 def _require_ancestor(root: Path, ancestor: str, descendant: str) -> None:
