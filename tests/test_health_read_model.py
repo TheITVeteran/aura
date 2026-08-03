@@ -1389,15 +1389,23 @@ def test_runtime_revision_retries_unverified_collection_after_worker_ttl(monkeyp
         attempts.append(len(attempts) + 1)
         return unverified if len(attempts) == 1 else verified
 
-    timestamps = iter((100.0, 101.0, 102.1))
+    # Patching time.monotonic replaces it for the WHOLE process, so an
+    # exhaustible iterator here is a trap: any background thread, lock or
+    # logger that reads the clock during this test consumes a scripted value
+    # and the test fails with "generator raised StopIteration" — a failure
+    # that measures what else the process happened to be doing. The clock is a
+    # value this test sets explicitly instead.
+    clock = {"now": 100.0}
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 0.0)
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_UNVERIFIED_TTL_S", 2.0)
     monkeypatch.setattr(system_routes, "_collect_runtime_revision_uncached", collect)
-    monkeypatch.setattr(system_routes.time, "monotonic", lambda: next(timestamps))
+    monkeypatch.setattr(system_routes.time, "monotonic", lambda: clock["now"])
 
     first = system_routes._runtime_revision_contract()
+    clock["now"] = 101.0
     before_ttl = system_routes._runtime_revision_contract()
+    clock["now"] = 102.1
     after_ttl = system_routes._runtime_revision_contract()
 
     assert first["verified"] is False
@@ -1421,15 +1429,23 @@ def test_runtime_revision_refreshes_verified_identity_after_ttl(monkeypatch):
             "issues": [],
         }
 
-    timestamps = iter((100.0, 110.0, 131.0))
+    # Patching time.monotonic replaces it for the WHOLE process, so an
+    # exhaustible iterator here is a trap: any background thread, lock or
+    # logger that reads the clock during this test consumes a scripted value
+    # and the test fails with "generator raised StopIteration" — a failure
+    # that measures what else the process happened to be doing. The clock is a
+    # value this test sets explicitly instead.
+    clock = {"now": 100.0}
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE", None)
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_CACHE_COLLECTED_AT", 0.0)
     monkeypatch.setattr(system_routes, "_RUNTIME_REVISION_VERIFIED_TTL_S", 30.0)
     monkeypatch.setattr(system_routes, "_collect_runtime_revision_uncached", collect)
-    monkeypatch.setattr(system_routes.time, "monotonic", lambda: next(timestamps))
+    monkeypatch.setattr(system_routes.time, "monotonic", lambda: clock["now"])
 
     first = system_routes._runtime_revision_contract()
+    clock["now"] = 110.0
     before_ttl = system_routes._runtime_revision_contract()
+    clock["now"] = 131.0
     after_ttl = system_routes._runtime_revision_contract()
 
     assert first["revision_token"] == "1" * 64
