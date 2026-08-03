@@ -1,5 +1,5 @@
 {
-  "baseline_sha256": "4434cea129ebc6828199afdb39c218cdd03c1876c28cc62f0ae7c410644a1db9",
+  "baseline_sha256": "e90869ecf78e39fdf5d5732ede16f92208b4a56e5ec8c9fbff9ee1a24324c006",
   "cycles": [
     [
       "core.ontogeny",
@@ -7177,7 +7177,7 @@
     "tools/closeout/background_autonomy_proof.py": 335,
     "tools/closeout/final_closeout_assembler.py": 323,
     "tools/closeout/frontier_standards_matrix.py": 320,
-    "tools/closeout/migrate_architecture_quality_baseline.py": 476,
+    "tools/closeout/migrate_architecture_quality_baseline.py": 509,
     "tools/closeout/operational_label_baselines.py": 726,
     "tools/closeout/remaining_checkpoint_contract.py": 613,
     "tools/closeout/run_codebase_closeout_audit.py": 611,
@@ -7415,7 +7415,7 @@
     "unresolved_dynamic_imports": 22,
     "unresolved_local_imports": 0
   },
-  "migration_receipt_sha256": "eaf91a61b2d446459bbde45b7d0cb7172d0cc3946aaa047ec81738bf2a97fb8c",
+  "migration_receipt_sha256": "a42575f4454c14b2f809f193479d61a967fcbf07055385f7a5d772eb3586ae45",
   "module_to_path": {
     "core": "core/__init__.py",
     "core.actuation": "core/actuation/__init__.py",
@@ -10360,7 +10360,7 @@
   "signature": {
     "algorithm": "ed25519",
     "public_key_sha256": "2ffb59af48ff6db6b1b2ef4b8e0428c00a17e39bc99749e7dffffb6e66118dab",
-    "signature_b64": "yvl40Fm5nhJufVnZvw7ATlEMr7IeboG10xdpLAwJtGx9EqFCwS6zVUzIx4WkNKNDYAalai/3TrrZLcVof9n1Cg=="
+    "signature_b64": "DCwF0pBWy+rDHuqB1+H5hh8N+l5iMZbhFrJowkvao7M2C8ZaT/hgsIeuNXXzewcofC9eBDqzGhQoJ0YvOfLAAQ=="
   },
-  "source_report_attestation_sha256": "f0ad5deb1f1ffd073613853e1b81084a54fabe64770554d8286c5ed0a734bb00"
+  "source_report_attestation_sha256": "14b130c7a9062297a2cef9e992781a29a4cc187da7a962c850c620c577a280c5"
 }

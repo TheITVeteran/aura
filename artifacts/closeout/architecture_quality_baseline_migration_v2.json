@@ -43,13 +43,13 @@
   },
   "legacy_baseline_sha256": "8c1595df671c426aa2b356ceadaef563954dc699c446abfd51833b5fab8cb982",
   "migration_decision": {
-    "future_ratchet_origin": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+    "future_ratchet_origin": "b320d571b5d9ea3da9a5e918bd17bab7854c6e7d",
     "future_regressions_waived": false,
     "legacy_debt_preserved": true,
     "rationale": "The complete historical source deltas are retained below under one analyzer schema. The target baseline starts a strict non-regression ratchet; it does not relabel accumulated architecture debt as resolved.",
     "status": "explicitly_migrated_not_erased"
   },
-  "migration_sha256": "eaf91a61b2d446459bbde45b7d0cb7172d0cc3946aaa047ec81738bf2a97fb8c",
+  "migration_sha256": "a42575f4454c14b2f809f193479d61a967fcbf07055385f7a5d772eb3586ae45",
   "phases": [
     {
       "ambiguous_owners_added": [],
@@ -16787,11 +16787,11 @@
         "core/architect/code_graph.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
         "core/architect/hidden_eval.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
         "core/architect/lesion_matrix.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
-        "core/architecture_quality/attestation.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
-        "core/architecture_quality/dependency_analysis.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
-        "core/architecture_quality/gate.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
-        "core/architecture_quality/models.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
-        "core/architecture_quality/scorer.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+        "core/architecture_quality/attestation.py": "002190af786b8693090dc2789fccb37ee967fc80",
+        "core/architecture_quality/dependency_analysis.py": "002190af786b8693090dc2789fccb37ee967fc80",
+        "core/architecture_quality/gate.py": "002190af786b8693090dc2789fccb37ee967fc80",
+        "core/architecture_quality/models.py": "002190af786b8693090dc2789fccb37ee967fc80",
+        "core/architecture_quality/scorer.py": "002190af786b8693090dc2789fccb37ee967fc80",
         "core/audit/__init__.py": "9920fa4004f48130dc3900e3d77187ee12f9f67d",
         "core/autonomic/allostasis.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
         "core/autonomic/reflection_loop.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
@@ -17363,7 +17363,7 @@
         "core/runtime/reconcile.py": "4c4ded6089590a133caed0ff0f337a004e1012df",
         "core/runtime/release_certificate.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
         "core/runtime/resource_stage_guard.py": "dd5cc59990fff95dd033cdfee9e71d31b018d290",
-        "core/runtime/runtime_relaunch.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+        "core/runtime/runtime_relaunch.py": "002190af786b8693090dc2789fccb37ee967fc80",
         "core/runtime/runtime_settings.py": "5614f9a549b9fa7187766878618f5ead2c7772bc",
         "core/runtime/runtime_shell_snapshot.py": "70f9b2bf2a5b56fc830b5ebe7122552877fb33c4",
         "core/runtime/sanitizers.py": "c4b7f1b33e94266b9f157bb4e00ba22cd2eb3ada",
@@ -17407,7 +17407,7 @@
         "core/self/identity_consistency.py": "b81cd3fd53c4626b4b2f4d0e0eb97f22173dd08d",
         "core/self/inner_language.py": "415b59d38216624446ab6a8f74625464e159eb25",
         "core/self/self_condition.py": "415b59d38216624446ab6a8f74625464e159eb25",
-        "core/self/will_engine.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+        "core/self/will_engine.py": "002190af786b8693090dc2789fccb37ee967fc80",
         "core/self_improvement/artifact_grading.py": "8e129b8870f1152094d1e3b03276f62fc0cf4d41",
         "core/self_improvement/artifact_quality.py": "0a3cac2fb58b9c3e23547536f48b3cb251d9623f",
         "core/self_improvement/checkers_reference.py": "2724e20992fe213b31d4de3d6c3922d1a8926a86",
@@ -17491,8 +17491,8 @@
         "tools/build_resident_v3_pilot_contract.py": "a4750793ed17eb478da2d485bfe5d20bbc44a6f5",
         "tools/build_structured_sft_dataset.py": "c5a51471f1fd90a70a83460ed95aaafe955145c0",
         "tools/check_layering.py": "c4b7f1b33e94266b9f157bb4e00ba22cd2eb3ada",
-        "tools/closeout/architecture_quality_gate.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
-        "tools/closeout/migrate_architecture_quality_baseline.py": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+        "tools/closeout/architecture_quality_gate.py": "002190af786b8693090dc2789fccb37ee967fc80",
+        "tools/closeout/migrate_architecture_quality_baseline.py": "b320d571b5d9ea3da9a5e918bd17bab7854c6e7d",
         "tools/closeout/semantic_remediation_ledger.py": "2b2e669743696a7da267603deb62f771936f0daa",
         "tools/closeout/semantic_review_ledger.py": "1b7dedaabd7da1d517a73ef6b1ee80eebd69cc15",
         "tools/configure_messages_contact.py": "ebb4faa9927b1b0422412f391b992d6fb7653469",
@@ -17607,7 +17607,7 @@
   "signature": {
     "algorithm": "ed25519",
     "public_key_sha256": "2ffb59af48ff6db6b1b2ef4b8e0428c00a17e39bc99749e7dffffb6e66118dab",
-    "signature_b64": "vkzTNNI9AedwtXj1u6pzw37jjJ0pqQtMa45iD//mYV4pJQYymA/JBiJy1hYTUC8hxXIrKXiYAkCmGEqvtxO4Cg=="
+    "signature_b64": "9Ccwy6IODveQ2WPd0YzJBn8QIyZTlvXFKh50nj5664//aqL74eF2RRAab/DCTFKb4dNG1R4D2vwJU4N9so0kAA=="
   },
   "snapshots": {
     "legacy": {
@@ -17686,8 +17686,8 @@
     },
     "target": {
       "analysis_scope_sha256": "9a9ac1ece4edbf521fc5e966979b3c3340020d1bffe8bc4215cb753cc73bbdea",
-      "authored_at": "2026-08-03T10:48:47-07:00",
-      "commit": "1e461bd72d935b622ed73f2d56cc39e41a5547aa",
+      "authored_at": "2026-08-03T10:56:55-07:00",
+      "commit": "b320d571b5d9ea3da9a5e918bd17bab7854c6e7d",
       "metrics": {
         "architecture_debt": 568.804,
         "conditional_dependency_edges": 2,
@@ -17717,9 +17717,9 @@
         "unresolved_dynamic_imports": 22,
         "unresolved_local_imports": 0
       },
-      "report_attestation_sha256": "f0ad5deb1f1ffd073613853e1b81084a54fabe64770554d8286c5ed0a734bb00",
+      "report_attestation_sha256": "14b130c7a9062297a2cef9e992781a29a4cc187da7a962c850c620c577a280c5",
       "score": 14.952064,
-      "subject": "fix(architecture): make quality evidence complete and tamper-evident"
+      "subject": "fix(architecture): make baseline migration reproducible"
     }
   }
 }
