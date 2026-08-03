@@ -82,6 +82,16 @@ APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
         "5ad187adb9e5c6d0e8e5cfc2abb33c7ee53f7b4ba867a752a188661459f1d321",
         "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",
     ): "cached_generated_rollin_rematerialization_v1",
+    (
+        "objective_policy",
+        "5ad187adb9e5c6d0e8e5cfc2abb33c7ee53f7b4ba867a752a188661459f1d321",
+        "2642c39ec7b351c5662d858505430ee7dd5bd8e1e3ee198f6d3794a159737e42",
+    ): "exact_cached_lexical_adjoint_v2",
+    (
+        "objective_policy",
+        "0cf65e020b6d953309847662dbbed5c196b080efc0816540db2ad0d050a97652",
+        "2642c39ec7b351c5662d858505430ee7dd5bd8e1e3ee198f6d3794a159737e42",
+    ): "exact_cached_lexical_adjoint_v2",
 }
 
 

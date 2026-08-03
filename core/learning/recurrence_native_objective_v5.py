@@ -22,11 +22,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.brain.llm.latent_cortex.recurrence_adapter import recurrence_adapter_scope
 from core.learning.recurrence_native_objective_v2 import (
+    _advance_recurrent_states,
+    _cached_causal_layers,
+    _logits,
+    _prepare_recurrent_prefix,
     cached_live_path_token_logprobs,
     generate_cached_live_path_rollin,
     transformer_layer_group_checkpointing,
 )
+from core.learning.role_conditioned_lora import recurrent_branch_index
 
 RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA = "aura.recurrence_native_objective.v5"
 GENERATED_ROLLIN_CONFIG_SCHEMA = "aura.generated_rollin_selection_config.v1"
@@ -510,6 +516,251 @@ def _rematerialized_branch_loss(
     return -mx.sum(logprobs * weight_tensor) / weight_total
 
 
+def _frozen_recurrent_prefix(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+) -> tuple[Any, tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], int, int]:
+    import mlx.core as mx
+
+    values = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
+    prompt_embeddings, seeds, prompts, states, anchors, prelude_end, coda_start = values
+
+    def detached(items: Sequence[Any]) -> tuple[Any, ...]:
+        result = tuple(mx.stop_gradient(value) for value in items)
+        mx.eval(result)
+        return result
+
+    frozen_prompt = mx.stop_gradient(prompt_embeddings)
+    mx.eval(frozen_prompt)
+    return (
+        frozen_prompt,
+        detached(seeds),
+        detached(prompts),
+        detached(states),
+        detached(anchors),
+        prelude_end,
+        coda_start,
+    )
+
+
+def _recomputed_states(
+    model: Any,
+    prompts: tuple[Any, ...],
+    anchors: tuple[Any, ...],
+    initial_states: tuple[Any, ...],
+    *,
+    spec: RLCExecutionSpec,
+    recurrent_steps: int,
+    prelude_end: int,
+    coda_start: int,
+) -> tuple[Any, ...]:
+    import mlx.core as mx
+
+    states = initial_states
+    for step in range(recurrent_steps):
+        outputs = _advance_recurrent_states(
+            model,
+            prompts,
+            states,
+            anchors,
+            spec,
+            step,
+            prelude_end,
+            coda_start,
+        )
+        next_states = tuple(mx.stop_gradient(value) for value in outputs)
+        mx.eval(next_states)
+        if states is not initial_states:
+            del states
+        del outputs
+        states = next_states
+        mx.clear_cache()
+    return states
+
+
+def _cached_branch_loss_from_final_states(
+    model: Any,
+    prompt_embeddings: Any,
+    seeds: tuple[Any, ...],
+    final_states: tuple[Any, ...],
+    answer_tokens: Sequence[int],
+    *,
+    branch_index: int,
+    bridge_tokens: Sequence[int],
+    rollin_tokens: Sequence[int],
+    prelude_end: int,
+    coda_start: int,
+    weight_tensor: Any,
+    weight_total: float,
+) -> Any:
+    import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
+
+    layers = tuple(model.model.layers)
+    cache = [KVCache() for _layer in layers]
+    _cached_causal_layers(model, prompt_embeddings, cache)
+    with recurrent_branch_index(branch_index), recurrence_adapter_scope():
+        _cached_causal_layers(
+            model,
+            seeds[branch_index],
+            cache,
+            start=0,
+            end=prelude_end,
+        )
+        persisted = _cached_causal_layers(
+            model,
+            final_states[branch_index],
+            cache,
+            start=prelude_end,
+            end=coda_start,
+        )
+        output = _cached_causal_layers(
+            model,
+            persisted,
+            cache,
+            start=coda_start,
+            end=len(layers),
+        )
+    logits = _logits(model, output)[0, -1]
+    targets = (*bridge_tokens, *answer_tokens)
+    decoder_inputs = (*bridge_tokens, *rollin_tokens)
+    answer_logprobs: list[Any] = []
+    for position, (target, decoder_input) in enumerate(zip(targets, decoder_inputs, strict=True)):
+        logprob = logits[target].astype(mx.float32) - mx.logsumexp(logits.astype(mx.float32))
+        if position >= len(bridge_tokens):
+            answer_logprobs.append(logprob)
+        if position + 1 == len(targets):
+            continue
+        hidden = model.model.embed_tokens(mx.array([[decoder_input]]))
+        hidden = _cached_causal_layers(model, hidden, cache)
+        logits = _logits(model, hidden)[0, -1]
+    logprobs = mx.stack(answer_logprobs)
+    return -mx.sum(logprobs * weight_tensor) / weight_total
+
+
+def _exact_adjoint_branch_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    bridge_tokens: Sequence[int],
+    rollin_tokens: Sequence[int],
+    weight_tensor: Any,
+    weight_total: float,
+) -> tuple[Any, Any]:
+    """Differentiate one cached branch with O(1) recurrent-depth residency."""
+
+    import mlx.core as mx
+    from mlx.utils import tree_map
+
+    parameters = model.trainable_parameters()
+    (
+        prompt_embeddings,
+        seeds,
+        prompts,
+        initial_states,
+        anchors,
+        prelude_end,
+        coda_start,
+    ) = _frozen_recurrent_prefix(model, prompt_tokens, spec=spec)
+    final_states = _recomputed_states(
+        model,
+        prompts,
+        anchors,
+        initial_states,
+        spec=spec,
+        recurrent_steps=spec.recurrent_steps,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+    )
+
+    def tail_objective(parameter_tree: Any, states: tuple[Any, ...]) -> Any:
+        model.update(parameter_tree)
+        with transformer_layer_group_checkpointing(model, parameter_tree, group_size=1):
+            return _cached_branch_loss_from_final_states(
+                model,
+                prompt_embeddings,
+                seeds,
+                states,
+                answer_tokens,
+                branch_index=branch_index,
+                bridge_tokens=bridge_tokens,
+                rollin_tokens=rollin_tokens,
+                prelude_end=prelude_end,
+                coda_start=coda_start,
+                weight_tensor=weight_tensor,
+                weight_total=weight_total,
+            )
+
+    value, (accumulated, cotangents) = mx.value_and_grad(
+        tail_objective,
+        argnums=(0, 1),
+    )(parameters, final_states)
+    mx.eval(value, accumulated, cotangents)
+    cotangents = tuple(mx.stop_gradient(item) for item in cotangents)
+    mx.eval(cotangents)
+    del final_states
+    mx.clear_cache()
+
+    for step in range(spec.recurrent_steps - 1, -1, -1):
+        prior_states = _recomputed_states(
+            model,
+            prompts,
+            anchors,
+            initial_states,
+            spec=spec,
+            recurrent_steps=step,
+            prelude_end=prelude_end,
+            coda_start=coda_start,
+        )
+
+        def transition_pullback(
+            parameter_tree: Any,
+            states: tuple[Any, ...],
+            _step: int = step,
+            _cotangents: tuple[Any, ...] = cotangents,
+        ) -> Any:
+            model.update(parameter_tree)
+            with transformer_layer_group_checkpointing(model, parameter_tree, group_size=1):
+                outputs = _advance_recurrent_states(
+                    model,
+                    prompts,
+                    states,
+                    anchors,
+                    spec,
+                    _step,
+                    prelude_end,
+                    coda_start,
+                )
+            return sum(
+                mx.sum(output * cotangent)
+                for output, cotangent in zip(outputs, _cotangents, strict=True)
+            )
+
+        _pullback, (parameter_gradient, incoming) = mx.value_and_grad(
+            transition_pullback,
+            argnums=(0, 1),
+        )(parameters, prior_states)
+        mx.eval(parameter_gradient, incoming)
+        accumulated = tree_map(
+            lambda left, right: left + right,
+            accumulated,
+            parameter_gradient,
+        )
+        mx.eval(accumulated)
+        cotangents = tuple(mx.stop_gradient(item) for item in incoming)
+        mx.eval(cotangents)
+        if prior_states is not initial_states:
+            del prior_states
+        del parameter_gradient, incoming
+        mx.clear_cache()
+    return value, accumulated
+
+
 def generated_rollin_live_path_value_and_grad(
     model: Any,
     prompt_tokens: Sequence[int],
@@ -525,7 +776,6 @@ def generated_rollin_live_path_value_and_grad(
     """Differentiate generated-prefix soft branch selection with bounded memory."""
 
     import mlx.core as mx
-    import mlx.nn as nn
     from mlx.utils import tree_flatten, tree_map
 
     resolved = config or GeneratedRollinSelectionConfig()
@@ -566,24 +816,17 @@ def generated_rollin_live_path_value_and_grad(
             config=resolved,
         )
 
-        def objective(
-            current_model: Any,
-            _branch_index: int = branch_index,
-            _rollin: tuple[int, ...] = rollin,
-        ) -> Any:
-            return _rematerialized_branch_loss(
-                current_model,
-                prompt_tokens,
-                answer,
-                spec=spec,
-                branch_index=_branch_index,
-                bridge_tokens=bridge,
-                rollin_tokens=_rollin,
-                weight_tensor=weight_tensor,
-                weight_total=weight_total,
-            )
-
-        value, gradients = nn.value_and_grad(model, objective)(model)
+        value, gradients = _exact_adjoint_branch_value_and_grad(
+            model,
+            prompt_tokens,
+            answer,
+            spec=spec,
+            branch_index=branch_index,
+            bridge_tokens=bridge,
+            rollin_tokens=rollin,
+            weight_tensor=weight_tensor,
+            weight_total=weight_total,
+        )
         finite_flags = [
             mx.all(mx.isfinite(gradient)) for _path, gradient in tree_flatten(gradients)
         ]
