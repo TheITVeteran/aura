@@ -168,3 +168,27 @@ def test_the_verifier_foundry_is_live_and_not_mislabelled():
     assert "def boot_verifier_foundry" not in module, (
         "the dead ServiceContainer wrapper is back; nothing reads that key"
     )
+
+
+def test_cross_tier_verifier_declares_that_it_is_not_wired():
+    """Found by the CP126 pass, same shape as the three above.
+
+    Its docstring claimed it "wires to the live Solver tier in production".
+    That was a claim about a call site that does not exist.
+    """
+    callers = _production_call_sites(
+        "get_cross_tier_verifier", "core/brain/cross_tier_verifier.py"
+    ) + _production_call_sites(
+        "CrossTierVerifier", "core/brain/cross_tier_verifier.py"
+    )
+    module = (ROOT / "core" / "brain" / "cross_tier_verifier.py").read_text("utf-8")
+    if callers:
+        assert "NOT WIRED INTO THE LIVE RESPONSE PATH" not in module, (
+            f"cross-tier verification now has production callers ({callers}); "
+            "the module still declares itself unwired."
+        )
+    else:
+        assert "NOT WIRED INTO THE LIVE RESPONSE PATH" in module, (
+            "neither get_cross_tier_verifier() nor CrossTierVerifier has a "
+            "production caller, so cross-tier verification is not live."
+        )
