@@ -152,7 +152,19 @@ def _iter_source_files(roots: Iterable[str], repo_root: Path) -> Iterable[Path]:
         if not base.is_dir():
             continue
         for path in base.rglob("*.py"):
-            if _SKIP_DIR_PARTS.intersection(path.parts):
+            # Match against the path RELATIVE to the repo, not the absolute
+            # one. Absolute parts include every ancestor directory, so a
+            # checkout living under any skipped name disqualified the entire
+            # tree: in a worktree at `<repo>/.claude/worktrees/<name>/` this
+            # skipped every file, found zero registration sites, and reported
+            # EVERY organ as unwired. A blind audit that says "nothing is
+            # wired" instead of "I cannot see" is worse than no audit — it is
+            # a detector reporting total failure as a measurement.
+            try:
+                relative = path.relative_to(repo_root)
+            except ValueError:
+                continue
+            if _SKIP_DIR_PARTS.intersection(relative.parts):
                 continue
             yield path
 

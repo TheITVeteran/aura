@@ -233,7 +233,14 @@ def _trust_manifest_path() -> Path:
     configured = os.environ.get("AURA_CODE_MODEL_TRUST_MANIFEST")
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".aura" / "trust" / "local_code_model.json"
+    # state_root(), not Path.home()/".aura". Resolving the live root here meant
+    # a TEST run wrote its code-model trust manifest into the real instance's
+    # state — deciding which model the live Aura trusts to write code. That is
+    # exactly the class core/runtime/state_ownership.py exists to prevent, and
+    # asking state_root() is how a non-live profile gets its own root.
+    from core.runtime.state_ownership import state_root
+
+    return state_root() / "trust" / "local_code_model.json"
 
 
 def _canonical_path(path: str) -> str:

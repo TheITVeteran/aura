@@ -25,6 +25,12 @@ ALLOWED_ROOT_DOCS = frozenset({
     "HARDWARE_PROFILES.md", "KNOWN_FAILURE_MODES.md",
     "AUTONOMY_BOUNDARIES.md", "HUMAN_OVERRIDE_POLICY.md", "TOOL_USE_POLICY.md",
     "OWNERSHIP.md", "SERVICE_OWNERSHIP.md",
+    # Front-door by definition, and deliberately allowlisted rather than moved:
+    # AGENTS.md is the instruction surface an agent reads before touching this
+    # repo (the sibling of CLAUDE.md), and a CHANGELOG belongs at the root of
+    # any project that ships releases — filing either under docs/evidence/
+    # would hide it from the reader it exists for.
+    "AGENTS.md", "CHANGELOG.md",
 })
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
