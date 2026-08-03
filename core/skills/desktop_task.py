@@ -3935,7 +3935,9 @@ class DesktopTaskSkill(BaseSkill):
         return all(step.action in non_effect_actions for step in steps)
 
     @staticmethod
-    def _objective_requests_observation_only(objective: str) -> bool:
+    def _objective_requests_observation_only(
+        objective: str, previous_user_request: str = ""
+    ) -> bool:
         """Delegates to the one shared definition.
 
         This was a literal-substring list, and it disagreed with the regex the
@@ -3943,9 +3945,23 @@ class DesktopTaskSkill(BaseSkill):
         you see?" said "the screen" where the list said "my screen", so a read
         escalated into os_automation and came back refused for having no
         observable acceptance contract. See looks_like_screen_observation.
-        """
 
-        return looks_like_screen_observation(objective)
+        ``previous_user_request`` restores the antecedent for a follow-up. Live,
+        Bryan asked for a screen read, was refused, and then said "Can you do it
+        now?" and "Yes you can lol" — neither contains a screen noun, so both
+        classified as not-an-observation and he was refused twice more. "It" was
+        the screen read; the request was in the previous turn.
+        """
+        if looks_like_screen_observation(objective):
+            return True
+        if not previous_user_request:
+            return False
+        from core.runtime.referential_continuation import effective_message
+
+        resolved = effective_message(
+            objective, previous_user_request=previous_user_request
+        )
+        return resolved.resolved and looks_like_screen_observation(resolved.text)
 
     @staticmethod
     def _objective_needs_general_os_automation(objective: str) -> bool:
