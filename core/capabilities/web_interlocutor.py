@@ -32,6 +32,7 @@ from core.capabilities.browser_controller import get_browser_controller
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.gateways import MemoryWriteRequest
+from core.runtime.lockdep import LockRank, checked_async_lock
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.task_ownership import create_tracked_task
 
@@ -188,9 +189,27 @@ class WebInterlocutorJob:
     target_url: str = ""
     result: dict[str, Any] | None = None
     error: str = ""
+    #: Who asked for this job. CP126 d0b864a8: status and cancel took no caller
+    #: identity, so any caller holding the singleton and a job id could read a
+    #: full conversation transcript or cancel somebody else's work.
+    owner: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload.pop("owner", None)
+        return payload
+
+    def summary(self) -> dict[str, Any]:
+        """Listing view: enough to identify a job, without its transcript."""
+        return {
+            "job_id": self.job_id,
+            "status": self.status,
+            "objective": self.objective,
+            "started_at": self.started_at,
+            "updated_at": self.updated_at,
+            "target_url": self.target_url,
+            "error": self.error,
+        }
 
 
 def _clipboard_borrow_script(payload: str, body: str) -> str:
@@ -2563,19 +2582,54 @@ class WebInterlocutorSession:
         return "What distinction should I make next if I want to avoid overclaiming while still learning from this?"
 
 
+#: The principal a background job belongs to. There is one local operator on
+#: this machine today, so an absent principal resolves to a single well-known
+#: owner rather than to "everyone" — the boundary exists so that adding real
+#: principals later is a change of value, not a change of shape
+#: (CP126 d0b864a8).
+_LOCAL_OWNER_PRINCIPAL = "local_owner"
+
+
+def _job_owner(context: dict[str, Any] | None) -> str:
+    if not isinstance(context, dict):
+        return _LOCAL_OWNER_PRINCIPAL
+    for key in ("authenticated_principal", "principal", "owner", "user_id"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return _LOCAL_OWNER_PRINCIPAL
+
+
+#: Job bookkeeping bounds (CP126 83e11ce9). A finished job's transcript is
+#: kept long enough for the caller to collect it and no longer.
+_FINISHED_JOB_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_JOB_RESULT_TTL_S = 3600.0
+_MAX_RETAINED_FINISHED_JOBS = 20
+
+
 class WebInterlocutorJobManager:
     """Bounded manager for background visible web-dialogue jobs.
 
     Jobs run through the same WebInterlocutorSession and remain visible in the
-    user's browser. They are not parallel foreground typists: each job sends a
-    message, waits/polls, and composes follow-ups with bounded turns, allowing
-    other live desktop actions to run between browser interactions.
+    user's browser. They are not parallel foreground typists — and CP126
+    6633b065 was that this said so without enforcing it. Two jobs could be
+    active, each with its own task, both navigating, focusing, pasting and
+    submitting into the SAME visible browser: one job's paste landing in the
+    other's composer, one job's Return submitting the other's half-typed text.
+
+    A job now holds :attr:`_browser_lease` for the whole of its browser work,
+    so the second one waits. The docstring is the contract again.
     """
 
     def __init__(self, *, max_jobs: int = 2) -> None:
         self.max_jobs = max(1, int(max_jobs))
         self._jobs: dict[str, WebInterlocutorJob] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        #: Exactly one job may drive the visible browser at a time.
+        self._browser_lease = checked_async_lock(
+            "web_interlocutor.visible_browser", rank=LockRank.RESOURCE
+        )
+        self._lease_holder: str = ""
 
     def start(
         self,
@@ -2589,13 +2643,17 @@ class WebInterlocutorJobManager:
         context: dict[str, Any] | None = None,
         session_factory: Any | None = None,
     ) -> dict[str, Any]:
+        self._retire_finished_jobs()
+        owner = _job_owner(context)
         active = [job for job in self._jobs.values() if job.status in {"queued", "running"}]
         if len(active) >= self.max_jobs:
             return {
                 "ok": False,
                 "status": "web_interlocutor_background_capacity",
                 "error": f"At most {self.max_jobs} web interlocutor jobs may run at once.",
-                "active_jobs": [job.to_dict() for job in active],
+                "active_jobs": [
+                    job.summary() for job in active if job.owner == owner
+                ],
             }
         job_id = f"webchat-{uuid.uuid4().hex[:12]}"
         now = time.time()
@@ -2606,10 +2664,21 @@ class WebInterlocutorJobManager:
             target_url=str(url or ""),
             started_at=now,
             updated_at=now,
+            owner=owner,
         )
         self._jobs[job_id] = job
 
         async def _runner() -> None:
+            # Queued until the visible browser is free. Status stays "queued"
+            # so the user can see that a job is waiting rather than stalled.
+            async with self._browser_lease:
+                self._lease_holder = job_id
+                try:
+                    await _run_with_browser()
+                finally:
+                    self._lease_holder = ""
+
+        async def _run_with_browser() -> None:
             job.status = "running"
             job.updated_at = time.time()
             try:
@@ -2658,12 +2727,46 @@ class WebInterlocutorJobManager:
             finally:
                 job.updated_at = time.time()
                 _mark_web_interlocutor_progress(f"web_interlocutor.background_job.{job_id}.{job.status}")
+                self._retire_finished_jobs()
 
         task = create_tracked_task(_runner(), name=f"web_interlocutor.{job_id}")
         self._tasks[job_id] = task
         return {"ok": True, "status": "queued", "job": job.to_dict()}
 
-    def status(self, job_id: str = "") -> dict[str, Any]:
+    def _retire_finished_jobs(self) -> None:
+        """Drop finished tasks, and expire old jobs and their transcripts.
+
+        CP126 83e11ce9: these dictionaries only ever grew. A long-lived Aura
+        accumulated every task object, every objective and every full
+        transcript of a conversation with an external service, with no TTL, no
+        capacity bound and nothing to reconcile after a restart.
+        """
+        now = time.time()
+        for job_id, task in list(self._tasks.items()):
+            if task.done():
+                self._tasks.pop(job_id, None)
+        finished = [
+            job
+            for job in self._jobs.values()
+            if job.status in _FINISHED_JOB_STATUSES
+        ]
+        for job in finished:
+            if now - job.updated_at > _JOB_RESULT_TTL_S:
+                self._jobs.pop(job.job_id, None)
+        finished = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if job.status in _FINISHED_JOB_STATUSES
+            ),
+            key=lambda item: item.updated_at,
+        )
+        for job in finished[: max(0, len(finished) - _MAX_RETAINED_FINISHED_JOBS)]:
+            self._jobs.pop(job.job_id, None)
+
+    def status(
+        self, job_id: str = "", *, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         def _with_progress(payload: dict[str, Any]) -> dict[str, Any]:
             try:
                 from core.runtime.liveness import get_runtime_service_progress
@@ -2673,23 +2776,31 @@ class WebInterlocutorJobManager:
                 payload["runtime_progress"] = {"ok": False}
             return payload
 
+        owner = _job_owner(context)
         if job_id:
             job = self._jobs.get(job_id)
-            if not job:
+            # A job belonging to somebody else reads as absent rather than
+            # forbidden: "not yours" would confirm the id exists.
+            if not job or job.owner != owner:
                 return {"ok": False, "status": "not_found", "error": f"Unknown web interlocutor job {job_id!r}."}
             return {"ok": True, "status": job.status, "job": _with_progress(job.to_dict())}
         return {
             "ok": True,
             "status": "listed",
+            # Listing is a summary. A transcript of a conversation with an
+            # external service is not something to hand out by enumeration
+            # (CP126 d0b864a8).
             "jobs": [
-                _with_progress(job.to_dict())
+                job.summary()
                 for job in sorted(self._jobs.values(), key=lambda item: item.started_at)
+                if job.owner == owner
             ],
         }
 
-    def cancel(self, job_id: str) -> dict[str, Any]:
+    def cancel(self, job_id: str, *, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        owner = _job_owner(context)
         job = self._jobs.get(job_id)
-        if not job:
+        if not job or job.owner != owner:
             return {"ok": False, "status": "not_found", "error": f"Unknown web interlocutor job {job_id!r}."}
         task = self._tasks.get(job_id)
         if task and not task.done():

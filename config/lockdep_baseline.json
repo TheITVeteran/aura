@@ -295,7 +295,6 @@
     "core/executive/standing_authority.py::::threading.RLock",
     "core/executive/standing_authority.py::StandingAuthorityManager.__init__::asyncio.Lock",
     "core/executive/standing_authority.py::StandingAuthorityManager.__init__::threading.RLock",
-    "core/fictional_ai_synthesis.py::ProactiveAnticipationEngine.__init__::threading.Lock",
     "core/fsw/assertions.py::AssertionLog.__init__::threading.Lock",
     "core/fsw/command_dispatch.py::CommandDispatcher.__init__::threading.RLock",
     "core/fsw/health_checker.py::HealthChecker.__init__::threading.Lock",

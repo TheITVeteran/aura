@@ -63,9 +63,13 @@ class WebInterlocutorSkill(BaseSkill):
         else:
             parsed = WebInterlocutorParams(**dict(params or {}))
         if parsed.mode == "status":
-            return get_web_interlocutor_job_manager().status(parsed.job_id)
+            return get_web_interlocutor_job_manager().status(
+                parsed.job_id, context=context
+            )
         if parsed.mode == "cancel":
-            return get_web_interlocutor_job_manager().cancel(parsed.job_id)
+            return get_web_interlocutor_job_manager().cancel(
+                parsed.job_id, context=context
+            )
         brain = (context or {}).get("brain") or ServiceContainer.peek(
             "cognitive_engine", default=None
         )
