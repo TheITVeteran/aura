@@ -571,13 +571,20 @@ class EmergencyProtocol:
 
     def _log_threat(self, signal: ThreatSignal):
         try:
+            # Read defensively. Attribute access used to be direct, so a signal
+            # missing any one field raised AttributeError, the except below
+            # swallowed it as a degradation, and THE THREAT WAS NEVER LOGGED.
+            # A threat log that silently drops the entries it cannot fully
+            # parse is worse than one that records "unknown" — the incomplete
+            # record is still evidence, and its absence looks identical to
+            # "nothing happened".
             entry = {
-                "timestamp": signal.timestamp,
-                "source": signal.source,
-                "description": signal.description,
-                "severity": signal.severity,
-                "threat_class": signal.threat_class,
-                "evidence": signal.evidence,
+                "timestamp": getattr(signal, "timestamp", 0.0),
+                "source": getattr(signal, "source", "unknown"),
+                "description": getattr(signal, "description", ""),
+                "severity": getattr(signal, "severity", "unknown"),
+                "threat_class": getattr(signal, "threat_class", ""),
+                "evidence": getattr(signal, "evidence", None),
                 "threat_score": self._threat_score,
             }
             with local_internal_governed_scope(

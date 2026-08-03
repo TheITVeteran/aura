@@ -114,3 +114,45 @@ def test_security_event_logs_use_file_write_governance(monkeypatch, tmp_path):
         ("security.audit_log", "file_write"),
         ("security.emergency_protocol.threat", "file_write"),
     ]
+
+
+def test_a_partial_threat_signal_is_still_logged(monkeypatch):
+    """A threat log must not drop what it cannot fully parse.
+
+    Attribute access here used to be direct, so a signal missing one field
+    raised AttributeError, the handler swallowed it as a degradation, and the
+    threat was never recorded at all. The absence of that record is
+    indistinguishable from "nothing happened", which is the worst possible
+    failure for a security log.
+    """
+    import json
+    import types
+
+    from core.security import emergency_protocol as emergency_module
+
+    written = []
+
+    class Gateway:
+        def append_text(self, path, text, *, source):
+            written.append(json.loads(text))
+
+        async def append_text_async(self, *args, **kwargs):
+            return self.append_text(*args, **kwargs)
+
+    monkeypatch.setattr(emergency_module, "get_file_write_gateway", lambda: Gateway())
+
+    protocol = emergency_module.EmergencyProtocol.__new__(
+        emergency_module.EmergencyProtocol
+    )
+    protocol._threat_score = 0.5
+    # Deliberately missing threat_class and evidence.
+    protocol._log_threat(
+        types.SimpleNamespace(
+            timestamp=1.0, source="probe", description="partial", severity="high"
+        )
+    )
+
+    assert written, "a partial threat signal produced no log entry at all"
+    assert written[0]["source"] == "probe"
+    assert written[0]["severity"] == "high"
+    assert written[0]["threat_class"] == ""
