@@ -33,7 +33,24 @@ shapes:
 
 Every decision is recorded in a bounded in-memory ring for the health
 surface and the incident narrator. ``AURA_LANE_ADMISSION`` selects
-``enforce`` (default) or ``advise`` (log-only; the kill switch).
+``enforce`` (default) or ``advise``.
+
+``advise`` is NOT a kill switch, whatever this docstring used to say
+(CP126 87a971fa). It only flips the ``enforced`` field on the decision;
+``admitted`` still reads False on an envelope breach. The one production
+caller — ``core/runtime/model_lane_control.py`` — deliberately ignores
+``enforced`` entirely, because a durable reservation is a safety boundary
+and must not become a reservation just because advisory mode was set. So
+``advise`` is a DIAGNOSTIC ANNOTATION on refusals, not a way to disable
+them, and describing it as a kill switch told an operator they had an
+escape hatch that does not exist.
+
+What this module does NOT own, and must not be read as owning: atomic
+reservation, leases, committed-state reconciliation, eviction commands,
+acknowledgements or release (CP126 f075c288 / f1728553 / eb09e5c0). It is
+arithmetic over a snapshot the caller supplies. ``model_lane_control``
+wraps it in the durable transaction that provides those, and calling this
+module directly gives you a calculation, not a guarantee.
 """
 
 from __future__ import annotations
@@ -93,12 +110,42 @@ class QoSClass(StrEnum):
 _QOS_RANK = {QoSClass.BEST_EFFORT: 0, QoSClass.BURSTABLE: 1, QoSClass.GUARANTEED: 2}
 
 
-def classify_lane(model_path: str, *, purpose: str = "serve") -> tuple[str, QoSClass]:
+def _finite_gb(value: Any) -> float | None:
+    """A non-negative, finite GB quantity, or None when it is not one.
+
+    CP126 0021d73a. `max(0.0, float("nan"))` is nan and every comparison
+    against nan is False, so a malformed quantity did not refuse — it slid
+    past the fit check into the eviction path. Infinity admits nothing but
+    produces an eviction advisory naming every lane on the host.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    if number < 0.0:
+        return None
+    return number
+
+
+def classify_lane(
+    model_path: str, *, purpose: str = "serve", qos: QoSClass | None = None
+) -> tuple[str, QoSClass]:
     """Map a model path (and purpose) to a (lane, QoS) declaration.
 
     Token matching mirrors the projection heuristics in mlx_client so the
     two layers never disagree about which lane a path belongs to.
+
+    CP126 4c7e8933: the tokens are a HEURISTIC over a caller-supplied
+    string. A legitimately renamed 32B does not match, falls to
+    BEST_EFFORT, and becomes first in line for eviction while it is
+    serving. An explicit ``qos`` overrides the guess; the lane name is
+    still derived from the path because that is only a label.
     """
+    if qos is not None:
+        lane, _inferred = classify_lane(model_path, purpose=purpose)
+        return lane, qos
     if purpose in {"train", "compound", "fuse", "benchmark", "evaluate", "eval"}:
         return "trainer", QoSClass.BEST_EFFORT
     lowered = str(model_path or "").lower()
@@ -162,10 +209,22 @@ class AdmissionDecision:
 
 
 def _host_total_gb(observer: ResourceObserver | None = None) -> tuple[float, bool]:
+    """Observed host RAM in GB, and whether it was actually observed.
+
+    CP126 ec83a2ed / 360473eb: this used to return 64.0 when observation
+    failed. On the developer host that is the right number, which is
+    exactly why it survived — everywhere else it invented a host large
+    enough to admit ~46GB of model lanes, recorded "observation
+    unavailable", and then bound the decision as a normal fit. An
+    envelope check against a guessed envelope is not a check.
+
+    The guess is gone. Callers get 0.0 and the False flag, and admit()
+    refuses rather than sizing a budget it cannot justify.
+    """
     memory = (observer or get_resource_observer()).memory()
     if memory.available and memory.total_bytes > 0:
         return float(memory.total_bytes) / float(1024**3), True
-    return 64.0, False
+    return 0.0, False
 
 
 def _budget_for_total_gb(host_total_gb: float) -> float:
@@ -185,7 +244,14 @@ def lane_budget_gb(*, observer: ResourceObserver | None = None) -> float:
     keep the remainder. Override with AURA_LANE_BUDGET_GB (absolute) or
     AURA_LANE_BUDGET_FRACTION.
     """
-    host_total_gb, _available = _host_total_gb(observer)
+    host_total_gb, available = _host_total_gb(observer)
+    if not available:
+        # No observation, no budget. 0.0 is the honest answer and makes
+        # every fit comparison fail, which is the fail-closed direction.
+        # An absolute operator override still stands: that is a declared
+        # quantity, not an inferred one.
+        absolute = float(_BUDGET_GB_FLAG.value())
+        return absolute if absolute > 0.0 else 0.0
     return _budget_for_total_gb(host_total_gb)
 
 
@@ -221,16 +287,104 @@ class LaneAdmissionController:
         active: Iterable[ActiveLane],
         purpose: str = "serve",
         allow_disruptive_eviction: bool = False,
+        qos: QoSClass | None = None,
     ) -> AdmissionDecision:
-        lane, qos = classify_lane(model_path, purpose=purpose)
-        request_gb = max(0.0, float(request_gb))
+        """Decide whether one lane may commit its declared memory.
+
+        ``qos`` lets a caller that KNOWS declare it. Without it the class is
+        inferred from tokens in the model path (CP126 4c7e8933), which is a
+        heuristic: a renamed 32B falls to BEST_EFFORT and becomes evictable
+        while serving. Inference stays the default because every current
+        caller relies on it, but a declaration now beats a guess.
+        """
+        lane, qos = classify_lane(model_path, purpose=purpose, qos=qos)
+        # CP126 0021d73a: NaN, infinity and negatives reached the arithmetic.
+        # `max(0.0, nan)` is nan, and `nan + committed <= budget` is False —
+        # so a NaN request did not refuse loudly, it fell through to the
+        # eviction path and could emit an evict_first advisory for a request
+        # that means nothing. A malformed request is refused as malformed.
+        request_gb = _finite_gb(request_gb)
+        if request_gb is None:
+            return self._record(
+                AdmissionDecision(
+                    admitted=False,
+                    reason=f"malformed_request_gb:{request_gb!r}",
+                    lane=lane,
+                    qos=qos,
+                    request_gb=0.0,
+                    committed_gb=0.0,
+                    budget_gb=0.0,
+                )
+            )
         observer = self._observer or get_resource_observer()
         provenance = observer.provenance
         host_total, observation_available = _host_total_gb(observer)
-        budget = _budget_for_total_gb(host_total)
+        budget = _budget_for_total_gb(host_total) if observation_available else 0.0
+        absolute_override = float(_BUDGET_GB_FLAG.value())
+        if not observation_available and absolute_override > 0.0:
+            # A declared absolute budget is a quantity the operator supplied.
+            # Honouring it is not a guess.
+            budget = absolute_override
+            observation_available = True
+
+        if not observation_available:
+            # CP126 ec83a2ed: the envelope cannot be established. Refusing is
+            # the only honest answer — admitting here is what the old 64GB
+            # fallback did, and it recorded the observation as unavailable
+            # while binding the decision as a normal fit.
+            #
+            # GUARANTEED is the one exception and it is NOT an admission of
+            # fit: the primary cortex must be able to come up on a host whose
+            # memory we cannot read, or an observation fault becomes a total
+            # outage. It is admitted with the envelope explicitly unverified,
+            # so no reader can mistake it for a checked decision.
+            return self._record(
+                AdmissionDecision(
+                    admitted=qos is QoSClass.GUARANTEED,
+                    reason=(
+                        "admitted_without_envelope:memory_unobservable"
+                        if qos is QoSClass.GUARANTEED
+                        else "memory_unobservable:cannot_establish_lane_budget"
+                    ),
+                    lane=lane,
+                    qos=qos,
+                    request_gb=request_gb,
+                    committed_gb=0.0,
+                    budget_gb=0.0,
+                    observation_source=provenance.source.value,
+                    observation_scenario_id=provenance.scenario_id,
+                    resource_observation_available=False,
+                )
+            )
         # A lane replacing itself (worker recycle) must not double-count:
         # callers exclude the candidate's own lane from `active`.
-        lanes = [active_lane for active_lane in active if active_lane.footprint_gb > 0.0]
+        # A malformed footprint in the ACTIVE set is worse than in the
+        # request: silently dropping it (the old `> 0.0` filter, which is
+        # False for NaN) under-counts what is committed and admits over the
+        # envelope. Count what we can read; refuse if we cannot read it all.
+        lanes: list[ActiveLane] = []
+        unreadable: list[str] = []
+        for active_lane in active:
+            footprint = _finite_gb(active_lane.footprint_gb)
+            if footprint is None:
+                unreadable.append(active_lane.model_path or active_lane.lane)
+            elif footprint > 0.0:
+                lanes.append(active_lane)
+        if unreadable:
+            return self._record(
+                AdmissionDecision(
+                    admitted=False,
+                    reason=f"unreadable_active_footprint:{','.join(unreadable[:3])}",
+                    lane=lane,
+                    qos=qos,
+                    request_gb=request_gb,
+                    committed_gb=0.0,
+                    budget_gb=budget,
+                    observation_source=provenance.source.value,
+                    observation_scenario_id=provenance.scenario_id,
+                    resource_observation_available=observation_available,
+                )
+            )
         committed = sum(active_lane.footprint_gb for active_lane in lanes)
 
         if committed + request_gb <= budget:
@@ -255,6 +409,25 @@ class LaneAdmissionController:
         # a GUARANTEED candidate (the primary cortex) outranks it — the
         # cortex must always be able to come up.
         shield_s = _eviction_shield_s()
+        # CP126 8de2c849 asked whether allow_disruptive_eviction should be
+        # able to pierce the QoS floor and name a GUARANTEED cortex lane.
+        # It should — an explicit operator handoff (a 72B solver taking the
+        # host, a cortex-for-cortex model swap) has to be able to replace the
+        # resident lane, and the existing arithmetic tests encode exactly
+        # that. Restricting it here broke the legitimate case.
+        #
+        # The finding is still real, but it is a TRUST-BOUNDARY question, not
+        # an arithmetic one: the flag is the caller ASSERTING authority, and
+        # this module cannot tell an authorised handoff from an untrusted
+        # trainer because everything it is given is caller-supplied
+        # (CP126 7b277475 says the same thing about the whole input set).
+        #
+        # The check therefore lives where the state actually is:
+        # core/runtime/model_lane_control.py refuses to fence an owner that
+        # is not `preemptible`, one already fenced by someone else, and a
+        # GUARANTEED owner that is currently SERVING. That is verified
+        # against committed state this module never sees. Duplicating a
+        # weaker version of it here would be a second, disagreeing authority.
         evictable = [
             active_lane
             for active_lane in lanes
@@ -347,23 +520,50 @@ class LaneAdmissionController:
     def snapshot(self) -> dict[str, Any]:
         observer = self._observer or get_resource_observer()
         provenance = observer.provenance
+        _total, observation_available = _host_total_gb(observer)
+        budget = lane_budget_gb(observer=observer)
         with self._lock:
             recent = [d.to_dict() for d in list(self._decisions)[-10:]]
+            unverified = sum(
+                1
+                for d in self._decisions
+                if not d.resource_observation_available
+            )
         return {
             "alive": True,
-            "ready": True,
-            "budget_gb": round(lane_budget_gb(observer=observer), 2),
+            "ready": self.is_ready(),
+            "budget_gb": round(budget, 2),
             "mode": enforcement_mode(),
+            # CP126 e405a76a: the surface reported healthy while the
+            # controller could not observe memory. Say what is true instead.
+            "resource_observation_available": observation_available,
+            "envelope_established": budget > 0.0,
+            "decisions_without_envelope": unverified,
             "observation_source": provenance.source.value,
             "observation_scenario_id": provenance.scenario_id,
             "recent_decisions": recent,
         }
 
     def is_alive(self) -> bool:
+        """The controller object exists and can be called.
+
+        Distinct from readiness on purpose: the arithmetic is always
+        available, and that is not the same as being able to bind an
+        envelope.
+        """
         return True
 
     def is_ready(self) -> bool:
-        return True
+        """Whether admission decisions can actually be BOUND right now.
+
+        CP126 e405a76a: this returned True unconditionally, so a controller
+        that could not read host memory — and was therefore refusing every
+        non-GUARANTEED lane — reported ready. That is the absence of a check
+        published as a passed check, and it is the reason the fail-open 64GB
+        default went unnoticed for so long: nothing on the health surface
+        could ever have said otherwise.
+        """
+        return lane_budget_gb(observer=self._observer) > 0.0
 
     def get_status(self) -> dict[str, Any]:
         return self.snapshot()

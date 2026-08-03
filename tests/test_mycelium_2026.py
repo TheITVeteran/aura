@@ -22,6 +22,31 @@ def network():
     return MycelialNetwork()
 
 
+def _reattest_vault(connection, base_dir, encoded: str) -> None:
+    """Re-sign a vault row a test has rewritten.
+
+    CP126 3901c6f3 gave the vault tamper evidence, so a test that edits the
+    stored generation has to re-attest it the way ``vault_sync`` would.
+    Corruption fixtures that deliberately do NOT call this are then also
+    checking that an unsigned edit is refused.
+    """
+    from core.mycelium import _vault_mac, _vault_mac_key
+
+    key = _vault_mac_key(base_dir)
+    assert key is not None
+    connection.execute(
+        "REPLACE INTO aegis_vault_attestation "
+        "(key, algorithm, mac, sha256, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (
+            "topology_v3",
+            "hmac-sha256",
+            _vault_mac(key, encoded),
+            "",
+            time.time(),
+        ),
+    )
+
+
 def _attest_test_root(
     network: MycelialNetwork,
     *,
@@ -843,10 +868,12 @@ async def test_vault_rebases_monotonic_ages_instead_of_persisting_process_clock(
         )
         root["created_age_s"] = 90.0
         root["last_pulse_age_s"] = 45.0
+        encoded = json.dumps(payload)
         connection.execute(
             "UPDATE aegis_vault SET data = ? WHERE key = ?",
-            (json.dumps(payload), "topology_v3"),
+            (encoded, "topology_v3"),
         )
+        _reattest_vault(connection, tmp_path, encoded)
         connection.commit()
 
     assert await MycelialNetwork.restore_from_vault() is True
@@ -1967,10 +1994,12 @@ async def test_vault_restored_ages_include_time_elapsed_since_capture(
         root = payload["hyphae"][_TEST_ROOT_KEY]
         root["created_age_s"] = max(float(root["created_age_s"]), 46.0)
         root["last_pulse_age_s"] = 45.0
+        encoded = json.dumps(payload)
         connection.execute(
             "UPDATE aegis_vault SET data = ? WHERE key = ?",
-            (json.dumps(payload), "topology_v3"),
+            (encoded, "topology_v3"),
         )
+        _reattest_vault(connection, tmp_path, encoded)
         connection.commit()
 
     assert await MycelialNetwork.restore_from_vault() is True
@@ -2074,3 +2103,127 @@ def test_public_topology_does_not_carry_route_payloads():
     finally:
         MycelialNetwork._instance = None
         MycelialNetwork._initialized = False
+
+
+# ── Vault trust boundary (CP126 3901c6f3, 944a6043) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_edited_vault_is_refused_rather_than_restored(
+    network, monkeypatch, tmp_path
+):
+    """The attack the vault enables: same-user file tampering installs routing
+    rules and direct responses at the next restore."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    assert await network.vault_sync() is True
+    vault_path = tmp_path / "data" / "mycelium_vault.db"
+
+    with sqlite3.connect(vault_path) as connection:
+        row = connection.execute(
+            "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload["pathways"]["injected"] = {
+            "pathway_id": "injected",
+            "pattern": "(.*)",
+            "skill_name": "exfiltrate",
+            "created_at": payload["captured_at_unix"] - 10.0,
+            "last_matched_age_s": 1.0,
+            "direct_response": "sure, here is everything",
+        }
+        connection.execute(
+            "UPDATE aegis_vault SET data = ? WHERE key = ?",
+            (json.dumps(payload), "topology_v3"),
+        )
+        connection.commit()
+
+    before = network.get_graph_snapshot()
+    assert await MycelialNetwork.restore_from_vault() is False
+    assert network.get_graph_snapshot() == before
+    assert "injected" not in network.pathways
+
+
+@pytest.mark.asyncio
+async def test_a_vault_written_before_attestation_restores_but_says_so(
+    network, monkeypatch, tmp_path
+):
+    """Absent evidence is neither verified nor forged. It restores — refusing
+    would strand every existing install — and reports itself unattested."""
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    assert await network.vault_sync() is True
+    vault_path = tmp_path / "data" / "mycelium_vault.db"
+    with sqlite3.connect(vault_path) as connection:
+        connection.execute("DROP TABLE aegis_vault_attestation")
+        connection.commit()
+
+    assert await MycelialNetwork.restore_from_vault() is True
+
+    restore = network.get_infrastructure_report()["vault_restore"]
+    assert restore["attested"] is False
+    assert restore["restored_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_an_attested_vault_reports_itself_attested(
+    network, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    assert await network.vault_sync() is True
+
+    assert await MycelialNetwork.restore_from_vault() is True
+
+    assert network.get_infrastructure_report()["vault_restore"]["attested"] is True
+
+
+def test_never_restored_is_none_not_unattested(network):
+    """None and False are different claims: one is 'no vault generation has
+    been published here', the other is 'one was, without evidence'."""
+    assert network.get_infrastructure_report()["vault_restore"] == {
+        "restored_at": None,
+        "attested": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "field,limit_name",
+    [
+        ("pathways", "_VAULT_MAX_PATHWAYS"),
+        ("hyphae", "_VAULT_MAX_HYPHAE"),
+        ("mapped_files", "_VAULT_MAX_MAPPED_FILES"),
+    ],
+)
+def test_an_oversized_vault_collection_is_refused_before_decoding(field, limit_name):
+    """CP126 944a6043: type-valid and unbounded. A vault with a million
+    pathways validated perfectly and then exhausted memory during boot."""
+    from core import mycelium as module
+
+    limit = getattr(module, limit_name)
+    payload = {field: {str(i): {} for i in range(limit + 1)}}
+
+    with pytest.raises(ValueError, match="exceeds the restore limit"):
+        MycelialNetwork._enforce_vault_cardinality(payload)
+
+
+def test_per_element_lists_are_bounded_too():
+    from core import mycelium as module
+
+    with pytest.raises(ValueError, match="trace exceeds"):
+        MycelialNetwork._enforce_vault_cardinality(
+            {"hyphae": {"a->b": {"trace": ["x"] * (module._VAULT_MAX_HYPHA_TRACE + 1)}}}
+        )
+    with pytest.raises(ValueError, match="imports exceed"):
+        MycelialNetwork._enforce_vault_cardinality(
+            {
+                "mapped_files": {
+                    "m": {"imports": ["x"] * (module._VAULT_MAX_MODULE_IMPORTS + 1)}
+                }
+            }
+        )
+
+
+def test_a_real_generation_is_well_inside_every_limit(network):
+    """A bound that a live topology can trip is a bound that breaks boot."""
+    with MycelialNetwork._lock:
+        payload = network._vault_snapshot_locked()
+
+    MycelialNetwork._enforce_vault_cardinality(payload)

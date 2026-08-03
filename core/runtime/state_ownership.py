@@ -42,6 +42,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
+import sys
 
 __all__ = [
     "RuntimeProfile",
@@ -54,6 +55,7 @@ __all__ = [
     "assert_state_path_allowed",
     "stamp_record",
     "runtime_identity",
+    "shared_asset_root",
 ]
 
 
@@ -160,14 +162,22 @@ def _derive_profile() -> RuntimeProfile:
     """
     if os.environ.get("AURA_BENCH_RUN") or os.environ.get("AURA_BENCHMARK"):
         return RuntimeProfile.BENCH
-    # pytest sets PYTEST_CURRENT_TEST for the duration of every test. It is
-    # set by the runner, so code under test cannot clear it to win back the
-    # live root — which is exactly the move that would reintroduce the bug.
+    # Is THIS process running pytest? `pytest` in sys.modules answers that
+    # and the environment does not: a subprocess a test spawns inherits
+    # PYTEST_VERSION and PYTEST_CURRENT_TEST but is an ordinary program.
+    #
+    # That distinction is load-bearing. A delegated child launched with its
+    # own HOME derives its state root from that HOME — which is what the
+    # parent arranged — and env-based detection sent it to a `-test` sibling
+    # the parent never created, breaking a lane delegation that worked.
+    #
+    # AURA_TESTING and AURA_PROOF_RUN stay environmental because they are
+    # DECLARED by a harness rather than leaked by one: a caller that sets
+    # them means it, including for a child.
     if (
-        os.environ.get("PYTEST_CURRENT_TEST")
+        "pytest" in sys.modules
         or os.environ.get("AURA_TESTING")
         or os.environ.get("AURA_PROOF_RUN")
-        or "PYTEST_VERSION" in os.environ
     ):
         return RuntimeProfile.TEST
     if os.environ.get("AURA_DEV_RUNTIME"):
@@ -243,6 +253,27 @@ def state_root() -> Path:
                 root = current.with_name(f"{current.name}-{profile.value}")
         _ROOT, _ROOT_KEY = root, key
         return _ROOT
+
+
+def shared_asset_root() -> Path:
+    """Where immutable, downloaded artifacts live. Always the real root.
+
+    Model weights, checkpoints and tokenizers are NOT per-runtime state.
+    They are large, content-addressed, read-only, and shared by every
+    runtime on the host — a test run reading them changes nothing, while
+    diverting it to an empty ``-test`` sibling breaks it for no benefit
+    (measured: the Auto-AVSR checkpoint went `manifest_missing` the moment
+    assets followed the state root).
+
+    The rule this encodes: separate state by what a runtime WRITES, not by
+    everything it touches. Anything that lives here must be genuinely
+    immutable — if a runtime mutates it, it is state and belongs under
+    ``state_root()``.
+    """
+    override = os.environ.get("AURA_ASSET_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    return live_state_root()
 
 
 def is_live_state_path(path: Path | str) -> bool:

@@ -197,3 +197,90 @@ def test_no_module_resolves_the_live_root_for_itself_any_more():
         "these modules resolve the live state root themselves instead of "
         f"asking state_root(): {offenders[:10]}"
     )
+
+
+# ------------------------------------------------------------ shared assets
+#
+# Separate state by what a runtime WRITES, not by everything it touches.
+# Model weights are large, content-addressed, read-only and shared by every
+# runtime on the host. Diverting them broke a real checkpoint load
+# (manifest_missing) for no safety benefit.
+
+
+def test_model_assets_resolve_to_the_real_root_even_under_test():
+    from core.runtime.state_ownership import shared_asset_root
+
+    assert shared_asset_root() == live_state_root()
+    assert is_live_state_path(shared_asset_root() / "models")
+
+
+def test_asset_root_is_still_overridable():
+    """A harness with its own model cache must be able to say so."""
+    import os
+    from unittest import mock
+
+    from core.runtime.state_ownership import shared_asset_root
+
+    # resolve() on the expectation too: on macOS /tmp is a symlink to
+    # /private/tmp, and comparing an unresolved literal would be testing
+    # the platform rather than the override.
+    with mock.patch.dict(os.environ, {"AURA_ASSET_ROOT": "/tmp/aura-assets"}):
+        assert shared_asset_root() == Path("/tmp/aura-assets").resolve()
+
+
+def test_assets_are_read_not_written_through_the_gateway():
+    """The distinction only holds if nothing WRITES to the asset root.
+
+    If a runtime mutates something there it is state, not an asset, and it
+    belongs under state_root(). The write gateway still refuses.
+    """
+    from core.runtime.file_write_gateway import get_file_write_gateway
+    from core.runtime.state_ownership import shared_asset_root
+
+    with pytest.raises(StateOwnershipViolation):
+        get_file_write_gateway().write_text(
+            shared_asset_root() / "models" / "should_never_write.json",
+            "{}",
+            source="test_state_ownership",
+        )
+
+
+def test_a_spawned_child_is_not_a_test_runtime_just_because_it_inherited_env():
+    """PYTEST_VERSION is inherited by subprocesses; running pytest is not.
+
+    A delegated child launched with its own HOME derives its state root
+    from that HOME — which is what its parent arranged. Env-based detection
+    sent it to a `-test` sibling the parent never created and broke a
+    working model-lane delegation.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as home:
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json;"
+                "from core.runtime.state_ownership import runtime_profile, state_root;"
+                "print(json.dumps({'profile': runtime_profile().value,"
+                " 'root': str(state_root())}))",
+            ],
+            cwd=str(ROOT),
+            env={**os.environ, "HOME": home},
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert child.returncode == 0, child.stderr
+        result = json.loads(child.stdout.strip())
+
+    assert result["profile"] == "live", (
+        "a plain subprocess inherited PYTEST_VERSION and called itself a test "
+        "runtime; it is an ordinary program"
+    )
+    assert result["root"].endswith("/.aura"), result["root"]

@@ -32,7 +32,7 @@ from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_ml
 from core.runtime.errors import record_degradation
 
 from .model_registry import resolve_personality_adapter
-from core.runtime.state_ownership import state_root
+from core.runtime.state_ownership import shared_asset_root, state_root
 
 logger = logging.getLogger("MLXWorker")
 
@@ -3354,7 +3354,7 @@ def _expert_adapter_approved_roots() -> list[Path]:
     """Directories an IPC-supplied adapter path may resolve under."""
     roots = [
         Path(str(state_root() / "data/adapters")),
-        Path(str(state_root() / "models")),
+        Path(str(shared_asset_root() / "models")),
     ]
     try:
         # Repo artifacts: training pipelines publish adapters here.

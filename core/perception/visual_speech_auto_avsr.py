@@ -23,11 +23,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from core.perception.visual_speech import BackendPrediction
-from core.runtime.state_ownership import state_root
+from core.runtime.state_ownership import shared_asset_root, state_root
 
 logger = logging.getLogger("Aura.VisualSpeech.AutoAVSR")
 
-_DEFAULT_ROOT = state_root() / "models" / "visual_speech" / "auto_avsr"
+_DEFAULT_ROOT = shared_asset_root() / "models" / "visual_speech" / "auto_avsr"
 _CHECKPOINT_SHA256 = "fbf7cd70ff1c0e694b3030fb779dbb4570f04e4b841d62f9296c229e94878ddb"
 _RUNTIME_SHA256 = "16c00029964c56771bb3e7bf511c152204dfcb50f0837022575b8b97b93bceab"
 _RUNTIME_COMMIT = "182b62837773ab01052d4ac21ef1d2203ea7d267"
