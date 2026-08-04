@@ -48,8 +48,20 @@ def test_resolve_llm_router_falls_back_to_kernel_interface(service_container):
     assert service_access.resolve_llm_router() is llm
 
 
-def test_resolve_dialogue_cognition_uses_factory_when_service_missing(monkeypatch):
+def test_resolve_dialogue_cognition_uses_factory_when_service_missing(
+    monkeypatch, service_container
+):
+    """The premise is in the name, so the test has to establish it.
+
+    Without the clean container this passed or failed depending on whether an
+    earlier test had registered ``dialogue_cognition``: ``optional_service``
+    would return that instance and the factory path — the thing under test —
+    never ran. A test whose outcome depends on what else executed is not
+    testing what it claims to.
+    """
     import sys
+
+    assert service_container.get("dialogue_cognition", default=None) is None
 
     dialogue = object()
     fake_module = ModuleType("core.social.dialogue_cognition")
