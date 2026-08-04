@@ -642,7 +642,21 @@ class ChromeCDPDialogueBrowser:
     const st = window.getComputedStyle(el);
     return r.width > 8 && r.height > 8 && st.visibility !== 'hidden' && st.display !== 'none';
   };
-  const promptLike = (label) => /ask anything|message chatgpt|message gemini|ask gemini|enter a prompt|send a message|type a message|message|reply/.test(label);
+  // CP126 8598d4b2: this used to include the bare words 'message' and 'reply',
+  // so any field whose label merely contained them scored as a chat composer —
+  // a search box on a messages page, a subject line, a comment field. A
+  // composer renders a PLACEHOLDER that instructs the user; a field that just
+  // mentions the noun does not.
+  const promptLike = (label) => /ask anything|message chatgpt|message claude|message gemini|ask gemini|ask copilot|enter a prompt|send a message|type a message|type your message|write a message|write a reply|type a reply|start typing/.test(label);
+  // A per-origin contract: where a site's composer actually is. When the
+  // origin has one and the element is missing, that is a refusal — not an
+  // invitation to guess with the generic scorer.
+  const CONTRACTS = {
+    'chatgpt.com': '#prompt-textarea',
+    'chat.openai.com': '#prompt-textarea',
+    'claude.ai': 'div[contenteditable="true"][enterkeyhint], fieldset div[contenteditable="true"]',
+    'gemini.google.com': 'rich-textarea div[contenteditable="true"]'
+  };
   const unsafeEditor = (el) => {
     const r = el.getBoundingClientRect();
     const label = [
@@ -670,10 +684,27 @@ class ChromeCDPDialogueBrowser:
     if (r.bottom < window.innerHeight * 0.70) s -= 5;
     return s;
   };
+  const host = location.hostname.replace(/^www\./, '');
+  const contract = Object.keys(CONTRACTS).find((h) => host === h || host.endsWith('.' + h));
+  let el = null;
+  let selection = 'heuristic';
+  if (contract) {
+    const contracted = Array.from(document.querySelectorAll(CONTRACTS[contract])).filter(visible);
+    if (!contracted.length) {
+      return JSON.stringify({
+        ok:false,
+        error:'site_composer_contract_not_satisfied',
+        host: host,
+        selector: CONTRACTS[contract]
+      });
+    }
+    el = contracted[0];
+    selection = 'site_contract';
+  }
   const candidates = Array.from(document.querySelectorAll(
     'textarea,input[type="text"],input:not([type]),div[contenteditable="true"],[role="textbox"],[contenteditable="true"]'
   )).filter((el) => visible(el) && !unsafeEditor(el)).sort((a,b) => score(b) - score(a));
-  const el = candidates[0];
+  if (!el) el = candidates[0];
   if (!el) return JSON.stringify({ok:false, error:'no_visible_editable_field'});
   el.scrollIntoView({block:'center', inline:'nearest'});
   el.focus();
@@ -681,6 +712,8 @@ class ChromeCDPDialogueBrowser:
   const rect = el.getBoundingClientRect();
   return JSON.stringify({
     ok:true,
+    selection: selection,
+    focused: document.activeElement === el,
     tag: el.tagName,
     role: el.getAttribute('role') || '',
     aria: el.getAttribute('aria-label') || '',
@@ -693,6 +726,17 @@ class ChromeCDPDialogueBrowser:
         focused = await asyncio.to_thread(self._evaluate_json_expression, focus_expression)
         if not focused.get("ok"):
             return {"ok": False, "stage": "focus", **focused}
+        # CP126 8598d4b2: the scorer picked a field and the code typed into
+        # whatever had focus afterwards. Confirm the element it chose is the
+        # element that actually took focus before inserting text and pressing
+        # Enter — a click that did not land is not a composer.
+        if not focused.get("focused", False):
+            return {
+                "ok": False,
+                "stage": "focus",
+                "error": "composer_did_not_take_focus",
+                **focused,
+            }
         await asyncio.to_thread(self._cdp_call, "Input.insertText", {"text": text})
         await asyncio.to_thread(
             self._cdp_call,
@@ -1699,17 +1743,29 @@ end tell
                             )
                             if composer_verified:
                                 focus_attempt["inferred_prompt_composer"] = True
-                        if (
-                            not composer_verified
-                            and candidate.get("target_kind") == "text_input"
-                            and float(candidate.get("target_confidence") or 0.0) >= 0.76
-                            and self._focused_snapshot_is_sparse_browser(focus_snapshot)
-                        ):
-                            composer_verified = True
-                            focus_attempt["screen_target_prompt_composer"] = True
+                        # CP126 de352148: a third path used to accept "the
+                        # perception model was 0.76 confident this is a text
+                        # input" plus "the accessibility snapshot was sparse" as
+                        # proof of a chat composer, and then pasted and pressed
+                        # Return. Confidence that something is A text input says
+                        # nothing about WHICH one, and a sparse snapshot is an
+                        # absence of evidence. Both are removed; a composer is
+                        # verified by what the focused element is, or not at all.
                         if not composer_verified:
                             last_error = "unsafe focus: prompt composer not verified"
                             focus_attempt["rejected_reason"] = last_error
+                            continue
+                        # Between the checks above and the paste below the page
+                        # can move and focus can change — a streaming reply
+                        # reflows the composer, a dialog steals focus. Re-read
+                        # the focused element and require it to be the one that
+                        # passed, or abandon this candidate rather than typing
+                        # into whatever is there now.
+                        recheck = await asyncio.to_thread(self._focused_element_snapshot)
+                        if not self._focused_snapshot_matches(focus_snapshot, recheck):
+                            last_error = "focus moved between verification and send"
+                            focus_attempt["rejected_reason"] = last_error
+                            focus_attempt["recheck_snapshot"] = recheck
                             continue
                         pasted = await asyncio.to_thread(self._paste_and_submit, text)
                         if pasted.get("ok"):
@@ -1742,6 +1798,42 @@ end tell
                 }
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "stage": "visible_keyboard", "error": str(exc), "reason": reason}
+
+    #: Accessibility attributes that identify WHICH element has focus. AXValue
+    #: is excluded because it changes as text is typed, and position/size are
+    #: excluded because a composer legitimately reflows while a reply streams.
+    _FOCUS_IDENTITY_ATTRS = (
+        "process:",
+        "AXRole:",
+        "AXSubrole:",
+        "AXTitle:",
+        "AXDescription:",
+        "AXHelp:",
+        "AXPlaceholderValue:",
+    )
+
+    @classmethod
+    def _focus_identity(cls, snapshot: str) -> tuple[str, ...]:
+        lines = [line.strip() for line in str(snapshot or "").splitlines()]
+        return tuple(
+            line
+            for line in lines
+            if line.startswith(cls._FOCUS_IDENTITY_ATTRS)
+        )
+
+    @classmethod
+    def _focused_snapshot_matches(cls, before: str, after: str) -> bool:
+        """Whether the focused element is still the one that passed the checks.
+
+        An empty or unreadable snapshot fails closed: not knowing which element
+        has focus is not the same as knowing it is the right one
+        (CP126 de352148).
+        """
+        before_identity = cls._focus_identity(before)
+        after_identity = cls._focus_identity(after)
+        if not before_identity or not after_identity:
+            return False
+        return before_identity == after_identity
 
     def _send_escape_to_browser(self) -> None:
         script = f"""
