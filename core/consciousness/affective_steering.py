@@ -1367,11 +1367,28 @@ class AffectiveSteeringHook:
                     # Diagnostic
                     hook._inject_count += 1
                     hook._last_effective_alpha = effective_alpha
-                    hook._maybe_record_phi_residual(h)
                     # Note: norm is expensive, only do it occasionally
                     if hook._inject_count % 50 == 0:
                         import mlx.core as mx
                         hook._last_injection_norm = float(mx.norm(composite)) * effective_alpha
+
+                # φ's ACTIVATION GROUNDING USED TO DEPEND ON STEERING FIRING.
+                # This sample sat inside `if composite is not None`, so whenever
+                # steering stood down — no composite, alpha derated to zero, the
+                # substrate sync not yet warm — the residual stream was never
+                # recorded and PhiCore's Grassmann complex stayed empty.
+                #
+                # Measured live 2026-08-04 with the corrected estimator wired
+                # in: "reporting a state_summary measurement because
+                # better-grounded estimators could not run:
+                # residual_stream_grassmann (insufficient_history:0/50)". Zero.
+                # Not "not enough yet" — none, ever, on a boot that answered
+                # four turns with three steering hooks installed.
+                #
+                # Whether the model's representation is integrated is not a
+                # question about whether we happen to be steering it. The
+                # sample belongs to the forward pass, not to the injection.
+                hook._maybe_record_phi_residual(h)
 
                 if rest is not None:
                     return (h,) + rest
