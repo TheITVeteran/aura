@@ -3193,6 +3193,17 @@ class MLXLocalClient:
         # instead of the repository transport itself. The last slot is reserved
         # for steering liveness.
         self._substrate_mem = self._mp_context.Array("d", 16, lock=False)
+        # Reverse channel: Grassmann state integers from the worker (where the
+        # activations are) back to PhiCore (which lives here). Without it the
+        # activation-grounded Φ complex can never fill — the steering hook's
+        # in-process PhiCore lookup is always False on the far side of the fork.
+        # See core/consciousness/phi_residual_channel.py.
+        try:
+            from core.consciousness.phi_residual_channel import create_channel
+
+            self._phi_residual_mem = create_channel(self._mp_context)
+        except (ImportError, OSError, ValueError):
+            self._phi_residual_mem = None
 
         # Shared memory flag to track if affective steering successfully attached
         self._steering_active = self._mp_context.Value("b", False, lock=False)
@@ -7524,6 +7535,7 @@ class MLXLocalClient:
                         self._cancel_seq,
                         self._contract_key,
                         dict(self._worker_capture_launch_authority.challenge),
+                        self._phi_residual_mem,
                     ),
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",

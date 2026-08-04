@@ -1053,6 +1053,11 @@ class AffectiveSteeringHook:
         
         # Diagnostic counters
         self._inject_count = 0
+        #: Set by the worker when it is running out-of-process. When present,
+        #: Grassmann states go across this ring instead of to a PhiCore that
+        #: does not exist on this side of the fork.
+        self._phi_residual_channel = None
+        self._grassmann_encoder = None
         try:
             self._phi_sample_every = max(1, int(os.getenv("AURA_PHI_RESIDUAL_SAMPLE_EVERY", "32")))
         except (TypeError, ValueError):
@@ -1291,13 +1296,29 @@ class AffectiveSteeringHook:
         if len(shape) == 2 and shape[0] > 1:
             return
         try:
+            sample = h[0, -1, :] if len(shape) >= 3 else h
+
+            # IN THE WORKER PROCESS there is no PhiCore to hand this to — the
+            # hook runs inside the MLX worker subprocess and PhiCore is
+            # registered in the main runtime, so the container lookup below
+            # returned False on every token and the activation-grounded complex
+            # never filled. Encode here, where the activations are, and publish
+            # the 8-bit state across the boundary.
+            channel = getattr(self, "_phi_residual_channel", None)
+            if channel is not None:
+                state = self._encode_grassmann_state(sample)
+                if state is not None:
+                    from core.consciousness.phi_residual_channel import publish_state
+
+                    publish_state(channel, state)
+                    return
+
             from core.container import ServiceContainer
 
             if not ServiceContainer.has("phi_core"):
                 return
             phi_core = ServiceContainer.get("phi_core", default=None)
             if phi_core is not None and hasattr(phi_core, "record_residual_stream"):
-                sample = h[0, -1, :] if len(shape) >= 3 else h
                 phi_core.record_residual_stream(
                     sample, layer_idx=self._layer_idx, token_position=-1
                 )
@@ -1310,6 +1331,31 @@ class AffectiveSteeringHook:
                 extra={"layer_idx": self._layer_idx},
             )
             logger.debug("Residual phi sample failed at layer %d: %s", self._layer_idx, exc)
+
+    def _encode_grassmann_state(self, sample: Any) -> int | None:
+        """Reduce a residual vector to the 8-bit state Φ's TPM is built from.
+
+        Done HERE rather than in the parent because the encoder is what makes
+        this cheap to ship: ~5120 floats in, one byte out. Sending the vector
+        instead would put a per-token megabyte across the process boundary on
+        the path where latency decides whether a turn survives.
+        """
+        try:
+            if self._grassmann_encoder is None:
+                from core.consciousness.grassmann_phi import GrassmannResidualComplex
+                from core.consciousness.phi_core import _grassmann_anchor_count
+
+                self._grassmann_encoder = GrassmannResidualComplex(
+                    n_anchors=_grassmann_anchor_count()
+                )
+            import numpy as _np
+
+            vector = _np.asarray(sample, dtype=_np.float32).reshape(-1)
+            state = self._grassmann_encoder.observe(vector)
+            return None if state is None else int(state) & 0xFF
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            # A telemetry sample is never worth a generation.
+            return None
 
     def install(self):
         """

@@ -4513,6 +4513,7 @@ def _mlx_worker_loop(
     cancel_seq: Any = None,
     contract_key: bytes | None = None,
     worker_capture_launch_challenge: Mapping[str, Any] | None = None,
+    phi_residual_mem: Any = None,
 ):
     """Runs in a FULLY ISOLATED native subprocess via ForkServer.
 
@@ -4719,6 +4720,16 @@ def _mlx_worker_loop(
             engine.attach(model, tokenizer)
             if substrate_mem is not None:
                 engine.start_substrate_sync(shared_state=substrate_mem)
+            # Hand the Φ residual ring to every installed hook. Without it the
+            # hooks fall back to an in-process PhiCore lookup that is ALWAYS
+            # False here — this is the worker, PhiCore lives in the parent —
+            # which is why the activation-grounded complex read 0/50 forever.
+            if phi_residual_mem is not None:
+                for _hook in getattr(engine, "_hooks", None) or []:
+                    try:
+                        _hook._phi_residual_channel = phi_residual_mem
+                    except (AttributeError, TypeError):
+                        continue
             _steering_active = engine.is_active()
 
             if steering_active_flag is not None:

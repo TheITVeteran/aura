@@ -506,6 +506,8 @@ class PhiCore:
         #: sample; 0 until then, which reports as "unknown" rather than as a
         #: coverage figure nobody measured.
         self._residual_population_size: int = 0
+        #: How many worker-published Grassmann states have been consumed.
+        self._worker_residual_cursor: int = 0
         #: The sampling null is `surrogates` more exhaustive MIP searches, so
         #: it runs on its own bounded schedule and never on a foreground turn.
         self._last_null_measured_at: float = 0.0
@@ -712,6 +714,63 @@ class PhiCore:
                 result.phi_s, result.is_complex, result.tpm_n_samples,
             )
         return result
+
+    def _locate_worker_residual_channel(self) -> Any:
+        """The live client's ring, if a worker is up. None is normal at boot."""
+        try:
+            from core.container import ServiceContainer
+
+            client = ServiceContainer.get("mlx_client", default=None)
+            if client is None:
+                # `_CLIENTS` is the module's own registry, keyed by model path.
+                # Any live client's ring will do — there is one worker.
+                from core.brain.llm.mlx_client import _CLIENTS
+
+                for candidate in list(_CLIENTS.values()):
+                    if getattr(candidate, "_phi_residual_mem", None) is not None:
+                        client = candidate
+                        break
+            return getattr(client, "_phi_residual_mem", None)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    def drain_worker_residuals(self, channel: Any) -> int:
+        """Pull Grassmann states published by the generation worker.
+
+        The activations live in the MLX worker subprocess and PhiCore lives
+        here, so the steering hook's in-process lookup could never find it —
+        that is why this complex read 0/50 transitions on every boot ever. The
+        worker now encodes each sampled residual to an 8-bit state and writes it
+        to a shared ring; this drains it.
+
+        Returns how many new states were taken.
+        """
+        if channel is None:
+            return 0
+        try:
+            from core.consciousness.phi_residual_channel import drain
+
+            states, cursor = drain(channel, self._worker_residual_cursor)
+        except (ImportError, AttributeError, OSError, TypeError, ValueError) as exc:
+            record_degradation("phi_core", exc, severity="warning")
+            return 0
+        self._worker_residual_cursor = int(cursor)
+        for state in states:
+            masked = int(state) & 0xFF
+            self._grassmann_state_history.append(masked)
+            self._grassmann_state_visits[masked] += 1.0
+        if states:
+            # INFO, not debug: whether the activation feed is alive is the
+            # difference between an activation-grounded Φ and a summary one,
+            # and it read zero for the entire life of this system without
+            # anything saying so.
+            logger.info(
+                "PhiCore drained %d worker residual state(s); grassmann history now %d/%d.",
+                len(states),
+                len(self._grassmann_state_history),
+                MIN_HISTORY_FOR_TPM,
+            )
+        return len(states)
 
     def _grassmann_population_size(self) -> int:
         """Geometric modes the encoder resolves, or 0 if it has not started."""
@@ -1309,6 +1368,16 @@ class PhiCore:
 
         self._surrogate_phi = surrogate_phi
 
+        # Take whatever the generation worker has published since last time.
+        # This is the seam that was missing entirely: activations are produced
+        # in the MLX worker subprocess and Φ is computed here, so without a
+        # drain the activation-grounded complex stays empty no matter how much
+        # the model generates.
+        try:
+            self.drain_worker_residuals(self._locate_worker_residual_channel())
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation('phi_core', exc, severity="warning")
+
         # ── Always compute exact 8-node affective baseline ───────────────
         try:
             self.compute_affective_phi()
@@ -1337,7 +1406,9 @@ class PhiCore:
         if selection is not None and selection.winner is not None:
             self._last_result = selection.winner
             self._last_compute_time = now
-            logger.debug(
+            # INFO: which substrate the published Φ was measured on is the
+            # whole question, and it was invisible.
+            logger.info(
                 "PhiCore live: %s φs=%.5f grounding=%s best_grounded=%s net=%s",
                 selection.winner_name,
                 selection.phi_s,
