@@ -400,3 +400,54 @@ def test_the_chat_path_runs_the_completion():
     # Nothing may return out of the function between the two, or the
     # completion would not reach the gate that rejected the turn.
     assert "\n        return" not in between
+
+
+class TestAnExcerptArrivesByteForByte:
+    """The whole value of a read excerpt is that it was not invented.
+
+    Live 2026-08-03: asked for a piece of her own source, Aura returned
+    core/mycelium.py:88 correctly, read from disk — and the prose normalizer
+    rewrote the file's "re.Pattern[str]" into "re. Pattern[str]" on the way to
+    the screen. Lowercase, full stop, capital: the exact shape its
+    sentence-splitting rule looks for. An excerpt that cannot be pasted back
+    without a syntax error is no longer evidence of anything.
+    """
+
+    def _normalize(self, text: str) -> str:
+        from core.conversation.response_reliability import normalize_user_facing_format
+
+        return normalize_user_facing_format(text)
+
+    def test_dotted_names_in_fenced_code_survive(self):
+        reply = (
+            "Here it is:\n\n```python\n"
+            'def _safe_pattern_search(compiled: "re.Pattern[str]", text: str):\n'
+            "    return compiled.search(text)\n"
+            "```\n"
+        )
+        out = self._normalize(reply)
+        assert 're.Pattern[str]' in out
+        assert 're. Pattern' not in out
+
+    def test_the_real_file_round_trips(self):
+        """Against the actual bytes of the file she quoted."""
+        from pathlib import Path
+
+        source = Path("core/mycelium.py").read_text(encoding="utf-8")
+        excerpt = "\n".join(source.split("\n")[87:105])
+        out = self._normalize(f"Read from disk:\n\n```python\n{excerpt}\n```\n")
+        assert excerpt in out, "the excerpt was altered between the file and the screen"
+
+    def test_prose_outside_the_fence_is_still_repaired(self):
+        out = self._normalize("Done.Next thing here.\n\n```python\nx = 1\n```\n")
+        assert "Done. Next thing here." in out
+
+    def test_several_blocks_are_each_preserved(self):
+        reply = (
+            "One:\n\n```python\na = re.Pattern\n```\n\n"
+            "Two.And three:\n\n```python\nb = os.PathLike\n```\n"
+        )
+        out = self._normalize(reply)
+        assert "re.Pattern" in out and "os.PathLike" in out
+        assert "re. Pattern" not in out and "os. PathLike" not in out
+        assert "Two. And three:" in out

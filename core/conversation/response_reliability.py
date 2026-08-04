@@ -2368,15 +2368,48 @@ def strip_internal_scaffold(reply_text: Any) -> str:
     return strip_internal_scaffold(tail).strip() if sep else ""
 
 
+#: A fenced code block, fence and all.
+_FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
 def normalize_user_facing_format(reply_text: Any) -> str:
-    """Apply safe whitespace-only repairs to user-facing prose.
+    """Apply safe whitespace-only repairs to user-facing PROSE.
 
     This is deliberately conservative: it does not create new content, but it
     fixes common local-model formatting defects such as ``sentence.2. next``.
+
+    Fenced code is exempt, because every repair here is a claim about English
+    that is false about code. Measured live 2026-08-03: asked to show a piece
+    of her own source, Aura returned core/mycelium.py:88 correctly and read it
+    from disk, and the sentence-splitting rule below rewrote the file's
+    ``"re.Pattern[str]"`` into ``"re. Pattern[str]"`` on the way to the
+    screen — lowercase, full stop, capital, the exact shape it looks for. An
+    excerpt whose whole point is that it was read rather than invented has to
+    arrive byte-for-byte, or pasting it back is a syntax error and the proof
+    it offers is worthless.
     """
     text = strip_internal_scaffold(reply_text).strip()
     if not text:
         return text
+
+    blocks: list[str] = []
+
+    def _park(match: re.Match[str]) -> str:
+        blocks.append(match.group(0))
+        # A placeholder no rule below can match: no full stops, no digits, no
+        # hyphens, no capital-after-lowercase seam.
+        return f"\x00CODEBLOCK{len(blocks) - 1}\x00"
+
+    text = _FENCED_CODE_BLOCK_RE.sub(_park, text)
+    text = _normalize_prose_format(text)
+    for index, block in enumerate(blocks):
+        text = text.replace(f"\x00CODEBLOCK{index}\x00", block)
+    return text
+
+
+def _normalize_prose_format(text: str) -> str:
+    """The prose repairs themselves, with fenced code already parked."""
+
     text = _split_jammed_numbered_markers(text)
     # A bullet welded to the previous sentence or a heading colon is the same
     # defect as a welded number: "Let's break this down:- Total marbles: …".
