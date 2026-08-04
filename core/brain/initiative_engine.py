@@ -41,22 +41,45 @@ def _record_initiative_degradation(
 
 
 def _proactivity_suppressed_now(now: float | None = None) -> bool:
+    """Whether Aura must stay quiet right now. FAILS CLOSED.
+
+    CP126 eb01cf8b: an absent orchestrator or a raising lookup returned
+    False — "not suppressed" — so the one control governing whether Aura
+    speaks to a person unprompted failed OPEN. The failure mode was Aura
+    starting a conversation precisely when the runtime could not confirm
+    she was allowed to.
+
+    The asymmetry is not close. Staying quiet when she could have spoken
+    costs a missed remark. Speaking when a quiet window was in force is the
+    thing the control exists to prevent, and it reaches the person.
+    """
     try:
         from core.container import ServiceContainer
 
         orch = ServiceContainer.get("orchestrator", default=None)
         if not orch:
-            return False
+            _record_initiative_degradation(
+                RuntimeError("orchestrator unavailable"),
+                action=(
+                    "suppressed unsolicited proactivity: the quiet-window owner "
+                    "was absent, so permission to speak could not be established"
+                ),
+                severity="warning",
+            )
+            return True
         now = time.time() if now is None else now
         quiet_until = float(getattr(orch, "_suppress_unsolicited_proactivity_until", 0.0) or 0.0)
         return quiet_until > now
     except INITIATIVE_RECOVERABLE_ERRORS as exc:
         _record_initiative_degradation(
             exc,
-            action="treated unsolicited proactivity as not suppressed after quiet-window lookup failed",
-            severity="debug",
+            action=(
+                "suppressed unsolicited proactivity after the quiet-window lookup "
+                "failed; unverifiable permission is not permission"
+            ),
+            severity="warning",
         )
-        return False
+        return True
 
 
 class ProactiveInitiativeEngine:

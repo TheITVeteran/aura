@@ -57,6 +57,9 @@ _CONFIDENT_RE = re.compile(
     re.IGNORECASE,
 )
 # Phrases that claim a capability a local model generally cannot have done.
+#: Labels emitted in a serialized report.
+_MAX_REPORTED_LABELS = 10
+
 _IMPOSSIBLE_RE = re.compile(
     r"\b(?:i (?:just )?(?:browsed|googled|searched the web|accessed the internet|"
     r"checked online|called the api|ran it on your machine|looked it up online)|"
@@ -70,6 +73,10 @@ class ClaimLabel:
     text: str
     status: EpistemicStatus
     reason: str = ""
+    #: Offsets into the ORIGINAL answer, so a rewrite can splice rather than
+    #: rebuild. -1 when the label was not derived from a span.
+    start: int = -1
+    end: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         return {"text": self.text[:160], "status": self.status.value, "reason": self.reason}
@@ -88,21 +95,66 @@ class CalibrationReport:
     felt_demotions: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        """The full report, INCLUDING the answer the gate says may be spoken.
+
+        CP126 a40c5b75: ``calibrated_answer`` is the entire point of this
+        gate — the corrected text the rest of the system is allowed to say —
+        and serialization excluded it. Any boundary consuming only
+        ``to_dict()`` got the scores and labels while silently losing the
+        correction, and then spoke the original. The honesty gate was
+        bypassed by its own serializer.
+
+        CP126 1bfaa5ab: labels were cut to the first ten with no total and
+        no truncation flag, so a long answer could not be audited.
+        """
         return {
             "overall": self.overall.value,
             "confidence": round(self.confidence, 3),
+            "calibrated_answer": self.calibrated_answer,
             "downgraded": self.downgraded,
             "flagged_impossible": self.flagged_impossible,
             "felt_confidence": (
                 round(self.felt_confidence, 3) if self.felt_confidence is not None else None
             ),
             "felt_demotions": self.felt_demotions,
-            "labels": [c.to_dict() for c in self.labels[:10]],
+            "labels": [c.to_dict() for c in self.labels[:_MAX_REPORTED_LABELS]],
+            "label_count": len(self.labels),
+            "labels_truncated": len(self.labels) > _MAX_REPORTED_LABELS,
         }
 
 
 def _sentences(text: str) -> list[str]:
-    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", str(text or "")) if s.strip()]
+    return [span[0] for span in _sentence_spans(text)]
+
+
+def _sentence_spans(text: str) -> list[tuple[str, int, int]]:
+    """Sentences WITH their offsets in the original text.
+
+    CP126 616e5ae1: the gate rebuilt the answer with `" ".join(sentences)`,
+    which discards newlines, paragraphs, list structure, indentation and
+    code-fence layout — for an answer containing code that can change what
+    the code DOES, and it happened on every answer, including the common
+    case where nothing was downgraded at all.
+
+    Keeping offsets lets the rewrite splice only the sentences it actually
+    modified back into the untouched original.
+    """
+    raw = str(text or "")
+    spans: list[tuple[str, int, int]] = []
+    cursor = 0
+    for piece in re.split(r"(?<=[.!?])(\s+)", raw):
+        if not piece:
+            continue
+        if piece.isspace():
+            cursor += len(piece)
+            continue
+        stripped = piece.strip()
+        if stripped:
+            offset = piece.index(stripped)
+            start = cursor + offset
+            spans.append((stripped, start, start + len(stripped)))
+        cursor += len(piece)
+    return spans
 
 
 class CalibrationGate:
@@ -125,11 +177,13 @@ class CalibrationGate:
         v_ok = bool(getattr(verification, "ok", False))
 
         labels: list[ClaimLabel] = []
-        for sent in _sentences(answer):
-            labels.append(self._classify_sentence(
+        for sent, start, end in _sentence_spans(answer):
+            label = self._classify_sentence(
                 sent, evidence_blob, known_blob,
                 v_checked=v_checked, v_ok=v_ok, tool_verified=tool_verified,
-            ))
+            )
+            label.start, label.end = start, end
+            labels.append(label)
 
         # Substrate interoception: if the answer's felt trace shows the words
         # were contested as they formed, unsupported sentences overlapping the
@@ -247,21 +301,50 @@ class CalibrationGate:
         return ClaimLabel(sent, EpistemicStatus.UNVERIFIED, "no check available")
 
     def _apply(self, answer: str, labels: list[ClaimLabel]) -> tuple[str, int, int]:
-        """Rewrite the answer so confidence matches epistemic status."""
+        """Rewrite the answer so confidence matches epistemic status.
+
+        Splices replacements into the ORIGINAL text at the sentences that
+        actually changed, so everything else — newlines, paragraphs, list
+        markers, indentation, code fences — survives byte for byte. An
+        answer with nothing to downgrade is returned untouched.
+        """
+        original = str(answer or "")
         downgraded = 0
         flagged = 0
-        out: list[str] = []
+        edits: list[tuple[int, int, str]] = []
+
         for label in labels:
-            text = label.text
             if label.status is EpistemicStatus.IMPOSSIBLE_LOCALLY:
                 flagged += 1
-                out.append(f"[unverifiable locally] {text}")
+                replacement = f"[unverifiable locally] {label.text}"
             elif label.status is EpistemicStatus.GUESSED:
                 downgraded += 1
-                out.append(self._soften(text))
+                replacement = self._soften(label.text)
             else:
-                out.append(text)
-        return " ".join(out).strip() or str(answer or ""), downgraded, flagged
+                continue
+            if replacement == label.text:
+                continue
+            if label.start < 0 or label.end > len(original):
+                index = original.find(label.text)
+                if index < 0:
+                    continue
+                edits.append((index, index + len(label.text), replacement))
+            else:
+                edits.append((label.start, label.end, replacement))
+
+        if not edits:
+            return original, downgraded, flagged
+
+        rebuilt: list[str] = []
+        cursor = 0
+        for start, end, replacement in sorted(edits):
+            if start < cursor:
+                continue  # overlapping edit; keep the first
+            rebuilt.append(original[cursor:start])
+            rebuilt.append(replacement)
+            cursor = end
+        rebuilt.append(original[cursor:])
+        return "".join(rebuilt) or original, downgraded, flagged
 
     @staticmethod
     def _soften(sentence: str) -> str:
