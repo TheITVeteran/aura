@@ -70,7 +70,11 @@ _ACTION_VERBS = (
     "email|post|ask|tell|reply|respond|answer|show|pull|load|check|read|write|"
     "save|delete|move|copy|close|switch|log|sign|install|update|play|pause|"
     "take|make|create|build|generate|draw|compose|summarise|summarize|"
-    "translate|compare|compile|deploy|test|call|ping|talk|chat|converse"
+    "translate|compare|compile|deploy|test|call|ping|talk|chat|converse|"
+    # Memory instructions are instructions. "Remember for future sessions that
+    # my codename is glass orchard" asks her to STORE something; reading it as
+    # a remark about remembering loses the fact.
+    "remember|remind|note|store|save|forget|pin|log|track|record"
 )
 
 #: An imperative: optional politeness/discourse lead-in, then a bare verb.
@@ -112,13 +116,13 @@ _MENTION_FRAMES = (
     # you and ChatGPT discussed" opened a NEW browser session and held a second
     # conversation, because the router saw an imperative and a tool name and
     # had no way to see that the thing being named had already happened.
-    (r"\bremind\s+me\b", "recollection"),
+    (r"\bremind\s+me\s+(?:what|how|who|when|which|about)\b", "retrospective_request"),
     (r"\bwhat\s+did\s+(?:you|we|it|they)(?:\s+(?:two|both|and\s+\w+))?\s+"
      r"(?:discuss|talk\s+about|say|said|cover|conclude|decide|learn|find|end\s+up)\b",
-     "recollection"),
+     "retrospective_request"),
     (r"\bwhat\s+(?:you|we)\s+(?:discussed|talked\s+about|said|covered|concluded)\b",
-     "recollection"),
-    (r"\bhow\s+did\s+(?:it|that|the\s+\w+)\s+go\b", "recollection"),
+     "retrospective_request"),
+    (r"\bhow\s+did\s+(?:it|that|the\s+\w+)\s+go\b", "retrospective_request"),
     # explicitly NOT an instruction
     (r"\b(?:don'?t|do not|no need to|you don'?t have to|not asking you to|"
      r"without)\s+(?:go|open|visit|ask|message|search|use)\b", "refusal_to_act"),
@@ -132,9 +136,14 @@ _MENTION_FRAMES = (
 #: nobody, and asks nothing. "the search for a new apartment has been
 #: exhausting" names a capability keyword and requests nothing — the router
 #: already carried a bespoke lookahead for exactly this one sentence shape.
+#: `[A-Z][a-z]+` used to be an alternative here, and it matched the FIRST WORD
+#: OF EVERY SENTENCE — including imperative verbs. "Remember for future sessions
+#: that my codename is glass orchard" was read as a declarative statement and
+#: stopped routing to memory_ops. A capitalised word at the start of a sentence
+#: is evidence of nothing; a determiner or pronoun is.
 _NOUN_PHRASE_OPENER_RE = re.compile(
-    r"^\s*(?:the|a|an|this|that|these|those|my|our|his|her|their|its|i|we|they|he|she|it|"
-    r"[A-Z][a-z]+)\b",
+    r"^\s*(?:the|a|an|this|that|these|those|my|our|his|her|their|its|i|we|they|he|she|it)\b",
+    re.IGNORECASE,
 )
 _FINITE_STATEMENT_RE = re.compile(
     r"\b(?:is|are|was|were|has|have|had|been|feels?|felt|seems?|seemed|"
@@ -176,7 +185,13 @@ def assess_request_mood(message: str) -> MoodVerdict:
     # An explicit instruction wins over incidental mention framing: "Ask ChatGPT
     # what it said yesterday" contains reported speech AND is an instruction.
     # The one exception is a frame that exists to CANCEL the action.
-    cancelling = {"refusal_to_act", "hypothetical"}
+    # A retrospective frame cancels an imperative because it directs at what
+    # ALREADY HAPPENED: "Remind me what you and ChatGPT discussed" is a request
+    # to retrieve, and reading it as an instruction opened a second browser
+    # session and held a whole new conversation (measured live 2026-08-04).
+    # Plain recollection markers ("yesterday", "last time") do NOT cancel —
+    # "Ask ChatGPT what it said yesterday" is still an instruction.
+    cancelling = {"refusal_to_act", "hypothetical", "retrospective_request"}
     if directive_reasons and not (set(mention_reasons) & cancelling):
         return MoodVerdict(RequestMood.DIRECTIVE, tuple(directive_reasons))
     if mention_reasons:

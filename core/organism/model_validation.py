@@ -289,6 +289,43 @@ def _summarize(value: Any, limit: int = 200) -> Any:
 
 
 @dataclass(frozen=True)
+class Evidence(StrEnum):
+    """What KIND of evidence a claim's test actually provides.
+
+    Binding a claim to a test was never enough. A test can pass while
+    establishing much less than the claim implies, and the registry had no way
+    to say so — which is how two numbers came to stand as evidence they had not
+    earned:
+
+    * Φ. The old estimator assigned substantial integration to a system built
+      to be memoryless, and at reachable history lengths could rank it ABOVE a
+      genuinely coupled ring. Prior values (φ_s mean 0.253 among them) cannot
+      be presented as quantitative evidence of integration. The corrected
+      null-subtracted estimator separates cleanly — 0.000 / 0.049 / 0.563 — but
+      only on SYNTHETIC systems. No live null-corrected result exists yet.
+
+    * CAA steering. The A/B supports causal capacity at high strength
+      (significant at α=8, d≈0.90 against one control). The live surface runs
+      at α=0.35, where measured steering-to-quantisation-noise is ~0.056.
+      "Steering was injected" is not "steering changed the answer".
+
+    In both cases the honest position is not zero and not proven. It is
+    UNMEASURED, and a registry that cannot say that will keep implying proof.
+    """
+
+    #: Measured on the live system, with provenance.
+    MEASURED_LIVE = "measured_live"
+    #: Measured, but on constructed systems with known answers. Establishes the
+    #: estimator, not the subject.
+    MEASURED_SYNTHETIC = "measured_synthetic"
+    #: Instrumented and reported, with no measurement that settles it.
+    UNMEASURED = "unmeasured"
+    #: Previously asserted, now withdrawn because the measurement behind it
+    #: did not support it.
+    RETRACTED = "retracted"
+
+
+@dataclass(frozen=True)
 class Claim:
     """A statement about the system, bound to the test that checks it."""
 
@@ -298,6 +335,26 @@ class Claim:
     #: Where the claim is asserted publicly, so a failing suite points at
     #: the document that has to change.
     asserted_in: str = ""
+    #: What the bound test actually establishes. Defaults to the strongest
+    #: reading ONLY because every pre-existing claim was written under it;
+    #: anything weaker must say so explicitly.
+    evidence: Evidence = Evidence.MEASURED_LIVE
+    #: Required when evidence is not MEASURED_LIVE: what is missing, in a
+    #: sentence someone reading the claim can act on.
+    evidence_note: str = ""
+
+    def __post_init__(self) -> None:
+        if self.evidence is not Evidence.MEASURED_LIVE and not self.evidence_note.strip():
+            raise ValueError(
+                f"claim {self.statement!r} is {self.evidence.value} and says nothing "
+                "about what is missing; an unmeasured claim with no note reads as a "
+                "measured one"
+            )
+
+    @property
+    def is_evidence_for_the_system(self) -> bool:
+        """Whether this claim may be cited as evidence ABOUT AURA."""
+        return self.evidence is Evidence.MEASURED_LIVE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -305,6 +362,9 @@ class Claim:
             "test": self.test,
             "owner": self.owner,
             "asserted_in": self.asserted_in,
+            "evidence": self.evidence.value,
+            "evidence_note": self.evidence_note,
+            "citable_as_evidence": self.is_evidence_for_the_system,
         }
 
 

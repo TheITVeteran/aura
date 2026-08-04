@@ -4568,6 +4568,18 @@ async def _collect_api_health_payload(
                 mhaf_data["phi_complex"] = result.is_complex
                 mhaf_data["phi_mip"] = result.mip_description
                 mhaf_data["phi_samples"] = result.tpm_n_samples
+                # A bare φ is the number that could not stand on its own: the
+                # old estimator scored a MEMORYLESS system at 0.60 and could
+                # rank it above a genuinely coupled ring. What makes a value
+                # readable is what it was measured on, by which estimator, and
+                # how much of it survives its own sampling null — so the
+                # provenance travels with it rather than being available
+                # somewhere else.
+                if hasattr(result, "provenance"):
+                    mhaf_data["phi_provenance"] = result.provenance()
+                selection = getattr(phi_core, "_last_selection", None)
+                if selection is not None and hasattr(selection, "as_metrics"):
+                    mhaf_data["phi_selection"] = selection.as_metrics()
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("PhiCore status collection failed: %s", e)
