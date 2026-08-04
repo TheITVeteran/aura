@@ -126,3 +126,45 @@ def test_an_empty_answer_does_not_crash():
     report = _gate().assess("")
     assert report.calibrated_answer == ""
     assert report.overall is EpistemicStatus.UNVERIFIED
+
+
+# ------------------------------------------------------- the felt channel
+#
+# CP126 0d707883. The interoception lookup returned a bare None on import or
+# lookup failure, which is indistinguishable from "no trace matched" — so the
+# gate could present an ordinary calibration result after silently losing one
+# of its advertised evidence channels. A missing channel is a finding.
+
+
+def test_an_unavailable_felt_channel_is_reported_not_silently_absent(monkeypatch):
+    def _explode(*args, **kwargs):
+        raise RuntimeError("interoception organ is down")
+
+    monkeypatch.setattr(
+        "core.being.thought_interoception.get_thought_interoception", _explode
+    )
+    payload = _gate().assess("Something confident.").to_dict()
+    assert payload["felt_channel"].startswith("unavailable:"), (
+        "a lost evidence channel reads as 'nothing felt contested'"
+    )
+
+
+def test_a_supplied_trace_is_recorded_as_supplied():
+    class _Trace:
+        felt_confidence = 0.9
+        ambivalence = 0.1
+        spikes = ()
+
+    payload = _gate().assess("Something confident.", felt=_Trace()).to_dict()
+    assert payload["felt_channel"] == "supplied"
+
+
+def test_no_matching_trace_is_distinct_from_a_broken_channel(monkeypatch):
+    """The distinction the bare None destroyed."""
+    monkeypatch.setattr(
+        "core.being.thought_interoception.get_thought_interoception",
+        lambda: type("_I", (), {"find_for_text": staticmethod(lambda _t: None)})(),
+    )
+    payload = _gate().assess("Something confident.").to_dict()
+    assert payload["felt_channel"] == "consulted"
+    assert not payload["felt_channel"].startswith("unavailable")

@@ -20,6 +20,8 @@ path and governance can read.
 from __future__ import annotations
 
 import re
+
+from core.runtime.errors import record_degradation
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -93,6 +95,12 @@ class CalibrationReport:
     # Substrate interoception coupling (None when no felt trace matched):
     felt_confidence: float | None = None
     felt_demotions: int = 0
+    #: "consulted" | "supplied" | "no_trace" | "unavailable:<reason>".
+    #: CP126 0d707883: an import or lookup failure returned None, which the
+    #: caller could not tell apart from "no trace matched" — so the gate
+    #: could present an ordinary calibration result after losing one of its
+    #: advertised evidence channels.
+    felt_channel: str = "no_trace"
 
     def to_dict(self) -> dict[str, Any]:
         """The full report, INCLUDING the answer the gate says may be spoken.
@@ -117,6 +125,9 @@ class CalibrationReport:
                 round(self.felt_confidence, 3) if self.felt_confidence is not None else None
             ),
             "felt_demotions": self.felt_demotions,
+            # Whether the interoception channel was actually consulted, so a
+            # LOST evidence channel is never read as "nothing felt contested".
+            "felt_channel": self.felt_channel,
             "labels": [c.to_dict() for c in self.labels[:_MAX_REPORTED_LABELS]],
             "label_count": len(self.labels),
             "labels_truncated": len(self.labels) > _MAX_REPORTED_LABELS,
@@ -188,7 +199,10 @@ class CalibrationGate:
         # Substrate interoception: if the answer's felt trace shows the words
         # were contested as they formed, unsupported sentences overlapping the
         # contested regions lose their nerve (see _apply_felt).
-        felt_trace = felt if felt is not None else self._felt_trace_for(answer)
+        if felt is not None:
+            felt_trace, felt_channel = felt, "supplied"
+        else:
+            felt_trace, felt_channel = self._felt_trace_for(answer)
         felt_demotions = 0
         felt_conf: float | None = None
         if felt_trace is not None:
@@ -211,6 +225,7 @@ class CalibrationGate:
             flagged_impossible=flagged,
             felt_confidence=felt_conf,
             felt_demotions=felt_demotions,
+            felt_channel=felt_channel,
         )
 
     @staticmethod
@@ -223,9 +238,18 @@ class CalibrationGate:
         try:
             from core.being.thought_interoception import get_thought_interoception
 
-            return get_thought_interoception().find_for_text(answer)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return None
+            return get_thought_interoception().find_for_text(answer), "consulted"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # CP126 0d707883: returning a bare None here made "the organ is
+            # gone" indistinguishable from "nothing matched", so the gate
+            # could present an ordinary result after silently losing one of
+            # its advertised evidence channels.
+            record_degradation(
+                "calibration_gate",
+                exc,
+                action="calibrated text-only after the interoception channel was unavailable",
+            )
+            return None, f"unavailable:{type(exc).__name__}"
 
     @staticmethod
     def _apply_felt(labels: list[ClaimLabel], felt_trace: Any) -> int:
