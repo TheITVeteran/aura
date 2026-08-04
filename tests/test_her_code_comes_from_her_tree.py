@@ -198,3 +198,38 @@ def test_the_follow_up_can_name_where_the_shown_code_lives():
         assert "made it up" in brief.lower()
     finally:
         forget_shown_excerpt()
+
+
+# ── the check must not be defeated by how the code was formatted ──────────
+
+
+def test_unfenced_code_is_checked_too():
+    """The fabrication came back with no ``` around it and sailed through."""
+    unfenced = (
+        "Sure, here's a piece:\n\n"
+        "def self_organize_modules(self, existing_module_data):\n"
+        "    for module in existing_module_data:\n"
+        "        module.reorganize()\n"
+    )
+    assert code_blocks_in(unfenced)
+    assert reply_fabricates_own_code(unfenced)
+
+
+def test_code_merely_QUOTED_in_prose_does_not_prove_it_exists():
+    """This module's own comments quote the fabricated signature.
+
+    A fixed-string search found it here and pronounced the invention
+    genuine — the check has to distinguish a file CONTAINING a line from a
+    file MENTIONING it.
+    """
+    verdict, _path = snippet_verdict(
+        "def self_organize_modules(self, existing_module_data):\n"
+        "    for module in existing_module_data:\n"
+    )
+    assert verdict == "absent"
+
+
+def test_prose_with_no_code_is_never_flagged():
+    assert not reply_fabricates_own_code(
+        "I read it from core/mycelium.py — the routing validation logic."
+    )

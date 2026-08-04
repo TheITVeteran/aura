@@ -643,9 +643,34 @@ _UNDISTINCTIVE_LINE_RE = re.compile(
 )
 
 
+#: Python that arrives without a fence. Live 2026-08-04 the fabrication came
+#: back as a bare `def self_organize_modules(self, existing_module_data):`
+#: with no ``` around it, so a fence-only check saw no code at all and let it
+#: through. Whether the model remembered to fence its output is not what
+#: makes something a claim about her source.
+_BARE_DEF_RE = re.compile(r"^[ \t]*(?:async\s+def|def|class)\s+\w+", re.MULTILINE)
+
+
 def code_blocks_in(reply: Any) -> list[str]:
-    """The fenced Python blocks of a reply."""
-    return [block for block in _FENCED_PYTHON_RE.findall(str(reply or "")) if block.strip()]
+    """The Python in a reply, fenced or not."""
+    body = str(reply or "")
+    blocks = [block for block in _FENCED_PYTHON_RE.findall(body) if block.strip()]
+    if blocks:
+        return blocks
+    # No fences. Take each run of lines starting at a definition, so the
+    # check has the same material it would have had inside a fence.
+    bare: list[str] = []
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if _BARE_DEF_RE.match(line):
+            run = [line]
+            for following in lines[index + 1 : index + 30]:
+                if following.strip() and not following.startswith((" ", "\t")):
+                    if not _BARE_DEF_RE.match(following):
+                        break
+                run.append(following)
+            bare.append("\n".join(run))
+    return bare
 
 
 def _distinctive_lines(code: str, limit: int = 4) -> list[str]:
@@ -692,12 +717,19 @@ def snippet_verdict(code: str) -> tuple[str, str]:
     # walk for each, ~6s on the foreground lane. `-l` with several `-e`
     # patterns lists files matching any of them, which is the same question
     # asked once.
+    # Anchored to the start of a line, so PROSE QUOTING code does not count
+    # as the code existing. This module's own comments quote the fabricated
+    # `def self_organize_modules(...)` from the live defect; a fixed-string
+    # search found it here and pronounced the invention genuine. A snippet
+    # is in the tree when a line of it IS a line of a file, not when some
+    # file mentions it.
     patterns: list[str] = []
     for line in lines:
-        patterns.extend(("-e", line))
+        escaped = re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", line)
+        patterns.extend(("-e", rf"^[[:space:]]*{escaped}"))
     try:
         found = subprocess.run(
-            ["grep", "-rlsF", "--include=*.py", *excludes, *patterns, *roots],
+            ["grep", "-rlsE", "--include=*.py", *excludes, *patterns, *roots],
             capture_output=True,
             text=True,
             timeout=10,
