@@ -419,3 +419,53 @@ def test_the_prompt_forbids_the_rehash():
     # And it carries the position she actually reached, not a blank invitation
     # to have one.
     assert reading_disposition(_record()).disposition in prompt
+
+
+# --- every read path, not just the one that wrote the screenshot ----------
+from core.knowledge.source_comprehension import comprehension_payload  # noqa: E402
+
+
+class TestTheReadPathAdapter:
+    """comprehension_payload is what each read path merges into its result."""
+
+    def test_a_readable_source_yields_a_comprehension(self):
+        payload = comprehension_payload(
+            url="https://www.reddit.com/r/philosophy/x",
+            title=_REDDIT_TITLE,
+            text=_REDDIT_BODY,
+        )
+        assert "comprehension" in payload
+        assert payload["comprehension"]["claim"]
+
+    def test_an_unreadable_source_yields_nothing_to_merge(self):
+        """An empty understanding must never be published as if it were one."""
+        assert comprehension_payload(url="", title="", text="Home All") == {}
+
+    def test_it_never_raises_on_junk(self):
+        for bad in (None, 12, object()):
+            assert comprehension_payload(url=bad, title=bad, text=bad) == {}
+
+
+class TestEveryReadPathIsWired:
+    """A read that returns characters and nothing about them leaves a blob."""
+
+    def test_the_direct_browse_carries_comprehension(self):
+        """The browse Bryan asks for by name went through the one path that
+        returned raw text and nothing about it."""
+        import inspect
+
+        from core.skills.sovereign_browser import SovereignBrowserSkill
+
+        source = inspect.getsource(SovereignBrowserSkill)
+        browse = source[source.index("Browse mode requires"):]
+        browse = browse[: browse.index("async def _handle_interact")]
+        assert "_read_comprehension" in browse, "a direct browse must judge what it read"
+
+    def test_the_search_aliases_inherit_it(self):
+        """search_web and free_search delegate rather than duplicating."""
+        from core.skills.free_search import FreeSearchSkill
+        from core.skills.web_search import EnhancedWebSearchSkill
+        from core.skills.web_search_skill import WebSearchSkill
+
+        assert issubclass(WebSearchSkill, EnhancedWebSearchSkill)
+        assert issubclass(FreeSearchSkill, EnhancedWebSearchSkill)

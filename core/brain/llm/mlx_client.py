@@ -20,7 +20,7 @@ import sys
 import threading as _threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -3089,9 +3089,12 @@ class MLXLocalClient:
         self._model_load_admission_suppressed_count = 0
         self._model_load_admission_denied_at = 0.0
         self._consecutive_empty: int = 0  # [STABILITY v53] Explicit init — was missing
-        self._expected_cancel_reason = ""
-        self._expected_cancel_budget = 0
-        self._expected_cancel_recorded_at = 0.0
+        #: req_id → (reason, recorded_at). Bound to the request that was
+        #: actually planned for cancellation. A client-wide credit counter
+        #: let any unrelated cancellation spend a credit and be reported as
+        #: expected, while the request that really was cancelled went
+        #: unaccounted for.
+        self._expected_cancels: dict[str, tuple[str, float]] = {}
         self._process_started_at = 0.0
         self._current_request_started_at = 0.0
         self._current_first_token_at = 0.0
@@ -3877,30 +3880,52 @@ class MLXLocalClient:
                 action="continued generation return after interoception ingest failed",
             )
 
-    def _note_expected_generation_cancellation(self, reason: str, *, count: int) -> None:
-        if count <= 0:
-            return
-        self._expected_cancel_reason = str(reason or "planned_reboot")
-        self._expected_cancel_budget += int(count)
-        self._expected_cancel_recorded_at = time.time()
+    #: How long a planned cancellation stays claimable. Past this the
+    #: cancellation is no longer attributable to the plan that scheduled it.
+    _EXPECTED_CANCEL_TTL_S = 30.0
 
-    def _consume_expected_generation_cancellation(self) -> str:
-        if self._expected_cancel_budget <= 0:
+    def _note_expected_generation_cancellation(
+        self, reason: str, *, request_ids: Iterable[str]
+    ) -> None:
+        """Mark specific in-flight requests as deliberately cancelled.
+
+        Named requests, not a count. The credit form could not tell a planned
+        cancellation from an unrelated one that happened to arrive first, so a
+        genuine wedge could be logged as routine reboot cleanup while the
+        request the reboot actually killed was reported as a surprise.
+        """
+        now = time.time()
+        label = str(reason or "planned_reboot")
+        self._prune_expected_cancellations(now=now)
+        for req_id in request_ids:
+            key = str(req_id or "")
+            if key:
+                self._expected_cancels[key] = (label, now)
+
+    def _prune_expected_cancellations(self, *, now: float | None = None) -> None:
+        """Drop claims too old to attribute. Keeps the map bounded."""
+        moment = time.time() if now is None else now
+        stale = [
+            key
+            for key, (_reason, at) in self._expected_cancels.items()
+            if at and (moment - at) > self._EXPECTED_CANCEL_TTL_S
+        ]
+        for key in stale:
+            self._expected_cancels.pop(key, None)
+
+    def _consume_expected_generation_cancellation(self, req_id: str = "") -> str:
+        """The planned reason for THIS request's cancellation, or "".
+
+        An empty return means this cancellation was not planned — which is the
+        answer that has to be right, because it decides whether the runtime
+        treats the event as cleanup or as a worker that stopped responding.
+        """
+        self._prune_expected_cancellations()
+        key = str(req_id or "")
+        if not key:
             return ""
-        if (
-            self._expected_cancel_recorded_at
-            and (time.time() - self._expected_cancel_recorded_at) > 30.0
-        ):
-            self._expected_cancel_reason = ""
-            self._expected_cancel_budget = 0
-            self._expected_cancel_recorded_at = 0.0
-            return ""
-        reason = self._expected_cancel_reason
-        self._expected_cancel_budget = max(0, self._expected_cancel_budget - 1)
-        if self._expected_cancel_budget == 0:
-            self._expected_cancel_reason = ""
-            self._expected_cancel_recorded_at = 0.0
-        return reason
+        claim = self._expected_cancels.pop(key, None)
+        return claim[0] if claim else ""
 
     def _mark_generation_started(
         self,
@@ -10038,7 +10063,7 @@ class MLXLocalClient:
         except asyncio.CancelledError:
             origin_label = str(kwargs.get("origin", "") or "")
             purpose_label = str(kwargs.get("purpose", "") or "")
-            expected_cancel_reason = self._consume_expected_generation_cancellation()
+            expected_cancel_reason = self._consume_expected_generation_cancellation(req_id)
             benchmark_baseline_cancel = (
                 origin_label.strip().lower() == "baseline"
                 or purpose_label.strip().lower().endswith("_baseline")
@@ -10760,17 +10785,17 @@ class MLXLocalClient:
             # RECREATE QUEUES TO PREVENT ZOMBIE THREADS STEALING MESSAGES
             self._replace_ipc_queues()
 
-            pending_futures = {
-                id(future): future
-                for future in list(self._pending_generations.values()) + [self._current_gen_future]
+            pending_request_ids = [
+                req_id
+                for req_id, future in self._pending_generations.items()
                 if future is not None and not future.done()
-            }
+            ]
             if mark_failed:
-                self._expected_cancel_reason = ""
-                self._expected_cancel_budget = 0
-                self._expected_cancel_recorded_at = 0.0
-            elif pending_futures:
-                self._note_expected_generation_cancellation(reason, count=len(pending_futures))
+                self._expected_cancels.clear()
+            elif pending_request_ids:
+                self._note_expected_generation_cancellation(
+                    reason, request_ids=pending_request_ids
+                )
 
             cleared_owner = _clear_matching_foreground_owner(
                 f"warmup:{os.path.basename(self.model_path)}",

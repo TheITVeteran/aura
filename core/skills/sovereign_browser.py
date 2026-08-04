@@ -21,6 +21,21 @@ from core.thought_stream import get_emitter
 
 logger = logging.getLogger("Skills.SovereignBrowser")
 
+
+def _read_comprehension(*, url: str, title: str, text: str) -> dict[str, Any]:
+    """What this page claims, judged — merged into the browse result.
+
+    A browse Bryan asked for by name went through the one read path that
+    returned raw characters and nothing about them, so the turn after it had
+    nothing to say about the page.
+    """
+
+    try:
+        from core.knowledge.source_comprehension import comprehension_payload
+    except ImportError:
+        return {}
+    return comprehension_payload(url=url, title=title, text=text)
+
 class BrowserAction(BaseModel):
     type: Literal["click", "type", "scroll", "wait", "get_html", "screenshot"] = Field(
         ...,
@@ -507,7 +522,7 @@ class SovereignBrowserSkill(BaseSkill):
             get_emitter().emit("📄 Reading Document", f"Extracting content from {url}", category="Browser")
             content = await self._safe_read_content(browser)
             observed_url = self._observed_url(browser)
-            return {
+            payload = {
                 "ok": True,
                 "source": url,
                 "observed_url": observed_url,
@@ -515,6 +530,10 @@ class SovereignBrowserSkill(BaseSkill):
                 "content": content,
                 "message": f"I've navigated to {url} and captured the content.",
             }
+            payload.update(
+                _read_comprehension(url=observed_url or url, title="", text=content)
+            )
+            return payload
         return {"ok": False, "error": f"Failed to load {url}"}
 
     async def _handle_interact(

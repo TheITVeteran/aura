@@ -149,8 +149,16 @@ class SourceComprehension:
 
     @property
     def understood(self) -> bool:
-        """Whether anything was actually extracted. Empty is not understanding."""
-        return bool(self.claim)
+        """Whether anything was actually extracted. Empty is not understanding.
+
+        A claim has to contain a word. Emptiness was the only thing ruled out,
+        so a page whose whole extractable content was "12" produced a record
+        claiming — with a stance and a stored narrative — that the source
+        claims 12. A later turn then says that out loud. Requiring a letter is
+        not a length threshold; it is the difference between a statement and a
+        fragment that survived extraction.
+        """
+        return bool(self.claim) and any(character.isalpha() for character in self.claim)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -379,6 +387,42 @@ def comprehend_source(
         topics=sorted(_content_terms(f"{title} {claim}"))[:12],
         content_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
     )
+
+
+def comprehension_payload(
+    *,
+    url: str = "",
+    title: str = "",
+    text: str = "",
+    known_beliefs: list[str] | None = None,
+) -> dict[str, Any]:
+    """The read-path adapter: ``{"comprehension": {...}}``, or ``{}``.
+
+    Every path that fetches text — a search, a browse she was asked for, the
+    interlocutor's own reading — merges this into what it returns, so a later
+    turn has something to say about the page beyond the blob of characters.
+
+    Returns an EMPTY dict when the text could not be comprehended, so a caller
+    can merge unconditionally and never publish an empty understanding as if it
+    were one. Never raises: a read path must not fail because the judgement of
+    what it read failed.
+    """
+
+    if not isinstance(text, str):
+        # A page's text is text. Coercing whatever arrived would put its repr
+        # — "<object object at 0x...>" — into a stored claim, and a later turn
+        # would say the source claims that. Not a read.
+        return {}
+    try:
+        record = comprehend_source(
+            url=str(url or ""),
+            title=str(title or ""),
+            text=text,
+            known_beliefs=known_beliefs,
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {}
+    return {"comprehension": record.to_dict()} if record.understood else {}
 
 
 #: Hedging that turns an opinion back into a summary. A reaction containing
@@ -630,6 +674,7 @@ __all__ = [
     "assess_stance",
     "classify_source",
     "comprehend_source",
+    "comprehension_payload",
     "extract_claim",
     "remember_reading",
     "strip_site_chrome",

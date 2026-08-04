@@ -1032,25 +1032,66 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
     async def test_expected_cancelled_generation_does_not_mark_worker_unhealthy(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         self._attach_local_ipc_queues(client)
-        client._expected_cancel_reason = "yield_to_Qwen2.5-72B-Instruct-4bit"
-        client._expected_cancel_budget = 1
-        client._expected_cancel_recorded_at = 10_000.0
 
         cancelled_calls = []
 
         async def _cancelled(*args, **kwargs):
             cancelled_calls.append((args, kwargs))
+            # What a planned reboot does: name the requests that are actually
+            # in flight when it decides to cancel them.
+            client._note_expected_generation_cancellation(
+                "yield_to_Qwen2.5-72B-Instruct-4bit",
+                request_ids=[client._current_request_id],
+            )
             raise asyncio.CancelledError
 
         with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
             with ReplaceAttr(client, "_wait_for_generation_result", AsyncCallProbe(side_effect=_cancelled)):
-                with replace_dotted("time.time", lambda: 10_001.0):
-                    with self.assertRaises(asyncio.CancelledError):
-                        await client._generate_inner("hello", foreground_request=True)
+                with self.assertRaises(asyncio.CancelledError):
+                    await client._generate_inner("hello", foreground_request=True)
 
         self.assertIsNone(client._deferred_reboot_reason)
         self.assertEqual(len(cancelled_calls), 1)
-        self.assertEqual(client._expected_cancel_budget, 0)
+        # The claim was spent by the request it was filed against.
+        self.assertEqual(client._expected_cancels, {})
+
+    async def test_one_requests_planned_cancellation_does_not_excuse_another(self):
+        """A claim is bound to the request it was filed against.
+
+        The accounting used to be a client-wide credit counter, so whichever
+        cancellation arrived first spent the credit. An unrelated cancellation
+        could be logged as routine reboot cleanup while the request the reboot
+        actually killed was reported as a surprise — the two conclusions the
+        runtime uses to decide whether a worker stopped responding.
+        """
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        client._note_expected_generation_cancellation(
+            "planned_reboot", request_ids=["req-planned"]
+        )
+
+        # An unrelated request must not be able to claim it.
+        self.assertEqual(client._consume_expected_generation_cancellation("req-other"), "")
+        # And the planned one still can, afterwards.
+        self.assertEqual(
+            client._consume_expected_generation_cancellation("req-planned"), "planned_reboot"
+        )
+        # Claims are single-use.
+        self.assertEqual(client._consume_expected_generation_cancellation("req-planned"), "")
+
+    async def test_a_stale_claim_is_not_attributable(self):
+        """Past the TTL the cancellation is no longer the plan's doing."""
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        client._note_expected_generation_cancellation(
+            "planned_reboot", request_ids=["req-old"]
+        )
+        client._expected_cancels["req-old"] = (
+            "planned_reboot",
+            time.time() - (client._EXPECTED_CANCEL_TTL_S + 1.0),
+        )
+        self.assertEqual(client._consume_expected_generation_cancellation("req-old"), "")
+        self.assertEqual(client._expected_cancels, {})
 
     async def test_generate_times_out_waiting_for_foreground_owner(self):
         import core.brain.llm.mlx_client as mlx_module
