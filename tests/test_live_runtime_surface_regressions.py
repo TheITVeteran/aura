@@ -2428,19 +2428,32 @@ async def test_intent_router_route_execution_drives_capability_engine():
     )
 
     assert result["ok"] is True
-    assert calls == [
-        (
-            "file_operation",
-            {"action": "exists", "path": "README.md"},
-            {
-                "origin": "api",
-                "route": "intent_router.route_execution",
-                "foreground_request": True,
-                "user_explicitly_authorized": True,
-                "user_requested_action": True,
-            },
-        )
-    ]
+    assert len(calls) == 1
+    skill, params, execution_context = calls[0]
+    assert skill == "file_operation"
+    assert params == {"action": "exists", "path": "README.md"}
+    assert {
+        "origin": "api",
+        "route": "intent_router.route_execution",
+        "foreground_request": True,
+        "user_explicitly_authorized": True,
+        "user_requested_action": True,
+    }.items() <= execution_context.items()
+
+    # `user_explicitly_authorized` is a caller-supplied boolean, and
+    # BeingRuntime correctly ignores it unless a capability token bound to
+    # tool_execution/foreground_desktop_action backs it. Nothing was minting
+    # that token, so the assertion was dead and its refusal was logged on
+    # every desktop turn. The router now asks the authority gateway — the
+    # only issuer — to attest what it has already established.
+    #
+    # Asserted as a PROPERTY rather than pinning the dict exactly: the old
+    # equality check made adding the token look like a regression when it is
+    # the fix.
+    assert execution_context.get("capability_token"), (
+        "the router asserts user authority without obtaining the token that "
+        "attests it, so the flag is ignored downstream"
+    )
 
 
 @pytest.mark.asyncio
@@ -2495,19 +2508,20 @@ def test_legacy_interface_router_delegates_to_canonical_capability_path():
     )
 
     assert result["ok"] is True
-    assert calls == [
-        (
-            "forge_skill",
-            {"name": "diagnostic_skill"},
-            {
-                "origin": "api",
-                "route": "intent_router.route_execution",
-                "foreground_request": True,
-                "user_explicitly_authorized": True,
-                "user_requested_action": True,
-            },
-        )
-    ]
+    assert len(calls) == 1
+    skill, params, execution_context = calls[0]
+    assert skill == "forge_skill"
+    assert params == {"name": "diagnostic_skill"}
+    assert {
+        "origin": "api",
+        "route": "intent_router.route_execution",
+        "foreground_request": True,
+        "user_explicitly_authorized": True,
+        "user_requested_action": True,
+    }.items() <= execution_context.items()
+    # See the note in the sibling test: the router now obtains the gateway
+    # token that attests the authority flag it asserts.
+    assert execution_context.get("capability_token")
 
     source = Path("interface/router.py").read_text(encoding="utf-8")
     assert "execute_skill_task.delay" not in source

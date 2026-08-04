@@ -2158,6 +2158,42 @@ class CapabilityEngine(AuraBaseModule):
             if any(token in objective_lower for token in tokens):
                 heuristic_candidates.extend(names)
 
+        # A screen OBSERVATION has exactly one owner.
+        #
+        # Live 2026-08-04: "can you tell me what you see on the screen?"
+        # matched two rules — "on my screen" and "screen" — so the candidate
+        # list carried both computer_use and desktop_task. Both dispatched,
+        # each declared its own intention and minted its own capability
+        # token, and each ran the SAME read_screen_text. One request, two
+        # governed desktop actions, two readings of the person's screen,
+        # double the latency, and two entries in the audit trail for one act.
+        #
+        # desktop_task is the governed lane: it plans, verifies effects,
+        # produces receipts, and types the result as an Observation. A bare
+        # computer_use read duplicates that with less. So for an observation
+        # the governed lane owns it, and computer_use stays available for
+        # everything else.
+        if "desktop_task" in heuristic_candidates and "computer_use" in heuristic_candidates:
+            try:
+                from core.runtime.desktop_objective_intent import (
+                    looks_like_screen_observation,
+                )
+
+                if looks_like_screen_observation(objective_lower):
+                    heuristic_candidates = [
+                        name for name in heuristic_candidates if name != "computer_use"
+                    ]
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "capability_engine",
+                    exc,
+                    severity="debug",
+                    action=(
+                        "left both desktop skills as candidates; a screen read may "
+                        "be dispatched twice"
+                    ),
+                )
+
         ordered: list[str] = []
 
         def _push(name: str | None) -> None:

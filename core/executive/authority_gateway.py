@@ -550,6 +550,39 @@ class AuthorityGateway:
         )
 
     @classmethod
+    def issue_desktop_authority_capability(cls, *, skill: str, origin: str) -> str:
+        """Mint the token that backs an explicitly-authorized desktop action.
+
+        CP126 3b1a9177 made `user_explicitly_authorized` require a capability
+        token bound to domain+action, because a caller-supplied boolean is not
+        authority. That was right — and, exactly as with the continuity flags
+        before it, NOTHING was issuing the token. So BeingRuntime logged
+
+            Context flag 'user_explicitly_authorized' for
+            tool_execution/foreground_desktop_action carried no capability
+            token; ignoring it
+
+        on every desktop turn (twice on 2026-08-04, once per dispatched
+        skill), and the foreground-desktop exception it guards never applied.
+        A check that can never pass is not a check; it is a warning that
+        teaches operators to ignore warnings.
+
+        The gateway is the approver. It has already established from the
+        request that the person asked for this action in this turn, which is
+        precisely what the token attests. The flag still cannot be
+        self-granted by a caller — only the gateway issues.
+        """
+        return cls._issue_gateway_capability(
+            domain="tool_execution",
+            action="foreground_desktop_action",
+            scope=f"tool_execution:{skill}:{origin}",
+            unattested_action=(
+                "foreground desktop action proceeds unattested (the exception "
+                "it would clear does not apply)"
+            ),
+        )
+
+    @classmethod
     def _issue_state_continuity_capability(cls, origin: str, cause: str) -> str:
         """Mint the token that backs a gateway-approved foreground state commit."""
         return cls._issue_gateway_capability(

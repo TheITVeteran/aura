@@ -139,6 +139,33 @@ class IntentRouter:
         execution_context["foreground_request"] = True
         execution_context["user_explicitly_authorized"] = True
         execution_context["user_requested_action"] = True
+        # The flag alone is a caller-supplied boolean, and BeingRuntime
+        # correctly ignores it without a capability token bound to
+        # tool_execution/foreground_desktop_action. Nothing was issuing that
+        # token, so the assertion was dead and its refusal logged on every
+        # desktop turn. The router does not self-grant: it asks the AUTHORITY
+        # GATEWAY, which is the only issuer, to attest what it has already
+        # established — that this action was explicitly requested this turn.
+        if not execution_context.get("capability_token"):
+            try:
+                from core.executive.authority_gateway import get_authority_gateway
+
+                token = get_authority_gateway().issue_desktop_authority_capability(
+                    skill=str(skill_name or ""),
+                    origin=str(execution_context.get("origin") or "api"),
+                )
+                if token:
+                    execution_context["capability_token"] = token
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "intent_router",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "routed the skill without a desktop authority token; the "
+                        "foreground-desktop exception simply will not apply"
+                    ),
+                )
 
         return await capability_engine.execute(
             str(skill_name or "").strip(),
