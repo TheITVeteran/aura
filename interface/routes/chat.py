@@ -4135,6 +4135,30 @@ async def _fetch_deep_memory_context(user_message: str) -> str:
         return ""
 
 
+#: Openers of the three non-answer surfaces built by _build_reply_failure_notice.
+#: Kept as a tuple rather than a regex so a change to those sentences is a
+#: visible edit here rather than a silently-stopped guard.
+_NON_ANSWER_OPENERS: tuple[str, ...] = (
+    "I couldn't get a clear enough answer together",
+    "I couldn't put together an answer I trust",
+    "I keep circling the same non-answer",
+)
+
+
+def _is_non_answer_surface(text: str) -> bool:
+    """True when the text is a refusal notice rather than a reply.
+
+    Live, 2026-08-04: asked what he had said he wanted to learn, she quoted
+    his sentence back correctly and then appended
+    'and I acknowledged it: "I couldn\'t get a clear enough answer
+    together..."'. She had not acknowledged it — she had declined to answer.
+    Recalling a refusal as an acknowledgement asserts a thing that did not
+    happen, on the one path whose entire purpose is anti-confabulation.
+    """
+    stripped = " ".join(str(text or "").split())
+    return any(stripped.startswith(opener) for opener in _NON_ANSWER_OPENERS)
+
+
 async def _build_conversation_recall_reply(
     user_message: str,
     *,
@@ -4178,7 +4202,10 @@ async def _build_conversation_recall_reply(
             quoted = _clip_conversation_text(matches[0].get("user"), limit=420)
             reply = f'Earlier in this conversation you told me: "{quoted}"'
             ack = _clip_conversation_text(matches[0].get("aura"), limit=200)
-            if ack:
+            # A refusal is not an acknowledgement. Quoting one back claims a
+            # response that never happened, on the path built to never claim
+            # anything that did not.
+            if ack and not _is_non_answer_surface(ack):
                 reply += f' — and I acknowledged it: "{ack}"'
             return reply
         # Before declaring a miss: is it in the durable ledger from before a
