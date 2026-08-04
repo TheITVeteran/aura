@@ -704,6 +704,72 @@ class HostAutomationProvider:
         self._log_receipt(receipt)
         return receipt
 
+    async def click_element(
+        self,
+        reference: str,
+        *,
+        app: str = "",
+        button: str = "left",
+    ) -> AutomationReceipt:
+        """Click a NAMED control, or refuse — never a guessed coordinate.
+
+        `click_at` takes two numbers and nothing checks that they mean
+        anything. This reads the frontmost window's controls into an inventory
+        (core/perception/element_inventory.py), resolves the reference against
+        it, and clicks the centre of the element it actually found.
+
+        Refusing is the feature. An agent that always produces a coordinate
+        will click SOMETHING when it recognised nothing, and a wrong click is
+        not a smaller version of the right one — it is a different action taken
+        on the person's machine. The refusal names the candidates so the next
+        turn can disambiguate instead of guessing again.
+        """
+        start = time.time()
+        try:
+            from core.perception.element_inventory import (
+                build_inventory,
+                resolve_action_target,
+            )
+        except ImportError as exc:
+            return AutomationReceipt(
+                action="click_element", target=str(reference), adapter="element_inventory",
+                success=False, error=f"element inventory unavailable: {exc}",
+                duration_ms=(time.time() - start) * 1000,
+            )
+
+        target_app = str(app or "").strip()
+        if not target_app:
+            try:
+                from core.perception.frontmost_app import frontmost_app_name_fast
+
+                target_app = str(frontmost_app_name_fast() or "").strip()
+            except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+                target_app = ""
+        if not target_app:
+            return AutomationReceipt(
+                action="click_element", target=str(reference), adapter="element_inventory",
+                success=False, error="no frontmost app to read controls from",
+                duration_ms=(time.time() - start) * 1000,
+            )
+
+        inventory = build_inventory(target_app)
+        resolution = resolve_action_target(inventory, reference)
+        if not resolution.resolved or resolution.element is None:
+            return AutomationReceipt(
+                action="click_element", target=str(reference), adapter="element_inventory",
+                success=False, error=resolution.reason,
+                duration_ms=(time.time() - start) * 1000,
+            )
+
+        element = resolution.element
+        centre_x, centre_y = element.centre
+        receipt = await self.click_at(int(centre_x), int(centre_y), button)
+        # The receipt names WHAT was clicked, not only where. A coordinate in a
+        # log cannot be audited after the screen has moved on.
+        receipt.action = "click_element"
+        receipt.target = f"{element.element_id} ({element.function()})"
+        return receipt
+
     async def click_at(self, x: int, y: int, button: str = "left") -> AutomationReceipt:
         """Click at screen coordinates using cliclick (fast) or PyAutoGUI (fallback)."""
         start = time.time()

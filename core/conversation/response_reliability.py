@@ -4363,6 +4363,58 @@ def own_source_excerpt_floor(user_message: Any) -> str:
 #: arrangement of windows or about their contents.
 
 
+#: Asking what she can DO on the screen, as opposed to what is on it. These
+#: are different questions with different evidence: the first is answered from
+#: an interactable-element inventory, the second from a capture.
+_ACTIONABLE_SCREEN_RE = re.compile(
+    r"\b(?:what\s+(?:can|could)\s+you\s+(?:click|press|type|do)|"
+    r"what(?:'?s| is)\s+(?:click|press)able|"
+    r"what\s+(?:buttons?|controls?|fields?|links?)\b|"
+    r"list\s+the\s+(?:buttons?|controls?|elements?)|"
+    r"what\s+can\s+you\s+interact\s+with)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_what_is_actionable_on_screen(user_message: Any) -> bool:
+    """True when the turn asks what she can act on, not what she can see."""
+    return bool(_ACTIONABLE_SCREEN_RE.search(str(user_message or "")))
+
+
+def actionable_screen_floor(user_message: Any) -> str:
+    """Answer "what can you click here?" from a real element inventory.
+
+    The same discipline as the window-layout floor above, applied to controls:
+    the answer is READ, each element carries the source that produced it, and
+    when the read fails she says the read failed. She names ids because those
+    are what an instruction can then cite — "press e3a91f" is checkable in a
+    way that "click the send button" is not.
+    """
+    if not asks_what_is_actionable_on_screen(user_message):
+        return ""
+    try:
+        from core.perception.element_inventory import build_inventory
+        from core.perception.frontmost_app import frontmost_app_name_fast
+    except ImportError:
+        return ""
+    try:
+        app = str(frontmost_app_name_fast() or "").strip()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        app = ""
+    if not app:
+        return (
+            "I can't tell which app is in front right now, so I can't list what "
+            "is clickable in it. I'd rather say that than guess at controls."
+        )
+    inventory = build_inventory(app)
+    if not inventory.available:
+        return (
+            f"I couldn't read {app}'s controls just now ({inventory.unavailable_reason}), "
+            "so I don't have a list to give you. I won't invent one."
+        )
+    return inventory.render()
+
+
 def occluded_screen_view_floor(user_message: Any) -> str:
     """Answer "what's behind your window?" from the window layout.
 

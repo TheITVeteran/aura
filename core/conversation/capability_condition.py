@@ -102,6 +102,12 @@ _CAPABILITY_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("computer_use", (
         "click", "open the app", "take a screenshot", "on my screen",
         "my desktop",
+        # Asking what she can ACT on is a capability question with a factual
+        # answer — core/perception/element_inventory.py reads the frontmost
+        # window's controls. Without this cue the turn was answered from
+        # general knowledge about screens instead of from her own screen.
+        "what can you click", "what buttons", "what controls",
+        "clickable", "interact with the screen",
     )),
     ("email_adapter", ("email", "inbox", "send a message to")),
     # Asking whether she has a mind of her own is a capability question, and
