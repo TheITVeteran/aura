@@ -118,7 +118,10 @@ governance-lint:
 coverage:
 	@echo "📊 Measuring line + branch coverage (full suite, 6 chunks — this is long)..."
 	@$(PYTHON) -m coverage erase
-	@$(PYTHON) -m coverage run -m tools.run_test_chunks --chunks 6 \
+	@# --coverage, NOT `coverage run` around the runner: the chunks are fresh
+	@# interpreters, so wrapping the runner measured only the runner and this
+	@# target reported 0.00% over 419,306 statements while 27,494 tests passed.
+	@$(PYTHON) -m tools.run_test_chunks --chunks 6 --coverage \
 		--marker "not live and not network and not external" --continue-on-failure || true
 	@$(PYTHON) -m coverage combine || true
 	@$(PYTHON) -m coverage report | tail -30

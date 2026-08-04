@@ -78,9 +78,22 @@ def run_chunk(
     timeout_s: float,
     python: str,
     extra_args: list[str],
+    coverage: bool = False,
 ) -> tuple[bool, str, list[str]]:
-    cmd = [
-        python,
+    # Each chunk is a FRESH INTERPRETER launched with subprocess.run, so
+    # wrapping this runner in `coverage run` measures the runner and nothing
+    # else — `make coverage` reported 0.00% over 419,306 statements while
+    # 27,494 tests passed underneath it. `parallel`/`concurrency` in
+    # pyproject.toml do not help: they cover threads and the multiprocessing
+    # module, not an arbitrary child interpreter.
+    #
+    # So the child runs coverage itself. --parallel-mode gives every chunk its
+    # own data file for `coverage combine` to merge, which is also what makes
+    # the six chunks safe to write concurrently.
+    cmd = [python]
+    if coverage:
+        cmd += ["-m", "coverage", "run", "--parallel-mode"]
+    cmd += [
         "-m",
         "pytest",
         *[str(f) for f in files],
@@ -123,6 +136,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk-timeout", type=float, default=2400.0)
     parser.add_argument("--tests-dir", type=Path, default=ROOT / "tests")
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="measure each chunk with `coverage run --parallel-mode` (combine afterwards)",
+    )
     parser.add_argument(
         "--continue-on-failure",
         action="store_true",
@@ -177,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.chunk_timeout,
             python=args.python,
             extra_args=list(args.extra),
+            coverage=args.coverage,
         )
         results.append(result)
         if not result[0] and not args.continue_on_failure:
