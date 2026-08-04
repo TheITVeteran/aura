@@ -9929,10 +9929,45 @@ async def _run_cognitive_engine_chat_turn(
             # Whatever she ended up showing, remember where it came from, so
             # the next turn can say so instead of disowning it.
             from core.self.source_excerpt import (
+                grounded_excerpt_reply,
                 last_shown_excerpt,
                 provenance_sentence,
                 remember_shown_excerpt,
+                reply_is_grounded_in_source,
+                source_tree_is_readable,
             )
+
+            # A turn about her code that neither shows any nor cites a file
+            # has not reached her source at all.
+            #
+            # Live 2026-08-04: "show me how you're actually built" arrived
+            # with real excerpts attached and she answered "I can't show you
+            # code files directly", then described her architecture from
+            # memory. A false capability denial made while holding the file
+            # — the third form of one defect, after inventing a snippet and
+            # after disowning a real one. All three end with the person
+            # believing something untrue about what she can do.
+            if (
+                not _fabricated
+                and source_tree_is_readable()
+                and not await asyncio.to_thread(reply_is_grounded_in_source, text)
+            ):
+                _real = await asyncio.to_thread(grounded_excerpt_reply, visible)
+                if _real:
+                    logger.warning(
+                        "A question about her source was answered without "
+                        "showing or citing any; substituting a real excerpt."
+                    )
+                    _append_turn_text_mutation(
+                        turn_trace,
+                        stage="chat.own_source_answer_ungrounded",
+                        method="source_tree_excerpt_substitution",
+                        reasons=["reply_cited_no_real_source"],
+                        before=text,
+                        after=_real,
+                        deterministic=True,
+                    )
+                    text = _real
 
             # Asked where real code came from, a reply that never names the
             # file has not answered. Live 2026-08-04 she showed

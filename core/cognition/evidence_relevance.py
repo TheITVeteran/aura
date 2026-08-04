@@ -91,6 +91,12 @@ _BASELINE_ANCHORS: tuple[str, ...] = (
     # for prose.
     "write a couple of concise sentences about a general principle",
     "summarise a topic briefly in your own words",
+    # Asking what she CAN DO is not asking to see what she is made of.
+    # Live: "what external tools could you use from the live desktop
+    # path" scored as a question about her source and had a capability
+    # answer replaced with a file excerpt.
+    "what tools and capabilities do you have available to use",
+    "describe what you are able to do for me",
 )
 
 #: How much closer to the concept than to ordinary talk a request must be.

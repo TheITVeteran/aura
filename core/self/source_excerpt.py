@@ -821,3 +821,51 @@ def provenance_sentence() -> str:
         "repository, which is where I read it from. It is not a third-party "
         "package, but it is a file you can open."
     )
+
+
+def grounded_excerpt_reply(request: Any = "") -> str:
+    """A real excerpt, offered without waiting for a phrase to match.
+
+    ``own_source_excerpt_floor`` is gated on ``asks_for_own_source``, a
+    pattern. This is the same reading without that gate, for a caller that
+    has already decided by MEANING that the turn is about her code.
+
+    Live 2026-08-04: "show me how you're actually built" reached her with
+    real excerpts attached and she replied "I can't show you code files
+    directly", then described her architecture from memory. A false
+    capability denial, made while holding the file — the third form of the
+    same defect, after inventing a snippet and after disowning a real one.
+    """
+    if not source_tree_is_readable():
+        return ""
+    interest = None
+    try:
+        interest = excerpt_of_standing_interest()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        interest = None
+    if interest is not None and interest.grounded:
+        return (
+            f"This one, because {interest.reason.rstrip('.')}. Read from disk "
+            f"just now, so you can check it:\n\n{interest.excerpt.rendered()}"
+        )
+    excerpt = excerpt_for_topic(str(request or ""))
+    if excerpt is None:
+        return ""
+    return (
+        "Here's a real piece of me — read from disk just now, so you can "
+        f"check it:\n\n{excerpt.rendered()}"
+    )
+
+
+def reply_is_grounded_in_source(reply: Any) -> bool:
+    """Whether a reply actually shows or cites real code of hers."""
+    body = str(reply or "")
+    if not body.strip():
+        return False
+    for match in _SHOWN_CITATION_RE.finditer(body):
+        if (_SOURCE_ROOT / match.group(1)).is_file():
+            return True
+    for block in code_blocks_in(body):
+        if snippet_verdict(block)[0] == "found":
+            return True
+    return False

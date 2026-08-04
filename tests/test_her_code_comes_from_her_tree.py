@@ -233,3 +233,38 @@ def test_prose_with_no_code_is_never_flagged():
     assert not reply_fabricates_own_code(
         "I read it from core/mycelium.py — the routing validation logic."
     )
+
+
+# ── the third form: denying she can, while holding the file ───────────────
+
+
+def test_a_reply_that_shows_nothing_real_is_not_grounded():
+    from core.self.source_excerpt import reply_is_grounded_in_source
+
+    assert not reply_is_grounded_in_source(
+        "I can't show you code files directly. However, I can describe the "
+        "key components: the Cognitive Engine, the Memory System..."
+    )
+    assert not reply_is_grounded_in_source("")
+
+
+def test_a_reply_that_cites_a_real_file_is_grounded():
+    from core.self.source_excerpt import reply_is_grounded_in_source
+
+    assert reply_is_grounded_in_source(
+        "That came from core/mycelium.py:88 — the routing validation logic."
+    )
+
+
+def test_a_reply_citing_a_file_that_does_not_exist_is_not_grounded():
+    from core.self.source_excerpt import reply_is_grounded_in_source
+
+    assert not reply_is_grounded_in_source("It's in core/not_a_real_module.py:12.")
+
+
+def test_a_real_excerpt_is_available_without_any_phrase_matching():
+    from core.self.source_excerpt import grounded_excerpt_reply
+
+    reply = grounded_excerpt_reply("show me how you're actually built")
+    assert reply
+    assert re.search(r"\b[\w/]+\.py:\d+", reply), reply[:200]
