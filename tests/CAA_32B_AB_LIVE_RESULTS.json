@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-04T11:41:19.670953+00:00",
+  "timestamp": "2026-08-04T11:51:47.928012+00:00",
   "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
   "model_layers": 64,
   "vector_source": {
@@ -36,7 +36,7 @@
   ],
   "alpha": 8.0,
   "max_tokens": 100,
-  "duration_seconds": 4513.6,
+  "duration_seconds": 4453.6,
   "injection_count": 14994,
   "analysis": {
     "n_trials": 50,

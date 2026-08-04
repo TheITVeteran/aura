@@ -5931,6 +5931,49 @@ def _has_detail_request_deflection(user_message: Any, reply_text: Any) -> bool:
     return True
 
 
+def _quotes_a_screen_it_did_not_read(prompt: Any, reply_text: Any) -> bool:
+    """A reply that quotes on-screen text without a capture behind it.
+
+    MEASURED live 2026-08-04: asked to quote the visible text in two windows,
+    she produced two specific strings. An independent screencapture taken
+    seconds later was all black — min 0, max 0, mean 0.0 — so there was nothing
+    to read and no capture had run. Free generation has no way to know it
+    cannot see; the gate does.
+
+    Only a QUOTATION is blocked. Describing the window layout, saying she
+    cannot read something, or refusing all pass untouched.
+    """
+    try:
+        from core.conversation.screen_reading_claim import (
+            ScreenReadingEvidence,
+            screen_reading_claim_is_unsupported,
+        )
+        from core.perception.screen_blueprint import capture_blueprint
+    except ImportError as exc:  # pragma: no cover - import wiring failure
+        record_degradation("response_reliability.screen_claim", exc, severity="warning")
+        return False
+
+    if not screen_reading_claim_is_unsupported(prompt, reply_text, None):
+        return False
+
+    # A quotation was made. The only thing that can license it is a capture
+    # that actually returned text on this turn.
+    try:
+        blueprint = capture_blueprint()
+        text = str(getattr(blueprint, "readable_text", "") or "")
+        evidence = ScreenReadingEvidence(
+            captured=not bool(getattr(blueprint, "unavailable", True)),
+            text=text,
+            source="screen_blueprint",
+            unavailable_reason=str(getattr(blueprint, "unavailable_reason", "") or ""),
+        )
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("response_reliability.screen_claim", exc, severity="warning")
+        evidence = ScreenReadingEvidence(captured=False, unavailable_reason=str(exc)[:120])
+
+    return screen_reading_claim_is_unsupported(prompt, reply_text, evidence)
+
+
 def _has_stale_diagnostic_floor_leak(user_message: Any, reply_text: Any) -> bool:
     raw_norm = _normalize(reply_text)
     if not raw_norm:
@@ -6710,6 +6753,8 @@ def _model_text_integrity_reasons(
         reasons.append("persona_card_deflection")
     if user_facing and _has_detail_request_deflection(prompt, raw):
         reasons.append("detail_request_deflection")
+    if user_facing and _quotes_a_screen_it_did_not_read(prompt, raw):
+        reasons.append("unsupported_screen_reading_claim")
     if user_facing and _has_stale_diagnostic_floor_leak(prompt, raw):
         reasons.append("stale_diagnostic_floor_leak")
     if user_facing and _has_pseudo_commitment_status_leak(prompt, raw):

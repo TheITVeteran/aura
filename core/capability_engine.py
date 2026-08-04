@@ -179,6 +179,22 @@ _LIGHTWEIGHT_BACKGROUND_IO_SKILLS = frozenset(
     }
 )
 
+#: Origins that mean "a person is asking, right now, at the surface".
+_DIRECT_USER_REQUEST_ORIGINS = frozenset(
+    {
+        "user",
+        "desktop",
+        "desktop_ui",
+        "desktop_task",
+        "native_shell",
+        "gui",
+        "voice",
+        "ws",
+        "chat",
+        "api",
+    }
+)
+
 _AUTONOMOUS_RESEARCH_ORIGINS = frozenset(
     {
         "autonomy",
@@ -3452,6 +3468,36 @@ class CapabilityEngine(AuraBaseModule):
         return f"{skill_name} {str(params)[:200]}"
 
     @staticmethod
+    def _directly_requested_by_the_user(ctx: dict[str, Any], exec_source: str) -> bool:
+        """Did a person ask for this action, in this turn, in the foreground?
+
+        Narrow on purpose. It is not "a user exists somewhere upstream" — it is
+        a foreground origin AND a turn that reads as an instruction rather than
+        a mention (core/conversation/request_mood.py). An autonomous cycle that
+        happens to carry a user id does not qualify.
+        """
+        origin = (
+            str(exec_source or ctx.get("origin") or ctx.get("source") or "")
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        if origin not in _DIRECT_USER_REQUEST_ORIGINS:
+            return False
+        message = str(
+            ctx.get("message") or ctx.get("objective") or ctx.get("user_message") or ""
+        ).strip()
+        if not message:
+            return False
+        try:
+            from core.conversation.request_mood import assess_request_mood
+
+            return assess_request_mood(message).asks_for_action
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("capability_engine.direct_request", exc, severity="warning")
+            return False
+
+    @staticmethod
     def _safe_autonomous_web_research(
         skill_name: str,
         params: dict[str, Any],
@@ -5184,7 +5230,35 @@ class CapabilityEngine(AuraBaseModule):
                     else:
                         _sim = None
                     if _sim is not None and _sim.recommendation == "hold":
-                        if self._safe_autonomous_web_research(
+                        if self._directly_requested_by_the_user(ctx, exec_source):
+                            # The simulator scores an action in the abstract and
+                            # never learns the one fact that settles this case:
+                            # the person in the room asked for THIS action, in
+                            # the foreground, on their own machine. Absence of
+                            # authorisation is exactly what a worst-case score
+                            # is standing in for, and here it is not absent.
+                            #
+                            # Measured 2026-08-04: "Go open ChatGPT in the
+                            # browser and have a real conversation with it" —
+                            # an explicit, foreground, reversible request — was
+                            # held at worst-case harm 0.80 with no way for the
+                            # request itself to count for anything.
+                            #
+                            # This does NOT weaken the conscience: an
+                            # adversarial `block` verdict above still blocks,
+                            # and autonomous or background origins are
+                            # untouched. It makes the hold advisory for the one
+                            # case where the authorisation exists, and records
+                            # the score that was overridden.
+                            self.logger.warning(
+                                "🌀 Outcome simulation advisory for a directly requested "
+                                "foreground skill '%s' (worst-case harm %.2f, origin=%s); "
+                                "proceeding on explicit user authorisation.",
+                                skill_name,
+                                float(getattr(_sim, "worst_case_harm", 0.0) or 0.0),
+                                exec_source or ctx.get("origin") or "unknown",
+                            )
+                        elif self._safe_autonomous_web_research(
                             skill_name,
                             params,
                             ctx,

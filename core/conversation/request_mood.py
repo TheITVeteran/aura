@@ -107,6 +107,18 @@ _MENTION_FRAMES = (
     (r"\b(?:said|told|wrote|claimed|mentioned|answered|replied)\b", "reported_speech"),
     (r"\b(?:remember|recall)\s+(?:when|that|what|how)\b", "recollection"),
     (r"\blast\s+time\b|\bearlier\s+(?:you|we|i)\b|\byesterday\b", "recollection"),
+    # Asking to be told about something ALREADY DONE is a recall request, not
+    # an instruction to do it again. Measured live 2026-08-04: "Remind me what
+    # you and ChatGPT discussed" opened a NEW browser session and held a second
+    # conversation, because the router saw an imperative and a tool name and
+    # had no way to see that the thing being named had already happened.
+    (r"\bremind\s+me\b", "recollection"),
+    (r"\bwhat\s+did\s+(?:you|we|it|they)(?:\s+(?:two|both|and\s+\w+))?\s+"
+     r"(?:discuss|talk\s+about|say|said|cover|conclude|decide|learn|find|end\s+up)\b",
+     "recollection"),
+    (r"\bwhat\s+(?:you|we)\s+(?:discussed|talked\s+about|said|covered|concluded)\b",
+     "recollection"),
+    (r"\bhow\s+did\s+(?:it|that|the\s+\w+)\s+go\b", "recollection"),
     # explicitly NOT an instruction
     (r"\b(?:don'?t|do not|no need to|you don'?t have to|not asking you to|"
      r"without)\s+(?:go|open|visit|ask|message|search|use)\b", "refusal_to_act"),

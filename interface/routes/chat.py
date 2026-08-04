@@ -9992,7 +9992,34 @@ def _is_actionably_stale_response(user_message: str, text: str) -> bool:
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.output_contract", exc)
         return True
-    return not (exact_target and str(text or "").strip() == exact_target)
+    if exact_target:
+        # An explicit exact-reply contract keeps its original, stricter rule:
+        # only the response that exactly satisfies the parsed target is exempt.
+        return str(text or "").strip() != exact_target
+
+    # Saying the same thing twice about the same subject is CONSISTENCY, not
+    # staleness. The failure this guard exists for is a reply that repeats even
+    # though the question moved on — and the runtime already computes exactly
+    # that, as `same_answer_diff_prompt`, right beside this. It just was not
+    # allowed to settle anything.
+    #
+    # MEASURED live 2026-08-04. She held a real 8-turn conversation with
+    # ChatGPT, wrote the memory record, summarised it — and then, asked "so
+    # what did you two actually talk about?", produced the same account again
+    # and was degraded for it:
+    #
+    #   Response confidence: degraded (stale=True, same_answer_diff_prompt=False,
+    #   off_topic=False, semantic_glitch=False, assessment=, streak=2)
+    #
+    # `assessment=` is empty: nothing was wrong with the reply. The person
+    # asked a follow-up about the thing she had just done and got "I couldn't
+    # get a clear enough answer together" over a memory she was holding.
+    if not _is_same_answer_different_prompt(user_message, text):
+        logger.debug(
+            "Repetition is consistent with the question asked; not treating it as stale."
+        )
+        return False
+    return True
 
 
 _EQUIVALENT_REPAIR_PROMPT_GROUPS = (
@@ -22747,6 +22774,28 @@ async def api_chat(
             )
             if desktop_memory_state_contract_failed:
                 _live_turn_trace["response_path"] = "cognitive_engine_memory_state_contract_failed"
+        # DIAGNOSTIC DEFECT, measured live 2026-08-04. This condition has EIGHT
+        # disjuncts and the warning below printed SEVEN. The eighth —
+        # `_reply_assessment_requires_repair_with_memory_evidence` — was the one
+        # that fired on a real turn, and because `assessment=` renders the
+        # assessment's REASONS (empty, since the repair requirement is a
+        # judgement about evidence rather than a reason on the reply), the log
+        # read:
+        #
+        #   Response confidence: degraded (stale=False, same_answer_diff_prompt=False,
+        #   off_topic=False, semantic_glitch=False, recall_contract=False,
+        #   context_contract=False, memory_state_contract=False, assessment=,
+        #   streak=1, reason=)
+        #
+        # Every flag False, no assessment, no reason — a turn degraded on a
+        # condition the runtime does not report. A gate that cannot say what it
+        # did is the reason this took a restart and a log dive to find.
+        assessment_requires_repair = _reply_assessment_requires_repair_with_memory_evidence(
+            reply_assessment,
+            _semantic_user_message,
+            reply_text,
+            memory_state_evidence=desktop_memory_state_evidence,
+        )
         if (
             is_stale
             or is_same_diff
@@ -22755,17 +22804,12 @@ async def api_chat(
             or desktop_recall_contract_failed
             or desktop_context_contract_failed
             or desktop_memory_state_contract_failed
-            or _reply_assessment_requires_repair_with_memory_evidence(
-                reply_assessment,
-                _semantic_user_message,
-                reply_text,
-                memory_state_evidence=desktop_memory_state_evidence,
-            )
+            or assessment_requires_repair
         ):
             response_confidence = "degraded"
             _consecutive_degraded_count += 1
             logger.warning(
-                "⚠️ Response confidence: degraded (stale=%s, same_answer_diff_prompt=%s, off_topic=%s, semantic_glitch=%s, recall_contract=%s, context_contract=%s, memory_state_contract=%s, assessment=%s, streak=%d, reason=%s)",
+                "⚠️ Response confidence: degraded (stale=%s, same_answer_diff_prompt=%s, off_topic=%s, semantic_glitch=%s, recall_contract=%s, context_contract=%s, memory_state_contract=%s, assessment_requires_repair=%s, assessment=%s, assessment_ok=%s, retryable=%s, hard_failure=%s, reply_len=%d, streak=%d, reason=%s)",
                 is_stale,
                 is_same_diff,
                 is_off_topic,
@@ -22773,7 +22817,12 @@ async def api_chat(
                 desktop_recall_contract_failed,
                 desktop_context_contract_failed,
                 desktop_memory_state_contract_failed,
+                assessment_requires_repair,
                 ",".join(getattr(reply_assessment, "reasons", ()) or ()),
+                getattr(reply_assessment, "ok", None),
+                getattr(reply_assessment, "retryable", None),
+                getattr(reply_assessment, "hard_failure", None),
+                len(str(reply_text or "")),
                 _consecutive_degraded_count,
                 off_topic_reason or semantic_glitch_reason or "",
             )

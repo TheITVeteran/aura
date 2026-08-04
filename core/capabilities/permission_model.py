@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import os
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -65,6 +66,16 @@ class PermissionDecision:
 # ---------------------------------------------------------------------------
 # Modality toggles
 # ---------------------------------------------------------------------------
+
+#: Modalities a session grant may never turn on. These are not defaults that
+#: happen to be off — they are decisions, and a temporary grant is the wrong
+#: instrument for revisiting one.
+_UNGRANTABLE_MODALITIES = frozenset({"file_delete"})
+
+#: The longest a grant may last. A grant that outlives the session it was for
+#: is a configuration change wearing a timer.
+_MAX_SESSION_GRANT_S = 3600.0
+
 
 @dataclass
 class ModalityPermissions:
@@ -244,12 +255,18 @@ class PermissionRiskModel:
         self._max_history = 500
         self._escalation_window_s = 60.0
         self._escalation_threshold = 3          # 3+ MEDIUM in 60s → escalate
+        #: Bounded, attributed, self-expiring grants for modalities that are
+        #: standing-off. Initialised HERE, not in start(): a check that runs
+        #: before start() must find an empty dict, not an AttributeError.
+        self._session_grants: dict[str, float] = {}
+        self._session_grant_log: list[dict[str, Any]] = []
         self._started = False
 
     async def start(self) -> None:
         if self._started:
             return
         ServiceContainer.register_instance("permission_model", self, required=False)
+        self._apply_boot_session_grants()
         self._started = True
         logger.info(
             "PermissionRiskModel ONLINE (trusted=%s, demo_safe=%s)",
@@ -393,8 +410,124 @@ class PermissionRiskModel:
         return "app_control"  # default
 
     def _check_modality(self, modality: str) -> bool:
-        """Check if a modality is enabled."""
-        return getattr(self.modality, modality, True)
+        """Check if a modality is enabled, standing or granted for this session."""
+        if getattr(self.modality, modality, True):
+            return True
+        return self.session_grant_active(modality)
+
+    # ------------------------------------------------------------------
+    # Session grants
+    # ------------------------------------------------------------------
+
+    def _apply_boot_session_grants(self) -> None:
+        """Apply grants named in AURA_SESSION_GRANTS at startup.
+
+        The gap this fills: a standing-off modality could only be exercised by
+        editing its dataclass default, which turns one authorised action into a
+        permanent change. There was no way to say "on, for this run, because
+        the person asked, and off again after".
+
+        Format: ``modality:ttl_seconds:reason`` entries separated by commas.
+        Every grant is bounded, attributed to ``env:AURA_SESSION_GRANTS``, and
+        logged at WARNING so it appears in the boot record.
+        """
+        raw = str(os.getenv("AURA_SESSION_GRANTS", "") or "").strip()
+        if not raw:
+            return
+        for entry in raw.split(","):
+            parts = [piece.strip() for piece in entry.split(":", 2)]
+            if len(parts) < 2 or not parts[0]:
+                logger.warning("Ignoring malformed AURA_SESSION_GRANTS entry %r", entry)
+                continue
+            modality, ttl = parts[0], parts[1]
+            reason = parts[2] if len(parts) > 2 else "unstated"
+            try:
+                self.grant_modality_for_session(
+                    modality,
+                    ttl_s=float(ttl),
+                    reason=reason,
+                    granted_by="env:AURA_SESSION_GRANTS",
+                )
+            except (PermissionError, TypeError, ValueError) as exc:
+                logger.warning("Refused AURA_SESSION_GRANTS entry %r: %s", entry, exc)
+
+    def session_grant_active(self, modality: str) -> bool:
+        """Whether a live, unexpired grant covers ``modality``."""
+        expiry = self._session_grants.get(str(modality))
+        if expiry is None:
+            return False
+        if time.time() >= expiry:
+            self._session_grants.pop(str(modality), None)
+            logger.info("Permission model: session grant for %r expired.", modality)
+            return False
+        return True
+
+    def grant_modality_for_session(
+        self,
+        modality: str,
+        *,
+        ttl_s: float,
+        reason: str,
+        granted_by: str,
+    ) -> dict[str, Any]:
+        """Turn a standing-off modality on for a bounded window.
+
+        There was no way to do this. A modality was on or off in a dataclass
+        default, so exercising an off-by-default capability once — to test it,
+        to run a proof, because the person in the room asked for it — meant
+        editing the default, which turns a single authorised action into a
+        standing configuration change nobody revisits.
+
+        A grant is therefore: named, time-bounded, attributed, and recorded. It
+        expires on its own; nothing has to remember to switch it back.
+
+        Modalities on the never-list cannot be granted this way. Those are not
+        "off by default", they are off, and a session grant is not the
+        mechanism for changing that.
+        """
+        name = str(modality)
+        if name in _UNGRANTABLE_MODALITIES:
+            raise PermissionError(
+                f"{name!r} cannot be granted for a session; it is not a default, it is a rule"
+            )
+        if not hasattr(self.modality, name):
+            raise ValueError(f"unknown modality {name!r}")
+        window = float(ttl_s)
+        if not (0 < window <= _MAX_SESSION_GRANT_S):
+            raise ValueError(
+                f"session grant must be between 0 and {_MAX_SESSION_GRANT_S:.0f}s"
+            )
+        if self._demo_safe_mode:
+            raise PermissionError("demo-safe mode is on; session grants are refused")
+
+        expiry = time.time() + window
+        self._session_grants[name] = expiry
+        record = {
+            "modality": name,
+            "granted_by": str(granted_by),
+            "reason": str(reason),
+            "ttl_s": window,
+            "expires_at": expiry,
+        }
+        self._session_grant_log.append(record)
+        logger.warning(
+            "Permission model: SESSION GRANT %r for %.0fs by %s — %s",
+            name, window, granted_by, reason,
+        )
+        return dict(record)
+
+    def revoke_session_grant(self, modality: str) -> bool:
+        """Drop a grant early. Returns whether one was live."""
+        return self._session_grants.pop(str(modality), None) is not None
+
+    def session_grants(self) -> dict[str, float]:
+        """Live grants and their expiry times."""
+        now = time.time()
+        return {
+            name: expiry
+            for name, expiry in self._session_grants.items()
+            if expiry > now
+        }
 
     def _should_escalate(self) -> bool:
         """Check if too many MEDIUM actions happened recently."""

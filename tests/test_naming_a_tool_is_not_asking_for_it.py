@@ -59,6 +59,13 @@ MENTIONS = [
     "the search for a new apartment has been exhausting",
     "my email is full of noise lately",
     "the news about the library was sad",
+    # Asking about something ALREADY DONE is a recall request. Measured live
+    # 2026-08-04: "Remind me what you and ChatGPT discussed" opened a NEW
+    # browser session and held a second conversation.
+    "Remind me what you and ChatGPT discussed, and whether it changed anything.",
+    "What did you and ChatGPT talk about?",
+    "How did it go with ChatGPT?",
+    "What did you two conclude?",
 ]
 
 
