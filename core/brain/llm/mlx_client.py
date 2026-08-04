@@ -1337,6 +1337,10 @@ def _recurrent_depth_readiness_blocker(status: dict[str, Any]) -> str | None:
     return None
 
 
+#: Whole origin labels that mean "a person is waiting on this". Matched
+#: exactly against the normalized label, never by token (CP126 829ffbee).
+#: Hyphens normalize to underscores, so both spellings are covered by one
+#: entry.
 _USER_FACING_ORIGINS = frozenset(
     {
         "user",
@@ -1344,14 +1348,23 @@ _USER_FACING_ORIGINS = frozenset(
         "admin",
         "api",
         "desktop",
+        "desktop_ui",
+        # Both spellings are listed so the cross-surface origin contract holds
+        # literally (tests/test_live_runtime_surface_regressions.py compares
+        # the raw sets), while normalization keeps matching either form.
         "desktop-ui",
         "gui",
         "ws",
         "websocket",
         "direct",
         "external",
+        "native_shell",
         "native-shell",
         "test",
+        # Compound labels the live surfaces actually send.
+        "user_voice",
+        "desktop_chat",
+        "chat",
     }
 )
 _USER_FACING_PURPOSES = frozenset(
@@ -1837,13 +1850,28 @@ def _foreground_owner_active() -> bool:
 
 
 def _origin_tokens(origin: str | None) -> set[str]:
-    normalized = str(origin or "").strip().lower().replace("-", "_")
+    normalized = _normalized_origin(origin)
     return {token for token in normalized.split("_") if token}
 
 
+def _normalized_origin(origin: str | None) -> str:
+    return str(origin or "").strip().lower().replace("-", "_")
+
+
 def _origin_is_user_facing(origin: str | None) -> bool:
-    tokens = _origin_tokens(origin)
-    return bool(tokens & _USER_FACING_ORIGINS)
+    """Whether this request is on a path a person is waiting on.
+
+    CP126 829ffbee. This used to split the origin on underscores and intersect
+    the tokens with the allowlist, so ANY label containing one of them elevated
+    itself: ``background_user`` matched ``user``, ``test_background_sweep``
+    matched ``test``, ``api_prefetch`` matched ``api``. Foreground priority
+    decides who gets the model when it is contended, so a background sweep
+    that can name itself into the foreground is a self-granted privilege.
+
+    The whole normalized label must be in the allowlist. A new user-facing
+    origin is added deliberately, which is the point.
+    """
+    return _normalized_origin(origin) in _USER_FACING_ORIGINS
 
 
 def _background_deferral_active(origin: str | None = None) -> str | None:
@@ -2773,6 +2801,10 @@ class MLXLocalClient:
         self._current_first_token_hard_ceiling_s = 0.0
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
+        #: The worker's recurrent-adapter activation receipt, validated against
+        #: its signed identity at handshake. Empty until a receipt is accepted:
+        #: not knowing which adapter is live is not the same as knowing none is.
+        self._recurrent_adapter_activation: dict[str, Any] = {}
         self._worker_identity: dict[str, Any] = {}
         self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
@@ -5318,6 +5350,22 @@ class MLXLocalClient:
                 reported_loops = recurrent_status.get("loops")
                 if isinstance(reported_loops, int) and reported_loops != required_loops:
                     errors.append(f"recurrent_depth_mismatch:{reported_loops}!={required_loops}")
+
+        # The adapter-activation receipt: whether the recurrent adapter this
+        # worker was supposed to load actually loaded. The worker states it in
+        # its signed identity; the handshake must also carry it as a separate
+        # top-level receipt, and the two must agree. Without this the client
+        # takes the worker's word for what weights it is running — which is
+        # exactly how a trained adapter that silently failed to attach reads
+        # as a live one.
+        if isinstance(identity, dict):
+            declared_activation = identity.get("worker_recurrent_adapter_activation")
+            if isinstance(declared_activation, dict):
+                reported_activation = res.get("recurrent_adapter_activation")
+                if not isinstance(reported_activation, dict):
+                    errors.append("missing_recurrent_adapter_activation_receipt")
+                elif reported_activation != declared_activation:
+                    errors.append("recurrent_adapter_activation_receipt_mismatch")
         return errors
 
     def _attest_worker_capture_origin(
@@ -7996,6 +8044,10 @@ class MLXLocalClient:
                             self._init_done = False
                             self._worker_identity = {}
                             self._recurrent_depth_status = {}
+                            # Every field the receipt was supposed to establish
+                            # is cleared together. Leaving one behind lets the
+                            # PREVIOUS worker's claim certify this one.
+                            self._recurrent_adapter_activation = {}
                             self._set_lane_state(
                                 "failed",
                                 "init_receipt_invalid",
@@ -8015,6 +8067,12 @@ class MLXLocalClient:
                         # reported recurrence.
                         self._recurrent_depth_status = (
                             recurrent_status if isinstance(recurrent_status, dict) else {}
+                        )
+                        adapter_activation = res.get("recurrent_adapter_activation")
+                        self._recurrent_adapter_activation = (
+                            adapter_activation
+                            if isinstance(adapter_activation, dict)
+                            else {}
                         )
                         if not isinstance(recurrent_status, dict):
                             _record_mlx_degradation(
