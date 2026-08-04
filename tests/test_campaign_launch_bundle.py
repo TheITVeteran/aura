@@ -44,11 +44,22 @@ def _write_json(path: Path, value: dict) -> None:
 def test_read_canonical_json_honors_schema_specific_newline_policy(
     tmp_path: Path,
 ) -> None:
-    sft = tmp_path / "sft.json"
-    sft.write_bytes(
-        canonical_json_bytes({"schema": "aura.resident_recurrent_sft_adapter_manifest.v1"})
+    # The schema STRING was hardcoded here as ".v1". The manifest schema moved
+    # to .v2 and this test kept asserting the old literal, so `trailing_newline
+    # = None` resolved the other way, the file was written without the newline
+    # the reader then required, and the test failed as `sft_noncanonical` — a
+    # stale test tracking a deliberate bump, not a real canonicalisation bug.
+    # It reads the constant now, so the next bump cannot strand it again.
+    from core.brain.llm.latent_cortex.campaign_launch_bundle import (
+        RESIDENT_SFT_MANIFEST_SCHEMA,
     )
-    assert read_canonical_json(sft, role="sft", trailing_newline=None)["schema"].endswith(".v1")
+
+    sft = tmp_path / "sft.json"
+    sft.write_bytes(canonical_json_bytes({"schema": RESIDENT_SFT_MANIFEST_SCHEMA}))
+    assert (
+        read_canonical_json(sft, role="sft", trailing_newline=None)["schema"]
+        == RESIDENT_SFT_MANIFEST_SCHEMA
+    )
 
     legacy = tmp_path / "legacy.json"
     legacy.write_bytes(canonical_json_bytes({"schema": "legacy"}))

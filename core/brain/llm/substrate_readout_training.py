@@ -219,12 +219,31 @@ def train_readout(
 
 
 def save_fit(fit: ReadoutFit, path: str | Path) -> Path:
-    """Persist a trained head next to the report that justifies it."""
+    """Persist a trained head next to the report that justifies it.
+
+    Through the atomic writer, not `np.save` and `write_text`. A half-written
+    weight matrix beside a complete report is worse than no head at all — it
+    would load, produce numbers, and carry a report claiming they were
+    measured. The governance lint flagged the first draft of this function for
+    exactly that, and it was right to.
+    """
+    import io
+
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    gateway = get_file_write_gateway()
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    np.save(target.with_suffix(".npy"), fit.weights)
-    target.with_suffix(".json").write_text(
-        json.dumps(fit.as_report(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    buffer = io.BytesIO()
+    np.save(buffer, fit.weights, allow_pickle=False)
+    gateway.write_bytes(
+        target.with_suffix(".npy"),
+        buffer.getvalue(),
+        source="substrate_readout_training",
+    )
+    gateway.write_text(
+        target.with_suffix(".json"),
+        json.dumps(fit.as_report(), indent=2, sort_keys=True) + "\n",
+        source="substrate_readout_training",
     )
     return target
 

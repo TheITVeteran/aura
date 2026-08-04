@@ -42,11 +42,18 @@ _BOUNDING_CONTEXTS = {"timeout", "timeout_at", "move_on_after", "fail_after"}
 
 # (file, async function, callee) — historical debt frozen 2026-07-09 (68
 # sites). ONLY shrinks: fix a site, delete its entry. Never add for new code.
+#
+# 2026-08-04: three entries removed, none by changing the code they named. The
+# scanner was counting `await self.method()` as a primitive await, so a method
+# that delegates to a BOUNDED one in the same class was reported as a wedge
+# risk — including CheckedSemaphore.__aenter__, which meant lockdep, the module
+# whose entire job is bounding acquires, failed this gate on its own wrapper.
+# The callee is scanned in its own right; flagging the delegation counted the
+# same await twice.
 ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
     {
         ("core/adaptation/self_optimizer.py", "_run_gateway_command", "wait"),
         ("core/affect/affect_facade.py", "get", "get"),
-        ("core/affect/damasio_v2.py", "get_valence_vector", "get"),
         ("core/autonomy/autonomous_initiative_loop.py", "_event_listener_loop", "get"),
         ("core/brain/llm/nucleus_manager.py", "_listen_for_updates", "get"),
         ("core/brain/llm/nucleus_manager.py", "generate_stream_async", "get"),
@@ -54,7 +61,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/bus/actor_bus.py", "_telemetry_broadcaster", "get"),
         ("core/bus/local_pipe_bus.py", "_dispatch_loop", "get"),
         ("core/bus/sensory_gate.py", "run", "wait"),
-        ("core/capabilities/clipboard_manager.py", "set", "get"),
         ("core/capability_engine.py", "_execute_wrapped", "get"),
         ("core/cognition/cognitive_loop.py", "_acquire_next_message", "get"),
         ("core/cognitive/state_machine.py", "queue_sentence_generator", "get"),
@@ -107,7 +113,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/skills/sovereign_network.py", "probe", "wait_closed"),
         ("core/skills/sovereign_terminal.py", "_open_target", "wait"),
         ("core/state/state_repository.py", "_mutation_consumer_loop", "get"),
-        ("core/utils/concurrency.py", "__aenter__", "acquire"),
         ("core/utils/context_assembler.py", "gather_full_context", "get"),
         ("core/utils/output_gate.py", "get_secondary_stream", "get"),
         ("core/utils/queues.py", "get", "get"),
@@ -123,6 +128,16 @@ def _callee_name(call: ast.Call) -> str:
     return ""
 
 
+def _is_self_call(call: ast.Call) -> bool:
+    """True for ``self.method(...)`` — delegation, not a primitive await."""
+    func = call.func
+    return (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "self"
+    )
+
+
 def _scan_offenders() -> set[tuple[str, str, str]]:
     offenders: set[tuple[str, str, str]] = set()
     for path in (PROJECT_ROOT / "core").rglob("*.py"):
@@ -133,6 +148,13 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
         except (SyntaxError, UnicodeDecodeError, OSError):
             continue
         rel = str(path.relative_to(PROJECT_ROOT))
+        local_async_methods = {
+            child.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            for child in node.body
+            if isinstance(child, ast.AsyncFunctionDef)
+        }
 
         class Visitor(ast.NodeVisitor):
             def __init__(self, rel_path: str) -> None:
@@ -177,6 +199,20 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
                     name = _callee_name(value)
                     if name in _BOUNDING_WRAPPERS:
                         return  # bounded; do not descend into the wrapped call
+                    # `await self.acquire()` delegating to a method DEFINED IN
+                    # THIS FILE is not a primitive await — the callee is scanned
+                    # in its own right, so flagging the delegation counts the
+                    # same await twice. It reported CheckedSemaphore.__aenter__
+                    # as a wedge risk when the acquire it calls is the module's
+                    # own `asyncio.wait_for`-bounded wrapper: lockdep, the thing
+                    # that exists to bound acquires, failing its own gate.
+                    #
+                    # Restricted to a `self.` receiver on purpose. `await
+                    # queue.get()` stays flagged even in a file that happens to
+                    # define a method called `get`.
+                    if _is_self_call(value) and name in local_async_methods:
+                        self.generic_visit(node)
+                        return
                     flagged = (
                         name in _ZERO_ARG_UNBOUNDED
                         and not value.args
