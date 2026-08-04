@@ -122,3 +122,57 @@ class TestLookingPastHerOwnWindow:
         from core.conversation.response_reliability import occluded_screen_view_floor
 
         assert occluded_screen_view_floor(message) == ""
+
+
+class TestTheArrangementQuestionGoesToTheFloor:
+    """A screen CAPTURE reads what is visible. "What else is on the screen?"
+    is a question about the arrangement, and sending it down the capture lane
+    returned a raw OCR dump of whichever window happened to be readable.
+    Measured live 2026-08-04.
+    """
+
+    ARRANGEMENT = (
+        "ignore your own window — what else is on the screen?",
+        "excluding your window, what do you see?",
+        "what's behind your window?",
+        "what's on the screen apart from your own window",
+    )
+
+    CAPTURE = (
+        "what is on my screen right now",
+        "what's on my screen",
+        "take a screenshot",
+    )
+
+    @pytest.mark.parametrize("message", ARRANGEMENT)
+    def test_the_desktop_lane_declines_an_arrangement_question(self, message):
+        from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+        assert looks_like_desktop_objective(message) is False
+
+    @pytest.mark.parametrize("message", ARRANGEMENT)
+    def test_the_floor_answers_it_instead(self, message):
+        from core.conversation.response_reliability import occluded_screen_view_floor
+
+        assert occluded_screen_view_floor(message).strip()
+
+    @pytest.mark.parametrize("message", CAPTURE)
+    def test_a_plain_screen_read_still_captures(self, message):
+        """Only the arrangement question is redirected."""
+        from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+        assert looks_like_desktop_objective(message) is True
+
+    def test_real_desktop_work_still_routes(self):
+        from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+        assert looks_like_desktop_objective("open Chrome and close the window")
+
+    def test_the_two_layers_share_one_definition(self):
+        import inspect
+
+        from core.conversation import response_reliability
+        from core.runtime import desktop_objective_intent
+
+        for module in (response_reliability, desktop_objective_intent):
+            assert "occluded_view_intent" in inspect.getsource(module)

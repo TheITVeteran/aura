@@ -7,6 +7,7 @@ from core.runtime.skill_task_bridge import (
     strip_negated_action_spans,
 )
 from core.utils.intent_normalization import normalize_memory_intent_text
+from core.utils.occluded_view_intent import asks_about_occluded_view
 from core.utils.own_source_intent import asks_for_own_source
 
 _WEB_SEARCH_REQUEST_SPAN_RE = re.compile(
@@ -270,6 +271,14 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     # ready for that exact sentence and the person never saw it, because this
     # lane answered first.
     if asks_for_own_source(user_message):
+        return False
+    # "Ignore your own window — what else is on the screen?" is a question
+    # about the ARRANGEMENT, and a screen capture reads what is visible. Sent
+    # down the capture lane it came back as a raw OCR dump of whichever window
+    # was readable; the floor answers it from the window layout, naming each
+    # window, how much of it shows, and saying plainly what it cannot read
+    # while it is covered. Measured live 2026-08-04.
+    if asks_about_occluded_view(user_message):
         return False
     # Screen observation ("read my screen", "what's on my screen") needs the
     # desktop body even though it carries no action+surface verb pair.

@@ -4321,31 +4321,10 @@ def own_source_excerpt_floor(user_message: Any) -> str:
     )
 
 
-#: A question about what is BEHIND or UNDER a window — occluded content. A
-#: screen capture reads what is visible; what a window covers is not in it.
-_OCCLUDED_VIEW_RE = re.compile(
-    r"\b(?:behind|underneath|under|beneath|covered\s+by|hidden\s+(?:by|behind)|"
-    r"obscured\s+by"
-    # Asking her to LOOK PAST her own window is the same question as asking
-    # what is behind it, and it was the phrasing that failed live: "ignore
-    # your own window, what else is on the screen?" and "excluding your
-    # window, what do you see?" matched nothing and fell through to the model,
-    # which answers a question about the screen without looking at one.
-    r"|(?:ignor\w*|exclud\w*|apart\s+from|aside\s+from|other\s+than|besides|"
-    r"without|not\s+counting|leaving\s+out|except)\s+"
-    r"(?:your|the|her|its|that)?\s*(?:own\s+)?(?:window|app|ui|interface|self)"
-    r"|\bwhat\s+else\b"
-    r")\b",
-    re.IGNORECASE,
-)
-_SCREEN_SUBJECT_RE = re.compile(
-    r"\b(?:screen|window|display|desktop|monitor|you|your\s+window|it)\b",
-    re.IGNORECASE,
-)
-_SEEING_VERB_RE = re.compile(
-    r"\b(?:see|seeing|look|looking|view|show|read|tell\s+me\s+what)\b",
-    re.IGNORECASE,
-)
+#: The predicate these three regexes implemented now lives in
+#: core/utils/occluded_view_intent.py, shared with the desktop router so the
+#: two layers cannot disagree about whether a question is about the
+#: arrangement of windows or about their contents.
 
 
 def occluded_screen_view_floor(user_message: Any) -> str:
@@ -4367,14 +4346,14 @@ def occluded_screen_view_floor(user_message: Any) -> str:
     that are back there, and say plainly that their contents are not readable
     while they are covered.
     """
-    raw = str(user_message or "")
-    if not raw.strip():
-        return ""
-    if not _OCCLUDED_VIEW_RE.search(raw):
-        return ""
-    if not (_SEEING_VERB_RE.search(raw) or "what" in raw.lower()):
-        return ""
-    if not _SCREEN_SUBJECT_RE.search(raw):
+    # Shared with the desktop router, which has to know to decline this one:
+    # a screen capture reads what is VISIBLE, so sending it down the capture
+    # lane returns an OCR dump of whatever happened to be readable when the
+    # question was about the arrangement. Two copies of this judgement would
+    # drift. See core/utils/occluded_view_intent.py.
+    from core.utils.occluded_view_intent import asks_about_occluded_view
+
+    if not asks_about_occluded_view(user_message):
         return ""
     try:
         from core.perception.screen_blueprint import capture_blueprint
