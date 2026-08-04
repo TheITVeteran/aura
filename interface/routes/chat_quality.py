@@ -97,20 +97,66 @@ def _log_response_quality_metrics(
         wm_size = 0
         has_summary = False
         coherence = 1.0
+        recent_thread: list[str] = []
+        ledger_entries = 0
         if live_state:
-            wm = getattr(getattr(live_state, "cognition", None), "working_memory", None)
+            cognition = getattr(live_state, "cognition", None)
+            wm = getattr(cognition, "working_memory", None)
             wm_size = len(wm) if isinstance(wm, list) else 0
-            has_summary = bool(getattr(getattr(live_state, "cognition", None), "rolling_summary", ""))
-            coherence = float(getattr(getattr(live_state, "cognition", None), "coherence_score", 1.0) or 1.0)
+            has_summary = bool(getattr(cognition, "rolling_summary", ""))
+            coherence = float(getattr(cognition, "coherence_score", 1.0) or 1.0)
+            if isinstance(wm, list):
+                recent_thread = [
+                    str(m.get("content", "") or "")
+                    for m in wm[-8:]
+                    if isinstance(m, dict)
+                    and str(m.get("role", "")).lower() in ("user", "assistant")
+                ]
+            ledger = getattr(cognition, "continuity_ledger", None)
+            if isinstance(ledger, dict):
+                ledger_entries = len(ledger.get("entries", []) or [])
+
+        # `coherence` above is state.cognition.coherence_score — an internal
+        # state score that never looks at the conversation. It read 0.814
+        # "ok" on the turn before a total non-sequitur. Log it still, but log
+        # beside it something that actually measures the thread.
+        thread_metrics: dict[str, object] = {}
+        try:
+            from core.conversation.thread_continuity import assess_thread_continuity
+
+            thread_metrics = assess_thread_continuity(
+                user_message, reply_text, recent_thread=recent_thread
+            ).as_metrics()
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat_quality.thread_continuity", exc, severity="warning",
+                               action="logged quality metrics without a thread-continuity reading",
+                               enforce_failure_policy=False)
 
         _quality_logger.info(
             "📊 quality_metrics | confidence=%s | stale=%s | same_diff=%s | off_topic=%s | "
-            "reply_len=%d | user_len=%d | wm_size=%d | has_summary=%s | coherence=%.3f | assessment=%s",
+            "reply_len=%d | user_len=%d | wm_size=%d | has_summary=%s | ledger_entries=%d | "
+            "state_coherence=%.3f | thread_abandoned=%s | overlap_turn=%s | overlap_thread=%s | "
+            "assessment=%s",
             confidence, stale, same_diff, off_topic,
             len(reply_text or ""), len(user_message or ""),
-            wm_size, has_summary, coherence,
+            wm_size, has_summary, ledger_entries, coherence,
+            thread_metrics.get("thread_abandoned", "unknown"),
+            thread_metrics.get("overlap_turn", "-"),
+            thread_metrics.get("overlap_thread", "-"),
             ",".join(assessment_reasons) or "ok",
         )
+
+        if thread_metrics.get("thread_abandoned"):
+            # Loud, because this is the shape a person actually notices: a
+            # fluent reply about something else entirely.
+            logger.warning(
+                "🧵 Reply abandoned the thread (overlap_turn=%s overlap_thread=%s) — "
+                "user=%r reply=%r",
+                thread_metrics.get("overlap_turn"),
+                thread_metrics.get("overlap_thread"),
+                (user_message or "")[:120],
+                (reply_text or "")[:160],
+            )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Quality metric logging skipped: %s", exc)
