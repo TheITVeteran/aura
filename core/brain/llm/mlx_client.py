@@ -262,6 +262,14 @@ def _clients_snapshot() -> list[tuple[str, Any]]:
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+# CP126 6595b0e1: ownership age was measured with time.time(), so an NTP step
+# or a sleep/wake made a healthy 32B cold load look 200 seconds stale and
+# cleared it mid-load — and a genuinely wedged owner still held until a guessed
+# age because nothing measured PROGRESS. The monotonic stamps below cannot be
+# stepped, and the heartbeat measures time since the owner last did something
+# rather than time since it started.
+_FOREGROUND_OWNER_ACQUIRED_MONOTONIC = 0.0
+_FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = 0.0
 # The budget the CURRENT holder declared for itself when it took ownership.
 # Eviction is judged against this, never against a newcomer's budget.
 _FOREGROUND_OWNER_STALE_AFTER: float | None = None
@@ -2105,10 +2113,60 @@ def _background_deferral_active(origin: str | None = None) -> str | None:
 
 
 def _foreground_owner_age(now: float | None = None) -> float:
-    if _FOREGROUND_OWNER_ACQUIRED_AT <= 0.0:
-        return 0.0
-    current_time = float(now if now is not None else time.time())
-    return max(0.0, current_time - _FOREGROUND_OWNER_ACQUIRED_AT)
+    """How long the current owner has held ownership, on a monotonic clock.
+
+    Falls back to the wall-clock acquisition stamp when the monotonic one is
+    unset. Acquisition sets both, so that only happens for state written
+    directly — and reporting an age of zero for an owner that plainly has one
+    would be worse than a clock that can be stepped.
+    """
+    if _FOREGROUND_OWNER_ACQUIRED_MONOTONIC > 0.0:
+        current_time = float(now if now is not None else time.monotonic())
+        return max(0.0, current_time - _FOREGROUND_OWNER_ACQUIRED_MONOTONIC)
+    if _FOREGROUND_OWNER_ACQUIRED_AT > 0.0:
+        return max(0.0, time.time() - _FOREGROUND_OWNER_ACQUIRED_AT)
+    return 0.0
+
+
+def _foreground_owner_silence(now: float | None = None) -> float:
+    """How long since the owner last reported progress.
+
+    This, not acquisition age, is what distinguishes a slow turn from a wedged
+    one. A 32B cold load that is loading heartbeats; a decode that has stopped
+    does not (CP126 6595b0e1, 8f772011).
+    """
+    if _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC <= 0.0:
+        return _foreground_owner_age(now)
+    current_time = float(now if now is not None else time.monotonic())
+    return max(0.0, current_time - _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC)
+
+
+def _stamp_foreground_owner(acquired_at: float) -> None:
+    """Keep the three ownership stamps coherent.
+
+    They are three views of one fact — when this owner took the lane — so they
+    are written together. Setting only one leaves an age that belongs to a
+    previous owner, which is how a stale monotonic stamp made a genuinely old
+    owner look freshly acquired.
+    """
+    global _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
+
+    wall = float(acquired_at)
+    _FOREGROUND_OWNER_ACQUIRED_AT = wall
+    # Project the wall-clock age onto the monotonic clock so a caller that
+    # knows only "this owner started N seconds ago" gets a coherent set.
+    age = max(0.0, time.time() - wall)
+    _FOREGROUND_OWNER_ACQUIRED_MONOTONIC = time.monotonic() - age
+    _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+
+
+def note_foreground_owner_progress() -> None:
+    """Refresh the owner heartbeat. Cheap, lock-free, called from hot paths."""
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
+    if _FOREGROUND_OWNER_NAME is not None:
+        _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = time.monotonic()
 
 
 def _foreground_owner_wait_budget(
@@ -2136,6 +2194,8 @@ def _foreground_owner_wait_budget(
 
 def _clear_matching_foreground_owner(*candidate_names: str) -> str | None:
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
 
     candidates = {str(name or "").strip() for name in candidate_names if str(name or "").strip()}
     if not candidates:
@@ -2147,6 +2207,8 @@ def _clear_matching_foreground_owner(*candidate_names: str) -> str | None:
             return None
         _FOREGROUND_OWNER_NAME = None
         _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+        _FOREGROUND_OWNER_ACQUIRED_MONOTONIC = 0.0
+        _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = 0.0
         return holder
 
 
@@ -2161,6 +2223,8 @@ def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
     'cortex warming forever' deadlock.
     """
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
 
     acquired = _FOREGROUND_OWNER_LOCK.acquire(False)
     if not acquired:
@@ -2176,6 +2240,8 @@ def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
             return None
         _FOREGROUND_OWNER_NAME = None
         _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+        _FOREGROUND_OWNER_ACQUIRED_MONOTONIC = 0.0
+        _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = 0.0
         return holder
     finally:
         _FOREGROUND_OWNER_LOCK.release()
@@ -2186,6 +2252,8 @@ def force_clear_foreground_owner(
     reason: str,
     min_age_s: float = 45.0,
     owner_prefix: str | None = None,
+    require_silence: bool = True,
+    min_silence_s: float = 30.0,
 ) -> dict[str, Any]:
     """Clear a leaked foreground owner from a higher-level recovery path.
 
@@ -2195,8 +2263,11 @@ def force_clear_foreground_owner(
     recovery or chat-lock preemption.
     """
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
 
     min_age = max(0.0, float(min_age_s))
+    min_silence = max(0.0, float(min_silence_s))
     with _FOREGROUND_OWNER_LOCK:
         holder = _FOREGROUND_OWNER_NAME
         age = _foreground_owner_age()
@@ -2223,6 +2294,22 @@ def force_clear_foreground_owner(
                 "holder": holder,
                 "age_s": round(age, 3),
                 "detail": "owner_younger_than_min_age",
+            }
+        # CP126 8f772011: age alone does not mean wedged. A 32B cold load is
+        # legitimately slow, and clearing it mid-load is what produced the
+        # 'cortex warming forever' deadlock. What distinguishes a wedge is
+        # SILENCE — the owner has stopped reporting progress. A caller may
+        # still override when it has its own proof (a desktop HTTP timeout
+        # already observed the turn fail), but the default requires evidence.
+        silence = _foreground_owner_silence()
+        if require_silence and silence < min_silence:
+            return {
+                "cleared": False,
+                "reason": reason,
+                "holder": holder,
+                "age_s": round(age, 3),
+                "silence_s": round(silence, 3),
+                "detail": "owner_still_reporting_progress",
             }
         acquired_at = _FOREGROUND_OWNER_ACQUIRED_AT
 
@@ -2261,6 +2348,8 @@ def force_clear_foreground_owner(
             }
         _FOREGROUND_OWNER_NAME = None
         _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+        _FOREGROUND_OWNER_ACQUIRED_MONOTONIC = 0.0
+        _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = 0.0
 
     logger.warning(
         "♻️ [MLX] Force-cleared foreground owner %s after %.1fs (%s).",
@@ -2324,6 +2413,8 @@ async def _foreground_owner_context(
 ):
     """Serialize foreground work so background model activity cannot compete with it."""
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+    global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+    global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
     global _FOREGROUND_OWNER_STALE_AFTER, _FOREGROUND_OWNER_IS_USER_FACING
 
     wait_budget = _foreground_owner_wait_budget(
@@ -2346,7 +2437,7 @@ async def _foreground_owner_context(
                 holder_age = _foreground_owner_age()
                 if holder is None:
                     _FOREGROUND_OWNER_NAME = owner_name
-                    _FOREGROUND_OWNER_ACQUIRED_AT = time.time()
+                    _stamp_foreground_owner(time.time())
                     _FOREGROUND_OWNER_STALE_AFTER = stale_after
                     _FOREGROUND_OWNER_IS_USER_FACING = bool(foreground_request)
                     owner_acquired = True
@@ -3329,6 +3420,10 @@ class MLXLocalClient:
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
+        # The foreground lease's staleness is measured from PROGRESS, not from
+        # acquisition, so every client-level progress mark is also a heartbeat
+        # for whoever currently owns the foreground (CP126 6595b0e1).
+        note_foreground_owner_progress()
 
     def latent_progress_counters(self) -> dict[str, int]:
         """Drop accounting for the latent progress channel.

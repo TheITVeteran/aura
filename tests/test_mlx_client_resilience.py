@@ -585,7 +585,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         thread = threading.Thread(target=_status_clear, daemon=True)
         try:
             mlx_module._FOREGROUND_OWNER_NAME = "chat_api:test"
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 500.0
+            mlx_module._stamp_foreground_owner(time.time() - 500.0)
             thread.start()
             thread.join(0.2)
             self.assertFalse(thread.is_alive())
@@ -595,7 +595,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             lock.release()
             thread.join(1.0)
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
 
     def test_replace_ipc_queues_closes_previous_queues_before_recreation(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
@@ -1059,7 +1059,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         old_owner = mlx_module._FOREGROUND_OWNER_NAME
         old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
         mlx_module._FOREGROUND_OWNER_NAME = "warmup:cortex"
-        mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time()
+        mlx_module._stamp_foreground_owner(time.time())
 
         try:
             acquire_probe = AsyncCallProbe(return_value=True)
@@ -1075,7 +1075,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                         )
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
 
         self.assertIsNone(result)
         inner.assert_not_awaited()
@@ -1088,7 +1088,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
         old_stale_after = mlx_module._FOREGROUND_OWNER_STALE_AFTER
         mlx_module._FOREGROUND_OWNER_NAME = "warmup:cortex"
-        mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 120.0
+        mlx_module._stamp_foreground_owner(time.time() - 120.0)
         # CP126 4cb6a1a0: an owner is stale only by ITS OWN declared budget —
         # a holder that never declared one is not evictable on age alone (a
         # short newcomer used to be able to declare a working owner stale).
@@ -1108,7 +1108,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                     )
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
             mlx_module._FOREGROUND_OWNER_STALE_AFTER = old_stale_after
 
         self.assertEqual(result, "ok")
@@ -1121,7 +1121,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
         try:
             mlx_module._FOREGROUND_OWNER_NAME = "chat_api:default"
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 10.0
+            mlx_module._stamp_foreground_owner(time.time() - 10.0)
             young = mlx_module.force_clear_foreground_owner(
                 reason="unit_test_young_owner",
                 min_age_s=45.0,
@@ -1129,7 +1129,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(young["cleared"])
             self.assertEqual(mlx_module._FOREGROUND_OWNER_NAME, "chat_api:default")
 
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 60.0
+            mlx_module._stamp_foreground_owner(time.time() - 60.0)
             stale = mlx_module.force_clear_foreground_owner(
                 reason="unit_test_stale_owner",
                 min_age_s=45.0,
@@ -1140,7 +1140,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mlx_module._FOREGROUND_OWNER_ACQUIRED_AT, 0.0)
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
 
     async def test_foreground_generate_reserves_owner_before_request_lock(self):
         import core.brain.llm.mlx_client as mlx_module
@@ -1167,7 +1167,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                     )
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
 
         self.assertEqual(result, "ok")
         self.assertEqual(observed_owner, ["live_user"])
@@ -1179,7 +1179,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         old_owner = mlx_module._FOREGROUND_OWNER_NAME
         old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
         mlx_module._FOREGROUND_OWNER_NAME = "warmup:Qwen2.5-32B-Instruct-8bit"
-        mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 20.0
+        mlx_module._stamp_foreground_owner(time.time() - 20.0)
 
         try:
             await client.reboot_worker(reason="yield_to_solver", mark_failed=False)
@@ -1187,7 +1187,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mlx_module._FOREGROUND_OWNER_ACQUIRED_AT, 0.0)
         finally:
             mlx_module._FOREGROUND_OWNER_NAME = old_owner
-            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+            mlx_module._stamp_foreground_owner(old_owned_at)
 
 
     async def test_primary_lane_generate_requires_explicit_foreground_request(self):
