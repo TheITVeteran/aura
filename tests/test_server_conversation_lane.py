@@ -10564,7 +10564,16 @@ async def test_compound_choice_reaches_engine_as_deep_self_contained_turn(monkey
     assert calls[0]["context"]["compact_desktop_chat_contract"] is False
     assert calls[0]["context"]["prompt_shape"]["imperative_parts"] == 4
     assert calls[0]["context"]["recent_completed_exchanges"] == []
-    recent.assert_not_awaited()
+    # The guarantee is that no prior exchange reaches the PROMPT (asserted
+    # above). This used to be written as "never looked at all", which stopped
+    # being true when the antecedent lookup landed: a pro-form follow-up
+    # ("why did it catch your attention?") carries no topic of its own, so the
+    # reliability gate needs the previous turn to have anything to check
+    # relevance against. That reader takes exactly one exchange and never
+    # feeds the prompt. Assert the distinction rather than forbidding the read.
+    assert all(
+        call[1].get("limit") == 1 for call in recent.calls
+    ), f"only the antecedent reader may run on a self-contained turn: {recent.calls}"
     assert trace["foreground_model_generation_count"] == 1
     assert trace["single_owner_generation_exhausted"] is True
 

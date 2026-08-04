@@ -7907,7 +7907,23 @@ async def _run_cognitive_engine_chat_turn(
     # live-mind speech contract; execution, identity/self-process, long, and
     # multi-part turns are still excluded above and flow through deeper planning.
     recent_context_needed = _desktop_turn_needs_recent_context(visible)
-    if self_condition_contract:
+    # A multi-part task that happens to say "you" is still a task. Asking her to
+    # compare two locking strategies, choose one, justify it and verify it with a
+    # failure scenario is not a question about her condition — but it contains
+    # "which one you would use", so the self-condition contract claimed it and
+    # handed the turn a stale exchange it had explicitly been denied.
+    #
+    # This is the general shape behind the reported misroutes: a contract
+    # recognises a phrase, wins the turn, and answers its own question instead of
+    # the one asked. Structure beats phrasing — an explicit multi-part request
+    # keeps its own shape.
+    self_contained_compound = bool(require_engine) and (
+        bool(getattr(shape, "requires_single_reply_coverage", False))
+        or bool(getattr(shape, "prefers_extended_answer", False))
+        or int(getattr(shape, "question_parts", 0) or 0) >= 2
+        or int(getattr(shape, "imperative_parts", 0) or 0) >= 2
+    )
+    if self_condition_contract and not self_contained_compound:
         # One prior exchange is enough to preserve a natural "though?" follow-up
         # without letting an older task replace the current condition question.
         recent_context_limit = 1
@@ -7928,11 +7944,7 @@ async def _run_cognitive_engine_chat_turn(
         recent_context_limit = 0
     elif recent_context_needed:
         recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
-    elif require_engine and (
-        bool(getattr(shape, "requires_single_reply_coverage", False))
-        or bool(getattr(shape, "prefers_extended_answer", False))
-        or int(getattr(shape, "question_parts", 0) or 0) >= 2
-    ):
+    elif self_contained_compound:
         # A self-contained compound task must not inherit an older answer just
         # because all desktop turns historically received a default transcript
         # window. Explicit continuation/recall signals above still opt in.
