@@ -24,11 +24,12 @@ def _batching_enabled() -> bool:
 
 def _resolve_primary_client() -> Any | None:
     try:
-        from core.brain.llm.mlx_client import _CLIENTS
+        from core.brain.llm.mlx_client import clients_snapshot
     except ImportError:
         return None
     best = None
-    for client in _CLIENTS.values():
+    # Snapshot first: iterating the live registry races registration.
+    for _path, client in clients_snapshot():
         if not getattr(client, "is_alive", lambda: False)():
             continue
         path = str(getattr(client, "model_path", "") or "").lower()

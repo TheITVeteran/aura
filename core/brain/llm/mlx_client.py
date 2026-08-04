@@ -259,6 +259,23 @@ def _clients_snapshot() -> list[tuple[str, Any]]:
     """
     with _CLIENTS_LOCK:
         return list(_CLIENTS.items())
+
+
+def clients_snapshot() -> list[tuple[str, Any]]:
+    """Public name for the atomic membership view.
+
+    Observers outside this module were reaching past the lock — ``dict(_CLIENTS)``
+    and ``list(_CLIENTS.values())`` both ITERATE the registry, so a client
+    registered or torn down mid-copy raises "dictionary changed size during
+    iteration". The inference gate hit exactly that live on 2026-08-03, and
+    because that subsystem is on the fail-closed list the RuntimeError was
+    escalated to CRITICAL and held the runtime DEGRADED across health pulses.
+
+    A single-key ``_CLIENTS.get(path)`` is safe and does not need this; copying
+    or iterating the registry does.
+    """
+
+    return _clients_snapshot()
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0

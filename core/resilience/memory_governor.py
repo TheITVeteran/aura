@@ -18,6 +18,19 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger("Aura.Resilience.MemoryGovernor")
 
 
+def _mlx_registry_snapshot(module) -> dict:
+    """The MLX client registry as an atomic dict, or {} when unavailable."""
+    if module is None:
+        return {}
+    snapshot = getattr(module, "clients_snapshot", None)
+    if callable(snapshot):
+        try:
+            return dict(snapshot())
+        except (RuntimeError, TypeError, ValueError):
+            return {}
+    return {}
+
+
 _PROCESS_INSPECTION_ERRORS = (
     psutil.NoSuchProcess,
     psutil.AccessDenied,
@@ -178,7 +191,9 @@ class MemoryGovernor:
     def _registered_mlx_worker_pids() -> set[int]:
         """Return worker PIDs from the authoritative in-process client registry."""
         module = sys.modules.get("core.brain.llm.mlx_client")
-        clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+        # Through the registry's own lock — copying it directly iterates a
+        # dict another thread registers into, which raises mid-copy.
+        clients = _mlx_registry_snapshot(module)
         if not isinstance(clients, dict):
             return set()
         pids: set[int] = set()
@@ -257,7 +272,9 @@ class MemoryGovernor:
             snapshot = {"state": "cold", "load_active": False}
 
         module = sys.modules.get("core.brain.llm.mlx_client")
-        clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+        # Through the registry's own lock — copying it directly iterates a
+        # dict another thread registers into, which raises mid-copy.
+        clients = _mlx_registry_snapshot(module)
         identity: list[tuple[str, int, str, bool]] = []
         if isinstance(clients, dict):
             for path, client in list(clients.items()):

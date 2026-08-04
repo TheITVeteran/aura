@@ -35,6 +35,27 @@ _MEMORY_RED_PCT = 92.0
 _THERMAL_RED_LEVEL = 3  # critical
 
 
+def _registry_snapshot(module: Any) -> dict[str, Any]:
+    """The MLX client registry as an atomic dict, or {} when unavailable.
+
+    Through the registry's own lock, via the accessor the module exposes.
+    Reading ``_CLIENTS`` and copying it here would iterate a dict another
+    thread registers into. Kept duck-typed rather than imported: core/runtime
+    may not depend on core/brain, and this probe stays passive by design —
+    it looks only at an already-loaded module.
+    """
+
+    if module is None:
+        return {}
+    snapshot = getattr(module, "clients_snapshot", None)
+    if callable(snapshot):
+        try:
+            return dict(snapshot())
+        except (RuntimeError, TypeError, ValueError):
+            return {}
+    return {}
+
+
 def _model_resource_lifecycle_snapshot() -> dict[str, Any]:
     """Observe resident MLX allocation state without importing or waking it.
 
@@ -44,7 +65,9 @@ def _model_resource_lifecycle_snapshot() -> dict[str, Any]:
     ramp from steady-state memory growth.
     """
     module = sys.modules.get("core.brain.llm.mlx_client")
-    clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+    # Through the registry's own lock: copying it directly iterates a dict
+    # another thread registers into, which raises mid-copy.
+    clients = _registry_snapshot(module)
     if not isinstance(clients, dict) or not clients:
         return {
             "state": "cold",

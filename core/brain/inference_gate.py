@@ -36,6 +36,7 @@ from core.brain.llm.model_registry import (
     FALLBACK_ENDPOINT,
     PRIMARY_ENDPOINT,
 )
+from core.brain.request_contract import REQUEST_FIELDS, validate_request_context
 from core.conversation.response_reliability import (
     assess_model_text_integrity,
     assess_user_facing_reply,
@@ -45,17 +46,21 @@ from core.conversation.response_reliability import (
     is_self_process_question,
     requested_output_contract,
 )
-from core.epistemics.opinion_engine import standing_disposition
 from core.conversation.user_surface_contract import (
     bind_user_surface_prompt,
     resolve_user_surface_prompt,
 )
+from core.epistemics.opinion_engine import standing_disposition
 from core.runtime import resource_psutil as psutil
 from core.runtime.desktop_boot_safety import (
     desktop_resource_guard_enabled,
     desktop_safe_boot_enabled,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind as _FlagKind
+from core.runtime.flags import declare as _declare_flag
+from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.process_identity import assert_owned, capture_identity
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
     is_strict_proof_answer_prompt,
@@ -67,10 +72,6 @@ from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.lockdep import LockRank, checked_lock
-from core.runtime.process_identity import assert_owned, capture_identity
-from core.brain.request_contract import REQUEST_FIELDS, validate_request_context
-from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -569,16 +570,24 @@ def _deep_snapshot_inner(value: Any, *, depth: int, seen: set[int]) -> Any:
         if id(value) in seen:
             return "<cycle>"
         seen = seen | {id(value)}
+        # list(...) FIRST. This walks live provider metadata while other
+        # threads are still writing to it, and a Python-level comprehension
+        # over .items() can be interrupted between elements — "dictionary
+        # changed size during iteration", raised inside an evidence path, in
+        # a subsystem on the fail-closed list, so it escalated to CRITICAL and
+        # held the runtime DEGRADED across health pulses (live 2026-08-03
+        # 22:13, repeating). The C-level copy cannot be interrupted.
         return {
             key: _deep_snapshot_inner(item, depth=depth + 1, seen=seen)
-            for key, item in value.items()
+            for key, item in list(value.items())
         }
     if isinstance(value, (list, tuple)):
         if id(value) in seen:
             return "<cycle>"
         seen = seen | {id(value)}
         return [
-            _deep_snapshot_inner(item, depth=depth + 1, seen=seen) for item in value
+            _deep_snapshot_inner(item, depth=depth + 1, seen=seen)
+            for item in list(value)
         ]
     if isinstance(value, (set, frozenset)):
         return sorted(
@@ -1908,9 +1917,14 @@ class InferenceGate:
     def _iter_local_clients() -> dict[str, Any]:
         clients: dict[str, Any] = {}
         try:
-            from core.brain.llm.mlx_client import _CLIENTS
+            # NOT dict(_CLIENTS): copying iterates the shared registry, and a
+            # client registered or torn down mid-copy raises "dictionary
+            # changed size during iteration". Live 2026-08-03 — and because
+            # this subsystem is fail-closed, that RuntimeError was escalated to
+            # CRITICAL and held the runtime DEGRADED across health pulses.
+            from core.brain.llm.mlx_client import clients_snapshot
 
-            clients.update(dict(_CLIENTS))
+            clients.update(dict(clients_snapshot()))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             logger.debug("MLX client registry unavailable: %s", exc)
         return clients
@@ -3815,9 +3829,10 @@ class InferenceGate:
 
         client_registry = {}
         try:
-            from core.brain.llm.mlx_client import _CLIENTS
+            # Atomic membership view — see clients_snapshot().
+            from core.brain.llm.mlx_client import clients_snapshot
 
-            client_registry.update(dict(_CLIENTS))
+            client_registry.update(dict(clients_snapshot()))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
