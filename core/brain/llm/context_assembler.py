@@ -635,6 +635,24 @@ class ContextAssembler:
         # summary above is still useful as narrative, but it is lossy by
         # construction; this block is what makes an early disclosure reachable
         # two hundred turns later.
+        # Preferences she formed herself. Empty until something actually is
+        # hers — she must not be handed a personality she never developed.
+        self_preference_block = ""
+        try:
+            from core.being.individual_preferences import IndividualPreferences
+
+            self_preference_block = IndividualPreferences.from_dict(
+                getattr(state.identity, "self_preferences", None)
+            ).render()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation(
+                "context_assembler.self_preferences",
+                _e,
+                severity="warning",
+                action="assembled the prompt without her own formed preferences",
+                enforce_failure_policy=False,
+            )
+
         ledger_block = ""
         try:
             from core.brain.llm.continuity_ledger import ContinuityLedger
@@ -1036,6 +1054,8 @@ class ContextAssembler:
                 base += rolling_summary
             if ledger_block:
                 base += ledger_block
+            if self_preference_block:
+                base += self_preference_block
             if continuity_block:
                 base += continuity_block
             # 3. Social/Humor strategy
@@ -1063,6 +1083,8 @@ class ContextAssembler:
                 base += rolling_summary
             if ledger_block:
                 base += ledger_block
+            if self_preference_block:
+                base += self_preference_block
             if continuity_block:
                 base += continuity_block
             if personhood_context:
@@ -1086,6 +1108,7 @@ class ContextAssembler:
                 f"{personality_block}"
                 f"{rolling_summary}"
                 f"{ledger_block}"
+                f"{self_preference_block}"
                 f"{continuity_block}"
                 f"{goal_execution_block}"
                 f"{temporal_finitude_block}"

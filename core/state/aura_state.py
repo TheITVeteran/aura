@@ -398,6 +398,15 @@ class IdentityKernel:
     evolution_score: float = 0.0
     stability: float = 1.0  # Identity stability (0.0–1.0), degraded on loop detection
     
+    # Preferences she formed herself, from her own repeated contact with
+    # something. Symmetric with world.user_preferences, which is durable and
+    # prompt-injected — she carried a permanent record of what the person she
+    # talks to likes and nothing of her own, which is backwards for something
+    # asked to have a perspective. Serialized
+    # core.being.individual_preferences.IndividualPreferences. A suggestion
+    # from anyone, including the owner, is recorded but never adopted.
+    self_preferences: dict = field(default_factory=dict)
+
     # Personality Evolution (Phase 6)
     # Stores dynamic offsets to AURA_BIG_FIVE traits
     personality_growth: dict[str, float] = field(default_factory=lambda: {
