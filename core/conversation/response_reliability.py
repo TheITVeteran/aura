@@ -4182,21 +4182,14 @@ def own_source_excerpt_floor(user_message: Any) -> str:
     and line numbers. When the read fails, the reply says so instead of
     generating one, because a snippet nobody read is not her code.
     """
-    text = _normalize(user_message)
-    if not text:
+    # Shared with the desktop-objective router, which has to know to keep its
+    # hands off this. Two copies of this judgement would drift, and the way it
+    # fails is that one layer answers a question the other was going to answer
+    # properly. See core/utils/own_source_intent.py.
+    from core.utils.own_source_intent import asks_for_own_source
+
+    if not asks_for_own_source(user_message):
         return ""
-    if not _contains_any_marker(text, _SOURCE_SHOW_MARKERS):
-        return ""
-    raw = str(user_message or "")
-    if _OWN_SOURCE_RE.search(raw):
-        pass
-    else:
-        actual = _ACTUAL_SOURCE_RE.search(raw)
-        # "the actual code" means HERS only when nothing else is named. "the
-        # actual code for numpy" is a question about numpy, and answering it
-        # with a piece of Aura would be its own kind of made-up answer.
-        if not actual or _NAMES_ANOTHER_SUBJECT_RE.match(raw[actual.end():]):
-            return ""
     try:
         from core.self.source_excerpt import excerpt_for_topic, source_tree_is_readable
     except ImportError:

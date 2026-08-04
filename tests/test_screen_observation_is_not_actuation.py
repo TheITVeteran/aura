@@ -161,3 +161,88 @@ class TestThePhrasingsBryanActuallyUsed:
         from core.runtime.desktop_objective_intent import looks_like_screen_observation
 
         assert not looks_like_screen_observation(message), message
+
+
+class TestARequestedDelayIsPartOfTheRequest:
+    """"Wait 5 seconds, then tell me what is on my screen" waited 0 seconds.
+
+    Live 2026-08-03: one read_screen_text step, answered in 1s, reported as
+    "Completed 1/1 governed desktop steps". The observation was of the wrong
+    moment and nothing said the delay had been dropped.
+    """
+
+    def _plan(self, objective: str):
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        return DesktopTaskSkill()._derive_single_objective_steps(objective, {})
+
+    def test_a_stated_delay_becomes_a_wait_step_first(self):
+        steps = self._plan("Please wait 5 seconds, then tell me what is on my screen.")
+        assert steps[0].action == "wait"
+        assert steps[0].target == "5"
+        assert any(step.action == "read_screen_text" for step in steps)
+
+    def test_no_delay_means_no_wait(self):
+        steps = self._plan("what is on my screen")
+        assert not any(step.action == "wait" for step in steps)
+
+    def test_an_unquantified_delay_invents_no_duration(self):
+        """"Wait a moment" leaves the quantity unspecified; picking one would
+        be answering a request nobody made."""
+        steps = self._plan("wait a moment and tell me what is on my screen")
+        assert not any(step.action == "wait" for step in steps)
+
+    @pytest.mark.parametrize(
+        ("objective", "seconds"),
+        [
+            ("wait 10s and read the screen", 10.0),
+            ("give it 3 secs then look at the screen", 3.0),
+            ("in 2 minutes tell me what is on my screen", 120.0),
+        ],
+    )
+    def test_units_are_read_from_the_request(self, objective, seconds):
+        from core.skills.desktop_task import _requested_wait_seconds
+
+        assert _requested_wait_seconds(objective) == seconds
+
+
+class TestBeingShownHerOwnCodeIsNotDesktopWork:
+    """"Show me a piece of your own code and which file it lives in" carries an
+    action word and a surface word, so it was sent to os_automation and refused
+    for having no observable effect — while the conversational floor had a real
+    1999-character excerpt ready. Measured live 2026-08-03 21:42.
+    """
+
+    BRYAN_ASKED = (
+        "Show me a piece of your own code that you find interesting. Tell me "
+        "which file it lives in, what it does, and why it interests you."
+    )
+
+    def test_the_desktop_lane_keeps_its_hands_off(self):
+        assert looks_like_desktop_objective(self.BRYAN_ASKED) is False
+
+    def test_the_source_floor_answers_it(self):
+        from core.conversation.response_reliability import own_source_excerpt_floor
+
+        assert own_source_excerpt_floor(self.BRYAN_ASKED).strip()
+
+    def test_somebody_elses_code_is_not_hers(self):
+        from core.conversation.response_reliability import own_source_excerpt_floor
+        from core.utils.own_source_intent import asks_for_own_source
+
+        assert asks_for_own_source("show me the actual code for numpy") is False
+        assert own_source_excerpt_floor("show me the actual code for numpy") == ""
+
+    def test_real_desktop_work_still_routes(self):
+        assert looks_like_desktop_objective("open Chrome and show me the file on my desktop")
+
+    def test_the_two_layers_share_one_definition(self):
+        """Two copies of this judgement drift, and then one layer answers a
+        question the other was going to answer properly."""
+        import inspect
+
+        from core.conversation import response_reliability
+        from core.runtime import desktop_objective_intent
+
+        for module in (response_reliability, desktop_objective_intent):
+            assert "own_source_intent" in inspect.getsource(module)

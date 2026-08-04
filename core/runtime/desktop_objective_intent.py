@@ -7,6 +7,7 @@ from core.runtime.skill_task_bridge import (
     strip_negated_action_spans,
 )
 from core.utils.intent_normalization import normalize_memory_intent_text
+from core.utils.own_source_intent import asks_for_own_source
 
 _WEB_SEARCH_REQUEST_SPAN_RE = re.compile(
     r"\b(?:search|google|look\s*up|research)\b[^.?!]{0,48}?"
@@ -257,6 +258,18 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     # because the visible app action remains after this span is stripped.
     sanitized_text = _CANONICAL_RESEARCH_TOOL_SPAN_RE.sub(" ", sanitized_text)
     if looks_like_capability_inventory_dialogue_request(user_message):
+        return False
+    # Being shown her own source is not desktop work. "Show me a piece of your
+    # own code and tell me which file it lives in" carries an action word
+    # ("show me") and a surface word ("file"), so the generic action+surface
+    # test called it a desktop objective, sent it to os_automation, and it
+    # came back "refused to act because the objective has no complete
+    # observable acceptance contract" — correctly, because reading her source
+    # aloud has no observable desktop effect to verify. Measured live
+    # 2026-08-03: the conversational floor had a real 1999-character excerpt
+    # ready for that exact sentence and the person never saw it, because this
+    # lane answered first.
+    if asks_for_own_source(user_message):
         return False
     # Screen observation ("read my screen", "what's on my screen") needs the
     # desktop body even though it carries no action+surface verb pair.

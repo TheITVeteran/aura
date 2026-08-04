@@ -73,6 +73,35 @@ _COMPUTER_USE_SKILL = None
 #: writes, downloads, settings) is indifferent to the frontmost window.
 _FOCUS_SENSITIVE_ACTIONS = frozenset({"type", "hotkey", "click", "scroll", "read_screen_text"})
 
+#: "wait 5 seconds", "in 10s", "after 3 seconds", "hold on for 2 minutes".
+#: The duration has to be STATED. An unquantified "wait a moment" leaves the
+#: quantity unspecified, and inventing one would be answering a request the
+#: person did not make — the executor's own bound then clamps whatever is
+#: asked for, and reports the seconds it actually slept in the receipt.
+_REQUESTED_WAIT_RE = re.compile(
+    r"\b(?:wait|pause|hold\s+(?:on|off)|delay|give\s+it|after|in)\s+"
+    r"(?:for\s+|about\s+|around\s+)?"
+    r"(\d+(?:\.\d+)?)\s*"
+    r"(seconds?|secs?|s|minutes?|mins?|m)\b",
+    re.IGNORECASE,
+)
+
+
+def _requested_wait_seconds(objective: str) -> float:
+    """Seconds the request explicitly asks to wait, or 0.0 when it does not."""
+
+    match = _REQUESTED_WAIT_RE.search(str(objective or ""))
+    if not match:
+        return 0.0
+    try:
+        amount = float(match.group(1))
+    except (TypeError, ValueError):
+        return 0.0
+    unit = match.group(2).lower()
+    if unit.startswith("m") and not unit.startswith("ms"):
+        amount *= 60.0
+    return max(0.0, amount)
+
 
 #: Text inside quotes is a name someone chose — a folder, a file, a phrase to
 #: type — never a request to open an application.
@@ -3924,6 +3953,22 @@ class DesktopTaskSkill(BaseSkill):
                     reason="Observe the current desktop before attempting an underspecified action.",
                     expect="Foreground screen text or an explicit permission failure is returned.",
                 )
+            )
+        # A delay the person asked for is part of the request, not decoration.
+        # "Wait 5 seconds, then tell me what is on my screen" planned one
+        # read_screen_text and answered in 1s — the observation was of the
+        # wrong moment, and "Completed 1/1 governed desktop steps" reported it
+        # as the whole request done. Measured live 2026-08-03.
+        requested_wait = _requested_wait_seconds(text)
+        if requested_wait > 0.0 and not any(step.action == "wait" for step in steps):
+            steps.insert(
+                0,
+                DesktopTaskStep(
+                    action="wait",
+                    target=f"{requested_wait:g}",
+                    reason=f"The request asks to wait {requested_wait:g}s before observing.",
+                    expect="Wait completes within the bounded desktop-task budget.",
+                ),
             )
         return steps
 
