@@ -438,6 +438,69 @@ class MessagePipelineMixin:
             {"role": "internal", "content": f"[SKILL OUTPUT: {tool_name}]\n{str(result)}"}
         )
 
+    #: Result keys that hold a PERCEPTION — something looked at, not a value
+    #: computed. These are evidence and must be framed as such.
+    _PERCEPTION_KEYS = ("text", "screen_text", "accessibility_text")
+
     def _inject_shortcut_results(self, message: str, result: dict) -> str:
-        summary = str(result.get("summary", result.get("result", result)))[:800]
-        return f"{message}\n\n[DIRECT RESULT]: {summary}\n\nSynthesize this result for the user."
+        """Attach a skill's result to the turn, framed for what it IS.
+
+        Measured live 2026-08-04, twice. `summary` falls back to
+        `result.get("result", result)` — and computer_use returns
+        `{"ok": True, "text": <raw accessibility dump>}` with NO summary
+        key. So the fallback stringified the whole dict, the raw screen
+        contents landed in the prompt as a "[DIRECT RESULT]" to synthesize,
+        and the model did the only sensible thing with a wall of unlabelled
+        text: it reproduced it.
+
+        The first fix went to desktop_task's summary, which is the OTHER
+        skill. It was verified with AST checks that the wiring existed
+        rather than by exercising this function, so it passed while the
+        live turn still dumped. This is the chokepoint both callers use and
+        every skill flows through, so it is where the framing belongs.
+
+        A perception is rendered as an Observation — labelled evidence,
+        attributed, paired with the request — so she answers the question
+        instead of continuing a buffer. Everything else keeps its summary.
+        """
+        if isinstance(result, dict):
+            for key in self._PERCEPTION_KEYS:
+                capture = result.get(key)
+                if isinstance(capture, str) and capture.strip():
+                    try:
+                        from core.perception.observation_evidence import (
+                            Observation,
+                            ObservationKind,
+                            remember_observation,
+                        )
+
+                        observation = remember_observation(
+                            Observation(
+                                kind=ObservationKind.SCREEN_TEXT,
+                                capture=capture,
+                                request=str(message or ""),
+                                source=str(result.get("active_app") or ""),
+                            )
+                        )
+                        return f"{message}\n\n{observation.for_reasoning()}"
+                    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                        record_degradation(
+                            "message_pipeline",
+                            exc,
+                            severity="warning",
+                            action=(
+                                "attached a raw perception without its evidence "
+                                "frame; the reply may echo the capture"
+                            ),
+                        )
+                    break
+
+        # A non-perception result. Never stringify the whole dict: an
+        # unlabelled blob is what the model reproduces.
+        summary = result.get("summary") or result.get("result") if isinstance(result, dict) else None
+        if not isinstance(summary, str) or not summary.strip():
+            summary = str(summary if summary is not None else result)
+        return (
+            f"{message}\n\n[DIRECT RESULT]: {str(summary)[:800]}\n\n"
+            "Synthesize this result for the user."
+        )
