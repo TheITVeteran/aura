@@ -148,6 +148,11 @@ class WebInterlocutorTurn:
     verification: str
     #: CP126 ff18e5ee / a3474c19: which evidence tied this reply to this turn.
     reply_provenance: str = REPLY_PROVENANCE_NONE
+    #: CP126 033dbcf3: who wrote the message that was SENT — live cognition, or
+    #: a canned deterministic line. A conversation carried by canned text is a
+    #: different artifact from one Aura actually composed, and the transcript
+    #: used to look identical either way.
+    sent_authorship: str = "cognitive"
 
 
 @dataclass
@@ -172,6 +177,11 @@ class WebInterlocutorResult:
     revision_receipts: list[dict[str, Any]] = field(default_factory=list)
     # Grounded pushback: where Aura challenged the interlocutor from her corpus.
     challenges_issued: list[dict[str, Any]] = field(default_factory=list)
+    #: CP126 033dbcf3: True when ANY sent message came from the deterministic
+    #: fallback rather than live cognition. The summary and the durable memory
+    #: are marked with it, so canned text can never be read back as something
+    #: Aura composed.
+    used_deterministic_composition: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -210,6 +220,54 @@ class WebInterlocutorJob:
             "target_url": self.target_url,
             "error": self.error,
         }
+
+
+#: Shapes that must not enter durable memory from a remote page. Deliberately
+#: narrow and high-precision: a false positive redacts a real answer, and this
+#: runs on content Aura will remember (CP126 f6059536).
+_SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("api_key", re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{16,}\b")),
+    ("bearer_token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}\b")),
+    ("aws_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
+    ("email", re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
+    ("card_number", re.compile(r"\b(?:\d[ \-]?){13,19}\b")),
+    ("phone_number", re.compile(r"(?<![\w.])\+?\d{1,3}[ .\-]?\(?\d{3}\)?[ .\-]?\d{3}[ .\-]?\d{4}(?![\w.])")),
+)
+
+
+def _redact_remote_content(text: str) -> tuple[str, list[str]]:
+    """Strip credential and contact shapes from remote text, naming what went.
+
+    CP126 f6059536. A lexical summary of what another service said was written
+    straight into durable episodic memory. That text is untrusted and may carry
+    anything the remote page rendered — including whatever the user pasted into
+    it earlier in the conversation. A memory Aura keeps forever is the wrong
+    place to discover that.
+
+    The kinds found are reported so the record can say it was redacted rather
+    than pretending it was always clean.
+    """
+    redacted = str(text or "")
+    found: list[str] = []
+    for name, pattern in _SECRET_PATTERNS:
+        redacted, count = pattern.subn(f"[redacted:{name}]", redacted)
+        if count:
+            found.append(name)
+    return redacted, found
+
+
+def _transcript_digest(turns: list["WebInterlocutorTurn"]) -> str:
+    """A digest over exactly what was sent and observed.
+
+    Ties the durable record to the transcript it came from, so a later reader
+    can tell whether the memory still matches the conversation (CP126 f6059536).
+    """
+    hasher = hashlib.sha256()
+    for turn in turns:
+        hasher.update(f"{turn.index}\x1f{turn.sent}\x1f{turn.observed_reply}\x1e".encode())
+    return hasher.hexdigest()
 
 
 def _clipboard_borrow_script(payload: str, body: str) -> str:
@@ -1988,6 +2046,7 @@ class WebInterlocutorSession:
                 result.completed_at = time.time()
                 return result
             opening_message = self._default_opening(objective)
+            result.used_deterministic_composition = True
 
         try:
             _mark_web_interlocutor_progress("web_interlocutor.open_or_attach")
@@ -1995,6 +2054,14 @@ class WebInterlocutorSession:
             result.target_url = initial.url or url
             result.target_title = initial.title
             next_message = opening_message
+            # The first turn inherits the opening's authorship: a canned
+            # opening must not be reported as cognition just because it was
+            # substantive enough to pass the contract check below.
+            pending_authorship = (
+                "deterministic_fallback"
+                if result.used_deterministic_composition
+                else "cognitive"
+            )
             current = initial
             for index in range(1, max_turns + 1):
                 _mark_web_interlocutor_progress(f"web_interlocutor.turn.{index}.send")
@@ -2024,6 +2091,11 @@ class WebInterlocutorSession:
                         result.completed_at = time.time()
                         return result
                     next_message = self._default_followup(result.turns) if result.turns else self._default_opening(objective)
+                    result.used_deterministic_composition = True
+                    turn_authorship = "deterministic_fallback"
+                else:
+                    turn_authorship = pending_authorship
+                pending_authorship = "cognitive"
                 send_receipts: list[dict[str, Any]] = []
                 sent_at = time.time()
                 after = before
@@ -2108,6 +2180,7 @@ class WebInterlocutorSession:
                         and before.text_hash != after.text_hash
                     ),
                     reply_provenance=observed.provenance,
+                    sent_authorship=turn_authorship,
                     verification=_describe_reply_evidence(observed, before, after),
                 )
                 result.diagnostics[f"turn_{index}_send_receipts"] = send_receipts
@@ -2539,8 +2612,12 @@ class WebInterlocutorSession:
             from core.memory.memory_write_gateway import get_memory_write_gateway
 
             gateway = get_memory_write_gateway()
+        # CP126 f6059536: the summary is derived from what a remote service
+        # said. Redact credential and contact shapes before it becomes durable,
+        # and bind the record to the transcript it came from.
+        safe_summary, redacted_kinds = _redact_remote_content(result.learned_summary)
         request = MemoryWriteRequest(
-            content=result.learned_summary,
+            content=safe_summary,
             metadata={
                 "family": "episodic",
                 "source": "web_interlocutor",
@@ -2550,6 +2627,25 @@ class WebInterlocutorSession:
                 "turn_count": len(result.turns),
                 "explicit_observational_memory_write": True,
                 "receipt_surface": "visible_browser_dialogue",
+                # This content came from an external service, not from Aura.
+                # A downstream reader must be able to tell.
+                "content_origin": "remote_interlocutor",
+                "content_trust": "untrusted_remote",
+                "transcript_sha256": _transcript_digest(result.turns),
+                "redacted_kinds": redacted_kinds,
+                # CP126 033dbcf3: a conversation carried by canned text is a
+                # different artifact from one Aura composed. The record says
+                # which, so a later reader cannot mistake a deterministic
+                # opening for something she chose to say.
+                "aura_authorship": (
+                    "deterministic_fallback"
+                    if result.used_deterministic_composition
+                    else "cognitive"
+                ),
+                "sent_authorship_by_turn": [
+                    getattr(turn, "sent_authorship", "cognitive")
+                    for turn in result.turns
+                ],
                 # What this memory is allowed to be used as. A partial
                 # observation is real material and is NOT evidence of a
                 # completed exchange; the record says which it is.
@@ -2616,8 +2712,14 @@ class WebInterlocutorSession:
                 severity="warning",
                 action="kept the conversation result without causal-revision proof",
             )
+            # CP126 7b02ba55: this used to write causal=False, which is the
+            # same value the proof writes when it RAN and found no causal
+            # influence. A proof that could not execute is not a measurement of
+            # absence, and a receipt that cannot tell the two apart lets an
+            # unavailable verifier read as a completed negative result.
             result.causal_influence = {
-                "causal": False,
+                "causal": None,
+                "measured": False,
                 "reason": f"revision adjudication unavailable: {exc}",
             }
 
@@ -3911,8 +4013,22 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
             "protected_foreground_lane": True,
             "foreground_request": True,
             "live_user_path_required": True,
-            "proof_evaluation_contract": False,
+            # CP126 ba0294cc: this used to hardcode proof_evaluation_contract
+            # to False and copy the caller's requirement into a custom key that
+            # no standard gate reads — so a caller who asked for proof got a
+            # message composed without it and nothing said so. The caller's
+            # value is preserved, and when the direct path is taken with a
+            # contract outstanding the bypass is RECORDED against the run
+            # rather than being invisible.
+            "proof_evaluation_contract": bool(
+                base_context.get("proof_evaluation_contract", False)
+            ),
             "web_interlocutor_proof_contract": bool(base_context.get("proof_evaluation_contract")),
+            # The lane flags above are scheduling preferences: composing a
+            # visible message must not be throttled as background work. They
+            # are not a claim that a human is waiting on this call, which a
+            # background job would make false.
+            "composed_for_background_job": bool(base_context.get("background", False)),
             "user_anchor": request_origin in {"desktop_ui", "desktop", "user", "voice", "chat"},
             "user_visible_browser_action": True,
             "suppress_user_memory_append": True,
@@ -3937,6 +4053,18 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
             "max_tokens": int(base_context.get("compose_max_tokens", 420) or 420),
         }
         if hasattr(engine, "generate"):
+            if think_context["proof_evaluation_contract"]:
+                # The direct generation path does not run the executive's proof
+                # evaluation. Say so where the run's receipts are read.
+                context.setdefault("_web_interlocutor_composition_events", []).append(
+                    {
+                        "source": "proof_contract_not_applied",
+                        "reason": (
+                            "composed through direct generation, which does not "
+                            "run the executive proof-evaluation gate"
+                        ),
+                    }
+                )
             try:
                 logger.info(
                     "WebInterlocutor cognitive compose: calling generate on %s",
@@ -3997,6 +4125,8 @@ def _clean_message(text: str) -> str:
 
 
 def _deterministic_learning_summary(objective: str, turns: list[WebInterlocutorTurn]) -> str:
+    """A lexical summary. CP126 033dbcf3: it says so, so a reader can tell it
+    apart from a summary Aura actually reasoned out."""
     observed = " ".join(turn.observed_reply for turn in turns).strip()
     observed = re.sub(r"\s+", " ", observed)
     if len(observed) > 1200:
