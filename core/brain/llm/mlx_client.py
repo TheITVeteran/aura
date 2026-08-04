@@ -6770,10 +6770,31 @@ class MLXLocalClient:
                         "progress": dict(self._latent_progress_by_request.get(req_id) or {}),
                         "reason": "latent_answer_invalid",
                     }
+                # LIVE DEFECT, 2026-08-03. The worker returns the decoded
+                # answer token ids alongside the text (LatentReasonResult.
+                # to_dict -> "tokens"), and this payload dropped them. The
+                # facade then called _receipt_contract_errors with
+                # result.get("tokens") == None, and ALL THREE proofs that bind
+                # a receipt to the answer require a token list:
+                # terminal_disposition, answer_replacement, and
+                # fast_weight_learning each raise without it. So every
+                # foreground turn failed with
+                #   receipt_contract_failed:terminal_disposition_unproven,
+                #   answer_replacement_unproven,fast_weight_learning_receipt_unproven
+                # and fell back to an ordinary generation. The recurrent lane
+                # was inert on the live path — not declining for a reason, but
+                # unable to prove anything about an answer whose tokens it was
+                # never handed.
+                answer_tokens = res.get("tokens")
                 self._mark_progress()
                 return {
                     "ok": True,
                     "text": answer,
+                    "tokens": (
+                        list(answer_tokens)
+                        if isinstance(answer_tokens, list)
+                        else None
+                    ),
                     "receipt": receipt,
                     # CP126 f22c4ed8: the facade cannot recompute this digest
                     # — it would have to duplicate the wire normalization

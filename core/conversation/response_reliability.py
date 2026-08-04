@@ -4223,6 +4223,88 @@ def own_source_excerpt_floor(user_message: Any) -> str:
     )
 
 
+#: A question about what is BEHIND or UNDER a window — occluded content. A
+#: screen capture reads what is visible; what a window covers is not in it.
+_OCCLUDED_VIEW_RE = re.compile(
+    r"\b(?:behind|underneath|under|beneath|covered\s+by|hidden\s+(?:by|behind)|"
+    r"obscured\s+by)\b",
+    re.IGNORECASE,
+)
+_SCREEN_SUBJECT_RE = re.compile(
+    r"\b(?:screen|window|display|desktop|monitor|you|your\s+window|it)\b",
+    re.IGNORECASE,
+)
+_SEEING_VERB_RE = re.compile(
+    r"\b(?:see|seeing|look|looking|view|show|read|tell\s+me\s+what)\b",
+    re.IGNORECASE,
+)
+
+
+def occluded_screen_view_floor(user_message: Any) -> str:
+    """Answer "what's behind your window?" from the window layout.
+
+    LIVE DEFECT, 2026-08-03 19:49. Asked "can you see what's on my screen
+    behind your window?", Aura answered with the frontmost app and window
+    title — which is what is IN FRONT. Asked "behind you", she said "There's
+    nothing there." Asked again, "I'm not afraid. Are you?". Asked once more,
+    "there's no physical space behind me — just more circuitry and data
+    centers."
+
+    A screen capture reads what is visible. What a window covers is not in it,
+    so "there's nothing there" is a claim about content she cannot observe —
+    the same shape as reporting an unmeasured value as a measured zero. But
+    the window LAYOUT is observable, and Aura already captures it
+    (core/perception/screen_blueprint.py knows which windows are covered, by
+    what, and how much). So the honest answer is available: name the windows
+    that are back there, and say plainly that their contents are not readable
+    while they are covered.
+    """
+    raw = str(user_message or "")
+    if not raw.strip():
+        return ""
+    if not _OCCLUDED_VIEW_RE.search(raw):
+        return ""
+    if not (_SEEING_VERB_RE.search(raw) or "what" in raw.lower()):
+        return ""
+    if not _SCREEN_SUBJECT_RE.search(raw):
+        return ""
+    try:
+        from core.perception.screen_blueprint import capture_blueprint
+
+        blueprint = capture_blueprint()
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return (
+            "I can't read the window layout right now, so I don't know what's "
+            "back there. I'd rather say that than guess."
+        )
+    if getattr(blueprint, "unavailable", True):
+        return (
+            "I can't see the window layout from here, so I genuinely don't "
+            "know what's behind this window."
+        )
+    windows = [w for w in getattr(blueprint, "windows", ()) if getattr(w, "area", 0) > 0]
+    covered = [w for w in windows[1:] if getattr(w, "visible_fraction", 1.0) < 0.999]
+    if not covered:
+        return (
+            "Nothing is behind my window — it's the only one I can see in the "
+            "layout, and I'd tell you if there were more."
+        )
+    named: list[str] = []
+    for window in covered[:5]:
+        app = str(getattr(window, "app", "") or "").strip() or "an untitled window"
+        title = str(getattr(window, "title", "") or "").strip()
+        fraction = float(getattr(window, "visible_fraction", 0.0) or 0.0)
+        state = "completely covered" if fraction <= 0.02 else f"{int(fraction * 100)}% visible"
+        named.append(f"{app}" + (f' ("{title[:60]}")' if title else "") + f" — {state}")
+    listing = "\n".join(f"· {row}" for row in named)
+    return (
+        "I can see the window layout, so I know what's back there, but I "
+        "can't read what's ON them while they're covered — a screen capture "
+        f"only gets what's visible:\n\n{listing}\n\nMove one forward and I "
+        "can read it."
+    )
+
+
 def live_chat_diagnostic_floor(user_message: Any) -> str:
     text = _normalize(user_message)
     if not text or looks_like_learning_resource_bundle(str(user_message or "")):

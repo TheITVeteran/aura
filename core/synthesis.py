@@ -13,6 +13,7 @@ from core.conversation.response_reliability import (
     grounded_operational_status_reply,
     live_chat_diagnostic_floor,
     normalize_user_facing_format,
+    occluded_screen_view_floor,
     own_source_excerpt_floor,
     repair_instruction_shape,
     requested_exact_reply_target,
@@ -300,6 +301,13 @@ def _direct_answer_floor(user_message: str) -> str:
     own_source = own_source_excerpt_floor(q)
     if own_source:
         return own_source
+
+    # "What's behind your window?" is answerable from the window layout. Left
+    # to the model it said "There's nothing there", then "I'm not afraid. Are
+    # you?", then invented circuitry and data centers.
+    occluded = occluded_screen_view_floor(q)
+    if occluded:
+        return occluded
 
     # CP126 8b28006a: a phrase match used to return a stale, hardcoded claim
     # that live API parity and autonomous email/Reddit follow-through had been

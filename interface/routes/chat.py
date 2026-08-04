@@ -9101,6 +9101,30 @@ async def _run_cognitive_engine_chat_turn(
             numeric_answer_missing,
         )
 
+        # LIVE DEFECT, 2026-08-03 19:51. "Cortex response received (len=125)"
+        # then "reply_reliability_gate_failed:truncated_tail", and the person
+        # got a preserved repairable draft instead of the answer. The engine
+        # already has a trimmer that cuts a clipped reply back to its last
+        # complete sentence and re-asks the same gate until it is satisfied
+        # (cognitive_engine._complete_reply_tail) — but it runs only on the
+        # direct desktop quick-reply path, not on this one, so a reply that
+        # ran into its token budget here died with a real answer in hand.
+        # Trim BEFORE the gate judges it, exactly as the other path does.
+        try:
+            from core.brain.cognitive_engine import _complete_reply_tail
+
+            completed_text, tail_trimmed = _complete_reply_tail(text)
+            if tail_trimmed and completed_text.strip():
+                logger.info(
+                    "Trimmed a token-budget mid-sentence cutoff before the chat "
+                    "reliability gate (%d -> %d chars).",
+                    len(text),
+                    len(completed_text),
+                )
+                text = completed_text
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Reply tail completion unavailable: %s", exc)
+
         recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
         assessment_text = (
             _ground_runtime_fact_status_reply(

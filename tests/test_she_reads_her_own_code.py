@@ -258,3 +258,145 @@ def test_the_app_installs_an_edit_menu():
     # And it is installed at launch, not merely defined.
     launch = source.split("func applicationDidFinishLaunching", 1)[1][:400]
     assert "installMenuBar()" in launch
+
+
+# --- "what's behind your window?" (2026-08-03 19:49) --------------------
+
+
+def test_an_occluded_view_question_is_answered_from_the_window_layout():
+    """She answered "There's nothing there", then "I'm not afraid. Are you?",
+    then invented circuitry and data centers. A screen capture reads what is
+    VISIBLE; what a window covers is not in it — but the layout is."""
+    from core.conversation.response_reliability import occluded_screen_view_floor
+
+    reply = occluded_screen_view_floor("what do you see behind you?")
+
+    assert reply
+    assert "can't read what's ON them" in reply or "don't know what's" in reply
+    assert "data center" not in reply.lower()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Can you see what's on my screen behind your window?",
+        "what do you see behind you?",
+        "what's behind your window",
+        "what is underneath your window?",
+    ],
+)
+def test_the_phrasings_he_used_all_route(question):
+    reply = _direct_answer_floor(question)
+
+    assert reply, f"{question!r} still falls through to the model"
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["what is on my screen", "what is 2+2", "what's behind the couch"],
+)
+def test_unrelated_questions_do_not_route(question):
+    from core.conversation.response_reliability import occluded_screen_view_floor
+
+    assert occluded_screen_view_floor(question) == ""
+
+
+def test_an_unavailable_layout_says_so_rather_than_guessing(monkeypatch):
+    from core.conversation import response_reliability
+
+    class _Unavailable:
+        unavailable = True
+        windows = ()
+
+    monkeypatch.setattr(
+        "core.perception.screen_blueprint.capture_blueprint", lambda **_k: _Unavailable()
+    )
+
+    reply = response_reliability.occluded_screen_view_floor("what's behind your window?")
+
+    assert "don't know" in reply
+    assert "nothing there" not in reply
+
+
+# --- the RLC receipt contract (2026-08-03 19:51) ------------------------
+
+
+def test_the_latent_client_returns_the_answer_tokens():
+    """All three receipt proofs bind to the answer's TOKENS. The transport
+    dropped them, so terminal_disposition, answer_replacement and
+    fast_weight_learning failed together on every turn and the recurrent lane
+    was inert on the live path."""
+    import re
+
+    source = pathlib.Path("core/brain/llm/mlx_client.py").read_text(encoding="utf-8")
+    marker = '"ok": True,\n                    "text": answer,'
+    assert marker in source
+    payload = source[source.index(marker) : source.index(marker) + 1800]
+    keys = re.findall(r'^\s{20}"([a-z_0-9]+)":', payload, re.M)
+
+    assert "tokens" in keys, "latent_reason must hand the facade the answer tokens"
+
+
+def test_a_missing_token_list_is_named_once_not_three_times():
+    """Three 'unproven' errors for one missing input is three symptoms and no
+    cause."""
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    errors = LatentCortexService._receipt_contract_errors(
+        {"schema": "x"}, {}, None, None, None, "general", output_text="hello"
+    )
+
+    assert "output_tokens_unavailable" in errors
+
+
+def test_a_real_token_list_does_not_trip_that_check():
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    errors = LatentCortexService._receipt_contract_errors(
+        {"schema": "x"}, {}, None, None, [1, 2, 3], "general", output_text="hello"
+    )
+
+    assert "output_tokens_unavailable" not in errors
+
+
+# --- truncated_tail on the chat path (2026-08-03 19:51) -----------------
+
+
+def test_a_clipped_reply_is_completed_before_the_gate_judges_it():
+    """"Cortex response received (len=125)" then
+    "reply_reliability_gate_failed:truncated_tail" — the engine's trimmer ran
+    only on the direct desktop path, not on this one."""
+    from core.brain.cognitive_engine import _complete_reply_tail
+    from core.conversation.response_reliability import _has_truncated_tail
+
+    clipped = (
+        "I think the tide turns at eleven. The moon dominates the semidiurnal "
+        "component, and the basin geometry"
+    )
+    assert _has_truncated_tail(clipped) is True
+
+    completed, trimmed = _complete_reply_tail(clipped)
+
+    assert trimmed is True
+    assert _has_truncated_tail(completed) is False
+    assert completed == "I think the tide turns at eleven."
+
+
+def test_the_chat_path_runs_the_completion():
+    source = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+
+    assert "_complete_reply_tail" in code
+
+    # And it must run BEFORE the reliability gate that judged the reply, not
+    # before some other assessment earlier in the file — there are several.
+    completion_at = code.index("_complete_reply_tail")
+    gate_at = code.index("assessment = assess_user_facing_reply", completion_at)
+    between = code[completion_at:gate_at]
+
+    assert gate_at > completion_at
+    # Nothing may return out of the function between the two, or the
+    # completion would not reach the gate that rejected the turn.
+    assert "\n        return" not in between

@@ -915,6 +915,18 @@ class LatentCortexService:
             return ["receipt_not_mapping"]
         errors: list[str] = []
 
+        # LIVE DEFECT, 2026-08-03. Three proofs — terminal_disposition,
+        # answer_replacement and fast_weight_learning — each bind the receipt
+        # to the answer's TOKENS, and each raises without them. When the
+        # transport dropped the token list, all three failed together and the
+        # receipt said "terminal_disposition_unproven,answer_replacement_
+        # unproven,fast_weight_learning_receipt_unproven" on every single turn:
+        # three symptoms of one missing input, none of them naming it. Say the
+        # actual condition once, so the next person reads the cause instead of
+        # three consequences.
+        if output_tokens is not ... and not isinstance(output_tokens, list):
+            errors.append("output_tokens_unavailable")
+
         def positive_int(mapping: dict[str, Any], key: str) -> bool:
             return type(mapping.get(key)) is int and mapping[key] > 0
 
