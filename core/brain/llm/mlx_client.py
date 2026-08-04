@@ -239,6 +239,26 @@ _MLX_CLIENT_RECOVERABLE_ERRORS = (
 _GLOBAL_LAST_SWAP_TIME = 0.0
 _GLOBAL_LAST_HEAVY_MODEL: str | None = None
 _CLIENTS: dict[str, Any] = {}
+# CP126 bec28d76: every observer iterated `list(_CLIENTS.items())` and then read
+# each client's mutable lifecycle fields independently, so a worker could be
+# registered, recycled or torn down mid-scan. Admission then decided against a
+# view that never existed at any instant: a lane counted twice, a lane missed,
+# a lane classified from a path whose client had already been replaced. The
+# registry itself is now guarded, and observers take a consistent snapshot of
+# the membership before reading the members.
+_CLIENTS_LOCK = _threading.Lock()
+
+
+def _clients_snapshot() -> list[tuple[str, Any]]:
+    """One atomic view of registry membership.
+
+    The clients' own fields are still read afterwards without the lock —
+    holding it across `is_alive()` (which can touch a process handle) would
+    couple registry mutation to process I/O. What this removes is the
+    membership race: no observer can see a half-applied registration.
+    """
+    with _CLIENTS_LOCK:
+        return list(_CLIENTS.items())
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
@@ -790,7 +810,7 @@ def _observed_active_lanes(exclude_client: Any = None) -> list[ActiveLane]:
     from core.brain.lane_admission import ActiveLane, classify_lane
 
     lanes: list[ActiveLane] = []
-    for path, client in list(_CLIENTS.items()):
+    for path, client in _clients_snapshot():
         if client is None or client is exclude_client:
             continue
         try:
@@ -813,11 +833,22 @@ def _observed_active_lanes(exclude_client: Any = None) -> list[ActiveLane]:
 
 
 def _model_lane_owner_id(client: Any) -> str:
+    """A lane-owner id that identifies THIS client, not just its model.
+
+    CP126 cdbb177d: the id was ``mlx:<parent pid>:<model path>``, so two
+    clients for the same artifact — or the same client across a worker
+    recycle — shared one identity. Exact eviction then could not name which
+    owner to evict, and durable fencing could not tell a stale generation from
+    the live one: revoking "the 32B owner" revoked whichever happened to
+    answer. The client's own object identity and its generation counter make
+    it unique without depending on the worker process existing yet.
+    """
     existing = str(getattr(client, "_model_lane_owner_id", "") or "")
     if existing:
         return existing
     model_path = _real_model_path(getattr(client, "model_path", ""))
-    owner_id = f"mlx:{os.getpid()}:{model_path}"
+    generation = int(getattr(client, "_worker_generation", 0) or 0)
+    owner_id = f"mlx:{os.getpid()}:{id(client):x}:{generation}:{model_path}"
     try:
         client._model_lane_owner_id = owner_id
     except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -835,7 +866,7 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
     )
 
     owners: list[LaneOwnerObservation] = []
-    for path, client in list(_CLIENTS.items()):
+    for path, client in _clients_snapshot():
         if client is None or client is exclude_client:
             continue
         try:
@@ -882,7 +913,7 @@ async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
     target = next(
         (
             client
-            for client in list(_CLIENTS.values())
+            for _path, client in _clients_snapshot()
             if client is not None and _model_lane_owner_id(client) == owner.owner_id
         ),
         None,
@@ -970,7 +1001,7 @@ async def _compensate_model_lane_owner(owner: Any, reason: str) -> bool:
     target = next(
         (
             client
-            for client in list(_CLIENTS.values())
+            for _path, client in _clients_snapshot()
             if client is not None and _model_lane_owner_id(client) == owner.owner_id
         ),
         None,
@@ -1062,7 +1093,7 @@ def _lane_is_last_warm(client: Any) -> bool:
     try:
         if client is None or not client.is_alive():
             return False
-        for other in list(_CLIENTS.values()):
+        for _other_path, other in _clients_snapshot():
             if other is None or other is client:
                 continue
             try:
@@ -2183,7 +2214,7 @@ def soft_cancel_active_generations(*, reason: str) -> list[dict[str, Any]]:
     request; clients with nothing running are skipped.
     """
     receipts: list[dict[str, Any]] = []
-    for client in list(_CLIENTS.values()):
+    for _client_path, client in _clients_snapshot():
         try:
             receipt = client.soft_cancel_active_generation(reason)
         except (AttributeError, OSError, RuntimeError, ValueError) as exc:
@@ -2861,6 +2892,11 @@ class MLXLocalClient:
         self._latent_progress_drop_reported = False
         self._last_ready_at = 0.0
         self._last_generation_completed_at = 0.0
+        #: Bumped on every worker reboot so a lane-owner id names the
+        #: generation it belongs to (CP126 cdbb177d). Without it, a stale
+        #: generation and the live one shared one identity and fencing could
+        #: not tell them apart.
+        self._worker_generation = 0
         self._last_user_facing_completed_at = 0.0
         self._last_visible_readiness_at = 0.0
         self._current_gen_future: SharedFuture | None = None
@@ -10442,6 +10478,10 @@ class MLXLocalClient:
         first response to 10 seconds of contention.
         """
         self._set_lane_state("recovering", reason)
+        # A new generation begins here, so the next owner id cannot be confused
+        # with the one being torn down.
+        self._worker_generation = int(getattr(self, "_worker_generation", 0) or 0) + 1
+        self._model_lane_owner_id = ""
         acquired = await asyncio.to_thread(self._lock.acquire, True, 10.0)
         if not acquired:
             # Escalate the wait before considering anything unsynchronized.
@@ -10938,9 +10978,15 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
             " live Aura uses the in-process MLX model lane; external Cortex artifacts are retired"
         )
 
-    if client_key not in _CLIENTS:
-        _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)
-    return _CLIENTS[client_key]
+    with _CLIENTS_LOCK:
+        existing = _CLIENTS.get(client_key)
+    if existing is not None:
+        return existing
+    # Construction happens outside the lock (it can be slow), then a
+    # last-writer check keeps a concurrent creator from being discarded.
+    created = MLXLocalClient(model_path=runtime_path, **kwargs)
+    with _CLIENTS_LOCK:
+        return _CLIENTS.setdefault(client_key, created)
 
 
 _TOOL_ARGS_MAX_KEYS = 64
@@ -11201,7 +11247,7 @@ async def scavenge_idle_model_vram(
 
     results: list[dict[str, Any]] = []
     unloaded = 0
-    for path, client in list(_CLIENTS.items()):
+    for path, client in _clients_snapshot():
         lane_label = os.path.basename(str(path or "")) or "unknown"
         unload = getattr(client, "maybe_unload_idle", None)
         if unload is None:
