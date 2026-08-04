@@ -25,6 +25,13 @@ from core.runtime.errors import record_degradation
 from core.runtime.os_automation_effects import extract_target_paths
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from core.perception.observation_evidence import (
+        Observation as ObservationEvidence,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -3972,6 +3979,143 @@ class DesktopTaskSkill(BaseSkill):
             )
         return steps
 
+
+    #: Chrome that appears on every macOS screen and describes nothing about
+    #: what the person is actually looking at.
+    _SCREEN_CHROME = frozenset({
+        "edit", "window", "file", "view", "help", "history", "bookmarks",
+        "apple", "show more", "show less", "home", "shorts", "you",
+        "settings", "search", "menu", "back", "forward", "reload",
+    })
+
+    @classmethod
+    def _observation_evidence(
+        cls, receipts: list[dict[str, Any]], objective: str
+    ) -> "ObservationEvidence | None":
+        """The perception, typed as evidence gathered for THIS request.
+
+        This is what her reasoning should receive. A raw capture in working
+        memory is material a model continues — which is exactly what
+        happened live on 2026-08-04, when a screen read came back as the
+        verbatim accessibility dump. Typed as an Observation it arrives
+        labelled, attributed, and paired with the question it was gathered
+        to answer, so what she forms is an answer rather than an echo.
+        """
+        from core.perception.observation_evidence import (
+            Observation,
+            ObservationKind,
+            remember_observation,
+        )
+
+        for receipt in receipts:
+            action = receipt.get("action")
+            if action not in {"read_screen_text", "inspect_screen"}:
+                continue
+            result = receipt.get("result")
+            if not isinstance(result, Mapping):
+                continue
+            capture = str(result.get("text") or "")
+            source = str(result.get("active_app") or "").strip()
+            if not capture.strip() and not source:
+                continue
+            # Retained, so she can refer to it after this turn — a follow-up
+            # ("which repo was that?"), a later comment of her own, or a
+            # question about what she saw a minute ago. A perception she
+            # cannot refer back to is not something she saw; it is something
+            # that passed through her, and every follow-up would force
+            # another capture that answers a question about the PAST with a
+            # reading of the PRESENT.
+            return remember_observation(
+                Observation(
+                    kind=ObservationKind.SCREEN_TEXT,
+                    capture=capture,
+                    request=str(objective or ""),
+                    source=source,
+                    detail={"desktop_action": action},
+                )
+            )
+        return None
+
+    @classmethod
+    def _describe_screen_observation(cls, receipts: list[dict[str, Any]]) -> str:
+        """A grounded FALLBACK description, for when reasoning cannot run.
+
+        Not the primary path. Her reasoning receives the typed Observation
+        and forms the answer; this exists so that a turn which loses the
+        cognitive lane still says something true about the screen instead of
+        pasting the buffer or reporting a step count.
+
+        Measured live 2026-08-04. Bryan asked "can you tell me what you see
+        on the screen?" and got the raw accessibility dump back verbatim —
+        "Edit / Window / (9) Kurzgesagt / ... / Show more / You >" — a
+        transcription of the UI tree, not an answer. Reading the screen and
+        being able to say what is on it are different acts, and only the
+        second is what was asked for.
+
+        The raw text is EVIDENCE. It stays in the receipt for anything that
+        needs to verify the claim; it is not the reply.
+
+        Deterministic on purpose: this runs inside a governed desktop step
+        on the foreground lane, and spending a second model generation to
+        narrate a screenshot is exactly the kind of hidden allocation that
+        turns one observation into a stalled turn. What it produces is a
+        grounded factual description — which app is in front, what is
+        identifiable in it — and the response lane is free to phrase it.
+        """
+        for receipt in receipts:
+            if receipt.get("action") not in {"read_screen_text", "inspect_screen"}:
+                continue
+            result = receipt.get("result")
+            if not isinstance(result, Mapping):
+                continue
+            text = str(result.get("text") or "").strip()
+            app = str(result.get("active_app") or "").strip()
+            if not text and not app:
+                continue
+
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            seen: dict[str, None] = {}
+            for line in lines:
+                if len(line) < 2 or line.lower() in cls._SCREEN_CHROME:
+                    continue
+                seen.setdefault(line, None)
+            candidates = list(seen)
+
+            # Prefer SUBSTANTIVE lines over navigation labels. The first cut
+            # of this took the first eight distinct strings, which on a
+            # YouTube page meant "Subscriptions; RealLifeLore; Nexpo; fern" —
+            # the sidebar — while the video titles the person was actually
+            # looking at fell past the limit. A description made of nav chrome
+            # is a worse answer than a shorter one made of content.
+            substantive = [
+                line for line in candidates
+                if len(line.split()) >= 2 or len(line) >= 20
+            ]
+            content = substantive if len(substantive) >= 3 else candidates
+
+            parts: list[str] = []
+            if app:
+                parts.append(f"The frontmost app is {app}.")
+            if content:
+                shown = content[:8]
+                parts.append(
+                    "Visible on screen: " + "; ".join(shown)
+                    + (f" (and {len(content) - len(shown)} more items)"
+                       if len(content) > len(shown) else "")
+                    + "."
+                )
+                parts.append(
+                    f"That is {len(candidates)} distinct text elements in total."
+                )
+            elif text:
+                parts.append(
+                    "The screen read returned text, but nothing in it was "
+                    "distinguishable from ordinary window chrome."
+                )
+            if parts:
+                return " ".join(parts)
+        return ""
+
     @staticmethod
     def _primitive_steps_are_only_observational(steps: list[DesktopTaskStep]) -> bool:
         if not steps:
@@ -5009,6 +5153,7 @@ class DesktopTaskSkill(BaseSkill):
             else "failed"
         )
         completed_count = sum(1 for receipt in receipts if receipt.get("ok"))
+        observation = self._observation_evidence(receipts, objective)
         return {
             "ok": ok,
             "status": status,
@@ -5039,8 +5184,23 @@ class DesktopTaskSkill(BaseSkill):
                     "desktop_task_research_pressure_limited"
                 ),
             } if research_context else None,
+            # The perception, typed as evidence for THIS request. The
+            # response lane renders it into the reasoning context so she can
+            # answer the question rather than continue the buffer.
+            "observation": (
+                observation.for_reasoning() if observation is not None else None
+            ),
+            "observation_meta": (
+                observation.to_dict() if observation is not None else None
+            ),
             "summary": (
-                f"Desktop task completed {completed_count}/{len(steps)} governed "
+                # An observation's answer is what was SEEN. A step count is a
+                # progress report about the machinery, and handing it back for
+                # "what do you see?" reports that the looking happened without
+                # ever saying what was there. This is the FALLBACK; the
+                # reasoning above forms the real answer.
+                self._describe_screen_observation(receipts)
+                or f"Desktop task completed {completed_count}/{len(steps)} governed "
                 f"computer-use steps through {planner or 'unknown'} planning."
             ),
         }

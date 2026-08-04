@@ -798,7 +798,24 @@ class ResponseProcessingMixin:
 
         if shortcut_result:
             message = self._inject_shortcut_results(message, shortcut_result)
-            context["skill_result"] = str(shortcut_result.get("summary", ""))
+            # A PERCEPTION goes to her reasoning as framed evidence, not as a
+            # pre-written summary. `summary` is a finished sentence; handing
+            # it over leaves nothing to reason about, and the sentence stops
+            # being hers. `observation` is the capture WITH its provenance
+            # and the request it was gathered for, so she can describe it,
+            # answer a specific question from it, quote it when quoting is
+            # what was asked, or refer back to it later.
+            #
+            # Live 2026-08-04: without this frame a screen read reached the
+            # model as an untyped blob and was continued verbatim — the
+            # accessibility tree returned as the reply.
+            context["skill_result"] = str(
+                shortcut_result.get("observation")
+                or shortcut_result.get("summary", "")
+            )
+            observation_meta = shortcut_result.get("observation_meta")
+            if observation_meta:
+                context["observation_meta"] = observation_meta
 
         # Inject HOT MEMORY into the Fast-Path prompt (fallback to empty dict if payload_context isn't passed)
         # Note: payload_context isn't passed into _attempt_fast_path by default.
