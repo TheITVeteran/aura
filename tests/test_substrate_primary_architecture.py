@@ -103,9 +103,20 @@ async def test_llm_router_uses_substrate_before_transformer(monkeypatch):
     text = await router.think(
         "quiet status", force_substrate=True, max_tokens=8, origin="evaluation"
     )
+    assert isinstance(text, str) and text.strip()
 
-    assert text.startswith("Substrate path:")
-    assert router.last_tier == "substrate"
+    # The contract is that the substrate is CONSULTED before the transformer,
+    # and that is what this asserts. It used to assert the substrate's TEXT was
+    # returned — but that text comes from an untrained random projection onto a
+    # 32-word proto vocabulary ("Substrate path: world action hold grounded…"),
+    # and measured 2026-08-04 it was reachable as a live user-facing reply.
+    # A person may not be handed it; see
+    # tests/test_substrate_readout_is_not_language.py.
+    generation = router.stats.get("last_substrate_generation")
+    assert generation is not None, "the substrate was never consulted"
+    assert generation["used_substrate"] is True
+    assert generation["text"].startswith("Substrate path:")
+    assert generation["is_user_presentable"] is False
 
     # And the authority itself: the same call from a user turn must NOT be
     # able to force the bypass.

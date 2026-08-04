@@ -1332,6 +1332,28 @@ class IntelligentLLMRouter:
             kwargs["substrate_generation"] = result.to_dict()
             self.stats["last_substrate_generation"] = result.to_dict()
             if result.used_substrate and result.text.strip():
+                # The readout head is an UNTRAINED random projection onto a
+                # 32-word proto vocabulary, so its text is a fingerprint of
+                # substrate state, not language: "Substrate path: world action
+                # hold grounded choose loop result repair." Measured
+                # 2026-08-04, that was reachable as a live user-facing reply —
+                # this path is on by default for user turns, and a short prompt
+                # whose hashed vector aligns with the live state clears the
+                # 0.34 threshold at 0.157.
+                #
+                # It stays available for background and evaluation, where a
+                # deterministic state fingerprint is exactly what is wanted.
+                if not is_background and not result.is_user_presentable:
+                    _record_router_degradation(
+                        RuntimeError("substrate readout is not user-presentable"),
+                        action="deferred to the transformer cortex for a user-facing turn",
+                        severity="warning",
+                        extra={
+                            "vocabulary": result.vocabulary,
+                            "prediction_error": result.prediction_error,
+                        },
+                    )
+                    return None
                 self.last_tier = "substrate"
                 if not is_background:
                     self.last_user_tier = "substrate"

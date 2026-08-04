@@ -42,20 +42,49 @@ class SubstrateGeneration:
     state_energy: float = 0.0
     generated_at: float = 0.0
     steering_telemetry: Optional[dict[str, Any]] = None
+    #: The vocabulary this text is drawn from. PROTO_TOKENS is 32 words and the
+    #: readout mapping onto them is an UNTRAINED random projection, so its
+    #: output ("Substrate path: world action hold grounded choose loop result
+    #: repair.") is a state fingerprint, not language. Anything that puts text
+    #: in front of a person must check this.
+    vocabulary: str = "proto"
+
+    @property
+    def is_user_presentable(self) -> bool:
+        """Whether this text may be shown to a person as an answer.
+
+        MEASURED 2026-08-04: the substrate-first path is enabled for
+        user-facing turns by default (AURA_SUBSTRATE_PRIMARY_USER=1), the
+        threshold is 0.34, and a short prompt whose hashed vector aligns with
+        the live state reaches a prediction error of 0.157 — so proto-token
+        output was reachable as a live reply. It is a diagnostic of substrate
+        state and reads as word salad; a real readout means a trained head over
+        the model vocabulary, and until there is one this says so.
+        """
+        return self.used_substrate and self.vocabulary != "proto"
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["generated_at"] = self.generated_at or time.time()
+        # Travels with the record: whether this ran, and whether its text may
+        # be shown to a person, are two different questions.
+        payload["is_user_presentable"] = self.is_user_presentable
         return payload
 
 
 class SubstrateTokenGenerator:
-    """A learned-readout style head over the live substrate state.
+    """A readout over the live substrate state.
 
-    In production, a tokenizer can be attached and the readout can target the
-    model vocabulary. In CPU tests and emergency paths, a compact proto-token
-    vocabulary gives deterministic state-dependent output without loading the
-    transformer.
+    The head is a random projection (``_ensure_readout`` seeds it from numpy
+    and never trains it) onto a 32-word proto vocabulary, so what it produces
+    is a deterministic fingerprint of substrate state — useful for telemetry,
+    for tests, and for proving the substrate is doing something without loading
+    the transformer. It is NOT language, and ``SubstrateGeneration``
+    distinguishes the two: ``used_substrate`` says the path ran,
+    ``is_user_presentable`` says whether its text may be shown to a person.
+
+    A real substrate-first readout means a trained head over the model
+    vocabulary. Until that exists, nothing here claims to be one.
     """
 
     def __init__(
