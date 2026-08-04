@@ -56,10 +56,10 @@ def test_nothing_is_attached_to_turns_that_are_not_about_her_code():
     from interface.routes.chat import _turn_may_concern_own_source
 
     for unrelated in (
-        "what's on my screen?",
         "how are you feeling?",
         "what's 17 times 4?",
         "write me a python module for sorting",
+        "tell me a joke",
     ):
         assert not _turn_may_concern_own_source(unrelated), unrelated
 

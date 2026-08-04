@@ -17542,14 +17542,29 @@ def _turn_may_concern_own_source(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text:
         return False
-    try:
-        from core.utils.own_source_intent import asks_for_own_source
 
-        if asks_for_own_source(text):
-            return True
-    except (ImportError, AttributeError, TypeError, ValueError):
-        pass
-    return bool(_ASKS_WHERE_CODE_LIVES_RE.search(text))
+    def _lexical(candidate: str) -> bool:
+        try:
+            from core.utils.own_source_intent import asks_for_own_source
+
+            if asks_for_own_source(candidate):
+                return True
+        except (ImportError, AttributeError, TypeError, ValueError):
+            pass
+        return bool(_ASKS_WHERE_CODE_LIVES_RE.search(candidate))
+
+    try:
+        from core.cognition.evidence_relevance import OWN_SOURCE, wants_evidence
+
+        return wants_evidence(text, OWN_SOURCE, lexical_floor=_lexical)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action="routed a code question by pattern after semantic relevance failed",
+        )
+        return _lexical(text)
 
 
 def _turn_may_concern_perception(user_message: str) -> bool:
@@ -17564,7 +17579,24 @@ def _turn_may_concern_perception(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text:
         return False
-    return bool(_PERCEPTION_RELEVANCE_RE.search(text))
+    try:
+        from core.cognition.evidence_relevance import SCREEN_PERCEPTION, wants_evidence
+
+        return wants_evidence(
+            text,
+            SCREEN_PERCEPTION,
+            lexical_floor=lambda candidate: bool(
+                _PERCEPTION_RELEVANCE_RE.search(candidate)
+            ),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action="routed perception by pattern after semantic relevance failed",
+        )
+        return bool(_PERCEPTION_RELEVANCE_RE.search(text))
 
 
 def _is_screen_perception_objective(user_message: str) -> bool:
