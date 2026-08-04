@@ -68,6 +68,14 @@ SENSITIVE_KEY_MARKERS: frozenset[str] = frozenset({
 SENSITIVE_KEY_EXEMPTIONS: frozenset[str] = frozenset({
     "auth_method", "auth_required", "auth_type", "authenticated",
     "authority_verified", "authorized", "cert_expiry", "has_token",
+    # The shell's working directory is not a credential. "pwd" is a marker so
+    # that pwd_hash and pwd_salt are caught, and because exemptions match the
+    # WHOLE key those still are — but PWD and OLDPWD are exported by every
+    # login shell, so without these two the sandbox refused to launch on any
+    # developer machine, reporting "untrusted_code may not hold secrets;
+    # environment carries ... OLDPWD, PWD". A guard that fires on the current
+    # directory teaches people to route around it.
+    "oldpwd", "pwd",
     "requires_auth", "secret_count", "token_budget", "token_count",
     "token_limit", "tokens_used",
 })

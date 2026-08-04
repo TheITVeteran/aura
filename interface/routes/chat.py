@@ -11995,13 +11995,12 @@ def _verified_floor_answer(user_message: str = "") -> str:
     if not message:
         return ""
     try:
-        from core.utils.own_source_intent import asks_for_own_source
+        # ONE definition, shared with the synthesis lane. Naming a single floor
+        # here would recreate the split this exists to close: the next floor
+        # added over there would be invisible over here again.
+        from core.synthesis import verified_answer_floor
 
-        if not asks_for_own_source(message):
-            return ""
-        from core.conversation.response_reliability import own_source_excerpt_floor
-
-        return str(own_source_excerpt_floor(message) or "").strip()
+        return str(verified_answer_floor(message) or "").strip()
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("verified floor unavailable for degraded turn: %s", exc)
         return ""

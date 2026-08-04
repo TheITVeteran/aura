@@ -263,11 +263,28 @@ class SecureSandbox:
         try:
             # Build environment with restricted vars
             env = os.environ.copy()
-            # Strip sensitive env vars from sandbox processes
+            # Strip with the SAME classifier the subprocess gateway enforces
+            # with. This list used to be its own — TOKEN/SECRET/PASSWORD/KEY/
+            # CREDENTIAL/AUTH — and the gateway's is broader (session_id,
+            # cookie, cert, bearer, passphrase, signature, ssn). So the
+            # sandbox stripped what it knew about, the gateway then refused
+            # the spawn over what it did not, and the sandbox could not launch
+            # at all: "untrusted_code may not hold secrets; environment
+            # carries CLAUDE_CODE_HOST_SESSION_ID, CLAUDE_CODE_SESSION_ID,
+            # OLDPWD, PWD". Two definitions of "sensitive", disagreeing.
+            #
+            # Sharing the classifier means stripping is exactly what passing
+            # is, and anything added to one is honoured by both.
+            try:
+                from core.security.structural_redaction import is_sensitive_key
+            except ImportError:  # pragma: no cover - keep the sandbox launchable
+                def is_sensitive_key(key: str) -> bool:
+                    return any(
+                        marker in key.upper()
+                        for marker in ("TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL", "AUTH")
+                    )
             for key in list(env.keys()):
-                if any(s in key.upper() for s in (
-                    "TOKEN", "SECRET", "PASSWORD", "KEY", "CREDENTIAL", "AUTH"
-                )):
+                if is_sensitive_key(key):
                     del env[key]
 
             # macOS strict sandbox-exec injection

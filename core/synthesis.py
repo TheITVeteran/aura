@@ -281,6 +281,48 @@ def _format_direct_answer(q: str, answer: str) -> str:
     return answer
 
 
+def verified_answer_floor(user_message: str) -> str:
+    """An answer that was READ rather than generated, or "".
+
+    Every floor here answers from evidence on disk or in live state, carries
+    where it came from, and says plainly when it cannot read — none of them
+    needs the model.
+
+    Public and shared on purpose. These used to be reachable only from
+    _direct_answer_floor, which is on the synthesis lane. A turn that went to
+    full cognition could not see them, so "show me a piece of your code you
+    find interesting" was answered "I couldn't get a clear enough answer
+    together" while a correctly-cited, disk-read excerpt sat one call away
+    (live 2026-08-03). The floors were never the problem; being invisible to
+    the other lane was. Anything added here is answerable from BOTH lanes.
+    """
+
+    q = re.sub(r"\s+", " ", str(user_message or "").strip())
+    if not q:
+        return ""
+
+    # A status question, answered from the live health surface.
+    diagnostic = live_chat_diagnostic_floor(q)
+    if diagnostic:
+        return diagnostic
+
+    # "Show me your actual code" is answerable from the source tree. Left to
+    # the model it produced a transformer pipeline that exists in no file here
+    # and a claim about multiple GPUs on a one-GPU laptop.
+    own_source = own_source_excerpt_floor(q)
+    if own_source:
+        return own_source
+
+    # "What's behind your window?" is answerable from the window layout. Left
+    # to the model it said "There's nothing there", then "I'm not afraid. Are
+    # you?", then invented circuitry and data centers.
+    occluded = occluded_screen_view_floor(q)
+    if occluded:
+        return occluded
+
+    return ""
+
+
 def _direct_answer_floor(user_message: str) -> str:
     """Return a reliable answer for unambiguous tiny factual/math turns."""
     q = re.sub(r"\s+", " ", str(user_message or "").strip())
@@ -299,23 +341,9 @@ def _direct_answer_floor(user_message: str) -> str:
     # sentence was true-sounding and unmeasured. A status turn now falls
     # through to real cognition, which can consult the actual health surface.
 
-    diagnostic = live_chat_diagnostic_floor(q)
-    if diagnostic:
-        return diagnostic
-
-    # "Show me your actual code" is answerable from the source tree. Left to
-    # the model it produced a transformer pipeline that exists in no file here
-    # and a claim about multiple GPUs on a one-GPU laptop.
-    own_source = own_source_excerpt_floor(q)
-    if own_source:
-        return own_source
-
-    # "What's behind your window?" is answerable from the window layout. Left
-    # to the model it said "There's nothing there", then "I'm not afraid. Are
-    # you?", then invented circuitry and data centers.
-    occluded = occluded_screen_view_floor(q)
-    if occluded:
-        return occluded
+    read = verified_answer_floor(q)
+    if read:
+        return read
 
     # CP126 8b28006a: a phrase match used to return a stale, hardcoded claim
     # that live API parity and autonomous email/Reddit follow-through had been
