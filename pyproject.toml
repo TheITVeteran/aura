@@ -47,6 +47,12 @@ dependencies = [
 aura = "aura_main:main"
 
 [project.optional-dependencies]
+# Coverage + mutation tooling for the quality gates (make coverage,
+# make coverage-check, make mutation). Not required to run Aura.
+quality = [
+    "coverage[toml]>=7.6.0",
+    "mutmut>=3.0.0",
+]
 voice-xtts = [
     "coqui-tts[codec]==0.27.5",
     "torchaudio==2.11.0",
@@ -143,3 +149,32 @@ markers = [
     "host_leak_observation: test observes only current-test child, port, and file leaks; never policy evidence",
     "mutates_global_state: test deliberately changes process-global state; exempt from the contamination guard",
 ]
+
+[tool.coverage.run]
+# Branch coverage, not just line. A 4,465-line function with 632 branches can
+# show high line coverage while leaving most combinations unexplored — which
+# is exactly the gap an external review named for this repo.
+branch = true
+source = ["core", "interface", "proof_kernel"]
+parallel = true
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "*/__pycache__/*",
+    "*/.venv/*",
+    "*/tests/*",
+    "*/node_modules/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 2
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.paths]
+source = ["core", "*/core"]

@@ -1,4 +1,4 @@
-.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -114,6 +114,29 @@ source-hygiene:
 governance-lint:
 	@echo "🛡  Running governance lint..."
 	@$(PYTHON) tools/lint_governance.py
+
+coverage:
+	@echo "📊 Measuring line + branch coverage (full suite, 6 chunks — this is long)..."
+	@$(PYTHON) -m coverage erase
+	@$(PYTHON) -m coverage run -m tools.run_test_chunks --chunks 6 \
+		--marker "not live and not network and not external" --continue-on-failure || true
+	@$(PYTHON) -m coverage combine || true
+	@$(PYTHON) -m coverage report | tail -30
+
+coverage-check:
+	@echo "🔒 Coverage ratchet (floor may rise, never fall)..."
+	@$(PYTHON) tools/coverage_ratchet.py check
+
+coverage-bless:
+	@$(PYTHON) tools/coverage_ratchet.py bless
+
+mutation:
+	@echo "🧬 Mutation testing the coherence chokepoints..."
+	@echo "   Scoped deliberately: mutmut over 35,673 functions never finishes."
+	@$(PYTHON) -m mutmut run \
+		--paths-to-mutate core/brain/llm/continuity_ledger.py,core/conversation/thread_continuity.py,core/being/individual_preferences.py \
+		--tests-dir tests || true
+	@$(PYTHON) -m mutmut results
 
 layering:
 	@echo "🏛  Checking architectural layering (DEPS include rules)..."
