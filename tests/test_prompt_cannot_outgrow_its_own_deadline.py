@@ -1,0 +1,87 @@
+"""A prompt too large to prefill returns one token and no text.
+
+Live 2026-08-03, repeatedly:
+
+    ⏱️ [WORKER] Request deadline reached at token 1; stopping decode cooperatively.
+    ⚠️ [WORKER] Generation produced 1 token(s) but no text survived to the
+       caller — discarded downstream, not a decode failure.
+       Prompt length: 91441
+
+Prefill alone consumed the entire request deadline, so the answer came back
+empty — which then became "cognitive cycle produced nothing", which on a
+fail-closed subsystem became CRITICAL SERVICE FAILURE and took long-term
+memory consolidation with it.
+
+inference_gate has per-section AND total prompt budgets. A path that
+assembles its own prompt never meets them. This is the last boundary every
+generation crosses, so a bypass upstream cannot route around it.
+"""
+from __future__ import annotations
+
+import pytest
+
+from core.brain.llm.mlx_client import (
+    _PREFILL_CEILING_CHARS,
+    _PREFILL_KEEP_HEAD_CHARS,
+    _prompt_within_prefill_ceiling,
+)
+
+HEAD = "SYSTEM-CONTRACT-HEAD"
+TAIL = "THE-ACTUAL-QUESTION-TAIL"
+
+
+def _oversized(total: int = 95_000) -> str:
+    filler = "m" * max(0, total - len(HEAD) - len(TAIL))
+    return f"{HEAD}{filler}{TAIL}"
+
+
+class TestOrdinaryPromptsAreUntouched:
+    @pytest.mark.parametrize("size", [0, 1, 5_000, _PREFILL_CEILING_CHARS])
+    def test_anything_within_the_ceiling_passes_through_byte_for_byte(self, size):
+        prompt = "x" * size
+        assert _prompt_within_prefill_ceiling(prompt) == prompt
+
+    def test_none_becomes_empty_not_the_string_none(self):
+        assert _prompt_within_prefill_ceiling(None) == ""
+
+
+class TestAnOversizedPromptIsMadeAnswerable:
+    def test_the_result_fits_under_the_ceiling(self):
+        bounded = _prompt_within_prefill_ceiling(_oversized())
+        assert len(bounded) <= _PREFILL_CEILING_CHARS
+
+    def test_the_system_contract_survives(self):
+        assert _prompt_within_prefill_ceiling(_oversized()).startswith(HEAD)
+
+    def test_the_question_survives(self):
+        """The question is at the END. Truncating from the tail would drop it."""
+        assert _prompt_within_prefill_ceiling(_oversized()).endswith(TAIL)
+
+    def test_the_gap_is_declared(self):
+        """The model must not reason across a hole it cannot see."""
+        assert "characters omitted" in _prompt_within_prefill_ceiling(_oversized())
+
+    def test_it_keeps_the_head_it_promises(self):
+        bounded = _prompt_within_prefill_ceiling(_oversized())
+        assert bounded[:_PREFILL_KEEP_HEAD_CHARS] == _oversized()[:_PREFILL_KEEP_HEAD_CHARS]
+
+    @pytest.mark.parametrize("size", [48_001, 60_000, 91_441, 500_000])
+    def test_every_oversize_fits(self, size):
+        bounded = _prompt_within_prefill_ceiling(_oversized(size))
+        assert len(bounded) <= _PREFILL_CEILING_CHARS
+        assert bounded.endswith(TAIL)
+
+
+class TestItIsWiredAtTheLastBoundary:
+    def test_the_generate_dispatch_bounds_the_prompt(self):
+        import inspect
+
+        from core.brain.llm import mlx_client
+
+        source = inspect.getsource(mlx_client)
+        dispatch = source[source.index('"action": "generate",')]
+        assert dispatch  # anchor exists
+        # The call must precede the request that carries the prompt.
+        cap_at = source.index("_prompt_within_prefill_ceiling(prompt")
+        req_at = source.index('"action": "generate",')
+        assert cap_at < req_at, "the prompt must be bounded before it is dispatched"

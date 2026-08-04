@@ -1756,6 +1756,55 @@ def _bounded_max_tokens(requested: Any, bridged: Any, fallback: int) -> int:
     return max(1, min(max(1, requested_int), max(1, bridged_int)))
 
 
+#: The last boundary before a prompt reaches the worker. inference_gate has
+#: per-section and total budgets, but a path that assembles its own prompt
+#: never meets them, and on 2026-08-03 one did: 88,659 / 78,861 / 91,441
+#: characters. Prefill alone then consumed the whole request deadline —
+#: "Request deadline reached at token 1", "produced 1 token but no text
+#: survived" — so the answer came back empty, over and over.
+#:
+#: Generous on purpose. This is not the budget; it is the ceiling past which a
+#: prompt cannot be answered at all, and no legitimate turn is near it.
+_PREFILL_CEILING_CHARS = 48_000
+#: The tail holds the actual question and the most recent exchange. The head
+#: holds the system contract. What a runaway prompt buries is in the middle.
+_PREFILL_KEEP_HEAD_CHARS = 12_000
+
+
+def _prompt_within_prefill_ceiling(prompt: Any, *, model_path: str = "") -> str:
+    """Bound a prompt so prefill cannot eat the whole request deadline.
+
+    Keeps the head (the system contract) and the tail (the question and the
+    latest exchange), drops the middle, and says so in the text so the model
+    is not silently reasoning over a gap it cannot see.
+    """
+
+    text = str(prompt or "")
+    if len(text) <= _PREFILL_CEILING_CHARS:
+        return text
+
+    # The marker counts against the ceiling too — it is prompt like any other.
+    marker = (
+        f"\n\n…[{len(text) - _PREFILL_CEILING_CHARS} characters omitted: this prompt "
+        "exceeded the prefill ceiling and would not have been answered at all]…\n\n"
+    )
+    tail_budget = max(0, _PREFILL_CEILING_CHARS - _PREFILL_KEEP_HEAD_CHARS - len(marker))
+    bounded = text[:_PREFILL_KEEP_HEAD_CHARS] + marker + text[-tail_budget:]
+    logger.error(
+        "🪓 [MLX] Prompt %d chars exceeded the %d prefill ceiling for %s — kept head+tail, "
+        "dropped the middle. An unbounded prompt returns one token and no text.",
+        len(text),
+        _PREFILL_CEILING_CHARS,
+        os.path.basename(str(model_path or "")) or "model",
+    )
+    _record_mlx_degradation(
+        RuntimeError(f"prompt {len(text)} chars over prefill ceiling {_PREFILL_CEILING_CHARS}"),
+        action="bounded the prompt to head+tail so the turn could produce an answer",
+        severity="warning",
+    )
+    return bounded
+
+
 def _bounded_generation_max_tokens(
     requested: Any,
     bridged: Any,
@@ -9681,6 +9730,8 @@ class MLXLocalClient:
             self.max_tokens,
             requested_output_contract,
         )
+
+        prompt = _prompt_within_prefill_ceiling(prompt, model_path=self.model_path)
 
         req_id = uuid.uuid4().hex
         self._job_seq_counter += 1
