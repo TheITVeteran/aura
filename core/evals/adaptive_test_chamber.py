@@ -108,10 +108,45 @@ class AdaptiveTestChamber:
         }
 
     def get_status(self) -> dict[str, Any]:
+        """Report the chamber's own condition from what it has actually seen.
+
+        ``"healthy": True`` used to be a literal. A health field that cannot
+        return False is not a health field — it is a decoration on a dictionary,
+        and it reads as a passed check to everything that consumes it.
+
+        The chamber is healthy when it is doing its job: it has results to learn
+        from, and the difficulties it chose are sitting near the frontier band
+        rather than pinned at either wall (pinned means every challenge is
+        trivial or every challenge is impossible, and neither produces signal).
+        Before any results exist there is nothing to be healthy or unhealthy
+        about, so it says so.
+        """
+        scored = {cap: hist for cap, hist in self._history.items() if hist}
+        if not scored:
+            return {
+                "capabilities_tracked": len(self._difficulty),
+                "challenges_issued": self._issued,
+                "healthy": None,
+                "reason": "no results recorded yet",
+            }
+        pinned = []
+        for cap, hist in scored.items():
+            if len(hist) < 5 or self._diff(cap) not in (MIN_DIFFICULTY, MAX_DIFFICULTY):
+                continue
+            rate = sum(hist) / len(hist)
+            if not (self.FRONTIER_BAND[0] <= rate <= self.FRONTIER_BAND[1]):
+                pinned.append(cap)
         return {
             "capabilities_tracked": len(self._difficulty),
             "challenges_issued": self._issued,
-            "healthy": True,
+            "capabilities_scored": len(scored),
+            "healthy": not pinned,
+            "pinned_at_a_wall": pinned,
+            "reason": (
+                "adapting within the frontier band"
+                if not pinned
+                else "difficulty pinned at a wall, so challenges carry no signal"
+            ),
         }
 
 

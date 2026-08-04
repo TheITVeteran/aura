@@ -424,7 +424,13 @@ async def test_service_requires_and_forwards_the_same_memory_authority(monkeypat
         selective_memory_result=result,
     )
 
-    assert response == {"ok": False, "reason": "captured"}
+    # What this test is about is the FORWARDING, below. The response shape is
+    # incidental to it, and asserting dict equality made this test fail the day
+    # a refusal started carrying a receipt — which is the contract everywhere
+    # else in this runtime, not a regression. Assert the verdict and let the
+    # service attach the evidence a refusal is supposed to attach.
+    assert response["ok"] is False
+    assert response["reason"] == "captured"
     assert captured["cognitive_context"] == items
 
 

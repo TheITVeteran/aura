@@ -198,6 +198,14 @@ class LiquidSubstrate:
         self._degradation_last_reported: dict[str, float] = {}
         self._degradation_suppressed_counts: dict[str, int] = {}
 
+        # --- ODE divergence recovery ---
+        # A rolling record of states verified sound, so a NaN step restores her
+        # actual previous condition instead of being coerced to zeros with
+        # nothing recorded. See core/consciousness/substrate_recovery.py.
+        from core.consciousness.substrate_recovery import DivergenceRecovery
+
+        self._divergence_recovery = DivergenceRecovery()
+
         # --- Controlled Chaos Engine (breaks perfect determinism) ---
         self._chaos_engine: Any = None
         try:
@@ -353,6 +361,44 @@ class LiquidSubstrate:
             self._torch_state_revision = int(state_revision)
             return True
 
+    def _recover_diverged_state(self, proposed_state: Any, *, source: str) -> np.ndarray:
+        """Judge a proposed state, and restore the last sound one if it diverged.
+
+        One place, at the single commit point every transform funnels through,
+        so a divergence cannot enter state via a path that forgot to look.
+
+        Fails OPEN on its own error, deliberately: if the recovery layer itself
+        is broken, the substrate keeps running on the old coercion rather than
+        stopping the mind. That fallback is recorded, never silent.
+        """
+        proposed = np.asarray(proposed_state)
+        try:
+            outcome = self._divergence_recovery.recover(proposed, subsystem="liquid_substrate")
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("liquid_substrate", exc, severity="warning")
+            return np.nan_to_num(proposed, copy=True, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        if outcome.recovered and outcome.state is not None:
+            return np.asarray(outcome.state, dtype=float)
+        if outcome.state is not None:
+            return np.asarray(outcome.state, dtype=float)
+        # Diverged with no sound checkpoint ever recorded — recovery already
+        # logged this CRITICAL. Coercion is all that is left, and the caller is
+        # not silently told it succeeded.
+        logger.error(
+            "Substrate diverged during %s with no sound checkpoint; falling back to coercion.",
+            source,
+        )
+        return np.nan_to_num(proposed, copy=True, nan=0.0, posinf=1.0, neginf=-1.0)
+
+    def substrate_recovery_metrics(self) -> dict[str, Any]:
+        """Divergences, recoveries, escalations and current damping."""
+        try:
+            return self._divergence_recovery.as_metrics()
+        except (AttributeError, TypeError, ValueError) as exc:
+            record_degradation("liquid_substrate", exc, severity="warning")
+            return {}
+
     def _commit_worker_state_transform(
         self,
         *,
@@ -378,13 +424,20 @@ class LiquidSubstrate:
             posinf=1.0,
             neginf=-1.0,
         )
-        proposed_state = np.nan_to_num(
-            np.asarray(proposed_state),
-            copy=True,
-            nan=0.0,
-            posinf=1.0,
-            neginf=-1.0,
-        )
+        # DEFECT. `np.nan_to_num(..., nan=0.0)` was the ONLY thing standing
+        # between a diverged ODE step and live state. It does not detect a
+        # divergence and it does not recover from one: it silently substitutes
+        # zeros and the run continues. Zeros are not a neutral default here —
+        # x[0..6] are valence, arousal, dominance, frustration, curiosity,
+        # energy and focus, so a diverged step reset every affective reading to
+        # the middle mid-conversation, with nothing recorded. An unlogged
+        # divergence is indistinguishable from a calm mind.
+        #
+        # The proposed state is now judged before it is coerced, and a diverged
+        # step is replaced by the last state that was VERIFIED sound — her real
+        # previous condition — with the divergence recorded and repeated
+        # divergence damping the dynamics that caused it.
+        proposed_state = self._recover_diverged_state(proposed_state, source=source)
         if source_state.shape != proposed_state.shape:
             raise ValueError(
                 f"substrate transform shape mismatch: {source_state.shape} != {proposed_state.shape}"
