@@ -383,17 +383,74 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     if explicit is not None:
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS", 1)
 
-    lowered = str(model_path or "").lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    if _model_matches_class(model_path, ("72b", "solver")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_72B", 1)
-    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+    if _model_matches_class(model_path, ("32b", "cortex", "zenith")):
         # Must mirror MODEL_PROFILE_DEFAULTS in recurrent_depth.py: the parent
         # marks the lane required at this count, so a mismatch reports a
         # readiness blocker for a pass that is actually correct.
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_32B", 2)
-    if any(token in lowered for token in ("14b", "24b", "40b")):
+    if _model_matches_class(model_path, ("14b", "24b", "40b")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_14B", 1)
     return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
+
+
+#: CP126 48f80787: solver/cortex classification, recurrent depth and RAM
+#: admission all keyed off substrings of the model PATH — "72b", "32b",
+#: "cortex", "zenith". A directory named for one model and holding another
+#: therefore got the other model's memory gate and recurrence contract, and a
+#: rename was enough to change either. core/brain/llm/model_artifact_profile.py
+#: already reads the checkpoint's own config and safetensors index and reports
+#: whether its answer was measured; these helpers ask it first and fall back to
+#: naming only when the artifact could not be read.
+def _measured_size_class(model_path: Any) -> str | None:
+    """The artifact's measured weight class, or None when unmeasured."""
+    try:
+        from core.brain.llm.model_artifact_profile import get_model_artifact_profile
+
+        profile = get_model_artifact_profile(str(model_path or ""))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return profile.size_class if getattr(profile, "measured", False) else None
+
+
+def _model_class_tokens(model_path: Any) -> tuple[str, ...]:
+    """Classification tokens for a model, measured evidence preferred.
+
+    Returns the measured class as a single token when the artifact could be
+    read, so callers match on evidence; otherwise the lowercased path, so the
+    historical naming fallback still works on an unreadable artifact.
+    """
+    measured = _measured_size_class(model_path)
+    if measured and measured != "unknown":
+        return (measured,)
+    return (str(model_path or "").lower(),)
+
+
+def _model_matches_class(model_path: Any, tokens: tuple[str, ...]) -> bool:
+    haystacks = _model_class_tokens(model_path)
+    return any(token in haystack for haystack in haystacks for token in tokens)
+
+
+def _model_is_quantized(model_path: Any) -> bool:
+    """Whether the checkpoint's own metadata says it is quantized.
+
+    CP126 48f80787: this was a substring test for "4bit", "q4", "fused-model"
+    and a date stamp in the path. Quantization changes the memory footprint by
+    more than a third; reading it off a directory name means a rename silently
+    moves the admission gate.
+    """
+    try:
+        from core.brain.llm.model_artifact_profile import get_model_artifact_profile
+
+        profile = get_model_artifact_profile(str(model_path or ""))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        profile = None
+    bits = int(getattr(profile, "quantization_bits", 0) or 0)
+    if bits:
+        return bits <= 8
+    lowered = str(model_path or "").lower()
+    return any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510"))
 
 
 def _finite_env_float(name: str, default: float, *, minimum: float | None = None) -> float:
@@ -414,15 +471,14 @@ def _model_load_min_available_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    lowered = str(model_path or "").lower()
     try:
         total_gb = float(psutil.virtual_memory().total) / float(1024**3)
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
         total_gb = 0.0
-    if any(token in lowered for token in ("72b", "solver")):
+    if _model_matches_class(model_path, ("72b", "solver")):
         default = 52.0 if 0.0 < total_gb < 96.0 else 34.0
         return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", default)
-    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+    if _model_matches_class(model_path, ("32b", "cortex", "zenith")):
         # Derive the requirement from the model actually on disk rather than a
         # constant that happens to be wrong for it. Measured 2026-07-25: the
         # resident 32B is 17.2GB on disk and the flat 24.0 gate refused it on a
@@ -491,6 +547,41 @@ def _env_projected_footprint_gb(name: str) -> float | None:
 # saturated the disk — the 5.5-8.6s loop stalls captured in
 # data/error_logs/stalls/stall_1784673149 / stall_1784675621 bottom out
 # exactly here (pathlib stat under _projected_footprint_from_artifact_gb).
+#: Extensions that hold model weights. Everything else in a checkpoint
+#: directory — tokenizer caches, logs, receipts, adapters, temp files — is not
+#: what gets loaded into memory, so it is not part of the footprint that RAM
+#: admission is computed from (CP126 50d8ed03).
+_WEIGHT_FILE_SUFFIXES = frozenset(
+    {".safetensors", ".bin", ".gguf", ".npz", ".pt", ".pth"}
+)
+#: Depth and count ceilings for the artifact scan. A checkpoint's weights sit
+#: at the top level or one directory below it; a scan that follows an arbitrary
+#: tree is unbounded work on an admission path.
+_MAX_ARTIFACT_SCAN_DEPTH = 2
+_MAX_ARTIFACT_FILES_SCANNED = 512
+
+
+def _weight_files(root: Path):
+    """Weight files within the artifact, bounded in depth."""
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        directory, depth = stack.pop()
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir():
+                    if depth + 1 < _MAX_ARTIFACT_SCAN_DEPTH:
+                        stack.append((entry, depth + 1))
+                    continue
+                if entry.suffix.lower() in _WEIGHT_FILE_SUFFIXES:
+                    yield entry
+            except OSError:
+                continue
+
+
 _PATH_SIZE_CACHE: dict[tuple[str, int], float] = {}
 
 
@@ -505,13 +596,29 @@ def _path_size_gb(model_path: str) -> float:
         cached = _PATH_SIZE_CACHE.get(cache_key)
         if cached is not None:
             return cached
+        # CP126 50d8ed03: this walked EVERY descendant and counted every file,
+        # so tokenizer caches, training logs, adapters, receipts and temporary
+        # artifacts inflated the "model footprint" that RAM admission is
+        # computed from — and a directory with a deep subtree made the walk
+        # unbounded. What the footprint means is the weights that get loaded,
+        # so only weight files count, only the top two levels are walked, and
+        # the walk stops at a file ceiling rather than running as long as the
+        # tree is deep.
         total = 0
-        for child in path.rglob("*"):
+        scanned = 0
+        for child in _weight_files(path):
             try:
-                if child.is_file():
-                    total += child.stat().st_size
+                total += child.stat().st_size
             except OSError:
                 continue
+            scanned += 1
+            if scanned >= _MAX_ARTIFACT_FILES_SCANNED:
+                logger.debug(
+                    "Artifact size scan for %s stopped at %d files.",
+                    path,
+                    scanned,
+                )
+                break
         size_gb = float(total) / float(1024**3)
         if len(_PATH_SIZE_CACHE) > 64:
             _PATH_SIZE_CACHE.clear()
@@ -533,10 +640,9 @@ def _projected_footprint_from_artifact_gb(model_path: str, *, fallback_gb: float
     size_gb = _path_size_gb(model_path)
     if size_gb <= 0.0:
         return fallback_gb
-    lowered = str(model_path or "").lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    if _model_matches_class(model_path, ("72b", "solver")):
         overhead = max(4.0, size_gb * 0.14)
-    elif any(token in lowered for token in ("32b", "cortex", "zenith", "aura-32b")):
+    elif _model_matches_class(model_path, ("32b", "cortex", "zenith", "aura-32b")):
         overhead = max(3.0, size_gb * 0.30)
     else:
         overhead = max(1.0, size_gb * 0.20)
@@ -547,25 +653,24 @@ def _projected_model_footprint_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    lowered = str(model_path or "").lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    if _model_matches_class(model_path, ("72b", "solver")):
         override = _env_projected_footprint_gb("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB")
         if override is not None:
             return override
         return _projected_footprint_from_artifact_gb(model_path, fallback_gb=41.0)
-    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+    if _model_matches_class(model_path, ("32b", "cortex", "zenith")):
         override = _env_projected_footprint_gb("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB")
         if override is not None:
             return override
-        default = (
-            20.0
-            if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510"))
-            else 35.0
-        )
+        # Quantization changes the footprint by more than a third, and it is
+        # a property of the checkpoint, not of its directory name. Ask the
+        # artifact; fall back to the name only when it cannot be read.
+        quantized = _model_is_quantized(model_path)
+        default = 20.0 if quantized else 35.0
         return _projected_footprint_from_artifact_gb(model_path, fallback_gb=default)
-    if "14b" in lowered:
+    if _model_matches_class(model_path, ("14b",)):
         return _env_float("AURA_MLX_14B_PROJECTED_FOOTPRINT_GB", 10.0)
-    if "7b" in lowered:
+    if _model_matches_class(model_path, ("7b",)):
         return _env_float("AURA_MLX_7B_PROJECTED_FOOTPRINT_GB", 5.0)
     return _env_float("AURA_MLX_PROJECTED_FOOTPRINT_GB", 4.0)
 
@@ -574,10 +679,9 @@ def _model_process_reserve_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         return _finite_env_float(name, default, minimum=0.0)
 
-    lowered = str(model_path or "").lower()
-    if any(token in lowered for token in ("72b", "solver")):
+    if _model_matches_class(model_path, ("72b", "solver")):
         lane_default = _env_float("AURA_MLX_72B_PROCESS_RESERVE_GB", 5.0)
-    elif any(token in lowered for token in ("32b", "cortex", "zenith")):
+    elif _model_matches_class(model_path, ("32b", "cortex", "zenith")):
         lane_default = _env_float("AURA_MLX_32B_PROCESS_RESERVE_GB", 3.0)
     else:
         lane_default = _env_float("AURA_MLX_PROCESS_RESERVE_GB", 1.0)
