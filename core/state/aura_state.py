@@ -423,6 +423,12 @@ class CognitiveContext:
     current_objective: Optional[str] = None # The specific goal of the current cognitive cycle
     current_origin: str = "system"        # Source of the current objective (user, motivation, etc.)
     rolling_summary: str = ""             # Rolling compacted summary of older context
+    # Durable, non-decaying record of what the conversation established.
+    # Serialized form of core.brain.llm.continuity_ledger.ContinuityLedger.
+    # rolling_summary above decays across compactions by construction; this
+    # does not, which is what makes coherence survive an unbounded number of
+    # turns rather than sawtoothing with the compaction cycle.
+    continuity_ledger: dict = field(default_factory=dict)
     coherence_score: float = 1.0
     fragmentation_score: float = 0.0
     contradiction_count: int = 0
@@ -931,6 +937,36 @@ class AuraState:
             source=source,
         )
 
+    def _fold_into_continuity_ledger(self, messages: list[dict]) -> None:
+        """Preserve the substance of messages leaving working memory.
+
+        Compaction is the only moment where the original wording is still
+        available; after it, only the truncated summary remains. A failure
+        here must not break compaction — but it must be recorded, because a
+        silently empty ledger looks identical to a conversation that
+        established nothing.
+        """
+        if not messages:
+            return
+        try:
+            from core.brain.llm.continuity_ledger import ContinuityLedger
+
+            ledger = ContinuityLedger.from_dict(
+                getattr(self.cognition, "continuity_ledger", None)
+            )
+            ledger.observe(messages)
+            self.cognition.continuity_ledger = ledger.to_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "aura_state.continuity_ledger",
+                exc,
+                severity="warning",
+                action="compacted without folding the dropped turns into the ledger",
+                enforce_failure_policy=False,
+            )
+
     def _summarize_messages(self, messages: list[dict], *, max_items: int = 8) -> str:
         lines: list[str] = []
         for msg in messages:
@@ -1100,6 +1136,12 @@ class AuraState:
             if not (isinstance(msg, dict) and (msg.get("metadata", {}) or {}).get("synthetic_summary"))
         ]
         recent = working[-keep_turns:]
+
+        # Record what is about to leave working memory BEFORE it is condensed.
+        # The rolling summary below is lossy by construction; the ledger is the
+        # copy that survives, so it has to see the originals rather than the
+        # already-truncated summary of them.
+        self._fold_into_continuity_ledger(summary_candidates)
 
         # Build a clean summary instead of pipe-concatenating
         existing_summary = " ".join(str(getattr(self.cognition, "rolling_summary", "") or "").split())

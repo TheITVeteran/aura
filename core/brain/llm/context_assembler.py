@@ -10,6 +10,7 @@ from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_
 from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
 from core.runtime.errors import record_degradation
+from core.brain.llm.continuity_ledger import env_int
 from core.state.aura_state import AuraState
 from core.synthesis import get_identity_lock
 
@@ -360,6 +361,49 @@ class ContextAssembler:
                 depth += 1
         return depth
 
+    @staticmethod
+    def _continuity_budget_chars(depth: int) -> int:
+        """Characters allowed for continuity, as a function of depth.
+
+        Deliberately monotonically NON-DECREASING. The previous policy did the
+        opposite (1800 → 600 → 400 as depth crossed 20 and 30), which meant the
+        deeper the conversation, the less of it she could see — the mechanism
+        behind losing the plot and never recovering it.
+
+        The ceiling is affordable: the primary window is 32,768 tokens and the
+        live desktop system prompt measured ~550.
+        """
+        floor = max(0, env_int("AURA_CONTINUITY_FLOOR_CHARS", 1800))
+        ceiling = max(floor, env_int("AURA_CONTINUITY_CEILING_CHARS", 4800))
+        ramp_turns = max(1, env_int("AURA_CONTINUITY_RAMP_TURNS", 40))
+        progress = min(1.0, max(0, int(depth)) / float(ramp_turns))
+        return int(floor + (ceiling - floor) * progress)
+
+    @staticmethod
+    def _interlocutor_name(state: AuraState) -> str:
+        """Who she is talking to, resolved from state rather than baked in.
+
+        A hardcoded name in a rendering path is both wrong for anyone else and
+        a way for one person's details to become part of her identity.
+        """
+        for path in (
+            ("world", "interlocutor_name"),
+            ("identity", "interlocutor_name"),
+        ):
+            holder = getattr(state, path[0], None)
+            value = getattr(holder, path[1], None) if holder is not None else None
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        try:
+            profile = getattr(getattr(state, "world", None), "user_profile", None) or {}
+            if isinstance(profile, dict):
+                name = profile.get("name") or profile.get("preferred_name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        except (AttributeError, TypeError, ValueError):
+            pass
+        return "They"
+
     @classmethod
     def microcompact(cls, messages: list[dict], *, keep_recent: int = 3) -> list[dict]:
         """Strip stale tool results, verbose system noise, and redundant content
@@ -431,14 +475,26 @@ class ContextAssembler:
     def build_system_prompt(state: AuraState) -> str:
         """Construct the core system prompt from state. Uses Elasticity to scale verbosity.
 
-        CONTEXT PRESSURE: The 32B model has ~8K tokens.  When conversation
-        is deep (many turns), the system prompt must shrink so conversation
-        history can fit.  We prune optional blocks progressively:
+        CONTEXT PRESSURE: the resident primary model's window is resolved from
+        the registry (Qwen2.5-32B-Instruct: 32,768 tokens), not assumed. This
+        docstring previously asserted "~8K tokens" and the whole trimming
+        regime was sized against that number — a 4x underestimate that made
+        her discard continuity to defend a budget she was using about 2% of.
+        Measured on the live desktop path: system prompt 2,189 chars ≈ 550
+        tokens.
+
+        Elasticity still prunes OPTIONAL colour as depth grows:
           depth < 10 → full prompt
           depth 10-20 → drop telemetry, somatic, temporal_finitude, meta-qualia
           depth 20-30 → also drop personhood modules, world model, discourse
-          depth 30+   → also drop continuity, rolling summary, goals; keep only
-                        identity + requirements + minimal affect
+
+        What it must NOT prune is continuity. The old policy dropped the
+        rolling summary, temporal obligations and goals at depth 30+ and
+        capped the summary at 400 characters — the tightest budget at the
+        deepest point, exactly backwards. Continuity is the thing that gets
+        *more* load-bearing as the raw transcript scrolls out of reach, so
+        its budget now GROWS with depth. Optional colour yields; the thread
+        never does.
         """
         objective = getattr(state.cognition, "current_objective", "") or ""
         is_casual = ContextAssembler._is_casual_interaction(objective)
@@ -557,6 +613,11 @@ class ContextAssembler:
         if (phenomenal_state or not is_casual) and not black_box_steering:
             aura_now_block = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=is_casual or elasticity >= 2)
 
+        # Continuity budget GROWS with depth. At depth 46 the old policy gave
+        # the summary 400 characters to represent the whole conversation; that
+        # is where "she loses the plot" came from.
+        continuity_budget = ContextAssembler._continuity_budget_chars(depth)
+
         rolling_summary = ""
         if getattr(state.cognition, "rolling_summary", ""):
             from core.continuity import sanitize_continuity_summary
@@ -564,14 +625,36 @@ class ContextAssembler:
             safe_rolling_summary = sanitize_continuity_summary(
                 state.cognition.rolling_summary
             )
-            # Continuity becomes more important as the raw transcript grows.
-            # Keep a compact summary at maximum elasticity instead of deleting it.
-            cap = 400 if elasticity >= 3 else 600 if elasticity >= 2 else 1800
             if safe_rolling_summary:
                 rolling_summary = (
                     "## CONTINUITY SUMMARY\n"
-                    f"{safe_rolling_summary[:cap]}\n\n"
+                    f"{safe_rolling_summary[:continuity_budget]}\n\n"
                 )
+
+        # The ledger is the non-decaying half of continuity. The rolling
+        # summary above is still useful as narrative, but it is lossy by
+        # construction; this block is what makes an early disclosure reachable
+        # two hundred turns later.
+        ledger_block = ""
+        try:
+            from core.brain.llm.continuity_ledger import ContinuityLedger
+
+            ledger = ContinuityLedger.from_dict(
+                getattr(state.cognition, "continuity_ledger", None)
+            )
+            if ledger.entries:
+                ledger_block = ledger.render(
+                    continuity_budget,
+                    speaker_name=ContextAssembler._interlocutor_name(state),
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation(
+                "context_assembler.continuity_ledger",
+                _e,
+                severity="warning",
+                action="assembled the prompt without the durable continuity ledger",
+                enforce_failure_policy=False,
+            )
 
         continuity_block = ""
         continuity_obligations = mods.get("continuity_obligations", {}) or {}
@@ -949,6 +1032,8 @@ class ContextAssembler:
             # 2. Vital continuity only
             if rolling_summary:
                 base += rolling_summary
+            if ledger_block:
+                base += ledger_block
             if continuity_block:
                 base += continuity_block
             # 3. Social/Humor strategy
@@ -974,6 +1059,8 @@ class ContextAssembler:
             # 3. Continuity + Personhood
             if rolling_summary:
                 base += rolling_summary
+            if ledger_block:
+                base += ledger_block
             if continuity_block:
                 base += continuity_block
             if personhood_context:
@@ -996,6 +1083,7 @@ class ContextAssembler:
                 f"{state_section}"
                 f"{personality_block}"
                 f"{rolling_summary}"
+                f"{ledger_block}"
                 f"{continuity_block}"
                 f"{goal_execution_block}"
                 f"{temporal_finitude_block}"

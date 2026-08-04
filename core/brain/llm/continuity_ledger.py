@@ -43,7 +43,7 @@ logger = logging.getLogger("Aura.Continuity.Ledger")
 # time, so a live runtime picks up a change without a reboot.
 
 
-def _env_int(name: str, default: int) -> int:
+def env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None or not str(raw).strip():
         return default
@@ -60,7 +60,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _env_float(name: str, default: float) -> float:
+def env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None or not str(raw).strip():
         return default
@@ -80,13 +80,13 @@ def _env_float(name: str, default: float) -> float:
 #: Hard ceiling on the rendered ledger, in characters. This is the whole
 #: point of the structure: continuity has a fixed price regardless of depth.
 def ledger_budget_chars() -> int:
-    return max(0, _env_int("AURA_CONTINUITY_LEDGER_CHARS", 3200))
+    return max(0, env_int("AURA_CONTINUITY_LEDGER_CHARS", 3200))
 
 
 #: How many entries may be held before salience eviction runs. Held entries
 #: are cheap (they are not all rendered); this bounds memory, not prompt.
 def ledger_capacity() -> int:
-    return max(8, _env_int("AURA_CONTINUITY_LEDGER_CAPACITY", 240))
+    return max(8, env_int("AURA_CONTINUITY_LEDGER_CAPACITY", 240))
 
 
 #: Kind weights decide what survives an eviction. A thing the user said about
@@ -94,11 +94,11 @@ def ledger_capacity() -> int:
 #: sound like she has never met them.
 def _kind_weights() -> dict[str, float]:
     return {
-        "disclosure": _env_float("AURA_CONTINUITY_W_DISCLOSURE", 3.0),
-        "commitment": _env_float("AURA_CONTINUITY_W_COMMITMENT", 2.6),
-        "position": _env_float("AURA_CONTINUITY_W_POSITION", 2.0),
-        "question": _env_float("AURA_CONTINUITY_W_QUESTION", 1.6),
-        "subject": _env_float("AURA_CONTINUITY_W_SUBJECT", 1.2),
+        "disclosure": env_float("AURA_CONTINUITY_W_DISCLOSURE", 3.0),
+        "commitment": env_float("AURA_CONTINUITY_W_COMMITMENT", 2.6),
+        "position": env_float("AURA_CONTINUITY_W_POSITION", 2.0),
+        "question": env_float("AURA_CONTINUITY_W_QUESTION", 1.6),
+        "subject": env_float("AURA_CONTINUITY_W_SUBJECT", 1.2),
     }
 
 
@@ -133,7 +133,7 @@ class LedgerEntry:
             return float("inf")
         weight = _kind_weights().get(self.kind, 1.0)
         age = max(0, int(now_turn) - int(self.last_turn))
-        half_life = max(1.0, _env_float("AURA_CONTINUITY_HALF_LIFE_TURNS", 60.0))
+        half_life = max(1.0, env_float("AURA_CONTINUITY_HALF_LIFE_TURNS", 60.0))
         recency = 0.5 ** (age / half_life)
         repetition = 1.0 + min(3.0, 0.5 * max(0, self.mentions - 1))
         return weight * repetition * (0.35 + 0.65 * recency)
@@ -254,7 +254,7 @@ class ContinuityLedger:
         if self.subject_trail and _normalise(self.subject_trail[-1]) == _normalise(subject):
             return
         self.subject_trail.append(subject)
-        keep = max(2, _env_int("AURA_CONTINUITY_SUBJECT_TRAIL", 6))
+        keep = max(2, env_int("AURA_CONTINUITY_SUBJECT_TRAIL", 6))
         if len(self.subject_trail) > keep:
             self.subject_trail = self.subject_trail[-keep:]
 
