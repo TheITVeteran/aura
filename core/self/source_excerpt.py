@@ -144,10 +144,36 @@ class SourceExcerpt:
         return f"{where}\n\n```python\n{self.text}\n```"
 
 
+def _relative_parts(path: Path) -> tuple[str, ...]:
+    """The path's segments BELOW the source root.
+
+    DEFECT. ``_SKIP_DIRS`` was matched against ``path.parts`` — the segments of
+    the absolute path, which include wherever the checkout happens to live. So
+    whether Aura could read her own source depended on the name of a directory
+    somebody else chose. A checkout under ``.claude/worktrees/…`` matched
+    ``.claude`` and every file in the tree was ruled "not Aura's source"; the
+    reply path then said "I looked in my source tree and couldn't find a
+    section matching that", which is an absence claim from a search that never
+    looked at one file. ``/opt/build/aura``, ``~/data/aura`` and ``…/archive/``
+    all fail the same way, and none of them is exotic.
+
+    The skip list is about the SHAPE of the repository, so it is applied to the
+    part of the path that belongs to the repository.
+    """
+    try:
+        return path.resolve().relative_to(_SOURCE_ROOT).parts
+    except (OSError, ValueError):
+        # Outside the source root entirely: not hers, whatever it is called.
+        return ()
+
+
 def _is_source_file(path: Path) -> bool:
     if path.suffix != ".py":
         return False
-    return not any(part in _SKIP_DIRS for part in path.parts)
+    parts = _relative_parts(path)
+    if not parts:
+        return False
+    return not any(part in _SKIP_DIRS for part in parts)
 
 
 def _is_substantive_source(path: Path) -> bool:

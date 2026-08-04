@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from core.brain.llm.latent_cortex.output_quality import (
@@ -6997,6 +6997,7 @@ def assess_user_facing_reply(
     recent_user_messages: Iterable[str] | None = None,
     grounding: Iterable[str] | None = None,
     antecedent: Any = None,
+    provenance: Any = None,
 ) -> ConversationReplyAssessment:
     """Classify a reply, and record the verdict on the turn's candidate ledger.
 
@@ -7015,6 +7016,13 @@ def assess_user_facing_reply(
     A reply carrying an internal leak is recorded UNRECOVERABLE: some text
     genuinely must never reach a person, and the ledger must not resurrect
     it.
+
+    ``provenance`` says who composed the text and what was already known when
+    they did (see ``core/conversation/reply_provenance.py``). Several reasons
+    here are inferences about a CHOICE — that the author narrated the runtime
+    when they could have answered — and that inference is simply unavailable
+    when the caller has already established there was no answer to give. It
+    excuses nothing else; see ``_apply_reply_provenance``.
     """
     assessment = _assess_user_facing_reply(
         user_message,
@@ -7023,8 +7031,72 @@ def assess_user_facing_reply(
         grounding=grounding,
         antecedent=antecedent,
     )
+    assessment = _apply_reply_provenance(
+        user_message, reply_text, assessment, provenance
+    )
     _record_on_turn_ledger(reply_text, assessment)
     return assessment
+
+
+def _apply_reply_provenance(
+    user_message: Any,
+    reply_text: Any,
+    assessment: ConversationReplyAssessment,
+    provenance: Any,
+) -> ConversationReplyAssessment:
+    """Re-judge one verdict in the light of who wrote the text.
+
+    LIVE DEFECT, 2026-08-04. ``_build_degraded_live_reply`` composes the turn's
+    last resort — it runs only after generation, every recovery, and the
+    verified-floor lookup have all come back empty. Its sentence said so, and
+    the gate classified it ``runtime_boilerplate``: the detector for "you
+    narrated the machine instead of answering" fired on a statement that no
+    answer existed, from the one author in the system who had already proven
+    it. Two live turns shipped with ``assessment=runtime_boilerplate`` recorded
+    against a sentence the runtime wrote itself, and nothing below it could
+    repair anything.
+
+    The words are not the problem and are not restricted. What was wrong is
+    that the gate reasoned about intent without knowing the author's position.
+    """
+
+    if not assessment.reasons:
+        return assessment
+    try:
+        from core.conversation.reply_provenance import (
+            admission_defects,
+            declared_provenance,
+            excused_reasons,
+            ReplyProvenance,
+        )
+    except ImportError as exc:  # pragma: no cover - import wiring failure
+        record_degradation("response_reliability.provenance", exc, severity="warning")
+        return assessment
+
+    # An explicit argument wins; otherwise ask what the composer declared about
+    # this exact text. Most call sites pass a string and a string only, and
+    # requiring each of them to thread a parameter is how the next one forgets.
+    provenance = provenance or declared_provenance(str(reply_text or ""))
+    if not provenance:
+        return assessment
+
+    excused = excused_reasons(provenance)
+    if not excused:
+        return assessment
+
+    reasons = [str(reason) for reason in (assessment.reasons or ())]
+    kept = [reason for reason in reasons if reason not in excused]
+
+    # An exemption is not a pass. An admission earns it by being an admission:
+    # it must not assert a finding it does not have, and it must show what it
+    # understood so the person can see whether they were parsed at all.
+    if str(provenance) == ReplyProvenance.HONEST_FAILURE.value:
+        check = admission_defects(str(user_message or ""), str(reply_text or ""))
+        kept.extend(defect for defect in check.defects if defect not in kept)
+
+    if kept == reasons:
+        return assessment
+    return replace(assessment, ok=not kept, reasons=tuple(kept))
 
 
 def _record_on_turn_ledger(

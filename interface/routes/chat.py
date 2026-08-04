@@ -9851,6 +9851,42 @@ def _evaluate_reply_topicality(
     if _has_topical_bridge(lowered_reply):
         return False, ""
 
+    # Everything above this line measures ABSENCE — the reply borrowed no
+    # vocabulary from the question. That is not evidence of drift, and treating
+    # it as evidence cost two correct answers live on 2026-08-04:
+    #
+    #   "I've always wanted to teach myself physics…"
+    #     -> "Start with the basics — kinematics, Newtonian mechanics. Khan
+    #         Academy has some great free resources…"     BLOCKED
+    #   "Do you ever get tired of being asked how you are?"
+    #     -> "Not really. The question is a social lubricant, and I enjoy the
+    #         interaction…"                                BLOCKED
+    #
+    # Both are in the durable transcript; the person got "I couldn't get a
+    # clear enough answer together" instead. An expert answer names the
+    # subfields rather than echoing the word, and a polar answer answers by
+    # saying "not really" — the better the reply, the less it repeats.
+    #
+    # So the block now needs PRESENCE of the failure it exists for: a reply
+    # about the runtime's own operation instead of about anything asked.
+    try:
+        from core.conversation.reply_subject import (
+            answers_polar_question,
+            assess_subject_drift,
+        )
+    except ImportError as exc:  # pragma: no cover - import wiring failure
+        # A check that could not run has not passed. Blocking here would
+        # discard the reply on the strength of a measurement nobody made.
+        record_degradation("chat.reply_subject", exc, severity="warning")
+        return False, ""
+
+    if answers_polar_question(user_message, reply):
+        return False, ""
+
+    drift = assess_subject_drift(reply)
+    if not drift.drifted:
+        return False, ""
+
     return True, "foreign_topic_burst"
 
 
@@ -12101,10 +12137,65 @@ def _build_degraded_live_reply(
     else:
         state_clause = "I couldn't get a clear enough answer together"
 
-    return _apply_aura_voice_shaping(
+    # "Ask me again and I should have it." matched `_BROKEN_LANE_BOILERPLATE_RE`
+    # (`ask (?:that|it|me) again`), so the final gate classified this composer's
+    # own output as `runtime_boilerplate` and shipped it anyway — that is what
+    # `assessment=runtime_boilerplate` in the live quality_metrics line was,
+    # every time. A last resort that its own gate rejects is not a last resort;
+    # it is a second failure stacked on the first. The invitation is the same
+    # invitation without the phrase the gate reserves for lane chatter.
+    composed = _apply_aura_voice_shaping(
         f"{state_clause}, and I'd rather say that than hand you something thin. "
         f"I understood you to be asking about {anchor.removeprefix('your question about ')}. "
         "Ask me again and I should have it."
+    )
+    _record_last_resort_self_rejection(user_message, composed)
+    return composed
+
+
+def _record_last_resort_self_rejection(user_message: str, composed: str) -> None:
+    """Assess the last resort as what it is, and alarm on anything left over.
+
+    This composer runs only after generation, every recovery, and the
+    verified-floor lookup have all come back empty, so it declares
+    ``HONEST_FAILURE`` provenance: "I could not answer" is a true report from
+    the one author that has already proven it, not the model narrating the
+    runtime in place of an answer. Without that, the gate read this sentence as
+    ``runtime_boilerplate`` — which is exactly what the live quality log
+    recorded on 2026-08-04, against text the runtime wrote itself.
+
+    Anything the provenance does NOT excuse is a real defect with nowhere left
+    to fall back to, so it is recorded rather than repaired.
+    """
+
+    try:
+        from core.conversation.reply_provenance import (
+            declare_provenance,
+            ReplyProvenance,
+        )
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        # Say it once, here, where the fact is known. Every gate downstream —
+        # `_looks_semantically_glitched`, the final quality gate, the learning
+        # admissibility check — reads it from the text without being modified.
+        declare_provenance(composed, ReplyProvenance.HONEST_FAILURE)
+        assessment = assess_user_facing_reply(
+            user_message, composed, provenance=ReplyProvenance.HONEST_FAILURE.value
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.last_resort_self_check", exc, severity="warning")
+        return
+    reasons = [str(reason) for reason in (getattr(assessment, "reasons", ()) or ())]
+    if not reasons:
+        return
+    record_degradation(
+        "chat.last_resort_self_check",
+        RuntimeError(
+            "degraded-turn composer emitted text its own reliability gate "
+            f"rejects ({','.join(reasons)})"
+        ),
+        severity="warning",
+        action="shipped the last-resort reply; no further fallback exists",
     )
 
 
