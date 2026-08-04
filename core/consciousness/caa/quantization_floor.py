@@ -22,13 +22,26 @@ into the same residual stream, and the cosine between intended and realised
 direction is 0.056. The live engine α of ~6 is, not coincidentally, about where
 the two become comparable.
 
-None of this makes steering useless — a consistent bias summed over 64 blocks
-and hundreds of tokens is not the same as a zero-mean perturbation, and the
-measured live A/B results are what settle whether it works. What it makes
-impossible is claiming a given α is "applied" without saying at what strength
-relative to the floor it is competing against. That number now travels with the
-telemetry, and ``AlphaController``'s lower bound comes from this measurement
-instead of from a round number.
+AND THEN THE BEHAVIOURAL A/B WAS RUN AT 0.35, AND IT PASSED — LARGELY.
+Measured 2026-08-04 on the resident 32B, 50 trials over 5 held-out tasks, 10
+layers, 41,450 injections (artifacts/steering/CAA_AB_ALPHA_0.35_live.json):
+
+    steered vs terse-affect control   d = 1.879  p = 0.0002
+    steered vs RICH adversarial text  d = 2.502  p = 0.0002
+    distance steered↔baseline 0.2424, rich↔baseline 0.7611
+
+Larger effects than the α=8 run, at an SNR of 0.056.
+
+So the SNR is real and does NOT predict the behavioural outcome. It measures
+the instantaneous magnitude of one injection against one layer's quantisation
+noise; the noise is zero-mean and uncorrelated across layers and tokens, while
+the steering vector is the SAME DIRECTION every time. Over 10 layers and
+hundreds of tokens the bias accumulates and the noise cancels. That is why the
+number below is reported and deliberately not used to clamp α.
+
+Read it as "how loud is this injection right now", never as "is steering
+working" — the A/B answers the second question, and at the live surface α its
+answer is yes.
 """
 
 from __future__ import annotations
