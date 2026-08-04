@@ -3692,6 +3692,15 @@ class InferenceGate:
             )
             return True
 
+    def background_local_deferral_reason(self, *, origin: str | None = None) -> str | None:
+        """Public name for the background quiet policy.
+
+        CP126 aa66b0ac: the MLX boundary reached into the private method, so a
+        rename here would silently turn the check into "no deferral" at the one
+        place that protects a foreground turn from a stale background respawn.
+        """
+        return self._background_local_deferral_reason(origin=origin)
+
     def _background_local_deferral_reason(self, *, origin: str | None = None) -> str | None:
         try:
             from core.runtime.proof_policy import proof_run_active

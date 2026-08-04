@@ -1047,6 +1047,9 @@ def _note_lane_worker_death(client: Any, reason: str) -> None:
         started = float(getattr(client, "_process_started_at", 0.0) or 0.0)
         if started <= 0.0:
             return
+        # Recorded locally FIRST, so the fallback breaker has evidence even
+        # when the breaker module is the thing that is unavailable.
+        _note_local_worker_death(getattr(client, "model_path", ""))
         from core.runtime.lane_reconciler import get_crash_loop_breaker
 
         get_crash_loop_breaker().note_death(
@@ -1106,17 +1109,60 @@ def _lane_is_last_warm(client: Any) -> bool:
         return False
 
 
+#: Fallback crash-loop evidence when the breaker module is unavailable. This
+#: process reports every worker death it sees; that record is enough to refuse
+#: a respawn during a storm (CP126 21c6730b).
+_LOCAL_DEATH_LEDGER: dict[str, list[float]] = {}
+_LOCAL_DEATH_LEDGER_LOCK = _threading.Lock()
+_LOCAL_CRASH_LOOP_WINDOW_S = 120.0
+_LOCAL_CRASH_LOOP_DEATHS = 3
+
+
+def _note_local_worker_death(model_path: str) -> None:
+    key = _real_model_path(model_path)
+    now = time.time()
+    with _LOCAL_DEATH_LEDGER_LOCK:
+        deaths = [
+            stamp
+            for stamp in _LOCAL_DEATH_LEDGER.get(key, [])
+            if now - stamp <= _LOCAL_CRASH_LOOP_WINDOW_S
+        ]
+        deaths.append(now)
+        _LOCAL_DEATH_LEDGER[key] = deaths[-16:]
+
+
+def _local_crash_loop_block(client: Any) -> str | None:
+    key = _real_model_path(getattr(client, "model_path", ""))
+    now = time.time()
+    with _LOCAL_DEATH_LEDGER_LOCK:
+        recent = [
+            stamp
+            for stamp in _LOCAL_DEATH_LEDGER.get(key, [])
+            if now - stamp <= _LOCAL_CRASH_LOOP_WINDOW_S
+        ]
+        _LOCAL_DEATH_LEDGER[key] = recent
+    if len(recent) >= _LOCAL_CRASH_LOOP_DEATHS:
+        return (
+            f"local_crash_loop:{len(recent)}_deaths_in_"
+            f"{int(_LOCAL_CRASH_LOOP_WINDOW_S)}s"
+        )
+    return None
+
+
 def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
     """Consult the K4 crash-loop breaker before a (re)spawn. Never throws."""
     try:
         from core.runtime.lane_reconciler import get_crash_loop_breaker
     except ImportError as exc:
-        # Breaker module absent from this build: proceed, but visibly.
+        # CP126 21c6730b: an absent breaker used to mean an unchecked respawn,
+        # which is exactly what a crash storm needs to keep going. The absence
+        # of the module is not the absence of evidence: this process has been
+        # recording its own worker deaths all along, so fall back to them.
         _record_mlx_degradation(
             exc,
-            action="spawned without crash-loop breaker (module unavailable)",
+            action="consulted the local death ledger after the crash-loop breaker module was unavailable",
         )
-        return None
+        return _local_crash_loop_block(client)
     try:
         blocked = get_crash_loop_breaker().blocked(_real_model_path(client.model_path))
         return str(blocked) if blocked else None
@@ -2021,16 +2067,41 @@ def _background_deferral_active(origin: str | None = None) -> str | None:
         from core.container import ServiceContainer
 
         gate = ServiceContainer.get("inference_gate", default=None)
-        if gate and hasattr(gate, "_background_local_deferral_reason"):
-            reason = gate._background_local_deferral_reason(origin=origin)
-            return str(reason) if reason else None
-    except (ImportError, AttributeError, RuntimeError) as exc:
+    except (ImportError, RuntimeError) as exc:
+        # No container, no gate to consult, and nothing to defer from — this is
+        # a build without the gate rather than a gate that failed.
         _record_mlx_degradation(
             exc,
             action="continued without optional background deferral policy",
         )
-        logger.debug("MLX background deferral check unavailable: %s", exc)
-    return None
+        return None
+    if gate is None:
+        return None
+    reader = getattr(gate, "background_local_deferral_reason", None) or getattr(
+        gate, "_background_local_deferral_reason", None
+    )
+    if reader is None:
+        # CP126 aa66b0ac: a gate that exists but cannot be asked used to mean
+        # "no deferral", so a stale background request respawned a worker that
+        # had just been unloaded to protect a user turn. The gate's presence is
+        # the signal that this runtime HAS a background policy; not being able
+        # to read it is a reason to defer, not to proceed.
+        _record_mlx_degradation(
+            AttributeError("inference gate exposes no background deferral reader"),
+            action="deferred background model work while the gate policy was unreadable",
+            severity="error",
+        )
+        return "background_deferral_policy_unreadable"
+    try:
+        reason = reader(origin=origin)
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="deferred background model work after the gate policy raised",
+            severity="error",
+        )
+        return "background_deferral_policy_unavailable"
+    return str(reason) if reason else None
 
 
 def _foreground_owner_age(now: float | None = None) -> float:
