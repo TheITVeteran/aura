@@ -737,16 +737,87 @@ def snippet_verdict(code: str) -> tuple[str, str]:
     except (OSError, subprocess.SubprocessError):
         return ("unchecked", "")
     if found.returncode == 0 and found.stdout.strip():
-        first = found.stdout.strip().splitlines()[0]
-        try:
-            return ("found", str(Path(first).resolve().relative_to(_SOURCE_ROOT)))
-        except (OSError, ValueError):
-            return ("found", first)
+        # ANY line matching ANY file used to certify the whole snippet. The
+        # commonest lines in Python are the ones a fabrication is built from:
+        # `def __init__(self, name):` occurs all over this tree, so a made-up
+        # class containing it was pronounced genuine on that line alone.
+        #
+        # A snippet that was READ came out of ONE file, so its lines are
+        # together in one file. Scattered single hits across unrelated files
+        # are what invention looks like. Erring this way is also the safe
+        # direction: a wrong "absent" swaps one real excerpt for another,
+        # while a wrong "found" is how an invention reaches the person.
+        candidates = [line for line in found.stdout.strip().splitlines() if line.strip()]
+        needed = (len(lines) + 1) // 2
+        best_path = ""
+        best_hits = 0
+        read_any = False
+        for candidate in candidates[:20]:
+            try:
+                body = Path(candidate).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            read_any = True
+            # Prefix, not equality — the grep that produced this candidate
+            # anchored each pattern at the start of a line without requiring
+            # the line to end there. Counting only exact matches would score
+            # a file grep had genuinely matched at zero.
+            present = [
+                stripped
+                for stripped in (raw.strip() for raw in body.splitlines())
+                if stripped
+            ]
+            hits = sum(
+                1 for line in lines if any(entry.startswith(line) for entry in present)
+            )
+            if hits > best_hits:
+                best_path, best_hits = candidate, hits
+        if not read_any:
+            # Every candidate was unreadable — nothing was measured, and an
+            # unmeasured snippet is not a fabricated one.
+            return ("unchecked", "")
+        if best_hits >= needed and best_path:
+            try:
+                return ("found", str(Path(best_path).resolve().relative_to(_SOURCE_ROOT)))
+            except (OSError, ValueError):
+                return ("found", best_path)
+        return ("absent", "")
     if found.returncode != 1:
         # grep distinguishes "no match" (1) from "something went wrong" (2+),
         # and only the first is evidence.
         return ("unchecked", "")
     return ("absent", "")
+
+
+#: First person about the thing being shown. Not a way of asking — a way of
+#: CLAIMING, read off her own draft after the fact.
+_CLAIMS_OWNERSHIP_RE = re.compile(
+    r"\b(?:my|mine|i)\b[^.\n]{0,60}"
+    r"\b(?:code|codebase|source|module|file|implementation|architecture|system|repo|repository)\b"
+    r"|\b(?:code|snippet|function|module|file)\b[^.\n]{0,40}\b(?:of mine|i wrote|i built|from me)\b",
+    re.IGNORECASE,
+)
+
+
+def reply_claims_own_code(reply: Any) -> bool:
+    """Whether this reply puts code forward as HERS.
+
+    The verification used to depend entirely on recognising the QUESTION as
+    being about her source. That leaves the guarantee hostage to phrasing
+    forever: "crack yourself open and show me a piece" names no code, no
+    file and no source, so nothing checked the answer, and an invention went
+    out unopposed.
+
+    What she ASSERTS does not have that problem. A reply that shows code and
+    calls it her own has made a claim that is true or false regardless of how
+    it was prompted, and it is the claim — not the request — that has to be
+    settled. Purely additive: this widens what gets checked and can never
+    stop a turn from being checked.
+    """
+    body = str(reply or "")
+    if not code_blocks_in(body):
+        return False
+    return bool(_CLAIMS_OWNERSHIP_RE.search(body))
 
 
 def reply_fabricates_own_code(reply: Any) -> bool:
@@ -776,12 +847,19 @@ _LAST_SHOWN: dict[str, Any] = {}
 
 def remember_shown_excerpt(reply: Any) -> dict[str, Any] | None:
     """Record the source citation a reply just put in front of someone."""
-    match = _SHOWN_CITATION_RE.search(str(reply or ""))
-    if match is None:
+    body = str(reply or "")
+    match = _SHOWN_CITATION_RE.search(body)
+    if match is None or not (_SOURCE_ROOT / match.group(1)).is_file():
+        # The record has to describe the code on the table NOW. Left alone,
+        # it is a real path from an earlier turn — so a reply that showed
+        # something uncited, asked "where did you get that from?", answers
+        # with a genuine file that has nothing to do with what she showed.
+        # A true sentence about the wrong code is still a wrong answer, and
+        # it is the most convincing kind.
+        if code_blocks_in(body):
+            _LAST_SHOWN.clear()
         return None
     relative, line = match.group(1), int(match.group(2))
-    if not (_SOURCE_ROOT / relative).is_file():
-        return None
     symbol = ""
     tail = str(reply or "")[match.end() : match.end() + 80]
     symbol_match = re.match(r"\s*\(([^)]+)\)", tail)

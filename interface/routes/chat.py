@@ -9894,7 +9894,10 @@ async def _run_cognitive_engine_chat_turn(
     # Only a PROVEN absence acts. A search that could not run proves nothing,
     # and treating that as fabrication would destroy real excerpts whenever
     # the search itself broke.
-    if text and _turn_may_concern_own_source(visible):
+    if text and (
+        _turn_may_concern_own_source(visible)
+        or _reply_claims_own_code(text)
+    ):
         try:
             from core.self.source_excerpt import reply_fabricates_own_code
 
@@ -9906,26 +9909,58 @@ async def _run_cognitive_engine_chat_turn(
                 from core.conversation.response_reliability import (
                     own_source_excerpt_floor,
                 )
+                from core.self.source_excerpt import (
+                    grounded_excerpt_reply as _grounded_excerpt_reply,
+                )
 
+                # The repair used to be gated on `asks_for_own_source`, a
+                # phrase list — while the DECISION to check at all was made
+                # by meaning. So the two disagreed, and they disagreed in
+                # the worst possible direction.
+                #
+                # Live 2026-08-04, three times: "Can you share a snippet of
+                # your own code" is not "show me", so the pattern said no,
+                # the floor returned "", and the log read "no grounded
+                # excerpt was available to replace it" — while the tree sat
+                # right there, readable. The invention was PROVEN and then
+                # served anyway, because the only path to a real excerpt
+                # was spelled a way she had not been asked.
+                #
+                # Meaning already decided this turn is about her source.
+                # Reading it must not require a second, narrower vote.
                 _grounded = str(own_source_excerpt_floor(visible) or "").strip()
+                if not _grounded:
+                    _grounded = str(
+                        await asyncio.to_thread(_grounded_excerpt_reply, visible)
+                    ).strip()
                 logger.warning(
-                    "Reply showed code that is not in the source tree; "
-                    "%s.",
+                    "Reply showed code that is not in the source tree; %s.",
                     "replacing it with a real excerpt read from disk"
                     if _grounded
-                    else "no grounded excerpt was available to replace it",
+                    else "the tree could not be read, so the invention was withdrawn",
                 )
-                if _grounded:
-                    _append_turn_text_mutation(
-                        turn_trace,
-                        stage="chat.own_source_claim_unverified",
-                        method="source_tree_excerpt_substitution",
-                        reasons=["shown_code_absent_from_source_tree"],
-                        before=text,
-                        after=_grounded,
-                        deterministic=True,
+                if not _grounded:
+                    # Nothing real to show and something false already
+                    # written. Serving it is the one option that is never
+                    # allowed: proven-invented code must not reach the
+                    # person just because the repair came up empty.
+                    _grounded = (
+                        "I need to correct myself: the code I just showed you "
+                        "is not in my source tree — I generated it rather than "
+                        "reading it, and I can't reach my own files right now "
+                        "to show you the real thing. Ask me again in a moment "
+                        "and I'll read it off disk instead of inventing it."
                     )
-                    text = _grounded
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.own_source_claim_unverified",
+                    method="source_tree_excerpt_substitution",
+                    reasons=["shown_code_absent_from_source_tree"],
+                    before=text,
+                    after=_grounded,
+                    deterministic=True,
+                )
+                text = _grounded
             # Whatever she ended up showing, remember where it came from, so
             # the next turn can say so instead of disowning it.
             from core.self.source_excerpt import (
@@ -9979,7 +10014,7 @@ async def _run_cognitive_engine_chat_turn(
             _shown = last_shown_excerpt()
             if (
                 _shown
-                and _ASKS_WHERE_CODE_LIVES_RE.search(visible)
+                and _turn_asks_where_that_came_from(visible)
                 and _shown["relative_path"] not in text
             ):
                 _truth = provenance_sentence()
@@ -17589,15 +17624,71 @@ def _turn_may_concern_own_source(user_message: str) -> bool:
         return bool(_ASKS_WHERE_CODE_LIVES_RE.search(candidate))
 
     try:
-        from core.cognition.evidence_relevance import OWN_SOURCE, wants_evidence
+        from core.cognition.evidence_relevance import (
+            OWN_SOURCE,
+            SOURCE_PROVENANCE,
+            wants_evidence,
+        )
 
-        return wants_evidence(text, OWN_SOURCE, lexical_floor=_lexical)
+        # Asking where something came from is part of this lane, not a
+        # rival to it. Scored on its own, "Where did you get that from?"
+        # sits at 0.22 against her source and 0.76 against provenance, so
+        # the dominance test — which exists to stop a screen question
+        # dragging in a file listing — threw out the very turn the tree
+        # had to be read for. Two readings of one subject, both kept.
+        return wants_evidence(text, OWN_SOURCE, lexical_floor=_lexical) or wants_evidence(
+            text, SOURCE_PROVENANCE, lexical_floor=_lexical
+        )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
             "chat",
             exc,
             severity="warning",
             action="routed a code question by pattern after semantic relevance failed",
+        )
+        return _lexical(text)
+
+
+def _reply_claims_own_code(reply: str) -> bool:
+    """Whether her own draft presents code as hers, however she was asked."""
+    try:
+        from core.self.source_excerpt import reply_claims_own_code
+
+        return reply_claims_own_code(reply)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _turn_asks_where_that_came_from(user_message: str) -> bool:
+    """Whether this turn asks where something she already showed came from.
+
+    Its subject is the PREVIOUS turn, so it repeats almost none of the words
+    that made the first request — "and that's from where exactly?", "you sure
+    you didn't just write that?", "could I open that myself?". A pattern has
+    to enumerate those; there is no end to the list, and every phrasing it
+    lacks is a turn where a citation she was holding never got spoken.
+
+    Live 2026-08-04: "Where did you get that from?" and "Where in the
+    codebase can I find that" both matched the pattern zero times. The
+    recorded path went unsaid and the turn fell through to the model.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+
+    def _lexical(candidate: str) -> bool:
+        return bool(_ASKS_WHERE_CODE_LIVES_RE.search(candidate))
+
+    try:
+        from core.cognition.evidence_relevance import SOURCE_PROVENANCE, wants_evidence
+
+        return wants_evidence(text, SOURCE_PROVENANCE, lexical_floor=_lexical)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action="judged a provenance question by pattern after meaning failed",
         )
         return _lexical(text)
 

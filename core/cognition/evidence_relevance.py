@@ -41,6 +41,8 @@ logger = logging.getLogger("Aura.Cognition.EvidenceRelevance")
 __all__ = [
     "SCREEN_PERCEPTION",
     "OWN_SOURCE",
+    "SOURCE_PROVENANCE",
+    "OTHER_SOURCE",
     "relevance",
     "wants_evidence",
     "semantic_routing_available",
@@ -53,6 +55,28 @@ SCREEN_PERCEPTION = "screen_perception"
 #: Questions about Aura's own implementation — her files, her functions,
 #: where a piece of her code lives.
 OWN_SOURCE = "own_source"
+
+#: Asking where something she ALREADY put on the table came from, or whether
+#: it was real. Its subject is the previous turn, not this one, so it rarely
+#: repeats any of the words that made the first request — which is exactly
+#: why a pattern kept missing it. Live 2026-08-04, "Where did you get that
+#: from?" and "Where in the codebase can I find that" both matched nothing,
+#: so the citation she had on record was never spoken and the turn was left
+#: to the model, which then failed a reliability gate and served nothing.
+SOURCE_PROVENANCE = "source_provenance"
+
+#: Somebody ELSE's code. Nothing requests this kind — it exists to be a
+#: better match than :data:`OWN_SOURCE` when the question is about a library,
+#: so the dominance test drops her source rather than answering "show me the
+#: actual code for numpy" by checking numpy against HER tree, correctly
+#: finding it absent, and substituting a piece of herself for it.
+#:
+#: A contrast sentence in the baseline set was the wrong instrument: phrased
+#: near "show me code" it suppressed every genuine request too, including
+#: "share a snippet of code and let me know where it's from". Whose code it
+#: is was never a question of degree — it is a rival reading, and this
+#: module already knows how to let one reading beat another.
+OTHER_SOURCE = "third_party_source"
 
 _ANCHORS: dict[str, tuple[str, ...]] = {
     SCREEN_PERCEPTION: (
@@ -70,6 +94,33 @@ _ANCHORS: dict[str, tuple[str, ...]] = {
         "what module or path in your repository contains that code",
         "where in your codebase is that written",
         "let me see the actual source you are built from",
+        # Asking what a part of her IS, without ever saying "code". Live
+        # 2026-08-04 "what does your memory system actually look like"
+        # scored 0.08 here and 0.26 against the screen — "look like" read
+        # as a request to LOOK — so a question about her implementation
+        # pulled a window listing.
+        "what does that part of you look like on the inside",
+        "how is your memory system actually implemented",
+        "walk me through how you really do that internally",
+        # Asking her to OPEN something of hers, rather than to show code.
+        # The act is the same; none of the words are.
+        "open one of your own files and read me part of it",
+        "pull up something you are built out of",
+    ),
+    OTHER_SOURCE: (
+        "show me the source code of the numpy library",
+        "how is that implemented inside the pandas package",
+        "what does the standard library do in that function",
+        "show me how that open source project wrote it",
+    ),
+    SOURCE_PROVENANCE: (
+        "where did you get that from",
+        "which file did that come out of",
+        "where can I find that in the repository",
+        "is that real code or did you make it up",
+        "can I look that up on github myself",
+        "what is the path to the thing you just showed me",
+        "did you read that somewhere or write it just now",
     ),
 }
 
