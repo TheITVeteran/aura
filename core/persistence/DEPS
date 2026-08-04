@@ -1,0 +1,52 @@
+# core/persistence — layering rules. See tools/check_layering.py.
+#
+# Storage that imports cognition cannot be used by anything else, and cannot
+# be loaded to recover state when cognition is what failed.
+#
+# Existing violations are grandfathered in config/layering_baseline.json,
+# which may only shrink. This directory was added with ZERO new entries.
+
+description = "Persistence: storage, with no opinion about what is stored."
+
+include_rules = [
+    # Foundation peers — always fine.
+    "+core.config",
+    "+core.container",
+    "+core.service_names",
+    "+core.exceptions",
+    "+core.schemas",
+    "+core.event_bus",
+    "+core.governance_context",
+    "+core.runtime",
+    "+core.observability",
+    "+core.verify",
+    "+core.utils",
+    "+core.health",
+    "+core.bus",
+    "+core.pipeline",
+    "+core.security",
+
+    # Upward dependencies: forbidden.
+    "-core.brain",
+    "-core.cognition",
+    "-core.cognitive",
+    "-core.consciousness",
+    "-core.reasoning",
+    "-core.agency",
+    "-core.autonomy",
+    "-core.goals",
+    "-core.creativity",
+    "-core.curiosity_engine",
+    "-core.evolution",
+    "-core.learning",
+    "-core.morphogenesis",
+    "-core.play",
+    "-core.research_core",
+    "-core.self_improvement",
+    "-core.self_modification",
+    "-core.social",
+    "-core.sovereignty",
+    "-core.swarm",
+    "-core.worlds",
+    "-interface",
+]

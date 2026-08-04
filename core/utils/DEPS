@@ -1,0 +1,54 @@
+# core/utils — layering rules. See tools/check_layering.py.
+#
+# A helper that imports a cognitive subsystem is not a helper, it is a
+# dependency of one — and it makes the utility layer un-importable without
+# the layer it sits under. Notify registered services through the container
+# rather than importing their modules.
+#
+# Existing violations are grandfathered in config/layering_baseline.json,
+# which may only shrink. This directory was added with ZERO new entries.
+
+description = "Utilities: helpers, below everything that uses them."
+
+include_rules = [
+    # Foundation peers — always fine.
+    "+core.config",
+    "+core.container",
+    "+core.service_names",
+    "+core.exceptions",
+    "+core.schemas",
+    "+core.event_bus",
+    "+core.governance_context",
+    "+core.runtime",
+    "+core.observability",
+    "+core.verify",
+    "+core.utils",
+    "+core.health",
+    "+core.bus",
+    "+core.pipeline",
+    "+core.security",
+
+    # Upward dependencies: forbidden.
+    "-core.brain",
+    "-core.cognition",
+    "-core.cognitive",
+    "-core.consciousness",
+    "-core.reasoning",
+    "-core.agency",
+    "-core.autonomy",
+    "-core.goals",
+    "-core.creativity",
+    "-core.curiosity_engine",
+    "-core.evolution",
+    "-core.learning",
+    "-core.morphogenesis",
+    "-core.play",
+    "-core.research_core",
+    "-core.self_improvement",
+    "-core.self_modification",
+    "-core.social",
+    "-core.sovereignty",
+    "-core.swarm",
+    "-core.worlds",
+    "-interface",
+]

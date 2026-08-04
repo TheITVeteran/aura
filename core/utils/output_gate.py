@@ -295,11 +295,19 @@ class AutonomousOutputGate:
             logger.warning("OutputGate: Blocked potentially unsafe or non-aligned output.")
             return None
 
+        # The closed loop is a REGISTERED SERVICE ("closed_causal_loop"), so
+        # importing core.consciousness to notify it was an inverted dependency
+        # that bought nothing: a utility module cannot be loaded without the
+        # cognitive layer it is supposed to be usable without. Resolved through
+        # the container instead — same call, same fail-open behaviour, no edge
+        # from utils into consciousness.
         try:
-            from core.consciousness.closed_loop import notify_closed_loop_output
+            from core.container import ServiceContainer
 
-            notify_closed_loop_output(content)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+            loop = ServiceContainer.get("closed_causal_loop", default=None)
+            if loop is not None and hasattr(loop, "on_inference_output"):
+                loop.on_inference_output(content)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation('output_gate', exc)
             logger.debug("OutputGate: Closed-loop notification skipped: %s", exc)
 

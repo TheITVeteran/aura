@@ -4,7 +4,6 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from core.brain.llm.model_registry import PRIMARY_ENDPOINT
 from core.health.conversation_lane import (
     conversation_lane_is_busy,
     conversation_lane_is_serving,
@@ -20,6 +19,13 @@ from core.runtime.health_contract import (
 from core.runtime.version import VERSION, version_string
 
 _BOOT_STATUS_RECOVERABLE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
+
+#: The health surface must be able to report on a mind that failed to start,
+#: which it cannot do if importing it drags in core.brain. This is the display
+#: NAME of the primary endpoint, not a handle to it —
+#: core.brain.llm.model_registry.PRIMARY_ENDPOINT is the same literal, and
+#: tests/test_health_does_not_import_the_brain.py holds the two together.
+_PRIMARY_ENDPOINT_NAME = "Cortex"
 
 
 def _record_boot_degradation(
@@ -116,7 +122,7 @@ def _boot_status_message(
 ) -> str:
     normalized = str(boot_phase or "").strip().lower()
     lane = conversation_lane if isinstance(conversation_lane, dict) else {}
-    endpoint = str(lane.get("foreground_endpoint", "") or PRIMARY_ENDPOINT)
+    endpoint = str(lane.get("foreground_endpoint", "") or _PRIMARY_ENDPOINT_NAME)
     failure_reason = str(lane.get("last_failure_reason", "") or lane.get("last_error", "") or "")
 
     if normalized == "proxy_ready":

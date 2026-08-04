@@ -30,6 +30,7 @@ from core.runtime.atomic_writer import (
 from core.runtime.audit_chain import AuditChain
 from core.runtime.flags import FlagKind, declare
 from core.runtime.state_ownership import state_root
+from core.runtime.store_locality import assert_wal_safe
 
 logger = logging.getLogger("core.runtime.receipts")
 
@@ -441,6 +442,12 @@ class ReceiptStore:
                 self._ledger.close()
             except sqlite3.Error:
                 pass
+        # WAL's shared-memory index is a same-machine mechanism. On a network
+        # filesystem it is not coherent between hosts and the failure mode is
+        # silent corruption, not an error — see core/runtime/store_locality.py,
+        # which also carries the measurement showing that WAL does NOT impose
+        # the single-PROCESS lock it was assumed to.
+        assert_wal_safe(self._ledger_path, subsystem="receipts.ledger")
         connection = sqlite3.connect(
             self._ledger_path,
             timeout=5.0,
