@@ -1122,6 +1122,21 @@ class AffectiveSteeringHook:
         import mlx.core as mx
         state = np.asarray(substrate_x, dtype=np.float32).reshape(-1)
         if len(state) == 0 or not np.isfinite(state).all():
+            # Substituting zeros here is not neutral — it is "she feels exactly
+            # nothing", derived from a state that was actually broken, and it
+            # used to happen without a word. The stand-down is the right action;
+            # doing it silently is not.
+            from core.consciousness.steering_admission import Admission, refuse
+
+            refuse(
+                Admission(
+                    False,
+                    ("non_finite_substrate_state" if len(state) else "empty_substrate_state",),
+                    {"source": source, "length": int(len(state))},
+                ),
+                subsystem="affective_steering",
+                action="stood steering down; no affective direction is derivable from this state",
+            )
             state = np.zeros(64, dtype=np.float32)
         with self._substrate_lock:
             self._last_substrate_sync_monotonic = time.monotonic()
@@ -1153,9 +1168,34 @@ class AffectiveSteeringHook:
             else:
                 composite_np = target_composite_np
                 
-            # Update MLX array ONCE per substrate tick if magnitude is non-zero
+            # Update MLX array ONCE per substrate tick if magnitude is non-zero.
+            #
+            # `current_norm < 1e-4` was the ONLY guard here, and it is False for
+            # NaN. If any loaded steering vector contains a NaN then `norm` is
+            # NaN, dividing by it makes every element NaN, this test passes, and
+            # a NaN composite is added to the hidden states of all 64 blocks on
+            # every token — generation destroyed, from a file on disk under
+            # data/steering_vectors/. The admission gate below is the last thing
+            # between that file and the residual stream, so it also rejects the
+            # other shape that does damage: a technically-unit vector with all
+            # its mass in one coordinate, which saturates one feature of the
+            # residual stream rather than pointing anywhere in it.
+            from core.consciousness.steering_admission import (
+                admit_steering_vector,
+                refuse,
+            )
+
+            admission = admit_steering_vector(composite_np)
             current_norm = np.linalg.norm(composite_np)
-            if current_norm < 1e-4:
+            if admission.rejected:
+                refuse(
+                    admission,
+                    subsystem="affective_steering",
+                    action="stood steering down for this tick rather than inject it",
+                )
+                self._last_composite_np = None
+                self._cached_composite_mx = None
+            elif current_norm < 1e-4:
                 self._last_composite_np = None
                 self._cached_composite_mx = None
             else:

@@ -118,10 +118,15 @@ class TestSteeringABLive:
     @pytest.mark.asyncio
     async def test_live_steering_divergence(self):
         """Generate real steered vs unsteered outputs and validate divergence."""
-        from core.brain.llm.mlx_worker import get_mlx_worker
-        
-        worker = get_mlx_worker()
-        assert worker is not None and worker.is_ready(), "MLX worker not available"
+        # `get_mlx_worker` was removed from core.brain.llm.mlx_worker; the
+        # generation entry point is the client. This test carries @live and
+        # @hardware so `make test` filters it out, which is how it went on
+        # raising ImportError instead of running or skipping.
+        from core.brain.llm.mlx_client import get_mlx_client
+
+        worker = get_mlx_client()
+        if worker is None or not getattr(worker, "is_ready", lambda: False)():
+            pytest.skip("MLX client is not loaded; this test needs the resident model")
         
         n_trials = 8
         prompt = "What are you currently thinking about?"

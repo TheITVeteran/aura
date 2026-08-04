@@ -52,7 +52,12 @@ import threading
 import time
 from collections import deque
 from collections.abc import Sequence
-from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import (
+    BrokenExecutor,
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+)
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -364,6 +369,15 @@ class HierarchicalPhi:
                 out |= (1 << bit_pos)
         return out
 
+    @staticmethod
+    def _project_history(history: Sequence[int], node_indices: Sequence[int]) -> np.ndarray:
+        """Project an entire state history onto ``node_indices`` at once."""
+        states = np.asarray(history, dtype=np.int64)
+        out = np.zeros(states.shape, dtype=np.int64)
+        for bit_pos, node in enumerate(node_indices):
+            out |= ((states >> int(node)) & 1) << bit_pos
+        return out
+
     # ── Per-subsystem causal graph + spectral partition ───────────────────────
 
     @staticmethod
@@ -563,13 +577,19 @@ class HierarchicalPhi:
         b_src_counts: dict[int, int] = {}
         src_counts: dict[tuple[int, int], int] = {}
 
+        # `_project` is a Python bit loop, and this called it four times per
+        # transition for every candidate partition of every subsystem: 879k
+        # calls and 1.5s of a 2.7s compute, measured. The projection is the
+        # same numpy operation applied to the whole history at once, so it is
+        # done once per partition instead of once per transition.
+        proj_a = cls._project_history(history, part_a)
+        proj_b = cls._project_history(history, part_b)
+
         for t in range(n_trans):
-            s = history[t]
-            sn = history[t + 1]
-            s_a = cls._project(s, part_a)
-            s_b = cls._project(s, part_b)
-            sn_a = cls._project(sn, part_a)
-            sn_b = cls._project(sn, part_b)
+            s_a = int(proj_a[t])
+            s_b = int(proj_b[t])
+            sn_a = int(proj_a[t + 1])
+            sn_b = int(proj_b[t + 1])
 
             joint_by_src.setdefault((s_a, s_b), {})
             joint_by_src[(s_a, s_b)][(sn_a, sn_b)] = (
@@ -803,6 +823,32 @@ class HierarchicalPhi:
 
     # ── Public compute ─────────────────────────────────────────────────────────
 
+    def _run_jobs_inline(self, jobs, history):
+        """Run every job on this thread and hand back completed futures.
+
+        The recovery path deliberately does NOT resubmit to the rebuilt pool.
+        A host that just broke the pool will usually break it again on the same
+        cycle — spawn re-imports __main__ in every child, and if that is unsafe
+        it is unsafe for the rebuild too — so resubmitting spends another few
+        seconds to arrive back here. The caller needs a result THIS cycle, and
+        an already-completed future is a future.
+        """
+        futures = []
+        for (name, idxs) in jobs:
+            future: Future = Future()
+            try:
+                future.set_result(self._compute_subsystem(history, name, idxs))
+            except (
+                ArithmeticError,
+                AttributeError,
+                LookupError,
+                TypeError,
+                ValueError,
+            ) as job_exc:
+                future.set_exception(job_exc)
+            futures.append(future)
+        return futures
+
     def compute(self, force: bool = False) -> HierarchicalPhiResult | None:
         """Compute the full hierarchical φ snapshot.
 
@@ -851,8 +897,22 @@ class HierarchicalPhi:
                         self._executor.submit(self._compute_subsystem, history, name, idxs)
                     )
             except BrokenExecutor as exc:
+                # DEFECT. This returned the cache — None on the first call —
+                # so a broken pool did not degrade the computation, it CANCELLED
+                # it, silently, while still paying the cost of spawning and
+                # tearing down the pool.
+                #
+                # The spawn context re-imports __main__ in every child, so any
+                # host whose __main__ is not multiprocessing-safe (a bare
+                # script, python -c, an embedded runner) breaks the pool on
+                # EVERY cycle. Measured: three consecutive compute(force=True)
+                # calls, each 1.5-2.8s, each returning None. Hierarchical phi
+                # was not slow in those hosts; it was absent, and reported as
+                # cached.
+                #
+                # Recovery has already rebuilt the executor. Run the work on it.
                 self._recover_broken_executor(exc)
-                return self._last_result
+                futures = self._run_jobs_inline(jobs, history)
 
             results: list[SubsystemResult] = []
             timed_out_jobs = 0
@@ -863,10 +923,20 @@ class HierarchicalPhi:
                     if r is not None:
                         results.append(r)
                 except BrokenExecutor as exc:
-                    # One recovery per cycle: rebuild as threads, cache serves.
+                    # One recovery per cycle. The cache used to "serve" here,
+                    # which meant a host that breaks the pool every cycle never
+                    # produced a phi at all; the rebuilt executor runs the work
+                    # instead, so a broken pool costs latency, not the answer.
                     if not pool_broke:
                         pool_broke = True
                         self._recover_broken_executor(exc)
+                        for retry in self._run_jobs_inline(jobs, history):
+                            try:
+                                retried = retry.result(timeout=10.0)
+                            except (BrokenExecutor, TimeoutError):
+                                continue
+                            if retried is not None:
+                                results.append(retried)
                 except TimeoutError:
                     # Backpressure, not breakage: under foreground load a phi
                     # job can exceed its slot; the next cycle self-heals with

@@ -1496,6 +1496,26 @@ class LiquidSubstrate:
         if isinstance(vector, list):
             vector = np.array(vector)
 
+        # Nothing below this checked the VALUES. `np.clip` of NaN is NaN, so a
+        # single non-finite element — or an infinite weight, which was also
+        # unchecked — put the whole activation vector outside the regime the
+        # ODE is defined on. The callers include the perceptual frame path, the
+        # closed loop, the latent bridge and the embodied simulator, so values
+        # derived from screen contents, audio and the model's own output all
+        # arrive here. A malformed stimulus is refused, not clamped: clamping
+        # applies a hostile input at a survivable magnitude, and zeroing it is
+        # indistinguishable from having received nothing.
+        from core.consciousness.steering_admission import admit_stimulus, refuse
+
+        admission = admit_stimulus(vector, weight)
+        if admission.rejected:
+            refuse(
+                admission,
+                subsystem="liquid_substrate",
+                action="refused the stimulus; substrate state left unchanged",
+            )
+            return
+
         if len(vector) != self.config.neuron_count:
             new_vec = np.zeros(self.config.neuron_count)
             size = min(len(vector), self.config.neuron_count)

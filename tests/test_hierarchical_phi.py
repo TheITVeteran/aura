@@ -477,7 +477,15 @@ def test_broken_pool_mid_cycle_recovers_to_threads(monkeypatch):
     monkeypatch.setattr(h._executor, "submit", broken_submit)
     result = h.compute(force=True)
 
-    assert result is cached, "cache must serve while the pool is rebuilt"
+    # The cache USED to serve here, and that was the defect: a host whose
+    # __main__ is not multiprocessing-safe breaks the pool on every cycle, so
+    # "cache serves" meant hierarchical phi never computed at all while still
+    # paying seconds per cycle to spawn and tear down the pool. Measured: three
+    # consecutive compute(force=True) calls, 1.5-2.8s each, every one returning
+    # None. A broken pool must cost latency, not the answer.
+    assert result is not None
+    assert result is not cached, "a broken pool must not cancel the cycle"
+    assert result.computed_at > cached.computed_at
     # under pytest process isolation is off → recovery demotes to threads
     assert h._executor_kind == "thread"
     assert len(degradations) == 1

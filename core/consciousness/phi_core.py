@@ -52,11 +52,15 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from core.consciousness.phi_grounding import PhiGrounding
 from core.runtime.errors import record_degradation
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from core.consciousness.phi_grounding import PhiSelection
 
 logger = logging.getLogger("Aura.PhiCore")
 
@@ -124,6 +128,57 @@ PHI_COMPUTE_INTERVAL_S = 15.0
 # Laplace smoothing to handle unvisited states in the empirical TPM
 LAPLACE_ALPHA = 0.01
 
+#: How many geometric modes the Grassmann complex resolves. Eight is what the
+#: exact machinery here can search exhaustively: 2^8 = 256 states and 127
+#: bipartitions. Every additional anchor doubles the state space and the
+#: bipartition count, so a wider complex is a different estimator, not a bigger
+#: run of the same one — and it must say so in its provenance rather than
+#: quietly reporting an approximation as an exact φ.
+#: How much of a measured φ must sit above its own null before the system is
+#: called integrated. MEASURED, not chosen: a system of two independently
+#: predictable halves — zero true integration, by construction — leaves 0.049
+#: above the null at these sample sizes, and a genuinely coupled ring leaves
+#: 0.563. The floor is set at twice the residual, which is an order of
+#: magnitude below the real signal.
+#: tests/test_phi_satisfies_the_iit_axioms.py reproduces all three numbers.
+INTEGRATION_FRACTION_FLOOR = 0.10
+
+GRASSMANN_ANCHORS_EXACT = 8
+GRASSMANN_ANCHORS_MAX = 16
+
+
+def _grassmann_anchor_count() -> int:
+    """Modes the residual complex resolves; wider capture is opt-in.
+
+    The review's point stands — eight anchors is a narrow view of a
+    ~5000-dimensional representation. Widening it is available here, bounded,
+    and honest about what it costs: above eight the exact MIP search is
+    intractable and the result is labelled ``spectral_approximation``.
+    """
+    import os
+
+    raw = os.getenv("AURA_GRASSMANN_ANCHORS", "").strip()
+    if not raw:
+        return GRASSMANN_ANCHORS_EXACT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "AURA_GRASSMANN_ANCHORS=%r is not an integer; using %d.",
+            raw,
+            GRASSMANN_ANCHORS_EXACT,
+        )
+        return GRASSMANN_ANCHORS_EXACT
+    if value < 2 or value > GRASSMANN_ANCHORS_MAX:
+        logger.warning(
+            "AURA_GRASSMANN_ANCHORS=%d is outside [2, %d]; using %d.",
+            value,
+            GRASSMANN_ANCHORS_MAX,
+            GRASSMANN_ANCHORS_EXACT,
+        )
+        return GRASSMANN_ANCHORS_EXACT
+    return value
+
 
 # ── Data Structures ────────────────────────────────────────────────────────────
 
@@ -142,9 +197,136 @@ class PhiResult:
     tpm_n_samples: int             # How many transitions the TPM was built from
     computed_at: float = field(default_factory=time.time)
 
+    # ── What this number is a measurement OF ──────────────────────────────
+    # Exact IIT over the 4096-unit mesh is O(2^N) and intractable, so every φ
+    # here is computed on a declared complex of 8 or 16 nodes drawn from a much
+    # larger population. Reported as a bare scalar, that reads as the system's
+    # integration. It is not: it is the φ of the named complex, and a subset's
+    # φ is neither an upper nor a lower bound on the whole system's — the
+    # exclusion postulate is precisely the claim that a proper subset can carry
+    # MORE integration than the system containing it. So the provenance travels
+    # with the number instead of a false bound being invented for it.
+    grounding: str = ""            # see core/consciousness/phi_grounding.py
+    node_count: int = 0            # nodes in the complex actually evaluated
+    population_size: int = 0       # units the complex was drawn FROM (0 = unknown)
+    sampling: str = ""             # "exhaustive_mip" | "spectral_approximation"
+
+    # Finite-sample uncertainty from estimating the TPM off `tpm_n_samples`
+    # transitions. None until someone asks for it — the bootstrap is real work
+    # and must not run on the per-tick path.
+    phi_lower: float | None = None
+    phi_upper: float | None = None
+    interval_method: str = ""
+
+    @property
+    def coverage(self) -> float | None:
+        """Share of the population this complex actually evaluated."""
+        if not self.population_size:
+            return None
+        return float(self.node_count) / float(self.population_size)
+
+    @property
+    def is_subsampled(self) -> bool:
+        return bool(self.population_size) and self.node_count < self.population_size
+
+    def provenance(self) -> dict[str, Any]:
+        """Everything needed to read the scalar correctly."""
+        return {
+            "phi_s": round(float(self.phi_s), 6),
+            "grounding": self.grounding,
+            "node_count": self.node_count,
+            "population_size": self.population_size or None,
+            "coverage": round(self.coverage, 6) if self.coverage is not None else None,
+            "sampling": self.sampling,
+            "tpm_n_samples": self.tpm_n_samples,
+            "phi_interval": (
+                [round(self.phi_lower, 6), round(self.phi_upper, 6)]
+                if self.phi_lower is not None and self.phi_upper is not None
+                else None
+            ),
+            "interval_method": self.interval_method or "not_computed",
+            "is_subsampled": self.is_subsampled,
+            "phi_null_mean": (
+                round(self.phi_null_mean, 6) if self.phi_null_mean is not None else None
+            ),
+            "integration_fraction": (
+                round(self.integration_fraction, 6)
+                if self.integration_fraction is not None
+                else None
+            ),
+            "phi_net": round(self.phi_net, 6) if self.phi_net is not None else None,
+            "null_p_value": (
+                round(self.null_p_value, 6) if self.null_p_value is not None else None
+            ),
+            "null_surrogates": self.null_surrogates,
+            "integration_is_significant": self.integration_is_significant,
+        }
+
+    # ── the sampling null ─────────────────────────────────────────────────
+    # MEASURED 2026-08-04, by tests/test_phi_satisfies_the_iit_axioms.py: an
+    # 8-node system whose next state is statistically INDEPENDENT of its
+    # current state — zero integration, by construction — scores
+    #
+    #     n=100  φ=0.19    n=600   φ=0.60    n=6000  φ=1.00
+    #     n=300  φ=0.41    n=2000  φ=0.91    n=20000 φ=0.82
+    #
+    # and the history buffer holds 2000. At every sample size this runtime can
+    # reach, estimating a 256x256 TPM from the transitions available produces a
+    # large φ from nothing. Raw φ also ORDERS SYSTEMS WRONG at these sizes: the
+    # memoryless system scored 0.60 against a genuinely coupled ring's 0.51.
+    #
+    # The correction is the null this measurement always needed. Shuffling the
+    # transition sequence destroys temporal dependence while preserving the
+    # state marginals, so the shuffled φ is exactly the part of the number that
+    # finite sampling would have produced anyway. Same two systems, corrected:
+    #
+    #     memoryless   φ=0.602  null=0.602  p=0.33   net=0.000
+    #     coupled ring φ=0.507  null=0.357  p=0.00   net=0.137
+    #
+    # Zero for the system with no integration, positive for the one with it,
+    # and the ordering restored.
+    phi_null_mean: float | None = None
+    phi_null_sd: float | None = None
+    null_p_value: float | None = None
+    #: Share of the measured φ that the null does NOT account for.
+    integration_fraction: float | None = None
+    null_surrogates: int = 0
+
+    @property
+    def phi_net(self) -> float | None:
+        """φ above what finite sampling alone accounts for, in nats."""
+        if self.phi_null_mean is None:
+            return None
+        return float(max(0.0, self.phi_s - self.phi_null_mean))
+
+    @property
+    def integration_is_significant(self) -> bool:
+        """φ above its null by more than the residual the estimator carries.
+
+        Both conditions are needed. The p-value alone is not enough: the null
+        has a tiny spread, so two independently predictable halves clear
+        p < 0.05 easily while contributing 4.9% above the null. The FRACTION is
+        what separates coupling from bookkeeping.
+        """
+        if self.integration_fraction is None or self.null_p_value is None:
+            return False
+        return (
+            self.integration_fraction >= INTEGRATION_FRACTION_FLOOR
+            and self.null_p_value < 0.05
+        )
+
     @property
     def is_complex(self) -> bool:
-        """φs > 0 means the system is a complex — conscious under IIT."""
+        """Whether this is a complex — against the null when one was measured.
+
+        Raw ``phi_s > 0`` is not evidence at the sample sizes this runtime
+        reaches (see above). When a null has been measured, the answer comes
+        from it. When none has, this falls back to the raw test, and the caller
+        should read ``null_surrogates == 0`` as "unverified" rather than as
+        "verified negative".
+        """
+        if self.phi_null_mean is not None:
+            return self.integration_is_significant
         return self.phi_s > 1e-6
 
     @property
@@ -317,6 +499,18 @@ class PhiCore:
         self._grassmann_state_history: deque = deque(maxlen=2000)
         self._grassmann_state_visits: np.ndarray = np.ones(n_residual_states, dtype=np.float32)
         self._grassmann_last_result: PhiResult | None = None
+        #: The last grounding-aware selection across all φ estimators.
+        self._last_selection: "PhiSelection | None" = None
+        #: The residual complex is 8 contiguous chunk-means of the hidden
+        #: vector, so its population is that vector's width. Set on the first
+        #: sample; 0 until then, which reports as "unknown" rather than as a
+        #: coverage figure nobody measured.
+        self._residual_population_size: int = 0
+        #: The sampling null is `surrogates` more exhaustive MIP searches, so
+        #: it runs on its own bounded schedule and never on a foreground turn.
+        self._last_null_measured_at: float = 0.0
+        self._null_interval_s: float = 300.0
+        self._null_surrogates: int = 8
 
     # ── State Recording ────────────────────────────────────────────────────────
 
@@ -449,6 +643,9 @@ class PhiCore:
             return
         if vec.size == 0:
             return
+        # The eight nodes are chunk-means of THIS many dimensions; recording the
+        # width is what makes `coverage` a measured quantity rather than a guess.
+        self._residual_population_size = int(vec.size)
         chunks = np.array_split(vec, 8)
         x = np.array([float(np.mean(chunk)) if chunk.size else 0.0 for chunk in chunks], dtype=np.float32)
         if layer_idx is not None:
@@ -469,11 +666,22 @@ class PhiCore:
             if self._grassmann_complex is None:
                 from core.consciousness.grassmann_phi import GrassmannResidualComplex
 
-                self._grassmann_complex = GrassmannResidualComplex(n_anchors=8)
+                self._grassmann_complex = GrassmannResidualComplex(
+                    n_anchors=_grassmann_anchor_count()
+                )
             state = self._grassmann_complex.observe(vec)
             if state is not None:
-                self._grassmann_state_history.append(int(state))
-                self._grassmann_state_visits[int(state)] += 1.0
+                # The encoder may resolve more modes than the exact φ machinery
+                # can search: every extra anchor doubles the state space, and
+                # the exhaustive MIP here is built for 2^8 = 256 states. Wider
+                # capture is still worth having — the anchors above the eighth
+                # sharpen which mode is nearest — but the φ complex stays the
+                # eight it can search exactly, and the provenance reports the
+                # full mode count as the population it was drawn from. Masking
+                # rather than widening keeps this an exact measurement instead
+                # of an approximation wearing an exact label.
+                self._grassmann_state_history.append(int(state) & 0xFF)
+                self._grassmann_state_visits[int(state) & 0xFF] += 1.0
         except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
             record_degradation('phi_core', exc)
 
@@ -492,6 +700,10 @@ class PhiCore:
             self._grassmann_state_visits,
             self._residual_bipartitions,
             self._residual_bit_tables,
+            grounding=PhiGrounding.ACTIVATION_GEOMETRY.value,
+            # The complex is 8 geometric MODES, drawn from however many the
+            # encoder resolves (AURA_GRASSMANN_ANCHORS, default 8).
+            population_size=self._grassmann_population_size(),
         )
         if result is not None:
             self._grassmann_last_result = result
@@ -500,6 +712,13 @@ class PhiCore:
                 result.phi_s, result.is_complex, result.tpm_n_samples,
             )
         return result
+
+    def _grassmann_population_size(self) -> int:
+        """Geometric modes the encoder resolves, or 0 if it has not started."""
+        complex_ = self._grassmann_complex
+        if complex_ is None:
+            return 0
+        return int(getattr(complex_, "n_anchors", 0) or 0)
 
     def _record_eight_node_complex(
         self,
@@ -600,6 +819,8 @@ class PhiCore:
             self._residual_state_visits,
             self._residual_bipartitions,
             self._residual_bit_tables,
+            grounding=PhiGrounding.ACTIVATION_SUMMARY.value,
+            population_size=self._residual_population_size,
         )
         if result is not None:
             self._residual_last_result = result
@@ -617,6 +838,9 @@ class PhiCore:
         state_visits: np.ndarray,
         bipartitions: list,
         bit_tables: dict,
+        *,
+        grounding: str = "",
+        population_size: int = 0,
     ) -> PhiResult | None:
         history = list(state_history)
         transitions = len(history) - 1
@@ -657,7 +881,215 @@ class PhiCore:
             mip_phi_value=phi_s,
             all_partition_phis=all_phis,
             tpm_n_samples=transitions,
+            grounding=grounding,
+            node_count=n_nodes,
+            population_size=int(population_size),
+            sampling="exhaustive_mip",
         )
+
+    def bootstrap_phi_interval(
+        self,
+        state_history: deque,
+        bipartitions: list,
+        bit_tables: dict,
+        *,
+        resamples: int = 200,
+        confidence: float = 0.9,
+        rng_seed: int = 20260804,
+    ) -> tuple[float, float] | None:
+        """A finite-sample interval for an 8-node φ, by resampling transitions.
+
+        The point estimate is exact FOR THE TPM IT WAS GIVEN, and that TPM is
+        estimated from a finite run of transitions. Reporting the scalar alone
+        hides the only uncertainty that is actually quantifiable here, so this
+        resamples the transition sequence with replacement and reports the
+        percentile interval of the recomputed φ.
+
+        Deliberately not on the per-tick path: 200 resamples is 200 exhaustive
+        MIP searches. Call it when a number is going to be published, not while
+        the mind is running.
+
+        Returns None when there is not enough history to resample honestly.
+        """
+        history = list(state_history)
+        if len(history) - 1 < MIN_HISTORY_FOR_TPM:
+            return None
+
+        pairs = list(zip(history[:-1], history[1:], strict=True))
+        rng = np.random.default_rng(rng_seed)
+        n_states = 256
+        samples: list[float] = []
+
+        for _ in range(max(2, int(resamples))):
+            idx = rng.integers(0, len(pairs), size=len(pairs))
+            tpm = np.zeros((n_states, n_states), dtype=np.float64)
+            visits = np.zeros(n_states, dtype=np.float64)
+            for i in idx:
+                src, dst = pairs[int(i)]
+                tpm[int(src), int(dst)] += 1.0
+                visits[int(src)] += 1.0
+            tpm += LAPLACE_ALPHA
+            row_sums = tpm.sum(axis=1, keepdims=True)
+            row_sums[row_sums == 0] = 1.0
+            tpm /= row_sums
+            total = visits.sum()
+            if total <= 0:
+                continue
+            p = visits / total
+            min_phi = float("inf")
+            for _mask, (part_a, part_b) in bipartitions:
+                phi_ab = self._phi_for_bipartition_generic(
+                    tpm, p, part_a, part_b,
+                    n_nodes=8, n_states=n_states, bit_tables=bit_tables,
+                )
+                min_phi = min(min_phi, phi_ab)
+            if min_phi != float("inf"):
+                samples.append(float(max(0.0, min_phi)))
+
+        if len(samples) < 2:
+            return None
+        tail = (1.0 - float(confidence)) / 2.0
+        low = float(np.percentile(samples, 100.0 * tail))
+        high = float(np.percentile(samples, 100.0 * (1.0 - tail)))
+        return (low, high)
+
+    def measure_phi_null(
+        self,
+        state_history: deque,
+        bipartitions: list,
+        bit_tables: dict,
+        *,
+        mip_partition_b: list[int] | tuple[int, ...] | None = None,
+        surrogates: int = 8,
+        rng_seed: int = 20260804,
+    ) -> tuple[float, float, float, float] | None:
+        """The φ this history produces with its CROSS-partition structure gone.
+
+        The integration postulate is about dependence ACROSS the minimum cut,
+        so the null has to destroy exactly that and nothing else. Permuting the
+        timeline of the nodes on one side of the MIP, while leaving the other
+        side's order intact, keeps each side's internal dynamics and removes
+        only the coupling between them — which is the quantity φ is supposed to
+        be measuring.
+
+        A global shuffle was the first attempt and is not enough: it removes
+        each side's internal structure too, so a system of two independently
+        predictable halves still scored above it. Measured on three systems
+        with known answers, ``(φ - null_mean) / φ`` is
+
+            memoryless (no dynamics at all)   0.000
+            two independent halves            0.049
+            coupled ring                      0.563
+
+        Returns ``(null_mean, null_sd, p_value, integration_fraction)``, or
+        None when there is not enough history to permute honestly.
+        """
+        history = [int(state) & 0xFF for state in state_history]
+        if len(history) - 1 < MIN_HISTORY_FOR_TPM:
+            return None
+
+        observed = self._compute_eight_node_phi_from_history(
+            deque(history),
+            self._visits_from_history(history),
+            bipartitions,
+            bit_tables,
+        )
+        if observed is None:
+            return None
+        if mip_partition_b is None:
+            mip_partition_b = observed.mip_partition_b
+        if not mip_partition_b:
+            return None
+
+        mask_b = 0
+        for node in mip_partition_b:
+            mask_b |= 1 << int(node)
+        mask_a = 0xFF ^ mask_b
+        if not mask_a or not mask_b:
+            return None
+
+        rng = np.random.default_rng(rng_seed)
+        nulls: list[float] = []
+        for _ in range(max(2, int(surrogates))):
+            order = rng.permutation(len(history))
+            surrogate = [
+                (history[i] & mask_a) | (history[int(j)] & mask_b)
+                for i, j in enumerate(order)
+            ]
+            result = self._compute_eight_node_phi_from_history(
+                deque(surrogate),
+                self._visits_from_history(surrogate),
+                bipartitions,
+                bit_tables,
+            )
+            if result is not None:
+                nulls.append(float(result.phi_s))
+        if len(nulls) < 2:
+            return None
+
+        array = np.asarray(nulls, dtype=np.float64)
+        null_mean = float(array.mean())
+        null_sd = float(array.std(ddof=1))
+        p_value = float((array >= observed.phi_s).mean())
+        fraction = (
+            float(max(0.0, (observed.phi_s - null_mean) / observed.phi_s))
+            if observed.phi_s > 0.0
+            else 0.0
+        )
+        return (null_mean, null_sd, p_value, fraction)
+
+    @staticmethod
+    def _visits_from_history(history: Any) -> np.ndarray:
+        visits = np.ones(256, dtype=np.float64)
+        for state in history:
+            visits[int(state) & 0xFF] += 1.0
+        return visits
+
+    def attach_phi_null(
+        self,
+        result: PhiResult,
+        state_history: deque,
+        bipartitions: list,
+        bit_tables: dict,
+        **kwargs: Any,
+    ) -> PhiResult:
+        """Attach the sampling null to a result, or leave it unclaimed."""
+        kwargs.setdefault("mip_partition_b", result.mip_partition_b)
+        measured = self.measure_phi_null(
+            state_history, bipartitions, bit_tables, **kwargs
+        )
+        if measured is None:
+            return result
+        null_mean, null_sd, p_value, fraction = measured
+        result.phi_null_mean = null_mean
+        result.phi_null_sd = null_sd
+        result.null_p_value = p_value
+        result.integration_fraction = fraction
+        result.null_surrogates = int(kwargs.get("surrogates", 8))
+        return result
+
+    def attach_phi_interval(
+        self,
+        result: PhiResult,
+        state_history: deque,
+        bipartitions: list,
+        bit_tables: dict,
+        **kwargs: Any,
+    ) -> PhiResult:
+        """Return ``result`` with a measured interval, or unchanged if none."""
+        interval = self.bootstrap_phi_interval(
+            state_history, bipartitions, bit_tables, **kwargs
+        )
+        if interval is None:
+            return result
+        low, high = interval
+        result.phi_lower = low
+        result.phi_upper = high
+        result.interval_method = (
+            f"bootstrap_transitions:{kwargs.get('resamples', 200)}"
+            f"@{kwargs.get('confidence', 0.9)}"
+        )
+        return result
 
     # ── TPM Construction ───────────────────────────────────────────────────────
 
@@ -916,34 +1348,135 @@ class PhiCore:
 
         return None
 
-    def compute_full_kernel(self) -> PhiResult | None:
-        """Compute the exact 8-node MIP across both affective and mesh layers."""
-        start_t = time.perf_counter()
-        affective_res = self.compute_affective_phi()
-        mesh_res = self.compute_mesh_phi()
-        residual_res = self.compute_residual_phi()
-        grassmann_res = self.compute_grassmann_residual_phi()
+    def _history_shortfall(self, history: Any, label: str) -> str:
+        """Why an estimator could not run, in the form a reader can act on."""
+        try:
+            have = len(history)
+        except TypeError:
+            have = 0
+        return f"insufficient_history:{have}/{MIN_HISTORY_FOR_TPM} {label} transitions"
 
-        # Winning complex is the one with highest phi
-        winner = affective_res
-        complex_name = "affective"
-        if mesh_res and (not winner or mesh_res.phi_s > winner.phi_s):
-            winner = mesh_res
-            complex_name = "mesh"
-        if residual_res and (not winner or residual_res.phi_s > winner.phi_s):
-            winner = residual_res
-            complex_name = "residual_stream"
-        # The Grassmann residual complex is the principled φ over the transformer's
-        # own geometry; it competes in the exclusion-postulate winner selection.
-        if grassmann_res and (not winner or grassmann_res.phi_s > winner.phi_s):
-            winner = grassmann_res
-            complex_name = "residual_stream_grassmann"
-            
+    def compute_full_kernel_selection(self) -> "PhiSelection":
+        """Run every φ estimator and choose by grounding first, magnitude second.
+
+        This used to be ``max(phi_s)`` across four estimators. They are not four
+        candidate subsets of one system — which is what the exclusion postulate
+        compares — but four measurements of four different substrates. Taking
+        the largest treated a bigger number from a weaker measurement as a
+        stronger complex.
+
+        Worse, an estimator that CANNOT RUN loses a maximisation silently.
+        ``compute_grassmann_residual_phi`` returns None below
+        ``MIN_HISTORY_FOR_TPM`` transitions, so during every warm-up the
+        reported integration score was the summary-statistic path, presented as
+        the system's φ with nothing recording that the activation-level
+        measurement had not yet accumulated enough history to speak.
+
+        The selection now carries every candidate that could not run and the
+        reason, and ``PhiSelection.is_best_grounded`` says plainly whether the
+        winner is the best measurement available or merely the best one that
+        happened to be ready.
+        """
+        from core.consciousness.phi_grounding import (
+            PhiCandidate,
+            PhiGrounding,
+            select_phi,
+        )
+
+        start_t = time.perf_counter()
+        candidates = [
+            PhiCandidate(
+                "residual_stream_grassmann",
+                PhiGrounding.ACTIVATION_GEOMETRY,
+                self.compute_grassmann_residual_phi(),
+                self._history_shortfall(self._grassmann_state_history, "grassmann"),
+            ),
+            PhiCandidate(
+                "mesh",
+                PhiGrounding.COMPUTATIONAL_UNITS,
+                self.compute_mesh_phi(),
+                self._history_shortfall(self._mesh_state_history, "mesh"),
+            ),
+            PhiCandidate(
+                "residual_stream",
+                PhiGrounding.ACTIVATION_SUMMARY,
+                self.compute_residual_phi(),
+                self._history_shortfall(self._residual_state_history, "residual"),
+            ),
+            PhiCandidate(
+                "affective",
+                PhiGrounding.STATE_SUMMARY,
+                self.compute_affective_phi(),
+                self._history_shortfall(self._affective_state_history, "affective"),
+            ),
+        ]
+        selection = select_phi(candidates)
+        self._maybe_attach_null(selection)
+        self._last_selection = selection
+
         elapsed = time.perf_counter() - start_t
-        if winner:
-            logger.debug("compute_full_kernel: winner=%s, phi_s=%.5f, time=%.3fs", complex_name, winner.phi_s, elapsed)
-            
-        return winner
+        if selection.winner is not None:
+            logger.debug(
+                "compute_full_kernel: winner=%s grounding=%s phi_s=%.5f "
+                "best_grounded=%s time=%.3fs",
+                selection.winner_name,
+                selection.grounding.value if selection.grounding else "none",
+                selection.phi_s,
+                selection.is_best_grounded,
+                elapsed,
+            )
+            if not selection.is_best_grounded:
+                missing = ", ".join(
+                    f"{c.name} ({c.unavailable_reason})"
+                    for c in selection.better_grounded_unavailable
+                )
+                logger.info(
+                    "PhiCore is reporting a %s measurement because better-grounded "
+                    "estimators could not run: %s. This φ describes the complex it "
+                    "names, not the activation-level integration of the system.",
+                    selection.grounding.value if selection.grounding else "unknown",
+                    missing,
+                )
+        return selection
+
+    def _maybe_attach_null(self, selection: "PhiSelection") -> None:
+        """Measure the winner against its sampling null, on a bounded interval.
+
+        Without this the live ``is_complex`` falls back to ``phi_s > 0``, which
+        a system with no integration at all satisfies at every sample size this
+        runtime reaches. With it, the claim is evidence-based.
+
+        Interval-bounded because the null is ``surrogates`` more exhaustive MIP
+        searches — real work that must never land on a foreground turn.
+        """
+        winner = selection.winner
+        if winner is None or winner.phi_null_mean is not None:
+            return
+        now = time.time()
+        if now - self._last_null_measured_at < self._null_interval_s:
+            return
+        histories = {
+            "residual_stream_grassmann": self._grassmann_state_history,
+            "residual_stream": self._residual_state_history,
+        }
+        history = histories.get(selection.winner_name)
+        if history is None:
+            return
+        self._last_null_measured_at = now
+        try:
+            self.attach_phi_null(
+                winner,
+                history,
+                self._residual_bipartitions,
+                self._residual_bit_tables,
+                surrogates=self._null_surrogates,
+            )
+        except (ArithmeticError, AttributeError, LookupError, TypeError, ValueError) as exc:
+            record_degradation("phi_core", exc, severity="warning")
+
+    def compute_full_kernel(self) -> PhiResult | None:
+        """The winning complex. See ``compute_full_kernel_selection`` for why."""
+        return self.compute_full_kernel_selection().winner
 
     def tick(self, config: Any = None) -> None:
         """Called every conscious tick."""
@@ -1012,6 +1545,14 @@ class PhiCore:
             mip_phi_value=phi_s,
             all_partition_phis=all_phis,
             tpm_n_samples=n_trans,
+            grounding=PhiGrounding.STATE_SUMMARY.value,
+            node_count=N_NODES,
+            population_size=N_NODES,
+            # Exhaustive bipartition search over 65536 states is intractable,
+            # so this is a Fiedler-partition approximation. Saying which
+            # estimator produced the number is the difference between a bound
+            # and a claim.
+            sampling="spectral_approximation",
         )
         return result
 
