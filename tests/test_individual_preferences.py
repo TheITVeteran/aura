@@ -192,3 +192,40 @@ def test_prompt_carries_no_preference_block_when_none_are_hers():
 
     prompt = ContextAssembler.build_system_prompt(AuraState.default())
     assert "WHAT YOU HAVE COME TO PREFER" not in prompt
+
+
+def test_her_repeated_positions_accumulate_into_preferences_at_compaction():
+    """End to end: positions she took, repeatedly, become hers."""
+    from core.state.aura_state import AuraState
+
+    position = "I think wave interference is the most elegant idea in physics."
+    state = AuraState.default()
+    state.cognition.working_memory = (
+        [{"role": "assistant", "content": position} for _ in range(formation_threshold())]
+        + [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"filler {i} of chatter"}
+            for i in range(200)
+        ]
+    )
+
+    assert state.compact() is True
+
+    prefs = IndividualPreferences.from_dict(state.identity.self_preferences)
+    assert prefs.held(), prefs.stats()
+
+
+def test_what_the_user_said_never_becomes_her_preference():
+    from core.state.aura_state import AuraState
+
+    state = AuraState.default()
+    state.cognition.working_memory = (
+        [{"role": "user", "content": "I think competitive chess is the finest game there is."}
+         for _ in range(10)]
+        + [{"role": "user" if i % 2 == 0 else "assistant", "content": f"filler {i} of chatter"}
+           for i in range(200)]
+    )
+
+    state.compact()
+
+    prefs = IndividualPreferences.from_dict(state.identity.self_preferences)
+    assert not any("chess" in p.subject for p in prefs.held())

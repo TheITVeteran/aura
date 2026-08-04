@@ -965,6 +965,7 @@ class AuraState:
             )
             ledger.observe(messages)
             self.cognition.continuity_ledger = ledger.to_dict()
+            self._form_preferences_from(ledger)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             from core.runtime.errors import record_degradation
 
@@ -973,6 +974,46 @@ class AuraState:
                 exc,
                 severity="warning",
                 action="compacted without folding the dropped turns into the ledger",
+                enforce_failure_policy=False,
+            )
+
+    def _form_preferences_from(self, ledger) -> None:
+        """Let repeated contact of her own accumulate into a stance.
+
+        The source is deliberately narrow: positions SHE took, in her own
+        words, that recurred. A subject the user raised is not contact she
+        had, and an opinion she was told she holds is not one she formed —
+        both would make her preferences a mirror rather than hers.
+        """
+        try:
+            from core.being.individual_preferences import IndividualPreferences
+
+            prefs = IndividualPreferences.from_dict(
+                getattr(self.identity, "self_preferences", None)
+            )
+            for entry in getattr(ledger, "entries", []) or []:
+                if getattr(entry, "kind", "") != "position":
+                    continue
+                if getattr(entry, "speaker", "") != "assistant":
+                    continue
+                subject = " ".join(str(getattr(entry, "text", "")).split())[:80]
+                if len(subject) < 12:
+                    continue
+                # The ledger folds a repeated statement into ONE entry and
+                # counts it in `mentions`. Registering a single encounter per
+                # entry would mean a position she took ten times weighed the
+                # same as one she said once, and nothing would ever form.
+                for _ in range(max(1, int(getattr(entry, "mentions", 1) or 1))):
+                    prefs.encounter(subject, stance="drawn_to")
+            self.identity.self_preferences = prefs.to_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "aura_state.self_preferences",
+                exc,
+                severity="warning",
+                action="compacted without letting her own positions accumulate into preferences",
                 enforce_failure_policy=False,
             )
 
