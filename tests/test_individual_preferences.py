@@ -229,3 +229,34 @@ def test_what_the_user_said_never_becomes_her_preference():
 
     prefs = IndividualPreferences.from_dict(state.identity.self_preferences)
     assert not any("chess" in p.subject for p in prefs.held())
+
+
+def test_a_preference_keeps_the_words_as_spoken():
+    """Normalisation is for keying, not for display.
+
+    Storing the lowered form made her describe herself as "drawn to john
+    coltrane", flattening every proper noun she cared about.
+    """
+    prefs = IndividualPreferences()
+    for _ in range(formation_threshold()):
+        prefs.encounter("John Coltrane", stance="drawn_to")
+    assert "John Coltrane" in prefs.render()
+
+
+def test_case_variants_still_key_to_one_preference():
+    prefs = IndividualPreferences()
+    prefs.encounter("John Coltrane", stance="drawn_to")
+    prefs.encounter("john coltrane", stance="drawn_to")
+    prefs.encounter("JOHN COLTRANE", stance="drawn_to")
+    assert len(prefs.items) == 1
+    assert prefs.held()
+
+
+def test_eviction_preserves_lookup_by_key():
+    from core.being.individual_preferences import preference_capacity, _norm
+
+    prefs = IndividualPreferences()
+    for i in range(preference_capacity() * 2):
+        prefs.encounter(f"Subject {i}", stance="drawn_to")
+    for key, pref in prefs.items.items():
+        assert key == _norm(pref.subject), "eviction must re-key by the normalised subject"

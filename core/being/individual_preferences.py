@@ -66,7 +66,12 @@ class Revision:
 
 @dataclass
 class Preference:
-    """One stance she holds, and the history that earned it."""
+    """One stance she holds, and the history that earned it.
+
+    ``subject`` keeps the words as they were said. Normalisation is for
+    *keying* only — storing the lowered form made her describe herself as
+    "drawn to john coltrane", flattening every proper noun she cared about.
+    """
 
     subject: str
     stance: str = "curious_about"
@@ -128,10 +133,11 @@ class IndividualPreferences:
         key = _norm(subject)
         if not key:
             raise ValueError("a preference needs a subject")
+        spoken = " ".join(str(subject or "").split())[:_MAX_SUBJECT_CHARS]
 
         pref = self.items.get(key)
         if pref is None:
-            pref = Preference(subject=key, stance="curious_about", note=note[:_MAX_NOTE_CHARS])
+            pref = Preference(subject=spoken, stance="curious_about", note=note[:_MAX_NOTE_CHARS])
             self.items[key] = pref
 
         pref.last_seen = time.time()
@@ -168,7 +174,10 @@ class IndividualPreferences:
             raise ValueError("a suggestion needs a subject")
         pref = self.items.get(key)
         if pref is None:
-            pref = Preference(subject=key, stance="curious_about")
+            pref = Preference(
+                subject=" ".join(str(subject or "").split())[:_MAX_SUBJECT_CHARS],
+                stance="curious_about",
+            )
             self.items[key] = pref
         pref.suggested_by_other = True
         pref.last_seen = time.time()
@@ -194,7 +203,7 @@ class IndividualPreferences:
             key=lambda p: (p.formed, p.strength(), p.last_seen),
             reverse=True,
         )
-        self.items = {p.subject: p for p in ranked[:capacity]}
+        self.items = {_norm(p.subject): p for p in ranked[:capacity]}
 
     # ── surfacing ─────────────────────────────────────────────────────────
     def held(self) -> list[Preference]:

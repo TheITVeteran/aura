@@ -1044,31 +1044,42 @@ class ContextAssembler:
                 action="used guest prompt policy because trust context was unavailable",
             )
 
+        # ONE definition of the continuity and personhood groups, shared by
+        # every path below.
+        #
+        # These were written out three times, once per path, and each new
+        # block had to be added to all three by hand. Landing a rule at one of
+        # several sites is the defect shape this repo keeps rediscovering, and
+        # this function was manufacturing fresh instances of it: the ledger
+        # and the self-preference block each needed three separate edits, and
+        # nothing would have failed if one had been missed on the casual-guest
+        # path — a guest would simply have lost the thread with no test to say
+        # so. Adding a continuity block is now a single edit here.
+        continuity_sections = (
+            rolling_summary,
+            ledger_block,
+            self_preference_block,
+            continuity_block,
+        )
+        personhood_sections = (
+            personhood_context,
+            entity_memory_context,
+            imagination_context,
+            bicameral_context,
+            cognitive_situation_context,
+        )
+        continuity_group = "".join(section for section in continuity_sections if section)
+        personhood_group = "".join(section for section in personhood_sections if section)
+
         if is_casual and elevated_trust:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
             if aura_now_block:
                 base += aura_now_block
             # 2. Vital continuity only
-            if rolling_summary:
-                base += rolling_summary
-            if ledger_block:
-                base += ledger_block
-            if self_preference_block:
-                base += self_preference_block
-            if continuity_block:
-                base += continuity_block
+            base += continuity_group
             # 3. Social/Humor strategy
-            if personhood_context:
-                base += personhood_context
-            if entity_memory_context:
-                base += entity_memory_context
-            if imagination_context:
-                base += imagination_context
-            if bicameral_context:
-                base += bicameral_context
-            if cognitive_situation_context:
-                base += cognitive_situation_context
+            base += personhood_group
         elif is_casual:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -1079,24 +1090,8 @@ class ContextAssembler:
                 base += f"## CURRENT VIBE\nFunctional affect is {tone}; activation is {energy}. Self-report must stay grounded in telemetry.\n\n"
                 base += aura_now_block
             # 3. Continuity + Personhood
-            if rolling_summary:
-                base += rolling_summary
-            if ledger_block:
-                base += ledger_block
-            if self_preference_block:
-                base += self_preference_block
-            if continuity_block:
-                base += continuity_block
-            if personhood_context:
-                base += personhood_context
-            if entity_memory_context:
-                base += entity_memory_context
-            if imagination_context:
-                base += imagination_context
-            if bicameral_context:
-                base += bicameral_context
-            if cognitive_situation_context:
-                base += cognitive_situation_context
+            base += continuity_group
+            base += personhood_group
         else:
             # Standard path for non-casual/deliberate turns (Research/Complex tasks)
             base = (
@@ -1106,18 +1101,11 @@ class ContextAssembler:
                 f"{requirements}\n"
                 f"{state_section}"
                 f"{personality_block}"
-                f"{rolling_summary}"
-                f"{ledger_block}"
-                f"{self_preference_block}"
-                f"{continuity_block}"
+                f"{continuity_group}"
                 f"{goal_execution_block}"
                 f"{temporal_finitude_block}"
                 f"{meta_qualia_block}"
-                f"{personhood_context}"
-                f"{entity_memory_context}"
-                f"{imagination_context}"
-                f"{bicameral_context}"
-                f"{cognitive_situation_context}"
+                f"{personhood_group}"
                 f"{aura_now_block}"
                 f"{world_context}"
                 f"{somatic_context}"
