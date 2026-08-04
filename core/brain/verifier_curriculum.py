@@ -23,23 +23,23 @@ The loop is bounded (fixed proposals per cycle), governed (a Will decision
 gates each cycle), and honest (every cycle emits a report of proposed /
 solved / verified / captured / refused).
 
-STATUS: NOT WIRED INTO THE LIVE RUNTIME.
-----------------------------------------
-``boot_verifier_curriculum()`` has no caller, ``get_verifier_curriculum()``
-has no caller outside this module, and nothing reads the
-``verifier_curriculum`` ServiceContainer key it registers. The loop below is
-implemented and covered by tests/test_verifier_curriculum.py; it is not part
-of any running path.
+STATUS: wired at boot, behind AURA_ENABLE_VERIFIER_CURRICULUM (default on).
+--------------------------------------------------------------------------
+``aura_main.py`` calls ``boot_verifier_curriculum()`` during startup, which
+registers the ``verifier_curriculum`` ServiceContainer key; the loop below is
+covered by tests/test_verifier_curriculum.py.
 
-Recorded here rather than left to be rediscovered, for the same reason it is
-recorded in core/consciousness/latent_bridge.py and
-core/being/closed_loop_controller.py: substantial, tested and uninvoked reads
-exactly like working from the outside. A capability claim needs a call site,
-not a class.
+This block previously carried the unwired marker, and kept carrying it after
+the boot call landed. (The marker string itself is deliberately not repeated
+here: the gate that reads this file scans for it, and an explanatory mention
+would read as the claim.) The claim outlived its truth because the
+check that would have caught it only scanned ``core/`` and ``interface/`` —
+and the boot entrypoint is at the repository root, so a capability wired ONLY
+from boot looked uncalled. tests/test_capability_claims_have_call_sites.py now
+scans aura_main.py too.
 
-Contrast with the verifier FOUNDRY next door, which is genuinely live —
-core/brain/latent_cortex_service.py calls get_verifier_foundry() directly.
-Only its unused boot_ wrapper was removed.
+A capability claim needs a call site, not a class — and a claim that it has no
+call site needs the same standard.
 """
 from __future__ import annotations
 

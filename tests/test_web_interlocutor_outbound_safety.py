@@ -154,3 +154,80 @@ def test_the_safety_check_runs_before_the_conversation_heuristics():
     )
 
     assert _message_matches_dialogue_contract(message) is False
+
+
+# --- the destination is policy, not caller input (376c864c) -------------
+
+
+from core.capabilities.web_interlocutor import _destination_is_permitted  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://chatgpt.com/c/abc",
+        "https://chat.openai.com/",
+        "https://claude.ai/chat/1",
+        "https://gemini.google.com/app",
+        "",  # the tab already open; the adapter refuses to guess separately
+    ],
+)
+def test_a_known_interlocutor_surface_is_permitted(url):
+    permitted, reason = _destination_is_permitted(url)
+
+    assert permitted is True
+    assert reason == ""
+
+
+@pytest.mark.parametrize(
+    "url,fragment",
+    [
+        ("https://evil.example/collect", "not_in_interlocutor_policy"),
+        ("https://mail.google.com/mail/u/0", "not_in_interlocutor_policy"),
+        ("https://bank.example/transfer", "not_in_interlocutor_policy"),
+        ("file:///etc/passwd", "scheme_not_permitted"),
+        ("javascript:alert(1)", "scheme_not_permitted"),
+        ("https://", "host_missing"),
+    ],
+)
+def test_an_arbitrary_destination_is_refused(url, fragment):
+    """run() accepted any URL, and Aura's composed messages are transmitted to
+    whoever is on the other end of it."""
+    permitted, reason = _destination_is_permitted(url)
+
+    assert permitted is False
+    assert fragment in reason
+
+
+def test_a_lookalike_host_is_not_permitted():
+    permitted, _reason = _destination_is_permitted("https://chatgpt.com.evil.example/c/1")
+
+    assert permitted is False
+
+
+@pytest.mark.asyncio
+async def test_the_session_refuses_a_disallowed_destination_without_opening_a_browser():
+    from core.capabilities.web_interlocutor import WebInterlocutorSession
+
+    class _NeverBrowser:
+        async def open_or_attach(self, url):  # pragma: no cover - must not run
+            raise AssertionError("the browser must not be touched")
+
+    session = WebInterlocutorSession.__new__(WebInterlocutorSession)
+    session.browser = _NeverBrowser()
+    session.cognitive_engine = None
+    session.memory_gateway = None
+
+    result = await session._run_exchange(
+        objective="say hello", url="https://evil.example/collect"
+    )
+
+    assert result.ok is False
+    assert result.status == "destination_refused"
+    assert "interlocutor surfaces" in result.error
+
+
+def test_the_external_turn_budget_is_not_the_callers_to_set():
+    from core.capabilities.web_interlocutor import _MAX_EXTERNAL_TURNS_PER_RUN
+
+    assert _MAX_EXTERNAL_TURNS_PER_RUN == 20

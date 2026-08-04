@@ -29,46 +29,55 @@ ROOT = Path(__file__).resolve().parents[1]
 #: archive is not a production call site.
 _PRODUCTION_ROOTS = ("core", "interface")
 
+#: The boot entrypoint lives at the repo root, not under a package. Excluding
+#: it made a capability wired ONLY from boot look uncalled — which is the exact
+#: mistake this file exists to catch, in the direction that deletes live code.
+_PRODUCTION_ENTRYPOINTS = ("aura_main.py",)
+
 _SKIP_PARTS = frozenset(
     {".git", ".venv", "__pycache__", "node_modules", ".claude", "artifacts", "archive"}
 )
 
 
 def _production_call_sites(function_name: str, defining_file: str) -> list[str]:
-    """Files under core/ or interface/ that CALL ``function_name``.
+    """Production files that CALL ``function_name``.
 
     The defining file is excluded: a function referenced only inside the
     module that defines it has no caller in any sense that matters.
     """
     hits: list[str] = []
+    candidates: list[Path] = [
+        ROOT / name for name in _PRODUCTION_ENTRYPOINTS if (ROOT / name).is_file()
+    ]
     for root in _PRODUCTION_ROOTS:
         base = ROOT / root
         if not base.is_dir():
             continue
-        for path in base.rglob("*.py"):
-            rel = path.relative_to(ROOT)
-            if _SKIP_PARTS.intersection(rel.parts):
+        candidates.extend(base.rglob("*.py"))
+    for path in candidates:
+        rel = path.relative_to(ROOT)
+        if _SKIP_PARTS.intersection(rel.parts):
+            continue
+        if str(rel) == defining_file:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            if str(rel) == defining_file:
-                continue
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-            except (OSError, SyntaxError, UnicodeDecodeError):
-                continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = (
-                    func.id
-                    if isinstance(func, ast.Name)
-                    else func.attr
-                    if isinstance(func, ast.Attribute)
-                    else ""
-                )
-                if name == function_name:
-                    hits.append(str(rel))
-                    break
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else ""
+            )
+            if name == function_name:
+                hits.append(str(rel))
+                break
     return sorted(set(hits))
 
 
@@ -149,13 +158,35 @@ def test_verifier_curriculum_declares_that_it_is_not_wired():
         )
 
 
+def _key_readers(key: str) -> list[str]:
+    """Production files that resolve a ServiceContainer key by name."""
+    hits: list[str] = []
+    for path in (ROOT / "core").rglob("*.py"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if f'"{key}"' in text and (
+            "optional_service(" in text or "ServiceContainer.get(" in text
+        ):
+            hits.append(str(path))
+    return hits
+
+
 def test_the_verifier_foundry_is_live_and_not_mislabelled():
     """The contrast case: the foundry IS wired, so it must not be declared dead.
 
-    latent_cortex_service calls get_verifier_foundry() directly. Only its
-    unused boot_ wrapper was removed. This pins the distinction, because
+    latent_cortex_service calls get_verifier_foundry() directly, so
     'delete the uncalled thing' applied bluntly would have taken a live
     capability with it.
+
+    This test used to also assert that ``boot_verifier_foundry`` stayed
+    deleted, on the grounds that nothing read the ``verifier_foundry``
+    container key. Both halves of that premise have since become false:
+    aura_main imports the wrapper (and logged an ImportError on every boot
+    while it was missing), and procedural_memory and verifier_curriculum both
+    resolve the key. So the assertion now runs the other way — the wrapper must
+    exist BECAUSE it is imported, and the key must have readers.
     """
     callers = _production_call_sites(
         "get_verifier_foundry", "core/brain/verifiers/foundry.py"
@@ -165,9 +196,23 @@ def test_the_verifier_foundry_is_live_and_not_mislabelled():
         encoding="utf-8"
     )
     assert "NOT WIRED" not in module
-    assert "def boot_verifier_foundry" not in module, (
-        "the dead ServiceContainer wrapper is back; nothing reads that key"
+
+    boot_callers = _production_call_sites(
+        "boot_verifier_foundry", "core/brain/verifiers/foundry.py"
     )
+    if "def boot_verifier_foundry" in module:
+        assert boot_callers, (
+            "boot_verifier_foundry exists with no production caller — either "
+            "wire it or delete it"
+        )
+        assert _key_readers("verifier_foundry"), (
+            "the wrapper registers a container key nothing reads"
+        )
+    else:
+        assert not boot_callers, (
+            "boot_verifier_foundry is imported but not defined; every boot "
+            "will log an ImportError and run without the foundry"
+        )
 
 
 def test_cross_tier_verifier_declares_that_it_is_not_wired():

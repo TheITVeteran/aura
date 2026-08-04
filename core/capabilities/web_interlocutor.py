@@ -222,6 +222,57 @@ class WebInterlocutorJob:
         }
 
 
+#: Destinations this session may hold a conversation with. CP126 376c864c:
+#: ``run`` accepted any URL, so a caller-supplied destination — or one that
+#: arrived through a chain of context dicts — could receive Aura's composed
+#: messages. These are the interlocutor surfaces the capability exists for.
+_ALLOWED_INTERLOCUTOR_HOSTS = frozenset(
+    {
+        "chat.openai.com",
+        "chatgpt.com",
+        "claude.ai",
+        "gemini.google.com",
+        "bard.google.com",
+        "copilot.microsoft.com",
+        "www.perplexity.ai",
+        "perplexity.ai",
+        "grok.com",
+        "x.ai",
+    }
+)
+
+#: How many messages one conversation may transmit externally, whatever the
+#: caller asked for. A budget the caller sets is not a budget.
+_MAX_EXTERNAL_TURNS_PER_RUN = 20
+
+
+def _destination_is_permitted(url: str) -> tuple[bool, str]:
+    """Whether this session may hold a conversation at ``url``.
+
+    An empty URL means "the tab already open", which the adapter separately
+    refuses to guess at when it is ambiguous.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return True, ""
+    try:
+        parts = urllib.parse.urlparse(text)
+    except (TypeError, ValueError):
+        return False, "destination_url_malformed"
+    if parts.scheme not in {"http", "https"}:
+        return False, f"destination_scheme_not_permitted:{parts.scheme or 'none'}"
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host:
+        return False, "destination_host_missing"
+    if host in _ALLOWED_INTERLOCUTOR_HOSTS:
+        return True, ""
+    return False, f"destination_not_in_interlocutor_policy:{host}"
+
+
+#: How long a CDP availability answer stays good. Chrome starting or stopping
+#: with remote debugging is the only thing that changes it (CP126 38f77e65).
+_CDP_AVAILABILITY_TTL_S = 5.0
+
 _FENCE_LOOKALIKE_RE = re.compile(r"(?i)\bAURA-DATA-[0-9a-f]{8,}\b")
 
 
@@ -786,9 +837,35 @@ class ChromeVisibleDialogueBrowser:
         self._apple_events_js_disabled = False
         self._apple_events_js_warning_reported = False
         self._screen_scene_targeting_enabled = True
+        # CP126 38f77e65: is_available() is a synchronous HTTP request with a
+        # multi-second timeout, and it was awaited-in-name-only at the top of
+        # open, snapshot and send. Every foreground browser operation therefore
+        # blocked the event loop for the length of a network round trip, and a
+        # dead CDP endpoint blocked it for the full timeout, repeatedly.
+        self._cdp_available: bool | None = None
+        self._cdp_probe_at = 0.0
+
+
+    async def _cdp_is_available(self) -> bool:
+        """Probe CDP off the event loop, and not more often than the TTL.
+
+        The answer changes only when Chrome starts or stops with remote
+        debugging, so re-asking on every operation buys nothing and costs a
+        blocking round trip each time (CP126 38f77e65).
+        """
+        now = time.monotonic()
+        if (
+            self._cdp_available is not None
+            and now - self._cdp_probe_at < _CDP_AVAILABILITY_TTL_S
+        ):
+            return self._cdp_available
+        available = await asyncio.to_thread(self._cdp.is_available)
+        self._cdp_available = bool(available)
+        self._cdp_probe_at = now
+        return self._cdp_available
 
     async def open_or_attach(self, url: str) -> BrowserPageSnapshot:
-        if self._cdp.is_available():
+        if await self._cdp_is_available():
             return await self._cdp.open_or_attach(url)
         if url:
             try:
@@ -816,7 +893,7 @@ class ChromeVisibleDialogueBrowser:
         return await self.snapshot()
 
     async def snapshot(self) -> BrowserPageSnapshot:
-        if self._cdp.is_available():
+        if await self._cdp_is_available():
             return await self._cdp.snapshot()
         if self._apple_events_js_disabled:
             ax_snapshot = await self._accessibility_snapshot()
@@ -933,7 +1010,7 @@ class ChromeVisibleDialogueBrowser:
         )
 
     async def send_message(self, text: str) -> dict[str, Any]:
-        if self._cdp.is_available():
+        if await self._cdp_is_available():
             return await self._cdp.send_message(text)
         text = str(text or "").strip()
         if not text:
@@ -1997,12 +2074,32 @@ class WebInterlocutorSession:
         progress_callback: Any | None = None,
     ) -> WebInterlocutorResult:
         objective = str(objective or "").strip()
+        # CP126 376c864c: the destination arrives from a caller and is typed
+        # into a real browser, where Aura's composed messages are transmitted
+        # to whoever is on the other end. An execution policy decides that,
+        # not the caller.
+        permitted, refusal = _destination_is_permitted(url)
+        if not permitted:
+            logger.warning(
+                "🚫 Web interlocutor refused destination %r: %s", url, refusal
+            )
+            return WebInterlocutorResult(
+                ok=False,
+                target_url=str(url or ""),
+                objective=objective,
+                status="destination_refused",
+                error=(
+                    f"{refusal}. This capability holds conversations with known "
+                    "interlocutor surfaces only."
+                ),
+                completed_at=time.time(),
+            )
         # The governed skill gateway may coerce blank optional fields through
         # bool-ish sentinels such as "False". Treat those as absent; otherwise
         # the session skips cognitive composition and immediately fails the
         # proof gate with a non-substantive "opening".
         opening_message = _clean_message(str(opening_message or "").strip())
-        max_turns = max(1, min(int(max_turns or 1), 20))
+        max_turns = max(1, min(int(max_turns or 1), _MAX_EXTERNAL_TURNS_PER_RUN))
         wait_timeout_s = max(5.0, min(float(wait_timeout_s or _DEFAULT_WAIT_S), 180.0))
         result = WebInterlocutorResult(ok=False, target_url=url, objective=objective)
         ctx = dict(context or {})

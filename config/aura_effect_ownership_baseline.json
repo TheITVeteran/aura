@@ -5638,7 +5638,7 @@
       "category": "network_gateway",
       "count": 1,
       "path": "core/capabilities/web_interlocutor.py",
-      "scope": "<module>.ChromeCDPDialogueBrowser._active_target"
+      "scope": "<module>.ChromeCDPDialogueBrowser._page_targets"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
