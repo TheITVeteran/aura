@@ -81,3 +81,31 @@ def test_provenance_rule_names_the_real_sources(objective="hey"):
     # conversation, recalled memory, and her own beliefs
     assert "this conversation" in prompt
     assert "belief" in prompt
+
+
+# ── surfacing the distinctions the architecture already holds ─────────────
+
+@pytest.mark.parametrize(
+    "objective",
+    ["hey how are you", "Perform a full architecture review of the runtime"],
+)
+def test_calibration_rule_reaches_every_requirements_block(objective):
+    """Her beliefs carry confidences that reached the prompt and never her voice.
+
+    Five identity beliefs arrive with `confidence=0.90` attached, and nothing
+    told her what to do with the number — so she stated everything flatly and
+    invented where she held nothing. A distinction the architecture computes
+    and then never surfaces is a distinction she does not have.
+    """
+    assert "CALIBRATION" in _prompt(objective)
+
+
+def test_absence_of_a_belief_is_stated_as_information():
+    prompt = _prompt("hey").lower()
+    assert "do not have a view" in prompt or "no belief" in prompt
+
+
+def test_confidences_actually_arrive_in_the_prompt():
+    """The rule is worthless if the numbers it refers to are not there."""
+    prompt = _prompt("Perform a full architecture review of the runtime")
+    assert "confidence=" in prompt
