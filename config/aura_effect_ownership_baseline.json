@@ -677,6 +677,14 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
+      "path": "core/brain/cognitive/memory_management.py",
+      "scope": "<module>.MemoryConsolidator._write_journal"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
       "path": "core/brain/homeostatic_modulator.py",
       "scope": "<module>.SubstrateLogitProjection.save"
     },
@@ -687,6 +695,22 @@
       "count": 1,
       "path": "core/brain/llm/gemini_adapter.py",
       "scope": "<module>.DailyRateLimiter._save_state"
+    },
+    {
+      "callee": "self._custody.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
+      "scope": "<module>.CampaignJournal._write_all"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/brain/llm/local_code_model.py",
+      "scope": "<module>.write_model_trust_manifest"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -1305,6 +1329,14 @@
       "scope": "<module>.DomainSpecialistTrainer.train_domain"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/durable_external_verifier_job.py",
+      "scope": "<module>._private_directory"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1497,6 +1529,102 @@
       "scope": "<module>.save_recurrence_checkpoint"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>._root"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "custody.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "custody.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_checkpoint_migration.py",
+      "scope": "<module>._copy_exact"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_checkpoint_migration.py",
+      "scope": "<module>._copy_exact"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 3,
+      "path": "core/learning/resident_recurrent_sft_checkpoint_migration.py",
+      "scope": "<module>.migrate_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_checkpoint_migration.py",
+      "scope": "<module>.migrate_checkpoint"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1594,11 +1722,91 @@
     },
     {
       "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_recurrent_transition_repository.py",
+      "scope": "<module>._private_root"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_recurrent_transition_repository.py",
+      "scope": "<module>._publish_policy_state_replay_result"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
       "count": 1,
       "path": "core/learning/verified_transition_episode.py",
       "scope": "<module>._ensure_private_store_directory"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_launch_bundle.py",
+      "scope": "<module>._policy_state_replay_job"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._publish_generation"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>._ensure_root"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>._private_directory"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_rejection_transaction.py",
+      "scope": "<module>._private_directory"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._publish_generation"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>._ensure_root"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -1861,6 +2069,46 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
+      "path": "core/reality_reach/transactions.py",
+      "scope": "<module>.RealityActuationCoordinator._create"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/reality_reach/transactions.py",
+      "scope": "<module>.RealityActuationCoordinator._transition"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/reality_reach/transactions.py",
+      "scope": "<module>._private_root"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/reality_reach/trust_custody.py",
+      "scope": "<module>.KeychainAttachmentTrustStore._save_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/reality_reach/trust_custody.py",
+      "scope": "<module>.KeychainAttachmentTrustStore._save_locked"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
       "path": "core/reproducibility/proof_substrate.py",
       "scope": "<module>.ContentAddressedStore.put"
     },
@@ -2095,6 +2343,14 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.ensure_directory_async"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.move_path"
     },
     {
       "callee": "core.runtime.atomic_writer.ensure_private_directory",
@@ -2391,6 +2647,22 @@
       "count": 1,
       "path": "core/sandbox/runner.py",
       "scope": "<module>.run_untrusted"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/sandbox/untrusted_python.py",
+      "scope": "<module>._execute"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/sandbox/untrusted_python.py",
+      "scope": "<module>._wrap_with_boundary"
     },
     {
       "callee": "_atomic_write_bytes",
@@ -2857,6 +3129,14 @@
       "scope": "<module>.MetaLearner._log_step"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/meta_learner.py",
+      "scope": "<module>.MetaLearner._save"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -2871,6 +3151,14 @@
       "count": 1,
       "path": "core/adaptation/online_lora_governor.py",
       "scope": "<module>.OnlineLoRAGovernor._record"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/plasticity_governor.py",
+      "scope": "<module>.PlasticityGovernor._save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
@@ -3305,6 +3593,22 @@
       "scope": "<module>.VerifierFusionLedger.record_checked"
     },
     {
+      "callee": "<file_write_gateway>.write_bytes",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/substrate_readout_training.py",
+      "scope": "<module>.save_fit"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/substrate_readout_training.py",
+      "scope": "<module>.save_fit"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3423,6 +3727,22 @@
       "count": 1,
       "path": "core/cognitive/strange_loop.py",
       "scope": "<module>.StrangeLoop._save_weights"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/communication/messages_journal.py",
+      "scope": "<module>.MessagesDeliveryJournal._initialize"
+    },
+    {
+      "callee": "<file_write_gateway>.open_owned_binary",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/communication/messages_journal.py",
+      "scope": "<module>.MessagesDeliveryJournal._initialize"
     },
     {
       "callee": "<file_write_gateway>.write_text",
@@ -3697,6 +4017,14 @@
       "scope": "<module>.AmendmentCourt.record"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/governance/durable_learning.py",
+      "scope": "<module>.DurableLearningGate.persist_async"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3871,6 +4199,14 @@
       "count": 1,
       "path": "core/learning/latent_consolidation.py",
       "scope": "<module>.run_consolidation_cycle"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_batch",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/live_learner.py",
+      "scope": "<module>.LiveLearner._load_buffer"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -4241,6 +4577,22 @@
       "scope": "<module>.VSRCorpus.add"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/planning/mission_state.py",
+      "scope": "<module>.MissionState._execute_node"
+    },
+    {
+      "callee": "<file_write_gateway>.move_path_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/planning/mission_state.py",
+      "scope": "<module>.MissionState._execute_node"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4255,6 +4607,30 @@
       "count": 1,
       "path": "core/planning/task_graph.py",
       "scope": "<module>.TaskGraph.persist"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/providers/memory_provider.py",
+      "scope": "<module>.register_memory_services.create_knowledge_graph"
+    },
+    {
+      "callee": "<file_write_gateway>.replace_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/providers/memory_provider.py",
+      "scope": "<module>.register_memory_services.create_knowledge_graph"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/providers/memory_provider.py",
+      "scope": "<module>.register_memory_services.create_knowledge_graph"
     },
     {
       "callee": "<file_write_gateway>.ensure_directory",
@@ -4641,6 +5017,14 @@
       "scope": "<module>.PerformanceGuard._persist"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/release_certificate.py",
+      "scope": "<module>.write_certificate_async"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4773,6 +5157,14 @@
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
+      "path": "core/security/network_sentinel.py",
+      "scope": "<module>.NetworkSentinel._persist_baseline"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
       "path": "core/security/plugin_allowlist.py",
       "scope": "<module>.PluginAllowlist._save"
     },
@@ -4870,7 +5262,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/self_improvement/program_materialization.py",
-      "scope": "<module>.materialize_program"
+      "scope": "<module>._materialize"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -4878,7 +5270,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/self_improvement/program_materialization.py",
-      "scope": "<module>.materialize_program"
+      "scope": "<module>._materialize"
     },
     {
       "callee": "<file_write_gateway>.ensure_directory_async",
@@ -5143,6 +5535,14 @@
       "count": 1,
       "path": "core/skills/reddit_adapter.py",
       "scope": "<module>.RedditAdapterSkill._save_session"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/reddit_adapter.py",
+      "scope": "<module>.RedditAdapterSkill._set_connection_state"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -5636,17 +6036,17 @@
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
-      "count": 1,
+      "count": 2,
       "path": "core/capabilities/web_interlocutor.py",
-      "scope": "<module>.ChromeCDPDialogueBrowser._page_targets"
+      "scope": "<module>.ChromeCDPDialogueBrowser._new_target"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
-      "count": 2,
+      "count": 1,
       "path": "core/capabilities/web_interlocutor.py",
-      "scope": "<module>.ChromeCDPDialogueBrowser._new_target"
+      "scope": "<module>.ChromeCDPDialogueBrowser._page_targets"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
@@ -5671,6 +6071,14 @@
       "count": 1,
       "path": "core/consciousness/quantum_entropy.py",
       "scope": "<module>.QuantumEntropyBridge._try_refill_blocking"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/embodiment/mock_iot_plug.py",
+      "scope": "<module>.RestSmartPlug._status_request"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
@@ -5748,7 +6156,7 @@
       "callee": "<network_gateway>.request",
       "canonical_owner": false,
       "category": "network_gateway",
-      "count": 2,
+      "count": 1,
       "path": "core/skills/computer_use.py",
       "scope": "<module>.ComputerUseSkill._fetch_topic_image"
     },
@@ -5913,7 +6321,7 @@
       "scope": "<module>.ComputerUseSkill._execute_action"
     },
     {
-      "callee": "page.keyboard.press",
+      "callee": "password_input.fill",
       "canonical_owner": false,
       "category": "raw_browser",
       "count": 1,
@@ -5921,15 +6329,7 @@
       "scope": "<module>.RedditAdapterSkill._ensure_logged_in"
     },
     {
-      "callee": "page.keyboard.type",
-      "canonical_owner": false,
-      "category": "raw_browser",
-      "count": 2,
-      "path": "core/skills/reddit_adapter.py",
-      "scope": "<module>.RedditAdapterSkill._ensure_logged_in"
-    },
-    {
-      "callee": "password_input.click",
+      "callee": "password_input.press",
       "canonical_owner": false,
       "category": "raw_browser",
       "count": 1,
@@ -5937,7 +6337,7 @@
       "scope": "<module>.RedditAdapterSkill._ensure_logged_in"
     },
     {
-      "callee": "username_input.click",
+      "callee": "username_input.fill",
       "canonical_owner": false,
       "category": "raw_browser",
       "count": 1,
@@ -6484,7 +6884,7 @@
       "callee": "shutil.copy2",
       "canonical_owner": false,
       "category": "raw_file_mutation",
-      "count": 1,
+      "count": 2,
       "path": "core/adaptation/immune_system.py",
       "scope": "<module>.ImmuneSystem.initiate_rollback"
     },
@@ -7209,14 +7609,6 @@
       "scope": "<module>.ShadowWorkspaceManager.create"
     },
     {
-      "callee": "path.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architecture_quality/scorer.py",
-      "scope": "<module>.ArchitectureQualityReport.changed_module_for_path"
-    },
-    {
       "callee": "pathlib.Path().parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7228,23 +7620,7 @@
       "callee": "<pathlib.Path>.rename",
       "canonical_owner": false,
       "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/audit/__init__.py",
-      "scope": "<module>.AuditLog._heal_database"
-    },
-    {
-      "callee": "<pathlib.Path>.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/audit/__init__.py",
-      "scope": "<module>.AuditLog._heal_database"
-    },
-    {
-      "callee": "<pathlib.Path>.with_suffix().unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 4,
+      "count": 2,
       "path": "core/audit/__init__.py",
       "scope": "<module>.AuditLog._heal_database"
     },
@@ -7279,6 +7655,14 @@
       "count": 1,
       "path": "core/autonomy/autonomous_research_orchestrator.py",
       "scope": "<module>.AutonomousResearchOrchestrator._save_session"
+    },
+    {
+      "callee": "source.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/autonomy/autonomous_research_orchestrator.py",
+      "scope": "<module>._quarantine_corrupt_progress"
     },
     {
       "callee": "self._cache_dir.mkdir",
@@ -7481,6 +7865,22 @@
       "scope": "<module>.IntegrityGuard._write_audit_log"
     },
     {
+      "callee": "journal_path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/brain/cognitive/memory_management.py",
+      "scope": "<module>.MemoryConsolidator._commit_chroma"
+    },
+    {
+      "callee": "path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/cognitive/memory_management.py",
+      "scope": "<module>.MemoryConsolidator._recover_pending_journal"
+    },
+    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7545,14 +7945,6 @@
       "scope": "<module>.DailyRateLimiter._save_state"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -7590,26 +7982,10 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._open_directory"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
       "scope": "<module>.PrivateActionSnapshotStore._open_lock_file"
     },
     {
       "callee": "os.chmod",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._open_root"
-    },
-    {
-      "callee": "os.open",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
@@ -7623,14 +7999,6 @@
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
       "scope": "<module>.PrivateActionSnapshotStore._open_root"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._read_owned_at"
     },
     {
       "callee": "os.rmdir",
@@ -7657,22 +8025,6 @@
       "scope": "<module>.CampaignJournal.__init__"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
-      "scope": "<module>.CampaignJournal._acquire_lock"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
-      "scope": "<module>.CampaignJournal._atomic_publish"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -7695,22 +8047,6 @@
       "count": 1,
       "path": "core/brain/llm/latent_cortex/campaign_journal.py",
       "scope": "<module>.CampaignJournal._atomic_publish"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/campaign_journal.py",
-      "scope": "<module>.CampaignJournal._open_regular_append_file"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
-      "scope": "<module>._read_owned_bytes"
     },
     {
       "callee": "directory.mkdir",
@@ -7764,7 +8100,7 @@
       "callee": "os.open",
       "canonical_owner": true,
       "category": "raw_file_mutation",
-      "count": 2,
+      "count": 1,
       "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
       "scope": "<module>._atomic_create_or_verify"
     },
@@ -7785,28 +8121,12 @@
       "scope": "<module>._atomic_create_or_verify"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/worker_attempt_import.py",
-      "scope": "<module>._read_private_bytes"
-    },
-    {
       "callee": "lock_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/mlx_client.py",
       "scope": "<module>.MLXLocalClient._spawn_worker_blocking"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/mlx_client.py",
-      "scope": "<module>._open_spawn_lock_file"
     },
     {
       "callee": "_MLX_RUNTIME_PROBE_CACHE_PATH.parent.mkdir",
@@ -7847,6 +8167,14 @@
       "count": 1,
       "path": "core/brain/nonparametric_memory.py",
       "scope": "<module>.NonParametricMemory.persist"
+    },
+    {
+      "callee": "source.rename",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/nonparametric_worker.py",
+      "scope": "<module>._quarantine_unusable_datastore"
     },
     {
       "callee": "os.chmod",
@@ -8023,6 +8351,30 @@
       "count": 1,
       "path": "core/brain/trace_logger.py",
       "scope": "<module>.TraceLogger.__init__"
+    },
+    {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
     },
     {
       "callee": "os.open",
@@ -8207,6 +8559,14 @@
       "count": 1,
       "path": "core/capabilities/self_taught_builder.py",
       "scope": "<module>.build_app_verified"
+    },
+    {
+      "callee": "pathlib.Path().unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/web_interlocutor.py",
+      "scope": "<module>._discard_capture_screenshot"
     },
     {
       "callee": "self.base_data_dir.mkdir",
@@ -8577,8 +8937,32 @@
       "scope": "<module>.UnifiedSelf._save_to_disk"
     },
     {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
       "callee": "project_root.mkdir",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/container.py",
@@ -8586,7 +8970,7 @@
     },
     {
       "callee": "seal_path.parent.mkdir",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/container.py",
@@ -8650,7 +9034,7 @@
     },
     {
       "callee": "path.parent.mkdir",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/continuity.py",
@@ -8658,11 +9042,35 @@
     },
     {
       "callee": "path.parent.mkdir",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/continuity.py",
       "scope": "<module>.ContinuityEngine.save"
+    },
+    {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
     },
     {
       "callee": "self.db_path.replace",
@@ -8719,14 +9127,6 @@
       "count": 1,
       "path": "core/conversation/external_chat.py",
       "scope": "<module>.TerminalChatWindow._create_chat_script"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/conversation/external_chat.py",
-      "scope": "<module>.TerminalChatWindow._read_pipe_messages"
     },
     {
       "callee": "os.open",
@@ -9257,22 +9657,6 @@
       "scope": "<module>.TaskLifecycleManager.__init__"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>.NonceLedger._read_bytes_locked"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/governance/capability_chain.py",
-      "scope": "<module>._read_private_material"
-    },
-    {
       "callee": "self.LEDGER.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9521,14 +9905,6 @@
       "scope": "<module>.ExperienceStore.__init__"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/contradiction_tensor.py",
-      "scope": "<module>.ContradictionTensorHead.load"
-    },
-    {
       "callee": "self.config.work_root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9745,14 +10121,6 @@
       "scope": "<module>.LiveLearner._write_training_dataset"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/mistake_locator.py",
-      "scope": "<module>.MistakeLocatorHead.load"
-    },
-    {
       "callee": "shutil.copy2",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9775,14 +10143,6 @@
       "count": 1,
       "path": "core/learning/model_merge.py",
       "scope": "<module>.transplant_model_dirs_streaming"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/neural_uncertainty.py",
-      "scope": "<module>.NeuralUncertaintyHead.load"
     },
     {
       "callee": "data_dir.mkdir",
@@ -9817,6 +10177,30 @@
       "scope": "<module>.RecursiveSelfImprovementLoop._run_tool_creation"
     },
     {
+      "callee": "adapter_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.load_checkpoint"
+    },
+    {
+      "callee": "optimizer_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.load_checkpoint"
+    },
+    {
+      "callee": "<pathlib.Path>.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_checkpoint_migration.py",
+      "scope": "<module>._copy_exact"
+    },
+    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9831,14 +10215,6 @@
       "count": 1,
       "path": "core/learning/rsi_lineage.py",
       "scope": "<module>.RSILineageLedger.__init__"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/rsi_lineage.py",
-      "scope": "<module>.RSILineageLedger.append"
     },
     {
       "callee": "root.mkdir",
@@ -9865,14 +10241,6 @@
       "scope": "<module>.StopPolicyHead.save"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/stop_policy.py",
-      "scope": "<module>.StopPolicyHead.save"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9887,14 +10255,6 @@
       "count": 1,
       "path": "core/learning/stop_policy.py",
       "scope": "<module>.StopPolicyHead.save"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/stop_policy.py",
-      "scope": "<module>._read_stable_json"
     },
     {
       "callee": "self.artifact_dir.mkdir",
@@ -9929,14 +10289,6 @@
       "scope": "<module>.UpdateAcceptanceHead.save"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/update_acceptance.py",
-      "scope": "<module>.UpdateAcceptanceHead.save"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9953,28 +10305,12 @@
       "scope": "<module>.UpdateAcceptanceHead.save"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/update_acceptance.py",
-      "scope": "<module>._read_stable_artifact"
-    },
-    {
       "callee": "self._store_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/learning/verifiable_preference_harness.py",
       "scope": "<module>.VerifiablePreferenceHarness.__init__"
-    },
-    {
-      "callee": "self._store_path.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verifiable_preference_harness.py",
-      "scope": "<module>.VerifiablePreferenceHarness._persist"
     },
     {
       "callee": "os.open",
@@ -9993,68 +10329,212 @@
       "scope": "<module>.ExternalAttemptLedger.__init__"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>.ExternalAttemptLedger.__init__"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>.ExternalAttemptLedger.append"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>.TransitionArtifactStore.__init__"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>._hash_regular_file"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>._read_regular_file"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>._read_regular_file_at"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/verified_transition_episode.py",
-      "scope": "<module>._write_regular_file_once_at"
-    },
-    {
       "callee": "os.unlink",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/learning/verified_transition_episode.py",
       "scope": "<module>._write_regular_file_once_at"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore.__init__"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._cleanup_temporaries"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._cleanup_temporaries"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._publish_generation"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._publish_generation"
+    },
+    {
+      "callee": "temporary.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore._publish_generation"
+    },
+    {
+      "callee": "entry.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>.VerifiedTransitionMeasurementChainStore.begin"
+    },
+    {
+      "callee": "child.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>._ensure_child"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_measurement_chain.py",
+      "scope": "<module>._ensure_child"
+    },
+    {
+      "callee": "request_path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
+    },
+    {
+      "callee": "response_path.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
+    },
+    {
+      "callee": "directory.rmdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_rejection_transaction.py",
+      "scope": "<module>.VerifiedTransitionRejectionTransactionStore.inventory"
+    },
+    {
+      "callee": "directory.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_rejection_transaction.py",
+      "scope": "<module>.VerifiedTransitionRejectionTransactionStore.stage"
+    },
+    {
+      "callee": "generations.rmdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._cleanup_empty_transaction_locked"
+    },
+    {
+      "callee": "transaction_dir.rmdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._cleanup_empty_transaction_locked"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._publish_generation"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._publish_generation"
+    },
+    {
+      "callee": "temporary.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._publish_generation"
+    },
+    {
+      "callee": "child.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._remove_abandoned_tree"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 3,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._remove_abandoned_tree"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore._remove_abandoned_tree"
+    },
+    {
+      "callee": "transaction_dir.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>.VerifiedTransitionTransactionStore.stage"
+    },
+    {
+      "callee": "child.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>._ensure_private_child"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>._ensure_private_child"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_transaction.py",
+      "scope": "<module>._write_safetensors"
     },
     {
       "callee": "self.config.work_root.mkdir",
@@ -10129,6 +10609,14 @@
       "scope": "<module>.WeightCompoundingLoop.train"
     },
     {
+      "callee": "self._db_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/memory/associative_entity_memory.py",
+      "scope": "<module>.AssociativeEntityMemory._init_db"
+    },
+    {
       "callee": "self.storage_file.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10191,14 +10679,6 @@
       "count": 1,
       "path": "core/memory/aura_self_profile.py",
       "scope": "<module>.AuraSelfProfile._save_to_disk"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/black_hole.py",
-      "scope": "<module>._read_local_key"
     },
     {
       "callee": "os.makedirs",
@@ -10359,14 +10839,6 @@
       "count": 1,
       "path": "core/memory/horcrux.py",
       "scope": "<module>.HorcruxManager._save_shard_cache"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/horcrux.py",
-      "scope": "<module>._load_or_create_local_hardware_seed"
     },
     {
       "callee": "seed_path.parent.mkdir",
@@ -10617,6 +11089,30 @@
       "scope": "<module>.MycelialNetwork.vault_sync._sync_worker"
     },
     {
+      "callee": "key_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
+      "callee": "open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
       "callee": "candidate.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10793,7 +11289,7 @@
       "scope": "<module>.MissionState.__init__"
     },
     {
-      "callee": "<pathlib.Path>.mkdir",
+      "callee": "path.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -10801,7 +11297,7 @@
       "scope": "<module>.MissionState._execute_node"
     },
     {
-      "callee": "<pathlib.Path>.parent.mkdir",
+      "callee": "path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -10847,14 +11343,6 @@
       "count": 1,
       "path": "core/planning/task_graph.py",
       "scope": "<module>.TaskGraph.persist"
-    },
-    {
-      "callee": "kg_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/providers/memory_provider.py",
-      "scope": "<module>.register_memory_services.create_knowledge_graph"
     },
     {
       "callee": "db_path.parent.mkdir",
@@ -10943,14 +11431,6 @@
       "count": 1,
       "path": "core/reality_reach/digital_twin.py",
       "scope": "<module>.RealityDigitalTwinGraph._prepare_storage"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/reality_reach/digital_twin.py",
-      "scope": "<module>.RealityDigitalTwinGraph._write_archive_json"
     },
     {
       "callee": "os.replace",
@@ -11409,6 +11889,22 @@
       "scope": "<module>.SafetyGate.rollback"
     },
     {
+      "callee": "shutil.copytree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/app_bundle_sync.py",
+      "scope": "<module>.install_staged_bundle"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/app_bundle_sync.py",
+      "scope": "<module>.install_staged_bundle"
+    },
+    {
       "callee": "archive_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11449,23 +11945,7 @@
       "scope": "<module>.ArchiveGateway.extract_tar_gz"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/atomic_writer.py",
-      "scope": "<module>._fsync_dir"
-    },
-    {
       "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/atomic_writer.py",
-      "scope": "<module>.atomic_append_text"
-    },
-    {
-      "callee": "os.open",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
@@ -11569,36 +12049,12 @@
       "scope": "<module>.ensure_private_directory"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/atomic_writer.py",
-      "scope": "<module>.interprocess_file_lock"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/audit_chain.py",
-      "scope": "<module>.AuditChain._append_fd_locked"
-    },
-    {
       "callee": "self.root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/runtime/audit_chain.py",
       "scope": "<module>.AuditChain._ensure_root_ready_locked"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/audit_chain.py",
-      "scope": "<module>.AuditChain._fsync_dir"
     },
     {
       "callee": "os.open",
@@ -11615,14 +12071,6 @@
       "count": 1,
       "path": "core/runtime/audit_chain.py",
       "scope": "<module>.AuditChain.export"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/audit_chain.py",
-      "scope": "<module>.AuditChain.flush"
     },
     {
       "callee": "self.ledger_path.parent.mkdir",
@@ -11761,38 +12209,6 @@
       "scope": "<module>.WorkflowStore.__init__"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/runtime/file_read_gateway.py",
-      "scope": "<module>._open_directory_no_follow"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_read_gateway.py",
-      "scope": "<module>._open_stable_at"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_read_gateway.py",
-      "scope": "<module>.open_stable_readonly_binary"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_read_gateway.py",
-      "scope": "<module>.read_stable_directory_files"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -11878,14 +12294,6 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>.FileWriteGateway.open_owned_binary"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.write_bytes_batch_in_directory"
     },
     {
@@ -11895,22 +12303,6 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.write_bytes_batch_in_directory"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>._open_directory_no_follow"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>._read_regular_at"
     },
     {
       "callee": "os.replace",
@@ -11919,14 +12311,6 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>._recover_directory_batch"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>._stage_bytes_at"
     },
     {
       "callee": "os.unlink",
@@ -11951,14 +12335,6 @@
       "count": 1,
       "path": "core/runtime/flagship_doctor.py",
       "scope": "<module>.main"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/runtime/launch_provenance.py",
-      "scope": "<module>.capture_runtime_shell_assets"
     },
     {
       "callee": "self._db_path.parent.mkdir",
@@ -12007,14 +12383,6 @@
       "count": 1,
       "path": "core/runtime/performance_guard.py",
       "scope": "<module>"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/persistence_ownership.py",
-      "scope": "<module>._fsync_parent"
     },
     {
       "callee": "<pathlib.Path>.parent.mkdir",
@@ -12081,23 +12449,7 @@
       "scope": "<module>.ReceiptStore._initialize_high_volume_ledger"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/resource_stage_guard.py",
-      "scope": "<module>._read_canonical"
-    },
-    {
       "callee": "destination.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/resource_stage_guard.py",
-      "scope": "<module>._write_create_once"
-    },
-    {
-      "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -12135,6 +12487,70 @@
       "count": 1,
       "path": "core/runtime/runtime_manifest.py",
       "scope": "<module>.write_runtime_manifest"
+    },
+    {
+      "callee": "os.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody._open_parent"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.atomic_write_bytes"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.atomic_write_bytes"
+    },
+    {
+      "callee": "os.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.ensure_directory"
+    },
+    {
+      "callee": "os.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.open_directory"
+    },
+    {
+      "callee": "os.link",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.write_bytes_once"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>.DirectoryCustody.write_bytes_once"
+    },
+    {
+      "callee": "os.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/secure_path_custody.py",
+      "scope": "<module>._open_absolute_directory"
     },
     {
       "callee": "workspace.mkdir",
@@ -12183,14 +12599,6 @@
       "count": 1,
       "path": "core/runtime/shutdown_artifact_store.py",
       "scope": "<module>.write_shutdown_artifact"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/subprocess_gateway.py",
-      "scope": "<module>._open_spawn_stream"
     },
     {
       "callee": "target.parent.mkdir",
@@ -12401,6 +12809,14 @@
       "scope": "<module>.MacOSSandbox.execute_command"
     },
     {
+      "callee": "path.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/sandbox/untrusted_python.py",
+      "scope": "<module>._escape"
+    },
+    {
       "callee": "self.path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -12482,14 +12898,6 @@
     },
     {
       "callee": "os.chmod",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/emergency_protocol.py",
-      "scope": "<module>._atomic_write_bytes"
-    },
-    {
-      "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -12607,6 +13015,14 @@
       "count": 1,
       "path": "core/security/native_desktop_bridge.py",
       "scope": "<module>._invoke_resident_bridge"
+    },
+    {
+      "callee": "self._baseline_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/network_sentinel.py",
+      "scope": "<module>.NetworkSentinel._persist_baseline"
     },
     {
       "callee": "self.path.parent.mkdir",
@@ -13111,54 +13527,6 @@
       "count": 1,
       "path": "core/self_modification/structural_mutator.py",
       "scope": "<module>.StructuralMutator.__init__"
-    },
-    {
-      "callee": "self.backup_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine.__init__"
-    },
-    {
-      "callee": "backup_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine._create_backup"
-    },
-    {
-      "callee": "backup_path.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine._create_backup"
-    },
-    {
-      "callee": "shutil.copy2",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine._create_backup"
-    },
-    {
-      "callee": "shutil.copy2",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine._rollback"
-    },
-    {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification_engine.py",
-      "scope": "<module>.SelfModificationEngine._rollback"
     },
     {
       "callee": "self.data_dir.mkdir",
@@ -13769,14 +14137,6 @@
       "scope": "<module>.acquire_instance_lock"
     },
     {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 4,
-      "path": "core/utils/singleton.py",
-      "scope": "<module>.acquire_instance_lock"
-    },
-    {
       "callee": "self._path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -14009,6 +14369,14 @@
       "scope": "<module>.async_main"
     },
     {
+      "callee": "socket.create_connection",
+      "canonical_owner": false,
+      "category": "raw_network",
+      "count": 1,
+      "path": "core/conversation/capability_preconditions.py",
+      "scope": "<module>._probe_network"
+    },
+    {
       "callee": "websockets.connect",
       "canonical_owner": false,
       "category": "raw_network",
@@ -14097,6 +14465,14 @@
       "scope": "<module>.SovereignNetworkSkill._check_internet"
     },
     {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/conversation/capability_preconditions.py",
+      "scope": "<module>._probe_accessibility_permission"
+    },
+    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -14105,12 +14481,68 @@
       "scope": "<module>.ShadowExecutionPhase._validate_mutation_detailed"
     },
     {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/learning/durable_external_verifier_job.py",
+      "scope": "<module>.DurableExternalVerifierJob._runner_call"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
+    },
+    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
       "count": 1,
       "path": "core/ops/process_manager.py",
       "scope": "<module>.ManagedProcess.start"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/perception/app_dictionary.py",
+      "scope": "<module>._run_sdef"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/perception/screen_blueprint.py",
+      "scope": "<module>.read_browser_document"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/perception/screen_blueprint.py",
+      "scope": "<module>.read_window_elements"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/runtime/release_certificate.py",
+      "scope": "<module>.current_commit"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/runtime/store_locality.py",
+      "scope": "<module>._fstype_darwin"
     },
     {
       "callee": "subprocess.run",
@@ -14597,6 +15029,22 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
+      "path": "core/runtime/app_bundle_sync.py",
+      "scope": "<module>.bundle_is_running"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/app_bundle_sync.py",
+      "scope": "<module>.sync_app_bundle"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
       "path": "core/runtime/consequential_primitives.py",
       "scope": "<module>.guarded_shell_exec"
     },
@@ -14695,6 +15143,14 @@
       "count": 1,
       "path": "core/sandbox/macos_sandbox.py",
       "scope": "<module>.MacOSSandbox.execute_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/sandbox/untrusted_python.py",
+      "scope": "<module>._spawn"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15165,6 +15621,14 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
+      "path": "core/adaptation/immune_system.py",
+      "scope": "<module>.ImmuneSystem._rollback_authorized"
+    },
+    {
+      "callee": "core.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
       "path": "core/adaptation/online_lora_governor.py",
       "scope": "<module>.OnlineLoRAGovernor._decide"
     },
@@ -15425,6 +15889,14 @@
       "scope": "<module>.OvertActionLoop._authorize_fallback"
     },
     {
+      "callee": "core.governance.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 2,
+      "path": "core/skills/embodiment_skill.py",
+      "scope": "<module>.EmbodimentSkill._authorize_connection"
+    },
+    {
       "callee": "<will_decision>.decide",
       "canonical_owner": false,
       "category": "will_decision",
@@ -15490,6 +15962,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "8c0b60d9542291fc42395a6f79739d8454827237eb1a34c9b7d1a1aa6160387b",
+  "inventory_sha256": "cd20c1e32c4945c283f9543b83d029ec23bb4c54519cf123b0d50aa643684005",
   "schema_version": 1
 }

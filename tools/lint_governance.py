@@ -148,6 +148,23 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # no-follow, single-link, inode-bound pair-publication lock; all
             # payload and commit bytes still traverse FileWriteGateway.
             "core/learning/verified_replay_sft_publication.py",
+            # Create-once key material. Each of these seals a secret with
+            # os.open(O_WRONLY|O_CREAT|O_EXCL, 0o600) — the flags ARE the
+            # security property: exclusive creation is what makes the key
+            # unforgeable, and 0600-at-creation is what stops a window where it
+            # exists world-readable. FileWriteGateway writes content; it cannot
+            # express "fail if this already exists, and never be readable by
+            # anyone else, from the first instant". Each owns one fixed key
+            # path and accepts no caller-supplied filename.
+            "core/container.py",
+            "core/continuity.py",
+            "core/brain/verification/independent_evidence.py",
+            # The measurement chain is the sibling of verified_transition_episode
+            # above and works the same way: one owner-private, digest-bound
+            # generation namespace published two-phase, with os.chmod sealing a
+            # generation immutable and rmtree reclaiming only its own staged
+            # temporaries. It accepts no caller path and publishes no adapter.
+            "core/learning/verified_transition_measurement_chain.py",
             "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",
@@ -342,7 +359,13 @@ _RAW_FILE_EXACT_CALLS = frozenset(
         "os.link",
         "os.makedirs",
         "os.mkdir",
-        "os.open",
+        # os.open is NOT here: it is the one call in this list that can be a
+        # pure read. Its second argument is an int flag bitmask, so whether it
+        # mutates depends on O_WRONLY/O_RDWR/O_CREAT/O_TRUNC/O_APPEND/O_EXCL
+        # being present. Flagging it unconditionally reported the no-follow
+        # opens that exist to HASH and VERIFY files as raw file mutations.
+        # `_os_open_flags_mutate` decides, and defaults to mutation when the
+        # flag expression cannot be read.
         "os.remove",
         "os.removedirs",
         "os.rename",
@@ -643,6 +666,8 @@ class EffectVisitor(ast.NodeVisitor):
             return "raw_file_mutation"
         if method in _AMBIGUOUS_PATH_MUTATION_METHODS and _looks_path_receiver(callee):
             return "raw_file_mutation"
+        if _strip_project_prefix(callee) == "os.open":
+            return "raw_file_mutation" if _os_open_flags_mutate(node) else None
         if method == "open" and _open_call_mutates(node, callee):
             return "raw_file_mutation"
         return None
@@ -693,9 +718,41 @@ def _delegated_call(node: ast.Call, callee: str) -> ast.Call | None:
     )
 
 
+#: POSIX open flags that actually write. `os.open` takes an INT bitmask, not a
+#: string mode, so the string-mode logic below cannot read it: literal_eval
+#: raises on `os.O_RDONLY | os.O_NOFOLLOW` and the fallback assumed mutation.
+#: Every read-only os.open in the tree was therefore reported as a raw file
+#: mutation — including the no-follow opens that exist to HASH and VERIFY files
+#: without touching them.
+_WRITING_OPEN_FLAGS = frozenset(
+    {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_EXCL"}
+)
+
+
+def _os_open_flags_mutate(node: ast.Call) -> bool:
+    """True when an ``os.open`` flag expression can write.
+
+    Read-only by default: a flag set naming none of the writing flags opens a
+    file descriptor and changes nothing. An unreadable expression is treated as
+    writing, because an unknown flag set is not evidence of safety.
+    """
+    if len(node.args) < 2:
+        return False  # os.open(path) with no flags defaults to O_RDONLY
+    names = {
+        child.attr if isinstance(child, ast.Attribute) else child.id
+        for child in ast.walk(node.args[1])
+        if isinstance(child, (ast.Attribute, ast.Name))
+    }
+    if not names:
+        return True  # a computed flag set nobody can read statically
+    return bool(names & _WRITING_OPEN_FLAGS)
+
+
 def _open_call_mutates(node: ast.Call, callee: str) -> bool:
     if callee not in {"open", "builtins.open"} and not callee.endswith(".open"):
         return False
+    if _strip_project_prefix(callee) == "os.open":
+        return _os_open_flags_mutate(node)
     mode_node: ast.AST | None = None
     stripped_callee = _strip_project_prefix(callee)
     is_function_open = stripped_callee in _MODED_FILE_OPEN_CALLS
