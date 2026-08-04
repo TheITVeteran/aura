@@ -1923,6 +1923,20 @@ class CapabilityEngine(AuraBaseModule):
         triggered = []
         msg = normalize_memory_intent_text(message)
         skip_web_search = self._looks_like_search_capability_question(message)
+
+        # Trigger patterns match WORDS, and several of them contain proper
+        # nouns — `r"(?:ask|message) (?:gemini|chatgpt|claude|another ai)"`.
+        # So naming a thing was enough to route a turn at it, and "What do you
+        # think of ChatGPT?" dispatched a browser session. The distinction is
+        # grammatical, not a property of which name was used: is the thing the
+        # object of an instruction, or the subject of a remark?
+        #
+        # `_looks_like_search_capability_question` is the same fix made once,
+        # for one skill, after "the search for a new apartment" opened a
+        # browser. This is that fix made generally, so the next skill that gets
+        # a proper noun in a pattern inherits it instead of needing its own.
+        mentions_without_asking = self._is_mention_rather_than_request(message)
+
         for name, meta in self.skills.items():
             if not meta.enabled:
                 continue
@@ -1934,6 +1948,8 @@ class CapabilityEngine(AuraBaseModule):
                 "grounded_search",
                 "sovereign_browser",
             }:
+                continue
+            if mentions_without_asking:
                 continue
             for pattern in meta.trigger_patterns:
                 if re.search(pattern, msg):
@@ -1979,6 +1995,23 @@ class CapabilityEngine(AuraBaseModule):
         if re.search(r"\bresearch\s+(?:about|on)\b", msg) and not skip_web_search:
             _promote("web_search")
         return triggered
+
+    @staticmethod
+    def _is_mention_rather_than_request(message: str) -> bool:
+        """True when the turn talks about something instead of asking for it.
+
+        Fails OPEN — an unavailable classifier must not silently stop every
+        capability in the runtime from being reachable.
+        """
+        try:
+            from core.conversation.request_mood import (
+                names_a_thing_without_asking_for_it,
+            )
+
+            return bool(names_a_thing_without_asking_for_it(message))
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("capability_engine.request_mood", exc, severity="warning")
+            return False
 
     @staticmethod
     def _looks_like_reasoning_time_problem(message: str) -> bool:

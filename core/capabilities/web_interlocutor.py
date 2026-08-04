@@ -1042,6 +1042,79 @@ class ChromeVisibleDialogueBrowser:
     active.getAttribute('place' + 'holder') || '',
     active.isContentEditable ? 'contenteditable' : ''
   ].filter(Boolean).join('|') : '';
+  // ── Human-like page affordances, on EVERY site ────────────────────────
+  // A person reading a long thread does two things without being told: they
+  // scroll to the newest content, and when the page offers a "jump to latest"
+  // control they click it. Only the chatgpt.com branch below did either, so on
+  // every other site she read whatever happened to be in the viewport and
+  // reported it as the page — the middle of a conversation, described as its
+  // end.
+  //
+  // Nothing here is site-specific. Controls are matched on what they SAY they
+  // do (accessible name, aria-label, title, text) and on the shape a
+  // scroll-to-bottom control has (a small control pinned near the bottom of a
+  // scroll container). Only navigation controls are touched; this reads a
+  // page, it does not act on one.
+  const affordancesUsed = [];
+  const goToNewest = () => {
+    const wants = /(scroll|jump|go)\s*(to)?\s*(the)?\s*(bottom|end|latest|newest|last|most recent)|new messages?|latest messages?|scroll down/i;
+    const buttons = Array.from(document.querySelectorAll(
+      'button,[role="button"],a[href="#"],[aria-label],[title]'
+    )).filter(visible);
+    for (const el of buttons) {
+      const says = [
+        el.getAttribute('aria-label') || '',
+        el.getAttribute('title') || '',
+        el.getAttribute('data-testid') || '',
+        (el.innerText || el.textContent || '').trim().slice(0, 60)
+      ].join(' ');
+      if (!wants.test(says)) continue;
+      try { el.click(); affordancesUsed.push('named:' + says.trim().slice(0, 40)); } catch (e) {}
+      break;
+    }
+    if (!affordancesUsed.length) {
+      // Unlabelled chevron: a small control sitting low in the viewport,
+      // horizontally centred-ish, inside or beside a scrollable region. This
+      // is the shape, not any one site's markup.
+      const vh = window.innerHeight || 0;
+      const vw = window.innerWidth || 0;
+      for (const el of buttons) {
+        const r = el.getBoundingClientRect();
+        const small = r.width > 16 && r.width < 80 && r.height > 16 && r.height < 80;
+        const low = r.bottom > vh * 0.6 && r.top < vh;
+        const centred = r.left > vw * 0.15 && r.right < vw * 0.85;
+        if (!(small && low && centred)) continue;
+        const glyph = (el.innerText || el.textContent || '') + (el.innerHTML || '').slice(0, 400);
+        if (!/(chevron|arrow|down|↓|⌄|▼)/i.test(glyph)) continue;
+        try { el.click(); affordancesUsed.push('shape:bottom_chevron'); } catch (e) {}
+        break;
+      }
+    }
+    // Then scroll every genuinely scrollable ancestor to its end. Walking the
+    // computed overflow finds the real container; guessing it by CSS class
+    // breaks whenever a site reshuffles its markup, and when it breaks the
+    // thread silently stops following the conversation.
+    try {
+      const deepest = document.elementFromPoint(vwCentre(), (window.innerHeight || 2) - 2) || document.body;
+      let node = deepest;
+      let hops = 0;
+      while (node && node !== document.body && hops < 24) {
+        const st = getComputedStyle(node);
+        if (/(auto|scroll)/.test(st.overflowY) && node.scrollHeight > node.clientHeight) {
+          node.scrollTop = node.scrollHeight;
+          affordancesUsed.push('scrolled_container');
+        }
+        node = node.parentElement;
+        hops += 1;
+      }
+      if (document.scrollingElement) {
+        document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+      }
+    } catch (e) {}
+  };
+  const vwCentre = () => Math.floor((window.innerWidth || 2) / 2);
+  try { goToNewest(); } catch (e) {}
+
   // ChatGPT: read the actual conversation turns from the message DOM instead of
   // the whole-page innerText (which is menus/UI). Far cleaner reply detection.
   let pageText;
@@ -1102,6 +1175,7 @@ class ChromeVisibleDialogueBrowser:
     text: pageText,
     segments: segments.slice(-80),
     active_element: activeLabel,
+    affordances_used: affordancesUsed,
     editable_count: editableCount,
     generating: generating
   });
