@@ -369,6 +369,66 @@ def _turn_needs_undistorted_computation(user_message: Any) -> bool:
         return False
 
 
+def _apply_neurodynamic_sampling_bias(
+    controls: dict[str, Any],
+    advice: Any,
+) -> dict[str, Any]:
+    """Let the spiking model change the decode, not just the prompt.
+
+    ``SpikingActiveInferenceAdvisor._sampling_bias`` computes three numbers
+    from the neurodynamics: ``temperature_delta``, ``top_p_delta`` and
+    ``max_tokens_factor``. Only the last one was ever read. The first two were
+    computed on every turn and dropped, so the spiking model's entire route to
+    behaviour was ``_compact_spiking_active_inference_directive`` — English
+    sentences appended to the prompt, "Neurodynamic advisory: Keep the reply
+    compact and stable because runtime load pressure is elevated."
+
+    That is what "advisory-only, decoupled from the decision pipeline" meant in
+    practice: a neurodynamic model whose only actuator was a sentence. Asking
+    the model nicely is not a mechanism.
+
+    The deltas now move the actual decode parameters, inside the same bounds
+    the affective controls already respect — so uncertainty and error pressure
+    narrow the distribution the tokens are drawn from, and novelty widens it.
+    Bounded, auditable, and falsifiable: change the neurodynamics and the
+    sampler changes.
+    """
+    if not controls or not isinstance(advice, dict):
+        return controls
+    sampling = advice.get("sampling_bias")
+    if not isinstance(sampling, dict):
+        return controls
+
+    def _delta(key: str, limit: float) -> float:
+        try:
+            value = float(sampling.get(key, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        if not (-limit <= value <= limit):
+            return 0.0
+        return value
+
+    temperature_delta = _delta("temperature_delta", 0.25)
+    top_p_delta = _delta("top_p_delta", 0.25)
+    if not temperature_delta and not top_p_delta:
+        return controls
+
+    updated = dict(controls)
+    if "temperature" in updated and temperature_delta:
+        updated["temperature"] = round(
+            max(0.22, min(0.82, float(updated["temperature"]) + temperature_delta)), 4
+        )
+    if "top_p" in updated and top_p_delta:
+        updated["top_p"] = round(
+            max(0.72, min(0.94, float(updated["top_p"]) + top_p_delta)), 4
+        )
+    updated["neurodynamic_sampling_applied"] = {
+        "temperature_delta": temperature_delta,
+        "top_p_delta": top_p_delta,
+    }
+    return updated
+
+
 def _live_mind_generation_controls(
     live_mind_context: Any,
     *,
@@ -2708,6 +2768,12 @@ class CognitiveEngine:
             context.get("live_mind_generation_controls"), dict
         ):
             live_mind_generation_controls = dict(context["live_mind_generation_controls"])
+        # The spiking model's temperature and top-p deltas reach the sampler
+        # here. Before this they were computed every turn and dropped, leaving
+        # a prompt sentence as the neurodynamics' only actuator.
+        live_mind_generation_controls = _apply_neurodynamic_sampling_bias(
+            live_mind_generation_controls, advice
+        )
         live_mind_controls_bound = _live_mind_controls_bound(
             live_mind_context,
             live_mind_generation_controls,

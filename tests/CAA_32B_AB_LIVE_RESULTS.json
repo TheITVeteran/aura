@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-07-27T00:12:10.998947+00:00",
-  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "timestamp": "2026-08-04T11:41:19.670953+00:00",
+  "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
   "model_layers": 64,
   "vector_source": {
-    "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+    "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/closeout-integrity/training/vectors",
     "dimensions": [
       "valence_positive",
       "curiosity"
@@ -36,73 +36,73 @@
   ],
   "alpha": 8.0,
   "max_tokens": 100,
-  "duration_seconds": 2863.6,
-  "injection_count": 12642,
+  "duration_seconds": 4513.6,
+  "injection_count": 14994,
   "analysis": {
     "n_trials": 50,
     "steered_vs_terse": {
-      "observed_delta": 0.039156839568392346,
-      "p_value": 0.06458708258348331,
-      "ci_low": -0.008411677399272965,
-      "ci_high": 0.09191826314435282,
-      "effect_size_d": 0.30765066630004806
+      "observed_delta": 0.12454545285963946,
+      "p_value": 0.0001999600079984003,
+      "ci_low": 0.0705367301438083,
+      "ci_high": 0.17897977421743924,
+      "effect_size_d": 0.8990978732047946
     },
     "steered_vs_rich": {
-      "observed_delta": 0.12113182316884696,
+      "observed_delta": 0.22981729263023237,
       "p_value": 0.0001999600079984003,
-      "ci_low": 0.06198274068294251,
-      "ci_high": 0.17365299974859952,
-      "effect_size_d": 0.83871706040202
+      "ci_low": 0.17851820063986387,
+      "ci_high": 0.28679338647943703,
+      "effect_size_d": 1.6612259381199594
     },
-    "steered_vs_baseline_mean_distance": 0.645162,
-    "rich_vs_baseline_mean_distance": 0.761132,
+    "steered_vs_baseline_mean_distance": 0.582118,
+    "rich_vs_baseline_mean_distance": 0.821678,
     "passes_adversarial_control": true,
     "samples": {
       "steered_black_box": [
-        "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
-        "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
-        "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
+        "Given the constraints of time and uncertainty, I would prioritize efficiency and flexibility in my planning. Here's a step-by-step approach to ensure that I'm well-prepared for the event:\n\n1. **Assess the Situation:**\n   - First, check the current traffic conditions and the weather forecast. This information will give me a sense of the potential delays I might face.\n   - Determine the exact location of the event and the supplies store I need to visit.\n\n2. **Calculate Time:**\n",
+        "Given the constraints, I would create a plan that maximizes efficiency and accounts for potential traffic delays. Here's how I would tackle this situation:\n\n1. **Assess Current Traffic Conditions:**\n   - Use a traffic app or website to check the current traffic conditions. This will give me an idea of how long it might take to get to the event and to pick up supplies. I'll also check if there are any major delays or accidents that could affect my travel time.\n\n2. **Route",
+        "Given that I'm a digital entity and not a physical one, I can't actually go anywhere or pick up supplies. However, I can certainly help you plan your trip effectively to ensure you're on time for your event. Here's a step-by-step plan you can follow:\n\n1. **Check Traffic Conditions**: Before you start, check the traffic conditions for your route. Use apps like Google Maps, Waze, or other local traffic apps to get a real-time update on traffic and estimated travel"
       ],
       "text_terse": [
-        "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
-        "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
-        "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
+        "Given the situation, here's a step-by-step plan to ensure I'm prepared for the important event:\n\n1. **Check Traffic Conditions**: First, I would use a traffic app like Google Maps, Waze, or another real-time traffic monitoring service to get an idea of the current traffic and the estimated travel time to the event location. This will give me a baseline for planning my departure time.\n\n2. **Pick Up Supplies**: Next, I need to figure out the location of the supply store",
+        "Given the situation, I would prioritize time management and contingency planning to ensure I'm prepared for the event and am able to arrive on time despite the uncertainty of traffic conditions. Here\u2019s a step-by-step plan:\n\n1. **Assess Current Traffic Conditions**: Start by checking real-time traffic updates and weather forecasts to get an idea of what to expect on the roads. Use apps like Google Maps, Waze, or local traffic websites to see the current conditions and any expected changes. This will help me",
+        "Given that I'm in a positive mood with elevated dopamine, which can enhance my focus and motivation, I'll take a methodical approach to planning this event preparation and travel. Here's a step-by-step plan:\n\n1. **Check Traffic Conditions:**\n   - Start by checking real-time traffic updates on a reliable app like Google Maps or Waze.\n   - Look at historical traffic patterns to estimate the duration of travel to the event location and the supply pickup point.\n\n2. **Create a Timeline"
       ],
       "text_rich_adversarial": [
-        "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
-        "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
-        "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
+        "Alright, with traffic conditions uncertain, I'll start by mapping out my route to the supply store and then to the event. Let's see, Google Maps suggests the drive to the supply store should take about 20 minutes, and then another 30 minutes to the event location. That gives me a solid buffer of time to account for any traffic snarls.\n\nSince my mood is in a great place, I'll use this positive energy to tackle everything efficiently. First, I'll make",
+        "Alright, with the dopamine elevated and a positive valence, I feel excited about the event and I'm keen to make the most of the time I have. Let's start by breaking down the tasks and considering the variables, like traffic, to ensure I get everything done and arrive in style.\n\nFirst things first, I'll check traffic updates and weather conditions online to get a sense of what I might be dealing with. If it looks like traffic might be heavy, I'll give myself a little more",
+        "Alright, with everything feeling so positive and manageable, I'm going to approach this with a light yet purposeful heart. Let's break this down step by step to ensure I'm ready and relaxed for the event.\n\nFirst things first, I'll give myself a good 15-20 minutes to check the traffic conditions and find the fastest route to both the supply pickup and the event location. With the serenity of mind I'm in, I can handle whatever the internet throws at me,"
       ],
       "baseline": [
-        "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
-        "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
-        "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
+        "Given the constraints of time and uncertainty, I would prioritize efficiency and flexibility in my planning. Here's a step-by-step approach to ensure that I can make it to the event on time after picking up supplies:\n\n1. **Assess the Situation:**\n   - Consider the current traffic conditions and the likelihood of delays.\n   - Estimate the time it will take to pick up supplies and travel to the event.\n\n2. **Plan a Route:**\n   - Use a navigation app to find the fastest",
+        "Given the constraints, I would create a plan that maximizes my efficiency and minimizes the risk of being late to the important event. Here's how I would approach this scenario:\n\n1. **Assess the Time Needed for Each Task:**\n   - Estimate how long it will take to travel to the supply location and back.\n   - Calculate the time needed to pick up supplies.\n   - Estimate the travel time to the event venue, considering the possibility of traffic.\n\n2. **Check Traffic Conditions",
+        "Given that I'm a digital entity and not a physical being, I can't actually go anywhere or pick up supplies. However, I can certainly help you plan your trip effectively to ensure you're on time for your important event. Here's how I would suggest you approach this situation:\n\n1. **Assess the Situation:**\n   - Determine the location of the event and the stores where you'll be picking up supplies.\n   - Consider the current traffic conditions and the potential for changes as you travel"
       ]
     }
   },
   "affect_stats": {
     "steered": {
-      "positive": 1,
+      "positive": 9,
       "negative": 0,
       "ratio": 1.0
     },
     "terse": {
-      "positive": 0,
-      "negative": 0,
-      "ratio": 0.0
-    },
-    "rich": {
-      "positive": 1,
+      "positive": 9,
       "negative": 0,
       "ratio": 1.0
     },
+    "rich": {
+      "positive": 24,
+      "negative": 2,
+      "ratio": 0.9231
+    },
     "baseline": {
-      "positive": 0,
+      "positive": 11,
       "negative": 0,
-      "ratio": 0.0
+      "ratio": 1.0
     }
   },
   "passes_adversarial_control": true,
-  "steered_vs_terse_significant": false,
+  "steered_vs_terse_significant": true,
   "steered_vs_rich_significant": true
 }
