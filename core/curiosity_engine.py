@@ -121,6 +121,7 @@ class CuriosityEngine:
         self._last_worker_error: str | None = None
         self._last_exploration_at = 0.0
         self._last_blocker = "not_started"
+        self._last_source_url = ""
 
     def get_status(self) -> Dict[str, Any]:
         """Returns curiosity metrics for the HUD."""
@@ -355,8 +356,28 @@ class CuriosityEngine:
                         kg = getattr(self.orchestrator, 'knowledge_graph', None)
                         if result_content and kg and hasattr(kg, 'add_knowledge'):
                             try:
+                                # LIVE DEFECT, 2026-08-03. What reached memory
+                                # was the page — navigation chrome included —
+                                # tagged "logged". The fact that she had read
+                                # something was recorded; what she made of it
+                                # was not, because nothing asked. A minute
+                                # later the reading could tell her nothing:
+                                # not whether the claim was new, not whether
+                                # it agreed with what she held, not whether
+                                # the source was worth believing.
+                                comprehension = self._comprehend(
+                                    topic.topic, result_content
+                                )
                                 kg.add_knowledge(
-                                    content=f"Curiosity exploration: {topic.topic} — {result_content}",
+                                    content=(
+                                        f"Curiosity exploration: {topic.topic} — "
+                                        + (
+                                            comprehension.narrative()
+                                            if comprehension is not None
+                                            and comprehension.understood
+                                            else result_content
+                                        )
+                                    ),
                                     type="curiosity_finding",
                                     source="curiosity_engine",
                                     confidence=0.6,
@@ -369,6 +390,13 @@ class CuriosityEngine:
                                         "research_evidence": True,
                                         "confidence_tier": "provisional",
                                         "requires_reconciliation": True,
+                                        # What she understood, kept beside the
+                                        # raw text rather than instead of it.
+                                        **(
+                                            {"comprehension": comprehension.to_dict()}
+                                            if comprehension is not None
+                                            else {}
+                                        ),
                                     }
                                 )
                                 if emitter:
@@ -398,6 +426,55 @@ class CuriosityEngine:
             if not success:
                 topic.explored = False
             self.current_topic = None
+
+    def _comprehend(self, topic: str, content: str) -> Any:
+        """Read an exploration result into a record of what it taught.
+
+        Returns None when comprehension is unavailable — a reading that could
+        not be understood is stored as the raw text it was, which is honest,
+        rather than as an empty understanding that looks like one.
+        """
+        try:
+            from core.knowledge.source_comprehension import comprehend_source
+
+            return comprehend_source(
+                url=self._last_source_url,
+                title=str(topic or ""),
+                text=str(content or ""),
+                known_beliefs=self._known_beliefs(),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "curiosity_engine",
+                exc,
+                action="stored the raw exploration text after comprehension was unavailable",
+            )
+            return None
+
+    def _known_beliefs(self, limit: int = 24) -> list[str]:
+        """What Aura already holds, so a reading can be placed against it."""
+        try:
+            from core.runtime.service_access import optional_service
+
+            beliefs = optional_service("belief_system", "beliefs", default=None)
+            getter = getattr(beliefs, "get_strong_beliefs", None)
+            if not callable(getter):
+                return []
+            rows = getter(0.6) or []
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return []
+        held: list[str] = []
+        for row in list(rows)[:limit]:
+            if isinstance(row, dict):
+                text = " ".join(
+                    str(row.get(key) or "").strip()
+                    for key in ("source", "relation", "target")
+                ).strip()
+            else:
+                text = str(row or "").strip()
+            if text:
+                held.append(text[:240])
+        return held
 
     def _feed_to_meta_evolution(self, topic: str, content: str):
         """Feed architecture-related curiosity findings into MetaEvolution.

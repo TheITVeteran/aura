@@ -9126,6 +9126,24 @@ async def _run_cognitive_engine_chat_turn(
             logger.debug("Reply tail completion unavailable: %s", exc)
 
         recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
+        # LIVE DEFECT, 2026-08-03. Bryan asked "Why did it catch your attention
+        # specifically?" about a philosophy post Aura had just described, and
+        # she answered about acoustics and overtones. Every topic check keys
+        # off the CURRENT message, and the current message is a pro-form with
+        # no topic of its own — so the one turn where the subject can only come
+        # from the previous one was the one turn nothing checked. Hand the gate
+        # the antecedent.
+        antecedent_turn = ""
+        try:
+            prior_exchanges = await _recent_completed_conversation_exchanges(
+                current_user_message=visible,
+                session_id=str(session_id or ""),
+                limit=1,
+            )
+            if prior_exchanges:
+                antecedent_turn = str(prior_exchanges[-1].get("aura") or "").strip()
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Antecedent lookup unavailable: %s", exc)
         assessment_text = (
             _ground_runtime_fact_status_reply(
                 visible,
@@ -9140,6 +9158,7 @@ async def _run_cognitive_engine_chat_turn(
             visible,
             assessment_text,
             recent_user_messages=recent_user_messages,
+            antecedent=antecedent_turn,
             # What she was ENTITLED to have known, so a real recall is not
             # mistaken for an invention. The fabricated-shared-history check
             # asks "does this content appear anywhere in what they said" —

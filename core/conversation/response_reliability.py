@@ -6529,6 +6529,7 @@ def _model_text_integrity_reasons(
     *,
     prompt: Any = "",
     user_facing: bool = False,
+    antecedent: Any = None,
 ) -> list[str]:
     raw = str(reply_text or "").strip()
     reasons: list[str] = []
@@ -6682,6 +6683,8 @@ def _model_text_integrity_reasons(
         reasons.append("unsupported_deployment_routing_claim")
     if user_facing and _has_fabricated_substrate_claim(prompt, raw):
         reasons.append("fabricated_substrate_claim")
+    if user_facing and antecedent_topic_abandoned(prompt, raw, antecedent):
+        reasons.append("antecedent_topic_abandoned")
     if user_facing and _has_unsupported_runtime_limits_claim(prompt, raw):
         reasons.append("unsupported_runtime_limits_claim")
     if user_facing:
@@ -6770,12 +6773,107 @@ def assess_model_text_integrity(
     )
 
 
+#: A question whose SUBJECT is a bare pro-form: "why did it catch your
+#: attention", "what made you say that", "how does that work". The sentence is
+#: grammatically complete — which is why the referential-continuation resolver
+#: leaves it alone, by design — but its subject lives in the previous turn.
+_ANAPHORIC_SUBJECT_RE = re.compile(
+    r"\b(?:why|how|what|when|where|which|who)\b[^.?!]{0,60}?"
+    r"\b(?:it|that|this|those|these|them|they)\b",
+    re.IGNORECASE,
+)
+#: A concrete subject of its own means the question is not leaning on the
+#: previous turn. "why did the ferry catch your attention" needs no antecedent.
+_STOPWORDS_FOR_ANCHORS = frozenset(
+    {
+        "about", "after", "again", "along", "another", "anything", "because",
+        "been", "being", "between", "both", "came", "come", "could", "did",
+        "does", "doing", "done", "down", "during", "each", "even", "ever",
+        "every", "from", "gave", "give", "going", "have", "here", "into",
+        "just", "know", "like", "made", "make", "many", "more", "most",
+        "much", "must", "never", "next", "only", "other", "over", "really",
+        "same", "should", "some", "specifically", "still", "such", "take",
+        "than", "then", "there", "these", "they", "thing", "things", "think",
+        "this", "those", "through", "time", "under", "very", "want", "well",
+        "were", "what", "when", "where", "which", "while", "with", "would",
+        "your", "yours", "attention", "caught", "catch", "mean", "meant",
+        "said", "say", "saying", "tell", "told", "asked", "answer",
+        # The pro-forms themselves are what points at the antecedent, so they
+        # can never be the question's own subject.
+        "that", "them", "they", "those", "these",
+        # Light verbs carry no topic: "how does that work" is as anaphoric as
+        # "why is it like that".
+        "work", "works", "working", "mean", "means", "happen", "happens",
+        "happened", "come", "comes", "goes", "look", "looks", "seem", "seems",
+        "matter", "matters", "help", "helps", "need", "needs", "exactly",
+        "instead",
+    }
+)
+
+
+def _content_anchors(text: Any, *, minimum_length: int = 4) -> set[str]:
+    """Content words that could carry a topic. Lowercased, stopwords removed."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{%d,}" % (minimum_length - 1), str(text or ""))
+    return {
+        word.lower().strip("'-")
+        for word in words
+        if word.lower() not in _STOPWORDS_FOR_ANCHORS
+    }
+
+
+def is_anaphoric_followup(user_message: Any) -> bool:
+    """Whether this question's subject is a pro-form pointing at the last turn."""
+    text = str(user_message or "").strip()
+    if not text or len(text) > 200:
+        return False
+    if not _ANAPHORIC_SUBJECT_RE.search(text):
+        return False
+    # If the question names its own subject, it is not leaning on the antecedent.
+    return not _content_anchors(text)
+
+
+def antecedent_topic_abandoned(
+    user_message: Any,
+    reply_text: Any,
+    antecedent: Any,
+) -> bool:
+    """Whether a reply to an anaphoric follow-up changed the subject entirely.
+
+    LIVE DEFECT, 2026-08-03. Aura described a /r/philosophy post about Western
+    philosophy being "at war with Homer for 2,800 years". Bryan asked "Why did
+    it catch your attention specifically?" — where "it" is that post. She
+    answered: "It was about sound. Why two instruments playing the same note
+    can sound so different — it's all in the overtones and harmonics."
+
+    Nothing in the reply had anything to do with the antecedent, and no gate
+    noticed, because every existing topic check keys off the CURRENT message —
+    and the current message is a pro-form with no topic of its own. That is
+    exactly the turn where the subject can only come from the previous one.
+
+    The test is deliberately weak: ANY shared content word passes. It is
+    looking for a total subject swap, not for thematic tightness, because a
+    real answer often introduces new vocabulary and must not be punished for
+    it.
+    """
+    if not is_anaphoric_followup(user_message):
+        return False
+    antecedent_anchors = _content_anchors(antecedent)
+    if len(antecedent_anchors) < 3:
+        # Too little to judge against. Not knowing is not a violation.
+        return False
+    reply_anchors = _content_anchors(reply_text)
+    if not reply_anchors:
+        return False
+    return not (antecedent_anchors & reply_anchors)
+
+
 def assess_user_facing_reply(
     user_message: Any,
     reply_text: Any,
     *,
     recent_user_messages: Iterable[str] | None = None,
     grounding: Iterable[str] | None = None,
+    antecedent: Any = None,
 ) -> ConversationReplyAssessment:
     """Classify a reply, and record the verdict on the turn's candidate ledger.
 
@@ -6800,6 +6898,7 @@ def assess_user_facing_reply(
         reply_text,
         recent_user_messages=recent_user_messages,
         grounding=grounding,
+        antecedent=antecedent,
     )
     _record_on_turn_ledger(reply_text, assessment)
     return assessment
@@ -6842,6 +6941,7 @@ def _assess_user_facing_reply(
     *,
     recent_user_messages: Iterable[str] | None = None,
     grounding: Iterable[str] | None = None,
+    antecedent: Any = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
     # Defense in depth. The ingress now binds the visible request
@@ -6928,6 +7028,7 @@ def _assess_user_facing_reply(
             raw,
             prompt=user_message,
             user_facing=True,
+            antecedent=antecedent,
         )
     )
     if _GENERIC_ASSISTANT_RE.search(raw):
