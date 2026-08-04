@@ -5957,6 +5957,56 @@ def _has_ungrounded_person_address(
     )
 
 
+def strip_ungrounded_vocative(
+    user_message: Any,
+    reply_text: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> str:
+    """The reply with an unsupported opening name removed, or "" if none was.
+
+    The hard-failure set says of ``ungrounded_person_address`` that "the
+    honest remedy is to drop the vocative and deliver the answer". Nothing
+    performed that remedy. The reason still blocked the draft, and — being
+    deliberately absent from the retryable set — blocked it with no second
+    attempt, so the whole reply died over one word at the front of it.
+
+    Live 2026-08-04: asked where in the codebase a snippet lived, one turn
+    after she had shown it, the answer was thrown out for this reason and
+    Bryan got "I couldn't get to an answer I'd stand behind". Whatever she
+    had written about the code went with it.
+
+    A vocative carries no content. Removing it costs nothing and keeps
+    everything the person actually asked for.
+    """
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return ""
+    registry_names = _registry_grounded_person_names()
+    stripped = raw
+    for match in _VOCATIVE_ADDRESS_RE.finditer(raw):
+        name = match.group(1)
+        if _person_name_is_grounded(name, user_message, recent_user_messages, registry_names):
+            continue
+        # The pattern reaches PAST the name to confirm a sentence follows it
+        # ("Aaron, what's the plan" needs the "what" to be a vocative at all),
+        # so group(0) is not the thing to delete — cutting it took the first
+        # word of her answer with it and produced "'s the plan?".
+        # Only the name and the comma binding it come out.
+        cut = match.end(1)
+        while cut < len(raw) and raw[cut] in ", \t":
+            cut += 1
+        if match.start() != 0 or cut >= len(raw):
+            # Only an opening address is removable this way; one in the middle
+            # of a paragraph is part of a sentence's structure.
+            continue
+        remainder = raw[cut:].lstrip()
+        if not remainder:
+            continue
+        stripped = remainder[0].upper() + remainder[1:]
+        break
+    return "" if stripped == raw else stripped
+
+
 def _has_detail_request_deflection(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "").strip()
     if not raw or not _DETAIL_REQUEST_DEFLECTION_RE.search(raw):

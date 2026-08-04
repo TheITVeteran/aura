@@ -610,3 +610,125 @@ class TestADegradedTurnStillUsesAnAnswerItAlreadyHas:
         assert _verified_floor_answer("what is the weather") == ""
         assert _verified_floor_answer("") == ""
         assert "```python" in _verified_floor_answer("show me your code")
+
+
+class TestSheReadsThePhrasingNotTheQuestion:
+    """The live 2026-08-04 demo: three asks, three failures, one cause.
+
+    Every phrasing Bryan used scored True on the semantic own-source gate
+    and False on the phrase list that guarded the reader. So the check ran,
+    proved the snippet absent, asked for a real excerpt, and was refused by
+    a pattern that wanted the word "show" — then served the invention.
+    """
+
+    LIVE_ASKS = (
+        "Can you share a snippet of code you're interested in and let me know where it's from?",
+        "Can you share a snippet of your own code that you're interested in?",
+        "Can you share a snippet of your code with me? And tell me where I can find it",
+        "Can you look at your code",
+    )
+    LIVE_PROVENANCE = (
+        "Where in the codebase can I find that",
+        "Where did you get that from?",
+        "Did you make that up?",
+    )
+    # Share no vocabulary with any anchor sentence.
+    UNSEEN_PROVENANCE = (
+        "and that's sitting where exactly",
+        "could i open that myself and check",
+        "which one of your files was that sitting in",
+    )
+    NOT_HER_SOURCE = (
+        "how are you feeling today",
+        "what is seventeen multiplied by four",
+        "write me a python function that sorts a list",
+        "show me the actual code for numpy",
+        "how does pandas implement groupby internally",
+    )
+
+    def _lane(self, text: str) -> bool:
+        from interface.routes.chat import _turn_may_concern_own_source
+
+        return _turn_may_concern_own_source(text)
+
+    def test_every_live_phrasing_reaches_her_source(self):
+        missed = [ask for ask in self.LIVE_ASKS if not self._lane(ask)]
+        assert not missed, f"phrasings that never reached the tree: {missed}"
+
+    def test_provenance_questions_reach_the_lane(self):
+        from interface.routes.chat import _turn_asks_where_that_came_from
+
+        missed = [
+            ask
+            for ask in self.LIVE_PROVENANCE + self.UNSEEN_PROVENANCE
+            if not (_turn_asks_where_that_came_from(ask) and self._lane(ask))
+        ]
+        assert not missed, f"provenance questions with no path to the record: {missed}"
+
+    def test_unrelated_turns_do_not_pull_her_source(self):
+        pulled = [ask for ask in self.NOT_HER_SOURCE if self._lane(ask)]
+        assert not pulled, f"turns that wrongly pulled her source: {pulled}"
+
+    def test_a_generic_line_cannot_certify_a_fabrication(self):
+        """`def __init__(self, name):` is everywhere in this tree.
+
+        It alone used to pronounce a whole invented class genuine, because
+        any line matching any file counted as found.
+        """
+        from core.self.source_excerpt import reply_fabricates_own_code
+
+        invented = (
+            "```python\n"
+            "import json\n"
+            "class GraphNode:\n"
+            "    def __init__(self, name):\n"
+            "        self.name = name\n"
+            "        self.edges = []\n"
+            "def serialize_graph(root_node):\n"
+            "    return json.dumps(_node_to_dict(root_node), indent=2)\n"
+            "```"
+        )
+        assert reply_fabricates_own_code(invented) is True
+
+    def test_a_real_excerpt_still_passes_its_own_check(self):
+        from core.self.source_excerpt import (
+            grounded_excerpt_reply,
+            reply_fabricates_own_code,
+        )
+
+        real = grounded_excerpt_reply("can you share a snippet of your own code")
+        assert real, "the reader produced nothing from a readable tree"
+        assert reply_fabricates_own_code(real) is False
+
+    def test_verification_follows_the_claim_not_the_question(self):
+        """"Crack yourself open" names no code, so nothing checked the answer."""
+        from core.self.source_excerpt import reply_claims_own_code
+
+        claimed = (
+            "Here's a snippet from my cognitive architecture:\n"
+            "```python\n"
+            "def update_context(self, new_input):\n"
+            "    embedded_input = self.embedder(new_input)\n"
+            "```"
+        )
+        assert reply_claims_own_code(claimed) is True
+        neutral = "Sure:\n```python\ndef sort_list(x):\n    return sorted(x)\n```"
+        assert reply_claims_own_code(neutral) is False
+
+    def test_a_citation_does_not_outlive_the_reply_it_described(self):
+        """Otherwise "where's that from?" answers with a real, unrelated path."""
+        from core.self.source_excerpt import (
+            forget_shown_excerpt,
+            last_shown_excerpt,
+            remember_shown_excerpt,
+        )
+
+        forget_shown_excerpt()
+        remember_shown_excerpt("I read this from core/mycelium.py:88 just now.")
+        assert last_shown_excerpt().get("relative_path") == "core/mycelium.py"
+
+        remember_shown_excerpt(
+            "```python\ndef invented_thing(self):\n    return 1\n```"
+        )
+        assert last_shown_excerpt() == {}
+        forget_shown_excerpt()

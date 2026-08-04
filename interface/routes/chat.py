@@ -9805,6 +9805,47 @@ async def _run_cognitive_engine_chat_turn(
                         lane,
                         cognitive_engine_handled=True,
                     )
+            # A wrong name at the front of a good answer is not a reason to
+            # lose the answer. The hard-failure set already says so — it
+            # excludes this reason on the grounds that "the honest remedy is
+            # to drop the vocative and deliver the answer" — but nothing
+            # dropped it, so the reason simply blocked, and being excluded
+            # from the retryable set it blocked with no second attempt.
+            devocatived = _strip_ungrounded_vocative_reply(visible, text)
+            if devocatived:
+                from core.conversation.response_reliability import (
+                    assess_user_facing_reply as _assess_devocatived,
+                )
+
+                if not _reply_assessment_requires_repair_with_memory_evidence(
+                    _assess_devocatived(
+                        visible,
+                        devocatived,
+                        recent_user_messages=recent_user_messages,
+                    ),
+                    visible,
+                    devocatived,
+                    canonical_memory_state_evidence=canonical_memory_state_evidence,
+                ):
+                    logger.warning(
+                        "Reply carried an unsupported opening name (%s); removed "
+                        "the address and kept the answer.",
+                        ",".join(assessment.reasons),
+                    )
+                    _append_turn_text_mutation(
+                        turn_trace,
+                        stage="chat.ungrounded_person_address",
+                        method="opening_vocative_removed",
+                        reasons=["ungrounded_person_address"],
+                        before=text,
+                        after=devocatived,
+                        deterministic=True,
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        response_path="cognitive_engine_devocatived",
+                    )
+                    return devocatived
             retry_reply = await _attempt_repair_retry(text, assessment.reasons)
             if retry_reply:
                 if turn_trace is not None:
@@ -9815,6 +9856,32 @@ async def _run_cognitive_engine_chat_turn(
                         }
                     )
                 return retry_reply
+            # Every other contract here has somewhere to fall back to: the
+            # recall log, the identity record, the capability catalog. A
+            # question about her own source had none, so a rejected draft
+            # ended the turn — and the tree, which answers it outright, was
+            # never opened.
+            #
+            # Live 2026-08-04: "Where in the codebase can I find that" was
+            # thrown out for `ungrounded_person_address` and the person got
+            # "I couldn't get to an answer I'd stand behind" one turn after
+            # she had shown them code. The citation was on record. Nothing
+            # asked for it. A gate may reject a DRAFT; it must not be able
+            # to withhold an answer that was sitting on disk.
+            source_rescue = await _own_source_rescue_reply(visible)
+            if source_rescue:
+                logger.warning(
+                    "Reply for a question about her own source failed the "
+                    "reliability gate (%s); answering from the source tree "
+                    "instead of failing the turn.",
+                    ",".join(assessment.reasons),
+                )
+                _mark_turn_trace(
+                    cognitive_engine_reply_accepted=True,
+                    bounded_contract_used=False,
+                    response_path="cognitive_engine_own_source_grounding",
+                )
+                return source_rescue
             _mark_turn_trace(response_path="cognitive_engine_reply_rejected")
             _record_exhausted_cognitive_failure(
                 "reply_reliability_gate_failed:" + ",".join(assessment.reasons),
@@ -17691,6 +17758,57 @@ def _turn_asks_where_that_came_from(user_message: str) -> bool:
             action="judged a provenance question by pattern after meaning failed",
         )
         return _lexical(text)
+
+
+def _strip_ungrounded_vocative_reply(user_message: str, reply: str) -> str:
+    """Her reply without an unsupported opening name, or "" if it had none."""
+    try:
+        from core.conversation.response_reliability import strip_ungrounded_vocative
+
+        return str(strip_ungrounded_vocative(user_message, reply) or "").strip()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+async def _own_source_rescue_reply(user_message: str) -> str:
+    """A real answer about her source, for when the drafted one was rejected.
+
+    Reads the tree; never composes. Returns "" when nothing could be read,
+    because the entire point is that this path cannot invent — a rescue that
+    made something up would be the defect it exists to stop, arriving by a
+    safer-looking road.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return ""
+    try:
+        from core.self.source_excerpt import (
+            grounded_excerpt_reply,
+            last_shown_excerpt,
+            provenance_sentence,
+        )
+
+        # Asked where the last snippet came from, the recorded citation IS
+        # the answer, and it is already in hand.
+        if _turn_asks_where_that_came_from(text) and last_shown_excerpt():
+            spoken = str(provenance_sentence() or "").strip()
+            if spoken:
+                return spoken
+        if not _turn_may_concern_own_source(text):
+            return ""
+        # Off the loop: this walks and reads files.
+        return str(await asyncio.to_thread(grounded_excerpt_reply, text)).strip()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action=(
+                "could not read the source tree to rescue a rejected reply "
+                "about her own code"
+            ),
+        )
+        return ""
 
 
 def _turn_may_concern_perception(user_message: str) -> bool:

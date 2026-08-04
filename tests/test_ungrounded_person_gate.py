@@ -100,14 +100,52 @@ class TestAssessmentIntegration:
         assert assessment.hard_failure
         assert assessment.retryable
 
-    def test_confabulated_address_is_hard_and_retryable(self):
-        assessment = assess_user_facing_reply(
-            "That isn't a person",
-            "Aaron, what's the plan? Anyone coming our way on foot or by car?",
-        )
+    def test_confabulated_address_is_repaired_by_dropping_the_name(self):
+        """A wrong name at the front does not cost the answer behind it.
+
+        This once asserted hard_failure. The reason was then deliberately
+        removed from that set — destroying a whole reply over how it
+        addressed someone throws away the human part to protect a detail —
+        but nothing performed the remedy the exclusion assumed, so the
+        reason blocked the draft and, being excluded from the retryable set
+        too, blocked it with no second attempt. The contract is the remedy:
+        the address comes off and the answer survives.
+        """
+        from core.conversation.response_reliability import strip_ungrounded_vocative
+
+        asked = "That isn't a person"
+        drafted = "Aaron, what's the plan? Anyone coming our way on foot or by car?"
+
+        assessment = assess_user_facing_reply(asked, drafted)
         assert "ungrounded_person_address" in assessment.reasons
-        assert assessment.hard_failure
-        assert assessment.retryable
+
+        repaired = strip_ungrounded_vocative(asked, drafted)
+        assert repaired == "What's the plan? Anyone coming our way on foot or by car?"
+        assert "ungrounded_person_address" not in assess_user_facing_reply(
+            asked, repaired
+        ).reasons
+
+    def test_a_grounded_name_is_never_stripped(self):
+        from core.conversation.response_reliability import strip_ungrounded_vocative
+
+        asked = "I'm Bryan, by the way."
+        drafted = "Bryan, what did you want to look at?"
+        assert strip_ungrounded_vocative(asked, drafted, [asked]) == ""
+
+    def test_stripping_keeps_the_first_word_of_the_answer(self):
+        """The detector reaches past the name; the remover must not.
+
+        Cutting the matched span took the word after the comma with it and
+        produced "'s the plan?" — a repair that damages the sentence it is
+        repairing.
+        """
+        from core.conversation.response_reliability import strip_ungrounded_vocative
+
+        repaired = strip_ungrounded_vocative(
+            "Where in the codebase can I find that",
+            "Aaron, it lives in core/mycelium.py:88 and I read it off disk just now.",
+        )
+        assert repaired.startswith("It lives in core/mycelium.py:88")
 
     def test_grounded_person_answer_stays_ok(self):
         assessment = assess_user_facing_reply(
