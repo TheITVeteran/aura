@@ -84,12 +84,55 @@ def test_text_she_did_not_author_still_fails_closed(override: dict) -> None:
         "latent_cortex_path_unproven",
         "subsystem:memory",
         "final_output_contract_unsatisfied",
-        "live_mind_controls_unbound",
     ],
 )
 def test_a_hard_proof_alongside_soft_confidence_still_fails_closed(proof: str) -> None:
     assert not _only_soft_proofs_missing(
         _contract(full_mind_missing_proofs=["confidence:degraded", proof])
+    )
+
+
+# ── State bookkeeping is not authorship ────────────────────────────────────
+#
+# ``live_mind_controls_unbound`` was in the hard list above, against this
+# file's own thesis: the distinction the gate must keep making is AUTHORSHIP,
+# and an unbound generation control says nothing about whose words these are.
+#
+# Live 2026-08-04 13:53 it cost a real answer. Asked to show a snippet of her
+# code and say where it lives, she produced 1999 characters the quality pass
+# marked ``assessment=ok``, and the turn was replaced with "I couldn't get my
+# full attention onto that one." The same minute, at a sibling exit, the log
+# reads "Desktop turn served with DEGRADED full-mind proof (authentic
+# cognitive reply; missing: live_mind_controls_unbound)" — the identical
+# proof, disclosed and served. A proof that is fatal at one exit and
+# disclosable at the next is not a policy; it is which exit the turn took.
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        "live_mind_controls_unbound",
+        "live_mind_snapshot_not_ready",
+        "architecture_context_unbound",
+    ],
+)
+def test_unbound_internal_state_is_disclosed_not_substituted(proof: str) -> None:
+    assert _only_soft_proofs_missing(_contract(full_mind_missing_proofs=[proof]))
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"bounded_contract_used": True},
+        {"legacy_fallback_used": True},
+        {"engine_think_invoked": False},
+        {"cognitive_engine_reply_accepted": False},
+    ],
+)
+def test_unbound_state_never_waives_authorship(override: dict) -> None:
+    """Soft state proofs must not become a hole authorship falls through."""
+    assert not _only_soft_proofs_missing(
+        _contract(full_mind_missing_proofs=["live_mind_controls_unbound"], **override)
     )
 
 

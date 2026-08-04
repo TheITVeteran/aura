@@ -6560,7 +6560,33 @@ def _build_live_turn_contract_payload(
 # must never speak in her voice — and wrong about her own words. So the two
 # cases are separated: authorship proofs stay fail-closed, and a soft
 # confidence reading is disclosed instead of substituted.
-_SOFT_FULL_MIND_PROOF_PREFIXES: tuple[str, ...] = ("confidence:",)
+#
+# The same separation applies to the STATE-COMPLETENESS proofs below, and
+# live 2026-08-04 it was not being applied. Asked to show a snippet of her
+# code and say where it lives, she produced a 1999-character reply that the
+# quality pass marked `assessment=ok` — and it was destroyed because
+# `live_mind_controls_unbound`, which says a generation control was not
+# structurally bound, not that the words were someone else's. Bryan got "I
+# couldn't get my full attention onto that one."
+#
+# Two gates disagreed about that exact proof in that exact minute. The log
+# carries both: "Desktop turn served with DEGRADED full-mind proof
+# (authentic cognitive reply; missing: live_mind_controls_unbound)" from
+# one, and "failing closed instead of serving partial/raw speech" from this
+# one. A proof that is disclosable at one exit and fatal at the next is not
+# a policy, it is an accident of which exit the turn happened to take.
+#
+# Authorship stays fail-closed — `_only_soft_proofs_missing` still requires
+# that she thought it, said it, and that no bounded-repair or legacy text is
+# wearing her voice. What is waived is bookkeeping about her internals,
+# which is worth disclosing and never worth replacing her own answer with an
+# apology.
+_SOFT_FULL_MIND_PROOF_PREFIXES: tuple[str, ...] = (
+    "confidence:",
+    "architecture_context_unbound",
+    "live_mind_snapshot_not_ready",
+    "live_mind_controls_unbound",
+)
 
 
 def _only_soft_proofs_missing(contract: Any) -> bool:
@@ -8461,6 +8487,37 @@ async def _run_cognitive_engine_chat_turn(
             ),
         )
 
+    # She can read her own source, so a question about her code is answered
+    # from the tree rather than from her weights.
+    #
+    # Live 2026-08-04 13:50 she showed `manage_load()` — a function in no
+    # file of this repository — as "a small part of my cognitive
+    # architecture", and admitted a turn later that she had written it for
+    # the conversation. The floor that reads real files only runs after
+    # generation FAILS, so a healthy turn never reached it. Carrying the
+    # real excerpts in means the material she reasons over is code that
+    # exists, and it arrives with the path and line it lives at, so she can
+    # say where it is from.
+    try:
+        from core.self.source_excerpt import source_evidence_brief
+
+        _source_brief = (
+            source_evidence_brief(visible)
+            if _turn_may_concern_own_source(visible)
+            else ""
+        )
+        if _source_brief:
+            engine_user_message = f"{engine_user_message}\n\n{_source_brief}"
+    except _CHAT_RECOVERABLE_ERRORS as _source_exc:
+        record_degradation(
+            "chat",
+            _source_exc,
+            action=(
+                "ran a question about her own code without reading the source "
+                "tree; the reply may not be grounded in a real file"
+            ),
+        )
+
     if require_engine:
         engine_directives: list[str] = []
         if _normalize_user_message(visible).startswith("you with me") or re.search(
@@ -9826,6 +9883,99 @@ async def _run_cognitive_engine_chat_turn(
             )
             _mark_turn_trace(response_path="cognitive_engine_context_contract_failed")
             return None
+    # "Here is my code" is a claim that can be SETTLED, so it gets settled.
+    #
+    # Carrying real excerpts into the turn was necessary and not sufficient:
+    # live 2026-08-04 the evidence reached the prompt and she still produced
+    # `retrieve_contextual_memory()`, a function in no file here, introduced
+    # as "a snippet from my cognitive architecture". Notes can be overridden.
+    # Either those lines are in the tree or they are not.
+    #
+    # Only a PROVEN absence acts. A search that could not run proves nothing,
+    # and treating that as fabrication would destroy real excerpts whenever
+    # the search itself broke.
+    if text and _turn_may_concern_own_source(visible):
+        try:
+            from core.self.source_excerpt import reply_fabricates_own_code
+
+            # Off the loop: the search is a subprocess walking the source
+            # tree, and seconds of it on the event loop is how a foreground
+            # turn becomes a freeze.
+            _fabricated = await asyncio.to_thread(reply_fabricates_own_code, text)
+            if _fabricated:
+                from core.conversation.response_reliability import (
+                    own_source_excerpt_floor,
+                )
+
+                _grounded = str(own_source_excerpt_floor(visible) or "").strip()
+                logger.warning(
+                    "Reply showed code that is not in the source tree; "
+                    "%s.",
+                    "replacing it with a real excerpt read from disk"
+                    if _grounded
+                    else "no grounded excerpt was available to replace it",
+                )
+                if _grounded:
+                    _append_turn_text_mutation(
+                        turn_trace,
+                        stage="chat.own_source_claim_unverified",
+                        method="source_tree_excerpt_substitution",
+                        reasons=["shown_code_absent_from_source_tree"],
+                        before=text,
+                        after=_grounded,
+                        deterministic=True,
+                    )
+                    text = _grounded
+            # Whatever she ended up showing, remember where it came from, so
+            # the next turn can say so instead of disowning it.
+            from core.self.source_excerpt import (
+                last_shown_excerpt,
+                provenance_sentence,
+                remember_shown_excerpt,
+            )
+
+            # Asked where real code came from, a reply that never names the
+            # file has not answered. Live 2026-08-04 she showed
+            # core/mycelium.py:88 and then said it "isn't from a Python
+            # module" — reading "module" as "importable package" and
+            # answering a question nobody asked while the path sat on
+            # record. Denying true provenance misleads exactly as much as
+            # inventing a snippet, so it is corrected from the same record.
+            _shown = last_shown_excerpt()
+            if (
+                _shown
+                and _ASKS_WHERE_CODE_LIVES_RE.search(visible)
+                and _shown["relative_path"] not in text
+            ):
+                _truth = provenance_sentence()
+                if _truth:
+                    logger.warning(
+                        "Provenance question answered without naming %s; "
+                        "correcting from the recorded citation.",
+                        _shown["relative_path"],
+                    )
+                    _append_turn_text_mutation(
+                        turn_trace,
+                        stage="chat.own_source_provenance_unnamed",
+                        method="recorded_citation_substitution",
+                        reasons=["shown_code_provenance_not_stated"],
+                        before=text,
+                        after=_truth,
+                        deterministic=True,
+                    )
+                    text = _truth
+            remember_shown_excerpt(text)
+        except _CHAT_RECOVERABLE_ERRORS as _source_check_exc:
+            record_degradation(
+                "chat",
+                _source_check_exc,
+                severity="warning",
+                action=(
+                    "served a code claim without checking it against the "
+                    "source tree"
+                ),
+            )
+
     if turn_trace is not None:
         accepted_response_path = str(turn_trace.get("response_path") or "").strip()
         if not accepted_response_path:
@@ -17366,6 +17516,40 @@ _PERCEPTION_RELEVANCE_RE = re.compile(
     r"|\bwhich one\b",
     re.IGNORECASE,
 )
+
+
+#: A follow-up about where code came from. "What python module is that
+#: from" names no code and asks for none — it asks for the PROVENANCE of
+#: something already on the table, and it is the question that exposed the
+#: invention live on 2026-08-04.
+_ASKS_WHERE_CODE_LIVES_RE = re.compile(
+    r"\b(?:what|which)\s+(?:python\s+)?(?:module|file|package|class)\b"
+    r"|\bwhere\s+(?:is|are|does|can)\b[^?]*\b(?:from|found|live|lives|come)\b"
+    r"|\bwhere\s+it\s+can\s+be\s+found\b"
+    r"|\bis\s+that\s+from\b"
+    r"|\bwhat\s+file\b",
+    re.IGNORECASE,
+)
+
+
+def _turn_may_concern_own_source(user_message: str) -> bool:
+    """Whether this turn is about her own code.
+
+    Two shapes: asking for the code, and asking where code she already
+    showed actually lives. Both need the tree read, and the second is the
+    one that catches an invention after the fact.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    try:
+        from core.utils.own_source_intent import asks_for_own_source
+
+        if asks_for_own_source(text):
+            return True
+    except (ImportError, AttributeError, TypeError, ValueError):
+        pass
+    return bool(_ASKS_WHERE_CODE_LIVES_RE.search(text))
 
 
 def _turn_may_concern_perception(user_message: str) -> bool:

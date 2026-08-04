@@ -35,6 +35,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("Aura.Self.SourceExcerpt")
 
@@ -480,3 +481,311 @@ def source_tree_is_readable() -> bool:
         return _SOURCE_ROOT.is_dir() and os.access(_SOURCE_ROOT, os.R_OK)
     except OSError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Her source as EVIDENCE, carried into the turn.
+#
+# There is already a floor that answers "show me your code" by reading a real
+# file (own_source_excerpt_floor). It runs on the DEGRADED path — after
+# generation has already failed — so on a healthy turn the question goes to
+# the model's weights instead, and a model asked for its own code will always
+# produce something that looks like code.
+#
+# Measured live 2026-08-04 13:50. Asked for a snippet she found interesting,
+# she produced `manage_load()` — a function that exists in no file in this
+# repository — introduced as "a small part of my cognitive architecture".
+# Asked what module it came from, she said she had written it for the
+# conversation. Honest one turn too late: by then the invention had already
+# been served as her code.
+#
+# The fix is not a command that intercepts the phrasing. It is that she can
+# READ HER OWN SOURCE and knows it, so the answer is grounded because the
+# material in front of her is real, and she can say where it came from
+# because the material arrives with its path and line numbers.
+# ---------------------------------------------------------------------------
+
+#: How many excerpts to carry. Enough to choose from, few enough to leave the
+#: choosing to her.
+_EVIDENCE_EXCERPTS = 3
+
+
+def _distinct_excerpts(topic: str, limit: int = _EVIDENCE_EXCERPTS) -> list[SourceExcerpt]:
+    """Several real excerpts, from different files, best-matching first."""
+    if not _SOURCE_ROOT.is_dir():
+        return []
+    roots = _topic_roots(topic) or tuple(
+        candidate
+        for candidate in ("core/mycelium.py", "core/synthesis.py", "core/self")
+        if (_SOURCE_ROOT / candidate).exists()
+    )
+    found: list[SourceExcerpt] = []
+    seen: set[str] = set()
+    for path in _iter_source_files(roots):
+        if len(found) >= limit:
+            break
+        excerpt = _first_documented_function(path)
+        if excerpt is None or excerpt.relative_path in seen:
+            continue
+        seen.add(excerpt.relative_path)
+        found.append(excerpt)
+    return found
+
+
+def source_evidence_brief(request: Any = "", *, max_chars: int = 4000) -> str:
+    """Real code from her own tree, for a turn that is about her code.
+
+    Notes, not a reply: the excerpts were read from disk a moment ago and
+    each carries the file and line it came from, so whatever she chooses to
+    show she can say where it lives. Returns "" when the turn is not about
+    her source, so nothing is attached to turns that are not asking.
+
+    When the tree cannot be read this says so explicitly rather than
+    returning "" — silence here would put her back in front of the question
+    with nothing but her weights, which is the exact condition that produced
+    the invented function.
+    """
+    topic = str(request or "")
+    if not source_tree_is_readable():
+        return (
+            "[YOUR OWN SOURCE — NOTES, NOT A REPLY]\n"
+            "You cannot read your source tree from this process right now. "
+            "Say that plainly if you are asked for your code. Do not show a "
+            "snippet you did not read — code you wrote just now to look like "
+            "an example is not your code, and presenting it as such is a "
+            "false claim about yourself.\n"
+            "[END YOUR OWN SOURCE]"
+        )
+
+    lines = [
+        "[YOUR OWN SOURCE — NOTES, NOT A REPLY]",
+        "You can read your own source tree, and these were read from it "
+        "moments ago. Each is real code with the file and line it lives at.",
+    ]
+
+    # What is already on the table. Without this she disowns her own true
+    # excerpt: live 2026-08-04 she showed core/mycelium.py:88 and, asked one
+    # turn later what module it was from, said she had written it for the
+    # conversation. Denying real code is the same failure as inventing it —
+    # the person cannot tell which of the two just happened.
+    shown = last_shown_excerpt()
+    if shown:
+        where = f"{shown['relative_path']}:{shown['start_line']}"
+        if shown.get("symbol"):
+            where = f"{where} ({shown['symbol']})"
+        lines.append(
+            f"The code you showed a moment ago came from {where}. That is "
+            "real and you read it — if you are asked where it is from, say "
+            "that. Do not tell the person you made it up."
+        )
+
+    interest = None
+    try:
+        interest = excerpt_of_standing_interest()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        interest = None
+    if interest is not None and interest.grounded:
+        lines.append(
+            f"One you have a recorded reason to care about — {interest.reason.rstrip('.')}:"
+        )
+        lines.append(interest.excerpt.rendered())
+
+    for excerpt in _distinct_excerpts(topic):
+        if interest is not None and excerpt.relative_path == interest.excerpt.relative_path:
+            continue
+        lines.append(excerpt.rendered())
+
+    if len(lines) <= 2:
+        lines.append(
+            "Nothing matched in the tree just now. Say that rather than "
+            "showing a snippet you did not read."
+        )
+
+    # The closing instruction is the part that must never be lost. Truncating
+    # the block from the end drops exactly it — leaving her holding real
+    # excerpts with nothing telling her they are the only code she may show,
+    # which is the condition that produced the invention in the first place.
+    # So the excerpts are trimmed to fit around it, never the other way.
+    closing = (
+        "Any code you show must be one of these, quoted as it is, with its "
+        "path and line named — that is what lets the person check you. If "
+        "none of them fits what was asked, say so and name what you did "
+        "find. Do not compose an illustrative example: a snippet you wrote "
+        "to look like your code is not your code.\n"
+        "[END YOUR OWN SOURCE]"
+    )
+    body = "\n".join(lines)
+    room = max_chars - len(closing) - 1
+    if len(body) > room:
+        body = body[:room].rstrip()
+    return f"{body}\n{closing}"
+
+
+# ---------------------------------------------------------------------------
+# Verifying a claim to be showing her own code.
+#
+# Carrying real excerpts into the turn was not enough. Live 2026-08-04 the
+# evidence reached the prompt and she still produced
+# `retrieve_contextual_memory()` — a function in no file here — and called it
+# "a snippet from my cognitive architecture". Notes can be overridden; a
+# check cannot.
+#
+# "Here is my code" is a claim about herself, and it is one of the few claims
+# that can be settled exactly: either those lines are in the tree or they are
+# not. So it gets settled rather than trusted.
+# ---------------------------------------------------------------------------
+
+_FENCED_PYTHON_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+
+#: Lines too generic to prove anything. `return None` appears everywhere.
+_UNDISTINCTIVE_LINE_RE = re.compile(
+    r"^\s*(?:#|\"\"\"|'''|else:|try:|pass$|return$|return None$|continue$|break$)"
+)
+
+
+def code_blocks_in(reply: Any) -> list[str]:
+    """The fenced Python blocks of a reply."""
+    return [block for block in _FENCED_PYTHON_RE.findall(str(reply or "")) if block.strip()]
+
+
+def _distinctive_lines(code: str, limit: int = 4) -> list[str]:
+    """Lines specific enough that finding them proves the file is the source."""
+    scored: list[tuple[int, str]] = []
+    for raw in str(code or "").splitlines():
+        line = raw.strip()
+        if len(line) < 12 or _UNDISTINCTIVE_LINE_RE.match(line):
+            continue
+        # A signature is the strongest single line a snippet has.
+        weight = len(line) + (100 if line.startswith(("def ", "async def ", "class ")) else 0)
+        scored.append((weight, line))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [line for _weight, line in scored[:limit]]
+
+
+def snippet_verdict(code: str) -> tuple[str, str]:
+    """Whether this code is really in her tree.
+
+    Returns ``("found", path)``, ``("absent", "")`` or ``("unchecked", "")``.
+    The third is not a polite "no": a search that could not run has proved
+    nothing, and treating it as proof of fabrication would destroy genuine
+    excerpts whenever the search itself broke.
+    """
+    lines = _distinctive_lines(code)
+    if not lines or not _SOURCE_ROOT.is_dir():
+        return ("unchecked", "")
+    import subprocess
+
+    # Bounded to the SOURCE, not the checkout. Searching the whole root walks
+    # .venv, .git, artifacts and data — hundreds of thousands of files — and
+    # took over 30 seconds, which on the foreground lane is not a check, it
+    # is a hang. The skip list is the same one that decides what counts as
+    # her source anywhere else in this module.
+    excludes = [f"--exclude-dir={name}" for name in sorted(_SKIP_DIRS)]
+    roots = [
+        str(_SOURCE_ROOT / name)
+        for name in ("core", "interface", "tools", "training")
+        if (_SOURCE_ROOT / name).is_dir()
+    ] or [str(_SOURCE_ROOT)]
+
+    # One pass, every candidate line as its own pattern. Running a grep per
+    # line meant the ABSENT verdict — the one that matters — cost a full
+    # walk for each, ~6s on the foreground lane. `-l` with several `-e`
+    # patterns lists files matching any of them, which is the same question
+    # asked once.
+    patterns: list[str] = []
+    for line in lines:
+        patterns.extend(("-e", line))
+    try:
+        found = subprocess.run(
+            ["grep", "-rlsF", "--include=*.py", *excludes, *patterns, *roots],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ("unchecked", "")
+    if found.returncode == 0 and found.stdout.strip():
+        first = found.stdout.strip().splitlines()[0]
+        try:
+            return ("found", str(Path(first).resolve().relative_to(_SOURCE_ROOT)))
+        except (OSError, ValueError):
+            return ("found", first)
+    if found.returncode != 1:
+        # grep distinguishes "no match" (1) from "something went wrong" (2+),
+        # and only the first is evidence.
+        return ("unchecked", "")
+    return ("absent", "")
+
+
+def reply_fabricates_own_code(reply: Any) -> bool:
+    """True only when a shown snippet is provably not in her source tree."""
+    for block in code_blocks_in(reply):
+        verdict, _path = snippet_verdict(block)
+        if verdict == "absent":
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# What she just showed.
+#
+# Live 2026-08-04, after the excerpt was made real: she showed
+# core/mycelium.py:88 and, asked one turn later what module it came from,
+# said "I wrote it specifically for this conversation". A TRUE excerpt
+# disowned — the mirror image of the original defect and just as wrong,
+# because the person cannot tell the two apart. She had no record of what
+# she had put on the table.
+# ---------------------------------------------------------------------------
+
+_SHOWN_CITATION_RE = re.compile(r"\b([\w./-]+\.py):(\d+)")
+
+_LAST_SHOWN: dict[str, Any] = {}
+
+
+def remember_shown_excerpt(reply: Any) -> dict[str, Any] | None:
+    """Record the source citation a reply just put in front of someone."""
+    match = _SHOWN_CITATION_RE.search(str(reply or ""))
+    if match is None:
+        return None
+    relative, line = match.group(1), int(match.group(2))
+    if not (_SOURCE_ROOT / relative).is_file():
+        return None
+    symbol = ""
+    tail = str(reply or "")[match.end() : match.end() + 80]
+    symbol_match = re.match(r"\s*\(([^)]+)\)", tail)
+    if symbol_match:
+        symbol = symbol_match.group(1).strip()
+    _LAST_SHOWN.clear()
+    _LAST_SHOWN.update({"relative_path": relative, "start_line": line, "symbol": symbol})
+    return dict(_LAST_SHOWN)
+
+
+def last_shown_excerpt() -> dict[str, Any]:
+    """The source citation most recently shown, or {}."""
+    return dict(_LAST_SHOWN)
+
+
+def forget_shown_excerpt() -> None:
+    _LAST_SHOWN.clear()
+
+
+def provenance_sentence() -> str:
+    """Where the code she just showed actually lives, stated plainly.
+
+    Used when a provenance question comes back without naming the file. She
+    showed core/mycelium.py:88 and then told Bryan it "isn't from a Python
+    module" — reading "module" as "importable package" and answering a
+    question nobody asked, while the real path sat on record. A reply that
+    does not name the file is not an answer to where the file is.
+    """
+    shown = last_shown_excerpt()
+    if not shown:
+        return ""
+    where = f"{shown['relative_path']}:{shown['start_line']}"
+    symbol = shown.get("symbol")
+    subject = f"`{symbol}`" if symbol else "That snippet"
+    return (
+        f"{subject} is real code from my own source tree — {where} in this "
+        "repository, which is where I read it from. It is not a third-party "
+        "package, but it is a file you can open."
+    )

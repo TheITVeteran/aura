@@ -698,19 +698,23 @@ def _reset_observation_memory_between_tests():
     suite rode into an unrelated desktop-lane test and appended itself to
     that turn's objective.
     """
-    try:
-        from core.perception.observation_evidence import get_observation_memory
+    def _clear() -> None:
+        try:
+            from core.perception.observation_evidence import get_observation_memory
 
-        get_observation_memory().clear()
-    except (ImportError, RuntimeError, AttributeError):
-        pass
+            get_observation_memory().clear()
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+        try:
+            from core.self.source_excerpt import forget_shown_excerpt
+
+            forget_shown_excerpt()
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+
+    _clear()
     yield
-    try:
-        from core.perception.observation_evidence import get_observation_memory
-
-        get_observation_memory().clear()
-    except (ImportError, RuntimeError, AttributeError):
-        pass
+    _clear()
 
 
 @pytest.fixture(autouse=True)
