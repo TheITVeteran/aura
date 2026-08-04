@@ -507,7 +507,7 @@ def source_tree_is_readable() -> bool:
 
 #: How many excerpts to carry. Enough to choose from, few enough to leave the
 #: choosing to her.
-_EVIDENCE_EXCERPTS = 3
+_EVIDENCE_EXCERPTS = 2
 
 
 def _distinct_excerpts(topic: str, limit: int = _EVIDENCE_EXCERPTS) -> list[SourceExcerpt]:
@@ -532,7 +532,7 @@ def _distinct_excerpts(topic: str, limit: int = _EVIDENCE_EXCERPTS) -> list[Sour
     return found
 
 
-def source_evidence_brief(request: Any = "", *, max_chars: int = 4000) -> str:
+def source_evidence_brief(request: Any = "", *, max_chars: int = 1800) -> str:
     """Real code from her own tree, for a turn that is about her code.
 
     Notes, not a reply: the excerpts were read from disk a moment ago and
