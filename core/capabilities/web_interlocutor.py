@@ -3990,38 +3990,68 @@ def _dialogue_goal_from_objective(objective: str) -> str:
     text = re.sub(r"\s+", " ", str(objective or "")).strip()
     if not text:
         return ""
-    lowered = text.lower()
+    # CP126 312c2bbf: this lowercased the objective and then deleted broad
+    # words — use, run, real, browser, conversation, turns — GLOBALLY, anywhere
+    # in the topic. "how browsers use conversation turns in real time" came out
+    # as "how in time", and the opening message was composed from that. The
+    # words are command scaffolding only when they PRECEDE the subject; inside
+    # it they are the subject. So the topic is sliced out of the original text,
+    # case preserved, and scaffolding is stripped only from the front.
     topic_match = re.search(
         r"\b(?:about|on|regarding)\s+(.+?)(?:\b(?:ask|read|wait|then|tell|report|store|retain|remember|summarize|save)\b|$)",
-        lowered,
+        text,
         flags=re.IGNORECASE,
     )
-    if topic_match:
-        topic = topic_match.group(1)
-    else:
-        topic = text
-    topic = re.sub(
-        r"\b(?:can you|could you|please|i want you to|i'd like you to|i would like you to)\b",
-        " ",
-        topic,
-        flags=re.IGNORECASE,
-    )
-    topic = re.sub(
-        r"\b(?:open|go to|launch|use|using|talk to|talk with|hold|have|start|run|prove|show me|visible|live|real|one[- ]turn|single[- ]turn|twenty|20[- ]turn)\b",
-        " ",
-        topic,
-        flags=re.IGNORECASE,
-    )
-    topic = re.sub(
-        r"\b(?:chatgpt|gemini|claude|deepseek|copilot|meta ai|chrome|safari|browser|conversation|interlocutor|reply|replies|turns?|exchanges?)\b",
-        " ",
-        topic,
-        flags=re.IGNORECASE,
-    )
+    topic = topic_match.group(1) if topic_match else text
+    topic = _strip_leading_scaffolding(topic)
     topic = re.sub(r"\s+", " ", topic).strip(" .,:;")
     if len(topic) > 360:
         topic = topic[:360].rsplit(" ", 1)[0].strip()
     return topic
+
+
+#: Command scaffolding: what the user says to set the task up, before naming
+#: the subject. Stripped only from the FRONT of the extracted topic — the same
+#: words inside it are the subject (CP126 312c2bbf).
+_LEADING_SCAFFOLDING_RE = re.compile(
+    r"^\s*(?:"
+    r"can you|could you|would you|please|i want you to|i'd like you to|"
+    r"i would like you to|go and|go ahead and|"
+    r"open|go to|launch|use|using|talk to|talk with|hold|have|start|run|prove|"
+    r"show me|visible|live|real|one[- ]turn|single[- ]turn|twenty|20[- ]turn|"
+    r"chatgpt|gemini|claude|deepseek|copilot|meta ai|chrome|safari|browser|"
+    r"a|an|the|with|and|to"
+    r")\b[\s,:;-]*",
+    re.IGNORECASE,
+)
+
+
+def _strip_leading_scaffolding(topic: str) -> str:
+    """Remove setup words from the front of a topic, never from inside it."""
+    text = str(topic or "").strip()
+    for _ in range(12):
+        stripped = _LEADING_SCAFFOLDING_RE.sub("", text, count=1).strip()
+        if stripped == text or not stripped:
+            break
+        text = stripped
+    return text
+
+
+def parse_dialogue_goal(objective: str) -> dict[str, Any]:
+    """The parsed conversation aim, with what it was parsed FROM.
+
+    CP126 312c2bbf: the extraction ran silently, so a rewritten subject reached
+    cognition with nothing recording that the user had asked for something
+    else. This is the receipt.
+    """
+    original = re.sub(r"\s+", " ", str(objective or "")).strip()
+    goal = _dialogue_goal_from_objective(original)
+    return {
+        "objective": original,
+        "parsed_goal": goal,
+        "rewritten": bool(goal) and goal.lower() not in original.lower(),
+        "dropped_chars": max(0, len(original) - len(goal)),
+    }
 
 
 #: Instruction shapes a remote page uses to capture a model. A composed

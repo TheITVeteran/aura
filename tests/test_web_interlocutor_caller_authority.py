@@ -127,3 +127,88 @@ def test_the_contradiction_evidence_is_fenced():
     assert "_injection_guard(fence)" in source
     assert "_fence_safe(c.interlocutor_claim, fence)" in source
     assert "_fence_safe(c.counter_evidence, fence)" in source
+
+
+# --- the subject survives the parse (312c2bbf) --------------------------
+
+
+from core.capabilities.web_interlocutor import (  # noqa: E402
+    _dialogue_goal_from_objective,
+    _strip_leading_scaffolding,
+    parse_dialogue_goal,
+)
+
+
+@pytest.mark.parametrize(
+    "objective,must_survive",
+    [
+        (
+            "Talk to ChatGPT about how browsers use conversation turns in real time",
+            ["browsers", "conversation turns", "real time"],
+        ),
+        (
+            "Ask Claude about running a real experiment on live data",
+            ["running", "real experiment", "live data"],
+        ),
+        (
+            "Open ChatGPT and discuss the use of a single-turn exchange as evidence",
+            ["use of a single-turn exchange"],
+        ),
+    ],
+)
+def test_words_inside_the_subject_are_not_deleted(objective, must_survive):
+    """"use", "run", "real", "browser", "conversation" and "turns" were deleted
+    globally, so a topic containing them came out as mush and the opening
+    message was composed from the mush."""
+    goal = _dialogue_goal_from_objective(objective).lower()
+
+    for fragment in must_survive:
+        assert fragment in goal, f"{fragment!r} was deleted from {goal!r}"
+
+
+def test_leading_scaffolding_is_still_removed():
+    goal = _dialogue_goal_from_objective(
+        "Can you please open ChatGPT and talk about tidal resonance"
+    ).lower()
+
+    assert goal.startswith("tidal resonance")
+    assert "chatgpt" not in goal
+
+
+def test_the_original_casing_is_preserved():
+    goal = _dialogue_goal_from_objective(
+        "Talk to ChatGPT about how NASA measures Antarctic ice loss"
+    )
+
+    assert "NASA" in goal
+    assert "Antarctic" in goal
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("open ChatGPT and discuss tides", "discuss tides"),
+        ("please use the browser to explore tides", "explore tides"),
+        ("tides", "tides"),
+        ("", ""),
+    ],
+)
+def test_scaffolding_stripping_only_touches_the_front(text, expected):
+    assert _strip_leading_scaffolding(text) == expected
+
+
+def test_the_parse_is_reported_rather_than_silent():
+    receipt = parse_dialogue_goal(
+        "Can you open ChatGPT and talk about tidal resonance in shallow basins"
+    )
+
+    assert receipt["objective"].startswith("Can you open ChatGPT")
+    assert "tidal resonance in shallow basins" in receipt["parsed_goal"]
+    assert receipt["dropped_chars"] > 0
+
+
+def test_an_untouched_objective_reports_no_rewrite():
+    receipt = parse_dialogue_goal("tidal resonance in shallow basins")
+
+    assert receipt["parsed_goal"] == "tidal resonance in shallow basins"
+    assert receipt["rewritten"] is False

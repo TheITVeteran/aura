@@ -504,11 +504,17 @@ def test_web_interlocutor_dialogue_goal_strips_execution_instructions():
         "through observable behavior? Ask one natural follow-up, read the reply, then tell me what you learned."
     )
 
-    assert "local persistent ai" in goal
-    assert "retained memory" in goal
-    assert "open chatgpt" not in goal
-    assert "tell me" not in goal
-    assert "follow-up" not in goal
+    # CP126 312c2bbf: the goal keeps its original casing now — it is pasted
+    # into a prompt as the conversation aim, and case is content, not noise.
+    lowered = goal.lower()
+    assert "local persistent ai" in lowered
+    assert "retained memory" in lowered
+    # "use" inside "tool use" is the subject, not scaffolding. It used to be
+    # deleted globally along with "real", "conversation" and "turn".
+    assert "tool use" in lowered
+    assert "open chatgpt" not in lowered
+    assert "tell me" not in lowered
+    assert "follow-up" not in lowered
 
 
 def test_web_interlocutor_followup_must_anchor_to_observed_reply():
