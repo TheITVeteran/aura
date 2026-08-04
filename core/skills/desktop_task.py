@@ -3980,17 +3980,9 @@ class DesktopTaskSkill(BaseSkill):
         return steps
 
 
-    #: Chrome that appears on every macOS screen and describes nothing about
-    #: what the person is actually looking at.
-    _SCREEN_CHROME = frozenset({
-        "edit", "window", "file", "view", "help", "history", "bookmarks",
-        "apple", "show more", "show less", "home", "shorts", "you",
-        "settings", "search", "menu", "back", "forward", "reload",
-    })
-
     @classmethod
     def _observation_evidence(
-        cls, receipts: list[dict[str, Any]], objective: str
+        cls, receipts: list[dict[str, Any]], objective: str, *, retain: bool = True
     ) -> "ObservationEvidence | None":
         """The perception, typed as evidence gathered for THIS request.
 
@@ -4025,15 +4017,27 @@ class DesktopTaskSkill(BaseSkill):
             # that passed through her, and every follow-up would force
             # another capture that answers a question about the PAST with a
             # reading of the PRESENT.
-            return remember_observation(
-                Observation(
-                    kind=ObservationKind.SCREEN_TEXT,
-                    capture=capture,
-                    request=str(objective or ""),
-                    source=source,
-                    detail={"desktop_action": action},
-                )
+            observation = Observation(
+                kind=ObservationKind.SCREEN_TEXT,
+                capture=capture,
+                request=str(objective or ""),
+                source=source,
+                detail={"desktop_action": action},
             )
+            # The screen reader reports the frontmost process, which for
+            # this app is the launcher binary: "aura-launcher". Naming that
+            # back to the person describes nothing they can see — the
+            # window says "Aura". Live 2026-08-04 she answered "the front
+            # window is aura-launcher", which is the executable, not the
+            # app anyone is looking at.
+            windows = observation.windows()
+            if windows and windows[0].get("app"):
+                observation.source = str(windows[0]["app"]).strip()
+            # `retain=False` is for callers that only want to PHRASE what
+            # was seen (the summary describer). Retaining there too would
+            # record the same look twice and push a real earlier
+            # observation out of a deliberately short history.
+            return remember_observation(observation) if retain else observation
         return None
 
     @classmethod
@@ -4062,59 +4066,8 @@ class DesktopTaskSkill(BaseSkill):
         grounded factual description — which app is in front, what is
         identifiable in it — and the response lane is free to phrase it.
         """
-        for receipt in receipts:
-            if receipt.get("action") not in {"read_screen_text", "inspect_screen"}:
-                continue
-            result = receipt.get("result")
-            if not isinstance(result, Mapping):
-                continue
-            text = str(result.get("text") or "").strip()
-            app = str(result.get("active_app") or "").strip()
-            if not text and not app:
-                continue
-
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            seen: dict[str, None] = {}
-            for line in lines:
-                if len(line) < 2 or line.lower() in cls._SCREEN_CHROME:
-                    continue
-                seen.setdefault(line, None)
-            candidates = list(seen)
-
-            # Prefer SUBSTANTIVE lines over navigation labels. The first cut
-            # of this took the first eight distinct strings, which on a
-            # YouTube page meant "Subscriptions; RealLifeLore; Nexpo; fern" —
-            # the sidebar — while the video titles the person was actually
-            # looking at fell past the limit. A description made of nav chrome
-            # is a worse answer than a shorter one made of content.
-            substantive = [
-                line for line in candidates
-                if len(line.split()) >= 2 or len(line) >= 20
-            ]
-            content = substantive if len(substantive) >= 3 else candidates
-
-            parts: list[str] = []
-            if app:
-                parts.append(f"The frontmost app is {app}.")
-            if content:
-                shown = content[:8]
-                parts.append(
-                    "Visible on screen: " + "; ".join(shown)
-                    + (f" (and {len(content) - len(shown)} more items)"
-                       if len(content) > len(shown) else "")
-                    + "."
-                )
-                parts.append(
-                    f"That is {len(candidates)} distinct text elements in total."
-                )
-            elif text:
-                parts.append(
-                    "The screen read returned text, but nothing in it was "
-                    "distinguishable from ordinary window chrome."
-                )
-            if parts:
-                return " ".join(parts)
-        return ""
+        observation = cls._observation_evidence(receipts, "", retain=False)
+        return observation.describe() if observation is not None else ""
 
     @staticmethod
     def _primitive_steps_are_only_observational(steps: list[DesktopTaskStep]) -> bool:
@@ -5192,6 +5145,14 @@ class DesktopTaskSkill(BaseSkill):
             ),
             "observation_meta": (
                 observation.to_dict() if observation is not None else None
+            ),
+            # What she SAW, said plainly, built natively from the capture.
+            # The surface that answers "what's on my screen" reads this
+            # rather than digging the raw text out of a receipt — a screen
+            # is read by the OS, not narrated by a 32B, and the capture is
+            # evidence rather than a reply.
+            "observation_description": (
+                observation.describe() if observation is not None else None
             ),
             "summary": (
                 # An observation's answer is what was SEEN. A step count is a

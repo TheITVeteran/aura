@@ -425,6 +425,24 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
 )
 
 
+#: Verdicts that say only "this reply is shorter than we wanted". None of
+#: them is an integrity, honesty, or safety finding, and none is evidence
+#: that the answer is wrong — "68" is the whole correct answer to "what's 17
+#: times 4?".
+_THINNESS_ONLY_REASONS = frozenset(
+    {
+        "too_short_for_user_turn",
+        "too_thin_for_user_turn",
+        "too_thin_for_open_ended_turn",
+        "too_thin_for_status_turn",
+        "too_thin_for_operational_status_turn",
+        "too_thin_for_expansion_request",
+        "too_thin_for_reliability_turn",
+        "reliability_diagnostic_too_thin",
+    }
+)
+
+
 def _should_pass_user_facing_draft_downstream(
     text: str,
     reasons: set[str],
@@ -454,6 +472,33 @@ def _should_pass_user_facing_draft_downstream(
     stripped = str(text or "").strip()
     if reasons == {"missing_requested_word_count"}:
         return has_requested_word_count_contract(user_prompt) and bool(stripped)
+    # A draft whose ONLY fault is being short must not be failed for being
+    # short. The floors below exist to stop a stub entering repair; applied
+    # to a thinness verdict they are circular, and the circle is closed
+    # against every question whose correct answer is brief.
+    #
+    # Measured live 2026-08-04. Bryan asked "what's 17 times 4?" and the
+    # Cortex answered "68" — len=3. It was rejected as
+    # too_short_for_user_turn, retried, rejected again, and the turn died
+    # as "compact desktop generation returned no usable text". He was told
+    # "I couldn't get to an answer I'd stand behind" about arithmetic she
+    # had already got right. The runtime's own degradation record named it:
+    # "turn ended holding a servable answer that was never shown".
+    #
+    # Length is not evidence of inadequacy; unresponsiveness is, and the
+    # assessor reports THAT separately (reply_abandons_thread and friends).
+    # When thinness is the only complaint there is no evidence of a bad
+    # answer, so it goes downstream to repair rather than into the bin.
+    from core.conversation.surface_disposition import (
+        short_draft_answers_closed_question,
+    )
+
+    if (
+        stripped
+        and reasons.issubset(_THINNESS_ONLY_REASONS)
+        and short_draft_answers_closed_question(stripped, user_prompt)
+    ):
+        return True
     if len(stripped) < 48:
         return False
     words = [token for token in stripped.replace("\n", " ").split(" ") if token.strip()]

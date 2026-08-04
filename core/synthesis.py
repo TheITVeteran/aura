@@ -104,8 +104,23 @@ BANNED_PHRASES = [
     r"(?im)^Aura:.*$",
 ]
 
+#: A leaked speaker label at the very front of a reply.
+#
+# The colon used to be OPTIONAL, which made the pattern match the bare word
+# as well as the label — so any reply that legitimately BEGAN with one of
+# these words lost that word. Measured live 2026-08-04: a screen reading
+# that opened "aura-launcher is in front, showing …" was served as
+# "-launcher is in front, showing …", and "Aura Zenith is in front" would
+# have lost her own name the same way.
+#
+# A speaker label announces a turn: it is followed by a colon, or by the
+# chat-template marker that already identifies it. A word followed by the
+# rest of a sentence is just the sentence.
 _LEADING_ROLE_PREFIX_RE = re.compile(
-    r"^\s*(?:<\|im_start\|>\s*)?(?:assistant|aura|user|human|system)\s*[:：]?\s*",
+    r"^\s*(?:"
+    r"<\|im_start\|>\s*(?:assistant|aura|user|human|system)\b\s*[:：]?\s*"
+    r"|(?:assistant|aura|user|human|system)\s*[:：]\s*"
+    r")",
     re.IGNORECASE,
 )
 _INLINE_ROLE_BOUNDARY_PATTERNS = (

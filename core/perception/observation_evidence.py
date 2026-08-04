@@ -47,6 +47,7 @@ what kind of answer the material is for. The sentence stays hers.
 from __future__ import annotations
 
 import enum
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,6 +55,7 @@ from typing import Any
 __all__ = [
     "ObservationKind",
     "AnswerShape",
+    "SCREEN_CHROME",
     "Observation",
     "ObservationMemory",
     "answer_shape_for",
@@ -128,7 +130,161 @@ _LOCATE_CUES = (
     "does it",
     "is it",
     "has it",
+    # A question about something SEEN EARLIER is the same shape: it wants
+    # the thing named, not the screen toured. Live 2026-08-04, "what was
+    # that repo you saw on my screen?" fell through to DESCRIBE and was
+    # answered with the window stack while the repo name sat in the
+    # evidence.
+    "what was",
+    "what were",
+    "what did",
+    "which ",
+    "who ",
+    "where ",
+    "how much",
+    "name the",
+    "look for",
+    "tell me the",
+    "anything about",
+    "anything on",
 )
+
+
+#: Chrome that appears on every macOS screen and describes nothing about
+#: what the person is actually looking at. Menu bars and nav rails are the
+#: bulk of an accessibility capture and none of it is the answer to "what
+#: are you looking at".
+SCREEN_CHROME = frozenset({
+    "edit", "window", "file", "view", "help", "history", "bookmarks",
+    "apple", "show more", "show less", "home", "shorts", "you",
+    "settings", "search", "menu", "back", "forward", "reload",
+    "new", "more", "customize", "premium", "send", "voice", "online",
+    "mute", "subscriptions", "playlists", "watch later", "liked videos",
+    "your channel", "sign in", "close", "minimize", "maximize",
+})
+
+
+#: Glyphs an accessibility capture carries that belong to the widget, not
+#: the words: tab close crosses, separators, disclosure arrows, list
+#: bullets, and the icon stubs that come back as "8t" or "<>".
+_ELEMENT_EDGE_CHARS = " \t·•−–—-*×✕✖|<>‹›~+#•"
+
+_BADGE_PREFIX = re.compile(r"^\(\s*\d+\s*\)\s*")
+_ICON_STUB_PREFIX = re.compile(r"^(?:[0-9]{1,2}[a-z]{1,2}|[a-z]{1,2}[0-9]{1,2})\s+(?=[A-Z])")
+
+
+#: A browser tab strip comes back as one line holding several tabs, joined
+#: by each tab's close button and a divider:
+#:   ``Paramount Plus: Stream Mov × | youngbryan97/aura: A cognit x``
+#: Read as a single element that is one unreadable run-on; split, it is two
+#: titles.
+_ADJACENT_ELEMENT_RE = re.compile(r"\s+[×✕✖xX]\s*(?:\||$)|\s+\|\s+")
+
+#: The close button trailing the last tab on a line, with no divider after
+#: it to mark where the title ended.
+_TRAILING_CLOSE_RE = re.compile(r"\s+[×✕✖xX]\s*$")
+
+
+def _split_adjacent_elements(lines: Any) -> list[str]:
+    """One captured line may hold several distinct things. Separate them."""
+    separated: list[str] = []
+    for raw in lines:
+        text = str(raw or "")
+        for part in _ADJACENT_ELEMENT_RE.split(text):
+            part = _TRAILING_CLOSE_RE.sub("", str(part or "")).strip()
+            if part:
+                separated.append(part)
+    return separated
+
+
+def _clean_element(line: str) -> str:
+    """Strip widget furniture off a captured line.
+
+    Live 2026-08-04 the description named ``× | youngbryan97/aura: A
+    cogniti`` — the tab's close cross and separator read as part of the
+    title. What the person wants named is the title.
+    """
+    text = " ".join(str(line or "").split())
+    previous = None
+    while text and text != previous:
+        previous = text
+        text = text.strip(_ELEMENT_EDGE_CHARS)
+        text = _BADGE_PREFIX.sub("", text)
+        text = _ICON_STUB_PREFIX.sub("", text)
+    return text
+
+
+#: One line of the stacking order:
+#:   ``  3. Google Chrome "some title" — 1728x1037 at (0, 34), 33% visible``
+_WINDOW_LINE_RE = re.compile(
+    r"""^\s*(?P<order>\d+)\.\s+
+        (?P<app>[^"“]+?)\s*
+        (?:["“](?P<title>.*?)["”])?\s*
+        (?:[—–-]\s*(?P<tail>.*?))?\s*$""",
+    re.VERBOSE,
+)
+
+#: A title that says nothing beyond the app name already said.
+_EMPTY_TITLE_HINTS = frozenset({"", "untitled", "window"})
+
+
+def _describe_windows(windows: list[dict[str, Any]]) -> str:
+    """Say what is open and what is being looked at, as a person would.
+
+    Front window first, because that is what "what's on my screen" means.
+    Then what is behind it, and how much of it can actually be seen — a
+    window listed as fully covered is not something she saw, and saying it
+    is on screen without that qualifier would overstate the reading.
+    """
+
+    def _name(window: dict[str, Any]) -> str:
+        app = _clean_element(str(window.get("app") or ""))
+        title = _clean_element(str(window.get("title") or ""))
+        if title and title.casefold() not in _EMPTY_TITLE_HINTS and title != app:
+            return f"{app} (“{title}”)" if app else f"“{title}”"
+        return app or "an untitled window"
+
+    front, *behind = windows
+    sentences = [f"{_name(front)} is in front."]
+
+    visible_behind = [
+        window
+        for window in behind
+        if "completely hidden" not in str(window.get("visibility") or "").casefold()
+    ]
+    hidden_behind = [window for window in behind if window not in visible_behind]
+
+    if visible_behind:
+        named = [_name(window) for window in visible_behind[:3]]
+        listed = (
+            named[0]
+            if len(named) == 1
+            else f"{named[0]} and {named[1]}"
+            if len(named) == 2
+            else ", ".join(named[:-1]) + f", and {named[-1]}"
+        )
+        sentences.append(f"Behind it, partly visible: {listed}.")
+
+    if hidden_behind:
+        named = [str(window.get("app") or "").strip() for window in hidden_behind[:3]]
+        named = [name for name in named if name]
+        if named:
+            listed = (
+                named[0]
+                if len(named) == 1
+                else f"{named[0]} and {named[1]}"
+                if len(named) == 2
+                else ", ".join(named[:-1]) + f", and {named[-1]}"
+            )
+            extra = len(hidden_behind) - len(named)
+            verb = "is" if len(named) == 1 and extra <= 0 else "are"
+            sentences.append(
+                f"{listed} {verb} open but completely hidden"
+                + (f", along with {extra} more" if extra > 0 else "")
+                + "."
+            )
+
+    return " ".join(sentences)
 
 
 def answer_shape_for(request: Any) -> AnswerShape:
@@ -187,6 +343,182 @@ class Observation:
             if stripped:
                 seen.setdefault(stripped, None)
         return list(seen)
+
+    def describe(self) -> str:
+        """What is on the screen, said plainly. Native — no model involved.
+
+        Reading a screen is a sense, not a reasoning problem. The
+        accessibility capture already arrives structured, so saying what is
+        in front of the person is a matter of dropping the chrome and
+        naming what is left. Spending a 32B generation to narrate text the
+        OS already handed over is an allocation with nothing to show for
+        it, and it is how one observation turns into a stalled turn.
+
+        Returns "" when nothing was legible, so a caller says nothing
+        rather than describing a screen it never read.
+        """
+        windows = self.windows()
+        if windows:
+            described = _describe_windows(windows)
+            # The stacking order says which windows are open; it does not
+            # say what is IN the front one. Bryan's original case was a
+            # YouTube video — "what do you see" wants the thing being
+            # watched, not just the fact that Chrome is open.
+            on_page = self.salient(section_only=True)
+            fresh = [
+                item
+                for item in on_page
+                if not any(item.casefold() in str(w.get("title") or "").casefold() for w in windows)
+            ]
+            if fresh:
+                shown = fresh[:3]
+                listed = (
+                    shown[0]
+                    if len(shown) == 1
+                    else f"{shown[0]} and {shown[1]}"
+                    if len(shown) == 2
+                    else ", ".join(f"“{item}”" for item in shown[:-1])
+                    + f", and “{shown[-1]}”"
+                )
+                if len(shown) < 3:
+                    listed = " and ".join(f"“{item}”" for item in shown)
+                described += f" On screen: {listed}."
+            return described
+
+        app = self.source.strip()
+        content = self.salient()
+
+        if not content:
+            if not self.capture.strip():
+                # A read happened and came back with nothing. Saying so is
+                # the answer; falling through to a step count would report
+                # that the looking occurred without ever saying what was
+                # found, which is the failure this whole type exists for.
+                return (
+                    f"{app} is in front, but the screen read came back empty."
+                    if app
+                    else ""
+                )
+            return (
+                f"{app} is in front, but nothing on it read as content — just "
+                "window chrome."
+                if app
+                else "The screen read came back as window chrome only, with no "
+                "readable content."
+            )
+
+        # Prose, not a list. A semicolon-joined dump of every string the
+        # accessibility tree returned is the same failure as pasting the
+        # capture, only shorter: it is still the buffer, still unreadable,
+        # and still not an answer. Three or four named things, in a
+        # sentence, is what a person says when asked what is on a screen.
+        shown = [f"“{item}”" for item in content[:4]]
+        if len(shown) == 1:
+            listed = shown[0]
+        elif len(shown) == 2:
+            listed = f"{shown[0]} and {shown[1]}"
+        else:
+            listed = ", ".join(shown[:-1]) + f", and {shown[-1]}"
+
+        lead = f"{app} is in front" if app else "The screen is showing something"
+        rest = len(content) - len(shown)
+        tail = f", plus {rest} other bits of text" if rest > 0 else ""
+        return f"{lead}, showing {listed}{tail}."
+
+    def _text_section(self) -> list[str]:
+        """Just the ``Text on screen:`` part of a structured reading.
+
+        Everything above it is the reading's own scaffolding — field
+        labels and the stacking order — and naming that back is how a
+        description ends up saying "Screen layout (front to back):".
+        """
+        lines = self.capture.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip().casefold().startswith("text on screen"):
+                seen: dict[str, None] = {}
+                for entry in lines[index + 1:]:
+                    stripped = entry.strip()
+                    if stripped:
+                        seen.setdefault(stripped, None)
+                return list(seen)
+        return []
+
+    def windows(self) -> list[dict[str, Any]]:
+        """The window list the capture already carries, parsed.
+
+        ``read_screen_text`` does not return flat text. It returns a
+        structured reading — active app, focused window, then the stacking
+        order with titles and how much of each is visible:
+
+            3. Google Chrome "youngbryan97/aura: A cognitive…" — 1728x1037
+               at (0, 34), 33% visible, partly behind Aura
+
+        Treating those lines as anonymous strings threw away the best
+        material in the capture and described the screen as "Active app:
+        aura-launcher"; "Window: Aura Zenith" — the reading's own field
+        labels, named back as though they were content. What is on a screen
+        is which windows are open and which one you are looking at.
+        """
+        found: list[dict[str, Any]] = []
+        for line in self.capture.splitlines():
+            match = _WINDOW_LINE_RE.match(line)
+            if not match:
+                continue
+            # The tail is "1280x852 at (224, 80), fully visible". Splitting
+            # it on commas puts the window's Y coordinate in the visibility
+            # field — "(80), fully visible" — so the geometry is dropped at
+            # its closing bracket instead. Size and position are not what
+            # anyone means by what is on their screen; how much of the
+            # window can actually be seen is.
+            tail = (match.group("tail") or "").strip()
+            visibility = tail.rpartition("),")[2].strip() or tail
+            found.append(
+                {
+                    "order": int(match.group("order")),
+                    "app": match.group("app").strip(),
+                    "title": (match.group("title") or "").strip(),
+                    "visibility": visibility.strip().rstrip("."),
+                }
+            )
+        return found
+
+    def salient(self, *, section_only: bool = False) -> list[str]:
+        """The lines that are actually CONTENT, best first.
+
+        The accessibility tree hands back everything: menu bars, single
+        stray glyphs, clipped tab titles, playback timestamps. Live
+        2026-08-04 the reply opened with "E / 0:21 / Claude / File / Edit /
+        View / Window / Help / *" — nine lines before anything a person
+        would call content. Naming what is on a screen means dropping all
+        of that first.
+        """
+        ranked: list[str] = []
+        seen: dict[str, None] = {}
+        source_lines = self._text_section() if section_only else self.elements()
+        for raw in _split_adjacent_elements(source_lines):
+            line = _clean_element(raw)
+            if len(line) < 3 or line.casefold() in SCREEN_CHROME:
+                continue
+            # Needs letters to be words. Filters stray glyphs ("*", "×"),
+            # playback positions ("0:21"), and counter badges.
+            letters = sum(1 for ch in line if ch.isalpha())
+            if letters < 3:
+                continue
+            if line.casefold() in seen:
+                continue
+            seen[line.casefold()] = None
+            ranked.append(line)
+
+        # Prefer SUBSTANTIVE lines over navigation labels. The first cut of
+        # this took the first eight distinct strings, which on a YouTube
+        # page meant "Subscriptions; RealLifeLore; Nexpo; fern" — the
+        # sidebar — while the video titles the person was actually looking
+        # at fell past the limit. A description made of nav chrome is a
+        # worse answer than a shorter one made of content.
+        substantive = [
+            line for line in ranked if len(line.split()) >= 2 or len(line) >= 20
+        ]
+        return substantive if substantive else ranked
 
     def for_reasoning(self) -> str:
         """The evidence, presented WITH the frame it was gathered under.
@@ -331,6 +663,87 @@ class ObservationMemory:
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
+
+    def sensory_brief(
+        self,
+        *,
+        max_elements: int = 24,
+        max_chars: int = 1600,
+        max_age_s: float = RETENTION_FRESH_S,
+    ) -> str:
+        """What she has actually seen, for the context of any turn.
+
+        Bryan, live 2026-08-04: "she shouldn't be blind from information she
+        intakes." A perception that only exists inside the turn that
+        captured it makes her blind the moment the next question arrives —
+        she reads a screen, says what is on it, and then cannot answer "what
+        was that repo called?" a sentence later.
+
+        So this is not the answer to a screen question; it is the standing
+        fact that she looked and what she saw, carried into ordinary
+        conversation. It names its own provenance and its own age, because
+        a perception she cannot source is indistinguishable from something
+        she made up, and one she reports as current when it is five minutes
+        old is a different claim than the one the evidence supports.
+
+        Returns "" when she has seen nothing, so nothing is asserted.
+        """
+        item = self.latest()
+        if item is None or item.is_empty:
+            return ""
+        described = item.describe()
+        if not described:
+            return ""
+
+        age = max(0.0, time.time() - item.at)
+        # Her senses, not her archive. A reading from half an hour ago is a
+        # memory of a screen rather than a perception of one, and carrying
+        # it into every later turn would keep asserting a desk that has
+        # since changed. Past the window she can still be ASKED what she
+        # saw — that goes through recall, which states its own age.
+        if age > max_age_s:
+            return ""
+        if age <= 90:
+            when = "moments ago"
+        elif age <= RETENTION_FRESH_S:
+            when = f"about {max(1, int(age // 60))} minute(s) ago"
+        else:
+            when = (
+                f"{max(1, int(age // 60))} minute(s) ago — it may well have "
+                "changed since, so do not state it as current"
+            )
+
+        lines = [
+            "[YOUR OWN RECENT PERCEPTION — NOTES, NOT A REPLY]",
+            f"You looked at the screen yourself {when}. If asked where this "
+            "came from, say you read the screen.",
+        ]
+        windows = item.windows()
+        if windows:
+            lines.append("Windows open (front to back):")
+            for window in windows[:8]:
+                title = str(window.get("title") or "").strip()
+                visibility = str(window.get("visibility") or "").strip()
+                lines.append(
+                    f"- {window.get('app')}"
+                    + (f" — “{title}”" if title else "")
+                    + (f" ({visibility})" if visibility else "")
+                )
+        else:
+            lines.append(described)
+        rest = item.salient(section_only=bool(windows))[:max_elements]
+        if rest:
+            lines.append("Text read off the screen: " + "; ".join(rest) + ".")
+        lines.append(
+            "These are your notes on what you saw, not a draft answer. "
+            "Answer the question that was actually asked, in your own "
+            "words, using only what is relevant here. Do not read this "
+            "list back, and do not mention the screen if the question is "
+            "not about it."
+        )
+        lines.append("[END YOUR OWN RECENT PERCEPTION]")
+        brief = "\n".join(lines)
+        return brief[:max_chars]
 
     def recall_for(self, request: Any) -> str:
         """What she can honestly say about something she looked at earlier.

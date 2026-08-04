@@ -2696,6 +2696,29 @@ def _reply_assessment_requires_repair_with_memory_evidence(
     if not _reply_assessment_requires_repair(assessment):
         return False
     reasons = set(getattr(assessment, "reasons", ()) or ())
+    # A complete short answer is not a defect. "68" fails every thinness
+    # heuristic there is and is still the whole correct answer to "what's
+    # 17 times 4?" — live 2026-08-04 this gate turned it into "I couldn't
+    # get to an answer I'd stand behind".
+    try:
+        from core.conversation.surface_disposition import (
+            draft_is_servable,
+            short_draft_answers_closed_question,
+        )
+
+        if (
+            reasons
+            and draft_is_servable(reasons)
+            and short_draft_answers_closed_question(reply_text, user_message)
+        ):
+            return False
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action="kept the standard repair path after the short-answer check failed",
+        )
     if (
         reasons
         and reasons.issubset(_MEMORY_STATE_COMPATIBLE_ASSESSMENT_REASONS)
@@ -8402,6 +8425,42 @@ async def _run_cognitive_engine_chat_turn(
             }
         )
     engine_user_message = str(effective_user_message or "")
+
+    # Her senses travel with her, not just with the turn that captured them.
+    #
+    # A screen read is intake, and intake she cannot refer back to is not
+    # something she saw — it is something that passed through her. Without
+    # this she answers "what's on my screen", then goes blind to it on the
+    # very next sentence and has to look again, answering a question about
+    # what she saw with a fresh reading of the present.
+    #
+    # Attached to the message because that is the channel proven to reach
+    # the model on this lane; `preflight_context_message` is carried in the
+    # context dict and read by nothing.
+    # Carried when the turn could plausibly concern it. Attaching a screen
+    # reading to "what's 17 times 4?" puts a window inventory in front of an
+    # arithmetic question, which is noise at best; her senses should be
+    # available, not narrated at every turn.
+    try:
+        from core.perception.observation_evidence import get_observation_memory
+
+        _perception_brief = (
+            get_observation_memory().sensory_brief()
+            if _turn_may_concern_perception(visible)
+            else ""
+        )
+        if _perception_brief:
+            engine_user_message = f"{engine_user_message}\n\n{_perception_brief}"
+    except _CHAT_RECOVERABLE_ERRORS as _perception_exc:
+        record_degradation(
+            "chat",
+            _perception_exc,
+            action=(
+                "ran the turn without recent perception; she may not recall "
+                "what she just looked at"
+            ),
+        )
+
     if require_engine:
         engine_directives: list[str] = []
         if _normalize_user_message(visible).startswith("you with me") or re.search(
@@ -12008,7 +12067,7 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
     return " ".join(parts)
 
 
-def _worth_more_than_a_refusal(candidate: str) -> bool:
+def _worth_more_than_a_refusal(candidate: str, user_message: Any = "") -> bool:
     """Is this substantial enough to beat "ask me again in a moment"?
 
     The old rule was 80 characters and 12 words, and it discarded correct
@@ -12025,9 +12084,34 @@ def _worth_more_than_a_refusal(candidate: str) -> bool:
     """
     text = candidate.strip()
     words = text.split()
+    # A complete answer to a closed question is complete at any length, and
+    # the floor below cannot see that: "68" is one word and two characters
+    # and is the entire correct answer to "what's 17 times 4?". Live
+    # 2026-08-04 it was destroyed here, at the last site that could have
+    # saved it, after the gates above had already agreed it was servable.
+    if _short_closed_answer(text, user_message):
+        return True
     if len(words) < 4 or len(text) < 20:
         return False
     return text[-1] in ".!?\"')" or len(words) >= 12
+
+
+def _short_closed_answer(text: str, user_message: Any) -> bool:
+    """Shared policy: is this brief text a finished answer to what was asked?"""
+    try:
+        from core.conversation.surface_disposition import (
+            short_draft_answers_closed_question,
+        )
+
+        return short_draft_answers_closed_question(text, user_message)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat",
+            exc,
+            severity="warning",
+            action="applied the length floor because the short-answer check failed",
+        )
+        return False
 
 
 def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "") -> str:
@@ -12074,7 +12158,7 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "
         raw_model_draft(),
         suppressed,
     ):
-        if not _worth_more_than_a_refusal(candidate):
+        if not _worth_more_than_a_refusal(candidate, user_message):
             continue
         try:
             assessment = assess_user_facing_reply(user_message, candidate)
@@ -17263,6 +17347,83 @@ def _looks_like_capability_refusal(text: Any) -> bool:
     return bool(_CAPABILITY_REFUSAL_RE.search(body))
 
 
+#: Words that make a turn possibly about something she looked at: the
+#: surface itself, the act of seeing, or a reference back to a thing rather
+#: than a topic ("that repo", "those tabs").
+_PERCEPTION_RELEVANCE_RE = re.compile(
+    r"\b(?:screen|screens|window|windows|tab|tabs|monitor|display|desktop|"
+    r"app|apps|application|page|browser|see|seeing|saw|seen|look|looking|"
+    r"looked|watch|watching|showing|shown|visible|open|onscreen|"
+    r"front|foreground)\b"
+    r"|\b(?:that|those|this|these|it)\s+"
+    r"(?:one|thing|repo|repository|video|title|file|window|tab|page|app|"
+    r"article|error|message|name)\b"
+    # Asking how she knows something is a question ABOUT the perception:
+    # she cannot source what she saw if the seeing was not carried in.
+    r"|\bhow (?:did|do) you know\b"
+    r"|\bhow (?:can|could) you tell\b"
+    r"|\bwhere did (?:that|it|this|they) come from\b"
+    r"|\bwhich one\b",
+    re.IGNORECASE,
+)
+
+
+def _turn_may_concern_perception(user_message: str) -> bool:
+    """Whether her recent looking could bear on this turn at all.
+
+    Deliberately generous — being asked about the screen and having no
+    perception of it is the blindness this exists to prevent, so the cost
+    of a false positive (a few lines of notes she ignores) is much lower
+    than a false negative. It is not unconditional: a screen reading has no
+    business riding along on arithmetic.
+    """
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    return bool(_PERCEPTION_RELEVANCE_RE.search(text))
+
+
+def _is_screen_perception_objective(user_message: str) -> bool:
+    """A request whose desktop plan is nothing but LOOKING.
+
+    Reading a screen has no effect to verify and produces no artifact — it
+    produces evidence. That makes it the one desktop objective where the
+    executor owns the gathering and something else owns the answer.
+    """
+    if _blocks_consequential_desktop_execution(user_message):
+        return False
+    if not _looks_like_desktop_objective(user_message):
+        return False
+    try:
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        steps = DesktopTaskSkill()._derive_steps_from_objective(
+            str(user_message or "").strip(), {}
+        )
+        return bool(steps) and DesktopTaskSkill._primitive_steps_are_only_observational(
+            steps
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _screen_perception_needs_her_answer(user_message: str) -> bool:
+    """A screen question that a description cannot answer.
+
+    "What's on my screen" is served by the reading itself, natively and in
+    about a second. "What was that repo?" is not: the reading is where the
+    answer is found, not what the answer is.
+    """
+    if not _is_screen_perception_objective(user_message):
+        return False
+    try:
+        from core.perception.observation_evidence import AnswerShape, answer_shape_for
+
+        return answer_shape_for(user_message) is not AnswerShape.DESCRIBE
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return False
+
+
 def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str) -> bool:
     """Whether desktop_task can honestly complete without a model-composed body.
 
@@ -17277,6 +17438,18 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     if _looks_like_program_dna_execution_request(user_message):
         return False
     if not _looks_like_desktop_objective(user_message):
+        return False
+    if _screen_perception_needs_her_answer(user_message):
+        # A specific question about the screen is not self-sufficient: the
+        # executor can gather the evidence but cannot answer from it.
+        #
+        # Live 2026-08-04, "what was that repo you saw on my screen?" was
+        # classified self-sufficient, so the turn returned a canned "I will
+        # execute this through the governed desktop_task lane" WITHOUT ever
+        # invoking the engine — and when the desktop lane declined to answer
+        # a specific question with a generic description, the authorship
+        # gate correctly refused the placeholder and the turn failed closed.
+        # The read still happens; it just stops pretending to be the answer.
         return False
     text = str(user_message or "").strip()
     lowered = text.lower()
@@ -17564,8 +17737,32 @@ async def _execute_desktop_objective_from_chat(
         # heuristic_compat planning." The observation was in the receipt the
         # whole time. A step count is what the machine did; the answer is
         # what it found, and the question was the second one.
-        if observation:
-            response = f"{observation} (Completed {completed}/{requested} governed desktop steps.)"
+        if observation and _perception_needs_her_own_answer(result, objective):
+            # A SPECIFIC question about the screen is not answered by a
+            # description of the screen.
+            #
+            # Live 2026-08-04: "what was that repo you saw on my screen?"
+            # came back as "Aura is in front. Behind it, partly visible:
+            # Claude and Google Chrome…" — a correct description, and not
+            # the answer. The repo name was sitting inside the evidence.
+            #
+            # The read has happened and is retained, so returning no reply
+            # here is not a loss: the turn continues into cognition, which
+            # receives the perception and answers the question that was
+            # actually asked. Only a plain "what's on my screen" is served
+            # by the description, and that one is served natively.
+            response = ""
+        elif observation:
+            # A perception answers with what was SEEN and stops there. The
+            # step count is bookkeeping about the machinery; appending it to
+            # "Chrome is in front, showing …" turns an answer back into a
+            # progress report, and nobody asked how many steps it took to
+            # look at their own screen. Non-perception observations keep it.
+            response = (
+                observation
+                if result.get("observation_meta")
+                else f"{observation} (Completed {completed}/{requested} governed desktop steps.)"
+            )
         else:
             response = (
                 f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
@@ -17664,6 +17861,32 @@ def _clip_reply_to_sentence(text: str, limit: int) -> str:
         return (window[:cut] if cut >= limit // 2 else window).rstrip(" ,;:-—") + "…"
 
 
+def _perception_needs_her_own_answer(result: dict[str, Any], objective: str) -> bool:
+    """Whether this screen question wants an answer rather than a description.
+
+    "What's on my screen?" wants the description, and gets it natively — a
+    screen is read by the OS, and spending a model generation to narrate
+    text the accessibility API already returned buys nothing.
+
+    "What was that repo?", "is the build passing?", "read me the exact
+    wording" all want something FOUND in the reading. Handing those a tour
+    of the window stack answers a question nobody asked.
+    """
+    if not result.get("observation_meta"):
+        return False
+    try:
+        from core.perception.observation_evidence import AnswerShape, answer_shape_for
+
+        return answer_shape_for(objective) is not AnswerShape.DESCRIBE
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat",
+            exc,
+            action="served the screen description because answer shape was undecidable",
+        )
+        return False
+
+
 def _desktop_task_observation(result: dict[str, Any]) -> str:
     """The content a desktop task OBSERVED, as opposed to what it did.
 
@@ -17673,6 +17896,30 @@ def _desktop_task_observation(result: dict[str, Any]) -> str:
     someone the mechanism when they asked what is on their screen is the
     receipt standing in for the answer.
     """
+    # A PERCEPTION is DESCRIBED, never pasted.
+    #
+    # Measured live 2026-08-04. The scraping below reaches into the receipts
+    # for the first string it can find, and for a screen read that string is
+    # `result.text` — the whole accessibility dump. It was handed back as the
+    # reply verbatim: "E / 0:21 / Claude / File / Edit / View / Window /
+    # Help / *", forty lines of window furniture, in answer to "can you tell
+    # me what you see on the screen?".
+    #
+    # The scrape was itself a fix (2026-08-03) for the opposite failure, a
+    # step count standing in for the answer. Both are the same mistake in
+    # different directions: the receipt standing in for what was seen. What
+    # a person asked for is neither the buffer nor the bookkeeping — it is
+    # the reading, said plainly, which desktop_task now builds natively from
+    # the capture and carries here.
+    described = str(result.get("observation_description") or "").strip()
+    if described:
+        return described
+    if result.get("observation_meta"):
+        # A perception happened but produced no description. There is
+        # nothing honest to scrape — the capture is the one thing that must
+        # not be pasted — so say nothing and let the caller stay factual.
+        return ""
+
     observation_keys = (
         "observation",
         "screen_text",
@@ -20930,7 +21177,17 @@ async def api_chat(
                     _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
-            if _desktop_objective_self_sufficient_without_cognitive_text(_semantic_user_message):
+            # The read runs for BOTH kinds of screen request. When the
+            # question wants a description, the reading is the reply and is
+            # served here natively. When it wants something found in the
+            # reading, the reading is INTAKE: it is retained, it travels
+            # into the turn as her own perception, and cognition answers.
+            # Either way she looks before she speaks — being asked about the
+            # screen and having no perception of it is the blindness this
+            # lane exists to prevent.
+            if _desktop_objective_self_sufficient_without_cognitive_text(
+                _semantic_user_message
+            ) or _screen_perception_needs_her_answer(_semantic_user_message):
                 try:
                     executed = await _run_desktop_objective_tracked(
                         _semantic_user_message,

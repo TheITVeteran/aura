@@ -41,6 +41,7 @@ draft is kept, and it is the floor nothing is allowed to fall below.
 from __future__ import annotations
 
 import contextvars
+import re
 from enum import Enum
 from typing import Any, Iterable
 
@@ -58,6 +59,7 @@ __all__ = [
     "integrity_failures",
     "preserved_draft",
     "preserve_draft",
+    "short_draft_answers_closed_question",
     "begin_turn_tool_receipts",
     "record_tool_receipt",
     "turn_tool_receipts",
@@ -233,7 +235,7 @@ def repair_is_an_improvement(before: Any, after: Any, question: Any = "") -> boo
     return True
 
 
-def best_available_reply(*, minimum_words: int = 12) -> str:
+def best_available_reply(*, minimum_words: int = 12, question: Any = "") -> str:
     """The best thing this turn produced that is safe to say, or "".
 
     Checked in order of preference: a draft some layer deliberately preserved,
@@ -245,7 +247,13 @@ def best_available_reply(*, minimum_words: int = 12) -> str:
 
     for candidate in (preserved_draft(), raw_model_draft()):
         body = str(candidate or "").strip()
-        if not body or len(body.split()) < minimum_words:
+        if not body:
+            continue
+        # The word floor is a preference, not a verdict. A complete answer to
+        # a closed question clears nothing and is still the answer.
+        if len(body.split()) < minimum_words and not short_draft_answers_closed_question(
+            body, question
+        ):
             continue
         try:
             reasons = assess_user_facing_reply("", body).reasons
@@ -427,3 +435,64 @@ def draft_is_servable(reasons: Any) -> bool:
     The question every gate should be asking instead of "did anything fail".
     """
     return disposition_for(reasons) is not SurfaceDisposition.DISCARD
+
+
+#: A question whose correct answer is allowed to be two characters long.
+_CLOSED_QUANTITY_PROMPT_RE = re.compile(
+    r"\b(?:how many|how much|how old|how long|how far|what(?:'s| is| are)\s+"
+    r"[^?]*\b(?:\d|times|plus|minus|divided|multiplied|squared|percent|sum|"
+    r"total|average)\b)",
+    re.IGNORECASE,
+)
+_ARITHMETIC_PROMPT_RE = re.compile(
+    r"\d\s*(?:[-+*/x×÷]|times|plus|minus|divided by|multiplied by)\s*\d",
+    re.IGNORECASE,
+)
+_POLAR_PROMPT_RE = re.compile(
+    r"^\s*(?:is|are|was|were|do|does|did|can|could|will|would|should|has|have|"
+    r"had|am)\b",
+    re.IGNORECASE,
+)
+#: Acknowledgements that answer nothing on their own.
+_FILLER_DRAFTS = frozenset(
+    {"ok", "okay", "sure", "fine", "done", "right", "yep", "got it"}
+)
+
+
+def short_draft_answers_closed_question(text: Any, question: Any) -> bool:
+    """Whether a SHORT draft is a finished answer rather than a stub.
+
+    Thinness gates cannot tell "68" from "ok". Both are two-or-three
+    character replies; one is the complete and correct answer to "what's 17
+    times 4?" and the other is an acknowledgement that answers nothing. A
+    gate that judges on length alone must get one of them wrong, and the
+    one it gets wrong is the correct answer — every time the question was
+    a closed one.
+
+    Measured live 2026-08-04: Bryan asked "what's 17 times 4?", the Cortex
+    answered "68", and three separate gates rejected it for being three
+    characters long. He was told "I couldn't get to an answer I'd stand
+    behind" about arithmetic she had already got right, and the runtime's
+    own degradation record read "turn ended holding a servable answer that
+    was never shown to the person".
+
+    So the question decides, not the length. A quantity or a yes/no admits
+    a brief answer; an open question does not, and a stub answering one
+    still goes back for another generation.
+    """
+    draft = str(text or "").strip()
+    prompt = str(question or "").strip()
+    if not draft or not prompt:
+        return False
+    if draft.casefold().strip(".!") in _FILLER_DRAFTS:
+        return False
+    wants_quantity = bool(
+        _ARITHMETIC_PROMPT_RE.search(prompt) or _CLOSED_QUANTITY_PROMPT_RE.search(prompt)
+    )
+    if wants_quantity and any(char.isdigit() for char in draft):
+        return True
+    if _POLAR_PROMPT_RE.match(prompt) and re.match(
+        r"^\s*(?:yes|no|yeah|nope|not\b|it\s+is|it\s+isn't)\b", draft, re.IGNORECASE
+    ):
+        return True
+    return False

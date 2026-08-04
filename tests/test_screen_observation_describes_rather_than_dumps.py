@@ -92,12 +92,32 @@ def test_the_description_is_bounded_not_an_exhaustive_list():
     many = "\n".join(f"Distinct item number {index}" for index in range(60))
     description = _describe(_observation(text=many, app="Finder"))
     assert len(description) < 900
-    assert "more items" in description
+    # Only a handful are named; the rest are counted, not listed.
+    assert description.count("Distinct item number") <= 6
 
 
-def test_the_total_count_is_stated_so_nothing_is_silently_dropped():
+def test_omitted_content_is_counted_so_nothing_is_silently_dropped():
+    """Bounded is honest only if the boundary is visible.
+
+    Naming four things off a screen holding sixty is a fine answer; naming
+    four and implying that is all there was is not. The remainder is
+    stated as a number rather than listed — a count is readable, and the
+    exhaustive list is the buffer dump this whole module exists to stop.
+    """
+    many = "\n".join(f"Distinct item number {index}" for index in range(60))
+    description = _describe(_observation(text=many, app="Finder"))
+    assert "56" in description
+
+
+def test_the_description_reads_as_a_sentence_not_a_dump():
+    """What Bryan asked for live on 2026-08-04: "she needs to neatly be
+    able to say what she sees on screen"."""
     description = _describe(_observation())
-    assert "distinct text elements in total" in description
+    # Prose, not a machine listing: no semicolon-joined element list and no
+    # element-count bookkeeping read back to the person.
+    assert ";" not in description
+    assert "distinct text elements" not in description
+    assert description.endswith(".")
 
 
 # ------------------------------------------------------------- honest edges

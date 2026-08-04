@@ -689,6 +689,31 @@ def _reset_shutdown_request_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_observation_memory_between_tests():
+    """A screen one test looked at is not a screen the next test can see.
+
+    Retained perception is process-global on purpose — her senses outlive
+    the turn that filled them — which makes it exactly the kind of state
+    that leaks between tests. It did: a capture recorded by the perception
+    suite rode into an unrelated desktop-lane test and appended itself to
+    that turn's objective.
+    """
+    try:
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+    except (ImportError, RuntimeError, AttributeError):
+        pass
+    yield
+    try:
+        from core.perception.observation_evidence import get_observation_memory
+
+        get_observation_memory().clear()
+    except (ImportError, RuntimeError, AttributeError):
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _reset_runtime_degradation_state_between_tests():
     """Keep process-local incidents from contaminating later health assertions."""
     from core.runtime.errors import get_degradation_tracker, get_subsystem_registry
