@@ -377,3 +377,39 @@ def test_the_reasoning_context_receives_evidence_not_a_finished_sentence():
         "so there is nothing for her to reason over"
     )
     assert window.index('get("observation")') < window.index('get("summary"')
+
+
+# ------------------------------------------------- a menu bar is not content
+
+
+def test_a_concatenated_menu_bar_is_not_named_as_screen_content():
+    """Live 2026-08-04, the description named the browser's menu bar.
+
+    The chrome list is matched against a whole line, and a menu bar
+    defeats that by arriving as ONE line — "History Bookmarks Protiles lab
+    window Help", unique as a string, misspelled by the capture, and
+    furniture in every browser ever shipped.
+    """
+    observation = Observation(
+        kind=ObservationKind.SCREEN_TEXT,
+        capture=(
+            "History Bookmarks Protiles lab window Help\n"
+            "Monthly Expenses\n"
+            "The Reason Why Cancer is so Hard to Beat\n"
+        ),
+        source="Google Chrome",
+    )
+    described = observation.describe()
+    assert "Bookmarks" not in described
+    assert "Protiles" not in described
+    # and the real content still survives the filter
+    assert "Cancer" in described
+
+
+def test_content_that_merely_mentions_a_menu_word_survives():
+    observation = Observation(
+        kind=ObservationKind.SCREEN_TEXT,
+        capture="How to open a new tab in Chrome without losing history\n",
+        source="Google Chrome",
+    )
+    assert "losing history" in observation.describe()

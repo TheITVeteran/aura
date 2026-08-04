@@ -197,6 +197,35 @@ def _split_adjacent_elements(lines: Any) -> list[str]:
     return separated
 
 
+#: Menu-bar words. The chrome set above is matched against a WHOLE line,
+#: which a menu bar defeats by arriving as one: live 2026-08-04 the reply
+#: named "History Bookmarks Protiles lab window Help" as something on the
+#: screen. It is the menu bar of every browser ever shipped, it says
+#: nothing about what the person is looking at, and no per-line lookup can
+#: catch it because as a line it is unique — and misspelled, because the
+#: capture is imperfect.
+_MENU_WORDS = SCREEN_CHROME | frozenset({
+    "profiles", "tab", "tabs", "tools", "develop", "format", "insert",
+    "table", "arrange", "go", "favorites", "people", "safari", "chrome",
+    "actions", "selection", "run", "terminal", "shell", "finder",
+})
+
+#: How much of a line must be menu vocabulary before it is furniture. A
+#: capture mangles words ("Protiles", "lab" for "Tab"), so requiring all of
+#: them to match would catch nothing; a clear majority is the honest test.
+_CHROME_LINE_RATIO = 0.6
+
+
+def _is_mostly_chrome(line: str) -> bool:
+    """Whether this line is a menu bar rather than something on the screen."""
+    tokens = [token.strip(".,:;|-—·").casefold() for token in line.split()]
+    tokens = [token for token in tokens if token]
+    if len(tokens) < 3:
+        return False
+    hits = sum(1 for token in tokens if token in _MENU_WORDS)
+    return hits / len(tokens) >= _CHROME_LINE_RATIO
+
+
 def _clean_element(line: str) -> str:
     """Strip widget furniture off a captured line.
 
@@ -498,6 +527,8 @@ class Observation:
         for raw in _split_adjacent_elements(source_lines):
             line = _clean_element(raw)
             if len(line) < 3 or line.casefold() in SCREEN_CHROME:
+                continue
+            if _is_mostly_chrome(line):
                 continue
             # Needs letters to be words. Filters stray glyphs ("*", "×"),
             # playback positions ("0:21"), and counter badges.
