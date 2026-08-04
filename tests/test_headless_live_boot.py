@@ -136,3 +136,98 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# `main()` above carries four real checks that print ✅/❌ and assert nothing,
+# so a regression would have printed ❌ into a log nobody reads. It was also
+# never collected. These are the same properties as pytest tests, against a
+# tmp path rather than the repo root — the original wrote test_semantic.txt
+# into the working directory and never removed it.
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_terminal_truncates_a_flood_of_output():
+    """Anti-hang: unbounded stdout is how a skill wedges the runtime."""
+    term = SovereignTerminalSkill()
+    result = await term.safe_execute(
+        {"action": "execute", "command": "seq 1 5000", "timeout": 10},
+        {"mode": "headless_test"},
+    )
+    assert result.get("ok"), result.get("error")
+    assert "TRUNCATED" in result.get("stdout", "")
+
+
+@pytest.fixture
+def workspace_file():
+    """A uniquely named file inside the workspace, removed afterwards.
+
+    The skill sandboxes to the workspace, so tmp_path is correctly refused.
+    The original script wrote test_semantic.txt into the repo root and never
+    cleaned it up.
+    """
+    import os
+    import uuid
+
+    name = f"_headless_boot_probe_{uuid.uuid4().hex[:8]}.txt"
+    yield name
+    for candidate in (name, os.path.join(os.getcwd(), name)):
+        try:
+            os.remove(candidate)
+        except OSError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_the_file_skill_refuses_paths_outside_the_workspace(tmp_path):
+    """Fail-closed sandboxing, pinned. A skill that can write anywhere is a
+    skill that can overwrite the runtime that is running it."""
+    f_op = FileOperationSkill()
+    result = await f_op.safe_execute(
+        {"action": "write", "path": str(tmp_path / "escape.txt"), "content": "x"},
+        {"mode": "headless_test"},
+    )
+    assert result.get("ok") is False
+    assert "outside workspace" in str(result.get("error", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_reads_are_line_indexed(workspace_file):
+    """A semantic editor must cite lines, or an edit cannot be targeted."""
+    f_op = FileOperationSkill()
+    context = {"mode": "headless_test"}
+
+    written = await f_op.safe_execute(
+        {"action": "write", "path": workspace_file, "content": "Line 1\nLine 2\nLine 3\n"},
+        context,
+    )
+    assert written.get("ok"), written.get("error")
+
+    read = await f_op.safe_execute({"action": "read", "path": workspace_file}, context)
+    assert read.get("ok"), read.get("error")
+    assert "0001:" in read.get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_a_write_round_trips_its_content(workspace_file):
+    f_op = FileOperationSkill()
+    context = {"mode": "headless_test"}
+
+    await f_op.safe_execute(
+        {"action": "write", "path": workspace_file, "content": "alpha\nbeta\n"}, context
+    )
+    read = await f_op.safe_execute({"action": "read", "path": workspace_file}, context)
+    assert "alpha" in read.get("content", "")
+    assert "beta" in read.get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_command_reports_rather_than_hangs():
+    term = SovereignTerminalSkill()
+    result = await term.safe_execute(
+        {"action": "execute", "command": "exit 3", "timeout": 10},
+        {"mode": "headless_test"},
+    )
+    assert result is not None
+    assert "ok" in result

@@ -24,24 +24,10 @@ import pytest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
-#: Files that collected zero tests when this gate was introduced.
-#: Remove entries as they gain real tests. Never add one.
-KNOWN_EMPTY: frozenset[str] = frozenset(
-    {
-        "tests/test_cameral_routing.py",
-        "tests/test_dlq.py",
-        "tests/test_headless_live_boot.py",
-        "tests/test_persona_evolver.py",
-        "tests/test_scrambler.py",
-        "tests/test_sentient_unity.py",
-        "tests/test_smoke.py",
-        "tests/test_social_evolution.py",
-        "tests/test_state_causality.py",
-        "tests/test_swarm.py",
-        "tests/test_system_hardening_2026.py",
-        "tests/test_telemetry.py",
-    }
-)
+#: Files that collected zero tests when this gate was introduced. All twelve
+#: have since been given real tests, so the baseline is EMPTY and any new
+#: phantom file fails immediately. It may only ever stay this way.
+KNOWN_EMPTY: frozenset[str] = frozenset()
 
 
 def _looks_empty(path: pathlib.Path) -> bool:
@@ -87,6 +73,11 @@ def test_baseline_only_shrinks():
     )
 
 
-def test_the_reviewed_file_is_actually_empty():
-    """Pin the specific finding that prompted this gate."""
-    assert "tests/test_state_causality.py" in _empty_test_files()
+def test_the_reviewed_file_now_has_real_tests():
+    """The specific finding that prompted this gate, closed."""
+    assert "tests/test_state_causality.py" not in _empty_test_files()
+
+
+def test_the_baseline_is_empty():
+    """Twelve files were converted. Nothing may be grandfathered back in."""
+    assert KNOWN_EMPTY == frozenset()

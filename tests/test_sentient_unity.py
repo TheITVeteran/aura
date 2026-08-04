@@ -45,3 +45,47 @@ if __name__ == "__main__":
 
 
 ##
+
+
+# `main()` above carries three real assertions and was never collected. The
+# origin-tagging one is the load-bearing case: a thought that loses its
+# origin becomes indistinguishable from something the user said, which is
+# how an inner monologue reaches a person as conversation.
+
+import pytest
+
+
+def test_dict_message_keeps_the_origin_it_was_enqueued_with():
+    orc = MockOrchestrator()
+    orc.enqueue_from_thread(
+        {"content": "A sudden rush of insight regarding quantum computing!",
+         "context": {"urgency": "HIGH", "emotion": "EXCITED"}},
+        origin="impulse",
+    )
+    assert orc.enqueued[0]["origin"] == "impulse"
+
+
+def test_an_explicit_origin_is_not_overwritten():
+    orc = MockOrchestrator()
+    orc.enqueue_from_thread({"content": "x", "origin": "dream"}, origin="impulse")
+    assert orc.enqueued[0]["origin"] == "dream"
+
+
+def test_origin_defaults_to_user_when_unspecified():
+    orc = MockOrchestrator()
+    orc.enqueue_from_thread({"content": "x"})
+    assert orc.enqueued[0]["origin"] == "user"
+
+
+def test_non_dict_messages_pass_through_unchanged():
+    orc = MockOrchestrator()
+    orc.enqueue_from_thread("a bare string", origin="impulse")
+    assert orc.enqueued[0] == "a bare string"
+
+
+def test_every_enqueued_thought_is_recorded():
+    orc = MockOrchestrator()
+    for i in range(5):
+        orc.enqueue_from_thread({"content": f"thought {i}"}, origin="impulse")
+    assert len(orc.enqueued) == 5
+    assert all(m["origin"] == "impulse" for m in orc.enqueued)
