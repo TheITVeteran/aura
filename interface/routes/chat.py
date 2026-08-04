@@ -10214,6 +10214,7 @@ def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> 
 
 # ── Response Quality Metrics (extracted to chat_quality.py) ──
 from interface.routes.chat_quality import (  # noqa: E402
+    assess_post_response_confidence,
     _check_response_consistency,
     _extract_and_register_commitments,
     _log_response_quality_metrics,
@@ -23186,32 +23187,44 @@ async def api_chat(
 
         # ── Post-Response Infrastructure checks ─────────────────
         # 1. Check self-consistency (avoiding false inability claims, commitment contradictions)
-        if response_confidence == "high":
-            is_consistent, reason = _check_response_consistency(reply_text, _semantic_user_message)
-            if not is_consistent:
-                response_confidence = "degraded"
-                logger.warning("⚠️ Response confidence lowered to 'degraded' due to inconsistency: %s", reason)
-
+        # The decision itself lives in chat_quality.assess_post_response_confidence
+        # so it can be tested without driving a whole HTTP turn — this function
+        # is 4,488 lines and 633 branches, and everything inside it could only
+        # be exercised end to end.
+        is_consistent, inconsistency_reason = (
+            _check_response_consistency(reply_text, _semantic_user_message)
+            if response_confidence == "high"
+            else (True, "")
+        )
         lane_status = _collect_conversation_lane_status()
-        actual_user_endpoint = str(lane_status.get("last_user_generation_endpoint") or "").strip()
-        desired_user_endpoint = str(lane_status.get("desired_endpoint") or "").strip()
         try:
             actual_generation_at = float(lane_status.get("last_user_generation_at") or 0.0)
         except (TypeError, ValueError):
             actual_generation_at = 0.0
-        actual_generation_in_this_turn = actual_generation_at >= max(0.0, request_wall_started_at - 1.0)
-        used_fallback_lane = bool(lane_status.get("last_user_generation_used_fallback", False))
-        if response_confidence == "high" and used_fallback_lane and actual_generation_in_this_turn:
-            response_confidence = "degraded"
-            lane_status["response_lane_warning"] = (
-                f"last accepted user generation used {actual_user_endpoint or 'fallback'} "
-                f"instead of desired {desired_user_endpoint or 'primary'}"
-            )
+        _downgrade = assess_post_response_confidence(
+            response_confidence,
+            self_consistent=is_consistent,
+            inconsistency_reason=inconsistency_reason,
+            used_fallback_lane=bool(
+                lane_status.get("last_user_generation_used_fallback", False)
+            ),
+            generation_happened_this_turn=(
+                actual_generation_at >= max(0.0, request_wall_started_at - 1.0)
+            ),
+            actual_endpoint=str(
+                lane_status.get("last_user_generation_endpoint") or ""
+            ).strip(),
+            desired_endpoint=str(lane_status.get("desired_endpoint") or "").strip(),
+        )
+        if _downgrade.downgraded:
+            response_confidence = _downgrade.confidence
+            if _downgrade.lane_warning:
+                lane_status["response_lane_warning"] = _downgrade.lane_warning
             logger.warning(
-                "⚠️ Response confidence lowered to 'degraded' because accepted user generation "
-                "used fallback lane %s instead of desired %s.",
-                actual_user_endpoint or "fallback",
-                desired_user_endpoint or "primary",
+                "⚠️ Response confidence lowered to %r: %s%s",
+                _downgrade.confidence,
+                _downgrade.reason,
+                f" ({_downgrade.lane_warning})" if _downgrade.lane_warning else "",
             )
 
         # 2. Extract new open loops (commitments/promises) made in this turn

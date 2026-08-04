@@ -8,6 +8,7 @@ resolve through chat.py's globals, and intra-section calls live here).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 import re
 import time
 from typing import Any
@@ -359,3 +360,60 @@ def _extract_and_register_commitments(reply_text: str, user_message: str) -> Non
         logger.debug("Commitment extraction skipped: %s", exc)
 
 
+# ── Post-response confidence downgrades ──────────────────────────────
+
+
+@dataclass(frozen=True)
+class ConfidenceDowngrade:
+    """A post-response reason to stop calling a reply high-confidence."""
+
+    confidence: str
+    reason: str = ""
+    lane_warning: str = ""
+
+    @property
+    def downgraded(self) -> bool:
+        return bool(self.reason)
+
+
+def assess_post_response_confidence(
+    confidence: str,
+    *,
+    self_consistent: bool,
+    inconsistency_reason: str = "",
+    used_fallback_lane: bool = False,
+    generation_happened_this_turn: bool = False,
+    actual_endpoint: str = "",
+    desired_endpoint: str = "",
+) -> ConfidenceDowngrade:
+    """Decide whether a delivered reply may still be called high-confidence.
+
+    Lifted out of ``api_chat`` — a 4,488-line function with 633 branches, where
+    this decision had no test of its own and could only be exercised by driving
+    a whole HTTP turn. Two independent reasons to downgrade, in the order they
+    were applied:
+
+    1. the reply contradicts itself (false inability claims, commitment
+       contradictions);
+    2. the generation that produced it came from a FALLBACK lane in this turn,
+       so the answer is real but not from the mind that was asked.
+
+    Only ``high`` is downgraded. A reply already marked degraded stays degraded;
+    nothing here promotes anything.
+    """
+    if str(confidence) != "high":
+        return ConfidenceDowngrade(str(confidence))
+
+    if not self_consistent:
+        return ConfidenceDowngrade(
+            "degraded", inconsistency_reason or "self_inconsistent"
+        )
+
+    if used_fallback_lane and generation_happened_this_turn:
+        warning = (
+            f"last accepted user generation used {actual_endpoint or 'fallback'} "
+            f"instead of desired {desired_endpoint or 'primary'}"
+        )
+        return ConfidenceDowngrade("degraded", "fallback_lane_generation", warning)
+
+    return ConfidenceDowngrade("high")
