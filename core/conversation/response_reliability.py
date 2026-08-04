@@ -4325,7 +4325,17 @@ def own_source_excerpt_floor(user_message: Any) -> str:
 #: screen capture reads what is visible; what a window covers is not in it.
 _OCCLUDED_VIEW_RE = re.compile(
     r"\b(?:behind|underneath|under|beneath|covered\s+by|hidden\s+(?:by|behind)|"
-    r"obscured\s+by)\b",
+    r"obscured\s+by"
+    # Asking her to LOOK PAST her own window is the same question as asking
+    # what is behind it, and it was the phrasing that failed live: "ignore
+    # your own window, what else is on the screen?" and "excluding your
+    # window, what do you see?" matched nothing and fell through to the model,
+    # which answers a question about the screen without looking at one.
+    r"|(?:ignor\w*|exclud\w*|apart\s+from|aside\s+from|other\s+than|besides|"
+    r"without|not\s+counting|leaving\s+out|except)\s+"
+    r"(?:your|the|her|its|that)?\s*(?:own\s+)?(?:window|app|ui|interface|self)"
+    r"|\bwhat\s+else\b"
+    r")\b",
     re.IGNORECASE,
 )
 _SCREEN_SUBJECT_RE = re.compile(

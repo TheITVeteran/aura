@@ -2862,10 +2862,8 @@ end tell
 
                 from core.perception.screen_perception import get_screen_perception
 
-                save_screenshot = "screenshot" in str(params.target or "").lower()
-                snapshot = await get_screen_perception().capture(
-                    save_screenshot=save_screenshot,
-                )
+                # See the note on the other read path: a screen read captures.
+                snapshot = await get_screen_perception().capture(save_screenshot=True)
                 text = snapshot.screen_text or snapshot.accessibility_text
                 return {
                     "ok": True,
@@ -2940,13 +2938,16 @@ end tell
                 try:
                     from core.perception.screen_perception import get_screen_perception
 
-                    target_l = str(params.target or "").lower()
-                    save_screenshot = any(
-                        marker in target_l
-                        for marker in ("screenshot", "ocr", "visual", "image", "see")
-                    )
+                    # Reading the screen means reading the screen. This used to
+                    # capture only when the target string happened to contain
+                    # "screenshot"/"ocr"/"visual"/"image"/"see", and the planner
+                    # emits read_screen_text with an EMPTY target — so the
+                    # ordinary path never took a screenshot, OCR never ran,
+                    # screen_text was always "", and the answer could only ever
+                    # be the frontmost window's title. A capability that depends
+                    # on incidental wording is not a capability.
                     snapshot = await get_screen_perception().capture(
-                        save_screenshot=save_screenshot,
+                        save_screenshot=True,
                     )
                     perception_result = self._screen_snapshot_result(snapshot)
                     text = str(perception_result.get("text") or "")
@@ -4396,21 +4397,38 @@ end tell
             getattr(snapshot, "focused_description", "") or ""
         ).strip()
 
-        text = screen_text or accessibility_text or focused_value
-        if not text:
-            lines = []
-            if active_app:
-                lines.append(f"Active app: {active_app}")
-            if window_title:
-                lines.append(f"Window: {window_title}")
-            focus_parts = [
-                part
-                for part in (focused_role, focused_name, focused_description)
-                if part
-            ]
-            if focus_parts:
-                lines.append("Focused element: " + " | ".join(focus_parts))
-            text = "\n".join(lines)
+        window_layout = str(getattr(snapshot, "window_layout", "") or "").strip()
+        open_apps = tuple(getattr(snapshot, "open_apps", ()) or ())
+
+        # The whole desk, not just the window on top of it.
+        #
+        # capture() already collects the layout — every window, front to back,
+        # with what covers what — and this builder used to drop it, so a screen
+        # with Chrome and YouTube plainly visible beside Aura's own window was
+        # answered "Active app: aura-launcher / Window: Aura Zenith". That is
+        # not a reading of the screen; it is a reading of ONE window, and it is
+        # objectively incomplete to the person looking at it. It is also what
+        # made "ignore your own window" and "what's behind you" unanswerable:
+        # nothing downstream ever received anything but the frontmost title.
+        lines: list[str] = []
+        if active_app:
+            lines.append(f"Active app: {active_app}")
+        if window_title:
+            lines.append(f"Window: {window_title}")
+        focus_parts = [
+            part for part in (focused_role, focused_name, focused_description) if part
+        ]
+        if focus_parts:
+            lines.append("Focused element: " + " | ".join(focus_parts))
+        if window_layout:
+            lines.append(f"Screen layout (front to back):\n{window_layout}")
+        elif open_apps:
+            lines.append("Windows open: " + ", ".join(open_apps))
+
+        read_text = screen_text or accessibility_text or focused_value
+        if read_text:
+            lines.append(f"Text on screen:\n{read_text}")
+        text = "\n".join(part for part in lines if part).strip()
 
         text_hash = str(getattr(snapshot, "text_hash", "") or "").strip()
         if text and not text_hash:
@@ -4418,10 +4436,19 @@ end tell
 
         return {
             "ok": bool(text),
-            "status": "ok" if (screen_text or accessibility_text or focused_value) else "limited",
+            # Knowing every window on the desk IS a reading of the screen, even
+            # when no text could be lifted off it. Calling that "limited" told
+            # the caller to distrust the one part that was complete.
+            "status": (
+                "ok"
+                if (screen_text or accessibility_text or focused_value or window_layout)
+                else "limited"
+            ),
             "source": "screen_perception",
             "active_app": active_app,
             "window_title": window_title,
+            "window_layout": window_layout,
+            "open_apps": list(open_apps),
             "frontmost_window_bounds": str(
                 getattr(snapshot, "frontmost_window_bounds", "") or ""
             ).strip(),

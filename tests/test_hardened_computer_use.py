@@ -20,7 +20,13 @@ async def test_computer_use_inspect_screen_returns_structured_perception(monkeyp
 
     class PerceptionDouble:
         async def capture(self, *, save_screenshot=False):
-            assert save_screenshot is False
+            # Reading the screen captures the screen. This asserted False
+            # until 2026-08-04, pinning the defect that made the ordinary
+            # read skip the screenshot and therefore OCR — so the answer
+            # could only ever be the frontmost window's title. What these
+            # tests exist to pin is that the read goes through structured
+            # perception, which is unchanged.
+            assert save_screenshot is True
             return SimpleNamespace(
                 active_app="Google Chrome",
                 window_title="Climate article",
@@ -145,7 +151,13 @@ async def test_computer_use_read_screen_text_uses_structured_perception(monkeypa
 
     class PerceptionDouble:
         async def capture(self, *, save_screenshot=False):
-            assert save_screenshot is False
+            # Reading the screen captures the screen. This asserted False
+            # until 2026-08-04, pinning the defect that made the ordinary
+            # read skip the screenshot and therefore OCR — so the answer
+            # could only ever be the frontmost window's title. What these
+            # tests exist to pin is that the read goes through structured
+            # perception, which is unchanged.
+            assert save_screenshot is True
             return SimpleNamespace(
                 active_app="Google Chrome",
                 window_title="Google Docs - Aura Journal",
@@ -177,7 +189,11 @@ async def test_computer_use_read_screen_text_uses_structured_perception(monkeypa
     assert result["active_app"] == "Google Chrome"
     assert result["window_title"] == "Google Docs - Aura Journal"
     assert result["focused_role"] == "AXTextArea"
-    assert result["text"] == "Aura is typing in the document body."
+    # The reading is present; the answer now also carries which app and
+    # window it came from, because "what is on my screen" was being answered
+    # with one window while several were visible.
+    assert "Aura is typing in the document body." in result["text"]
+    assert "Google Docs - Aura Journal" in result["text"]
     assert result["text_hash"] == "screenabc"
 
 
