@@ -3007,7 +3007,7 @@ function thoughtPreviewText(message, maxChars = 520, maxLines = 7) {
 // A person watching their own mind think should not have to parse that.
 //
 // This rewrites the PREVIEW only. fullMessage and the COPY payload stay
-// byte-for-byte raw, so FULL and COPY remain the debugging surface they
+// byte-for-byte raw, so SHOW ALL and COPY remain the debugging surface they
 // already are — accessibility, not information loss.
 const PLAIN_LANGUAGE_RULES = [
     [/UNIFIED HEALTH PULSE\s*\|\s*System:\s*CPU\s*([\d.]+)%.*?RAM\s*([\d.]+)%.*?Uptime:\s*(\d+)s/i,
@@ -3100,9 +3100,22 @@ function plainLanguageThought(text) {
     const pairs = body.match(/\b[\w.]+=[^\s|]+/g) || [];
     const words = body.split(/\s+/).length;
     if (pairs.length >= 3 && pairs.length / Math.max(words, 1) > 0.5) {
-        return `${body.split(/[:|]/)[0].trim()} — internal measurements (open FULL for the numbers).`;
+        // Name the control that actually exists. This said "open FULL", and
+        // no control called FULL has ever been rendered — the expander is
+        // labelled SHOW ALL — so the card promised a way to read the numbers
+        // and offered none.
+        return `${body.split(/[:|]/)[0].trim()} — internal measurements (SHOW ALL for the numbers).`;
     }
     return body;
+}
+
+// Redaction hides content exactly the way clipping does, so it has to be
+// reported the same way. It was not: a SHORT telemetry line was rewritten to
+// "internal measurements" while `longThought` stayed false, so no expander
+// rendered and the numbers were unreachable — including on WARNING cards
+// naming an anomaly they then could not describe.
+function redactsMeasurements(text) {
+    return plainLanguageThought(text) !== String(text || '').trim();
 }
 
 
@@ -3395,16 +3408,19 @@ function addThoughtCard(data) {
         showCompletePayload ? 100 : 16
     );
     const hasHiddenFullPayload = fullMsg !== previewSource;
-    const longThought = preview.clipped || hasHiddenFullPayload;
+    // A card whose face was redacted has hidden content just as surely as one
+    // that was clipped, and must offer the same way back to it.
+    const measurementsRedacted = redactsMeasurements(preview.text);
+    const longThought = preview.clipped || hasHiddenFullPayload || measurementsRedacted;
     if (longThought) cls += ' long';
     card.className = cls;
     card.style.setProperty('--tc', chan.hue);
     card.dataset.channel = chanKey;
     const safeName = escHtml(name);
-    // Plain English on the face; FULL and COPY keep the raw payload.
+    // Plain English on the face; SHOW ALL and COPY keep the raw payload.
     preview.text = plainLanguageThought(preview.text);
     const previewText = hasHiddenFullPayload && !preview.clipped
-        ? `${preview.text}\n\n[preview card; open FULL or COPY for the complete payload]`
+        ? `${preview.text}\n\n[preview card; SHOW ALL or COPY for the complete payload]`
         : preview.text;
     const safePreview = escHtml(previewText).replace(/\n/g, '<br>');
     const safeFull = escHtml(fullMsg).replace(/\n/g, '<br>');
