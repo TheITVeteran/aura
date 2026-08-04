@@ -154,7 +154,15 @@ def strip_role_artifacts(text: str) -> str:
         cleaned = pattern.sub("", cleaned).strip()
 
     cleaned = _DANGLING_ROLE_TOKEN_RE.sub("", cleaned).strip()
-    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    # Tidying the space a removed role label left behind is right about prose
+    # and wrong inside a fence: it turned this repository's own
+    # ``# NO .strip()`` into ``# NO.strip()`` in an excerpt Aura had correctly
+    # read from disk. Measured live 2026-08-03.
+    from core.conversation.response_reliability import apply_outside_fenced_code
+
+    cleaned = apply_outside_fenced_code(
+        cleaned, lambda body: re.sub(r"\s+([,.!?;:])", r"\1", body)
+    )
     return cleaned.strip(" \t\r\n\"'")
 
 

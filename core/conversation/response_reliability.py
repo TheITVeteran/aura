@@ -10,7 +10,7 @@ import ast
 import logging
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -2372,6 +2372,40 @@ def strip_internal_scaffold(reply_text: Any) -> str:
 _FENCED_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
+def apply_outside_fenced_code(text: Any, repair: Callable[[str], str]) -> str:
+    """Run a prose repair over ``text``, leaving fenced code untouched.
+
+    Every cosmetic repair in this codebase is a claim about English, and each
+    one is false about code. Two of them were corrupting quoted source on the
+    way to the screen: a sentence-splitter turned ``re.Pattern[str]`` into
+    ``re. Pattern[str]``, and a punctuation tidy turned ``# NO .strip()`` into
+    ``# NO.strip()``. Both are right about prose. Neither is right inside a
+    fence, and an excerpt whose whole point is that it was read from disk has
+    to arrive byte-for-byte or it proves nothing.
+
+    Shared rather than reimplemented: a second copy of the parking logic is
+    how one caller keeps protecting code and another quietly stops.
+    """
+
+    body = str(text or "")
+    if "```" not in body:
+        return repair(body)
+
+    blocks: list[str] = []
+
+    def _park(match: re.Match[str]) -> str:
+        blocks.append(match.group(0))
+        # A placeholder no prose rule can match: no full stops, no digits, no
+        # hyphens, no capital-after-lowercase seam, no space before punctuation.
+        return f"\x00CODEBLOCK{len(blocks) - 1}\x00"
+
+    parked = _FENCED_CODE_BLOCK_RE.sub(_park, body)
+    repaired = repair(parked)
+    for index, block in enumerate(blocks):
+        repaired = repaired.replace(f"\x00CODEBLOCK{index}\x00", block)
+    return repaired
+
+
 def normalize_user_facing_format(reply_text: Any) -> str:
     """Apply safe whitespace-only repairs to user-facing PROSE.
 
@@ -2391,20 +2425,7 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     text = strip_internal_scaffold(reply_text).strip()
     if not text:
         return text
-
-    blocks: list[str] = []
-
-    def _park(match: re.Match[str]) -> str:
-        blocks.append(match.group(0))
-        # A placeholder no rule below can match: no full stops, no digits, no
-        # hyphens, no capital-after-lowercase seam.
-        return f"\x00CODEBLOCK{len(blocks) - 1}\x00"
-
-    text = _FENCED_CODE_BLOCK_RE.sub(_park, text)
-    text = _normalize_prose_format(text)
-    for index, block in enumerate(blocks):
-        text = text.replace(f"\x00CODEBLOCK{index}\x00", block)
-    return text
+    return apply_outside_fenced_code(text, _normalize_prose_format)
 
 
 def _normalize_prose_format(text: str) -> str:

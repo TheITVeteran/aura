@@ -451,3 +451,57 @@ class TestAnExcerptArrivesByteForByte:
         assert "re.Pattern" in out and "os.PathLike" in out
         assert "re. Pattern" not in out and "os. PathLike" not in out
         assert "Two. And three:" in out
+
+
+class TestTheWholeDeliveryChainPreservesCode:
+    """One repair protecting code is not enough when three run in sequence.
+
+    The sentence-splitter was fixed first; the punctuation tidy in
+    core/synthesis.py then turned this repository's own "# NO .strip()" into
+    "# NO.strip()" in an excerpt she had correctly read from disk. Both are
+    right about prose. Neither is right inside a fence.
+    """
+
+    PROBE = (
+        "Here:\n\n```python\n"
+        'def f(c: "re.Pattern[str]"):\n'
+        "            # NO .strip(). The key is 32 raw random bytes\n"
+        "    return c\n"
+        "```\n\nDone.Next thing."
+    )
+
+    @pytest.mark.parametrize(
+        "stage",
+        ["strip_role_artifacts", "strip_meta_commentary", "cure_personality_leak"],
+    )
+    def test_each_synthesis_stage_leaves_fenced_code_alone(self, stage):
+        from core import synthesis
+
+        out = getattr(synthesis, stage)(self.PROBE)
+        assert "# NO .strip()" in out
+        assert 're.Pattern[str]' in out
+
+    def test_the_chain_end_to_end(self):
+        from core import synthesis
+        from core.conversation.response_reliability import normalize_user_facing_format
+
+        out = normalize_user_facing_format(synthesis.cure_personality_leak(self.PROBE))
+        assert "# NO .strip()" in out
+        assert 're.Pattern[str]' in out
+        assert "Done. Next thing." in out, "prose outside the fence must still be repaired"
+
+    def test_the_parking_helper_is_shared_not_copied(self):
+        """A second copy is how one caller keeps protecting code and another
+        quietly stops."""
+        import inspect
+
+        from core import synthesis
+        from core.conversation import response_reliability
+
+        assert hasattr(response_reliability, "apply_outside_fenced_code")
+        assert "apply_outside_fenced_code" in inspect.getsource(synthesis.strip_role_artifacts)
+
+    def test_text_without_a_fence_is_unaffected(self):
+        from core.conversation.response_reliability import apply_outside_fenced_code
+
+        assert apply_outside_fenced_code("a b", lambda s: s.upper()) == "A B"
