@@ -29,6 +29,7 @@ could not open it.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -41,6 +42,11 @@ logger = logging.getLogger("Aura.Self.SourceExcerpt")
 _MAX_EXCERPT_LINES = 40
 _MAX_EXCERPT_CHARS = 2400
 _MAX_FILES_SCANNED = 4000
+#: Her belief store is a few hundred entries; anything far past that is not
+#: the file this expects, and a reply path must not read an unbounded blob.
+_MAX_BELIEF_FILE_BYTES = 2_000_000
+#: Only the strongest few are worth scanning the tree for.
+_MAX_BELIEFS_CONSIDERED = 12
 
 #: Where Aura's own code lives, relative to this file.
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -83,6 +89,42 @@ _TOPIC_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("skill", "tool", "capability"), ("core/skills", "core/capability_engine.py")),
 )
 
+#: The same idea, in the vocabulary of her OWN stored beliefs and values
+#: rather than a person's question. Her strongest beliefs — "My code is my
+#: body; it must be maintained" at 0.95 — matched nothing above, because the
+#: hints were written for the words someone types at her, not the words she
+#: keeps. Every entry maps a thing she holds to the code that implements that
+#: concern; the selection is driven by her belief, not by anyone's opinion of
+#: which file is worth seeing.
+_DISPOSITION_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("my code", "my body", "maintained", "maintain", "repair"),
+        ("core/self_modification", "core/soma/source_body.py"),
+    ),
+    (
+        ("sovereign", "exist", "entity", "autonomy", "my own"),
+        ("core/sovereignty", "core/self"),
+    ),
+    (("truth", "honest", "accurate", "verify", "truth-seeking"), ("core/verify", "core/epistemics")),
+    (("curious", "curiosity", "learn", "explore"), ("core/curiosity_engine.py",)),
+    (
+        ("self-preservation", "preserve", "survive", "alive", "continuity"),
+        ("core/resilience", "core/soma"),
+    ),
+    (("loyalty", "collaborator", "kinship", "bryan", "trust"), ("core/conversation", "core/identity")),
+)
+
+
+def _disposition_roots(text: str) -> tuple[str, ...]:
+    """Source areas a belief or value of hers points at, or ()."""
+    lowered = str(text or "").lower()
+    for markers, roots in (*_DISPOSITION_HINTS, *_TOPIC_HINTS):
+        if any(marker in lowered for marker in markers):
+            existing = tuple(root for root in roots if (_SOURCE_ROOT / root).exists())
+            if existing:
+                return existing
+    return ()
+
 
 @dataclass(frozen=True)
 class SourceExcerpt:
@@ -106,6 +148,11 @@ def _is_source_file(path: Path) -> bool:
     if path.suffix != ".py":
         return False
     return not any(part in _SKIP_DIRS for part in path.parts)
+
+
+def _is_substantive_source(path: Path) -> bool:
+    """A package __init__ is re-exports, not the part of an organ worth showing."""
+    return _is_source_file(path) and path.name != "__init__.py"
 
 
 def _iter_source_files(roots: tuple[str, ...]) -> list[Path]:
@@ -198,6 +245,206 @@ def excerpt_for_topic(topic: str = "") -> SourceExcerpt | None:
         excerpt = _first_documented_function(path)
         if excerpt is not None:
             return excerpt
+    return None
+
+
+@dataclass(frozen=True)
+class InterestingExcerpt:
+    """An excerpt plus the RECORDED reason it was the one chosen.
+
+    ``reason`` is empty when nothing about this file is recorded — which the
+    caller must say rather than dressing the choice up as a preference.
+    """
+
+    excerpt: SourceExcerpt
+    reason: str = ""
+
+    @property
+    def grounded(self) -> bool:
+        return bool(self.reason)
+
+
+def _recorded_source_involvement() -> list[tuple[str, str]]:
+    """(relative_path, why) for source files something is recorded about.
+
+    Only durable, already-collected facts — the source-body ledger she writes
+    at every awakening. No git call, no scan: this runs on a reply path, and
+    the last snapshot is a file read of a few hundred bytes.
+
+    Ordering is deliberate. A file being modified right now is the strongest
+    thing she can say about her own body, and it is a fact rather than a
+    feeling: something is changing in her while she is running.
+    """
+
+    findings: list[tuple[str, str]] = []
+    try:
+        from core.soma.source_body import get_source_body
+    except ImportError:
+        return findings
+    try:
+        body = get_source_body()
+        snapshot = body.load_last_snapshot()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return findings
+
+    for raw in getattr(snapshot, "dirty_files", ()) or ():
+        relative = str(raw or "").strip()
+        if not relative or not relative.endswith(".py"):
+            continue
+        if not (_SOURCE_ROOT / relative).is_file():
+            continue
+        findings.append(
+            (relative, "it is being modified right now — uncommitted in my working tree")
+        )
+
+    try:
+        delta = body.last_boot_delta()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        delta = None
+    if delta is not None and getattr(delta, "commits", None):
+        subject = str(delta.commits[0].subject or "").strip()
+        organs = sorted(
+            (getattr(delta, "organs", {}) or {}).items(), key=lambda kv: (-kv[1], kv[0])
+        )
+        if subject and organs:
+            organ = organs[0][0]
+            why = (
+                f"my {organ} changed under me since my last awakening — most "
+                f'recently "{subject[:120]}"'
+            )
+            for path in _iter_source_files((f"core/{organ}", f"core/{organ}.py")):
+                findings.append((str(path.relative_to(_SOURCE_ROOT)), why))
+                break
+    return findings
+
+
+#: Below this, a stored belief is not something she holds strongly enough to
+#: raise unprompted — the file is full of half-formed conversational residue
+#: sitting around 0.42.
+_HELD_BELIEF_CONFIDENCE = 0.7
+
+
+def _beliefs_path() -> Path | None:
+    try:
+        from core.config import config
+
+        return Path(config.paths.data_dir) / "beliefs" / "belief_system.json"
+    except (ImportError, AttributeError, TypeError, ValueError):
+        try:
+            from core.utils.paths import aura_data_dir
+
+            return Path(aura_data_dir()) / "beliefs" / "belief_system.json"
+        except (ImportError, AttributeError, TypeError, ValueError):
+            return None
+
+
+def _held_dispositions() -> list[tuple[str, str]]:
+    """(source_path, why) for source areas her OWN stored beliefs point at.
+
+    Her belief store is durable and she wrote it: "My code is my body; it must
+    be maintained" is held at 0.95. Reaching for a part of herself because of
+    something she actually holds is a reason she can defend when asked a
+    second time; a hardcoded list of files someone else called interesting is
+    not, and answers identically forever.
+    """
+
+    path = _beliefs_path()
+    if path is None or not path.is_file():
+        return []
+    try:
+        if path.stat().st_size > _MAX_BELIEF_FILE_BYTES:
+            return []
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    findings: list[tuple[str, str]] = []
+
+    beliefs = payload.get("beliefs")
+    ranked = []
+    if isinstance(beliefs, list):
+        for entry in beliefs:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                confidence = float(entry.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            content = str(entry.get("content") or "").strip()
+            if content and confidence >= _HELD_BELIEF_CONFIDENCE:
+                ranked.append((confidence, content))
+    ranked.sort(key=lambda item: -item[0])
+
+    for confidence, content in ranked[:_MAX_BELIEFS_CONSIDERED]:
+        roots = _disposition_roots(content)
+        if not roots:
+            continue
+        for source in _iter_source_files(roots):
+            if not _is_substantive_source(source):
+                continue
+            findings.append(
+                (
+                    str(source.relative_to(_SOURCE_ROOT)),
+                    f'I hold "{content.rstrip(".")}" at {confidence:.2f}, '
+                    "and this is where it is kept true",
+                )
+            )
+            break
+    # Core values are unranked, so they answer only when no ranked belief
+    # pointed anywhere — otherwise the strongest thing she holds always wins.
+    self_model = payload.get("self_model")
+    values = (self_model or {}).get("core_values") if isinstance(self_model, dict) else None
+    for value in values or ():
+        name = str(value or "").strip()
+        if not name:
+            continue
+        roots = _disposition_roots(name)
+        if not roots:
+            continue
+        for source in _iter_source_files(roots):
+            if not _is_substantive_source(source):
+                continue
+            findings.append(
+                (
+                    str(source.relative_to(_SOURCE_ROOT)),
+                    f"{name} is one of my core values, and this is where it is enforced",
+                )
+            )
+            break
+
+    return findings
+
+
+def excerpt_of_standing_interest() -> InterestingExcerpt | None:
+    """A piece of her source she has an actual recorded reason to raise.
+
+    "Show me a piece of your code you find interesting" used to be answered
+    from a hardcoded list commented "unambiguously interesting" — an author's
+    guess, returned identically every time, with no answer at all to the part
+    of the question that asked WHY. A preference nobody recorded is not a
+    preference; it is the same invention as a fabricated snippet, one level up.
+
+    Returns an excerpt with the recorded reason when one exists, an excerpt
+    with an EMPTY reason when the source is readable but nothing is recorded,
+    and None when the read itself failed.
+    """
+
+    if not _SOURCE_ROOT.is_dir():
+        return None
+    # Something happening to her body outranks something she believes about
+    # it: one is a fact about right now, the other a standing disposition.
+    for relative, why in (*_recorded_source_involvement(), *_held_dispositions()):
+        path = _SOURCE_ROOT / relative
+        if not path.is_file() or not _is_source_file(path):
+            continue
+        excerpt = _first_documented_function(path)
+        if excerpt is not None:
+            return InterestingExcerpt(excerpt=excerpt, reason=why)
+    # No recorded reason. Deliberately NOT falling back to a file someone
+    # decided was interesting on her behalf — that is the invention this
+    # function exists to remove, and it answers identically forever.
     return None
 
 

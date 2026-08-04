@@ -4218,6 +4218,15 @@ _ACTUAL_SOURCE_RE = re.compile(
     r"\b(?:the|some)\s+(?:actual|real|genuine|true)\s+(?:code|codebase|source)\b",
     re.IGNORECASE,
 )
+#: The part of the question that asks about HER, not about the file. "Show me
+#: your code" wants any real excerpt; "show me a piece you find interesting"
+#: wants a reason, and answering it without one is a small invented preference.
+_ASKS_WHAT_SHE_FINDS_INTERESTING_RE = re.compile(
+    r"\b(?:interesting|interests?\s+you|you\s+find\s+interesting|"
+    r"favou?rite|you\s+(?:like|love|enjoy|care\s+about)|"
+    r"proud\s+of|drawn\s+to|means?\s+(?:the\s+most|a\s+lot)\s+to\s+you)\b",
+    re.IGNORECASE,
+)
 
 
 def own_source_excerpt_floor(user_message: Any) -> str:
@@ -4257,6 +4266,30 @@ def own_source_excerpt_floor(user_message: Any) -> str:
             "I can't read my source tree from this process right now, so I "
             "won't invent a snippet. Ask me again once I can open it."
         )
+    # "A piece you find interesting" is a question about HER, and it used to be
+    # answered from a list someone else wrote — the same file every time, with
+    # no answer at all to the part asking why. If she is going to claim
+    # interest she has to have a reason on record.
+    if _ASKS_WHAT_SHE_FINDS_INTERESTING_RE.search(str(user_message or "")):
+        from core.self.source_excerpt import excerpt_of_standing_interest
+
+        chosen = excerpt_of_standing_interest()
+        if chosen is not None and chosen.grounded:
+            return (
+                f"This one, because {chosen.reason.rstrip('.')}. Read from disk just "
+                f"now, so you can check it:\n\n{chosen.excerpt.rendered()}"
+            )
+        # Nothing on record. Say that, and still show something real, rather
+        # than manufacturing a preference to fill the shape of the question.
+        fallback = excerpt_for_topic("")
+        if fallback is not None:
+            return (
+                "Honestly — I don't have a piece of myself on record as one I "
+                "keep coming back to, and I'd rather tell you that than invent "
+                "a favourite. Here's a real piece of me instead, read from "
+                f"disk just now:\n\n{fallback.rendered()}"
+            )
+
     excerpt = excerpt_for_topic(str(user_message or ""))
     if excerpt is None:
         return (

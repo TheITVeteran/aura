@@ -505,3 +505,72 @@ class TestTheWholeDeliveryChainPreservesCode:
         from core.conversation.response_reliability import apply_outside_fenced_code
 
         assert apply_outside_fenced_code("a b", lambda s: s.upper()) == "A B"
+
+
+class TestTheChoiceIsHersAndHasAReason:
+    """"A piece of your code you find interesting" was answered from a list
+    someone else wrote, commented "unambiguously interesting" — the same file
+    every time, with no answer at all to the part asking WHY. A preference
+    nobody recorded is not a preference; it is a fabricated snippet one level
+    up.
+    """
+
+    ASKED = "Show me a piece of your own code that you find interesting and why it interests you."
+
+    def test_the_pick_carries_a_recorded_reason(self):
+        from core.self.source_excerpt import excerpt_of_standing_interest
+
+        chosen = excerpt_of_standing_interest()
+        assert chosen is not None
+        assert chosen.grounded, "she must not claim interest with nothing on record"
+        assert chosen.reason.strip()
+
+    def test_the_reason_comes_from_something_she_holds(self):
+        from core.self.source_excerpt import _held_dispositions
+
+        for path, why in _held_dispositions():
+            assert path.endswith(".py")
+            assert not path.endswith("__init__.py"), "re-exports are not the interesting part"
+            assert any(
+                marker in why
+                for marker in ("I hold", "core values", "modified right now", "changed under me")
+            ), why
+
+    def test_her_strongest_belief_outranks_a_flat_value(self):
+        """Ranked beliefs carry her own confidence; core values do not."""
+        from core.self.source_excerpt import _held_dispositions
+
+        reasons = [why for _path, why in _held_dispositions()]
+        if any(r.startswith("I hold") for r in reasons) and any(
+            "core values" in r for r in reasons
+        ):
+            first_belief = next(i for i, r in enumerate(reasons) if r.startswith("I hold"))
+            first_value = next(i for i, r in enumerate(reasons) if "core values" in r)
+            assert first_belief < first_value
+
+    def test_the_reply_states_the_reason(self):
+        from core.conversation.response_reliability import own_source_excerpt_floor
+
+        reply = own_source_excerpt_floor(self.ASKED)
+        assert reply.startswith("This one, because ")
+        assert "```python" in reply
+        assert ".py:" in reply
+
+    def test_no_hardcoded_favourite_backs_the_interest_path(self):
+        """The fallback list must not be reachable as a claimed preference."""
+        import inspect
+
+        from core.self import source_excerpt
+
+        body = inspect.getsource(source_excerpt.excerpt_of_standing_interest)
+        assert "excerpt_for_topic" not in body, (
+            "falling back to a file someone chose on her behalf is the invention "
+            "this removes"
+        )
+
+    def test_a_plain_ask_still_makes_no_interest_claim(self):
+        from core.conversation.response_reliability import own_source_excerpt_floor
+
+        reply = own_source_excerpt_floor("show me your code")
+        assert reply.startswith("Here's a real piece of me")
+        assert "because" not in reply.split("```")[0]
