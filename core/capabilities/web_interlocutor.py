@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import os
+import pathlib
 import re
 import time
 import urllib.parse
@@ -55,6 +56,16 @@ _COMPOSE_TIMEOUT_S = max(
 _FACTCHECK_TIMEOUT_S = max(
     1.0,
     float(os.getenv("AURA_WEB_INTERLOCUTOR_FACTCHECK_TIMEOUT_S", "6") or "6"),
+)
+# CP126 1175afe1: the per-call timeout is clamped only from below and the
+# environment can raise it without limit, opening composition retries five
+# times, and each rejected attempt runs a full cognitive call before sleeping.
+# Multiply that by turns, follow-ups, factchecks, browser waits, the summary
+# and the memory write and a single conversation had no bound at all — it ran
+# until it happened to stop. This is the deadline for the WHOLE exchange.
+_SESSION_BUDGET_S = max(
+    60.0,
+    float(os.getenv("AURA_WEB_INTERLOCUTOR_SESSION_BUDGET_S", "900") or "900"),
 )
 
 
@@ -379,6 +390,34 @@ delay 0.1
 set the clipboard to aura_saved_clip
 if aura_error is not "" then error aura_error
 """
+
+
+async def _discard_capture_screenshot(snap: Any) -> None:
+    """Remove a transient capture screenshot once its text has been read.
+
+    CP126 408696bd. The perception capture writes a full-screen PNG so OCR can
+    run over it. That image contains everything on the display, not just the
+    conversation, and nothing deleted it or bounded how long it stayed. By the
+    time ``capture()`` returns, ``screen_text`` already holds what the file was
+    for.
+    """
+    path = str(getattr(snap, "screenshot_path", "") or "")
+    if not path:
+        return
+    try:
+        await asyncio.to_thread(pathlib.Path(path).unlink, True)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "web_interlocutor.capture_screenshot_retention",
+            exc,
+            severity="warning",
+            action="left a transient capture screenshot on disk after OCR",
+        )
+    else:
+        try:
+            snap.screenshot_path = ""
+        except (AttributeError, TypeError):
+            pass
 
 
 def _origin_of(url: Any) -> str:
@@ -1445,6 +1484,12 @@ end tell
             ):
                 perception = get_screen_perception()
                 snap = await perception.capture(save_screenshot=True, include_layout=True)
+                # CP126 408696bd: the screenshot is a means to OCR text, not an
+                # artifact worth keeping. It is a picture of the WHOLE screen —
+                # unrelated windows, other tabs, whatever was visible — written
+                # to disk with no retention rule. OCR has already run by the
+                # time capture() returns, so the file has no reader left.
+                await _discard_capture_screenshot(snap)
                 scene = perception.analyze_snapshot(
                     snap,
                     query=(
@@ -1454,7 +1499,13 @@ end tell
                     role_hint="transcript",
                     url=url,
                 )
-            text = str(snap.screen_text or snap.accessibility_text or snap.focused_value or "").strip()
+            # Whole-screen OCR and the accessibility tree both carry whatever
+            # was visible, including material from surfaces that have nothing
+            # to do with this conversation. Redact before any of it reaches a
+            # snapshot, a prompt, or durable memory (CP126 408696bd).
+            text, _redacted = _redact_remote_content(
+                str(snap.screen_text or snap.accessibility_text or snap.focused_value or "").strip()
+            )
             if len(text) < 800 and _url_allows_readability_fallback(url):
                 source_text = await self._read_page_content_fallback(url)
                 if source_text:
@@ -1585,7 +1636,7 @@ end tell
             return BrowserPageSnapshot(url=url, title=title)
         if not result.get("ok"):
             return BrowserPageSnapshot(url=url, title=title)
-        raw = str(result.get("stdout") or "")
+        raw, _redacted = _redact_remote_content(str(result.get("stdout") or ""))
         text = _normalize_accessibility_transcript(raw)[:_MAX_PAGE_TEXT_CHARS]
         relevant_text = _accessibility_relevant_text(text)[:_MAX_REPLY_CHARS]
         segments = _accessibility_chat_segments(text)[-80:]
@@ -2166,6 +2217,7 @@ class WebInterlocutorSession:
         progress_callback: Any | None = None,
     ) -> WebInterlocutorResult:
         objective = str(objective or "").strip()
+        self._start_session_budget()
         # CP126 376c864c: the destination arrives from a caller and is typed
         # into a real browser, where Aura's composed messages are transmitted
         # to whoever is on the other end. An execution policy decides that,
@@ -2275,6 +2327,13 @@ class WebInterlocutorSession:
             )
             current = initial
             for index in range(1, max_turns + 1):
+                if self._session_budget_exhausted():
+                    result.status = result.status or "session_budget_exhausted"
+                    result.error = (
+                        result.error
+                        or f"conversation exceeded its {_SESSION_BUDGET_S:.0f}s budget"
+                    )
+                    break
                 _mark_web_interlocutor_progress(f"web_interlocutor.turn.{index}.send")
                 before = current
                 next_message = _clean_message(next_message)
@@ -2357,7 +2416,9 @@ class WebInterlocutorSession:
                     after, observed = await self._wait_for_new_reply(
                         before,
                         sent_text=next_message,
-                        timeout_s=wait_timeout_s,
+                        # A per-wait timeout that outlives the conversation's
+                        # own deadline is not a bound (CP126 1175afe1).
+                        timeout_s=min(wait_timeout_s, self._session_budget_remaining()),
                         progress_source=f"web_interlocutor.turn.{index}.wait",
                     )
                     if observed or _rough_text_contains(after.text, next_message):
@@ -2617,6 +2678,19 @@ class WebInterlocutorSession:
             attempts=2,
         )
 
+    def _start_session_budget(self) -> None:
+        self._session_deadline = time.monotonic() + _SESSION_BUDGET_S
+
+    def _session_budget_exhausted(self) -> bool:
+        deadline = getattr(self, "_session_deadline", 0.0)
+        return bool(deadline) and time.monotonic() >= deadline
+
+    def _session_budget_remaining(self) -> float:
+        deadline = getattr(self, "_session_deadline", 0.0)
+        if not deadline:
+            return _SESSION_BUDGET_S
+        return max(0.0, deadline - time.monotonic())
+
     async def _compose_with_retry(
         self,
         engine: Any,
@@ -2630,6 +2704,17 @@ class WebInterlocutorSession:
         attempts: int = 5,
     ) -> str:
         for attempt in range(attempts):
+            # A retry that starts past the exchange's deadline cannot finish
+            # inside it (CP126 1175afe1).
+            if self._session_budget_exhausted():
+                context.setdefault("_web_interlocutor_composition_events", []).append(
+                    {
+                        "source": "session_budget_exhausted",
+                        "reason": "conversation deadline reached before this retry",
+                        "attempts": attempt,
+                    }
+                )
+                break
             _mark_web_interlocutor_progress(
                 f"web_interlocutor.compose.attempt.{attempt + 1}"
             )
