@@ -127,3 +127,38 @@ def test_metrics_are_reportable():
     )
     metrics = verdict.as_metrics()
     assert set(metrics) >= {"thread_abandoned", "overlap_turn", "overlap_thread"}
+
+
+# ── why this is NOT wired into the reliability gate ──────────────────────
+#
+# It was, briefly, and it converted a good answer into the refusal sentence.
+# Emitting `reply_abandons_thread` from `_assess_user_facing_reply` made
+# test_api_chat_uses_single_canonical_kernel_cognitive_path serve
+# "I couldn't get a clear enough answer together" in place of a correct reply
+# about foreground budget — the exact defect class this repo keeps
+# rediscovering, reproduced by the check meant to help.
+#
+# Adding the reason to _DELIVERABLE_RESIDUAL_SURFACE_REASONS was not enough:
+# another consumer treats any reason as a failure. Until every consumer of
+# that reason list is found and made to agree, this stays an OBSERVABILITY
+# signal — logged loudly in quality_metrics, acted on by nobody. A measure
+# that silently costs turns is worse than the thing it measures.
+
+
+def test_the_reason_is_deliverable_if_it_is_ever_emitted():
+    """The seat is kept warm, so a future wiring starts from safe."""
+    from core.brain.llm.mlx_worker import _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+
+    assert "reply_abandons_thread" in _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+
+
+def test_the_gate_does_not_yet_emit_it():
+    """Pins the deliberate decision above, so re-wiring is a conscious act."""
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "You know what that'll take, right?",
+        "Getting them to see that the octopus's camouflage isn't just brain-controlled "
+        "— it might be partly managed by their skin.",
+    )
+    assert "reply_abandons_thread" not in (assessment.reasons or ())

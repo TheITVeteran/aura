@@ -979,6 +979,11 @@ def _capability_inventory_minimum_grounding(
 # fail-closed.
 _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
     {
+        # A reply that wandered off the thread is still a reply. Marking the
+        # turn for repair is right; discarding it and reporting an
+        # infrastructure failure over it is the defect class this set exists
+        # to prevent, and a topical miss must not become a new instance of it.
+        "reply_abandons_thread",
         "missing_requested_phrase",
         "missing_requested_word_count",
         "missing_requested_sentence_count",
