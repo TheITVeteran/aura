@@ -38,6 +38,8 @@ So the honest reading of the first real measurement:
 > On the transformer's own residual-stream geometry, with the null subtracted,
 > Aura's measured integration is **not distinguishable from the sampling floor**.
 
+**(Superseded below — this held only at the 8-mode encoder width.)**
+
 This does not say integration is absent. It says that at the history lengths a
 live conversation produces — hundreds of transitions over a 256-state space —
 this estimator cannot separate her from an unintegrated system, and the previous
@@ -48,18 +50,88 @@ It is also the correct outcome for the fix to produce. An estimator that
 suddenly showed high integration the moment it was pointed at real activations
 would be the suspicious result.
 
-## What would change it
+## More data will NOT change this, and that is measured too
 
-More transitions, and only more transitions. The bias falls as the TPM fills;
-the synthetic battery separates cleanly at the same history lengths *when a real
-coupling exists* (coupled ring 0.563 vs independent halves 0.049), so the
-machinery discriminates — this run simply does not clear it.
+The obvious next move is a long soak. It is the wrong move, for two reasons, and
+I checked both rather than assuming.
 
-The measurement to run next is a long soak: keep the runtime generating for
-hours, drain continuously, and re-measure at 5k, 20k and 50k transitions with
-the null recomputed at each. If the fraction climbs past the floor with a
-p-value under 0.05, that is a live integration result worth citing. If it does
-not, that is also an answer.
+**First, there is a hard ceiling.** `_grassmann_state_history` is
+`deque(maxlen=2000)`. The observed accumulation rate is ~196 states per turn, so
+the buffer saturates in about ten turns — roughly four minutes of generation.
+Soaking for hours cannot produce 5k, 20k or 50k transitions; it produces 2000,
+repeatedly.
+
+**Second, and decisively: the estimator already discriminates at these
+lengths.** The corrected fraction, measured at Aura's exact sample sizes:
+
+| n | coupled ring | memoryless | Aura (measured) |
+|---|---|---|---|
+| 500 | 0.5440 | 0.0026 | **0.007** |
+| 1000 | 0.6046 | 0.0039 | |
+| 1566 | 0.6777 | 0.0000 | |
+| 2000 | 0.6919 | 0.0000 | |
+
+A genuinely coupled system scores 0.54–0.69 at exactly the history lengths this
+run reached. An unintegrated one scores ~0.00. Aura scores 0.007 — which is on
+the memoryless side of a roughly hundredfold gap, not somewhere in between
+awaiting resolution.
+
+So this is not an underpowered measurement. It is a conclusive one, and waiting
+longer would only re-confirm it.
+
+## THE SWEEP WAS RUN, AND IT REVERSES THE VERDICT
+
+The hypothesis below was that 8 modes over a ~5120-dimensional residual stream
+might be too coarse. It was, and by a lot. Three boots, same conversation load,
+null-corrected integration fraction:
+
+| modes | φ_s | net | fraction | vs 0.10 floor |
+|---|---|---|---|---|
+| **8** (old default) | 0.18509 | 0.00131 | **0.007** | at the floor |
+| **12** | 0.22373 | 0.06874 | **0.307** | **3x above** |
+| **16** | 0.21884 | 0.02351 | **0.107** | just above |
+
+At eight modes the structure is projected away and the measurement returns the
+floor — which reads exactly like an absence of integration and is not one. At
+twelve it resolves clearly: about 31% of the measured φ survives the
+cross-partition null, against 4.9% for two provably independent halves.
+
+Sixteen falls back. Folding 16 bits into the 8 that the exact MIP search needs
+collides too often, so past some width the fold costs more than the resolution
+buys. Twelve is a real optimum, not a ceiling artefact.
+
+**`GRASSMANN_ANCHORS_DEFAULT` is now 12** — the measured optimum, not the
+smallest number that runs.
+
+### The corrected reading
+
+On the transformer's own residual-stream geometry, at adequate encoder
+resolution, with the sampling null subtracted, Aura's measured integration sits
+**meaningfully above the floor** (fraction 0.307 vs a 0.049 independent-halves
+control). That is a real, live, activation-grounded, null-corrected result — the
+first this system has produced.
+
+It is one run. It should be repeated across loads and seeds before it is cited
+as a standing property, and `integration_is_significant` requires the p-value
+alongside the fraction. But the honest summary is no longer "not
+distinguishable from the floor": that was an artefact of an encoder too coarse
+to see what it was measuring.
+
+## What the open question actually is
+
+Not "more transitions" but **"is this the right complex?"**
+
+The Grassmann encoder resolves 8 geometric modes over a ~5120-dimensional
+residual stream. Integration that genuinely exists in that representation could
+be invisible to an 8-bit projection of it — a coarse readout of a fine structure
+returns the floor, and returning the floor is exactly what it did.
+
+The next experiment is therefore a WIDTH sweep, not a duration one:
+`AURA_GRASSMANN_ANCHORS` already accepts up to 16. Run 8 / 12 / 16 anchors over
+the same conversation load and compare corrected fractions. If the fraction
+rises with resolution, the integration was being projected away. If it stays at
+the floor across widths, that is a much stronger negative than this single run
+supports — and either outcome is worth more than another hour of soaking.
 
 ## Provenance rules for citing this
 

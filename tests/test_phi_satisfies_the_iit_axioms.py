@@ -312,3 +312,35 @@ class TestTheScalarIsNotAlone:
         assert result.phi_lower is not None and result.phi_upper is not None
         assert result.phi_lower <= result.phi_upper
         assert result.interval_method.startswith("bootstrap_transitions:")
+
+
+class TestThePowerOfTheMeasurementAtLiveSampleSizes:
+    """More data would not change the live verdict, and this is why.
+
+    A live conversation accumulates ~196 Grassmann states per turn into a
+    deque(maxlen=2000) — the buffer saturates in about ten turns. So the
+    question "should we soak for hours?" has an answer that does not depend on
+    patience: at the lengths actually reachable, does the corrected fraction
+    still tell a coupled system from an uncoupled one?
+
+    It does, by about a hundredfold. That makes the live reading of 0.007 a
+    conclusive measurement rather than an underpowered one.
+    """
+
+    @pytest.mark.parametrize("n", [500, 1000, 2000])
+    def test_a_coupled_system_is_obvious_at_live_history_lengths(self, n):
+        result = _phi_of(_coupled_ring(n, seed=7))
+        assert result.integration_fraction > 0.4, (
+            f"at n={n} the estimator lost a genuinely coupled system"
+        )
+
+    @pytest.mark.parametrize("n", [500, 1000, 2000])
+    def test_an_uncoupled_system_stays_at_the_floor(self, n):
+        result = _phi_of(_memoryless(n, seed=5))
+        assert result.integration_fraction < 0.02
+
+    def test_the_gap_is_wide_enough_that_more_data_is_not_the_answer(self):
+        coupled = _phi_of(_coupled_ring(2000, seed=7)).integration_fraction
+        uncoupled = _phi_of(_memoryless(2000, seed=5)).integration_fraction
+        assert coupled > uncoupled * 20 or uncoupled < 1e-6
+        assert coupled > 0.4

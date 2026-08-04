@@ -1352,7 +1352,13 @@ class AffectiveSteeringHook:
 
             vector = _np.asarray(sample, dtype=_np.float32).reshape(-1)
             state = self._grassmann_encoder.observe(vector)
-            return None if state is None else int(state) & 0xFF
+            if state is None:
+                return None
+            # Fold rather than truncate: `& 0xFF` would keep modes 0-7 and drop
+            # everything above, so a wider encoder would subtract information.
+            from core.consciousness.phi_core import _fold_modes_to_byte
+
+            return _fold_modes_to_byte(int(state))
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             # A telemetry sample is never worth a generation.
             return None

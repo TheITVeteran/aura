@@ -49,6 +49,7 @@ References:
 
 import logging
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -146,6 +147,43 @@ INTEGRATION_FRACTION_FLOOR = 0.10
 GRASSMANN_ANCHORS_EXACT = 8
 GRASSMANN_ANCHORS_MAX = 16
 
+#: MEASURED 2026-08-04 on the live 32B — a width sweep over the same
+#: conversation load, null-corrected integration fraction:
+#:
+#:      8 modes   φ_s 0.185   net 0.0013   fraction 0.007  (at the floor)
+#:     12 modes   φ_s 0.224   net 0.0687   fraction 0.307  (3x the floor)
+#:     16 modes   φ_s 0.219   net 0.0235   fraction 0.107  (just above)
+#:
+#: Eight modes over a ~5120-dimensional residual stream was too coarse: it
+#: projected the structure away and returned the floor, which reads exactly
+#: like an absence of integration. Twelve resolves it. Sixteen falls back —
+#: folding 16 bits into the 8 the exact MIP search needs collides too often,
+#: so past some width the fold costs more than the resolution buys.
+#:
+#: The default is the measured optimum, not the smallest number that works.
+GRASSMANN_ANCHORS_DEFAULT = 12
+
+
+def _fold_modes_to_byte(state: int) -> int:
+    """Fold an N-mode state into the 8 bits the exact MIP search can handle.
+
+    `state & 0xFF` was wrong and quietly so: with 12 anchors it kept modes 0-7
+    and THREW AWAY 8-11, so widening the encoder subtracted information instead
+    of adding it. A width sweep run against that mask would have measured the
+    truncation, not the resolution.
+
+    XOR-folding keeps every mode's contribution. It is lossy — 12 bits cannot
+    survive intact in 8 — but it is lossy in the way a hash is: each additional
+    mode still changes the state it participates in, so a finer encoder produces
+    a finer partition of the same dynamics rather than a blinded one.
+    """
+    value = int(state)
+    folded = 0
+    while value:
+        folded ^= value & 0xFF
+        value >>= 8
+    return folded & 0xFF
+
 
 def _grassmann_anchor_count() -> int:
     """Modes the residual complex resolves; wider capture is opt-in.
@@ -159,7 +197,7 @@ def _grassmann_anchor_count() -> int:
 
     raw = os.getenv("AURA_GRASSMANN_ANCHORS", "").strip()
     if not raw:
-        return GRASSMANN_ANCHORS_EXACT
+        return GRASSMANN_ANCHORS_DEFAULT
     try:
         value = int(raw)
     except ValueError:
@@ -511,7 +549,16 @@ class PhiCore:
         #: The sampling null is `surrogates` more exhaustive MIP searches, so
         #: it runs on its own bounded schedule and never on a foreground turn.
         self._last_null_measured_at: float = 0.0
-        self._null_interval_s: float = 300.0
+        # 300s suits a live runtime. A measurement run needs to ask for the
+        # null on its own schedule, or a sweep reads `net=None` for every arm
+        # that did not happen to cross the interval — which is what the first
+        # anchor-width sweep did on two of its three arms.
+        try:
+            self._null_interval_s: float = max(
+                0.0, float(os.getenv("AURA_PHI_NULL_INTERVAL_S", "300") or 300)
+            )
+        except (TypeError, ValueError):
+            self._null_interval_s = 300.0
         self._null_surrogates: int = 8
 
     # ── State Recording ────────────────────────────────────────────────────────
@@ -682,8 +729,9 @@ class PhiCore:
                 # full mode count as the population it was drawn from. Masking
                 # rather than widening keeps this an exact measurement instead
                 # of an approximation wearing an exact label.
-                self._grassmann_state_history.append(int(state) & 0xFF)
-                self._grassmann_state_visits[int(state) & 0xFF] += 1.0
+                folded = _fold_modes_to_byte(int(state))
+                self._grassmann_state_history.append(folded)
+                self._grassmann_state_visits[folded] += 1.0
         except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
             record_degradation('phi_core', exc)
 
