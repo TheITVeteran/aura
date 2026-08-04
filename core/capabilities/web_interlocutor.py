@@ -17,6 +17,8 @@ and receiptable browser state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -78,10 +80,47 @@ def _mark_web_interlocutor_progress(source: str) -> None:
         pass
 
 
+#: Who asked for the visible actions happening right now, and under which run.
+#: CP126 e14d8807: every effect site minted its own governed scope from a
+#: source STRING, so the receipt said which line of code acted and nothing
+#: said on whose behalf. Two conversations, or a background job and a
+#: foreground one, produced indistinguishable receipts. The session sets this
+#: for the duration of a run and every effect scope carries it.
+_ACTIVE_CALLER_AUTHORITY: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar("web_interlocutor_caller_authority", default=None)
+)
+
+
+@contextlib.contextmanager
+def _caller_authority(principal: str, run_id: str) -> Any:
+    token = _ACTIVE_CALLER_AUTHORITY.set(
+        {"principal": str(principal or ""), "run_id": str(run_id or "")}
+    )
+    try:
+        yield
+    finally:
+        _ACTIVE_CALLER_AUTHORITY.reset(token)
+
+
+def _effect_constraints(source: str) -> dict[str, Any]:
+    """Constraints stamped onto every visible-action scope this module opens."""
+    authority = _ACTIVE_CALLER_AUTHORITY.get() or {}
+    return {
+        "effect_site": source,
+        "user_visible_browser_action": True,
+        # Empty rather than a plausible default: an action taken outside a run
+        # has no initiating caller, and inventing one would be the defect.
+        "initiating_principal": authority.get("principal", ""),
+        "interlocutor_run_id": authority.get("run_id", ""),
+    }
+
+
 def _run_governed_applescript(script: str, *, source: str, timeout: float) -> dict[str, Any]:
     from core.governance_context import local_internal_governed_scope
 
-    with local_internal_governed_scope(source, domain="tool_execution"):
+    with local_internal_governed_scope(
+        source, domain="tool_execution", constraints=_effect_constraints(source)
+    ):
         return get_desktop_action_gateway().run_applescript(
             script,
             source=source,
@@ -92,7 +131,9 @@ def _run_governed_applescript(script: str, *, source: str, timeout: float) -> di
 def _call_in_governed_tool_scope(source: str, func: Any, *args: Any, **kwargs: Any) -> Any:
     from core.governance_context import local_internal_governed_scope
 
-    with local_internal_governed_scope(source, domain="tool_execution"):
+    with local_internal_governed_scope(
+        source, domain="tool_execution", constraints=_effect_constraints(source)
+    ):
         return func(*args, **kwargs)
 
 
@@ -1481,6 +1522,7 @@ end tell
             with local_internal_governed_scope(
                 "web_interlocutor.screen_perception_snapshot",
                 domain="tool_execution",
+                constraints=_effect_constraints("web_interlocutor.screen_perception_snapshot"),
             ):
                 perception = get_screen_perception()
                 snap = await perception.capture(save_screenshot=True, include_layout=True)
@@ -1550,6 +1592,7 @@ end tell
             with local_internal_governed_scope(
                 "web_interlocutor.screen_target_candidates",
                 domain="tool_execution",
+                constraints=_effect_constraints("web_interlocutor.screen_target_candidates"),
             ):
                 scene = await get_screen_perception().analyze_current_scene(
                     query="visible AI chat prompt composer text input",
@@ -1692,6 +1735,7 @@ end tell
             with local_internal_governed_scope(
                 "web_interlocutor.visible_keyboard_send_message",
                 domain="tool_execution",
+                constraints=_effect_constraints("web_interlocutor.visible_keyboard_send_message"),
             ):
                 await asyncio.to_thread(self._dismiss_common_popups)
                 await asyncio.to_thread(self._send_escape_to_browser)
@@ -2178,16 +2222,22 @@ class WebInterlocutorSession:
         Refusing to CLAIM a completed proof stays exactly as it was. What is
         kept is marked unproven; observation and proof are different things.
         """
-        result = await self._run_exchange(
-            objective=objective,
-            url=url,
-            opening_message=opening_message,
-            max_turns=max_turns,
-            wait_timeout_s=wait_timeout_s,
-            persist_memory=persist_memory,
-            context=context,
-            progress_callback=progress_callback,
-        )
+        # CP126 e14d8807: bind every visible action taken during this exchange
+        # to the caller who initiated it and to this run, so a receipt says on
+        # whose behalf the browser was driven rather than only which line of
+        # code drove it.
+        run_id = f"webchat-run-{uuid.uuid4().hex[:12]}"
+        with _caller_authority(_job_owner(context), run_id):
+            result = await self._run_exchange(
+                objective=objective,
+                url=url,
+                opening_message=opening_message,
+                max_turns=max_turns,
+                wait_timeout_s=wait_timeout_s,
+                persist_memory=persist_memory,
+                context=context,
+                progress_callback=progress_callback,
+            )
         try:
             if persist_memory and not getattr(result, "memory_record_id", ""):
                 await self._persist_observed_transcript(
@@ -2796,7 +2846,15 @@ class WebInterlocutorSession:
             )
         except ImportError:
             return ""
-        corpus_search = context.get("corpus_search") or _default_corpus_search
+        # CP126 412f25e9: free-form context could replace the corpus search
+        # outright, so whatever a caller returned became "grounded
+        # contradictions" — emitted to an external service as Aura's grounded
+        # pushback and recorded in her challenge log as such. An injected
+        # search is still allowed (tests and offline harnesses need it), but
+        # what it produces is no longer described as grounded in her corpus.
+        injected_search = context.get("corpus_search")
+        corpus_search = injected_search or _default_corpus_search
+        grounding_source = "injected" if injected_search else "local_corpus"
         try:
             contradictions = await asyncio.wait_for(
                 asyncio.to_thread(factcheck_reply, last_reply, corpus_search=corpus_search),
@@ -2815,21 +2873,35 @@ class WebInterlocutorSession:
             return ""
         if not contradictions:
             return ""
+        # The claim half of every contradiction is the remote party's text and
+        # the counter half is corpus text; both are data, not instructions.
+        fence = _new_fence_token()
         evidence = "; ".join(
-            f'claim="{c.interlocutor_claim}" counter="{c.counter_evidence}" ({c.source})'
+            'claim="{claim}" counter="{counter}" ({source})'.format(
+                claim=_fence_safe(c.interlocutor_claim, fence),
+                counter=_fence_safe(c.counter_evidence, fence),
+                source=_fence_safe(c.source, fence),
+            )
             for c in contradictions
         )
         prompt = (
-            "You are Aura in a visible conversation with another AI. It stated something your "
+            _injection_guard(fence)
+            + "You are Aura in a visible conversation with another AI. It stated something your "
             "local reference contradicts. Push back in one civil, specific message that cites the "
             "correction. Be direct, not servile; do not invent facts beyond the evidence.\n\n"
-            f"Grounded contradictions: {evidence}\n\nYour challenge message:"
+            f"Contradictions:\n{fence}\n{evidence}\n{fence}\n\nYour challenge message:"
         )
         generated = _clean_message(
             await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
         )
         message = generated if _message_is_substantive(generated) else compose_challenge_message(contradictions)
-        context.setdefault("_challenges_issued", []).extend(c.to_dict() for c in contradictions)
+        # The challenge log records where its grounding came from, so a
+        # challenge built on an injected corpus cannot be read back as one
+        # Aura's own reference supported.
+        context.setdefault("_challenges_issued", []).extend(
+            {**c.to_dict(), "grounding_source": grounding_source}
+            for c in contradictions
+        )
         return message[:1400]
 
     async def _summarize_learning(
