@@ -744,6 +744,19 @@ class TurnOutcome:
                 OutcomeStatus.RETRYABLE_FAILURE,
                 "answer_available_but_never_served",
             )
+        if self._user_visible is UserVisibleState.NOTHING_SERVED:
+            # The turn DID establish what happened: a cycle finished with no
+            # content, and said so. That is an empty cycle, not an unknown
+            # one, and the difference is not cosmetic — cognitive_engine is
+            # fail-closed, so "unknown" was escalated to CRITICAL SERVICE
+            # FAILURE, which took long-term memory consolidation down with
+            # it. 231 times on 2026-08-03, from a turn whose own code had
+            # already called mark_served("", state=NOTHING_SERVED) precisely
+            # to record this.
+            #
+            # It is still a failure — the person got nothing — and retryable,
+            # because the same request can succeed on the next pass.
+            return OutcomeStatus.RETRYABLE_FAILURE, "nothing_served"
         return OutcomeStatus.UNKNOWN, "nothing_recorded"
 
 
@@ -831,6 +844,22 @@ def _report(receipt: TurnReceipt, *, subsystem: str) -> None:
     elif receipt.status is OutcomeStatus.TERMINAL_FAILURE:
         severity = "degraded"
         action = "turn failed terminally after fallbacks were exhausted"
+    elif receipt.rationale == "nothing_served":
+        # An empty cognitive cycle. Ordinary, self-reported, and survivable on
+        # the next pass — the caller already tells the person. Recording it at
+        # warning meant every one escalated, because cognitive_engine is
+        # fail-closed and warning is the escalation floor: 231 CRITICAL SERVICE
+        # FAILUREs on 2026-08-03, which took long-term memory consolidation
+        # down with them and had the healer dispatching repairs at
+        # severity=emergency for a cycle that simply produced no text.
+        #
+        # CLAUDE.md's rule for exactly this: expected backpressure is recorded
+        # below the escalation floor, and only a persistent or total condition
+        # is a degradation. The receipt still says RETRYABLE_FAILURE, so the
+        # health surface still counts it — it just stops declaring the
+        # subsystem dead each time.
+        severity = "info"
+        action = "cognitive cycle produced no content; the person was told and the request can be retried"
     elif receipt.status is OutcomeStatus.RETRYABLE_FAILURE:
         severity = "warning"
         action = "turn failed in a way the same request could survive on retry"
