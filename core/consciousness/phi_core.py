@@ -1316,6 +1316,44 @@ class PhiCore:
             record_degradation('phi_core', exc)
             logger.debug("PhiCore affective baseline failed: %s", exc)
 
+        # ── The grounded, null-corrected result ──────────────────────────
+        # This is the live path — closed_loop calls compute_phi — and it used to
+        # end at the 16-node SPECTRAL result or the affective 8-node fallback.
+        # Both are STATE_SUMMARY grounding, neither is null-corrected, and the
+        # activation-grounded Grassmann complex was never consulted at all. So
+        # every φ this runtime has ever published came from summary statistics
+        # via an approximation, with no correction for the finite-sample bias
+        # that scores a MEMORYLESS system at 0.60.
+        #
+        # Running the selection here is what makes a corrected live value exist
+        # rather than being available in principle. It costs the same exhaustive
+        # 8-node searches `compute_affective_phi` already runs, and the null is
+        # interval-bounded inside `_maybe_attach_null`.
+        try:
+            selection = self.compute_full_kernel_selection()
+        except (ArithmeticError, AttributeError, LookupError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation('phi_core', exc, severity="warning")
+            selection = None
+        if selection is not None and selection.winner is not None:
+            self._last_result = selection.winner
+            self._last_compute_time = now
+            logger.debug(
+                "PhiCore live: %s φs=%.5f grounding=%s best_grounded=%s net=%s",
+                selection.winner_name,
+                selection.phi_s,
+                selection.grounding.value if selection.grounding else "none",
+                selection.is_best_grounded,
+                selection.winner.phi_net,
+            )
+            # The exclusion postulate is part of the live contract and used to
+            # run on the spectral branch this now returns ahead of.
+            try:
+                self.compute_max_phi_complex()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation('phi_core', exc)
+                logger.debug("PhiCore exclusion postulate computation failed: %s", exc)
+            return selection.winner
+
         # ── 16-node spectral phi ─────────────────────────────────────────
         if self._spectral_approx is not None and len(self._state_history) >= MIN_HISTORY_FOR_TPM:
             result = self._compute_spectral_phi_16()
