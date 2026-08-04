@@ -574,3 +574,39 @@ class TestTheChoiceIsHersAndHasAReason:
         reply = own_source_excerpt_floor("show me your code")
         assert reply.startswith("Here's a real piece of me")
         assert "because" not in reply.split("```")[0]
+
+
+class TestADegradedTurnStillUsesAnAnswerItAlreadyHas:
+    """"I couldn't get a clear enough answer together" while holding one.
+
+    Live 2026-08-03: "show me a piece of your code you find interesting" went
+    to full cognition, whose draft the quality gate filtered, and the last
+    resort apologised — while a real, correctly-cited, disk-read excerpt sat
+    one call away. The synthesis floors are consulted on the synthesis lane;
+    that turn was not on it. The short phrasing answered correctly the whole
+    time, which is what made it look like a phrasing bug rather than a lane
+    that cannot see its own evidence.
+    """
+
+    def test_the_last_resort_prefers_a_read_answer(self):
+        from interface.routes.chat import _build_degraded_live_reply
+
+        reply = _build_degraded_live_reply(
+            {}, "show me a piece of your code you find interesting", reason="filtered_draft"
+        )
+        assert "couldn't get a clear enough answer" not in reply
+        assert "```python" in reply
+        assert ".py:" in reply
+
+    def test_an_unrelated_degraded_turn_is_unchanged(self):
+        from interface.routes.chat import _build_degraded_live_reply
+
+        reply = _build_degraded_live_reply({}, "what is the weather", reason="filtered_draft")
+        assert "```python" not in reply
+
+    def test_the_bridge_only_returns_read_evidence(self):
+        from interface.routes.chat import _verified_floor_answer
+
+        assert _verified_floor_answer("what is the weather") == ""
+        assert _verified_floor_answer("") == ""
+        assert "```python" in _verified_floor_answer("show me your code")

@@ -4271,9 +4271,27 @@ def own_source_excerpt_floor(user_message: Any) -> str:
     # no answer at all to the part asking why. If she is going to claim
     # interest she has to have a reason on record.
     if _ASKS_WHAT_SHE_FINDS_INTERESTING_RE.search(str(user_message or "")):
-        from core.self.source_excerpt import excerpt_of_standing_interest
+        # Guarded, like every other step in this floor. Unguarded, ANY failure
+        # in the interest lookup raised out of the whole floor, the turn fell
+        # through to the model, and the quality gate then filtered the model's
+        # draft as runtime_boilerplate — so the person got "I couldn't get a
+        # clear enough answer together" while a real, correctly-cited excerpt
+        # was sitting one call away. Measured live 2026-08-03: the short
+        # phrasing answered and the same question with "you find interesting"
+        # did not. Choosing WHICH real excerpt to show must never be able to
+        # cost the excerpt.
+        chosen = None
+        try:
+            from core.self.source_excerpt import excerpt_of_standing_interest
 
-        chosen = excerpt_of_standing_interest()
+            chosen = excerpt_of_standing_interest()
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "source_excerpt",
+                exc,
+                severity="warning",
+                action="fell back to an ungrounded excerpt after the interest lookup failed",
+            )
         if chosen is not None and chosen.grounded:
             return (
                 f"This one, because {chosen.reason.rstrip('.')}. Read from disk just "

@@ -11983,6 +11983,30 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "
     return ""
 
 
+def _verified_floor_answer(user_message: str = "") -> str:
+    """An answer that was READ rather than generated, or "".
+
+    Only floors that produce checkable evidence belong here — the point is
+    that this path runs when generation has already failed, so anything that
+    needs the model is not a candidate.
+    """
+
+    message = str(user_message or "").strip()
+    if not message:
+        return ""
+    try:
+        from core.utils.own_source_intent import asks_for_own_source
+
+        if not asks_for_own_source(message):
+            return ""
+        from core.conversation.response_reliability import own_source_excerpt_floor
+
+        return str(own_source_excerpt_floor(message) or "").strip()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("verified floor unavailable for degraded turn: %s", exc)
+        return ""
+
+
 def _build_degraded_live_reply(
     frame: dict[str, Any],
     user_message: str = "",
@@ -11996,6 +12020,18 @@ def _build_degraded_live_reply(
     honest that the turn is degraded, but still stay attached to what the user
     actually asked instead of pretending a normal free-form answer exists.
     """
+
+    # Before apologising: some questions have an answer that does not need the
+    # model at all, read from disk and checkable. "Show me a piece of your code
+    # you find interesting" reached here live on 2026-08-03 and was answered
+    # "I couldn't get a clear enough answer together" while a real, correctly
+    # cited excerpt sat one call away — the synthesis floors are consulted on
+    # the synthesis lane, and this turn had gone to full cognition, which does
+    # not consult them. Saying "I have nothing" while holding something is the
+    # worst of the failure modes available here.
+    grounded = _verified_floor_answer(user_message)
+    if grounded:
+        return grounded
 
     topics = _select_anchor_topic_tokens(user_message)
     attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
