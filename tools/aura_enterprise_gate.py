@@ -669,6 +669,20 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
             if not pattern.search(line):
                 continue
             if kind == "placeholder_stub_mock" and re.search(
+                r"""(?:id|class)\s*=\s*["'][^"']*(?:placeholder|stub|mock)"""
+                r"""|[.#][\w-]*(?:placeholder|stub|mock)[\w-]*\b"""
+                r"""|["'][\w-]*-(?:placeholder|stub|mock)[\w-]*["']""",
+                line,
+                re.IGNORECASE,
+            ):
+                # A UI element NAMED "…-placeholder" is a name, not unfinished
+                # work: the lane-status element is called lane-placeholder, and
+                # its tests matched this rule fourteen times for saying so. The
+                # rule is looking for incomplete product code, and an HTML id,
+                # a CSS selector or a hyphenated token is neither. A bare
+                # "returns a placeholder" is still a finding.
+                continue
+            if kind == "placeholder_stub_mock" and re.search(
                 r"\b(?:from\s+unittest(?:\.mock)?\s+import|"
                 r"mock\.(?:patch|AsyncMock|MagicMock)|MagicMock)\b",
                 line,
