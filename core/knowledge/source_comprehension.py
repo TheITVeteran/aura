@@ -38,7 +38,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 from urllib.parse import urlparse
 
@@ -116,15 +116,15 @@ _CLAIM_HINT_RE = re.compile(
 #: Rhetoric that should lower confidence in an argument regardless of topic.
 _WEAK_ARGUMENT_MARKERS: tuple[tuple[str, str], ...] = (
     ("everyone knows", "appeals to consensus instead of evidence"),
-    ("obviously", "asserts rather than argues"),
+    ("obviously", "asserts where it should argue"),
     ("it is well known", "appeals to consensus instead of evidence"),
-    ("proves that", "claims proof, which almost nothing outside mathematics has"),
-    ("always", "universal claim, which one counterexample defeats"),
-    ("never", "universal claim, which one counterexample defeats"),
-    ("literally", "usually intensifier, not a measurement"),
-    ("destroys", "framing as a contest rather than an argument"),
-    ("debunked", "framing as a contest rather than an argument"),
-    ("keeps losing", "framing as a contest rather than an argument"),
+    ("proves that", "claims proof, which almost nothing outside mathematics earns"),
+    ("always", "makes a universal claim that one counterexample would defeat"),
+    ("never", "makes a universal claim that one counterexample would defeat"),
+    ("literally", "uses an intensifier where a measurement belongs"),
+    ("destroys", "frames a disagreement as a contest rather than an argument"),
+    ("debunked", "frames a disagreement as a contest rather than an argument"),
+    ("keeps losing", "frames a disagreement as a contest rather than an argument"),
 )
 
 
@@ -168,6 +168,18 @@ class SourceComprehension:
             "topics": list(self.topics),
             "content_sha256": self.content_sha256,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "SourceComprehension":
+        """Rebuild from :meth:`to_dict`, ignoring anything foreign.
+
+        The read paths pass comprehension around as a plain dict because that
+        is what memory stores. Reconstructing here means a caller does not
+        have to re-read the page to act on what it already understood.
+        """
+        data = dict(payload or {}) if isinstance(payload, dict) else {}
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     def narrative(self) -> str:
         """What she would say she took from it, in one short paragraph."""
@@ -369,13 +381,256 @@ def comprehend_source(
     )
 
 
+#: Hedging that turns an opinion back into a summary. A reaction containing
+#: these is the thing Bryan asked not to get: a survey of positions rather
+#: than one held position.
+_NON_COMMITTAL_MARKERS: tuple[str, ...] = (
+    "on one hand",
+    "on the other hand",
+    "there are many perspectives",
+    "it depends",
+    "both sides",
+    "some would argue",
+    "others might say",
+    "it is important to note",
+    "it's important to note",
+    "ultimately it comes down to",
+    "there is no right answer",
+    "reasonable people disagree",
+    "as an ai",
+)
+
+
+def opinion_is_a_position(text: Any) -> bool:
+    """Whether a reaction actually commits to something.
+
+    The failure this guards is a real one and not hypothetical: asked what she
+    thinks, a model will happily produce a balanced survey that contains no
+    view. A survey is a fine thing to write and a bad thing to call an
+    opinion.
+    """
+    body = str(text or "").strip()
+    if len(body) < 20:
+        return False
+    lowered = body.lower()
+    return not any(marker in lowered for marker in _NON_COMMITTAL_MARKERS)
+
+
+@dataclass
+class ReadingOpinion:
+    """Where Aura lands on something she read, and why she lands there."""
+
+    disposition: str = "undecided"
+    grounds: list[str] = field(default_factory=list)
+    invitation: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "disposition": self.disposition,
+            "grounds": list(self.grounds),
+            "invitation": self.invitation,
+        }
+
+
+def reading_disposition(
+    record: SourceComprehension,
+    *,
+    values: list[str] | None = None,
+) -> ReadingOpinion:
+    """The grounds a reading gives her for a view. NOT a second opinion system.
+
+    Opinions live in core/epistemics/opinion_engine.py, which forms them during
+    autonomous thought, stores them by topic, and is consulted on the general
+    reply path — so she can have a take on anything, not only on what she read
+    online. Reading is one INPUT to that, and this is what it contributes: a
+    disposition and the concrete grounds for it, drawn from her own beliefs and
+    from what the source actually did.
+
+    Kept separate from the engine deliberately. An opinion that only exists
+    when a comprehension record is in hand is a reading feature, and a mind
+    that needs a module loaded before it can have a thought does not have
+    thoughts.
+
+    ``undecided`` is a real answer and is used when nothing supports a view.
+    An opinion invented to avoid saying "I don't know yet" is worth less than
+    nothing.
+    """
+    grounds: list[str] = []
+    disposition = "undecided"
+
+    if not record.understood:
+        return ReadingOpinion(
+            disposition="unreadable",
+            grounds=["I could not get a claim out of it, so I have nothing to react to."],
+            invitation="Send me a better source for this and I'll tell you what I think.",
+        )
+
+    if record.stance == "contradicts":
+        disposition = "disagree"
+        grounds.append(
+            "It cuts against something I already hold, and I am not dropping "
+            "that on one source's say-so."
+        )
+    elif record.stance == "affirms":
+        disposition = "agree"
+        grounds.append(
+            "It lands where I already do, and an independent source arriving "
+            "at the same place makes me hold it more firmly."
+        )
+    elif record.stance == "repeats":
+        disposition = "unmoved"
+        grounds.append(
+            "I already thought this. The source adds a voice, not evidence."
+        )
+    elif record.stance == "extends":
+        disposition = "curious"
+        grounds.append(
+            "Nothing I hold speaks to this, so I want to chase it rather than "
+            "rule on it."
+        )
+
+    if record.argument_weaknesses:
+        grounds.extend(
+            f"The argument {weakness}." for weakness in record.argument_weaknesses[:2]
+        )
+        if disposition in {"agree", "curious"}:
+            # Agreeing with a conclusion is not endorsing how it was reached.
+            disposition = "sympathetic_but_unconvinced"
+            grounds.append(
+                "I may end up in the same place, but not for these reasons."
+            )
+        elif disposition == "undecided":
+            disposition = "unconvinced"
+
+    if record.source_kind in {"forum", "social"}:
+        grounds.append(
+            "It is one person's post, so I am treating it as a lead rather "
+            "than as a finding."
+        )
+
+    for value in list(values or [])[:3]:
+        text = str(value or "").strip()
+        if text and _content_terms(text) & _content_terms(record.claim):
+            grounds.append(f"It touches something I care about: {text[:120]}.")
+            break
+
+    invitation = {
+        "disagree": "I'd rather argue about this than agree — where do you land?",
+        "agree": "I think this is right. Do you?",
+        "unmoved": "Nothing new for me here, but say so if it lands differently for you.",
+        "curious": "I don't have a view yet and I'd like one. What do you make of it?",
+        "sympathetic_but_unconvinced": (
+            "I want this to be true and the argument doesn't get me there. "
+            "Do you see it differently?"
+        ),
+        "unconvinced": "This didn't convince me. Tell me if I'm being unfair to it.",
+        "undecided": "I haven't landed on this yet — what's your read?",
+    }.get(disposition, "What do you make of it?")
+
+    return ReadingOpinion(
+        disposition=disposition, grounds=grounds, invitation=invitation
+    )
+
+
+async def record_reading_opinion(
+    record: SourceComprehension | dict[str, Any],
+    *,
+    values: list[str] | None = None,
+) -> Any:
+    """Hand a reading's grounds to the general opinion engine.
+
+    The view is then stored by topic like any other opinion she holds, queried
+    on the general reply path, and available whether or not the conversation
+    is about an article. A reading contributes a position; it does not own one.
+    """
+    if not isinstance(record, SourceComprehension):
+        record = SourceComprehension.from_dict(record)
+    disposition = reading_disposition(record, values=values)
+    if disposition.disposition in {"unreadable", "undecided"}:
+        return None
+    try:
+        from core.runtime.service_access import optional_service
+
+        engine = optional_service("opinion_engine", default=None)
+        former = getattr(engine, "form_opinion", None)
+        if not callable(former):
+            return None
+        topic = record.claim[:120] or record.title[:120]
+        if not topic:
+            return None
+        return await former(
+            topic,
+            context=(
+                f"Source: {record.source_caveat or record.source_kind}. "
+                f"Where I land: {disposition.disposition}. "
+                + " ".join(disposition.grounds)
+            ),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Reading opinion not recorded: %s", exc)
+        return None
+
+
+def opinion_prompt(record: SourceComprehension, opinion: ReadingOpinion) -> str:
+    """The instruction that makes her SAY her view rather than survey the topic."""
+    grounds = "\n".join(f"- {ground}" for ground in opinion.grounds)
+    return (
+        "You just read something. Below is what you took from it and where you "
+        "landed. Say that, in your own voice, in two or three sentences.\n\n"
+        f"What it claims: {record.claim}\n"
+        f"What kind of source: {record.source_caveat or record.source_kind}\n"
+        f"Where you landed: {opinion.disposition}\n"
+        f"Why:\n{grounds}\n\n"
+        "Rules: take the position above and commit to it. Do not survey other "
+        "views, do not write 'on one hand', do not hedge with 'it depends', do "
+        "not summarise the article back. This is your opinion, so say I. End "
+        "by asking Bryan what he thinks.\n\n"
+        "Your take:"
+    )
+
+
+def remember_reading(
+    *,
+    url: str = "",
+    title: str = "",
+    text: str = "",
+    known_beliefs: list[str] | None = None,
+    prefix: str = "",
+) -> tuple[str, dict[str, Any]]:
+    """One call for any read path: the line to store, and the record beside it.
+
+    Every surface that reads something external should go through this rather
+    than formatting its own "I read a thing" string — that is how one path
+    ended up storing navigation chrome under ``action="logged"`` while the
+    others stored nothing at all. Returns the sentence worth remembering and
+    the structured comprehension to attach as metadata.
+    """
+    record = comprehend_source(
+        url=url, title=title, text=text, known_beliefs=known_beliefs
+    )
+    lead = str(prefix or "").strip()
+    if record.understood:
+        line = record.narrative()
+    else:
+        # Nothing comprehensible. Say what was opened rather than storing the
+        # page, so the trace is still findable and still honest.
+        line = f"Opened {title or url or 'a source'} but took no claim from it."
+    return (f"{lead} {line}".strip() if lead else line), record.to_dict()
+
+
 __all__ = [
     "SCHEMA",
+    "ReadingOpinion",
+    "reading_disposition",
+    "opinion_is_a_position",
+    "opinion_prompt",
+    "record_reading_opinion",
     "SourceComprehension",
     "argument_weaknesses",
     "assess_stance",
     "classify_source",
     "comprehend_source",
     "extract_claim",
+    "remember_reading",
     "strip_site_chrome",
 ]

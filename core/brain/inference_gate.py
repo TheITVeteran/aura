@@ -45,6 +45,7 @@ from core.conversation.response_reliability import (
     is_self_process_question,
     requested_output_contract,
 )
+from core.epistemics.opinion_engine import standing_disposition
 from core.conversation.user_surface_contract import (
     bind_user_surface_prompt,
     resolve_user_surface_prompt,
@@ -5476,19 +5477,28 @@ class InferenceGate:
             )
             logger.debug("Phenomenology injection unavailable: %s", exc)
 
+        # A position she formed before this conversation wins. Absent one, she
+        # still gets the standing disposition — she is entitled to a view on a
+        # subject she is meeting for the first time, and that entitlement must
+        # not depend on the opinion service being up.
+        held_position = ""
         try:
             topic_hint = self._topic_hint_from_prompt(prompt)
             opinion_engine = ServiceContainer.get("opinion_engine", default=None)
             if opinion_engine and topic_hint and hasattr(opinion_engine, "get_context_injection"):
                 opinion_context = await _resolve(opinion_engine.get_context_injection(topic_hint))
-                if opinion_context:
-                    segments.append(f"## HELD POSITIONS\n{str(opinion_context).strip()[:400]}")
+                held_position = str(opinion_context or "").strip()[:400]
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
             )
             logger.debug("Opinion injection unavailable: %s", exc)
+        if held_position or self._origin_is_user_facing(origin):
+            segments.append(
+                f"## {'HELD POSITIONS' if held_position else 'HOLDING A VIEW'}\n"
+                f"{standing_disposition(held_position)}"
+            )
 
         try:
             if self._origin_is_user_facing(origin):
@@ -6010,20 +6020,24 @@ class InferenceGate:
             )
             logger.debug("Compact GoalEngine injection unavailable: %s", exc)
 
+        compact_opinion = ""
         try:
             topic_hint = self._topic_hint_from_prompt(prompt)
             opinion_engine = ServiceContainer.get("opinion_engine", default=None)
             if opinion_engine and topic_hint and hasattr(opinion_engine, "get_context_injection"):
                 opinion_context = await _resolve(opinion_engine.get_context_injection(topic_hint))
-                if opinion_context:
-                    compact_opinion = " ".join(str(opinion_context).strip().split())
-                    segments.append(f"## HELD POSITION\n{compact_opinion[:220]}")
+                compact_opinion = " ".join(str(opinion_context or "").split())[:220]
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
             )
             logger.debug("Compact opinion injection unavailable: %s", exc)
+        if compact_opinion or self._origin_is_user_facing(origin):
+            segments.append(
+                f"## {'HELD POSITION' if compact_opinion else 'HOLDING A VIEW'}\n"
+                f"{standing_disposition(compact_opinion, compact=True)}"
+            )
 
         return "\n\n".join(segment for segment in segments if segment)
 

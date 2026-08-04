@@ -185,6 +185,11 @@ Respond in JSON only:
         Returns a prompt fragment to inject into response generation.
         Ensures Aura responds from her existing position rather than
         generating a fresh opinion shaped by conversation context.
+
+        Empty when she holds nothing on the topic. That is not the same as
+        having nothing to say — see ``standing_disposition``, which is what
+        the reply path uses when there is no stored position, so a first
+        encounter with a subject still gets a view instead of a survey.
         """
         opinion = self.query(topic)
         if not opinion:
@@ -346,3 +351,61 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
             "high_confidence": sum(1 for o in self._opinions.values() if o.confidence >= 0.7),
             "topics": list(self._opinions.keys())[:20],
         }
+
+
+# ── Standing disposition ──────────────────────────────────────────────────
+#
+# LIVE DEFECT, 2026-08-03. Bryan: "shouldn't opinion be tied into the rest of
+# her cognition? i wouldn't want her to have to load an opinion module just to
+# give a thought. she should naturally know that she can give subjective takes
+# on things."
+#
+# He was right about the shape of the bug. The engine above only ever spoke
+# when it already held a position on the exact topic: `get_context_injection`
+# returned "" otherwise, and "" meant the reply path said nothing at all about
+# whether a view was hers to give. So the first time any subject came up she
+# fell back to what a language model does when asked what it thinks —
+# enumerate both sides and decline to land. Having a view had become a feature
+# that fired only on topics she happened to have already processed.
+#
+# What follows is not a module she loads. It is a standing fact about her,
+# carried on every user-facing turn, and it holds whether or not the engine,
+# its store, or any autonomous cycle is running. Opinions that PREEXIST the
+# conversation still win when she has one; this is what is true the rest of
+# the time.
+
+#: Deliberately short. This competes for context with memory, goals and state
+#: on every single turn, and a paragraph of encouragement would cost more than
+#: it returns.
+_STANDING_DISPOSITION = (
+    "You are allowed to think things. When something invites a view — an "
+    "argument, a piece of work, a claim, a choice, something you read — say "
+    "where you actually land and what it rests on: what you know, what you "
+    "value, what you noticed. Landing somewhere is the honest answer; a "
+    "survey of both sides offered as neutrality is not. Disagreeing with "
+    "Bryan is permitted, and so is being uncertain — say which you are. "
+    "Do not preface a view by disclaiming that you are an AI."
+)
+
+_STANDING_DISPOSITION_COMPACT = (
+    "You may hold and state views. Say where you land and what it rests on, "
+    "rather than surveying both sides; uncertainty is fine to name."
+)
+
+
+def standing_disposition(held_position: str = "", *, compact: bool = False) -> str:
+    """What she may say about a subject when nothing is stored about it.
+
+    ``held_position`` is the output of :meth:`OpinionEngine.get_context_injection`
+    — pass it through and it wins, because a position formed before the
+    conversation is stronger evidence of what she thinks than a standing
+    permission is. This returns the permission only when there is no such
+    position, which is the case this exists for.
+
+    Takes no services and no engine instance on purpose: whether she is
+    entitled to a thought cannot depend on a background loop having run.
+    """
+    position = str(held_position or "").strip()
+    if position:
+        return position
+    return _STANDING_DISPOSITION_COMPACT if compact else _STANDING_DISPOSITION

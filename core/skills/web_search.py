@@ -64,6 +64,31 @@ class WebSearchInput(BaseModel):
     force_refresh: bool = Field(False, description="If True, bypass cache and force a new live search.")
 
 
+def _comprehension_of(
+    results: Any, *, query: str = "", answer: str = ""
+) -> dict[str, Any]:
+    """What the top result claims, judged. Empty when it cannot be read.
+
+    A search that returns text and never asks what it means leaves a blob no
+    later turn can say anything about.
+    """
+    rows = [row for row in (results or []) if isinstance(row, dict)]
+    if not rows:
+        return {}
+    top = rows[0]
+    try:
+        from core.knowledge.source_comprehension import comprehend_source
+
+        record = comprehend_source(
+            url=str(top.get("url") or top.get("link") or ""),
+            title=str(top.get("title") or query or ""),
+            text=str(top.get("snippet") or top.get("content") or answer or ""),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return {}
+    return {"comprehension": record.to_dict()} if record.understood else {}
+
+
 class EnhancedWebSearchSkill(BaseSkill):
     """Hybrid live web search with retrieval, synthesis, and retention."""
 
@@ -213,7 +238,17 @@ class EnhancedWebSearchSkill(BaseSkill):
                     results = res.get("results", [])
                     # format sources
                     content = res.get("answer") or str([r.get("snippet", "") for r in results])
-                    return {"ok": True, "content": content, "sources": results}
+                    # LIVE, 2026-08-03: a search returned text and nothing
+                    # asked what it meant, so the result was a blob a later
+                    # turn could say nothing about. The comprehension travels
+                    # with the result — what the top source claims, what KIND
+                    # of source it is, and the rhetoric worth discounting.
+                    return {
+                        "ok": True,
+                        "content": content,
+                        "sources": results,
+                        **_comprehension_of(results, query=q, answer=content),
+                    }
                 
                 # Curiosity may research all it likes; it just may not
                 # take the foreground lane to do it. Only a person's request

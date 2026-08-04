@@ -1409,8 +1409,98 @@ class AutonomousInitiativeLoop:
             },
         )
 
+    def _source_kind_note(self, url: str) -> dict[str, Any]:
+        """What kind of source this is, for material with no single claim."""
+        try:
+            from core.knowledge.source_comprehension import classify_source
+
+            kind, caveat = classify_source(url)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return {}
+        return {"source_kind": kind, "source_caveat": caveat} if caveat else {}
+
+    def _comprehend_reading(
+        self,
+        *,
+        url: str = "",
+        title: str = "",
+        text: str = "",
+        prefix: str = "",
+    ) -> tuple[str, dict[str, Any]]:
+        """What she took from a source, or an honest note that she took nothing.
+
+        Falls back to the old excerpt line when comprehension is unavailable:
+        losing the trace entirely would be worse than storing raw text.
+        """
+        try:
+            from core.knowledge.source_comprehension import remember_reading
+
+            return remember_reading(
+                url=url,
+                title=title,
+                text=text,
+                known_beliefs=self._known_beliefs_for_reading(),
+                prefix=prefix,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "autonomous_initiative_loop",
+                exc,
+                action="stored the raw excerpt after source comprehension was unavailable",
+            )
+            excerpt = " ".join(str(text or "").split())[:500]
+            return f"{prefix} {title} | excerpt={excerpt}".strip(), {}
+
+    async def _form_opinion_from_reading(self, comprehension: dict[str, Any]) -> None:
+        """Let a reading leave her holding a view, not just a record of it.
+
+        The view goes to the general opinion store — the same one consulted on
+        an ordinary reply — so it outlives this loop and can be disagreed with
+        later. Reading contributes positions; it does not keep its own.
+        """
+        if not comprehension:
+            return
+        try:
+            from core.knowledge.source_comprehension import record_reading_opinion
+
+            await record_reading_opinion(comprehension)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "autonomous_initiative_loop",
+                exc,
+                action="kept the reading record after opinion formation was unavailable",
+            )
+
+    def _known_beliefs_for_reading(self, limit: int = 24) -> list[str]:
+        """What she already holds, so a reading can be placed against it."""
+        try:
+            beliefs = optional_service("belief_system", "beliefs", default=None)
+            getter = getattr(beliefs, "get_strong_beliefs", None)
+            if not callable(getter):
+                return []
+            rows = getter(0.6) or []
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return []
+        held: list[str] = []
+        for row in list(rows)[:limit]:
+            if isinstance(row, dict):
+                text = " ".join(
+                    str(row.get(key) or "").strip()
+                    for key in ("source", "relation", "target")
+                ).strip()
+            else:
+                text = str(row or "").strip()
+            if text:
+                held.append(text[:240])
+        return held
+
     async def _remember_social_observation(
-        self, text: str, *, tags: list[str] | None = None, importance: float = 0.45
+        self,
+        text: str,
+        *,
+        tags: list[str] | None = None,
+        importance: float = 0.45,
+        comprehension: dict[str, Any] | None = None,
     ) -> None:
         text = " ".join(str(text or "").strip().split())
         if not text:
@@ -1418,9 +1508,25 @@ class AutonomousInitiativeLoop:
         try:
             memory = optional_service("memory_manager", default=None)
             if memory and hasattr(memory, "store"):
-                await memory.store(
-                    text[:1800], importance=importance, tags=tags or ["autonomy", "social"]
-                )
+                store_kwargs: dict[str, Any] = {
+                    "importance": importance,
+                    "tags": tags or ["autonomy", "social"],
+                }
+                if comprehension:
+                    # Kept BESIDE the sentence, so a later reader can see the
+                    # claim, the source's kind, and where it landed against
+                    # what she holds — not just that a page went by.
+                    store_kwargs["metadata"] = {"comprehension": comprehension}
+                try:
+                    await memory.store(text[:1800], **store_kwargs)
+                except TypeError:
+                    # An older store() without metadata support still gets the
+                    # comprehended sentence, which is the important half.
+                    await memory.store(
+                        text[:1800],
+                        importance=importance,
+                        tags=tags or ["autonomy", "social"],
+                    )
         except (RuntimeError, AttributeError, TypeError) as exc:
             _record_initiative_degradation(
                 exc,
@@ -1671,10 +1777,17 @@ class AutonomousInitiativeLoop:
                         f"{title} (score={post.get('score', '0')}, comments={post.get('comments', '0')})"
                     )
                 if digest_lines:
+                    # A browse digest is headlines, not an article, so there
+                    # is no claim to comprehend — but what KIND of thing these
+                    # are still matters, and remembering them without it makes
+                    # a vote count look like evidence.
                     await self._remember_social_observation(
                         f"Reddit browse r/{sub}: " + " | ".join(digest_lines),
                         tags=["autonomy", "reddit", f"r/{sub}"],
                         importance=0.42,
+                        comprehension=self._source_kind_note(
+                            f"https://www.reddit.com/r/{sub}"
+                        ),
                     )
 
                 url = str(top_post.get("url") or "").strip()
@@ -1694,11 +1807,25 @@ class AutonomousInitiativeLoop:
                                 f"Read top r/{sub} thread '{top_post.get('title')}'. Excerpt: {content[:260]}",
                                 category="Social",
                             )
+                            # LIVE DEFECT, 2026-08-03. This stored the page —
+                            # navigation chrome included — as a 500-character
+                            # excerpt tagged "logged". The event that she read
+                            # something was recorded; what she made of it was
+                            # not, so the reading could tell her nothing
+                            # afterwards.
+                            line, comprehension = self._comprehend_reading(
+                                url=url,
+                                title=str(top_post.get("title") or ""),
+                                text=content,
+                                prefix=f"Reddit read r/{sub}:",
+                            )
                             await self._remember_social_observation(
-                                f"Reddit read r/{sub}: {top_post.get('title')} | excerpt={content[:500]}",
+                                line,
                                 tags=["autonomy", "reddit", "read_post", f"r/{sub}"],
                                 importance=0.5,
+                                comprehension=comprehension,
                             )
+                            await self._form_opinion_from_reading(comprehension)
 
             provider = (
                 result.get("provider")

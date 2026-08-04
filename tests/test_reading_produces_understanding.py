@@ -280,3 +280,142 @@ def test_a_reply_that_introduces_new_vocabulary_is_not_punished():
     )
 
     assert antecedent_topic_abandoned("Why does that matter?", reply, antecedent) is False
+
+
+# --- she takes a position, not a survey ---------------------------------
+
+
+from core.knowledge.source_comprehension import (  # noqa: E402
+    reading_disposition,
+    opinion_is_a_position,
+    opinion_prompt,
+)
+
+
+def _record(**kwargs):
+    base = dict(
+        url="https://www.reddit.com/r/philosophy/x",
+        title=_REDDIT_TITLE,
+        text=_REDDIT_BODY,
+    )
+    base.update(kwargs)
+    return comprehend_source(**base)
+
+
+def test_a_claim_that_cuts_against_her_gets_disagreement():
+    record = comprehend_source(
+        url="https://example.com/a",
+        title="Tidal patterns are not dominated by the moon",
+        text="Tidal patterns are not dominated by the moon in any basin.",
+        known_beliefs=["Tidal patterns are dominated by the moon"],
+    )
+
+    opinion = reading_disposition(record)
+
+    assert opinion.disposition == "disagree"
+    assert any("not dropping that" in g for g in opinion.grounds)
+
+
+def test_agreement_is_held_more_firmly_not_merely_noted():
+    record = comprehend_source(
+        url="https://arxiv.org/abs/1",
+        title="Tidal patterns are dominated by the moon across shallow basins",
+        text="Tidal patterns are dominated by the moon across shallow basins.",
+        known_beliefs=["Tidal patterns are dominated by the moon"],
+    )
+
+    opinion = reading_disposition(record)
+
+    assert opinion.disposition in {"agree", "unmoved"}
+    assert opinion.grounds
+
+
+def test_a_bad_argument_for_a_congenial_conclusion_is_not_endorsed():
+    """Agreeing with a conclusion is not endorsing how it was reached."""
+    congenial = _record(
+        known_beliefs=["Classical wisdom keeps being rediscovered by argument"]
+    )
+    opinion = reading_disposition(congenial)
+
+    assert opinion.disposition == "sympathetic_but_unconvinced"
+    assert any("not for these reasons" in g for g in opinion.grounds)
+
+
+def test_a_bad_argument_alone_leaves_her_unconvinced():
+    opinion = reading_disposition(_record())
+
+    assert opinion.disposition == "unconvinced"
+    assert any("appeals to consensus" in g for g in opinion.grounds)
+
+
+def test_a_forum_post_is_treated_as_a_lead():
+    opinion = reading_disposition(_record())
+
+    assert any("lead rather than as a finding" in g for g in opinion.grounds)
+
+
+def test_every_ground_reads_as_a_sentence():
+    opinion = reading_disposition(_record())
+
+    for ground in opinion.grounds:
+        assert ground.endswith(".")
+        assert ground[0].isupper()
+
+
+def test_an_unreadable_source_gets_no_invented_opinion():
+    """An opinion invented to avoid saying "I don't know yet" is worth less
+    than nothing."""
+    opinion = reading_disposition(comprehend_source(url="", title="", text="Home All"))
+
+    assert opinion.disposition == "unreadable"
+    assert "could not get a claim" in opinion.grounds[0]
+
+
+def test_she_turns_it_back_to_him():
+    """A view she keeps to herself is half an opinion. The property is that
+    she addresses him, not that she ends on a question mark."""
+    invitation = reading_disposition(_record()).invitation.lower()
+
+    assert invitation
+    assert any(word in invitation for word in ("you", "your", "tell me", "bryan"))
+    unreadable = reading_disposition(comprehend_source(url="", title="", text="Home All"))
+    assert "send me a better source" in unreadable.invitation.lower()
+
+
+@pytest.mark.parametrize(
+    "survey",
+    [
+        "On one hand it's compelling, on the other hand it's weak.",
+        "There are many perspectives here and it depends on your framework.",
+        "Some would argue yes; others might say no.",
+        "As an AI, I don't really have opinions on this.",
+        "Hm.",
+    ],
+)
+def test_a_survey_is_not_an_opinion(survey):
+    """Asked what she thinks, a model will happily produce a balanced survey
+    containing no view."""
+    assert opinion_is_a_position(survey) is False
+
+
+@pytest.mark.parametrize(
+    "position",
+    [
+        "I think the poets were right, and this argument doesn't earn it.",
+        "This is wrong. The moon dominates and one forum post doesn't move me.",
+        "I don't have a view yet, and I want one — that's why it stuck with me.",
+    ],
+)
+def test_a_real_position_passes(position):
+    assert opinion_is_a_position(position) is True
+
+
+def test_the_prompt_forbids_the_rehash():
+    prompt = opinion_prompt(_record(), reading_disposition(_record()))
+
+    assert "do not survey other views" in prompt.lower()
+    assert "on one hand" in prompt.lower()
+    assert "this is your opinion" in prompt.lower()
+    # And it carries the position she actually reached, not a blank invitation
+    # to have one.
+    assert reading_disposition(_record()).disposition in prompt
