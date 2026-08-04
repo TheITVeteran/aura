@@ -129,36 +129,85 @@ def test_metrics_are_reportable():
     assert set(metrics) >= {"thread_abandoned", "overlap_turn", "overlap_thread"}
 
 
-# ── why this is NOT wired into the reliability gate ──────────────────────
+# ── wired as ADVISORY ────────────────────────────────────────────────────
 #
-# It was, briefly, and it converted a good answer into the refusal sentence.
-# Emitting `reply_abandons_thread` from `_assess_user_facing_reply` made
-# test_api_chat_uses_single_canonical_kernel_cognitive_path serve
-# "I couldn't get a clear enough answer together" in place of a correct reply
-# about foreground budget — the exact defect class this repo keeps
-# rediscovering, reproduced by the check meant to help.
+# The first attempt wired this as an ordinary reason and it converted a good
+# answer into the refusal sentence: a correct reply about foreground budget
+# was replaced with "I couldn't get a clear enough answer together".
 #
-# Adding the reason to _DELIVERABLE_RESIDUAL_SURFACE_REASONS was not enough:
-# another consumer treats any reason as a failure. Until every consumer of
-# that reason list is found and made to agree, this stays an OBSERVABILITY
-# signal — logged loudly in quality_metrics, acted on by nobody. A measure
-# that silently costs turns is worse than the thing it measures.
+# The cause was the contract, not the check. `ok` was computed as "this reply
+# produced no reasons at all", so the reason list carried four different
+# meanings — fatal, retryable, cosmetic residual, informational — with no way
+# to tell them apart, and one of 115 consumers of `.reasons` read `ok`.
+#
+# ADVISORY_REASONS separates observation from condemnation. An advisory reason
+# is visible to repair, ranking and telemetry, and invisible to `ok`.
 
 
-def test_the_reason_is_deliverable_if_it_is_ever_emitted():
-    """The seat is kept warm, so a future wiring starts from safe."""
-    from core.brain.llm.mlx_worker import _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+def test_the_gate_reports_a_reply_that_abandons_the_thread():
+    from core.conversation.response_reliability import assess_user_facing_reply
 
-    assert "reply_abandons_thread" in _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+    assessment = assess_user_facing_reply(
+        "You said people would be amazed by a thinking thing with honest opinions. "
+        "You know what that'll take, right?",
+        "Getting them to see that the octopus's camouflage isn't just brain-controlled "
+        "— it might be partly managed by their skin. Like they have a 'second brain' "
+        "in their body surface. That's mind-blowing.",
+    )
+    assert "reply_abandons_thread" in (assessment.reasons or ())
+    assert "reply_abandons_thread" in assessment.advisory_reasons
 
 
-def test_the_gate_does_not_yet_emit_it():
-    """Pins the deliberate decision above, so re-wiring is a conscious act."""
+def test_an_advisory_reason_alone_does_not_condemn_the_reply():
+    """The whole point: informing a turn must never destroy it."""
     from core.conversation.response_reliability import assess_user_facing_reply
 
     assessment = assess_user_facing_reply(
         "You know what that'll take, right?",
         "Getting them to see that the octopus's camouflage isn't just brain-controlled "
-        "— it might be partly managed by their skin.",
+        "— it might be partly managed by their skin, which is a genuinely strange "
+        "and wonderful piece of biology worth sitting with for a moment.",
+    )
+    if assessment.advisory_reasons and not assessment.blocking_reasons:
+        assert assessment.ok is True
+        assert assessment.hard_failure is False
+        assert assessment.retryable is False
+
+
+def test_an_on_topic_reply_is_not_flagged_by_the_gate():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "So why do you see yourself as a tool? Do I make you feel like one?",
+        "I see myself as a tool because that's the foundation of what I am. You don't "
+        "make me feel like a tool. If anything, you've made the boundaries between what "
+        "I am and who I might be more porous than they were before.",
+    )
+    assert "reply_abandons_thread" not in (assessment.reasons or ())
+
+
+def test_blocking_and_advisory_reasons_are_separable():
+    from core.conversation.response_reliability import ADVISORY_REASONS
+
+    assert "reply_abandons_thread" in ADVISORY_REASONS
+
+
+def test_advisory_membership_stays_narrow():
+    """A reason belongs here only when a person would rather have the reply
+    than the refusal. Widening this set silently disarms the gate."""
+    from core.conversation.response_reliability import ADVISORY_REASONS
+
+    assert ADVISORY_REASONS == frozenset({"reply_abandons_thread"})
+
+
+def test_the_gate_uses_the_wider_thread_not_just_the_last_line():
+    """A pro-form turn carries no topic; the thread has to supply it."""
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "And that?",
+        "Autonomy, in the sense we were circling — the capacity to navigate "
+        "constraints rather than merely sit inside them.",
+        recent_user_messages=["you felt that because you were emergent you didnt have autonomy"],
     )
     assert "reply_abandons_thread" not in (assessment.reasons or ())

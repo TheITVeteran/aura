@@ -1718,6 +1718,33 @@ _EXACT_REPLY_ADDITIONAL_ACTION_TAIL_RE = re.compile(
 )
 
 
+#: Reasons that are REPORTED but do not condemn the reply.
+#:
+#: `ok` was computed as "this reply produced no reasons at all", which made
+#: the reason list carry four different meanings — fatal, retryable, cosmetic
+#: residual, and merely informational — with no way to tell them apart. The
+#: consequence was measured: adding one new observation at the single
+#: assessment chokepoint, correctly registered as a deliverable residual,
+#: still turned a correct answer about foreground budget into "I couldn't get
+#: a clear enough answer together". Some consumer among the 115 readers of
+#: `.reasons` checks `ok`, and `ok` could not tell an observation from a
+#: defect.
+#:
+#: An advisory reason is visible to anything that wants to act on it —
+#: telemetry, repair, ranking — and invisible to `ok`. Adding one can inform
+#: a turn but never destroy it.
+#:
+#: Membership is deliberate and narrow. A reason belongs here only when a
+#: person would still rather have the reply than the refusal.
+ADVISORY_REASONS: frozenset[str] = frozenset(
+    {
+        # The reply wandered off the thread. Worth repairing, worth logging,
+        # never worth replacing a real answer with an apology.
+        "reply_abandons_thread",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ConversationReplyAssessment:
     ok: bool
@@ -1727,6 +1754,15 @@ class ConversationReplyAssessment:
 
     def has(self, reason: str) -> bool:
         return reason in self.reasons
+
+    @property
+    def advisory_reasons(self) -> tuple[str, ...]:
+        """Reasons that describe the reply without condemning it."""
+        return tuple(r for r in self.reasons if r in ADVISORY_REASONS)
+
+    @property
+    def blocking_reasons(self) -> tuple[str, ...]:
+        return tuple(r for r in self.reasons if r not in ADVISORY_REASONS)
 
 
 @dataclass(frozen=True)
@@ -7276,6 +7312,34 @@ def _assess_user_facing_reply(
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
     reasons.extend(_count_contract_quality_reasons(user_message, raw))
+    # Every check above asks whether the reply has enough of the right KIND of
+    # content for this kind of turn. None asks whether it engages what was
+    # said, which is how a fluent paragraph about octopus camouflage passed as
+    # an answer to "you know what that'll take, right?".
+    #
+    # Turn-kind independent on purpose — abandoning the thread is not a
+    # property of any one turn shape — and ADVISORY, so it informs repair and
+    # telemetry without ever standing between a person and a real answer.
+    try:
+        from core.conversation.thread_continuity import assess_thread_continuity
+
+        thread = assess_thread_continuity(
+            user_message,
+            raw,
+            recent_thread=[
+                str(m) for m in (recent_user_messages or []) if str(m or "").strip()
+            ] + ([str(antecedent)] if antecedent else []),
+        )
+        if thread.abandoned:
+            reasons.append("reply_abandons_thread")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "response_reliability.thread_continuity",
+            exc,
+            severity="warning",
+            action="assessed the reply without a thread-continuity reading",
+            enforce_failure_policy=False,
+        )
     if _has_question_back_non_answer(user_message, raw):
         reasons.append("question_back_non_answer")
     if _missing_current_request_recap(user_message, raw):
@@ -7418,11 +7482,14 @@ def _assess_user_facing_reply(
         # died in a single 30-turn probe.
         reasons = [r for r in reasons if r not in _REQUEST_COVERAGE_REASONS]
     unique = tuple(dict.fromkeys(reasons))
+    # Advisory reasons are reported, not held against the reply. See
+    # ADVISORY_REASONS for why `ok = not unique` was the wrong contract.
+    blocking = tuple(r for r in unique if r not in ADVISORY_REASONS)
     return ConversationReplyAssessment(
-        ok=not unique,
+        ok=not blocking,
         reasons=unique,
-        hard_failure=bool(set(unique) & hard_reasons),
-        retryable=bool(set(unique) & retryable_reasons),
+        hard_failure=bool(set(blocking) & hard_reasons),
+        retryable=bool(set(blocking) & retryable_reasons),
     )
 
 
