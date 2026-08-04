@@ -7,10 +7,10 @@ import time
 from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
+from core.brain.llm.continuity_ledger import env_int
 from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
 from core.runtime.errors import record_degradation
-from core.brain.llm.continuity_ledger import env_int
 from core.state.aura_state import AuraState
 from core.synthesis import get_identity_lock
 
