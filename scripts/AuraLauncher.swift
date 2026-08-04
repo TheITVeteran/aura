@@ -1414,7 +1414,117 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private let terminalHandoffWindow: TimeInterval = 75.0
     private let guiWindowLaunchWindow: TimeInterval = 25.0
 
+    /// Install the standard menu bar.
+    ///
+    /// LIVE DEFECT, 2026-08-03. Bryan reported that copy, paste and select-all
+    /// do nothing in Aura's window. The app never built a menu bar, and on
+    /// macOS ⌘C/⌘V/⌘X/⌘A reach a WKWebView through the Edit menu's key
+    /// equivalents — an app with no Edit menu has no clipboard shortcuts at
+    /// all. Nothing in the web content could have fixed it; the responder
+    /// chain was never asked.
+    ///
+    /// These are the standard selectors, so they act on whatever has focus
+    /// (the web view, a text field) exactly as every other Mac app behaves.
+    private func installMenuBar() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        let appName = ProcessInfo.processInfo.processName
+        appMenu.addItem(
+            withTitle: "Hide \(appName)",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h",
+        )
+        let hideOthers = appMenu.addItem(
+            withTitle: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h",
+        )
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(
+            withTitle: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: "",
+        )
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(
+            withTitle: "Quit \(appName)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q",
+        )
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(
+            withTitle: "Undo",
+            action: Selector(("undo:")),
+            keyEquivalent: "z",
+        )
+        let redo = editMenu.addItem(
+            withTitle: "Redo",
+            action: Selector(("redo:")),
+            keyEquivalent: "z",
+        )
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(
+            withTitle: "Cut",
+            action: #selector(NSText.cut(_:)),
+            keyEquivalent: "x",
+        )
+        editMenu.addItem(
+            withTitle: "Copy",
+            action: #selector(NSText.copy(_:)),
+            keyEquivalent: "c",
+        )
+        editMenu.addItem(
+            withTitle: "Paste",
+            action: #selector(NSText.paste(_:)),
+            keyEquivalent: "v",
+        )
+        let pasteMatch = editMenu.addItem(
+            withTitle: "Paste and Match Style",
+            action: Selector(("pasteAsPlainText:")),
+            keyEquivalent: "v",
+        )
+        pasteMatch.keyEquivalentModifierMask = [.command, .option, .shift]
+        editMenu.addItem(
+            withTitle: "Delete",
+            action: #selector(NSText.delete(_:)),
+            keyEquivalent: "",
+        )
+        editMenu.addItem(
+            withTitle: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a",
+        )
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Minimize",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m",
+        )
+        windowMenu.addItem(
+            withTitle: "Zoom",
+            action: #selector(NSWindow.performZoom(_:)),
+            keyEquivalent: "",
+        )
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        NSApp.mainMenu = mainMenu
+        NSApp.windowsMenu = windowMenu
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMenuBar()
         do {
             try configurePaths()
         } catch {

@@ -110,16 +110,31 @@ def resolve_identity_model(*, default: Any = None) -> Any:
 
 
 def resolve_identity_prompt_surface(orchestrator: Any = None, *, default: Any = None) -> Any:
-    identity = optional_service("identity", default=None)
-    if identity is not None and hasattr(identity, "get_full_system_prompt"):
-        return identity
+    """The identity surface that can render a bounded system prompt.
+
+    ``identity_system`` is checked alongside ``identity``: that is the name the
+    cognitive context manager registered under, and the resolver not knowing it
+    is why that call site looked the services up itself — and then raised
+    "identity service has no bounded prompt surface" on every turn. Either
+    name, and either getter, resolves here.
+    """
+    for service_name in ("identity", "identity_system"):
+        identity = optional_service(service_name, default=None)
+        if identity is not None and (
+            hasattr(identity, "get_full_system_prompt")
+            or hasattr(identity, "get_full_system_prompt_injection")
+        ):
+            return identity
     try:
         from core.identity import get_identity_system
 
         prompt_surface = get_identity_system(orchestrator)
     except (ImportError, AttributeError, RuntimeError):
         prompt_surface = None
-    if prompt_surface is not None and hasattr(prompt_surface, "get_full_system_prompt"):
+    if prompt_surface is not None and (
+        hasattr(prompt_surface, "get_full_system_prompt")
+        or hasattr(prompt_surface, "get_full_system_prompt_injection")
+    ):
         return prompt_surface
     fallback = resolve_identity_model(default=None)
     if fallback is not None and hasattr(fallback, "get_full_system_prompt"):

@@ -1359,6 +1359,80 @@ _DEPLOYMENT_ROUTING_CLAIM_MARKERS = (
 )
 
 
+#: Claims about the hardware Aura runs on. She runs as a local process on one
+#: machine; "distributed across multiple GPUs", "data centers" and "hardware
+#: accelerators" describe a deployment that does not exist.
+#:
+#: LIVE DEFECT, 2026-08-03 19:45. Asked for her code, she said her
+#: implementation "involves distributed computation across multiple GPUs and
+#: specialized hardware accelerators". Bryan pointed out he has one GPU. She
+#: agreed — and produced a second false explanation about dual-GPU laptops.
+#: A model asked about its own substrate answers from what such systems
+#: usually are, and what this one is was never in the reply path.
+_FABRICATED_SUBSTRATE_RE = re.compile(
+    r"\b(?:"
+    r"(?:multiple|several|many|thousands\s+of|clusters?\s+of)\s+"
+    r"(?:gpus?|tpus?|nodes?|servers?|machines?|accelerators?)"
+    r"|distributed\s+(?:computation|inference|training)\s+across"
+    r"|data\s+cent(?:er|re)s?"
+    r"|server\s+farms?"
+    r"|specialized\s+hardware\s+accelerators?"
+    r"|(?:my|our)\s+(?:gpu\s+)?cluster"
+    r")\b",
+    re.IGNORECASE,
+)
+#: The same words are fine when the reply is ABOUT such systems rather than
+#: claiming to be one.
+_SUBSTRATE_SELF_CLAIM_RE = re.compile(
+    r"\b(?:i|my|me|mine|aura(?:'s)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_fabricated_substrate_claim(user_message: Any, reply_text: Any) -> bool:
+    """Whether the reply claims hardware this runtime does not have.
+
+    Only fires on a FIRST-PERSON claim, and not when the user introduced the
+    subject — "do you run in a data center?" deserves a direct answer that may
+    repeat the phrase.
+    """
+    raw = str(reply_text or "")
+    if not raw.strip():
+        return False
+    prompt = _normalize(user_message)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", raw):
+        match = _FABRICATED_SUBSTRATE_RE.search(sentence)
+        if not match:
+            continue
+        if not _SUBSTRATE_SELF_CLAIM_RE.search(sentence):
+            continue
+        if match.group(0).lower() in prompt:
+            continue
+        # A denial is the honest form of this sentence — but only when the
+        # negation governs the CLAIM. "There is no physical space behind me,
+        # just more circuitry and data centers" denies one thing and asserts
+        # another; a negation anywhere in the sentence used to excuse it.
+        lead_in = sentence[max(0, match.start() - 60) : match.start()]
+        if re.search(
+            r"\b(?:not|no|never|don'?t|doesn'?t|isn'?t|aren'?t|without|nor)\b"
+            r"[^.;:]{0,40}$",
+            lead_in,
+            re.IGNORECASE,
+        ):
+            continue
+        # A contrastive disclaimer after the phrase does the same work:
+        # "…distributed across multiple GPUs, but that's not how I run."
+        if re.search(
+            r"\b(?:but|though|however|whereas|unlike)\b[^.;:]{0,80}"
+            r"\b(?:not|no|never|don'?t|doesn'?t|isn'?t|aren'?t)\b",
+            sentence[match.end():],
+            re.IGNORECASE,
+        ):
+            continue
+        return True
+    return False
+
+
 def _has_unsupported_deployment_routing_claim(
     user_message: Any,
     reply_text: Any,
@@ -4057,6 +4131,98 @@ def _is_chat_surface_reference(text: str) -> bool:
     return app_surface and reply_surface
 
 
+#: A request to see Aura's own source. Deliberately requires BOTH a
+#: show/see verb and a possessive reference to her code, so "show me a python
+#: snippet" (a generic request, which the model should answer freely) does not
+#: route here.
+_SOURCE_SHOW_MARKERS = (
+    "show me",
+    "show a",
+    "can you show",
+    "let me see",
+    "let's see",
+    "display",
+    "print out",
+    "paste",
+)
+#: "your ... code" with any adjectives between — "your actual codebase",
+#: "your own real source". Substring lists missed exactly the phrasings a
+#: person uses, which is how "show me a snippet of code from your actual
+#: codebase" fell through to the model.
+_OWN_SOURCE_RE = re.compile(
+    r"\byour\s+(?:\w+\s+){0,3}(?:code|codebase|source|implementation|architecture)\b",
+    re.IGNORECASE,
+)
+#: A follow-up that means her code because the turn before it did. "the actual
+#: code" is only ever asked after being shown something that was not.
+#: A subject named right after the code phrase, other than Aura herself.
+_NAMES_ANOTHER_SUBJECT_RE = re.compile(
+    r"\s+(?:for|of|in|from|behind)\s+(?!your\b|yourself\b|you\b|aura\b)\w",
+    re.IGNORECASE,
+)
+_ACTUAL_SOURCE_RE = re.compile(
+    r"\b(?:the|some)\s+(?:actual|real|genuine|true)\s+(?:code|codebase|source)\b",
+    re.IGNORECASE,
+)
+
+
+def own_source_excerpt_floor(user_message: Any) -> str:
+    """Answer "show me your code" from the source tree, or admit it cannot.
+
+    LIVE DEFECT, 2026-08-03 19:43. Asked twice for her actual code, Aura
+    produced a generic transformer pipeline and a ``reschedule_attention``
+    method that exists in no file in this repository, then claimed her
+    implementation runs "across multiple GPUs and specialized hardware
+    accelerators" on a single-GPU MacBook. The conversational path could not
+    reach the source tree, so the question fell through to the model's
+    weights — which will always answer "show me your code" with something that
+    looks like code.
+
+    Every excerpt returned here was read from a real file and carries its path
+    and line numbers. When the read fails, the reply says so instead of
+    generating one, because a snippet nobody read is not her code.
+    """
+    text = _normalize(user_message)
+    if not text:
+        return ""
+    if not _contains_any_marker(text, _SOURCE_SHOW_MARKERS):
+        return ""
+    raw = str(user_message or "")
+    if _OWN_SOURCE_RE.search(raw):
+        pass
+    else:
+        actual = _ACTUAL_SOURCE_RE.search(raw)
+        # "the actual code" means HERS only when nothing else is named. "the
+        # actual code for numpy" is a question about numpy, and answering it
+        # with a piece of Aura would be its own kind of made-up answer.
+        if not actual or _NAMES_ANOTHER_SUBJECT_RE.match(raw[actual.end():]):
+            return ""
+    try:
+        from core.self.source_excerpt import excerpt_for_topic, source_tree_is_readable
+    except ImportError:
+        return (
+            "I can't reach my own source from here, so I won't show you "
+            "something that looks like it. That reader is missing from this "
+            "build."
+        )
+    if not source_tree_is_readable():
+        return (
+            "I can't read my source tree from this process right now, so I "
+            "won't invent a snippet. Ask me again once I can open it."
+        )
+    excerpt = excerpt_for_topic(str(user_message or ""))
+    if excerpt is None:
+        return (
+            "I looked in my source tree and couldn't find a section matching "
+            "that. I'd rather say so than write something that looks like my "
+            "code and isn't."
+        )
+    return (
+        "Here's a real piece of me — read from disk just now, so you can "
+        f"check it:\n\n{excerpt.rendered()}"
+    )
+
+
 def live_chat_diagnostic_floor(user_message: Any) -> str:
     text = _normalize(user_message)
     if not text or looks_like_learning_resource_bundle(str(user_message or "")):
@@ -6432,6 +6598,8 @@ def _model_text_integrity_reasons(
         reasons.append("search_meta_artifact")
     if user_facing and _has_unsupported_deployment_routing_claim(prompt, raw):
         reasons.append("unsupported_deployment_routing_claim")
+    if user_facing and _has_fabricated_substrate_claim(prompt, raw):
+        reasons.append("fabricated_substrate_claim")
     if user_facing and _has_unsupported_runtime_limits_claim(prompt, raw):
         reasons.append("unsupported_runtime_limits_claim")
     if user_facing:

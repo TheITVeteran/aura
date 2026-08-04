@@ -13,6 +13,7 @@ from core.conversation.response_reliability import (
     grounded_operational_status_reply,
     live_chat_diagnostic_floor,
     normalize_user_facing_format,
+    own_source_excerpt_floor,
     repair_instruction_shape,
     requested_exact_reply_target,
 )
@@ -292,6 +293,13 @@ def _direct_answer_floor(user_message: str) -> str:
     diagnostic = live_chat_diagnostic_floor(q)
     if diagnostic:
         return diagnostic
+
+    # "Show me your actual code" is answerable from the source tree. Left to
+    # the model it produced a transformer pipeline that exists in no file here
+    # and a claim about multiple GPUs on a one-GPU laptop.
+    own_source = own_source_excerpt_floor(q)
+    if own_source:
+        return own_source
 
     # CP126 8b28006a: a phrase match used to return a stale, hardcoded claim
     # that live API parity and autonomous email/Reddit follow-through had been

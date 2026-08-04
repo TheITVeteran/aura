@@ -161,6 +161,28 @@ def _is_keep_awake_assertion_process(proc: Any) -> bool:
     return "-i" in _process_cmdline(proc) or "-m" in _process_cmdline(proc)
 
 
+def _is_governed_applescript_process(proc: Any) -> bool:
+    """Return true for the AppleScript helper Aura runs through its gateway.
+
+    LIVE DEFECT, 2026-08-03 19:43. StabilityGuardian reported DEGRADED with
+    "1 unregistered child process(es) detected; pid=30897 name=osascript".
+    That osascript is Aura's own: every AppleScript in the desktop and
+    web-interlocutor paths goes through
+    ``core.runtime.desktop_action_gateway`` as a short-lived direct child. It
+    is named for the macOS binary, matched none of the Aura worker tags, and
+    so was reported as rogue — the same shape as the keep-awake assertion
+    above, which produced a permanent DEGRADED card for a process the runtime
+    deliberately started.
+
+    Matched only as a DIRECT child, which the caller has already established,
+    so an osascript the user started elsewhere is never adopted.
+    """
+
+    name = _process_name(proc).lower()
+    cmdline = " ".join(_process_cmdline(proc)).lower()
+    return name == "osascript" or cmdline.startswith("osascript")
+
+
 def _is_python_multiprocessing_spawn_process(proc: Any) -> bool:
     """Return true for Python multiprocessing worker children owned by this runtime.
 
@@ -1695,6 +1717,19 @@ class RuntimeHygieneManager:
                     # child on EVERY boot — a permanent DEGRADED card in the
                     # user's neural feed for a process the runtime deliberately
                     # started.
+                    if child_name and _is_governed_applescript_process(child):
+                        self.register_process_handle(
+                            child,
+                            kind="subprocess",
+                            name="desktop_action_gateway.osascript",
+                            source="psutil.adopt_governed_applescript_during_summary",
+                            command=" ".join(_process_cmdline(child))[:240],
+                        )
+                        active_registered += 1
+                        active_subprocesses += 1
+                        if child_pid > 0:
+                            active_registered_pids.add(child_pid)
+                        continue
                     if child_name and _is_keep_awake_assertion_process(child):
                         self.register_process_handle(
                             child,

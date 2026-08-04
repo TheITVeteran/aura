@@ -387,7 +387,14 @@ class CognitiveContextManager:
             ),
             self._collect(
                 "identity",
-                lambda: service_access.optional_service("identity_system", "identity", default=None),
+                # A resolver already knows where the identity prompt surface
+                # lives — including constructing it when no service is
+                # registered. Looking up two service names directly found
+                # SOMETHING without the surface and then raised
+                # "identity service has no bounded prompt surface" on every
+                # turn, which is a live AttributeError for a question the
+                # runtime can answer.
+                lambda: service_access.resolve_identity_prompt_surface(default=None),
                 self._read_identity,
             ),
             self._collect(
