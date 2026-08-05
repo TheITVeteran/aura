@@ -19,7 +19,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 from core.reality_reach.acceptance import AcceptanceEvidenceClass
-from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_mandate import (
+    AcceptanceMandateProvisionReceipt,
+    AcceptanceVerificationMandate,
+)
+from core.reality_reach.acceptance_preregistration import (
+    build_acceptance_preregistration_bundle,
+    build_acceptance_preregistration_statement,
+    verify_acceptance_preregistration,
+)
 from core.reality_reach.acceptance_transparency import (
     ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
 )
@@ -135,6 +143,8 @@ def _witness_bundle(
 
 def _transparency_bundle(
     statement: dict[str, object],
+    *,
+    bundle_builder=build_acoustic_a1_transparency_bundle,
 ) -> tuple[dict[str, object], bytes]:
     issued_at = int(statement["issued_at_unix"])
     statement_bytes = json.dumps(
@@ -248,7 +258,7 @@ def _transparency_bundle(
         log_key.sign(set_payload, ec.ECDSA(hashes.SHA256()))
     ).decode("ascii")
     rekor_uuid = f"{123:016x}{root.hex()}"
-    bundle = build_acoustic_a1_transparency_bundle(
+    bundle = bundle_builder(
         statement=statement,
         producer_signature=signature,
         producer_certificate_pem=certificate,
@@ -368,7 +378,7 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         ),
         expected_simulated_channel_ids=(),
         required_cases=ACOUSTIC_A1_REQUIRED_CASES,
-        provisioned_at_ns=receipt.trials[0].captured_at_ns - 1,
+        provisioned_at_ns=receipt.trials[0].captured_at_ns - 5_000_000_000,
         custody_sequence=1,
     )
     record = AcousticA1CampaignRecord(
@@ -399,10 +409,54 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         mandate=mandate,
         evidence_sha256=str(sha256_hex(canonical_json(governance))),
     )
+    provision_receipt = AcceptanceMandateProvisionReceipt(
+        campaign_id=mandate.campaign_id,
+        mandate_sha256=mandate.sha256,
+        contract_sha256=mandate.contract_sha256,
+        custody_identity_sha256="sha256:" + "6" * 64,
+        provisioned_at_ns=mandate.provisioned_at_ns,
+        created=True,
+        custody_sequence=mandate.custody_sequence,
+    )
+    preregistration_issued_at = record.started_at_ns // 1_000_000_000 - 2
+    preregistration_statement = build_acceptance_preregistration_statement(
+        mandate,
+        provision_receipt,
+        sequence=1,
+        previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        previous_rekor_uuid=None,
+        issued_at_unix=preregistration_issued_at,
+    )
+    preregistration_bundle, preregistration_log_public_pem = _transparency_bundle(
+        preregistration_statement,
+        bundle_builder=build_acceptance_preregistration_bundle,
+    )
+    preregistration = verify_acceptance_preregistration(
+        mandate,
+        provision_receipt,
+        transparency_bundle=preregistration_bundle,
+        trusted_log_public_key_pem=preregistration_log_public_pem,
+        campaign_started_at_ns=record.started_at_ns,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+    assert preregistration.accepted is True
 
     verified = verify_acoustic_a1_with_external_witnesses(
         record,
         mandate,
+        preregistration_receipt=preregistration,
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governed,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governed.public_key_sha256,
+        now_ns=record.completed_at_ns + 2,
+    )
+    missing_preregistration = verify_acoustic_a1_with_external_witnesses(
+        record,
+        mandate,
+        preregistration_receipt=None,
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governed,
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -412,6 +466,7 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
     shared_root = verify_acoustic_a1_with_external_witnesses(
         record,
         mandate,
+        preregistration_receipt=preregistration,
         metrology_witness_bundle=metrology,
         governance_witness_bundle=_witness_bundle(
             AcceptanceWitnessRole.GOVERNANCE,
@@ -428,6 +483,9 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
     assert verified.accepted is True
     assert verified.blockers == ()
     assert verified.campaign_id == record.campaign_id
+    assert verified.preregistration_verification_sha256 == preregistration.sha256
+    assert missing_preregistration.accepted is False
+    assert "acceptance_preregistration_missing" in missing_preregistration.blockers
     assert shared_root.accepted is False
     assert "external_witness_roots_not_distinct" in shared_root.blockers
     receipt_path = tmp_path / "external-a1.json"
@@ -546,6 +604,18 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         "AcousticA1CampaignStore",
         _CampaignStoreFacade,
     )
+    preregistration_provision_path = tmp_path / "a1-preregistration-provision.json"
+    preregistration_bundle_path = tmp_path / "a1-preregistration-bundle.json"
+    preregistration_log_key_path = tmp_path / "a1-preregistration-log-key.pem"
+    preregistration_provision_path.write_text(
+        json.dumps(provision_receipt.to_dict()),
+        encoding="utf-8",
+    )
+    preregistration_bundle_path.write_text(
+        json.dumps(preregistration_bundle),
+        encoding="utf-8",
+    )
+    preregistration_log_key_path.write_bytes(preregistration_log_public_pem)
     operator_statement_path = tmp_path / "operator-a1-witness.json"
     operator_payload_path = tmp_path / "operator-a1-witness.payload"
     assert witness_tool.main(
@@ -567,6 +637,12 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
             "1",
             "--witnessed-at-ns",
             str(record.completed_at_ns + 1),
+            "--preregistration-provision-receipt",
+            str(preregistration_provision_path),
+            "--preregistration-bundle",
+            str(preregistration_bundle_path),
+            "--preregistration-log-public-key-pem",
+            str(preregistration_log_key_path),
             "--statement-output",
             str(operator_statement_path),
             "--payload-output",
@@ -662,6 +738,12 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
             "1",
             "--issued-at-unix",
             str(issued_at),
+            "--preregistration-provision-receipt",
+            str(preregistration_provision_path),
+            "--preregistration-bundle",
+            str(preregistration_bundle_path),
+            "--preregistration-log-public-key-pem",
+            str(preregistration_log_key_path),
             "--statement-output",
             str(operator_transparency_statement),
             "--payload-output",
@@ -704,6 +786,12 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
             str(assembled_path),
             "--transparency-log-public-key-pem",
             str(log_key_path),
+            "--preregistration-provision-receipt",
+            str(preregistration_provision_path),
+            "--preregistration-bundle",
+            str(preregistration_bundle_path),
+            "--preregistration-log-public-key-pem",
+            str(preregistration_log_key_path),
             "--receipt-output",
             str(independent_path),
         ]

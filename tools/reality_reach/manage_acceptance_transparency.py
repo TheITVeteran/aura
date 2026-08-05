@@ -19,7 +19,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.reality_reach.acceptance import AcceptanceCertificateStore  # noqa: E402
-from core.reality_reach.acceptance_mandate import AcceptanceMandateStore  # noqa: E402
+from core.reality_reach.acceptance_mandate import (  # noqa: E402
+    AcceptanceMandateProvisionReceipt,
+    AcceptanceMandateStore,
+)
+from core.reality_reach.acceptance_preregistration import (  # noqa: E402
+    verify_acceptance_preregistration,
+)
 from core.reality_reach.acceptance_transparency import (  # noqa: E402
     ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
 )
@@ -108,9 +114,52 @@ def _external_receipt(
         mandate_store.close()
     if args.artifact_kind == "acoustic-a1":
         record = AcousticA1CampaignStore(args.root).load(args.campaign_id)
+        required_preregistration = {
+            "--preregistration-provision-receipt": (
+                args.preregistration_provision_receipt
+            ),
+            "--preregistration-bundle": args.preregistration_bundle,
+            "--preregistration-log-public-key-pem": (
+                args.preregistration_log_public_key_pem
+            ),
+        }
+        missing = [name for name, value in required_preregistration.items() if value is None]
+        if missing:
+            raise ValueError(
+                "acoustic_a1_preregistration_arguments_missing:" + ",".join(missing)
+            )
+        provision_document = _read_json(args.preregistration_provision_receipt)
+        raw_provision = provision_document.get(
+            "provision_receipt",
+            provision_document,
+        )
+        if not isinstance(raw_provision, Mapping):
+            raise ValueError("acceptance_preregistration_provision_receipt_invalid")
+        preregistration = verify_acceptance_preregistration(
+            mandate,
+            AcceptanceMandateProvisionReceipt.from_dict(raw_provision),
+            transparency_bundle=_read_json(args.preregistration_bundle),
+            trusted_log_public_key_pem=_read_bytes(
+                args.preregistration_log_public_key_pem,
+                maximum=64 * 1024,
+            ),
+            campaign_started_at_ns=record.started_at_ns,
+            expected_sequence=args.preregistration_sequence,
+            expected_previous_statement_sha256=(
+                args.preregistration_previous_statement_sha256
+            ),
+            expected_previous_rekor_uuid=(
+                args.preregistration_previous_rekor_uuid
+            ),
+            minimum_log_index=args.preregistration_minimum_log_index,
+            minimum_integrated_time=(
+                args.preregistration_minimum_integrated_time
+            ),
+        )
         return verify_acoustic_a1_with_external_witnesses(
             record,
             mandate,
+            preregistration_receipt=preregistration,
             metrology_witness_bundle=_read_json(args.metrology_witness_bundle),
             governance_witness_bundle=_read_json(args.governance_witness_bundle),
             metrology_witness_key_sha256=args.metrology_witness_key_sha256,
@@ -250,6 +299,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     statement.add_argument("--previous-rekor-uuid")
     statement.add_argument("--issued-at-unix", type=int, default=0)
+    statement.add_argument("--preregistration-provision-receipt", type=Path)
+    statement.add_argument("--preregistration-bundle", type=Path)
+    statement.add_argument("--preregistration-log-public-key-pem", type=Path)
+    statement.add_argument("--preregistration-sequence", type=int, default=1)
+    statement.add_argument(
+        "--preregistration-previous-statement-sha256",
+        default=TRANSPARENCY_ZERO_SHA256,
+    )
+    statement.add_argument("--preregistration-previous-rekor-uuid")
+    statement.add_argument("--preregistration-minimum-log-index", type=int)
+    statement.add_argument("--preregistration-minimum-integrated-time", type=int)
     statement.add_argument("--statement-output", type=Path, required=True)
     statement.add_argument("--payload-output", type=Path, required=True)
     statement.set_defaults(handler=_statement)

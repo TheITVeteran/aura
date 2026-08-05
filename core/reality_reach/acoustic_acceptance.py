@@ -22,6 +22,9 @@ from core.reality_reach.acceptance import (
     acceptance_governance_document,
 )
 from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_preregistration import (
+    PreregisteredAcceptanceReceipt,
+)
 from core.reality_reach.acceptance_transparency import (
     ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA,
     AcceptanceTransparencyError,
@@ -43,7 +46,7 @@ from core.runtime.state_ownership import state_root
 ACOUSTIC_A1_RECEIPT_SCHEMA = "aura.reality_reach.acoustic_a1_acceptance.v1"
 ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v2"
 EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.external_acoustic_a1_verification.v1"
+    "aura.reality_reach.external_acoustic_a1_verification.v2"
 )
 TRANSPARENT_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
     "aura.reality_reach.transparent_acoustic_a1_verification.v1"
@@ -528,6 +531,7 @@ class ExternallyWitnessedAcousticA1Receipt:
     campaign_id: str
     campaign_record_sha256: str
     mandate_sha256: str
+    preregistration_verification_sha256: str
     metrology_witness_bundle_sha256: str
     governance_witness_bundle_sha256: str
     metrology_witness_key_sha256: str
@@ -540,6 +544,7 @@ class ExternallyWitnessedAcousticA1Receipt:
         for name in (
             "campaign_record_sha256",
             "mandate_sha256",
+            "preregistration_verification_sha256",
             "metrology_witness_bundle_sha256",
             "governance_witness_bundle_sha256",
             "metrology_witness_key_sha256",
@@ -576,6 +581,9 @@ class ExternallyWitnessedAcousticA1Receipt:
             "campaign_id": self.campaign_id,
             "campaign_record_sha256": self.campaign_record_sha256,
             "mandate_sha256": self.mandate_sha256,
+            "preregistration_verification_sha256": (
+                self.preregistration_verification_sha256
+            ),
             "metrology_witness_bundle_sha256": self.metrology_witness_bundle_sha256,
             "governance_witness_bundle_sha256": self.governance_witness_bundle_sha256,
             "metrology_witness_key_sha256": self.metrology_witness_key_sha256,
@@ -629,6 +637,7 @@ def verify_acoustic_a1_with_external_witnesses(
     record: AcousticA1CampaignRecord,
     mandate: AcceptanceVerificationMandate,
     *,
+    preregistration_receipt: PreregisteredAcceptanceReceipt | None,
     metrology_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
     governance_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
     metrology_witness_key_sha256: str,
@@ -642,6 +651,21 @@ def verify_acoustic_a1_with_external_witnesses(
     """Independently bind A1 physical and governance evidence to two roots."""
 
     blockers = list(acoustic_a1_campaign_binding_blockers(record, mandate))
+    verified_preregistration = ""
+    if preregistration_receipt is None:
+        blockers.append("acceptance_preregistration_missing")
+    elif not isinstance(preregistration_receipt, PreregisteredAcceptanceReceipt):
+        blockers.append("acceptance_preregistration_invalid")
+    elif (
+        not preregistration_receipt.accepted
+        or preregistration_receipt.mandate.sha256 != mandate.sha256
+        or preregistration_receipt.campaign_started_at_ns != record.started_at_ns
+        or preregistration_receipt.rekor_integrated_time
+        >= record.started_at_ns // 1_000_000_000
+    ):
+        blockers.append("acceptance_preregistration_binding_invalid")
+    else:
+        verified_preregistration = preregistration_receipt.sha256
 
     verified_metrology_bundle = ""
     verified_governance_bundle = ""
@@ -712,6 +736,7 @@ def verify_acoustic_a1_with_external_witnesses(
         campaign_id=record.campaign_id,
         campaign_record_sha256=record.sha256,
         mandate_sha256=mandate.sha256,
+        preregistration_verification_sha256=verified_preregistration,
         metrology_witness_bundle_sha256=verified_metrology_bundle,
         governance_witness_bundle_sha256=verified_governance_bundle,
         metrology_witness_key_sha256=(

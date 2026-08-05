@@ -348,6 +348,53 @@ class AcceptanceMandateProvisionReceipt:
         }
         return {**body, "receipt_sha256": _digest(body)}
 
+    @classmethod
+    def from_dict(
+        cls,
+        document: Mapping[str, Any],
+    ) -> AcceptanceMandateProvisionReceipt:
+        expected = {
+            "schema",
+            "campaign_id",
+            "mandate_sha256",
+            "contract_sha256",
+            "custody_identity_sha256",
+            "provisioned_at_ns",
+            "created",
+            "custody_sequence",
+            "receipt_sha256",
+        }
+        if not isinstance(document, Mapping) or set(document) != expected:
+            raise AcceptanceMandateError(
+                "acceptance_mandate_provision_receipt_schema_invalid"
+            )
+        if document.get("schema") != ACCEPTANCE_MANDATE_RECEIPT_SCHEMA:
+            raise AcceptanceMandateError(
+                "acceptance_mandate_provision_receipt_schema_invalid"
+            )
+        try:
+            receipt = cls(
+                campaign_id=document["campaign_id"],
+                mandate_sha256=document["mandate_sha256"],
+                contract_sha256=document["contract_sha256"],
+                custody_identity_sha256=document["custody_identity_sha256"],
+                provisioned_at_ns=document["provisioned_at_ns"],
+                created=document["created"],
+                custody_sequence=document["custody_sequence"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AcceptanceMandateError(
+                "acceptance_mandate_provision_receipt_invalid"
+            ) from exc
+        if not hmac.compare_digest(
+            str(document.get("receipt_sha256") or ""),
+            str(receipt.to_dict()["receipt_sha256"]),
+        ):
+            raise AcceptanceMandateError(
+                "acceptance_mandate_provision_receipt_digest_invalid"
+            )
+        return receipt
+
 
 class AcceptanceMandateStore:
     """Create-once mandate registry over encrypted Keychain-anchored state."""

@@ -19,7 +19,11 @@ from core.reality_reach.acceptance import (  # noqa: E402
     AcceptanceEvidenceClass,
 )
 from core.reality_reach.acceptance_mandate import (  # noqa: E402
+    AcceptanceMandateProvisionReceipt,
     AcceptanceMandateStore,
+)
+from core.reality_reach.acceptance_preregistration import (  # noqa: E402
+    verify_acceptance_preregistration,
 )
 from core.reality_reach.acceptance_transparency import (  # noqa: E402
     ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
@@ -131,6 +135,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transparency-minimum-log-index", type=int)
     parser.add_argument("--transparency-minimum-integrated-time", type=int)
     parser.add_argument("--receipt-output", type=Path)
+    parser.add_argument("--preregistration-provision-receipt", type=Path)
+    parser.add_argument("--preregistration-bundle", type=Path)
+    parser.add_argument("--preregistration-log-public-key-pem", type=Path)
+    parser.add_argument("--preregistration-sequence", type=int, default=1)
+    parser.add_argument(
+        "--preregistration-previous-statement-sha256",
+        default=TRANSPARENCY_ZERO_SHA256,
+    )
+    parser.add_argument("--preregistration-previous-rekor-uuid")
+    parser.add_argument("--preregistration-minimum-log-index", type=int)
+    parser.add_argument("--preregistration-minimum-integrated-time", type=int)
     args = parser.parse_args(argv)
 
     if args.artifact_kind == "acoustic-a1":
@@ -140,9 +155,58 @@ def main(argv: list[str] | None = None) -> int:
         mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
         try:
             mandate = mandate_store.get(args.campaign_id)
-            external_receipt = verify_acoustic_a1_with_external_witnesses(
+            required_preregistration = {
+                "--preregistration-provision-receipt": (
+                    args.preregistration_provision_receipt
+                ),
+                "--preregistration-bundle": args.preregistration_bundle,
+                "--preregistration-log-public-key-pem": (
+                    args.preregistration_log_public_key_pem
+                ),
+            }
+            missing = [
+                name
+                for name, value in required_preregistration.items()
+                if value is None
+            ]
+            if missing:
+                parser.error(
+                    "acoustic A1 verification requires: " + ", ".join(missing)
+                )
+            provision_document = _read_json(args.preregistration_provision_receipt)
+            raw_provision = provision_document.get(
+                "provision_receipt",
+                provision_document,
+            )
+            if not isinstance(raw_provision, Mapping):
+                raise ValueError(
+                    "acceptance_preregistration_provision_receipt_invalid"
+                )
+            preregistration = verify_acceptance_preregistration(
+                mandate,
+                AcceptanceMandateProvisionReceipt.from_dict(raw_provision),
+                transparency_bundle=_read_json(args.preregistration_bundle),
+                trusted_log_public_key_pem=_read_bytes(
+                    args.preregistration_log_public_key_pem,
+                    maximum=64 * 1024,
+                ),
+                campaign_started_at_ns=record.started_at_ns,
+                expected_sequence=args.preregistration_sequence,
+                expected_previous_statement_sha256=(
+                    args.preregistration_previous_statement_sha256
+                ),
+                expected_previous_rekor_uuid=(
+                    args.preregistration_previous_rekor_uuid
+                ),
+                minimum_log_index=args.preregistration_minimum_log_index,
+                minimum_integrated_time=(
+                    args.preregistration_minimum_integrated_time
+                ),
+            )
+            acoustic_external_receipt = verify_acoustic_a1_with_external_witnesses(
                 record,
                 mandate,
+                preregistration_receipt=preregistration,
                 metrology_witness_bundle=(
                     _read_json(args.metrology_witness_bundle)
                     if args.metrology_witness_bundle is not None
@@ -164,8 +228,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.governance_previous_statement_sha256
                 ),
             )
-            transparent_receipt = verify_transparently_logged_acoustic_a1(
-                external_receipt,
+            acoustic_transparent_receipt = verify_transparently_logged_acoustic_a1(
+                acoustic_external_receipt,
                 transparency_bundle=(
                     _read_json(args.transparency_bundle)
                     if args.transparency_bundle is not None
@@ -195,11 +259,11 @@ def main(argv: list[str] | None = None) -> int:
             mandate_store.close()
         if args.receipt_output is not None:
             persist_transparently_logged_acoustic_a1_receipt(
-                transparent_receipt,
+                acoustic_transparent_receipt,
                 args.receipt_output,
             )
-        output = transparent_receipt.to_dict()
-        accepted = transparent_receipt.accepted
+        output = acoustic_transparent_receipt.to_dict()
+        accepted = acoustic_transparent_receipt.accepted
     else:
         store = AcceptanceCertificateStore(args.root)
         certificate = store.load(args.campaign_id)

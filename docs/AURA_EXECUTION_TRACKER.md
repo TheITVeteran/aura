@@ -36517,3 +36517,53 @@ campaign without post-run evidence surgery. It does not create independently
 held production keys, publish a real Rekor entry, actuate the speaker, sample
 the microphone, or provide representative tenant/device results. Those remain
 empirical CP810 blockers, so the total remains open at 809/920.
+
+#### CP810 addendum: portable pre-campaign mandate proof
+
+Physical promotion no longer relies on a verifier trusting that Aura's local
+Keychain mandate existed before the result. A new preregistration protocol
+commits the complete mandate, its Keychain provision receipt, custody identity,
+custody sequence, chain predecessor, and issue time into a producer-signed
+Rekor artifact before physical execution. The portable verifier checks the
+exact mandate and provision-receipt digests, producer signature, pinned log
+root, signed entry timestamp, inclusion proof, signed checkpoint, UUID,
+publication delay, predecessor chain, and monotonic rollback floors. It then
+requires the public-log integrated time to be at least one complete timestamp
+interval before campaign start; same-second evidence is conservatively
+rejected rather than treated as proof of ordering.
+
+`manage_acceptance_preregistration.py` supports the complete operator cycle.
+Statement preparation reads the exact mandate from Keychain custody. Assembly
+accepts only cryptographically valid returned Rekor evidence. Verification can
+run on another machine from portable mandate, provision-receipt, bundle, and
+pinned-log-key documents without access to this Mac's Keychain. Its final
+verdict is private and create-once. The mandate provision receipt now has a
+strict parser and derived-digest verification instead of being write-only.
+
+A1 external promotion schema v2 carries the preregistration-verification
+digest. Witness-statement preparation, transparency preparation, and the
+independent acceptance CLI all recompute the raw preregistration proof before
+continuing. Even two valid external witness signatures plus a valid final
+Rekor entry are refused when preregistration is missing, rejected, bound to a
+different mandate, bound to another campaign start, or not strictly earlier
+than execution. The general scalar path remains behaviorally unchanged in this
+checkpoint; it will adopt the same portable preregistration requirement before
+its next physical campaign.
+
+Preregistration evidence:
+
+- statement construction, mandate/provision rebinding, genesis-chain,
+  producer signature, Rekor SET/checkpoint/inclusion/UUID, strict pre-campaign
+  ordering, missing-bundle refusal, portable cross-process verification,
+  create-once persistence, and A1 missing-preregistration refusal passed;
+- operator tests exercised Keychain-side statement preparation and a separate
+  portable assembler/verifier process; 38/38 focused mandate, preregistration,
+  witness, transparency, and A1 tests passed, with 178/178 affected Reality
+  Reach tests green;
+- smoke 103/103, full repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This removes the post-hoc-question loophole for A1 and supplies the missing
+cross-host preregistration artifact. No real production preregistration or
+campaign has yet been published, so empirical CP810 remains open at 809/920.

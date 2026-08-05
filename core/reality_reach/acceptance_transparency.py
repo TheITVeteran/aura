@@ -238,7 +238,10 @@ def build_acceptance_transparency_artifact_bundle(
 ) -> dict[str, Any]:
     """Verify and package any accepted statement into a portable Rekor bundle."""
 
-    statement_document = validate_acceptance_transparency_statement_envelope(statement)
+    statement_document = dict(statement)
+    issued_at_unix = statement_document.get("issued_at_unix")
+    if type(issued_at_unix) is not int or issued_at_unix <= 0:
+        raise AcceptanceTransparencyError("acceptance_transparency_issued_at_invalid")
     statement_bytes = _canonical_bytes(statement_document)
     try:
         certificate = load_x509_certificate(
@@ -257,7 +260,7 @@ def build_acceptance_transparency_artifact_bundle(
             producer_signature=producer_signature,
             producer_certificate_pem=producer_certificate_pem,
             trusted_log_public_key_pem=trusted_log_public_key_pem,
-            issued_at_unix=int(statement_document.get("issued_at_unix") or 0),
+            issued_at_unix=issued_at_unix,
             rekor_uuid=rekor_uuid,
             code_prefix="acceptance_transparency",
             maximum_witness_delay_s=_MAX_WITNESS_DELAY_S,

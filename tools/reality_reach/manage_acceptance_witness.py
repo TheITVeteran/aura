@@ -21,7 +21,11 @@ if str(ROOT) not in sys.path:
 
 from core.reality_reach.acceptance import AcceptanceCertificateStore  # noqa: E402
 from core.reality_reach.acceptance_mandate import (  # noqa: E402
+    AcceptanceMandateProvisionReceipt,
     AcceptanceMandateStore,
+)
+from core.reality_reach.acceptance_preregistration import (  # noqa: E402
+    verify_acceptance_preregistration,
 )
 from core.reality_reach.acceptance_witness import (  # noqa: E402
     ZERO_SHA256,
@@ -98,6 +102,53 @@ def _statement(args: argparse.Namespace) -> int:
         blockers = acoustic_a1_campaign_binding_blockers(record, mandate)
         if blockers:
             raise ValueError("acoustic_a1_campaign_binding_failed:" + ",".join(blockers))
+        required_preregistration = {
+            "--preregistration-provision-receipt": (
+                args.preregistration_provision_receipt
+            ),
+            "--preregistration-bundle": args.preregistration_bundle,
+            "--preregistration-log-public-key-pem": (
+                args.preregistration_log_public_key_pem
+            ),
+        }
+        missing = [name for name, value in required_preregistration.items() if value is None]
+        if missing:
+            raise ValueError(
+                "acoustic_a1_preregistration_arguments_missing:" + ",".join(missing)
+            )
+        provision_document = _read_json(args.preregistration_provision_receipt)
+        raw_provision = provision_document.get(
+            "provision_receipt",
+            provision_document,
+        )
+        if not isinstance(raw_provision, Mapping):
+            raise ValueError("acceptance_preregistration_provision_receipt_invalid")
+        preregistration = verify_acceptance_preregistration(
+            mandate,
+            AcceptanceMandateProvisionReceipt.from_dict(raw_provision),
+            transparency_bundle=_read_json(args.preregistration_bundle),
+            trusted_log_public_key_pem=_read_bytes(
+                args.preregistration_log_public_key_pem,
+                max_bytes=64 * 1024,
+            ),
+            campaign_started_at_ns=record.started_at_ns,
+            expected_sequence=args.preregistration_sequence,
+            expected_previous_statement_sha256=(
+                args.preregistration_previous_statement_sha256
+            ),
+            expected_previous_rekor_uuid=(
+                args.preregistration_previous_rekor_uuid
+            ),
+            minimum_log_index=args.preregistration_minimum_log_index,
+            minimum_integrated_time=(
+                args.preregistration_minimum_integrated_time
+            ),
+        )
+        if not preregistration.accepted:
+            raise ValueError(
+                "acoustic_a1_preregistration_rejected:"
+                + ",".join(preregistration.blockers)
+            )
         artifact_sha256 = record.sha256
         evidence_sha256 = (
             record.receipt.sha256
@@ -216,6 +267,17 @@ def main(argv: list[str] | None = None) -> int:
         default=ZERO_SHA256,
     )
     statement.add_argument("--witnessed-at-ns", type=int, default=0)
+    statement.add_argument("--preregistration-provision-receipt", type=Path)
+    statement.add_argument("--preregistration-bundle", type=Path)
+    statement.add_argument("--preregistration-log-public-key-pem", type=Path)
+    statement.add_argument("--preregistration-sequence", type=int, default=1)
+    statement.add_argument(
+        "--preregistration-previous-statement-sha256",
+        default=ZERO_SHA256,
+    )
+    statement.add_argument("--preregistration-previous-rekor-uuid")
+    statement.add_argument("--preregistration-minimum-log-index", type=int)
+    statement.add_argument("--preregistration-minimum-integrated-time", type=int)
     statement.add_argument("--statement-output", type=Path, required=True)
     statement.add_argument("--payload-output", type=Path, required=True)
     statement.set_defaults(handler=_statement)
