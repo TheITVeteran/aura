@@ -3,18 +3,38 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import os
+import re
+import stat
 import statistics
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from core.reality_reach.acceptance import (
+    acceptance_governance_accepted,
+    acceptance_governance_document,
+)
 from core.reality_reach.scalar_adapter import ScalarSample
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
+from core.runtime.state_ownership import state_root
 
 ACOUSTIC_A1_RECEIPT_SCHEMA = "aura.reality_reach.acoustic_a1_acceptance.v1"
+ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v1"
+ACOUSTIC_A1_CONNECTOR_ID = "macos.acoustic.a1"
+ACOUSTIC_A1_REQUIRED_CASES = (
+    "calibration.monotone_transfer",
+    "heldout.equal_work_control",
+    "heldout.error_reduction",
+    "restoration.silence",
+)
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class AcousticAcceptanceError(RuntimeError):
@@ -146,6 +166,31 @@ class AcousticTrial:
     source_event_id: str
     captured_at_ns: int
 
+    def __post_init__(self) -> None:
+        if not self.trial_id or len(self.trial_id) > 160:
+            raise ValueError("trial_id must be a bounded non-empty string")
+        if not isinstance(self.arm, AcousticTrialArm):
+            raise TypeError("arm must be an AcousticTrialArm")
+        if isinstance(self.order, bool) or self.order <= 0:
+            raise ValueError("order must be positive")
+        if isinstance(self.repeat, bool) or self.repeat < 0:
+            raise ValueError("repeat must be non-negative")
+        for name in ("amplitude", "observed_dbfs"):
+            object.__setattr__(self, name, _finite(getattr(self, name), name=name))
+        if not 0.0 <= self.amplitude <= 0.2:
+            raise ValueError("amplitude must lie inside [0, 0.2]")
+        if self.target_dbfs is not None:
+            object.__setattr__(
+                self,
+                "target_dbfs",
+                _finite(self.target_dbfs, name="target_dbfs"),
+            )
+        digest = str(self.source_event_id or "")
+        if not _SHA256.fullmatch(digest):
+            raise ValueError("source_event_id must be a sha256 digest")
+        if isinstance(self.captured_at_ns, bool) or self.captured_at_ns <= 0:
+            raise ValueError("captured_at_ns must be positive")
+
     @property
     def absolute_error_db(self) -> float | None:
         return (
@@ -168,6 +213,40 @@ class AcousticTrial:
             "captured_at_ns": self.captured_at_ns,
         }
 
+    @classmethod
+    def from_dict(cls, document: Any) -> AcousticTrial:
+        expected = {
+            "trial_id",
+            "arm",
+            "order",
+            "repeat",
+            "amplitude",
+            "target_dbfs",
+            "observed_dbfs",
+            "absolute_error_db",
+            "source_event_id",
+            "captured_at_ns",
+        }
+        if not isinstance(document, dict) or set(document) != expected:
+            raise AcousticAcceptanceError("acoustic_a1_trial_schema_invalid")
+        try:
+            trial = cls(
+                trial_id=document["trial_id"],
+                arm=AcousticTrialArm(document["arm"]),
+                order=document["order"],
+                repeat=document["repeat"],
+                amplitude=document["amplitude"],
+                target_dbfs=document["target_dbfs"],
+                observed_dbfs=document["observed_dbfs"],
+                source_event_id=document["source_event_id"],
+                captured_at_ns=document["captured_at_ns"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AcousticAcceptanceError("acoustic_a1_trial_invalid") from exc
+        if document["absolute_error_db"] != trial.absolute_error_db:
+            raise AcousticAcceptanceError("acoustic_a1_trial_error_invalid")
+        return trial
+
 
 @dataclass(frozen=True, slots=True)
 class AcousticA1AcceptanceReceipt:
@@ -186,10 +265,7 @@ class AcousticA1AcceptanceReceipt:
     def __post_init__(self) -> None:
         if not self.campaign_id or len(self.campaign_id) > 128:
             raise ValueError("campaign_id must be a bounded non-empty string")
-        digest = self.config_sha256.removeprefix("sha256:")
-        if len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
-        ):
+        if not _SHA256.fullmatch(self.config_sha256):
             raise ValueError("config_sha256 must be a canonical sha256 digest")
         targets = tuple(
             _finite(value, name="heldout_target_dbfs")
@@ -254,6 +330,235 @@ class AcousticA1AcceptanceReceipt:
         if include_digest:
             document["receipt_sha256"] = self.sha256
         return document
+
+    @classmethod
+    def from_dict(cls, document: Any) -> AcousticA1AcceptanceReceipt:
+        expected = {
+            "schema",
+            "campaign_id",
+            "config_sha256",
+            "heldout_targets_dbfs",
+            "trials",
+            "open_loop_mae_db",
+            "closed_loop_mae_db",
+            "error_reduction",
+            "restoration_error_db",
+            "calibration_span_db",
+            "blockers",
+            "completed_at_ns",
+            "raw_audio_retained",
+            "accepted",
+            "receipt_sha256",
+        }
+        if not isinstance(document, dict) or set(document) != expected:
+            raise AcousticAcceptanceError("acoustic_a1_receipt_schema_invalid")
+        if (
+            document.get("schema") != ACOUSTIC_A1_RECEIPT_SCHEMA
+            or document.get("raw_audio_retained") is not False
+        ):
+            raise AcousticAcceptanceError("acoustic_a1_receipt_schema_invalid")
+        try:
+            receipt = cls(
+                campaign_id=document["campaign_id"],
+                config_sha256=document["config_sha256"],
+                heldout_targets_dbfs=tuple(document["heldout_targets_dbfs"]),
+                trials=tuple(AcousticTrial.from_dict(item) for item in document["trials"]),
+                open_loop_mae_db=document["open_loop_mae_db"],
+                closed_loop_mae_db=document["closed_loop_mae_db"],
+                error_reduction=document["error_reduction"],
+                restoration_error_db=document["restoration_error_db"],
+                calibration_span_db=document["calibration_span_db"],
+                blockers=tuple(document["blockers"]),
+                completed_at_ns=document["completed_at_ns"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AcousticAcceptanceError("acoustic_a1_receipt_invalid") from exc
+        if document["accepted"] is not receipt.accepted or document["receipt_sha256"] != receipt.sha256:
+            raise AcousticAcceptanceError("acoustic_a1_receipt_derived_field_invalid")
+        return receipt
+
+
+@dataclass(frozen=True, slots=True)
+class AcousticA1CampaignRecord:
+    campaign_id: str
+    source_commit_sha256: str
+    workspace_state_sha256: str
+    physical_identity_sha256: str
+    mandate_sha256: str
+    receipt: AcousticA1AcceptanceReceipt
+    governance_evidence: dict[str, Any]
+    started_at_ns: int
+    completed_at_ns: int
+
+    def __post_init__(self) -> None:
+        if self.campaign_id != self.receipt.campaign_id:
+            raise ValueError("campaign record and receipt identity must match")
+        for name in (
+            "source_commit_sha256",
+            "workspace_state_sha256",
+            "physical_identity_sha256",
+            "mandate_sha256",
+        ):
+            digest = str(getattr(self, name) or "")
+            if not _SHA256.fullmatch(digest):
+                raise ValueError(f"{name} must be a sha256 digest")
+        if not isinstance(self.governance_evidence, dict):
+            raise TypeError("governance_evidence must be a dict")
+        governance = acceptance_governance_document(self.governance_evidence)
+        if set(self.governance_evidence) != set(governance):
+            raise ValueError("governance_evidence schema is invalid")
+        object.__setattr__(
+            self,
+            "governance_evidence",
+            governance,
+        )
+        if (
+            isinstance(self.started_at_ns, bool)
+            or isinstance(self.completed_at_ns, bool)
+            or self.started_at_ns <= 0
+            or self.completed_at_ns < self.started_at_ns
+            or self.receipt.completed_at_ns > self.completed_at_ns
+        ):
+            raise ValueError("campaign record timestamps are invalid")
+
+    @property
+    def accepted(self) -> bool:
+        return bool(
+            self.receipt.accepted
+            and acceptance_governance_accepted(self.governance_evidence)
+        )
+
+    @property
+    def sha256(self) -> str:
+        return _digest(self.to_dict(include_digest=False))
+
+    def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
+        document = {
+            "schema": ACOUSTIC_A1_CAMPAIGN_SCHEMA,
+            "campaign_id": self.campaign_id,
+            "source_commit_sha256": self.source_commit_sha256,
+            "workspace_state_sha256": self.workspace_state_sha256,
+            "physical_identity_sha256": self.physical_identity_sha256,
+            "mandate_sha256": self.mandate_sha256,
+            "receipt": self.receipt.to_dict(),
+            "governance_evidence": dict(self.governance_evidence),
+            "started_at_ns": self.started_at_ns,
+            "completed_at_ns": self.completed_at_ns,
+            "accepted": self.accepted,
+        }
+        if include_digest:
+            document["campaign_record_sha256"] = self.sha256
+        return document
+
+    @classmethod
+    def from_dict(cls, document: Any) -> AcousticA1CampaignRecord:
+        expected = {
+            "schema",
+            "campaign_id",
+            "source_commit_sha256",
+            "workspace_state_sha256",
+            "physical_identity_sha256",
+            "mandate_sha256",
+            "receipt",
+            "governance_evidence",
+            "started_at_ns",
+            "completed_at_ns",
+            "accepted",
+            "campaign_record_sha256",
+        }
+        if (
+            not isinstance(document, dict)
+            or set(document) != expected
+            or document.get("schema") != ACOUSTIC_A1_CAMPAIGN_SCHEMA
+        ):
+            raise AcousticAcceptanceError("acoustic_a1_campaign_schema_invalid")
+        try:
+            record = cls(
+                campaign_id=document["campaign_id"],
+                source_commit_sha256=document["source_commit_sha256"],
+                workspace_state_sha256=document["workspace_state_sha256"],
+                physical_identity_sha256=document["physical_identity_sha256"],
+                mandate_sha256=document["mandate_sha256"],
+                receipt=AcousticA1AcceptanceReceipt.from_dict(document["receipt"]),
+                governance_evidence=dict(document["governance_evidence"]),
+                started_at_ns=document["started_at_ns"],
+                completed_at_ns=document["completed_at_ns"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_invalid") from exc
+        if document["accepted"] is not record.accepted or document["campaign_record_sha256"] != record.sha256:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_derived_field_invalid")
+        return record
+
+
+class AcousticA1CampaignStore:
+    """Private create-once storage for positive and negative A1 outcomes."""
+
+    def __init__(self, root: str | Path | None = None) -> None:
+        self._root = Path(
+            root
+            or (state_root() / "data" / "reality_reach" / "acoustic_a1_acceptance")
+        ).expanduser().absolute()
+
+    @property
+    def root(self) -> Path:
+        return self._root
+
+    @staticmethod
+    def _filename(campaign_id: str) -> str:
+        if not campaign_id or len(campaign_id) > 128:
+            raise ValueError("campaign_id must be a bounded non-empty string")
+        return _digest({"campaign_id": campaign_id}).removeprefix("sha256:") + ".json"
+
+    @staticmethod
+    def _verify_mode(custody: DirectoryCustody, filename: str) -> None:
+        fd = custody.open_file(filename, os.O_RDONLY)
+        try:
+            if stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
+                raise AcousticAcceptanceError("acoustic_a1_campaign_mode_invalid")
+        finally:
+            os.close(fd)
+
+    def persist(self, record: AcousticA1CampaignRecord) -> bool:
+        if not isinstance(record, AcousticA1CampaignRecord):
+            raise TypeError("record must be an AcousticA1CampaignRecord")
+        filename = self._filename(record.campaign_id)
+        payload = canonical_json(record.to_dict())
+        try:
+            with DirectoryCustody.acquire(self._root, create=True, private=True) as custody:
+                published = bool(custody.write_bytes_once(filename, payload, mode=0o600))
+                self._verify_mode(custody, filename)
+                existing = custody.read_bytes(filename, max_bytes=2 * 1024 * 1024)
+        except SecurePathCustodyError as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_custody_invalid") from exc
+        if existing != payload:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_collision")
+        return published
+
+    def load(self, campaign_id: str) -> AcousticA1CampaignRecord:
+        filename = self._filename(campaign_id)
+        try:
+            os.lstat(self._root)
+        except FileNotFoundError as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_unavailable") from exc
+        except OSError as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_custody_invalid") from exc
+        try:
+            with DirectoryCustody.acquire(self._root, create=False, private=True) as custody:
+                self._verify_mode(custody, filename)
+                payload = custody.read_bytes(filename, max_bytes=2 * 1024 * 1024)
+        except FileNotFoundError as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_unavailable") from exc
+        except SecurePathCustodyError as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_custody_invalid") from exc
+        try:
+            document = json.loads(payload)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_json_invalid") from exc
+        record = AcousticA1CampaignRecord.from_dict(document)
+        if record.campaign_id != campaign_id:
+            raise AcousticAcceptanceError("acoustic_a1_campaign_identity_mismatch")
+        return record
 
 
 def _pava(values: Sequence[float]) -> tuple[float, ...]:
@@ -335,7 +640,11 @@ async def run_acoustic_a1_acceptance(
     ) -> AcousticTrial:
         nonlocal order
         order += 1
-        trial_id = f"{config.campaign_id}.{arm.value}.{order:04d}"
+        raw_trial_id = f"{config.campaign_id}.{arm.value}.{order:04d}"
+        trial_id = raw_trial_id
+        if len(trial_id) > 128:
+            suffix = hashlib.sha256(raw_trial_id.encode()).hexdigest()[:24]
+            trial_id = f"{config.campaign_id[:80]}.{arm.value}.{order:04d}.{suffix}"
         sample = await driver.measure_stimulus(amplitude, trial_id=trial_id)
         trial = AcousticTrial(
             trial_id=trial_id,
@@ -476,8 +785,13 @@ async def run_acoustic_a1_acceptance(
 
 
 __all__ = [
+    "ACOUSTIC_A1_CONNECTOR_ID",
+    "ACOUSTIC_A1_CAMPAIGN_SCHEMA",
     "ACOUSTIC_A1_RECEIPT_SCHEMA",
+    "ACOUSTIC_A1_REQUIRED_CASES",
     "AcousticA1AcceptanceReceipt",
+    "AcousticA1CampaignRecord",
+    "AcousticA1CampaignStore",
     "AcousticAcceptanceConfig",
     "AcousticAcceptanceError",
     "AcousticTrial",

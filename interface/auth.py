@@ -44,6 +44,8 @@ LOCAL_UI_ORIGINS = {
     "http://127.0.0.1:8000",
 }
 PROTECTED_LOCAL_POST_PATHS = {
+    "/api/reality-reach/acceptance/acoustic/a1/mandate",
+    "/api/reality-reach/acceptance/acoustic/a1/run",
     "/api/reality-reach/acceptance/acoustic/provision",
     "/api/reality-reach/acceptance/mandate",
     "/api/reality-reach/acceptance/run",

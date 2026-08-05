@@ -36334,3 +36334,51 @@ real built-in speaker/microphone experiment. Runtime governance wiring, a real
 device result, two genuinely independent custodian signatures, public Rekor
 inclusion, and representative tenant replay remain open. CP810 and the total
 therefore remain open at 809/920.
+
+#### CP810 addendum: governed acoustic A1 runtime campaign
+
+The preregistered A1 protocol is now an authenticated runtime capability rather
+than a test-only evaluator. Its operator flow is deliberately three-stage:
+explicitly provision the built-in acoustic adapter, precommit the exact A1
+question under the existing rollback-resistant Keychain mandate store, then run
+that mandate once through Will and ActionExecutor. The runtime API does not
+accept caller-supplied calibration ladders, thresholds, repeats, targets, or
+schedule seeds. The source-bound protocol fixes the 50% gain requirement and
+its complete case set before any physical stimulus is possible.
+
+The runtime verifies the boot-pinned source, workspace digest, device identity,
+live microphone channel, adapter identity, evidence class, protocol target, and
+required cases against the mandate before dispatch. A mismatch stops before a
+speaker call. The physical adapter now exposes its bounded trial interface
+without leaking the underlying transport, and maximum-length campaign ids are
+converted to digest-bound trial ids within the transport limit.
+
+Positive and negative scientific outcomes are persisted as private,
+create-once campaign records. Each record binds source and workspace identity,
+physical-device identity, mandate, complete trial receipt, reduced governance
+evidence, and campaign timestamps. Replaying an identical request reads that
+record without emitting another tone; changed source, device, mandate, or
+configuration fails rather than rerunning. Missing state is distinguished from
+corrupt custody so damage cannot masquerade as permission to repeat physical
+work. If the governing task is interrupted after measurement, the completed
+trial evidence is preserved with an explicitly unverified governance verdict
+and also blocks silent re-execution.
+
+Runtime-integration evidence:
+
+- source-bound precommit, exact mandate admission, positive governed campaign,
+  honest negative campaign, create-once persistence and reload, no-stimulus
+  replay, wrong-mandate pre-dispatch refusal, maximum identifier bounds,
+  post-effect interruption preservation, authenticated routes, and protected
+  paired-device path contracts: 63/63 focused tests passed;
+- full affected Reality Reach, acceptance, transaction, route, scalar-adapter,
+  witness, and acoustic family: 187/187 passed;
+- smoke 103/103, full repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This closes the governed local execution and durable-result layer. The live
+hardware campaign remains intentionally unexecuted while resident 32B training
+owns the host. Independent witness custody, public Rekor inclusion, independent
+replay, and representative tenant/device evidence remain empirical blockers.
+CP810 and the total therefore remain open at 809/920.

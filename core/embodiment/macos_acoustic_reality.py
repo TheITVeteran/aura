@@ -370,9 +370,39 @@ class MacOSAcousticScalarTransport:
             return receipt
 
 
+class MacOSAcousticRealityAdapter(ScalarRealityAdapter):
+    """Physical scalar adapter that also exposes bounded A1 trial stimuli."""
+
+    def __init__(
+        self,
+        transport: MacOSAcousticScalarTransport,
+        profile: ScalarResourceProfile,
+        *,
+        initial_sample: ScalarSample,
+    ) -> None:
+        self._acoustic_transport = transport
+        super().__init__(
+            transport,
+            profile,
+            initial_sample=initial_sample,
+            transport_class=ScalarTransportClass.PHYSICAL,
+        )
+
+    async def measure_stimulus(
+        self,
+        amplitude: float,
+        *,
+        trial_id: str,
+    ) -> ScalarSample:
+        return await self._acoustic_transport.measure_stimulus(
+            amplitude,
+            trial_id=trial_id,
+        )
+
+
 async def build_macos_acoustic_reality_adapter(
     backend: AcousticMeasurementBackend | None = None,
-) -> ScalarRealityAdapter:
+) -> MacOSAcousticRealityAdapter:
     """Build a physical adapter after a real microphone baseline is measured."""
 
     transport = MacOSAcousticScalarTransport(
@@ -397,11 +427,10 @@ async def build_macos_acoustic_reality_adapter(
         stale_after_s=5.0,
         readback_distinct_from_command=True,
     )
-    return ScalarRealityAdapter(
+    return MacOSAcousticRealityAdapter(
         transport,
         profile,
         initial_sample=initial,
-        transport_class=ScalarTransportClass.PHYSICAL,
     )
 
 
@@ -412,6 +441,7 @@ __all__ = [
     "AcousticDeviceIdentity",
     "AcousticMeasurementBackend",
     "MacOSAcousticRealityError",
+    "MacOSAcousticRealityAdapter",
     "MacOSAcousticScalarTransport",
     "SoundDeviceAcousticBackend",
     "build_macos_acoustic_reality_adapter",

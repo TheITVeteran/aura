@@ -48,6 +48,23 @@ class _Service:
             "provisioned": True,
         }
 
+    async def precommit_acoustic_a1(self, request: Any) -> dict[str, Any]:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return {
+            "mandate": {
+                "campaign_id": request.campaign_id,
+                "mandate_sha256": "sha256:" + "d" * 64,
+            }
+        }
+
+    async def run_acoustic_a1(self, request: Any) -> dict[str, Any]:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return {"campaign_id": request.campaign_id, "accepted": True}
+
 
 def _payload() -> routes.ScalarAcceptancePayload:
     return routes.ScalarAcceptancePayload(
@@ -68,6 +85,8 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         if isinstance(route, APIRoute)
     }
     assert set(acceptance_routes) == {
+        "/reality-reach/acceptance/acoustic/a1/mandate",
+        "/reality-reach/acceptance/acoustic/a1/run",
         "/reality-reach/acceptance/acoustic/provision",
         "/reality-reach/acceptance/preflight",
         "/reality-reach/acceptance/mandate",
@@ -84,6 +103,14 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         "/api/reality-reach/acceptance/acoustic/provision"
         in PROTECTED_LOCAL_POST_PATHS
     )
+    assert (
+        "/api/reality-reach/acceptance/acoustic/a1/mandate"
+        in PROTECTED_LOCAL_POST_PATHS
+    )
+    assert (
+        "/api/reality-reach/acceptance/acoustic/a1/run"
+        in PROTECTED_LOCAL_POST_PATHS
+    )
 
 
 @pytest.mark.asyncio
@@ -95,6 +122,38 @@ async def test_acoustic_provision_route_is_explicit_and_owner_guarded(monkeypatc
 
     assert response.status_code == 201
     assert b"macos_acoustic" in response.body
+
+
+@pytest.mark.asyncio
+async def test_acoustic_a1_routes_construct_fixed_protocol_requests(monkeypatch) -> None:
+    service = _Service()
+    monkeypatch.setattr(routes.ServiceContainer, "get", lambda *_args, **_kwargs: service)
+    mandate_payload = routes.AcousticA1MandatePayload(
+        campaign_id="cp810.acoustic.route",
+        expected_source_commit_sha256="sha256:" + "b" * 64,
+    )
+
+    mandate_response = await routes.precommit_acoustic_a1_mandate(
+        mandate_payload,
+        None,
+        None,
+    )
+    run_response = await routes.run_acoustic_a1(
+        routes.AcousticA1RunPayload(
+            **mandate_payload.model_dump(),
+            mandate_sha256="sha256:" + "d" * 64,
+        ),
+        None,
+        None,
+    )
+
+    assert mandate_response.status_code == 201
+    assert run_response.status_code == 201
+    assert [request.campaign_id for request in service.requests] == [
+        "cp810.acoustic.route",
+        "cp810.acoustic.route",
+    ]
+    assert service.requests[1].mandate_sha256 == "sha256:" + "d" * 64
 
 
 @pytest.mark.asyncio

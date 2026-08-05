@@ -68,6 +68,45 @@ REQUIRED_SCALAR_ACCEPTANCE_CASES = (
 )
 
 
+def acceptance_governance_document(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Reduce ActionExecutor output to the independently replayable fields."""
+
+    return {
+        "schema": ACCEPTANCE_GOVERNANCE_SCHEMA,
+        "action_id": str(result.get("action_id") or ""),
+        "request_digest": str(result.get("request_digest") or ""),
+        "will_receipt_id": str(result.get("will_receipt_id") or ""),
+        "post_action_receipt_id": str(result.get("post_action_receipt_id") or ""),
+        "post_action_output_hash": str(result.get("post_action_output_hash") or ""),
+        "status": str(result.get("status") or ""),
+        "transport_succeeded": result.get("transport_succeeded") is True,
+        "effect_verified": result.get("effect_verified") is True,
+        "receipt_persisted": result.get("receipt_persisted") is True,
+        "welfare_transaction_completed": (
+            result.get("welfare_transaction_completed") is True
+        ),
+    }
+
+
+def acceptance_governance_accepted(evidence: Mapping[str, Any]) -> bool:
+    """Return true only for a complete, persisted, verified governance receipt."""
+
+    return bool(
+        evidence.get("schema") == ACCEPTANCE_GOVERNANCE_SCHEMA
+        and evidence.get("action_id")
+        and evidence.get("request_digest")
+        and evidence.get("will_receipt_id")
+        and evidence.get("post_action_receipt_id")
+        and _DIGEST.fullmatch(str(evidence.get("request_digest") or ""))
+        and _DIGEST.fullmatch(str(evidence.get("post_action_output_hash") or ""))
+        and evidence.get("status") == "success_verified"
+        and evidence.get("transport_succeeded") is True
+        and evidence.get("effect_verified") is True
+        and evidence.get("receipt_persisted") is True
+        and evidence.get("welfare_transaction_completed") is True
+    )
+
+
 class AcceptanceError(RuntimeError):
     """An acceptance evidence or fault-injection contract failed."""
 
@@ -1090,38 +1129,11 @@ class ScalarAcceptanceRunner:
 
     @staticmethod
     def _governance_document(result: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            "schema": ACCEPTANCE_GOVERNANCE_SCHEMA,
-            "action_id": str(result.get("action_id") or ""),
-            "request_digest": str(result.get("request_digest") or ""),
-            "will_receipt_id": str(result.get("will_receipt_id") or ""),
-            "post_action_receipt_id": str(result.get("post_action_receipt_id") or ""),
-            "post_action_output_hash": str(result.get("post_action_output_hash") or ""),
-            "status": str(result.get("status") or ""),
-            "transport_succeeded": result.get("transport_succeeded") is True,
-            "effect_verified": result.get("effect_verified") is True,
-            "receipt_persisted": result.get("receipt_persisted") is True,
-            "welfare_transaction_completed": (
-                result.get("welfare_transaction_completed") is True
-            ),
-        }
+        return acceptance_governance_document(result)
 
     @staticmethod
     def _governance_accepted(evidence: Mapping[str, Any]) -> bool:
-        return bool(
-            evidence.get("schema") == ACCEPTANCE_GOVERNANCE_SCHEMA
-            and evidence.get("action_id")
-            and evidence.get("request_digest")
-            and evidence.get("will_receipt_id")
-            and evidence.get("post_action_receipt_id")
-            and _DIGEST.fullmatch(str(evidence.get("request_digest") or ""))
-            and _DIGEST.fullmatch(str(evidence.get("post_action_output_hash") or ""))
-            and evidence.get("status") == "success_verified"
-            and evidence.get("transport_succeeded") is True
-            and evidence.get("effect_verified") is True
-            and evidence.get("receipt_persisted") is True
-            and evidence.get("welfare_transaction_completed") is True
-        )
+        return acceptance_governance_accepted(evidence)
 
     async def _run_governed(self) -> ConnectorAcceptanceCertificate:
         from core.governance.will import ActionDomain
@@ -1507,4 +1519,6 @@ __all__ = [
     "ScalarAcceptanceRunner",
     "ScalarFault",
     "REQUIRED_SCALAR_ACCEPTANCE_CASES",
+    "acceptance_governance_accepted",
+    "acceptance_governance_document",
 ]

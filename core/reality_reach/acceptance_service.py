@@ -19,11 +19,23 @@ from core.reality_reach.acceptance import (
     ConnectorAcceptanceCertificate,
     ScalarAcceptancePlan,
     ScalarAcceptanceRunner,
+    acceptance_governance_document,
 )
 from core.reality_reach.acceptance_mandate import (
     AcceptanceMandateError,
     AcceptanceMandateStore,
     AcceptanceVerificationMandate,
+)
+from core.reality_reach.acoustic_acceptance import (
+    ACOUSTIC_A1_CONNECTOR_ID,
+    ACOUSTIC_A1_REQUIRED_CASES,
+    AcousticA1AcceptanceReceipt,
+    AcousticA1CampaignRecord,
+    AcousticA1CampaignStore,
+    AcousticAcceptanceConfig,
+    AcousticAcceptanceError,
+    AcousticTrialDriver,
+    run_acoustic_a1_acceptance,
 )
 from core.reality_reach.live import RealityReachService
 from core.reality_reach.metrology import (
@@ -38,6 +50,7 @@ from core.runtime.lockdep import checked_async_lock
 
 _GIT_OID = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _MAX_HIL_COMPANION_CHANNELS = 63
 SourceIdentityProvider = Callable[[], Mapping[str, Any]]
 AcousticAdapterFactory = Callable[[], Awaitable[Any]]
@@ -169,6 +182,45 @@ class ScalarAcceptanceMandateRequest:
         object.__setattr__(self, "target", target)
 
 
+@dataclass(frozen=True, slots=True)
+class AcousticA1MandateRequest:
+    campaign_id: str
+    expected_source_commit_sha256: str
+
+    def __post_init__(self) -> None:
+        campaign_id = str(self.campaign_id or "").strip().lower()
+        if not _IDENTIFIER.fullmatch(campaign_id):
+            raise ValueError("campaign_id must be a canonical identifier")
+        object.__setattr__(self, "campaign_id", campaign_id)
+        source = str(self.expected_source_commit_sha256 or "").strip().lower()
+        if not _SHA256.fullmatch(source):
+            raise ValueError("expected_source_commit_sha256 must be a sha256 digest")
+        object.__setattr__(self, "expected_source_commit_sha256", source)
+
+
+@dataclass(frozen=True, slots=True)
+class AcousticA1Request:
+    campaign_id: str
+    expected_source_commit_sha256: str
+    mandate_sha256: str
+
+    def __post_init__(self) -> None:
+        mandate_request = AcousticA1MandateRequest(
+            campaign_id=self.campaign_id,
+            expected_source_commit_sha256=self.expected_source_commit_sha256,
+        )
+        object.__setattr__(self, "campaign_id", mandate_request.campaign_id)
+        object.__setattr__(
+            self,
+            "expected_source_commit_sha256",
+            mandate_request.expected_source_commit_sha256,
+        )
+        mandate = str(self.mandate_sha256 or "").strip().lower()
+        if not _SHA256.fullmatch(mandate):
+            raise ValueError("mandate_sha256 must be a sha256 digest")
+        object.__setattr__(self, "mandate_sha256", mandate)
+
+
 class RealityAcceptanceService:
     """Serialize, execute, persist, and summarize physical acceptance runs."""
 
@@ -181,6 +233,7 @@ class RealityAcceptanceService:
         mandate_store: AcceptanceMandateStore | None = None,
         governed_executor: AcceptanceExecutor | None = None,
         acoustic_adapter_factory: AcousticAdapterFactory | None = None,
+        acoustic_campaign_store: AcousticA1CampaignStore | None = None,
         pinned_source_identity: Mapping[str, Any],
         source_identity_provider: SourceIdentityProvider | None = None,
     ) -> None:
@@ -199,6 +252,9 @@ class RealityAcceptanceService:
         }
         self._governed_executor = governed_executor
         self._acoustic_adapter_factory = acoustic_adapter_factory
+        self._acoustic_campaign_store = (
+            acoustic_campaign_store or AcousticA1CampaignStore()
+        )
         if not isinstance(pinned_source_identity, Mapping):
             raise TypeError("pinned_source_identity must be a mapping")
         self._pinned_source_identity = dict(pinned_source_identity)
@@ -351,6 +407,325 @@ class RealityAcceptanceService:
             },
         }
 
+    def _acoustic_trial_adapter(self) -> tuple[Any, AcousticTrialDriver]:
+        from core.embodiment.macos_acoustic_reality import ACOUSTIC_ADAPTER_ID
+
+        adapter = self._reality.scalar_acceptance_adapter(ACOUSTIC_ADAPTER_ID)
+        if adapter is None:
+            raise AcceptanceError("acceptance_acoustic_adapter_not_registered")
+        if adapter.transport_class.value != "physical":
+            raise AcceptanceError("acceptance_acoustic_adapter_not_physical")
+        if not isinstance(adapter, AcousticTrialDriver):
+            raise AcceptanceError("acceptance_acoustic_trial_driver_unavailable")
+        return adapter, adapter
+
+    async def precommit_acoustic_a1(
+        self,
+        request: AcousticA1MandateRequest,
+    ) -> dict[str, Any]:
+        """Precommit the immutable A1 protocol before any physical stimulus."""
+
+        from core.embodiment.macos_acoustic_reality import ACOUSTIC_ADAPTER_ID
+
+        if not isinstance(request, AcousticA1MandateRequest):
+            raise TypeError("request must be an AcousticA1MandateRequest")
+        if self._mandate_store is None:
+            raise AcceptanceError("acceptance_mandate_custody_unavailable")
+        adapter, _driver = self._acoustic_trial_adapter()
+        source = await self._source_binding(request.expected_source_commit_sha256)
+        config = AcousticAcceptanceConfig(campaign_id=request.campaign_id)
+        live_channels = self._observation_channels(adapter)
+        try:
+            provision = await asyncio.to_thread(
+                self._mandate_store.provision,
+                campaign_id=request.campaign_id,
+                connector_id=ACOUSTIC_A1_CONNECTOR_ID,
+                adapter_id=ACOUSTIC_ADAPTER_ID,
+                expected_source_commit_sha256=source["source_commit_sha256"],
+                expected_physical_identity_sha256=adapter.physical_identity_sha256,
+                expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+                target=config.required_error_reduction,
+                target_tolerance=0.0,
+                scenario_id="",
+                expected_live_channel_ids=live_channels,
+                expected_simulated_channel_ids=(),
+                required_cases=ACOUSTIC_A1_REQUIRED_CASES,
+            )
+            mandate = await asyncio.to_thread(
+                self._mandate_store.get,
+                request.campaign_id,
+            )
+            self._mandate_status = dict(
+                await asyncio.to_thread(self._mandate_store.status)
+            )
+        except AcceptanceMandateError as exc:
+            self._mandate_status = {
+                "healthy": False,
+                "state": "degraded",
+                "error_type": type(exc).__name__,
+            }
+            raise AcceptanceError(str(exc)) from exc
+        return {
+            "mandate": mandate.to_dict(),
+            "provision_receipt": provision.to_dict(),
+            "config_sha256": config.sha256,
+            "required_error_reduction": config.required_error_reduction,
+            "required_cases": list(ACOUSTIC_A1_REQUIRED_CASES),
+            "source_commit_sha256": source["source_commit_sha256"],
+            "workspace_state_sha256": source["workspace_state_sha256"],
+            "trust_boundary": "machine_local_precommit_not_external_witness",
+        }
+
+    async def _require_acoustic_a1_mandate(
+        self,
+        request: AcousticA1Request,
+        adapter: Any,
+        source: Mapping[str, str],
+    ) -> AcceptanceVerificationMandate:
+        if self._mandate_store is None:
+            raise AcceptanceError("acceptance_mandate_custody_unavailable")
+        config = AcousticAcceptanceConfig(campaign_id=request.campaign_id)
+        try:
+            mandate = await asyncio.to_thread(
+                self._mandate_store.get,
+                request.campaign_id,
+            )
+        except AcceptanceMandateError as exc:
+            raise AcceptanceError(str(exc)) from exc
+        expected = {
+            "campaign_id": request.campaign_id,
+            "connector_id": ACOUSTIC_A1_CONNECTOR_ID,
+            "adapter_id": adapter.adapter_id,
+            "expected_source_commit_sha256": source["source_commit_sha256"],
+            "expected_physical_identity_sha256": adapter.physical_identity_sha256,
+            "expected_evidence_class": AcceptanceEvidenceClass.LIVE,
+            "target": config.required_error_reduction,
+            "target_tolerance": 0.0,
+            "scenario_id": "",
+            "expected_live_channel_ids": self._observation_channels(adapter),
+            "expected_simulated_channel_ids": (),
+            "required_cases": ACOUSTIC_A1_REQUIRED_CASES,
+        }
+        if mandate.sha256 != request.mandate_sha256:
+            raise AcceptanceError("acceptance_mandate_digest_mismatch")
+        for field, value in expected.items():
+            if getattr(mandate, field) != value:
+                raise AcceptanceError(f"acceptance_mandate_{field}_mismatch")
+        return mandate
+
+    async def run_acoustic_a1(self, request: AcousticA1Request) -> dict[str, Any]:
+        """Run the exact precommitted A1 campaign through Will/ActionExecutor."""
+
+        from core.governance.will import ActionDomain
+        from core.runtime.action_executor import ActionExecutor
+        from core.runtime.skill_contract import ActionExpectation
+
+        if not isinstance(request, AcousticA1Request):
+            raise TypeError("request must be an AcousticA1Request")
+        adapter, driver = self._acoustic_trial_adapter()
+        async with self._lock:
+            self._generation += 1
+            self._active_campaign_id = request.campaign_id
+            started_at_ns = time.time_ns()
+            source_before: dict[str, str] | None = None
+            mandate: AcceptanceVerificationMandate | None = None
+            completed: dict[str, AcousticA1AcceptanceReceipt] = {}
+            persist_attempted = False
+
+            async def persist_interrupted_evidence(error: BaseException) -> None:
+                receipt = completed.get("receipt")
+                if (
+                    receipt is None
+                    or source_before is None
+                    or mandate is None
+                    or persist_attempted
+                ):
+                    return
+                governance = acceptance_governance_document(
+                    {
+                        "action_id": f"acceptance.{request.campaign_id}"[:128],
+                        "status": "interrupted_after_effect",
+                        "transport_succeeded": True,
+                        "effect_verified": False,
+                        "receipt_persisted": False,
+                        "welfare_transaction_completed": False,
+                    }
+                )
+                record = AcousticA1CampaignRecord(
+                    campaign_id=request.campaign_id,
+                    source_commit_sha256=source_before["source_commit_sha256"],
+                    workspace_state_sha256=source_before["workspace_state_sha256"],
+                    physical_identity_sha256=adapter.physical_identity_sha256,
+                    mandate_sha256=mandate.sha256,
+                    receipt=receipt,
+                    governance_evidence=governance,
+                    started_at_ns=started_at_ns,
+                    completed_at_ns=max(time.time_ns(), receipt.completed_at_ns),
+                )
+                try:
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            self._acoustic_campaign_store.persist,
+                            record,
+                        )
+                    )
+                except Exception as persist_exc:  # noqa: BLE001 - preserve root cause
+                    error.add_note(
+                        "completed acoustic evidence could not be persisted: "
+                        f"{type(persist_exc).__name__}: {persist_exc}"
+                    )
+
+            try:
+                source_before = await self._source_binding(
+                    request.expected_source_commit_sha256
+                )
+                mandate = await self._require_acoustic_a1_mandate(
+                    request,
+                    adapter,
+                    source_before,
+                )
+                config = AcousticAcceptanceConfig(campaign_id=request.campaign_id)
+                try:
+                    existing = await asyncio.to_thread(
+                        self._acoustic_campaign_store.load,
+                        request.campaign_id,
+                    )
+                except AcousticAcceptanceError as exc:
+                    if str(exc) != "acoustic_a1_campaign_unavailable":
+                        raise AcceptanceError(str(exc)) from exc
+                else:
+                    if (
+                        existing.source_commit_sha256
+                        != source_before["source_commit_sha256"]
+                        or existing.workspace_state_sha256
+                        != source_before["workspace_state_sha256"]
+                        or existing.physical_identity_sha256
+                        != adapter.physical_identity_sha256
+                        or existing.mandate_sha256 != mandate.sha256
+                        or existing.receipt.config_sha256 != config.sha256
+                    ):
+                        raise AcceptanceError("acoustic_a1_campaign_replay_mismatch")
+                    result = {
+                        **existing.to_dict(),
+                        "published": False,
+                        "replayed": True,
+                        "trust_boundary": (
+                            "producer_governed_result_pending_independent_witness"
+                        ),
+                    }
+                    self._last_result = result
+                    self._last_failure = None
+                    return dict(result)
+                async def effect_handler(
+                    context: Mapping[str, Any],
+                ) -> Mapping[str, Any]:
+                    authority_receipt_id = str(context.get("will_receipt_id") or "")
+                    if not _IDENTIFIER.fullmatch(authority_receipt_id):
+                        raise AcceptanceError("acceptance_governance_receipt_invalid")
+                    receipt = await run_acoustic_a1_acceptance(driver, config)
+                    completed["receipt"] = receipt
+                    return {
+                        "ok": True,
+                        "transport_succeeded": True,
+                        "acoustic_a1_receipt_sha256": receipt.sha256,
+                        "error_reduction": receipt.error_reduction,
+                    }
+
+                async def effect_verifier(
+                    _context: Mapping[str, Any],
+                ) -> Mapping[str, Any]:
+                    receipt = completed.get("receipt")
+                    return {
+                        "effect_verified": bool(receipt and receipt.accepted),
+                        "acoustic_a1_receipt_sha256": (
+                            receipt.sha256 if receipt is not None else ""
+                        ),
+                    }
+
+                executor = self._governed_executor or ActionExecutor.execute
+                raw_result = await executor(
+                    domain=ActionDomain.ENVIRONMENT_ACTION,
+                    action_name="reality_reach.acceptance.macos_acoustic_a1",
+                    params={
+                        "campaign_id": request.campaign_id,
+                        "adapter_id": adapter.adapter_id,
+                        "physical_identity_sha256": adapter.physical_identity_sha256,
+                        "config_sha256": config.sha256,
+                        "required_error_reduction": config.required_error_reduction,
+                    },
+                    source="reality_reach.acceptance.acoustic_a1",
+                    rollback_target="macos_acoustic.restore_silence",
+                    expectation=ActionExpectation(
+                        objective=(
+                            "calibrate speaker-to-microphone control and beat an "
+                            "equal-work open-loop arm on held-out targets"
+                        ),
+                        required_evidence=[
+                            "acoustic_a1_receipt_sha256",
+                            "error_reduction",
+                        ],
+                        rollback_hint="emit silence and remeasure the baseline",
+                        allow_partial=False,
+                    ),
+                    effect_handler=effect_handler,
+                    effect_verifier=effect_verifier,
+                    execution_timeout_s=60.0,
+                    verification_timeout_s=5.0,
+                    action_id=f"acceptance.{request.campaign_id}"[:128],
+                )
+                if not isinstance(raw_result, Mapping):
+                    raise AcceptanceError("acceptance_governance_result_invalid")
+                receipt = completed.get("receipt")
+                if receipt is None:
+                    raise AcceptanceError("acceptance_governance_refused_before_dispatch")
+                source_after = await self._source_binding(
+                    request.expected_source_commit_sha256
+                )
+                if source_after != source_before:
+                    raise AcceptanceError("acceptance_runtime_source_changed_during_run")
+                governance = acceptance_governance_document(raw_result)
+                completed_at_ns = max(time.time_ns(), receipt.completed_at_ns)
+                record = AcousticA1CampaignRecord(
+                    campaign_id=request.campaign_id,
+                    source_commit_sha256=source_after["source_commit_sha256"],
+                    workspace_state_sha256=source_after["workspace_state_sha256"],
+                    physical_identity_sha256=adapter.physical_identity_sha256,
+                    mandate_sha256=mandate.sha256,
+                    receipt=receipt,
+                    governance_evidence=governance,
+                    started_at_ns=started_at_ns,
+                    completed_at_ns=completed_at_ns,
+                )
+                persist_attempted = True
+                try:
+                    published = await asyncio.to_thread(
+                        self._acoustic_campaign_store.persist,
+                        record,
+                    )
+                except AcousticAcceptanceError as exc:
+                    raise AcceptanceError(str(exc)) from exc
+                result = {
+                    **record.to_dict(),
+                    "published": published,
+                    "replayed": False,
+                    "trust_boundary": (
+                        "producer_governed_result_pending_independent_witness"
+                    ),
+                }
+                self._last_result = result
+                self._last_failure = None
+                return dict(result)
+            except asyncio.CancelledError as exc:
+                await persist_interrupted_evidence(exc)
+                self._record_failure(request, exc, started_at_ns=started_at_ns)
+                raise
+            except Exception as exc:
+                await persist_interrupted_evidence(exc)
+                self._record_failure(request, exc, started_at_ns=started_at_ns)
+                raise
+            finally:
+                self._active_campaign_id = ""
+
     async def precommit(
         self,
         request: ScalarAcceptanceMandateRequest,
@@ -459,7 +834,7 @@ class RealityAcceptanceService:
 
     def _record_failure(
         self,
-        request: ScalarAcceptanceRequest,
+        request: ScalarAcceptanceRequest | AcousticA1Request,
         error: BaseException,
         *,
         started_at_ns: int,
@@ -647,6 +1022,7 @@ class RealityAcceptanceService:
             "last_result": dict(self._last_result) if self._last_result else None,
             "last_failure": dict(self._last_failure) if self._last_failure else None,
             "store_root": str(self._store.root),
+            "acoustic_campaign_store_root": str(self._acoustic_campaign_store.root),
             "mandate_custody": mandate_status,
         }
 
@@ -662,6 +1038,8 @@ class RealityAcceptanceService:
 
 
 __all__ = [
+    "AcousticA1MandateRequest",
+    "AcousticA1Request",
     "RealityAcceptanceService",
     "ScalarAcceptanceMandateRequest",
     "ScalarAcceptanceRequest",

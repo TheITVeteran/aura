@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from core.container import ServiceContainer
 from core.reality_reach.acceptance import AcceptanceError, AcceptanceEvidenceClass
 from core.reality_reach.acceptance_service import (
+    AcousticA1MandateRequest,
+    AcousticA1Request,
     ScalarAcceptanceMandateRequest,
     ScalarAcceptanceRequest,
 )
@@ -64,6 +66,24 @@ class ScalarAcceptanceMandatePayload(BaseModel):
     ] = ()
 
 
+class AcousticA1MandatePayload(BaseModel):
+    campaign_id: Annotated[
+        str,
+        Field(min_length=1, max_length=128, pattern=r"^[a-z0-9][a-z0-9_.:-]*$"),
+    ]
+    expected_source_commit_sha256: Annotated[
+        str,
+        Field(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ]
+
+
+class AcousticA1RunPayload(AcousticA1MandatePayload):
+    mandate_sha256: Annotated[
+        str,
+        Field(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ]
+
+
 def _service() -> Any:
     service = ServiceContainer.get("reality_acceptance", default=None)
     if service is None:
@@ -107,6 +127,40 @@ async def provision_acoustic_acceptance_adapter(
     return JSONResponse(result, status_code=201)
 
 
+@router.post("/acoustic/a1/mandate")
+async def precommit_acoustic_a1_mandate(
+    payload: AcousticA1MandatePayload,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+) -> JSONResponse:
+    try:
+        result = await _service().precommit_acoustic_a1(
+            AcousticA1MandateRequest(**payload.model_dump())
+        )
+    except AcceptanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(result, status_code=201)
+
+
+@router.post("/acoustic/a1/run")
+async def run_acoustic_a1(
+    payload: AcousticA1RunPayload,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+) -> JSONResponse:
+    try:
+        result = await _service().run_acoustic_a1(
+            AcousticA1Request(**payload.model_dump())
+        )
+    except AcceptanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(result, status_code=201)
+
+
 @router.post("/run")
 async def run_acceptance(
     payload: ScalarAcceptancePayload,
@@ -140,13 +194,17 @@ async def precommit_acceptance_mandate(
 
 
 __all__ = [
+    "AcousticA1MandatePayload",
+    "AcousticA1RunPayload",
     "ScalarAcceptanceMandatePayload",
     "ScalarAcceptancePayload",
     "ScalarAcceptancePreflightPayload",
     "acceptance_preflight",
     "acceptance_status",
     "precommit_acceptance_mandate",
+    "precommit_acoustic_a1_mandate",
     "provision_acoustic_acceptance_adapter",
     "router",
+    "run_acoustic_a1",
     "run_acceptance",
 ]
