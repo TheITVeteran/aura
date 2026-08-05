@@ -997,3 +997,99 @@ class TestAbortAndCancelHaveTargets:
         # Cancelling nothing during recovery is worse than cancelling widely —
         # but the widening is explicit and shows in the receipt.
         assert len(cancelled) == 2
+
+
+class TestReceiptsSayWhereTheyCameFrom:
+    """CP126 92cbf5e2 / 093a2902 / 0989c717."""
+
+    def test_a_surface_receipt_carries_its_provenance(self, client):
+        client._worker_identity = {"worker_boot_id": "boot-3", "worker_pid": 55}
+        client._worker_generation = 2
+        client._current_request_id = "req-live"
+        client._current_request_seq = 8
+        receipt = {"enabled": True, "clean_user_surface_contract": True}
+        client._bind_surface_receipt_provenance(receipt, {"id": "req-live"})
+        prov = receipt["provenance"]
+        assert prov["claims"] == "worker_attested"
+        assert prov["worker_boot_id"] == "boot-3"
+        assert prov["worker_generation"] == 2
+        assert prov["request_id_matches_active"] is True
+        assert prov["worker_identity_attested"] is True
+
+    def test_a_receipt_for_another_request_says_so(self, client):
+        client._worker_identity = {"worker_boot_id": "boot-3", "worker_pid": 55}
+        client._current_request_id = "req-live"
+        receipt = {"enabled": True}
+        client._bind_surface_receipt_provenance(receipt, {"id": "req-stale"})
+        assert receipt["provenance"]["request_id_matches_active"] is False
+
+    def test_an_unattested_worker_is_named_as_such(self, client):
+        client._worker_identity = {}
+        receipt = {"enabled": True}
+        client._bind_surface_receipt_provenance(receipt, {})
+        assert receipt["provenance"]["worker_identity_attested"] is False
+
+    def test_a_rejected_interoception_payload_is_not_published(self, client, monkeypatch):
+        import core.being.thought_interoception as intero
+
+        class _Rejecting:
+            def ingest(self, *_a, **_k):
+                return None
+
+        monkeypatch.setattr(intero, "get_thought_interoception", lambda: _Rejecting())
+        client._last_interoception = {"previous": True}
+        client._record_interoception_from_response(
+            {"interoception": {"junk": "x"}, "text": "hi"},
+            foreground_request=True,
+            owner_label="test",
+        )
+        assert client.get_last_interoception() == {"previous": True}
+
+    def test_an_accepted_payload_is_published_and_bounded(self, client, monkeypatch):
+        import core.being.thought_interoception as intero
+
+        class _Accepting:
+            def ingest(self, *_a, **_k):
+                return object()
+
+        monkeypatch.setattr(intero, "get_thought_interoception", lambda: _Accepting())
+        client._record_interoception_from_response(
+            {
+                "interoception": {
+                    "token_ids_sample": list(range(100_000)),
+                    "mean_surprisal": 1.5,
+                    "note": "y" * 10_000,
+                },
+                "text": "hi",
+            },
+            foreground_request=True,
+            owner_label="test",
+        )
+        stored = client.get_last_interoception()
+        assert len(stored["token_ids_sample"]) == 4096
+        assert len(stored["note"]) == 200
+        assert stored["mean_surprisal"] == 1.5
+        assert stored["_text_fingerprint"]
+
+    def test_pressure_reduced_recurrence_is_marked_not_silent(self):
+        import core.brain.llm.mlx_client as mod
+
+        recorded = []
+        original = mod._record_mlx_degradation
+        mod._record_mlx_degradation = lambda exc, **kw: recorded.append(str(exc))
+        try:
+            options = mod._apply_memory_pressure_generation_controls(
+                {
+                    "clean_user_surface_contract": True,
+                    "clean_user_surface_recurrent_loops": 4,
+                    "max_tokens": 900,
+                },
+                SimpleNamespace(max_token_cap=256),
+                default_max_tokens=512,
+            )
+        finally:
+            mod._record_mlx_degradation = original
+        assert options["clean_user_surface_recurrent_loops"] == 1
+        assert options["recurrent_loops_requested"] == 4
+        assert options["recurrent_loops_reduced_by_pressure"] is True
+        assert any("reduced to 1 under a token cap" in msg for msg in recorded)

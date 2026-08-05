@@ -255,19 +255,36 @@ def test_neutral_token_must_be_atomic() -> None:
 
 
 def test_tensor_fingerprint_binds_name_shape_dtype_and_values() -> None:
+    """9b250d4fd made a lone lora_a an invalid topology.
+
+    The fingerprint refuses to hash a tensor set that could not be a real
+    adapter, so the fixture pairs A with B — which is what an adapter always
+    has. The claim under test is unchanged: name, shape, dtype and values all
+    move the digest.
+    """
     import numpy as np
 
-    baseline = controls.adapter_tensor_fingerprint(
-        {"layer.lora_a": np.asarray([[1.0, 2.0]], dtype=np.float32)}
-    )
-    assert baseline == controls.adapter_tensor_fingerprint(
-        {"layer.lora_a": np.asarray([[1.0, 2.0]], dtype=np.float32)}
+    def _tensors(projection: str = "layer", value: float = 2.0) -> dict[str, object]:
+        return {
+            f"{projection}.lora_a": np.asarray([[1.0, value]], dtype=np.float32),
+            f"{projection}.lora_b": np.asarray([[3.0, 4.0]], dtype=np.float32),
+        }
+
+    baseline = controls.adapter_tensor_fingerprint(_tensors())
+    assert baseline == controls.adapter_tensor_fingerprint(_tensors())
+    assert baseline != controls.adapter_tensor_fingerprint(_tensors(value=3.0))
+    assert baseline != controls.adapter_tensor_fingerprint(_tensors(projection="other"))
+    assert baseline != controls.adapter_tensor_fingerprint(
+        {
+            "layer.lora_a": np.asarray([[1.0, 2.0]], dtype=np.float64),
+            "layer.lora_b": np.asarray([[3.0, 4.0]], dtype=np.float32),
+        }
     )
     assert baseline != controls.adapter_tensor_fingerprint(
-        {"layer.lora_a": np.asarray([[1.0, 3.0]], dtype=np.float32)}
-    )
-    assert baseline != controls.adapter_tensor_fingerprint(
-        {"other.lora_a": np.asarray([[1.0, 2.0]], dtype=np.float32)}
+        {
+            "layer.lora_a": np.asarray([[1.0], [2.0]], dtype=np.float32),
+            "layer.lora_b": np.asarray([[3.0, 4.0]], dtype=np.float32),
+        }
     )
 
 

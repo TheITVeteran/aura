@@ -251,6 +251,26 @@ def _sleep_inclusive_monotonic() -> float | None:
     return None
 
 
+#: The paired-sample arrays a feedback consumer reads. Everything else in an
+#: interoception payload is scalar summary.
+_INTEROCEPTION_SAMPLE_KEYS = ("token_ids_sample", "logprob_sample")
+#: One reply's worth of tokens, generously. Beyond this the parent is holding
+#: an array whose size the WORKER chose.
+_INTEROCEPTION_SAMPLE_LIMIT = 4096
+
+
+def _bounded_interoception(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Retain an accepted interoception payload at a size the parent chose."""
+    stored: dict[str, Any] = {}
+    for key, value in list(payload.items())[:64]:
+        name = str(key)
+        if name in _INTEROCEPTION_SAMPLE_KEYS and isinstance(value, (list, tuple)):
+            stored[name] = list(value)[:_INTEROCEPTION_SAMPLE_LIMIT]
+            continue
+        stored[name] = _bounded_progress_value(value)
+    return stored
+
+
 def _bounded_progress_value(value: Any) -> Any:
     """Clamp one worker-reported progress value to a size the parent chose.
 
@@ -2366,7 +2386,27 @@ def _apply_memory_pressure_generation_controls(
         bool(options.get("clean_user_surface_contract", False))
         or "clean_user_surface_recurrent_loops" in options
     ):
+        # CP126 0989c717: this overwrote the recurrent depth to 1 whenever a
+        # token cap applied, so memory pressure silently disabled the
+        # recurrence-native path — and the receipt still described the depth
+        # as caller-requested and worker-attested, with nothing anywhere
+        # saying it had been taken away. Reducing depth under pressure is a
+        # defensible decision; presenting it as the requested depth is not.
+        try:
+            requested_loops = int(options.get("clean_user_surface_recurrent_loops") or 1)
+        except (TypeError, ValueError):
+            requested_loops = 1
         options["clean_user_surface_recurrent_loops"] = 1
+        if requested_loops > 1:
+            options["recurrent_loops_requested"] = requested_loops
+            options["recurrent_loops_reduced_by_pressure"] = True
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"recurrent depth {requested_loops} reduced to 1 under a token cap"
+                ),
+                action="ran a single-pass surface turn and marked the depth as pressure-reduced",
+                severity="warning",
+            )
     return options
 
 
@@ -4495,9 +4535,55 @@ class MLXLocalClient:
                 receipt["generated_tokens"] = max(0, int(response.get("tokens_used") or 0))
             except (TypeError, ValueError, OverflowError):
                 pass
+        if receipt:
+            self._bind_surface_receipt_provenance(receipt, response)
         self._set_task_surface_control_receipt(receipt)
         if receipt:
             self._last_surface_control_receipt = receipt
+
+    def _bind_surface_receipt_provenance(
+        self, receipt: dict[str, Any], response: Any
+    ) -> None:
+        """Say who made these claims and about which request.
+
+        CP126 92cbf5e2: the sanitizer limited which FIELDS survived and said
+        nothing about where their values came from. "controls bound", "quality
+        passed", "loops applied", "exact reply" all arrived as an unsigned
+        worker dictionary, and a reader downstream could not tell a claim from
+        a measurement, or tell WHICH worker generation and request produced it.
+
+        There is no signature scheme between parent and worker, and inventing
+        one here would be its own kind of false assurance. What can be done
+        honestly is to stamp the identity the PARENT holds — the worker it
+        attested at handshake, the generation counter it increments, the
+        request id it issued — and to name the rest as worker-attested. A
+        reader then knows exactly how much the receipt is worth.
+        """
+        try:
+            identity = self.get_worker_identity_snapshot()
+        except (AttributeError, TypeError, ValueError):
+            identity = {}
+        response_id = ""
+        if isinstance(response, dict):
+            response_id = str(response.get("id") or "")
+        receipt["provenance"] = {
+            "claims": "worker_attested",
+            "model": os.path.basename(str(getattr(self, "model_path", "") or ""))
+            or "unknown",
+            "worker_boot_id": str(identity.get("worker_boot_id") or ""),
+            "worker_pid": identity.get("worker_pid")
+            if isinstance(identity.get("worker_pid"), int)
+            else None,
+            "worker_generation": int(getattr(self, "_worker_generation", 0) or 0),
+            "request_id": response_id,
+            "request_seq": int(getattr(self, "_current_request_seq", 0) or 0),
+            # The parent issued this request id; a response carrying a
+            # different one is describing somebody else's generation.
+            "request_id_matches_active": bool(
+                response_id and response_id == str(getattr(self, "_current_request_id", "") or "")
+            ),
+            "worker_identity_attested": bool(identity.get("worker_boot_id")),
+        }
 
     def _record_suppressed_draft(
         self, text: str, reasons: tuple[str, ...] | list[str]
@@ -4569,19 +4655,31 @@ class MLXLocalClient:
             # Fingerprint the payload to the text it measured, so consumers
             # (e.g. unified_inference feedback) can prove they are pairing the
             # right trace with the right response even under concurrent lanes.
-            stored = dict(payload)
-            stored["_text_fingerprint"] = text_fingerprint(str(response.get("text") or ""))
-
             # Ingest FIRST: the engine is the validator. Storing beforehand
             # exposed malformed/unbounded worker data through the public
             # getter as the "most recent measurement" even when the engine
             # rejected it.
-            get_thought_interoception().ingest(
+            #
+            # CP126 093a2902, second half: ordering alone did not fix that,
+            # because ingest() NEVER RAISES — it returns None for a payload it
+            # dropped. The store ran regardless, so a rejected payload was
+            # still published as the latest felt-thought measurement. Only an
+            # accepted one is retained now, and only in bounded form.
+            felt = get_thought_interoception().ingest(
                 payload,
                 origin=owner_label or "mlx",
                 foreground=bool(foreground_request),
                 response_text=str(response.get("text") or ""),
             )
+            if felt is None:
+                _record_mlx_degradation(
+                    ValueError("interoception payload rejected by the felt-thought engine"),
+                    action="left the previous measurement in place rather than publishing a rejected payload",
+                    severity="warning",
+                )
+                return
+            stored = _bounded_interoception(payload)
+            stored["_text_fingerprint"] = text_fingerprint(str(response.get("text") or ""))
             self._last_interoception = stored
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
             record_degradation(

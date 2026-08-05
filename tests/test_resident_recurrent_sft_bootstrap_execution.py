@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import copy
 from types import SimpleNamespace
+
+from core.learning.resident_recurrent_sft_bootstrap_authority import (
+    TRAINER_CONFIG_SCHEMA_V4,
+)
 from typing import Any
 
 import mlx.core as mx
@@ -218,7 +222,17 @@ def test_validation_executes_and_receipts_each_projected_depth(monkeypatch: Any)
         object(),
         rows,
         spec=RLCExecutionSpec(recurrent_steps=4),
-        config=SimpleNamespace(seed=17, validation_examples=3, branch_indices=(0, 1)),
+        # 6eeb251e2 gave the validation summary a schema-dependent branch
+        # (the v4 rotating validation window). The double never carried a
+        # schema, so it stopped matching the config the trainer actually
+        # builds and the summary raised instead of being exercised.
+        config=SimpleNamespace(
+            schema=TRAINER_CONFIG_SCHEMA_V4,
+            seed=17,
+            validation_examples=3,
+            intermediate_validation_examples=3,
+            branch_indices=(0, 1),
+        ),
     )
 
     assert sorted(observed) == [2, 4, 8]
