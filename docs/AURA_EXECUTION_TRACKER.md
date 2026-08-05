@@ -35681,3 +35681,38 @@ external receipt replay, cancellation during a long-running actuator action,
 and measured safe-state convergence remain open. The total therefore remains
 809/920, approximately 87.9%; reasoning gain, frontier, release, `WOW Signal`,
 and the deferred long soaks remain open.
+
+#### CP810 addendum: rotating cloud identity and conservative restart recovery
+
+Cloud credentials no longer require an Aura restart to rotate. AWS already read
+access keys and session tokens for every signed request; that behavior now has
+an explicit replacement and secret-redaction contract. Azure now retains only
+the stable tenant/client identity, reads the client secret anew at token
+refresh, uses a monotonic expiry margin, and singleflights concurrent refresh
+callers. A missing or invalid rotated secret fails before network dispatch, and
+neither old nor new secret enters provider identity or durable evidence.
+
+The physical transaction coordinator now exposes a restart-recovery operation
+for a source-bound command and persisted transaction. It never retries the
+requested effect. `PLANNED` or `ADMITTED` work is cancelled without dispatch;
+`DISPATCHED`, `EXECUTED`, or `INDETERMINATE` work is driven through the real
+adapter's safe-state path and becomes terminal only when that restoration is
+independently observed. A second recovery is idempotent. Inventory or adapter
+identity drift refuses before touching hardware, while failed restoration stays
+`INDETERMINATE` and requires reconciliation. Recovery errors are now stored as
+type plus digest, not raw provider text.
+
+Additional CP810 evidence:
+
+- credential expiry, rotation, removal, concurrent singleflight, network
+  restoration, restart cancellation, restart safe-state, idempotency, drift,
+  malformed gateway output, and secret-redaction contracts: 59/59 passed;
+- full affected Reality Reach family: 198/198 passed;
+
+This still does not make v1 transaction records self-starting at boot: they bind
+the command digest and critical identities but do not contain a reconstructable
+canonical command. A caller holding the original command can now recover across
+a process boundary, but an unattended boot sweep needs a versioned command
+capsule, secure pending-record enumeration, and deterministic recovery
+scheduling. That work, live credential rotation against real tenants, HIL, and
+external receipt review keep CP810 open and the total unchanged at 809/920.

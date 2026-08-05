@@ -14,6 +14,7 @@ from core.embodiment.aws_twinmaker_connector import (
     AwsTwinMakerConnectorError,
     AwsTwinMakerResourceSpec,
     AwsTwinMakerScalarTransport,
+    EnvironmentAwsCredentialProvider,
     parse_aws_twinmaker_manifest,
     sign_aws_v4_headers,
 )
@@ -130,6 +131,30 @@ def test_sigv4_binds_temporary_session_token_without_exposing_secret() -> None:
     assert headers["X-Amz-Security-Token"] == "temporary-session-token"
     assert "x-amz-security-token" in headers["Authorization"]
     assert _SECRET not in json.dumps(headers)
+
+
+def test_environment_aws_provider_adopts_rotated_credentials_without_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = EnvironmentAwsCredentialProvider()
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7FIRST1")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "first-secret-access-key-material")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "first-session-token")
+
+    first = provider.credentials()
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7SECOND")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "second-secret-access-key-material")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "second-session-token")
+    second = provider.credentials()
+
+    assert first.access_key_id == "AKIAIOSFODNN7FIRST1"
+    assert first.session_token == "first-session-token"
+    assert second.access_key_id == "AKIAIOSFODNN7SECOND"
+    assert second.session_token == "second-session-token"
+    assert first.identity_sha256 != second.identity_sha256
+    serialized = json.dumps({"first": first.identity_sha256, "second": second.identity_sha256})
+    assert "secret-access-key-material" not in serialized
+    assert "session-token" not in serialized
 
 
 def test_twinmaker_manifest_is_strict_typed_and_injection_closed() -> None:

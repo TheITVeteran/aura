@@ -8,7 +8,6 @@ import json
 import os
 import re
 import stat
-import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
@@ -35,8 +34,8 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
-from core.runtime.skill_contract import ActionExpectation
 from core.runtime.lockdep import checked_lock
+from core.runtime.skill_contract import ActionExpectation
 
 TRANSACTION_SCHEMA = "aura.reality-reach-actuation-transaction.v1"
 _TERMINAL = frozenset(
@@ -71,6 +70,16 @@ class RealityActuationError(RuntimeError):
 
 def _sha256(value: Any) -> str:
     return str(sha256_hex(canonical_json(value)))
+
+
+def _error_evidence(error: BaseException | str) -> str:
+    if isinstance(error, BaseException):
+        error_type = type(error).__name__
+        detail = str(error)
+    else:
+        error_type = "recovery"
+        detail = str(error)
+    return f"{error_type}:{_sha256(detail)}"
 
 
 def _record_path(root: Path, idempotency_key: str) -> Path:
@@ -188,8 +197,7 @@ def _validate_record(value: Mapping[str, Any]) -> dict[str, Any]:
         or int(value["revision"]) < 0
         or not isinstance(value.get("manual_reconciliation_required"), bool)
         or any(
-            not isinstance(value.get(name), str)
-            or not _IDENTIFIER.fullmatch(str(value[name]))
+            not isinstance(value.get(name), str) or not _IDENTIFIER.fullmatch(str(value[name]))
             for name in (
                 "command_id",
                 "idempotency_key",
@@ -270,9 +278,7 @@ class RealityActuationCoordinator:
         monotonic_clock_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         self._service = service
-        self._root = _private_root(
-            root or (Path(DATA_DIR) / "reality_reach" / "transactions")
-        )
+        self._root = _private_root(root or (Path(DATA_DIR) / "reality_reach" / "transactions"))
         self._lock_path = self._root / ".transactions.lock"
         self._executor = executor
         self._wall_clock_ns = wall_clock_ns
@@ -291,9 +297,7 @@ class RealityActuationCoordinator:
                 raw = _read_record_bytes(path)
                 value = json.loads(raw.decode("utf-8"))
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                raise RealityActuationError(
-                    "reality_actuation_transaction_unreadable"
-                ) from exc
+                raise RealityActuationError("reality_actuation_transaction_unreadable") from exc
             if not isinstance(value, Mapping):
                 raise RealityActuationError("reality_actuation_transaction_not_mapping")
             record = _validate_record(value)
@@ -318,9 +322,7 @@ class RealityActuationCoordinator:
         return {
             "alive": self.is_alive(),
             "ready": self.is_ready(),
-            "executable_actuator_channels": list(
-                self._service.executable_actuator_channels()
-            ),
+            "executable_actuator_channels": list(self._service.executable_actuator_channels()),
             "transaction_schema": TRANSACTION_SCHEMA,
         }
 
@@ -392,11 +394,7 @@ class RealityActuationCoordinator:
             update_fields = dict(updates or {})
             if not set(update_fields).issubset(permitted_updates):
                 raise RealityActuationError("reality_actuation_transition_fields_invalid")
-            body = {
-                key: value
-                for key, value in record.items()
-                if key != "transaction_sha256"
-            }
+            body = {key: value for key, value in record.items() if key != "transaction_sha256"}
             body.update(update_fields)
             body["state"] = state.value
             body["revision"] = int(record["revision"]) + 1
@@ -469,8 +467,7 @@ class RealityActuationCoordinator:
                 acceptance_criteria=["effect_verified", *command.expected_effects],
                 required_evidence=["reality_reach.effect_receipt"],
                 rollback_hint=(
-                    capability.compensation_action
-                    or "use adapter safe_state and rollback receipts"
+                    capability.compensation_action or "use adapter safe_state and rollback receipts"
                 ),
                 allow_partial=False,
             ),
@@ -530,6 +527,111 @@ class RealityActuationCoordinator:
             },
         )
         return self._replay(reconciled)
+
+    async def recover_after_restart(self, command: ActuationCommand) -> dict[str, Any]:
+        """Cancel or restore an interrupted transaction without replaying its effect."""
+
+        if not isinstance(command, ActuationCommand):
+            raise TypeError("command must be an ActuationCommand")
+        inventory_sha256 = str(self._service.status()["registry_sha256"])
+        if inventory_sha256 != command.inventory_sha256:
+            raise RealityActuationError("reality_actuation_recovery_inventory_drift")
+        adapter = self._service.actuator_adapter(command.channel_id)
+        capability = self._service.actuator_capability(command.channel_id)
+        if (
+            adapter is None
+            or capability is None
+            or adapter.adapter_id != command.adapter_id
+            or capability.adapter_id != command.adapter_id
+        ):
+            raise RealityActuationError("reality_actuation_recovery_identity_invalid")
+        record = await asyncio.to_thread(self._load, command)
+        if record is None:
+            raise RealityActuationError("reality_actuation_transaction_missing")
+        state = ActuationState(record["state"])
+        if state not in {
+            ActuationState.PLANNED,
+            ActuationState.ADMITTED,
+            ActuationState.DISPATCHED,
+            ActuationState.EXECUTED,
+            ActuationState.INDETERMINATE,
+        }:
+            return self._replay(record)
+
+        try:
+            if state in {ActuationState.PLANNED, ActuationState.ADMITTED}:
+                cancellation = await asyncio.wait_for(
+                    adapter.cancel(command, None),
+                    timeout=capability.watchdog_timeout_s,
+                )
+                self._validate_actuation(
+                    command,
+                    None,
+                    cancellation,
+                    allow_without_preparation=True,
+                )
+                if cancellation.state is not ActuationState.CANCELLED:
+                    raise RealityActuationError("restart_cancel_receipt_state_invalid")
+                recovered = await asyncio.to_thread(
+                    self._transition,
+                    command,
+                    expected={state},
+                    state=ActuationState.CANCELLED,
+                    updates={
+                        "actuation_receipt_sha256": cancellation.sha256,
+                        "manual_reconciliation_required": False,
+                        "last_error": _error_evidence("restart_cancelled_before_dispatch"),
+                    },
+                )
+                return self._replay(recovered)
+
+            restoration = await asyncio.wait_for(
+                adapter.safe_state(command, None),
+                timeout=capability.watchdog_timeout_s,
+            )
+            self._validate_rollback(command, None, restoration)
+            restored = bool(
+                restoration.independently_observed
+                and restoration.state
+                in {
+                    ActuationState.SAFE_STATE,
+                    ActuationState.ROLLED_BACK,
+                    ActuationState.COMPENSATED,
+                }
+            )
+            recovered = await asyncio.to_thread(
+                self._transition,
+                command,
+                expected={state},
+                state=(restoration.state if restored else ActuationState.INDETERMINATE),
+                updates={
+                    "rollback_receipt_sha256": restoration.sha256,
+                    "manual_reconciliation_required": not restored,
+                    "last_error": _error_evidence(
+                        "restart_safe_state_observed"
+                        if restored
+                        else "restart_safe_state_unverified"
+                    ),
+                },
+            )
+            return self._replay(recovered)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            latest = await asyncio.to_thread(self._load, command)
+            if latest is None:
+                raise RealityActuationError("reality_actuation_transaction_lost") from exc
+            latest_state = ActuationState(latest["state"])
+            if latest_state is not ActuationState.INDETERMINATE:
+                latest = await asyncio.to_thread(
+                    self._transition,
+                    command,
+                    expected={latest_state},
+                    state=ActuationState.INDETERMINATE,
+                    updates={
+                        "manual_reconciliation_required": True,
+                        "last_error": _error_evidence(exc),
+                    },
+                )
+            return self._replay(latest)
 
     async def _dispatch_adapter(
         self,
@@ -691,9 +793,9 @@ class RealityActuationCoordinator:
         error: BaseException | None = None,
         timeout_s: float = 10.0,
     ) -> None:
-        recovery_reason = str(
+        recovery_reason = _error_evidence(
             error or ("cancelled" if cancelled else "recovery_required")
-        )[:500]
+        )
         record = await asyncio.to_thread(self._load, command)
         if record is None:
             return
@@ -764,9 +866,7 @@ class RealityActuationCoordinator:
                     state=ActuationState.INDETERMINATE,
                     updates={
                         "manual_reconciliation_required": True,
-                        "last_error": (
-                            f"{type(recovery_exc).__name__}:{recovery_exc}"
-                        )[:500],
+                        "last_error": _error_evidence(recovery_exc),
                     },
                 )
 
@@ -800,8 +900,7 @@ class RealityActuationCoordinator:
             receipt.command_sha256 != command.sha256
             or receipt.adapter_id != command.adapter_id
             or (
-                not allow_without_preparation
-                and receipt.preparation_sha256 != expected_preparation
+                not allow_without_preparation and receipt.preparation_sha256 != expected_preparation
             )
         ):
             raise RealityActuationError("reality_actuation_receipt_identity_invalid")
@@ -851,9 +950,7 @@ class RealityActuationCoordinator:
                 ActuationState.MANUALLY_RECONCILED,
             },
             "retry_safe": False,
-            "manual_reconciliation_required": bool(
-                record["manual_reconciliation_required"]
-            )
+            "manual_reconciliation_required": bool(record["manual_reconciliation_required"])
             or state in _NO_AUTOMATIC_REPLAY,
             "reality_reach_transaction": dict(record),
             "replayed": True,

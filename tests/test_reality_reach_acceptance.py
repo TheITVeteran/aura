@@ -121,6 +121,35 @@ async def test_read_and_write_partitions_stop_before_delegate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transport_recovers_after_one_shot_network_partitions() -> None:
+    delegate = _Transport()
+    proxy = _proxy(delegate)
+    proxy.arm(ScalarFault.READ_PARTITION)
+    with pytest.raises(FaultInjectedReadError):
+        await proxy.read_scalar("fixture.level")
+
+    recovered_read = await proxy.read_scalar("fixture.level")
+    proxy.arm(ScalarFault.WRITE_PARTITION)
+    with pytest.raises(FaultInjectedWriteError):
+        await proxy.write_scalar(
+            "fixture.level",
+            2.0,
+            idempotency_key="partitioned-write",
+        )
+    recovered_write = await proxy.write_scalar(
+        "fixture.level",
+        3.0,
+        idempotency_key="restored-write",
+    )
+
+    assert recovered_read.value == 1.0
+    assert recovered_write.accepted is True
+    assert delegate.reads == 1
+    assert delegate.writes == 1
+    assert delegate.value == 3.0
+
+
+@pytest.mark.asyncio
 async def test_post_dispatch_ack_loss_is_explicitly_indeterminate() -> None:
     delegate = _Transport()
     proxy = _proxy(delegate)

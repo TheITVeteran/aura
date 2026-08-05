@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import deque
@@ -356,6 +357,163 @@ async def test_entra_token_provider_refreshes_once_and_never_returns_secret(
     assert calls[0]["read_only"] is False
     assert secret in calls[0]["data"]
     assert secret not in provider.identity_sha256
+
+
+@pytest.mark.asyncio
+async def test_entra_token_provider_adopts_rotated_secret_after_token_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant = "11111111-1111-4111-8111-111111111111"
+    client = "22222222-2222-4222-8222-222222222222"
+    first_secret = "first-private-client-secret"
+    second_secret = "second-private-client-secret"
+    monkeypatch.setenv("AURA_AZURE_DT_TENANT_ID", tenant)
+    monkeypatch.setenv("AURA_AZURE_DT_CLIENT_ID", client)
+    monkeypatch.setenv("AURA_AZURE_DT_CLIENT_SECRET", first_secret)
+    clock = [100.0]
+    calls: list[dict[str, Any]] = []
+
+    async def request(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "status_code": 200,
+            "headers": {},
+            "content": json.dumps(
+                {
+                    "access_token": f"rotated-access-token-{len(calls)}",
+                    "expires_in": 3600,
+                }
+            ).encode(),
+        }
+
+    monkeypatch.setattr(
+        azure_module.ActionExecutor,
+        "request_network_transport",
+        request,
+    )
+    provider = EntraClientCredentialsTokenProvider(monotonic_clock=lambda: clock[0])
+
+    assert await provider.access_token() == "rotated-access-token-1"
+    monkeypatch.setenv("AURA_AZURE_DT_CLIENT_SECRET", second_secret)
+    assert await provider.access_token() == "rotated-access-token-1"
+    clock[0] += 3541.0
+    assert await provider.access_token() == "rotated-access-token-2"
+
+    assert len(calls) == 2
+    assert first_secret in calls[0]["data"]
+    assert second_secret not in calls[0]["data"]
+    assert second_secret in calls[1]["data"]
+    assert first_secret not in calls[1]["data"]
+    assert first_secret not in provider.identity_sha256
+    assert second_secret not in provider.identity_sha256
+
+
+@pytest.mark.asyncio
+async def test_entra_token_provider_fails_closed_when_rotated_secret_disappears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AURA_AZURE_DT_TENANT_ID",
+        "11111111-1111-4111-8111-111111111111",
+    )
+    monkeypatch.setenv(
+        "AURA_AZURE_DT_CLIENT_ID",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    monkeypatch.setenv("AURA_AZURE_DT_CLIENT_SECRET", "initial-secret")
+    clock = [10.0]
+    calls = 0
+
+    async def request(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": True,
+            "status_code": 200,
+            "headers": {},
+            "content": json.dumps({"access_token": "temporary-token", "expires_in": 120}).encode(),
+        }
+
+    monkeypatch.setattr(
+        azure_module.ActionExecutor,
+        "request_network_transport",
+        request,
+    )
+    provider = EntraClientCredentialsTokenProvider(monotonic_clock=lambda: clock[0])
+    assert await provider.access_token() == "temporary-token"
+    monkeypatch.delenv("AURA_AZURE_DT_CLIENT_SECRET")
+    clock[0] += 61.0
+
+    with pytest.raises(AzureDigitalTwinsConnectorError, match="client_secret_invalid"):
+        await provider.access_token()
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_entra_token_refresh_is_singleflight_under_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AURA_AZURE_DT_TENANT_ID",
+        "11111111-1111-4111-8111-111111111111",
+    )
+    monkeypatch.setenv(
+        "AURA_AZURE_DT_CLIENT_ID",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    monkeypatch.setenv("AURA_AZURE_DT_CLIENT_SECRET", "concurrent-secret")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def request(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return {
+            "ok": True,
+            "status_code": 200,
+            "headers": {},
+            "content": json.dumps(
+                {"access_token": "singleflight-token", "expires_in": 3600}
+            ).encode(),
+        }
+
+    monkeypatch.setattr(
+        azure_module.ActionExecutor,
+        "request_network_transport",
+        request,
+    )
+    provider = EntraClientCredentialsTokenProvider()
+    tasks = [asyncio.create_task(provider.access_token()) for _ in range(12)]
+    await asyncio.wait_for(entered.wait(), timeout=1.0)
+    release.set()
+    tokens = await asyncio.gather(*tasks)
+
+    assert tokens == ["singleflight-token"] * 12
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_azure_transport_rejects_non_mapping_network_gateway_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure(monkeypatch)
+
+    async def request(**_kwargs: Any) -> Any:
+        return b"not-a-network-response"
+
+    monkeypatch.setattr(
+        azure_module.ActionExecutor,
+        "request_network_transport",
+        request,
+    )
+    transport = AzureDigitalTwinsScalarTransport((_resource(),), _TokenProvider())
+
+    with pytest.raises(AzureDigitalTwinsConnectorError, match="non_mapping"):
+        await transport.read_scalar("pump.temperature")
 
 
 def test_azure_catalog_reports_partial_configuration(

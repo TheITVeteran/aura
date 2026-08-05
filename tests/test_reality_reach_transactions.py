@@ -74,9 +74,16 @@ def _actuator() -> ChannelDeclaration:
 class TransactionAdapter:
     adapter_id = "test.transaction"
 
-    def __init__(self, *, verify: bool = True, fail_actuation: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        verify: bool = True,
+        fail_actuation: bool = False,
+        fail_safe_state: bool = False,
+    ) -> None:
         self.verify = verify
         self.fail_actuation = fail_actuation
+        self.fail_safe_state = fail_safe_state
         self.actuation_calls = 0
         self.rollback_calls = 0
         self.safe_state_calls = 0
@@ -168,11 +175,7 @@ class TransactionAdapter:
             actuation_receipt_sha256=actuation.sha256,
             observation_channel_id="test.sensor",
             observation_sha256=DIGEST,
-            state=(
-                ActuationState.EFFECT_VERIFIED
-                if self.verify
-                else ActuationState.FAILED
-            ),
+            state=(ActuationState.EFFECT_VERIFIED if self.verify else ActuationState.FAILED),
             target_error=0.1 if self.verify else 2.0,
             independently_observed=self.verify,
             recorded_at_ns=NOW_NS,
@@ -202,6 +205,8 @@ class TransactionAdapter:
         actuation: ActuationReceipt | None,
     ) -> RollbackReceipt:
         self.safe_state_calls += 1
+        if self.fail_safe_state:
+            raise RuntimeError("private-provider-detail")
         return self._rollback_receipt(command, actuation, ActuationState.SAFE_STATE)
 
     async def rollback(
@@ -399,6 +404,184 @@ async def test_dispatched_crash_state_is_never_automatically_replayed(tmp_path: 
     assert result["manual_reconciliation_required"] is True
     assert result["retry_safe"] is False
     assert adapter.actuation_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_state", [ActuationState.DISPATCHED, ActuationState.EXECUTED])
+async def test_new_coordinator_restores_interrupted_effect_to_observed_safe_state(
+    tmp_path: Path,
+    crash_state: ActuationState,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    first_process = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    first_process._create(command)
+    updates = (
+        {
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.1",
+        }
+        if crash_state is ActuationState.DISPATCHED
+        else {"actuation_receipt_sha256": DIGEST}
+    )
+    first_process._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=crash_state,
+        updates=updates,
+    )
+
+    restarted = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS + 1,
+        monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
+    )
+    first = await restarted.recover_after_restart(command)
+    second = await restarted.recover_after_restart(command)
+
+    assert first["reality_reach_transaction"]["state"] == "safe_state"
+    assert first["manual_reconciliation_required"] is False
+    assert first["retry_safe"] is False
+    assert second["reality_reach_transaction"]["state"] == "safe_state"
+    assert adapter.safe_state_calls == 1
+    assert adapter.actuation_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_cancels_admitted_work_without_dispatch(tmp_path: Path) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    coordinator._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.ADMITTED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.1",
+        },
+    )
+
+    result = await RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS + 1,
+        monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
+    ).recover_after_restart(command)
+
+    assert result["reality_reach_transaction"]["state"] == "cancelled"
+    assert result["manual_reconciliation_required"] is False
+    assert adapter.actuation_calls == 0
+    assert adapter.safe_state_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_failure_is_indeterminate_and_secret_free(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter(fail_safe_state=True)
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    coordinator._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.DISPATCHED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.1",
+        },
+    )
+
+    result = await RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS + 1,
+        monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
+    ).recover_after_restart(command)
+    record = result["reality_reach_transaction"]
+
+    assert record["state"] == "indeterminate"
+    assert record["manual_reconciliation_required"] is True
+    assert "private-provider-detail" not in record["last_error"]
+    assert record["last_error"].startswith("RuntimeError:sha256:")
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_refuses_inventory_drift_before_safe_state(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    coordinator._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.DISPATCHED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.1",
+        },
+    )
+    drifted = ActuationCommand(
+        **{
+            **command.to_dict(),
+            "inventory_sha256": DIGEST,
+            "safe_envelope": command.safe_envelope,
+            "parameters": dict(command.parameters),
+            "preconditions": command.preconditions,
+            "expected_effects": command.expected_effects,
+            "abort_predicates": command.abort_predicates,
+        }
+    )
+
+    with pytest.raises(RealityActuationError, match="recovery_inventory_drift"):
+        await RealityActuationCoordinator(
+            service,
+            root=tmp_path,
+            executor=_executor,
+            wall_clock_ns=lambda: NOW_NS + 1,
+            monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
+        ).recover_after_restart(drifted)
+    assert adapter.safe_state_calls == 0
 
 
 @pytest.mark.asyncio

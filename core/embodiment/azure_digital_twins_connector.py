@@ -16,7 +16,7 @@ import os
 import re
 import time
 import urllib.parse
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
@@ -376,32 +376,45 @@ class AzureAccessTokenProvider(Protocol):
 class EntraClientCredentialsTokenProvider:
     """Refresh an Entra OAuth token without exposing credentials in receipts."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._tenant_id = str(os.getenv("AURA_AZURE_DT_TENANT_ID") or "").strip()
         self._client_id = str(os.getenv("AURA_AZURE_DT_CLIENT_ID") or "").strip()
-        self._client_secret = str(os.getenv("AURA_AZURE_DT_CLIENT_SECRET") or "").strip()
         if not _GUID.fullmatch(self._tenant_id) or not _GUID.fullmatch(self._client_id):
             raise AzureDigitalTwinsConnectorError("azure_dt_tenant_or_client_id_invalid")
-        if not self._client_secret or len(self._client_secret.encode("utf-8")) > 4096:
-            raise AzureDigitalTwinsConnectorError("azure_dt_client_secret_invalid")
+        self._read_client_secret()
+        if not callable(monotonic_clock):
+            raise TypeError("monotonic_clock must be callable")
+        self._monotonic_clock = monotonic_clock
         self._token = ""
         self._expires_monotonic = 0.0
         self._lock = checked_async_lock("azure_dt.entra_token")
+
+    @staticmethod
+    def _read_client_secret() -> str:
+        secret = str(os.getenv("AURA_AZURE_DT_CLIENT_SECRET") or "").strip()
+        if not secret or len(secret.encode("utf-8")) > 4096:
+            raise AzureDigitalTwinsConnectorError("azure_dt_client_secret_invalid")
+        return secret
 
     @property
     def identity_sha256(self) -> str:
         return _digest({"tenant_id": self._tenant_id, "client_id": self._client_id})
 
     async def access_token(self) -> str:
-        if self._token and time.monotonic() < self._expires_monotonic:
+        if self._token and self._monotonic_clock() < self._expires_monotonic:
             return self._token
         async with self._lock:
-            if self._token and time.monotonic() < self._expires_monotonic:
+            if self._token and self._monotonic_clock() < self._expires_monotonic:
                 return self._token
+            client_secret = self._read_client_secret()
             body = urllib.parse.urlencode(
                 {
                     "client_id": self._client_id,
-                    "client_secret": self._client_secret,
+                    "client_secret": client_secret,
                     "grant_type": "client_credentials",
                     "scope": "https://digitaltwins.azure.net/.default",
                 }
@@ -429,7 +442,7 @@ class EntraClientCredentialsTokenProvider:
             if not 120.0 <= lifetime <= 86_400.0:
                 raise AzureDigitalTwinsConnectorError("azure_dt_access_token_lifetime_invalid")
             self._token = token
-            self._expires_monotonic = time.monotonic() + lifetime - 60.0
+            self._expires_monotonic = self._monotonic_clock() + lifetime - 60.0
             return token
 
 
@@ -500,7 +513,7 @@ class AzureDigitalTwinsScalarTransport:
         read_only: bool,
     ) -> dict[str, Any]:
         token = await self._token_provider.access_token()
-        return await ActionExecutor.request_network_transport(
+        response = await ActionExecutor.request_network_transport(
             method=method,
             url=self._url(twin_id),
             headers={"Authorization": f"Bearer {token}", **headers},
@@ -509,6 +522,9 @@ class AzureDigitalTwinsScalarTransport:
             source="world_bridge:azure_digital_twins.data_plane",
             read_only=read_only,
         )
+        if not isinstance(response, Mapping):
+            raise AzureDigitalTwinsConnectorError("azure_dt_network_gateway_returned_non_mapping")
+        return dict(response)
 
     async def _read_governed(self, spec: AzureDigitalTwinResourceSpec) -> ScalarSample:
         response = await self._request_governed(
