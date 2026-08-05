@@ -1859,3 +1859,37 @@ class TestWorkerScopedStateDoesNotSurviveASpawn:
         )
         assert "messages:aggregate_too_large" in faults
         assert len(rows) < 20
+
+
+class TestSteeringLivenessSaysWhatItProves:
+    """CP126 76cfcf09: a process flag was read as per-generation proof."""
+
+    def test_the_reading_labels_its_own_basis(self, client):
+        client._worker_generation = 4
+        reading = client.steering_liveness_reading()
+        assert reading["schema"] == "aura.mlx.steering_liveness_reading.v1"
+        assert reading["basis"] == "process_shared_flag"
+        assert reading["request_bound"] is False
+        assert reading["generation_bound"] is False
+        assert reading["worker_generation"] == 4
+
+    def test_before_any_worker_receipt_the_reading_is_unmeasured(self, client):
+        client._steering_liveness_observed = False
+        reading = client.steering_liveness_reading()
+        assert reading["active"] is None, "no receipt yet is not 'inactive'"
+        assert reading["observed_since_worker_start"] is False
+
+    def test_after_a_receipt_the_flag_is_reported(self, client):
+        class _Word:
+            value = True
+
+        client._steering_liveness_observed = True
+        client._steering_active = _Word()
+        reading = client.steering_liveness_reading()
+        assert reading["active"] is True
+        assert reading["observed_since_worker_start"] is True
+
+    def test_a_spawn_clears_the_sticky_observation(self, client):
+        client._steering_liveness_observed = True
+        client._reset_worker_scoped_state()
+        assert client.steering_liveness_reading()["active"] is None

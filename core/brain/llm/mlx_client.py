@@ -11171,6 +11171,32 @@ class MLXLocalClient:
         except json.JSONDecodeError:
             return None
 
+    def steering_liveness_reading(self) -> dict[str, Any]:
+        """The steering signal, labelled with what it can and cannot prove.
+
+        CP126 76cfcf09: a sticky observed flag plus a process-shared scalar was
+        being read as proof that steering was ACTIVE FOR THIS GENERATION. It
+        is not. It carries no worker generation, no request id, no checkpoint,
+        no layer count and no measured modulation delta — it says only that at
+        some point since this worker started, the worker wrote a nonzero
+        liveness flag into shared memory.
+
+        That is worth having, so the reading survives; what changes is that it
+        now says what it is. A caller wanting per-generation proof has to get
+        it from the worker's receipt, and can now tell that this is not it.
+        """
+        return {
+            "schema": "aura.mlx.steering_liveness_reading.v1",
+            "active": self._check_steering_liveness(),
+            "basis": "process_shared_flag",
+            "request_bound": False,
+            "generation_bound": False,
+            "observed_since_worker_start": bool(
+                getattr(self, "_steering_liveness_observed", False)
+            ),
+            "worker_generation": int(getattr(self, "_worker_generation", 0) or 0),
+        }
+
     def _check_steering_liveness(self) -> bool | None:
         """Return steering liveness once the worker has reported it.
 
@@ -11178,6 +11204,9 @@ class MLXLocalClient:
         that receipt, treating the default shared-memory zero as "inactive"
         creates a misleading neural-stream warning during first foreground
         generations and web-interlocutor bootstraps.
+
+        NOT per-generation proof — see :meth:`steering_liveness_reading` for
+        what this signal is actually bound to.
         """
         if not bool(getattr(self, "_steering_liveness_observed", False)):
             try:
@@ -11217,12 +11246,20 @@ class MLXLocalClient:
                 origin,
             )
         elif active:
-            logger.debug("✅ [STEERING] Active for this generation (origin=%s)", origin)
+            # "for this generation" was the claim; the signal is a process
+            # flag set at some point since this worker started (CP126
+            # 76cfcf09). Say what was measured.
+            logger.debug(
+                "✅ [STEERING] Liveness flag set by this worker (origin=%s, gen=%s)",
+                origin,
+                int(getattr(self, "_worker_generation", 0) or 0),
+            )
         else:
             logger.warning(
-                "⚠️ [STEERING] INACTIVE for generation (origin=%s) — "
-                "substrate state not modulating inference.",
+                "⚠️ [STEERING] Liveness flag CLEAR for this worker (origin=%s, gen=%s) — "
+                "substrate state is not modulating inference.",
                 origin,
+                int(getattr(self, "_worker_generation", 0) or 0),
             )
 
     async def generate(self, prompt: str, **kwargs) -> str | None:
