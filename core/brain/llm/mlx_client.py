@@ -386,6 +386,170 @@ def _validate_model_artifact(resolved: Path, incumbent: str = "") -> ArtifactVer
     return verdict
 
 
+#: What an MLX LoRA adapter directory must actually contain to be attachable.
+_ADAPTER_WEIGHT_NAMES = ("adapters.safetensors", "adapter.safetensors")
+_ADAPTER_CONFIG_NAME = "adapter_config.json"
+#: An adapter is tens of megabytes. An order of magnitude past that is not an
+#: adapter, and sending it to the resident worker is how a "swap" becomes a
+#: memory event.
+_ADAPTER_MAX_BYTES = 2 * 1024**3
+
+
+@dataclass(frozen=True)
+class AdapterVerdict:
+    """Whether a directory can be attached to the resident model, and what it is."""
+
+    ok: bool
+    reason: str = ""
+    weight_file: str = ""
+    weight_bytes: int = 0
+    base_checkpoint_fingerprint: str = ""
+    fine_tune_type: str = ""
+    #: verified | declared_unverified | not_declared
+    base_compatibility: str = "not_declared"
+
+    def as_receipt(self) -> dict[str, Any]:
+        return {
+            "adapter_weight_file": self.weight_file,
+            "adapter_weight_bytes": self.weight_bytes,
+            "adapter_base_checkpoint_fingerprint": self.base_checkpoint_fingerprint,
+            "adapter_fine_tune_type": self.fine_tune_type,
+            "adapter_base_compatibility": self.base_compatibility,
+        }
+
+
+def _bounded_maintenance_counters(
+    response: Mapping[str, Any],
+    *,
+    max_pairs: int,
+    scan_limit: int,
+    max_positions: int,
+) -> tuple[dict[str, int | None], list[str]]:
+    """Read the maintenance counters, or report that they could not be read.
+
+    ``None`` means unmeasured — a value the worker gave that cannot be true,
+    or did not give at all. It is deliberately distinct from ``0``, which
+    means the worker measured none. Collapsing the two is how "we never found
+    out" becomes "we checked and there was nothing".
+    """
+    faults: list[str] = []
+
+    def _count(name: str, ceiling: int) -> int | None:
+        raw = response.get(name)
+        if raw is None:
+            faults.append(f"{name}:absent")
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            faults.append(f"{name}:malformed")
+            return None
+        if value < 0:
+            faults.append(f"{name}:negative")
+            return None
+        if value > ceiling:
+            faults.append(f"{name}:above_budget")
+            return None
+        return value
+
+    counters: dict[str, int | None] = {
+        "pairs_considered": _count("pairs_considered", scan_limit),
+        "pairs_scanned": _count("pairs_scanned", scan_limit),
+        "pairs_ingested": _count("pairs_ingested", max_pairs),
+        "positions_ingested": _count("positions_ingested", max_positions),
+    }
+    scanned = counters["pairs_scanned"]
+    ingested = counters["pairs_ingested"]
+    if scanned is not None and ingested is not None and ingested > scanned:
+        # Ingesting what was never scanned is not a large number; it is a
+        # broken relationship between two counters.
+        faults.append("pairs_ingested:exceeds_scanned")
+        counters["pairs_ingested"] = None
+    return counters, faults
+
+
+def _validate_adapter_artifact(
+    path: Path, *, expected_base_fingerprint: str = ""
+) -> AdapterVerdict:
+    """Prove a directory is an attachable adapter before live weights change.
+
+    CP126 d665aa64: admission was ``is_dir()``. Any directory — a
+    half-finished training output, an empty scratch folder, a symlink to
+    somewhere else entirely — was handed to the resident worker as an adapter,
+    and the failure surfaced inside the process holding twenty gigabytes of
+    live weights.
+
+    When the adapter names the base checkpoint it was trained against AND the
+    caller supplies the resident one, a mismatch is refused here: LoRA deltas
+    are only meaningful against the weights they were fitted to, and attaching
+    them to different ones does not fail loudly — it quietly degrades every
+    answer the model gives afterwards.
+
+    When the caller cannot supply the resident fingerprint, the verdict says
+    ``declared_unverified`` rather than passing quietly. An unchecked
+    compatibility claim recorded as a checked one is the failure this whole
+    remediation keeps finding, and writing it into a new validator to make the
+    validator look thorough would be the same mistake with a fresh coat.
+    """
+    if not path.is_dir():
+        return AdapterVerdict(False, f"adapter_missing:{path}")
+
+    weight_path: Path | None = None
+    for name in _ADAPTER_WEIGHT_NAMES:
+        candidate = path / name
+        if candidate.is_file():
+            weight_path = candidate
+            break
+    if weight_path is None:
+        return AdapterVerdict(False, "adapter_missing_weights")
+    try:
+        weight_bytes = int(weight_path.stat().st_size)
+    except OSError as exc:
+        return AdapterVerdict(False, f"adapter_weights_unreadable:{type(exc).__name__}")
+    if weight_bytes <= 0:
+        return AdapterVerdict(False, "adapter_weights_empty")
+    if weight_bytes > _ADAPTER_MAX_BYTES:
+        return AdapterVerdict(False, f"adapter_weights_oversized:{weight_bytes}")
+
+    config: dict[str, Any] = {}
+    config_path = path / _ADAPTER_CONFIG_NAME
+    if config_path.is_file():
+        try:
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return AdapterVerdict(False, f"adapter_config_unreadable:{type(exc).__name__}")
+        if not isinstance(loaded, dict):
+            return AdapterVerdict(False, "adapter_config_not_an_object")
+        config = loaded
+
+    base_fingerprint = str(config.get("base_checkpoint_fingerprint") or "")
+    expected = str(expected_base_fingerprint or "")
+    if not base_fingerprint:
+        compatibility = "not_declared"
+    elif not expected:
+        compatibility = "declared_unverified"
+    elif base_fingerprint != expected:
+        return AdapterVerdict(
+            False,
+            f"adapter_base_mismatch:{base_fingerprint[:12]}!={expected[:12]}",
+            weight_file=weight_path.name,
+            weight_bytes=weight_bytes,
+            base_checkpoint_fingerprint=base_fingerprint,
+            fine_tune_type=str(config.get("fine_tune_type") or ""),
+            base_compatibility="mismatch",
+        )
+    else:
+        compatibility = "verified"
+    return AdapterVerdict(
+        True,
+        weight_file=weight_path.name,
+        weight_bytes=weight_bytes,
+        base_checkpoint_fingerprint=base_fingerprint,
+        fine_tune_type=str(config.get("fine_tune_type") or ""),
+        base_compatibility=compatibility,
+    )
+
+
 def _record_mlx_degradation(
     error: BaseException,
     *,
@@ -6098,6 +6262,15 @@ class MLXLocalClient:
         )
         if not acquired:
             return {**base, "status": "skipped_request_lane_busy"}
+        # CP126 9246b647: foreground ownership was tested at the top, then
+        # memory observation, budget normalisation and the request-lock wait
+        # all ran — every one of them an await. A person's turn could take
+        # foreground ownership anywhere in that window and maintenance would
+        # still win the lane and start a bounded worker job the user's request
+        # then had to cancel. Re-test now that the lane is actually held.
+        if _foreground_owner_active():
+            self._release_request_lock()
+            return {**base, "status": "skipped_foreground_active_after_lane"}
 
         future: SharedFuture | None = None
         request_id = ""
@@ -6162,13 +6335,29 @@ class MLXLocalClient:
                     "status": "worker_error",
                     "reason": str(response.get("message") or "unknown"),
                 }
+            # CP126 8264628d: these were int(...) straight off the wire, so a
+            # malformed value RAISED out of a maintenance call, and negative,
+            # absurd or mutually inconsistent counts were accepted as
+            # measurements — more pairs ingested than scanned, more scanned
+            # than the scan budget allowed. A counter that cannot be true is
+            # not a smaller number; it is not a measurement at all.
+            counters, counter_faults = _bounded_maintenance_counters(
+                response,
+                max_pairs=bounded_max_pairs,
+                scan_limit=bounded_scan_limit,
+                max_positions=bounded_max_positions,
+            )
+            if counter_faults:
+                _record_mlx_degradation(
+                    ValueError(f"maintenance counters out of contract: {counter_faults}"),
+                    action="reported maintenance counters as unmeasured after the worker's disagreed",
+                    severity="warning",
+                )
             return {
                 **base,
                 "status": str(response.get("state") or "complete"),
-                "pairs_considered": int(response.get("pairs_considered") or 0),
-                "pairs_scanned": int(response.get("pairs_scanned") or 0),
-                "pairs_ingested": int(response.get("pairs_ingested") or 0),
-                "positions_ingested": int(response.get("positions_ingested") or 0),
+                **counters,
+                "counter_faults": counter_faults,
             }
         except asyncio.CancelledError:
             if future is not None:
@@ -6223,11 +6412,35 @@ class MLXLocalClient:
             return {"ok": False, "reason": "worker_not_ready"}
         if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
             return {"ok": False, "reason": "generation_active"}
-        adapter_exists = (
-            await asyncio.to_thread(lambda: Path(path).expanduser().is_dir()) if path else True
-        )
+        adapter_verdict: AdapterVerdict | None = None
+        if path:
+            adapter_verdict = await asyncio.to_thread(
+                _validate_adapter_artifact,
+                Path(path).expanduser(),
+                # The resident checkpoint's training-pipeline fingerprint is
+                # not something this client measures — the worker identity
+                # carries a source sha and a model path, not the digest an
+                # adapter's base_checkpoint_fingerprint is computed against.
+                # So compatibility comes back "declared_unverified" and says
+                # so, rather than passing a key that is always absent and
+                # calling the resulting silence a check.
+                expected_base_fingerprint="",
+            )
+            adapter_exists = adapter_verdict.ok
+        else:
+            adapter_exists = True
         if not adapter_exists:
-            return {"ok": False, "reason": f"adapter_missing:{path}"}
+            reason = (
+                adapter_verdict.reason
+                if adapter_verdict is not None and adapter_verdict.reason
+                else f"adapter_missing:{path}"
+            )
+            logger.warning("🧬 [MLX] Refused adapter attach for %s: %s", path, reason)
+            return {
+                "ok": False,
+                "reason": reason,
+                **(adapter_verdict.as_receipt() if adapter_verdict is not None else {}),
+            }
 
         # Re-check after the filesystem await. The check above is a
         # time-of-check/time-of-use race: it reads the counter, then this

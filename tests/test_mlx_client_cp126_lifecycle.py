@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import time
 from types import SimpleNamespace
 
@@ -558,10 +559,208 @@ class TestBatchBudgetAndAdapterCancellation:
         import tempfile
 
         with tempfile.TemporaryDirectory() as adapter_dir:
+            root = pathlib.Path(adapter_dir)
+            (root / "adapters.safetensors").write_bytes(b"\x00" * 64)
+            (root / "adapter_config.json").write_text('{"fine_tune_type": "lora"}')
             with pytest.raises(asyncio.CancelledError):
-                await client.set_expert_adapter(adapter_dir)
+                await client.set_expert_adapter(str(root))
 
         # The command is on the worker's queue; the caller going away does not
         # stop it from attaching.
         assert client._expert_adapter_state_unknown is True
         assert client._pending_generations == {}
+
+
+class TestAdapterArtifactContract:
+    """CP126 d665aa64: admission was is_dir()."""
+
+    def _adapter(self, root, name, *, weights=True, config=None):
+        from json import dumps
+
+        path = root / name
+        path.mkdir()
+        if weights:
+            (path / "adapters.safetensors").write_bytes(b"\x00" * 128)
+        if config is not None:
+            (path / "adapter_config.json").write_text(dumps(config))
+        return path
+
+    def test_a_real_adapter_validates(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        v = _validate_adapter_artifact(
+            self._adapter(tmp_path, "good", config={"fine_tune_type": "lora"})
+        )
+        assert v.ok
+        assert v.weight_file == "adapters.safetensors"
+        assert v.fine_tune_type == "lora"
+        assert v.base_compatibility == "not_declared"
+
+    def test_an_empty_directory_is_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        v = _validate_adapter_artifact(self._adapter(tmp_path, "empty", weights=False))
+        assert not v.ok and v.reason == "adapter_missing_weights"
+
+    def test_zero_byte_weights_are_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = tmp_path / "hollow"
+        path.mkdir()
+        (path / "adapters.safetensors").write_bytes(b"")
+        assert _validate_adapter_artifact(path).reason == "adapter_weights_empty"
+
+    def test_an_unreadable_config_is_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = self._adapter(tmp_path, "bad-config")
+        (path / "adapter_config.json").write_text("{nope")
+        assert _validate_adapter_artifact(path).reason.startswith(
+            "adapter_config_unreadable"
+        )
+
+    def test_a_mismatched_base_checkpoint_is_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = self._adapter(
+            tmp_path, "foreign", config={"base_checkpoint_fingerprint": "a" * 64}
+        )
+        v = _validate_adapter_artifact(path, expected_base_fingerprint="b" * 64)
+        assert not v.ok
+        assert v.reason.startswith("adapter_base_mismatch")
+        assert v.base_compatibility == "mismatch"
+
+    def test_a_matching_base_checkpoint_is_verified(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = self._adapter(
+            tmp_path, "matched", config={"base_checkpoint_fingerprint": "a" * 64}
+        )
+        v = _validate_adapter_artifact(path, expected_base_fingerprint="a" * 64)
+        assert v.ok and v.base_compatibility == "verified"
+
+    def test_a_declared_base_with_nothing_to_compare_says_so(self, tmp_path):
+        """Unmeasured is not the same as fine."""
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = self._adapter(
+            tmp_path, "declared", config={"base_checkpoint_fingerprint": "a" * 64}
+        )
+        v = _validate_adapter_artifact(path)
+        assert v.ok and v.base_compatibility == "declared_unverified"
+
+    def test_the_singular_weight_filename_is_accepted(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_adapter_artifact
+
+        path = tmp_path / "cp796-shape"
+        path.mkdir()
+        (path / "adapter.safetensors").write_bytes(b"\x00" * 32)
+        v = _validate_adapter_artifact(path)
+        assert v.ok and v.weight_file == "adapter.safetensors"
+
+    @pytest.mark.asyncio
+    async def test_the_live_seam_refuses_a_bare_directory(self, client, tmp_path):
+        client._req_q = SimpleNamespace(put=lambda *a, **k: None)
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        res = await client.set_expert_adapter(str(bare))
+        assert res["ok"] is False
+        assert res["reason"] == "adapter_missing_weights"
+
+
+class TestMaintenanceCounterContract:
+    """CP126 8264628d: counters converted straight off the wire."""
+
+    def _counts(self, payload):
+        from core.brain.llm.mlx_client import _bounded_maintenance_counters
+
+        return _bounded_maintenance_counters(
+            payload, max_pairs=4, scan_limit=16, max_positions=96
+        )
+
+    def test_a_consistent_response_reads_cleanly(self):
+        counters, faults = self._counts(
+            {
+                "pairs_considered": 10,
+                "pairs_scanned": 8,
+                "pairs_ingested": 2,
+                "positions_ingested": 40,
+            }
+        )
+        assert faults == []
+        assert counters["pairs_ingested"] == 2
+
+    def test_a_malformed_counter_does_not_raise_into_the_caller(self):
+        counters, faults = self._counts({"pairs_scanned": "many"})
+        assert counters["pairs_scanned"] is None
+        assert "pairs_scanned:malformed" in faults
+
+    def test_a_negative_counter_is_unmeasured_not_clamped(self):
+        counters, faults = self._counts({"positions_ingested": -5})
+        assert counters["positions_ingested"] is None
+        assert "positions_ingested:negative" in faults
+
+    def test_a_counter_above_its_own_budget_is_refused(self):
+        counters, faults = self._counts({"pairs_ingested": 9999})
+        assert counters["pairs_ingested"] is None
+        assert "pairs_ingested:above_budget" in faults
+
+    def test_ingesting_more_than_was_scanned_breaks_the_relationship(self):
+        counters, faults = self._counts({"pairs_scanned": 1, "pairs_ingested": 3})
+        assert counters["pairs_ingested"] is None
+        assert "pairs_ingested:exceeds_scanned" in faults
+
+    def test_absent_is_unmeasured_and_not_zero(self):
+        """Zero means the worker measured none; None means we never found out."""
+        counters, faults = self._counts({})
+        assert all(value is None for value in counters.values())
+        assert all(fault.endswith(":absent") for fault in faults)
+
+    def test_a_measured_zero_stays_zero(self):
+        counters, faults = self._counts(
+            {
+                "pairs_considered": 0,
+                "pairs_scanned": 0,
+                "pairs_ingested": 0,
+                "positions_ingested": 0,
+            }
+        )
+        assert faults == []
+        assert counters == {
+            "pairs_considered": 0,
+            "pairs_scanned": 0,
+            "pairs_ingested": 0,
+            "positions_ingested": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_foreground_turn_arriving_during_the_wait_yields_the_lane(
+        self, client, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        client._init_done = True
+        client._req_q = SimpleNamespace(put=lambda *a, **k: None)
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        monkeypatch.setattr(
+            mod, "get_memory_pressure_snapshot",
+            lambda: SimpleNamespace(refuse_heavy_local_generation=False, reason=""),
+        )
+
+        owned = {"value": False}
+        monkeypatch.setattr(mod, "_foreground_owner_active", lambda: owned["value"])
+
+        real_acquire = client._acquire_request_lock
+
+        async def _acquire_then_person_arrives(**kwargs):
+            got = await real_acquire(**kwargs)
+            owned["value"] = True  # a person's turn takes the foreground
+            return got
+
+        monkeypatch.setattr(client, "_acquire_request_lock", _acquire_then_person_arrives)
+
+        res = await client.ingest_nonparametric_async()
+        assert res["status"] == "skipped_foreground_active_after_lane"
+        assert not client._request_lock.locked(), "the lane must be handed back"
