@@ -95,6 +95,18 @@ async def acceptance_preflight(
     return JSONResponse(result)
 
 
+@router.post("/acoustic/provision")
+async def provision_acoustic_acceptance_adapter(
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+) -> JSONResponse:
+    try:
+        result = await _service().provision_macos_acoustic_adapter()
+    except AcceptanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse(result, status_code=201)
+
+
 @router.post("/run")
 async def run_acceptance(
     payload: ScalarAcceptancePayload,
@@ -134,6 +146,7 @@ __all__ = [
     "acceptance_preflight",
     "acceptance_status",
     "precommit_acceptance_mandate",
+    "provision_acoustic_acceptance_adapter",
     "router",
     "run_acceptance",
 ]

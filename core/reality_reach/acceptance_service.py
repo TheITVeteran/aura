@@ -6,7 +6,7 @@ import asyncio
 import math
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +40,7 @@ _GIT_OID = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_HIL_COMPANION_CHANNELS = 63
 SourceIdentityProvider = Callable[[], Mapping[str, Any]]
+AcousticAdapterFactory = Callable[[], Awaitable[Any]]
 
 
 def capture_runtime_source_identity() -> Mapping[str, Any]:
@@ -179,6 +180,7 @@ class RealityAcceptanceService:
         store: AcceptanceCertificateStore | None = None,
         mandate_store: AcceptanceMandateStore | None = None,
         governed_executor: AcceptanceExecutor | None = None,
+        acoustic_adapter_factory: AcousticAdapterFactory | None = None,
         pinned_source_identity: Mapping[str, Any],
         source_identity_provider: SourceIdentityProvider | None = None,
     ) -> None:
@@ -196,6 +198,7 @@ class RealityAcceptanceService:
             "error_type": "" if mandate_store is not None else "mandate_store_unavailable",
         }
         self._governed_executor = governed_executor
+        self._acoustic_adapter_factory = acoustic_adapter_factory
         if not isinstance(pinned_source_identity, Mapping):
             raise TypeError("pinned_source_identity must be a mapping")
         self._pinned_source_identity = dict(pinned_source_identity)
@@ -262,6 +265,90 @@ class RealityAcceptanceService:
             "supported_evidence_classes": list(evidence_classes),
             **source,
             "trust_boundary": "producer_observation_not_independent_acceptance",
+        }
+
+    async def provision_macos_acoustic_adapter(self) -> dict[str, Any]:
+        """Attach the built-in reversible acoustic loop only on explicit demand."""
+
+        from core.embodiment.macos_acoustic_reality import (
+            ACOUSTIC_ADAPTER_ID,
+            MacOSAcousticRealityError,
+            build_macos_acoustic_reality_adapter,
+        )
+        from core.reality_reach.scalar_adapter import (
+            ScalarRealityAdapter,
+            ScalarTransportClass,
+        )
+
+        provisioned = False
+        async with self._lock:
+            if self._active_campaign_id:
+                raise AcceptanceError("acceptance_campaign_already_active")
+            adapter = self._reality.scalar_acceptance_adapter(ACOUSTIC_ADAPTER_ID)
+            if adapter is None:
+                factory = (
+                    self._acoustic_adapter_factory
+                    or build_macos_acoustic_reality_adapter
+                )
+                try:
+                    adapter = await factory()
+                except MacOSAcousticRealityError as exc:
+                    raise AcceptanceError(
+                        f"acceptance_acoustic_hardware_unavailable:{exc}"
+                    ) from exc
+                except (ImportError, OSError, RuntimeError, TimeoutError) as exc:
+                    raise AcceptanceError(
+                        "acceptance_acoustic_hardware_unavailable"
+                    ) from exc
+                if not isinstance(adapter, ScalarRealityAdapter):
+                    raise AcceptanceError("acceptance_acoustic_adapter_invalid")
+                if adapter.transport_class is not ScalarTransportClass.PHYSICAL:
+                    raise AcceptanceError("acceptance_acoustic_adapter_not_physical")
+                if adapter.adapter_id != ACOUSTIC_ADAPTER_ID:
+                    raise AcceptanceError("acceptance_acoustic_adapter_identity_invalid")
+                self._reality.register_adapter(adapter)
+                provisioned = True
+        result = await self.preflight(ACOUSTIC_ADAPTER_ID)
+        readings = tuple(adapter.read())
+        baseline_reading = next(
+            (
+                reading
+                for reading in readings
+                if isinstance(reading.value, (int, float))
+                and not isinstance(reading.value, bool)
+            ),
+            None,
+        )
+        baseline = (
+            float(baseline_reading.value)
+            if baseline_reading is not None
+            else math.nan
+        )
+        recommended_target = (
+            min(-18.0, baseline + 12.0) if math.isfinite(baseline) else math.nan
+        )
+        signal_margin = recommended_target - baseline
+        campaign_blockers: list[str] = []
+        if not math.isfinite(baseline):
+            campaign_blockers.append("acoustic_baseline_unavailable")
+        elif signal_margin < 8.0:
+            campaign_blockers.append("acoustic_signal_margin_insufficient")
+        return {
+            **result,
+            "provisioned": provisioned,
+            "campaign_ready": bool(result["ready"] and not campaign_blockers),
+            "campaign_blockers": campaign_blockers,
+            "stimulus": {
+                "frequency_hz": 997.0,
+                "baseline_dbfs": baseline if math.isfinite(baseline) else None,
+                "recommended_target_dbfs": (
+                    recommended_target if math.isfinite(recommended_target) else None
+                ),
+                "required_signal_margin_db": 8.0,
+                "raw_audio_retained": False,
+                "maximum_output_amplitude": 0.08,
+                "restoration": "silence_then_independent_microphone_readback",
+            },
         }
 
     async def precommit(

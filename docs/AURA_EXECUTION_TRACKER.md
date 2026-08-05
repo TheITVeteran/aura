@@ -36255,3 +36255,43 @@ This closes the software path for externally timestamped evidence. No public
 Rekor entry, independent custodian signature, or representative hardware/tenant
 campaign has been produced in this checkpoint, so those empirical claims remain
 open. CP810 and the total therefore remain open at 809/920.
+
+#### CP810 addendum: representative built-in hardware candidate
+
+Aura now has a real, reversible machine-local candidate for the representative
+physical campaign rather than requiring an operator to own separate lab or IoT
+hardware. The macOS acoustic adapter emits a short, amplitude-bounded 997 Hz
+reference tone through the selected speaker and measures that exact component
+through the microphone using sine/cosine lock-in detection. The command and
+observation paths are therefore physically separated. Broadband ambient noise
+does not satisfy the narrow-band effect predicate, raw audio is never retained,
+device names are only exposed through digests in receipts, writes are
+idempotent, adaptive control is attempt- and amplitude-bounded, and recovery
+returns to silence followed by a fresh microphone readback.
+
+The adapter is not opened at boot and cannot prompt for microphone access or
+emit sound accidentally. An authenticated internal-only
+`POST /api/reality-reach/acceptance/acoustic/provision` surface performs the
+hardware query and silent baseline only on explicit use, registers the physical
+scalar adapter exactly once, and returns its source/device identity, live
+observation channel, baseline, recommended target, required signal margin,
+bounded stimulus contract, and campaign blockers. It is protected from paired
+devices like the mandate and execution routes. The resulting adapter uses the
+same mandate, Will/ActionExecutor, enclosing metrology, dual-root witness,
+transparency, rollback, and independent replay paths as every other physical
+connector; it is not a campaign-specific verifier bypass.
+
+Candidate evidence:
+
+- adaptive physical control, narrow-band readback, idempotency, silence
+  restoration, unreachable-target refusal, physical identity, runtime
+  provisioning idempotency, readiness admission, route authentication, and
+  protected-path tests: 58/58 passed;
+- full affected Reality Reach and service family: 469/469 passed;
+- smoke 103/103, compile, Ruff, diff hygiene, and scoped production MyPy passed.
+
+No audible stimulus or microphone capture was performed while the resident 32B
+training process owned the host. The real device run, two genuinely independent
+custodian signatures, public Rekor inclusion, and representative tenant replay
+remain empirical requirements. CP810 and the total therefore remain open at
+809/920.

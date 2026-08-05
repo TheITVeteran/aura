@@ -42,6 +42,12 @@ class _Service:
             }
         }
 
+    async def provision_macos_acoustic_adapter(self) -> dict[str, Any]:
+        return {
+            "adapter_id": "macos_acoustic.macos.acoustic.reference_tone_dbfs.adapter",
+            "provisioned": True,
+        }
+
 
 def _payload() -> routes.ScalarAcceptancePayload:
     return routes.ScalarAcceptancePayload(
@@ -62,6 +68,7 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         if isinstance(route, APIRoute)
     }
     assert set(acceptance_routes) == {
+        "/reality-reach/acceptance/acoustic/provision",
         "/reality-reach/acceptance/preflight",
         "/reality-reach/acceptance/mandate",
         "/reality-reach/acceptance/status",
@@ -73,6 +80,21 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         assert routes._verify_token in dependencies
     assert "/api/reality-reach/acceptance/mandate" in PROTECTED_LOCAL_POST_PATHS
     assert "/api/reality-reach/acceptance/run" in PROTECTED_LOCAL_POST_PATHS
+    assert (
+        "/api/reality-reach/acceptance/acoustic/provision"
+        in PROTECTED_LOCAL_POST_PATHS
+    )
+
+
+@pytest.mark.asyncio
+async def test_acoustic_provision_route_is_explicit_and_owner_guarded(monkeypatch) -> None:
+    service = _Service()
+    monkeypatch.setattr(routes.ServiceContainer, "get", lambda *_args, **_kwargs: service)
+
+    response = await routes.provision_acoustic_acceptance_adapter(None, None)
+
+    assert response.status_code == 201
+    assert b"macos_acoustic" in response.body
 
 
 @pytest.mark.asyncio

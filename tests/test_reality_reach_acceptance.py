@@ -11,6 +11,10 @@ from typing import Any
 
 import pytest
 
+from core.embodiment.macos_acoustic_reality import (
+    ACOUSTIC_ADAPTER_ID,
+    ACOUSTIC_RESOURCE_ID,
+)
 from core.reality_reach.acceptance import (
     REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceCaseResult,
@@ -146,6 +150,72 @@ class _MandateStore:
 
     def close(self) -> None:
         return None
+
+
+@pytest.mark.asyncio
+async def test_operational_service_provisions_builtin_acoustic_adapter_once(
+    tmp_path,
+) -> None:
+    transport = _Transport()
+    initial = await transport.read_scalar(ACOUSTIC_RESOURCE_ID)
+    adapter = ScalarRealityAdapter(
+        transport,
+        ScalarResourceProfile(
+            resource_id=ACOUSTIC_RESOURCE_ID,
+            observable="reference_tone_level",
+            unit="dbfs",
+            domain=NumericDomain(-100.0, -10.0),
+            resolution=0.5,
+            tolerance=2.0,
+            writable=True,
+            physical_identity_sha256=_digest("acoustic.fixture"),
+            owner="tests.reality_reach_acceptance",
+            protocol="macos_acoustic",
+            safe_value=-80.0,
+            readback_distinct_from_command=True,
+        ),
+        initial_sample=replace(initial, value=-80.0),
+        transport_class=ScalarTransportClass.PHYSICAL,
+    )
+    assert adapter.adapter_id == ACOUSTIC_ADAPTER_ID
+    calls = 0
+
+    async def factory() -> ScalarRealityAdapter:
+        nonlocal calls
+        calls += 1
+        return adapter
+
+    source_identity = {
+        "identity_bound": True,
+        "source_commit": "a" * 40,
+        "source_dirty": False,
+        "workspace_state_sha256": "b" * 64,
+    }
+    reality = RealityReachService(session_id="acceptance.acoustic.session")
+    metrology = RealityMetrologyService(reality, state_path=tmp_path / "metrology.json")
+    await metrology.start()
+    service = RealityAcceptanceService(
+        reality,
+        metrology,
+        mandate_store=_MandateStore(),
+        acoustic_adapter_factory=factory,
+        pinned_source_identity=source_identity,
+        source_identity_provider=lambda: source_identity,
+    )
+
+    first = await service.provision_macos_acoustic_adapter()
+    second = await service.provision_macos_acoustic_adapter()
+
+    assert first["provisioned"] is True
+    assert second["provisioned"] is False
+    assert first["adapter_id"] == ACOUSTIC_ADAPTER_ID
+    assert first["transport_class"] == "physical"
+    assert first["campaign_ready"] is True
+    assert first["campaign_blockers"] == []
+    assert first["stimulus"]["baseline_dbfs"] == -80.0
+    assert first["stimulus"]["recommended_target_dbfs"] == -68.0
+    assert first["stimulus"]["raw_audio_retained"] is False
+    assert calls == 1
 
 
 def _proxy(delegate: _Transport | None = None) -> FaultInjectingScalarTransport:
