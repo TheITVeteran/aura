@@ -4864,6 +4864,20 @@ class MLXLocalClient:
 
             await asyncio.sleep(min(0.05, max(0.0, wait_deadline - loop.time())))
 
+        # Bind the observation to an IDENTITY, not just an age.
+        #
+        # Everything below decides whether to cancel the in-flight generation
+        # because the holder has been slow. The holder can release, and a new
+        # request can become current, between measuring the age here and
+        # cancelling further down — and the cancel used to re-read
+        # _current_gen_future at that moment, so it killed whichever request
+        # happened to be running by then. A caller was preempted for another
+        # request's slowness.
+        #
+        # Capturing the victim here lets the cancel below refuse unless it is
+        # still the same generation that was measured.
+        victim_future = self._current_gen_future
+        victim_request_id = str(getattr(self, "_current_request_id", "") or "")
         holder = self._request_lock_owner_label or "another_request"
         holder_age = (
             max(0.0, time.time() - self._request_lock_acquired_at)
@@ -4914,8 +4928,29 @@ class MLXLocalClient:
                     )
                     self._deferred_reboot_reason = "recoverable_foreground_preemption_slow_holder"
                 try:
+                    # Compare-and-cancel. Only the generation whose slowness
+                    # was actually measured may be cancelled; if the lane has
+                    # moved on, the new holder is innocent and preempting it
+                    # would be the very fault this is meant to fix.
                     stuck_future = self._current_gen_future
-                    if stuck_future is not None:
+                    current_request_id = str(
+                        getattr(self, "_current_request_id", "") or ""
+                    )
+                    if stuck_future is None or stuck_future is not victim_future:
+                        logger.info(
+                            "🛡️ [MLX] Holder changed during preemption "
+                            "(%s -> %s); leaving the new generation alone.",
+                            victim_request_id or "unknown",
+                            current_request_id or "none",
+                        )
+                    elif victim_request_id and current_request_id != victim_request_id:
+                        logger.info(
+                            "🛡️ [MLX] Request id changed during preemption "
+                            "(%s -> %s); leaving the new generation alone.",
+                            victim_request_id,
+                            current_request_id or "none",
+                        )
+                    else:
                         _cancel_shared_future(stuck_future)
                 except (RuntimeError, AttributeError) as exc:
                     logger.debug(
