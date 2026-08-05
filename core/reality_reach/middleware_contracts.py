@@ -21,6 +21,10 @@ class RealityMiddlewareError(RuntimeError):
     """A typed endpoint, lifecycle, deadline, or recovery contract failed."""
 
 
+class PhysicalEffectIndeterminateError(RealityMiddlewareError):
+    """A command may have reached hardware but its final effect is unproven."""
+
+
 def canonical_identifier(value: str, *, name: str) -> str:
     normalized = str(value or "").strip().lower()
     if not _IDENTIFIER.fullmatch(normalized):
@@ -519,6 +523,7 @@ __all__ = [
     "INFLIGHT_ACTION_STATES",
     "ManagedAdapterDeclaration",
     "ManagedRealityAdapter",
+    "PhysicalEffectIndeterminateError",
     "RealityMiddlewareError",
     "RestartPolicy",
     "ServiceEndpoint",

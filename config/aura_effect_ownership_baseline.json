@@ -6121,6 +6121,14 @@
       "scope": "<module>.RestSmartPlug._status_request"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_websocket",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/embodiment/ros2_connector.py",
+      "scope": "<module>.RosbridgeWebSocketTransport.connect"
+    },
+    {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -14489,6 +14497,14 @@
       "scope": "<module>._port_open"
     },
     {
+      "callee": "websockets.connect",
+      "canonical_owner": true,
+      "category": "raw_network",
+      "count": 1,
+      "path": "core/runtime/network_gateway.py",
+      "scope": "<module>.NetworkGateway.connect_websocket"
+    },
+    {
       "callee": "urllib.request.build_opener",
       "canonical_owner": true,
       "category": "raw_network",
@@ -16010,6 +16026,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e3905da742386660ea67c51f29137d60d55d7b21824594232874e334a053457b",
+  "inventory_sha256": "12b43eff62db161557dbb7a21a8940ceea573a94ba43a009c8a5c76d30d7680f",
   "schema_version": 1
 }

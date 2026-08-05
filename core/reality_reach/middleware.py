@@ -37,6 +37,7 @@ from core.reality_reach.middleware_contracts import (
     ActionState,
     ManagedAdapterDeclaration,
     ManagedRealityAdapter,
+    PhysicalEffectIndeterminateError,
     RealityMiddlewareError,
     RestartPolicy,
     ServiceEndpoint,
@@ -656,6 +657,10 @@ class RealityMiddlewareRuntime(RealityServiceLane):
                 record.state = ActionState.INTERRUPTED
                 record.recovery_required = True
             raise
+        except PhysicalEffectIndeterminateError as exc:
+            record.state = ActionState.INDETERMINATE
+            record.recovery_required = True
+            record.error = f"{type(exc).__name__}:{exc}"[:1024]
         except Exception as exc:  # noqa: BLE001 - adapter boundary becomes a durable result
             record.state = ActionState.ABORTED
             record.error = f"{type(exc).__name__}:{exc}"[:1024]
@@ -957,6 +962,7 @@ __all__ = [
     "ActionState",
     "ManagedAdapterDeclaration",
     "ManagedRealityAdapter",
+    "PhysicalEffectIndeterminateError",
     "RealityMiddlewareError",
     "RealityMiddlewareRuntime",
     "RestartPolicy",

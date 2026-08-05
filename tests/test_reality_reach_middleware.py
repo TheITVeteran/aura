@@ -23,6 +23,7 @@ from core.reality_reach.middleware import (
     ActionRecord,
     ActionState,
     ManagedAdapterDeclaration,
+    PhysicalEffectIndeterminateError,
     RealityMiddlewareError,
     RealityMiddlewareRuntime,
     ServiceEndpoint,
@@ -471,6 +472,31 @@ async def test_action_cannot_succeed_without_effect_verification(tmp_path: Path)
     final = await _wait_terminal(runtime, "goal.unverified")
     assert final["state"] == "aborted"
     assert "effect_verified=true" in final["error"]
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unproven_physical_effect_requires_reconciliation(tmp_path: Path) -> None:
+    class IndeterminateAdapter(ManagedAdapter):
+        async def execute_action(self, endpoint_id, request, context):
+            del endpoint_id, request, context
+            raise PhysicalEffectIndeterminateError(
+                "command accepted but independent readback timed out"
+            )
+
+    runtime, _adapter, _qos, _service = await _runtime(
+        tmp_path,
+        adapter=IndeterminateAdapter(),
+    )
+    await runtime.start_action("test.move", {}, goal_id="goal.indeterminate")
+
+    final = await _wait_terminal(runtime, "goal.indeterminate")
+
+    assert final["state"] == "indeterminate"
+    assert final["recovery_required"] is True
+    assert "independent readback timed out" in final["error"]
+    with pytest.raises(RealityMiddlewareError, match="requiring reconciliation"):
+        await runtime.start_action("test.move", {}, goal_id="goal.blocked")
     await runtime.shutdown()
 
 

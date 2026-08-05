@@ -269,6 +269,71 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
+    rosbridge_url = str(os.getenv("AURA_ROSBRIDGE_URL") or "").strip()
+    rosbridge_manifest = str(
+        os.getenv("AURA_ROSBRIDGE_NODE_MANIFEST_JSON") or ""
+    ).strip()
+    rosbridge_installation = str(
+        os.getenv("AURA_ROSBRIDGE_INSTALLATION_ID") or ""
+    ).strip()
+    rosbridge_present = bool(
+        rosbridge_url or rosbridge_manifest or rosbridge_installation
+    )
+    if not rosbridge_present:
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="ros2.rosbridge",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not rosbridge_url or not rosbridge_manifest or not rosbridge_installation:
+        missing = [
+            name
+            for name, value in (
+                ("AURA_ROSBRIDGE_URL", rosbridge_url),
+                ("AURA_ROSBRIDGE_NODE_MANIFEST_JSON", rosbridge_manifest),
+                ("AURA_ROSBRIDGE_INSTALLATION_ID", rosbridge_installation),
+            )
+            if not value
+        ]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="ros2.rosbridge",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.ros2_connector import (
+                build_configured_ros2_connector,
+            )
+
+            connector = build_configured_ros2_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="ros2.rosbridge",
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
     return RealityConnectorCatalog(tuple(connectors), tuple(statuses))
 
 
