@@ -484,6 +484,9 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
     assert verified.blockers == ()
     assert verified.campaign_id == record.campaign_id
     assert verified.preregistration_verification_sha256 == preregistration.sha256
+    assert (
+        replace(verified, preregistration_verification_sha256="").accepted is False
+    )
     assert missing_preregistration.accepted is False
     assert "acceptance_preregistration_missing" in missing_preregistration.blockers
     assert shared_root.accepted is False

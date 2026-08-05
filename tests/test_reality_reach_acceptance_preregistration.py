@@ -18,6 +18,7 @@ from cryptography.x509.oid import NameOID
 
 from core.reality_reach.acceptance import AcceptanceEvidenceClass
 from core.reality_reach.acceptance_mandate import (
+    AcceptanceMandateError,
     AcceptanceMandateProvisionReceipt,
     AcceptanceVerificationMandate,
 )
@@ -370,6 +371,12 @@ def test_preregistration_proves_mandate_predates_campaign(
     assert late.blockers == (
         "acceptance_preregistration_not_strictly_before_campaign",
     )
+    reconstructed_late = replace(
+        verified,
+        rekor_integrated_time=campaign_started_at_ns // 1_000_000_000,
+    )
+    assert reconstructed_late.strictly_predates_campaign is False
+    assert reconstructed_late.accepted is False
     assert missing.accepted is False
     assert missing.blockers == ("acceptance_transparency_bundle_missing",)
 
@@ -408,5 +415,5 @@ def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
         )
     attacked = provision_receipt.to_dict()
     attacked["custody_sequence"] = 8
-    with pytest.raises(Exception, match="provision_receipt_digest_invalid"):
+    with pytest.raises(AcceptanceMandateError, match="provision_receipt_digest_invalid"):
         AcceptanceMandateProvisionReceipt.from_dict(attacked)

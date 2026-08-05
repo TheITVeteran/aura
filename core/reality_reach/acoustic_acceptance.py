@@ -563,6 +563,7 @@ class ExternallyWitnessedAcousticA1Receipt:
     def accepted(self) -> bool:
         return bool(
             not self.blockers
+            and self.preregistration_verification_sha256
             and self.metrology_witness_bundle_sha256
             and self.governance_witness_bundle_sha256
             and self.metrology_witness_key_sha256
@@ -638,8 +639,8 @@ def verify_acoustic_a1_with_external_witnesses(
     mandate: AcceptanceVerificationMandate,
     *,
     preregistration_receipt: PreregisteredAcceptanceReceipt | None,
-    metrology_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
-    governance_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
+    metrology_witness_bundle: AcceptanceWitnessBundle | Mapping[str, Any] | None,
+    governance_witness_bundle: AcceptanceWitnessBundle | Mapping[str, Any] | None,
     metrology_witness_key_sha256: str,
     governance_witness_key_sha256: str,
     metrology_sequence: int = 1,
@@ -660,8 +661,7 @@ def verify_acoustic_a1_with_external_witnesses(
         not preregistration_receipt.accepted
         or preregistration_receipt.mandate.sha256 != mandate.sha256
         or preregistration_receipt.campaign_started_at_ns != record.started_at_ns
-        or preregistration_receipt.rekor_integrated_time
-        >= record.started_at_ns // 1_000_000_000
+        or not preregistration_receipt.strictly_predates_campaign
     ):
         blockers.append("acceptance_preregistration_binding_invalid")
     else:

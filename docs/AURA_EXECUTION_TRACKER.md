@@ -36567,3 +36567,46 @@ Preregistration evidence:
 This removes the post-hoc-question loophole for A1 and supplies the missing
 cross-host preregistration artifact. No real production preregistration or
 campaign has yet been published, so empirical CP810 remains open at 809/920.
+
+#### CP810 addendum: universal physical-campaign preregistration
+
+The portable pre-campaign proof is now a property of every physical Reality
+Reach acceptance path, not a protocol-specific A1 exception. Scalar HIL and
+live witness-statement preparation reload the immutable campaign certificate
+and independently verify the exact public preregistration against its start
+time before emitting bytes for either external custodian. Scalar transparency
+preparation and the independent verifier repeat that verification from raw
+provision-receipt, Rekor-bundle, and pinned-log-key inputs and bind the
+resulting preregistration-verification digest into the promoted receipt.
+Simulation campaigns remain outside this physical-evidence burden and retain
+their existing deterministic replay path.
+
+The preregistration receipt now carries its temporal-ordering invariant as a
+derived property. Its accepted verdict requires the public log's
+second-resolution timestamp to strictly predate the campaign, so a manually
+reconstructed or deserialized receipt cannot become accepted merely by
+omitting the verifier's blocker. Both scalar and A1 externally witnessed
+receipt types also require a non-empty preregistration-verification digest for
+acceptance. This closes direct-construction bypasses in addition to the normal
+operator path.
+
+Universal-preregistration evidence:
+
+- scalar live witness preparation refuses to emit a statement without the
+  preregistration inputs and binds the verified proof to the certificate's
+  exact start time; direct receipt construction without the proof digest and
+  same-second or post-start timestamps remain non-accepted;
+- focused preregistration, scalar witness, A1 witness, transparency, service,
+  and macOS acoustic suites passed 76/76; the complete affected Reality Reach,
+  transaction, route, middleware, scalar-adapter, and acoustic family passed
+  185/185;
+- smoke passed 103/103 under Aura's pinned virtualenv interpreter; full
+  repository compilation, governance ownership baseline, architectural
+  layering, local security, Ruff, diff hygiene, and scoped production MyPy
+  passed.
+
+This removes the weaker scalar physical-promotion path identified in the prior
+checkpoint. It still does not manufacture independent production keys,
+publish a real pre-campaign Rekor entry, actuate real hardware, or provide
+representative tenant/device replays. Those remain empirical CP810 blockers,
+so the total remains open at 809/920.

@@ -245,7 +245,19 @@ class PreregisteredAcceptanceReceipt:
 
     @property
     def accepted(self) -> bool:
-        return bool(self.transparency_bundle_sha256 and not self.blockers)
+        return bool(
+            self.transparency_bundle_sha256
+            and not self.blockers
+            and self.strictly_predates_campaign
+        )
+
+    @property
+    def strictly_predates_campaign(self) -> bool:
+        """Return whether the public log's second-resolution time is pre-start."""
+
+        return self.rekor_integrated_time < (
+            self.campaign_started_at_ns // 1_000_000_000
+        )
 
     @property
     def sha256(self) -> str:
@@ -262,6 +274,7 @@ class PreregisteredAcceptanceReceipt:
             "rekor_log_index": self.rekor_log_index,
             "rekor_integrated_time": self.rekor_integrated_time,
             "campaign_started_at_ns": self.campaign_started_at_ns,
+            "strictly_predates_campaign": self.strictly_predates_campaign,
             "blockers": list(self.blockers),
             "accepted": self.accepted,
         }

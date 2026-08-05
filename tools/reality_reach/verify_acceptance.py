@@ -21,8 +21,10 @@ from core.reality_reach.acceptance import (  # noqa: E402
 from core.reality_reach.acceptance_mandate import (  # noqa: E402
     AcceptanceMandateProvisionReceipt,
     AcceptanceMandateStore,
+    AcceptanceVerificationMandate,
 )
 from core.reality_reach.acceptance_preregistration import (  # noqa: E402
+    PreregisteredAcceptanceReceipt,
     verify_acceptance_preregistration,
 )
 from core.reality_reach.acceptance_transparency import (  # noqa: E402
@@ -91,6 +93,51 @@ def _read_bytes(path: Path, *, maximum: int) -> bytes:
     return payload
 
 
+def _verified_preregistration(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    mandate: AcceptanceVerificationMandate,
+    *,
+    campaign_started_at_ns: int,
+) -> PreregisteredAcceptanceReceipt:
+    required = {
+        "--preregistration-provision-receipt": args.preregistration_provision_receipt,
+        "--preregistration-bundle": args.preregistration_bundle,
+        "--preregistration-log-public-key-pem": (
+            args.preregistration_log_public_key_pem
+        ),
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        parser.error("physical acceptance verification requires: " + ", ".join(missing))
+    provision_document = _read_json(args.preregistration_provision_receipt)
+    raw_provision = provision_document.get("provision_receipt", provision_document)
+    if not isinstance(raw_provision, Mapping):
+        raise ValueError("acceptance_preregistration_provision_receipt_invalid")
+    receipt = verify_acceptance_preregistration(
+        mandate,
+        AcceptanceMandateProvisionReceipt.from_dict(raw_provision),
+        transparency_bundle=_read_json(args.preregistration_bundle),
+        trusted_log_public_key_pem=_read_bytes(
+            args.preregistration_log_public_key_pem,
+            maximum=64 * 1024,
+        ),
+        campaign_started_at_ns=campaign_started_at_ns,
+        expected_sequence=args.preregistration_sequence,
+        expected_previous_statement_sha256=(
+            args.preregistration_previous_statement_sha256
+        ),
+        expected_previous_rekor_uuid=args.preregistration_previous_rekor_uuid,
+        minimum_log_index=args.preregistration_minimum_log_index,
+        minimum_integrated_time=args.preregistration_minimum_integrated_time,
+    )
+    if not receipt.accepted:
+        raise ValueError(
+            "acceptance_preregistration_rejected:" + ",".join(receipt.blockers)
+        )
+    return receipt
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
@@ -155,53 +202,11 @@ def main(argv: list[str] | None = None) -> int:
         mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
         try:
             mandate = mandate_store.get(args.campaign_id)
-            required_preregistration = {
-                "--preregistration-provision-receipt": (
-                    args.preregistration_provision_receipt
-                ),
-                "--preregistration-bundle": args.preregistration_bundle,
-                "--preregistration-log-public-key-pem": (
-                    args.preregistration_log_public_key_pem
-                ),
-            }
-            missing = [
-                name
-                for name, value in required_preregistration.items()
-                if value is None
-            ]
-            if missing:
-                parser.error(
-                    "acoustic A1 verification requires: " + ", ".join(missing)
-                )
-            provision_document = _read_json(args.preregistration_provision_receipt)
-            raw_provision = provision_document.get(
-                "provision_receipt",
-                provision_document,
-            )
-            if not isinstance(raw_provision, Mapping):
-                raise ValueError(
-                    "acceptance_preregistration_provision_receipt_invalid"
-                )
-            preregistration = verify_acceptance_preregistration(
+            preregistration = _verified_preregistration(
+                args,
+                parser,
                 mandate,
-                AcceptanceMandateProvisionReceipt.from_dict(raw_provision),
-                transparency_bundle=_read_json(args.preregistration_bundle),
-                trusted_log_public_key_pem=_read_bytes(
-                    args.preregistration_log_public_key_pem,
-                    maximum=64 * 1024,
-                ),
                 campaign_started_at_ns=record.started_at_ns,
-                expected_sequence=args.preregistration_sequence,
-                expected_previous_statement_sha256=(
-                    args.preregistration_previous_statement_sha256
-                ),
-                expected_previous_rekor_uuid=(
-                    args.preregistration_previous_rekor_uuid
-                ),
-                minimum_log_index=args.preregistration_minimum_log_index,
-                minimum_integrated_time=(
-                    args.preregistration_minimum_integrated_time
-                ),
             )
             acoustic_external_receipt = verify_acoustic_a1_with_external_witnesses(
                 record,
@@ -272,10 +277,25 @@ def main(argv: list[str] | None = None) -> int:
             mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
             try:
                 mandate = mandate_store.get(args.campaign_id)
+                scalar_preregistration = (
+                    _verified_preregistration(
+                        args,
+                        parser,
+                        mandate,
+                        campaign_started_at_ns=certificate.started_at_ns,
+                    )
+                    if mandate.expected_evidence_class
+                    in {
+                        AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+                        AcceptanceEvidenceClass.LIVE,
+                    }
+                    else None
+                )
                 external_receipt = verify_acceptance_with_external_witnesses(
                     certificate,
                     evidence,
                     mandate,
+                    preregistration_receipt=scalar_preregistration,
                     metrology_witness_bundle=(
                         _read_json(args.metrology_witness_bundle)
                         if args.metrology_witness_bundle is not None

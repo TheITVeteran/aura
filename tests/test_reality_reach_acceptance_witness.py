@@ -22,11 +22,18 @@ from core.reality_reach.acceptance import (
     ACCEPTANCE_GOVERNANCE_SCHEMA,
     REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceCaseResult,
+    AcceptanceCertificateStore,
     AcceptanceEvidenceClass,
     AcceptanceVerdict,
     ConnectorAcceptanceCertificate,
 )
-from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_mandate import (
+    AcceptanceMandateProvisionReceipt,
+    AcceptanceVerificationMandate,
+)
+from core.reality_reach.acceptance_preregistration import (
+    PreregisteredAcceptanceReceipt,
+)
 from core.reality_reach.acceptance_transparency import (
     ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
 )
@@ -52,6 +59,16 @@ from core.reality_reach.metrology import (
     MeasurementSummary,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from tools.reality_reach import manage_acceptance_witness as witness_tool
+
+PROVISIONED_AT_NS = 1_000_000_000
+METROLOGY_STARTED_AT_NS = 1_500_000_000
+CAMPAIGN_STARTED_AT_NS = 2_000_000_000
+MEASUREMENT_CAPTURED_AT_NS = 2_500_000_000
+CAMPAIGN_COMPLETED_AT_NS = 3_000_000_000
+METROLOGY_COMPLETED_AT_NS = 3_500_000_000
+WITNESSED_AT_NS = 4_000_000_000
+VERIFIED_AT_NS = 5_000_000_000
 
 
 def _digest(value: Any) -> str:
@@ -121,7 +138,7 @@ def _metrology() -> AcquisitionReceipt:
         channel_id="fixture.live",
         value=7.0,
         unit="percent",
-        captured_at_ns=2_500,
+        captured_at_ns=MEASUREMENT_CAPTURED_AT_NS,
         source=EvidenceSource.LIVE,
         scenario_id="",
         wall_clock_source="fixture.clock",
@@ -150,8 +167,8 @@ def _metrology() -> AcquisitionReceipt:
         "task_sha256": _digest("task"),
         "mode": AcquisitionMode.LIVE.value,
         "mode_generation": 1,
-        "started_at_ns": 1_500,
-        "completed_at_ns": 3_500,
+        "started_at_ns": METROLOGY_STARTED_AT_NS,
+        "completed_at_ns": METROLOGY_COMPLETED_AT_NS,
         "sample_sets": 1,
         "maximum_observed_skew_ns": 1,
         "scenario_id": "",
@@ -163,8 +180,8 @@ def _metrology() -> AcquisitionReceipt:
         task_sha256=body["task_sha256"],
         mode=AcquisitionMode.LIVE,
         mode_generation=1,
-        started_at_ns=1_500,
-        completed_at_ns=3_500,
+        started_at_ns=METROLOGY_STARTED_AT_NS,
+        completed_at_ns=METROLOGY_COMPLETED_AT_NS,
         sample_sets=1,
         maximum_observed_skew_ns=1,
         scenario_id="",
@@ -208,7 +225,7 @@ def _campaign() -> tuple[
         expected_live_channel_ids=("fixture.live",),
         expected_simulated_channel_ids=(),
         required_cases=REQUIRED_SCALAR_ACCEPTANCE_CASES,
-        provisioned_at_ns=1_000,
+        provisioned_at_ns=PROVISIONED_AT_NS,
         custody_sequence=1,
     )
     case_evidence = _case_evidence()
@@ -233,8 +250,8 @@ def _campaign() -> tuple[
         source_commit_sha256=mandate.expected_source_commit_sha256,
         target=mandate.target,
         target_tolerance=mandate.target_tolerance,
-        started_at_ns=2_000,
-        completed_at_ns=3_000,
+        started_at_ns=CAMPAIGN_STARTED_AT_NS,
+        completed_at_ns=CAMPAIGN_COMPLETED_AT_NS,
         cases=cases,
         metrology_evidence_sha256=metrology.evidence_sha256,
         governance_evidence_sha256=_digest(governance),
@@ -248,6 +265,32 @@ def _campaign() -> tuple[
     return mandate, certificate, evidence
 
 
+def _preregistration(
+    mandate: AcceptanceVerificationMandate,
+    certificate: ConnectorAcceptanceCertificate,
+) -> PreregisteredAcceptanceReceipt:
+    provision_receipt = AcceptanceMandateProvisionReceipt(
+        campaign_id=mandate.campaign_id,
+        mandate_sha256=mandate.sha256,
+        contract_sha256=mandate.contract_sha256,
+        custody_identity_sha256=_digest("mandate-custody"),
+        provisioned_at_ns=mandate.provisioned_at_ns,
+        created=True,
+        custody_sequence=mandate.custody_sequence,
+    )
+    return PreregisteredAcceptanceReceipt(
+        mandate=mandate,
+        provision_receipt=provision_receipt,
+        transparency_bundle_sha256=_digest("preregistration-bundle"),
+        trusted_log_key_sha256=_digest("preregistration-log-key"),
+        rekor_uuid="0" * 80,
+        rekor_log_index=0,
+        rekor_integrated_time=0,
+        campaign_started_at_ns=certificate.started_at_ns,
+        blockers=(),
+    )
+
+
 def _bundle(
     key: Ed25519PrivateKey,
     *,
@@ -255,7 +298,7 @@ def _bundle(
     mandate: AcceptanceVerificationMandate,
     certificate: ConnectorAcceptanceCertificate,
     evidence_sha256: str,
-    witnessed_at_ns: int = 4_000,
+    witnessed_at_ns: int = WITNESSED_AT_NS,
     sequence: int = 1,
     previous: str = ZERO_SHA256,
 ) -> AcceptanceWitnessBundle:
@@ -307,14 +350,21 @@ def _external_receipt():
         certificate,
         evidence,
         mandate,
+        preregistration_receipt=_preregistration(mandate, certificate),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
         governance_witness_key_sha256=governance.public_key_sha256,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
     assert receipt.accepted is True
     return receipt
+
+
+def test_physical_external_receipt_cannot_omit_preregistration_digest() -> None:
+    receipt = _external_receipt()
+
+    assert replace(receipt, preregistration_verification_sha256="").accepted is False
 
 
 def _transparency_fixture():
@@ -468,16 +518,18 @@ def test_two_distinct_external_roots_promote_live_acceptance() -> None:
         certificate,
         evidence,
         mandate,
+        preregistration_receipt=_preregistration(mandate, certificate),
         metrology_witness_bundle=metrology.to_dict(),
         governance_witness_bundle=governance.to_dict(),
         metrology_witness_key_sha256=metrology.public_key_sha256,
         governance_witness_key_sha256=governance.public_key_sha256,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
 
     assert receipt.accepted is True
     assert receipt.blockers == ()
     assert receipt.mandate_verification.accepted is True
+    assert receipt.preregistration_verification_sha256
     assert receipt.metrology_witness_bundle_sha256 == metrology.sha256
     assert receipt.governance_witness_bundle_sha256 == governance.sha256
 
@@ -582,11 +634,12 @@ def test_physical_acceptance_cannot_promote_from_raw_producer_digests() -> None:
         certificate,
         evidence,
         mandate,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
 
     assert receipt.accepted is False
     assert set(receipt.blockers) == {
+        "acceptance_preregistration_missing",
         "external_governance_witness_missing",
         "external_metrology_witness_missing",
     }
@@ -621,11 +674,12 @@ def test_mandate_replay_rejects_readback_channel_substitution() -> None:
         certificate,
         substituted,
         mandate,
+        preregistration_receipt=_preregistration(mandate, certificate),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
         governance_witness_key_sha256=governance.public_key_sha256,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
 
     assert receipt.accepted is False
@@ -671,7 +725,7 @@ def test_witness_signature_tamper_and_wrong_pinned_root_fail_closed() -> None:
                 expected_evidence_sha256=certificate.metrology_evidence_sha256,
                 expected_sequence=1,
                 expected_previous_statement_sha256=ZERO_SHA256,
-                now_ns=5_000,
+                now_ns=VERIFIED_AT_NS,
             )
         except ValueError as exc:
             assert str(exc) == expected
@@ -730,7 +784,7 @@ def test_witness_role_sequence_predecessor_and_time_are_bound() -> None:
                 expected_evidence_sha256=certificate.metrology_evidence_sha256,
                 expected_sequence=sequence,
                 expected_previous_statement_sha256=previous,
-                now_ns=5_000,
+                now_ns=VERIFIED_AT_NS,
             )
         except ValueError as exc:
             assert str(exc) == expected
@@ -760,11 +814,12 @@ def test_metrology_and_governance_must_use_distinct_roots() -> None:
         certificate,
         evidence,
         mandate,
+        preregistration_receipt=_preregistration(mandate, certificate),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
         governance_witness_key_sha256=governance.public_key_sha256,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
 
     assert receipt.accepted is False
@@ -795,11 +850,12 @@ def test_external_receipt_is_private_create_once_and_collision_safe(
         certificate,
         evidence,
         mandate,
+        preregistration_receipt=_preregistration(mandate, certificate),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
         governance_witness_key_sha256=governance.public_key_sha256,
-        now_ns=5_000,
+        now_ns=VERIFIED_AT_NS,
     )
     path = tmp_path / "receipts" / "external.json"
 
@@ -862,6 +918,79 @@ def test_operator_assembler_verifies_detached_signature(tmp_path: Path) -> None:
     )
     assert failed.returncode != 0
     assert "acceptance_witness_signature_invalid" in failed.stderr
+
+
+def test_scalar_physical_witness_statement_requires_preregistration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mandate, certificate, _ = _campaign()
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    assert store.persist(certificate) is True
+
+    class _MandateHandle:
+        def get(self, campaign_id: str) -> AcceptanceVerificationMandate:
+            assert campaign_id == mandate.campaign_id
+            return mandate
+
+        def close(self) -> None:
+            return None
+
+    class _MandateStoreFacade:
+        @staticmethod
+        def from_system(_path: Path) -> _MandateHandle:
+            return _MandateHandle()
+
+    monkeypatch.setattr(
+        witness_tool,
+        "AcceptanceMandateStore",
+        _MandateStoreFacade,
+    )
+    common = [
+        "statement",
+        "--root",
+        str(store.root),
+        "--mandate-state",
+        str(tmp_path / "mandates.encrypted.json"),
+        "--campaign-id",
+        mandate.campaign_id,
+        "--role",
+        AcceptanceWitnessRole.METROLOGY.value,
+        "--witness-id",
+        "metrology.external.fixture",
+        "--sequence",
+        "1",
+        "--witnessed-at-ns",
+        str(WITNESSED_AT_NS),
+        "--statement-output",
+        str(tmp_path / "statement.json"),
+        "--payload-output",
+        str(tmp_path / "statement.payload"),
+    ]
+    with pytest.raises(
+        ValueError,
+        match="acceptance_preregistration_arguments_missing",
+    ):
+        witness_tool.main(common)
+
+    observed: list[int] = []
+
+    def _verified(
+        _args,
+        actual_mandate: AcceptanceVerificationMandate,
+        *,
+        campaign_started_at_ns: int,
+    ) -> PreregisteredAcceptanceReceipt:
+        assert actual_mandate == mandate
+        observed.append(campaign_started_at_ns)
+        return _preregistration(mandate, certificate)
+
+    monkeypatch.setattr(witness_tool, "_verified_preregistration", _verified)
+    assert witness_tool.main(common) == 0
+    statement = json.loads((tmp_path / "statement.json").read_text())
+    assert statement["campaign_id"] == mandate.campaign_id
+    assert statement["certificate_sha256"] == certificate.sha256
+    assert observed == [certificate.started_at_ns]
 
 
 def test_transparency_operator_assembles_only_verified_rekor_evidence(

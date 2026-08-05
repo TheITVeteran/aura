@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -38,12 +38,17 @@ from core.reality_reach.acceptance_verifier import (
 )
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
+if TYPE_CHECKING:
+    from core.reality_reach.acceptance_preregistration import (
+        PreregisteredAcceptanceReceipt,
+    )
+
 ACCEPTANCE_WITNESS_STATEMENT_SCHEMA = (
     "aura.reality_reach.acceptance_witness_statement.v1"
 )
 ACCEPTANCE_WITNESS_BUNDLE_SCHEMA = "aura.reality_reach.acceptance_witness_bundle.v1"
 EXTERNAL_ACCEPTANCE_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.external_acceptance_verification.v1"
+    "aura.reality_reach.external_acceptance_verification.v2"
 )
 ZERO_SHA256 = "sha256:" + "0" * 64
 
@@ -427,6 +432,7 @@ def verify_acceptance_witness_artifact_bundle(
 @dataclass(frozen=True, slots=True)
 class ExternallyWitnessedAcceptanceReceipt:
     mandate_verification: MandatedAcceptanceVerificationReceipt
+    preregistration_verification_sha256: str
     metrology_witness_bundle_sha256: str
     governance_witness_bundle_sha256: str
     metrology_witness_key_sha256: str
@@ -442,6 +448,7 @@ class ExternallyWitnessedAcceptanceReceipt:
                 "mandate_verification must be a MandatedAcceptanceVerificationReceipt"
             )
         for name in (
+            "preregistration_verification_sha256",
             "metrology_witness_bundle_sha256",
             "governance_witness_bundle_sha256",
             "metrology_witness_key_sha256",
@@ -463,10 +470,15 @@ class ExternallyWitnessedAcceptanceReceipt:
             self.metrology_witness_bundle_sha256
             and self.governance_witness_bundle_sha256
         )
+        preregistration_complete = bool(self.preregistration_verification_sha256)
         return bool(
             self.mandate_verification.accepted
             and not self.blockers
-            and (witness_complete if physical else True)
+            and (
+                witness_complete and preregistration_complete
+                if physical
+                else True
+            )
         )
 
     @property
@@ -477,6 +489,9 @@ class ExternallyWitnessedAcceptanceReceipt:
         document = {
             "schema": EXTERNAL_ACCEPTANCE_VERIFICATION_SCHEMA,
             "mandate_verification": self.mandate_verification.to_dict(),
+            "preregistration_verification_sha256": (
+                self.preregistration_verification_sha256
+            ),
             "metrology_witness_bundle_sha256": (
                 self.metrology_witness_bundle_sha256
             ),
@@ -498,6 +513,7 @@ def verify_acceptance_with_external_witnesses(
     evidence_document: Mapping[str, Any],
     mandate: AcceptanceVerificationMandate,
     *,
+    preregistration_receipt: PreregisteredAcceptanceReceipt | None = None,
     metrology_witness_bundle: AcceptanceWitnessBundle | Mapping[str, Any] | None = None,
     governance_witness_bundle: AcceptanceWitnessBundle | Mapping[str, Any] | None = None,
     metrology_witness_key_sha256: str = "",
@@ -529,12 +545,37 @@ def verify_acceptance_with_external_witnesses(
         )
         return ExternallyWitnessedAcceptanceReceipt(
             mandate_verification=mandate_receipt,
+            preregistration_verification_sha256="",
             metrology_witness_bundle_sha256="",
             governance_witness_bundle_sha256="",
             metrology_witness_key_sha256="",
             governance_witness_key_sha256="",
             blockers=tuple(blockers),
         )
+
+    verified_preregistration = ""
+    if preregistration_receipt is None:
+        blockers.append("acceptance_preregistration_missing")
+    else:
+        from core.reality_reach.acceptance_preregistration import (
+            PreregisteredAcceptanceReceipt,
+        )
+
+    if preregistration_receipt is not None and not isinstance(
+        preregistration_receipt,
+        PreregisteredAcceptanceReceipt,
+    ):
+        blockers.append("acceptance_preregistration_invalid")
+    elif preregistration_receipt is not None and (
+        not preregistration_receipt.accepted
+        or preregistration_receipt.mandate.sha256 != mandate.sha256
+        or preregistration_receipt.campaign_started_at_ns
+        != certificate.started_at_ns
+        or not preregistration_receipt.strictly_predates_campaign
+    ):
+        blockers.append("acceptance_preregistration_binding_invalid")
+    elif preregistration_receipt is not None:
+        verified_preregistration = preregistration_receipt.sha256
 
     if metrology_witness_bundle is None:
         blockers.append("external_metrology_witness_missing")
@@ -610,6 +651,7 @@ def verify_acceptance_with_external_witnesses(
         blockers.append("external_witness_roots_not_distinct")
     return ExternallyWitnessedAcceptanceReceipt(
         mandate_verification=mandate_receipt,
+        preregistration_verification_sha256=verified_preregistration,
         metrology_witness_bundle_sha256=verified_metrology_bundle,
         governance_witness_bundle_sha256=verified_governance_bundle,
         metrology_witness_key_sha256=(
