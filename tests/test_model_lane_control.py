@@ -922,6 +922,56 @@ def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_esca
     assert observed.metadata["registered_parent_owner_id"] == "managed-parent"
 
 
+def test_external_discovery_drops_process_registered_during_scan(tmp_path: Path) -> None:
+    alive = AliveTable(845)
+    receipt_store = ReceiptStore(tmp_path / "receipts")
+    state_path = tmp_path / "model_lanes.json"
+    registrar = ModelLaneController(
+        state_path=state_path,
+        receipt_store=receipt_store,
+        process_alive=alive,
+        process_discovery=None,
+    )
+    registered = False
+
+    def discover(_known: list[LaneOwnerObservation]) -> list[LaneOwnerObservation]:
+        nonlocal registered
+        if not registered:
+            registered = True
+            decision = registrar.reserve_sync(
+                LaneClaim(
+                    owner_id="mlx:registered-during-scan",
+                    model_path="/models/canonical-7b",
+                    request_gb=5.0,
+                    request_id="registered-during-discovery",
+                )
+            )
+            registrar.commit_sync(
+                decision,
+                process=ProcessIdentity(845, 845.0),
+            )
+        return [
+            _owner(
+                "external-model:845:845000000",
+                "/models/canonical-7b",
+                5.0,
+                845,
+            )
+        ]
+
+    controller = ModelLaneController(
+        state_path=state_path,
+        receipt_store=receipt_store,
+        process_alive=alive,
+        process_discovery=discover,
+    )
+
+    owners = controller.owner_observations()
+
+    assert [owner.owner_id for owner in owners] == ["mlx:registered-during-scan"]
+    assert controller.snapshot()["committed_gb"] == pytest.approx(5.0)
+
+
 def test_external_nonpreemptible_process_is_included_without_explicit_observations(
     tmp_path: Path,
 ) -> None:

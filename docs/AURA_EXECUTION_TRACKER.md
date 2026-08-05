@@ -36731,7 +36731,7 @@ It does not change the empirical CP810 requirements or the 809/920 total.
 #### Every-line semantic review addendum: model-lane transaction integrity
 
 `core/runtime/model_lane_control.py` received a complete semantic review of its
-original 3,463 lines plus the 126-line hardened delta, for 3,589 current lines
+original 3,463 lines plus the 129-line hardened delta, for 3,592 current lines
 across process identity, external discovery, capacity accounting,
 reserve/evict/commit/cancel transitions, compensation, delegation, and all
 three lease wrappers. The review found that mechanical gate success had hidden
@@ -36764,7 +36764,10 @@ Closed in this bounded checkpoint:
 - async and synchronous in-process releases stop their heartbeat owner first,
   unregister adapters only after durable release succeeds, and restart the
   heartbeat after refusal or persistence failure so exact-fence cleanup remains
-  retryable. Standalone leases likewise remain retryable after refusal.
+  retryable. Standalone leases likewise remain retryable after refusal; and
+- completed external-discovery scans are re-filtered against the freshly
+  locked owner ledger, eliminating duplicate accounting when a process becomes
+  canonically registered while the scan is in flight.
 
 Remaining reviewed findings, retained as open requirements rather than omitted
 from the semantic record:
@@ -36780,11 +36783,10 @@ from the semantic record:
   claims, and prevent descendants from exceeding the parent reservation;
 - replace fixed-name model-command recognition with a fail-closed capability
   declaration at the subprocess gateway so renamed or novel loaders cannot
-  bypass model-lane admission;
-- remove external-discovery registration-race duplicates before persistence.
+  bypass model-lane admission.
 
 Evidence: the focused new regressions passed 10/10 and the complete model-lane,
 fenced-owner, MLX-heartbeat, embedding, voice, image, and local-code family
-passed 75/75. This advances the every-line semantic workstream but does not
+passed 76/76. This advances the every-line semantic workstream but does not
 close it, does not close the remaining model-lane findings, and does not change
 the honest 809/920 total.

@@ -1043,6 +1043,9 @@ class ModelLaneController:
                 if not bool(dict(record.get("metadata") or {}).get("externally_discovered"))
                 and isinstance(record.get("process"), Mapping)
             }
+            discovered = [
+                item for item in discovered if item.process.pid not in represented_pids
+            ]
             discovered_ids = {item.owner_id for item in discovered}
             for owner_id, record in list(state["owners"].items()):
                 metadata = dict(record.get("metadata") or {})
