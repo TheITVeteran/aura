@@ -570,6 +570,22 @@ def _validate_adapter_artifact(
     )
 
 
+class ModelLoadAdmissionRefused(RuntimeError):
+    """The memory guard declined to load this model. A DECISION, not a fault.
+
+    CP126 5ce89b9e: this condition used to be recognised by searching an
+    arbitrary error message for "memory_pressure_refused_worker_spawn:". Any
+    unrelated failure whose text happened to contain that substring — a
+    wrapped traceback, a message quoting an earlier refusal, a log line echoed
+    into an exception — was silently downgraded to a non-critical fallback and
+    its backoff cleared. A type cannot be spelled by accident.
+    """
+
+    def __init__(self, blocker: str) -> None:
+        super().__init__(f"memory_pressure_refused_worker_spawn:{blocker}")
+        self.blocker = str(blocker)
+
+
 def _record_mlx_degradation(
     error: BaseException,
     *,
@@ -3746,6 +3762,13 @@ class MLXLocalClient:
         self._lock = _threading.Lock()
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
+        self._consecutive_spawn_failures: int = 0
+        self._spawn_backoff_until: float = 0.0
+        #: Why the current spawn backoff exists ("" when none is active). A
+        #: runtime probe proves the MLX runtime imports; it proves nothing
+        #: about an OOM, a corrupt checkpoint or a refused memory admission,
+        #: so it may only clear the backoffs a runtime failure caused.
+        self._spawn_backoff_cause: str = ""
         #: Set when a forced abort killed the worker but could not take the
         #: lifecycle lock; the next lock owner reconciles the state.
         self._force_abort_reconcile_pending: str | None = None
@@ -4991,22 +5014,32 @@ class MLXLocalClient:
                 pass
             logger.debug("Failed to record MLX degraded event: %s", exc)
 
-    def _is_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
-        return self._is_deep_solver_lane() and "memory_pressure_refused_worker_spawn:" in str(
-            detail
+    def _is_optional_deep_solver_memory_refusal(self, failure: Any) -> bool:
+        """Whether this failure IS an admission refusal on the optional lane.
+
+        Takes the exception, not its text. A string match on an arbitrary
+        error message meant an unrelated failure could be suppressed by
+        quoting the right words.
+        """
+        return self._is_deep_solver_lane() and isinstance(
+            failure, ModelLoadAdmissionRefused
         )
 
-    def _handle_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
+    def _handle_optional_deep_solver_memory_refusal(self, failure: Any) -> bool:
         """Treat a refused 72B load as an unavailable optional lane, not a live-system failure."""
 
-        if not self._is_optional_deep_solver_memory_refusal(detail):
+        if not self._is_optional_deep_solver_memory_refusal(failure):
             return False
+        detail = str(failure)
         self._set_lane_state("cold")
         self._init_future = None
         self._consecutive_spawn_failures = 0
         # Short backoff prevents repeated oversized 72B attempts from flooding the
         # neural stream while keeping the optional lane available after pressure falls.
         self._spawn_backoff_until = time.time() + 60.0
+        # Not a runtime failure: a runtime probe must not clear this one. It
+        # expires on its own once pressure has had a chance to fall.
+        self._spawn_backoff_cause = "memory_refusal"
         self._record_degraded_event(
             "optional_deep_solver_memory_refusal",
             detail=f"{os.path.basename(self.model_path)}:{detail}",
@@ -5606,9 +5639,19 @@ class MLXLocalClient:
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 worker_ready = False
             if worker_ready:
-                now = time.time()
-                self._last_ready_at = max(float(self._last_ready_at or 0.0), now)
-                self._last_progress_at = max(float(self._last_progress_at or 0.0), now)
+                # CP126 5b870404: this used to stamp _last_ready_at and
+                # _last_progress_at with time.time(). Nothing had happened —
+                # no heartbeat, no token, no probe, no worker response. It
+                # MANUFACTURED readiness evidence from a process being alive
+                # and a historical init flag, and those two timestamps are
+                # what every staleness and idleness check downstream reads.
+                # A lane could look freshly-responsive for as long as this
+                # path kept being taken.
+                #
+                # The conclusion was right and the evidence was invented. The
+                # lane state still moves to ready, because a live initialized
+                # worker refused a redundant warmup is not recovering — but
+                # the clocks now say what actually last happened.
                 self._set_lane_state("ready")
                 return
         self._set_lane_state("recovering", reason)
@@ -5636,16 +5679,32 @@ class MLXLocalClient:
             self._mark_runtime_unavailable(detail)
             return False
 
-        recovered = (
-            bool(runtime_error) or float(getattr(self, "_spawn_backoff_until", 0.0) or 0.0) > 0.0
-        )
+        # CP126 ee4ccfcc. A healthy runtime probe proves ONE thing: the MLX
+        # runtime imports and initializes. It says nothing about an out-of-
+        # memory kill, a corrupt checkpoint, a model-load fault or a refused
+        # memory admission — and this method cleared the backoff from all of
+        # them, so a lane that had just crashed three times respawned
+        # immediately because `import mlx` worked.
+        backoff_cause = str(getattr(self, "_spawn_backoff_cause", "") or "")
+        clears_backoff = bool(runtime_error) or backoff_cause in {"", "runtime_unavailable"}
+        backoff_active = float(getattr(self, "_spawn_backoff_until", 0.0) or 0.0) > 0.0
+        recovered = bool(runtime_error) or (backoff_active and clears_backoff)
         if recovered:
             logger.info(
                 "♻️ [MLX] Runtime probe recovered for %s. Clearing failed lane/backoff state.",
                 os.path.basename(self.model_path),
             )
-        self._consecutive_spawn_failures = 0
-        self._spawn_backoff_until = 0.0
+        elif backoff_active:
+            logger.info(
+                "⏳ [MLX] Runtime is healthy for %s but the spawn backoff came from "
+                "%s, which a runtime probe cannot clear. Backoff stands.",
+                os.path.basename(self.model_path),
+                backoff_cause,
+            )
+        if clears_backoff:
+            self._consecutive_spawn_failures = 0
+            self._spawn_backoff_until = 0.0
+            self._spawn_backoff_cause = ""
         self._warmup_in_flight = False
         if self._lane_state == "failed" or runtime_error:
             self._set_lane_state("cold")
@@ -8976,7 +9035,7 @@ class MLXLocalClient:
                     "🟢 [MLX] Headroom recovered after worker reclaim; proceeding with spawn."
                 )
         if memory_block:
-            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
+            error = ModelLoadAdmissionRefused(memory_block)
             if self._is_deep_solver_lane():
                 logger.warning(
                     "🛡️ [MLX] Refusing optional deep Solver spawn before model load: %s",
@@ -9814,14 +9873,24 @@ class MLXLocalClient:
                         self._process_started_at = time.time()
                         self._consecutive_spawn_failures = 0
                         self._spawn_backoff_until = 0.0
+                        self._spawn_backoff_cause = ""
                     except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                         detail = str(exc)
-                        if self._handle_optional_deep_solver_memory_refusal(detail):
+                        if self._handle_optional_deep_solver_memory_refusal(exc):
                             return False
                         _sf = getattr(self, "_consecutive_spawn_failures", 0) + 1
                         self._consecutive_spawn_failures = _sf
                         self._spawn_backoff_until = time.time() + min(
                             300.0, 10.0 * (2 ** min(_sf - 1, 5))
+                        )
+                        # CP126 ee4ccfcc: the backoff carried no cause, so the
+                        # runtime-availability probe cleared every one of them.
+                        # A healthy `import mlx` says nothing about an OOM, a
+                        # corrupt checkpoint or a refused memory admission.
+                        self._spawn_backoff_cause = (
+                            "runtime_unavailable"
+                            if "mlx_runtime_probe_failed:" in detail
+                            else "spawn_failure"
                         )
                         if "mlx_runtime_probe_failed:" in detail:
                             self._mark_runtime_unavailable(
@@ -9886,17 +9955,25 @@ class MLXLocalClient:
                     self._process_started_at = time.time()
                     self._consecutive_spawn_failures = 0  # Reset on success
                     self._spawn_backoff_until = 0.0
+                    self._spawn_backoff_cause = ""
                 except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                     # OSError included: queue creation, lock files, and
                     # multiprocessing start raise it — it previously escaped
                     # with the lane stuck in "spawning" and a pending init.
                     detail = str(exc)
-                    if self._handle_optional_deep_solver_memory_refusal(detail):
+                    if self._handle_optional_deep_solver_memory_refusal(exc):
                         return False
                     # [BUG FIX] Exponential backoff: 10s, 30s, 60s, 120s, 300s
                     self._consecutive_spawn_failures = _spawn_fails + 1
                     backoff = min(300.0, 10.0 * (2 ** min(_spawn_fails, 5)))
                     self._spawn_backoff_until = time.time() + backoff
+                    # See CP126 ee4ccfcc: a runtime probe may only clear the
+                    # backoffs a runtime failure caused.
+                    self._spawn_backoff_cause = (
+                        "runtime_unavailable"
+                        if "mlx_runtime_probe_failed:" in detail
+                        else "spawn_failure"
+                    )
                     if "mlx_runtime_probe_failed:" in detail:
                         self._mark_runtime_unavailable(
                             detail.split("mlx_runtime_probe_failed:", 1)[1]

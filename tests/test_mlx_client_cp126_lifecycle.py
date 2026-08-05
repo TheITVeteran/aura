@@ -1265,3 +1265,59 @@ class TestAnExhaustedDeadlineGrantsNothing:
         client._process_started_at = now - 7200.0
         client._last_generation_completed_at = now - 10.0
         assert client.should_recycle_for_fragmentation() is False
+
+
+class TestBackoffAndReadinessNeedCauses:
+    """CP126 ee4ccfcc / 5b870404 / 5ce89b9e."""
+
+    def test_a_runtime_probe_does_not_clear_a_crash_backoff(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        monkeypatch.setattr(mod, "_probe_mlx_runtime", lambda force=False: (True, "ok"))
+        monkeypatch.setattr(client, "_lane_runtime_failure", lambda: "")
+        client._spawn_backoff_until = time.time() + 120.0
+        client._spawn_backoff_cause = "spawn_failure"
+        client._consecutive_spawn_failures = 3
+
+        assert client.refresh_runtime_availability() is False
+        assert client._spawn_backoff_until > time.time(), "the crash backoff must stand"
+        assert client._consecutive_spawn_failures == 3
+
+    def test_a_runtime_probe_clears_a_runtime_backoff(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        monkeypatch.setattr(mod, "_probe_mlx_runtime", lambda force=False: (True, "ok"))
+        monkeypatch.setattr(client, "_lane_runtime_failure", lambda: "")
+        client._spawn_backoff_until = time.time() + 120.0
+        client._spawn_backoff_cause = "runtime_unavailable"
+        client._consecutive_spawn_failures = 3
+
+        assert client.refresh_runtime_availability() is True
+        assert client._spawn_backoff_until == 0.0
+        assert client._consecutive_spawn_failures == 0
+
+    def test_a_memory_refusal_backoff_is_not_a_runtime_backoff(self, client):
+        client.model_path = "/models/Qwen2.5-72B-Instruct-4bit"
+        client._record_degraded_event = lambda *a, **k: None
+        from core.brain.llm.mlx_client import ModelLoadAdmissionRefused
+
+        assert client._handle_optional_deep_solver_memory_refusal(
+            ModelLoadAdmissionRefused("model_load_headroom")
+        ) is True
+        assert client._spawn_backoff_cause == "memory_refusal"
+
+    def test_a_deferred_warmup_does_not_invent_readiness_timestamps(self, client):
+        client._init_done = True
+        client.is_alive = lambda: True
+        client._last_ready_at = 0.0
+        client._last_progress_at = 0.0
+
+        client.note_lane_recovering("foreground_warmup_deferred_memory_pressure")
+
+        assert client._lane_state == "ready", "a live initialized worker is not recovering"
+        assert client._last_ready_at == 0.0, "nothing happened; nothing may be stamped"
+        assert client._last_progress_at == 0.0
+
+    def test_an_ordinary_recovery_reason_still_marks_recovering(self, client):
+        client.note_lane_recovering("worker_died")
+        assert client._lane_state == "recovering"

@@ -2169,6 +2169,13 @@ class TestLiveRuntimeContentionGuards(unittest.IsolatedAsyncioTestCase):
         ServiceContainer.get = staticmethod(fake_get)
         try:
             crucible = DialecticalCrucible()
+            # The claim under test is that the DEFAULT path is lightweight —
+            # not that background work is currently admissible. The upstream
+            # background-policy gate reads a process-global health score that
+            # any earlier test exercising a degradation path drives down (seen
+            # live: "failure_lockdown_0.55"), so the crucible deferred before
+            # reaching the branch this test is about. Establish the premise.
+            crucible._background_deferral_reason = lambda _concept: ""
             result = await crucible.run_crucible("Aura should keep foreground chat responsive.", context="test")
         finally:
             ServiceContainer.get = old_get

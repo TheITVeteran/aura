@@ -674,8 +674,12 @@ def test_optional_deep_solver_memory_refusal_stays_noncritical(monkeypatch):
         lambda reason, **kwargs: events.append((reason, kwargs)),
     )
 
+    # CP126 5ce89b9e: the handler takes the EXCEPTION now. A substring of an
+    # arbitrary message could be spelled by accident; a type cannot.
     handled = client._handle_optional_deep_solver_memory_refusal(
-        "memory_pressure_refused_worker_spawn:model_load_headroom:25.5GB < required 52.0GB"
+        mlx_client.ModelLoadAdmissionRefused(
+            "model_load_headroom:25.5GB < required 52.0GB"
+        )
     )
 
     assert handled is True
@@ -714,10 +718,37 @@ def test_optional_deep_solver_handler_ignores_primary_32b_memory_refusal(monkeyp
     )
 
     handled = client._handle_optional_deep_solver_memory_refusal(
-        "memory_pressure_refused_worker_spawn:model_load_headroom:12.0GB < required 24.0GB"
+        mlx_client.ModelLoadAdmissionRefused(
+            "model_load_headroom:12.0GB < required 24.0GB"
+        )
     )
 
     assert handled is False
+    assert events == []
+
+
+def test_optional_deep_solver_handler_ignores_an_unrelated_failure_that_quotes_it(
+    monkeypatch,
+):
+    """The live hazard: a wrapped traceback carrying the refusal text."""
+    from core.brain.llm import mlx_client
+
+    events = []
+    client = mlx_client.MLXLocalClient("/models/Qwen2.5-72B-Instruct-4bit")
+    monkeypatch.setattr(
+        client,
+        "_record_degraded_event",
+        lambda reason, **kwargs: events.append((reason, kwargs)),
+    )
+
+    handled = client._handle_optional_deep_solver_memory_refusal(
+        RuntimeError(
+            "worker crashed while logging "
+            "memory_pressure_refused_worker_spawn:model_load_headroom"
+        )
+    )
+
+    assert handled is False, "a crash is not an admission decision"
     assert events == []
 
 
