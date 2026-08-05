@@ -1452,6 +1452,26 @@ class RuntimeHygieneManager:
         )
         self._process_refs[key] = proc
 
+    def process_handle_is_registered(self, proc: Any) -> bool:
+        """Whether this exact live process is tracked for shutdown accounting.
+
+        Registration that raised is visible to its caller; registration that
+        silently did not take is not. A spawn path that owns a multi-gigabyte
+        child needs to be able to CHECK rather than assume, because the cost
+        of an untracked one is an orphan holding the model after shutdown.
+        """
+        pid = getattr(proc, "pid", None)
+        key = id(proc)
+        record = self._process_records.get(key)
+        if record is not None and record.finished_at is None:
+            return True
+        if pid is None:
+            return False
+        return any(
+            other.pid == pid and other.finished_at is None
+            for other in list(self._process_records.values())
+        )
+
     def _register_multiprocessing_process(self, proc: mp.Process) -> None:
         self.register_process_handle(
             proc,

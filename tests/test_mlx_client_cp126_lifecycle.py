@@ -1893,3 +1893,64 @@ class TestSteeringLivenessSaysWhatItProves:
         client._steering_liveness_observed = True
         client._reset_worker_scoped_state()
         assert client.steering_liveness_reading()["active"] is None
+
+
+class TestReadyMeansRespondingNotMerelyAlive:
+    """CP126 6165be63 / 3a00ef69."""
+
+    def test_a_silent_worker_is_not_admitted_as_ready(self, client):
+        """Alive + init_done was the whole test. A wedged worker passes it."""
+        client._last_heartbeat = time.time() - 10_000.0
+        client._last_progress_at = 0.0
+        client._last_ready_at = 0.0
+        client._last_token_progress_at = 0.0
+        client._last_generation_completed_at = 0.0
+        assert client._liveness_quiet_for_s() > client._stale_after()
+
+    def test_a_recently_speaking_worker_is_ready(self, client):
+        client._last_heartbeat = time.time()
+        assert client._liveness_quiet_for_s() < client._stale_after()
+
+    def test_the_ready_path_does_not_re_enter_the_lifecycle_lock(self):
+        """Regression guard for a deadlock I nearly shipped.
+
+        The silent-worker recovery runs while holding the lifecycle lock.
+        reboot_worker acquires that same non-reentrant lock, so calling it
+        there would block for the full escalation ladder and then reboot
+        unsynchronised — turning the recovery into the wedge. Tear down
+        inline, exactly as the stale-handshake branch below it does.
+        """
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._ensure_worker_alive_inner)
+        marker = source.index("ready_check_worker_silent")
+        window = source[marker : marker + 1200]
+        assert "reboot_worker" not in window
+        assert "_kill_and_join_blocking" in window
+
+    def test_an_unregistered_worker_is_reaped_not_served(self):
+        """CP126 3a00ef69: an untracked 20GB child outlives its runtime."""
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        hygiene = get_runtime_hygiene()
+        assert hasattr(hygiene, "process_handle_is_registered")
+
+        class _Unregistered:
+            pid = 999_999
+
+        assert hygiene.process_handle_is_registered(_Unregistered()) is False
+
+    def test_a_registered_worker_is_recognised(self):
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        hygiene = get_runtime_hygiene()
+
+        class _Proc:
+            pid = 424_242
+            name = "MLXWorker-test"
+
+        proc = _Proc()
+        hygiene.register_process_handle(proc, kind="multiprocessing", name=proc.name)
+        assert hygiene.process_handle_is_registered(proc) is True

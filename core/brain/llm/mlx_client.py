@@ -9407,12 +9407,41 @@ class MLXLocalClient:
                         source="mlx_local_client.worker_owner",
                         command=f"MLX worker for {os.path.basename(self.model_path)}",
                     )
+                    registered = get_runtime_hygiene().process_handle_is_registered(p)
                 except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
                     _record_mlx_degradation(
                         exc,
-                        action="continued worker spawn after runtime hygiene registration failed",
-                        severity="warning",
+                        action="could not register the spawned worker for shutdown accounting",
+                        severity="error",
                     )
+                    registered = False
+                if not registered:
+                    # CP126 3a00ef69. This used to log and return the process
+                    # anyway. An unregistered worker is invisible to global
+                    # shutdown and proof accounting while owning ~20GB of
+                    # wired memory, so the failure mode is an orphaned model
+                    # surviving the runtime that spawned it — the exact
+                    # condition the hygiene registry exists to prevent.
+                    #
+                    # Registration is part of the spawn commit: a candidate
+                    # that cannot be tracked is reaped here, where we still
+                    # hold its handle and know its pid.
+                    _record_mlx_degradation(
+                        RuntimeError(
+                            f"worker for {os.path.basename(self.model_path)} could not be "
+                            f"registered for shutdown accounting (pid={p.pid})"
+                        ),
+                        action="terminated the unregistered worker rather than serving from it",
+                        severity="critical",
+                    )
+                    logger.critical(
+                        "🛑 [MLX] Worker pid=%s for %s is not tracked by runtime hygiene; "
+                        "terminating rather than leaving an untracked model process.",
+                        p.pid,
+                        os.path.basename(self.model_path),
+                    )
+                    self._kill_and_join_blocking(p)
+                    raise RuntimeError("worker_registration_failed")
                 return p
 
             finally:
@@ -10112,8 +10141,52 @@ class MLXLocalClient:
             # a dead process reads as "already healthy".
             self._apply_pending_force_abort_reconcile()
             if self._process and self._process.is_alive() and self._init_done:
-                self._set_lane_state("ready")
-                return True  # Already healthy, release gate
+                # CP126 6165be63. "The process exists and once finished its
+                # handshake" is not the same as "this lane can serve a turn".
+                # A wedged worker satisfies both and was admitted as healthy,
+                # so the first user request paid the whole first-token budget
+                # or the hard cap before anything noticed. Check that it has
+                # spoken recently, and that something is listening.
+                silence = self._liveness_quiet_for_s()
+                stale_after = self._stale_after()
+                listener = self._listener_task
+                listener_alive = listener is None or not listener.done()
+                if silence <= stale_after and listener_alive:
+                    self._set_lane_state("ready")
+                    return True  # Already healthy, release gate
+                _record_mlx_degradation(
+                    TimeoutError(
+                        f"worker for {os.path.basename(self.model_path)} passed the "
+                        f"alive+init check but has been silent {silence:.1f}s "
+                        f"(limit {stale_after:.1f}s, listener_alive={listener_alive})"
+                    ),
+                    action="recycled a worker that looked ready and was not responding",
+                    severity="error",
+                )
+                logger.warning(
+                    "♻️ [MLX] %s is alive and initialised but silent for %.1fs; "
+                    "recycling instead of admitting it as ready.",
+                    os.path.basename(self.model_path),
+                    silence,
+                )
+                # Torn down INLINE, not via reboot_worker: this runs while
+                # holding the lifecycle lock, and reboot_worker acquires it.
+                # Calling it here would block for its whole escalation ladder
+                # and then perform an unsynchronised reboot — turning a
+                # recovery into the wedge it was recovering from. The
+                # stale-handshake branch below does the same thing for the
+                # same reason.
+                self._set_lane_state("recovering", "ready_check_worker_silent")
+                self._init_done = False
+                if self._init_future is not None:
+                    _cancel_shared_future(self._init_future)
+                    self._init_future = None
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._kill_and_join_blocking, self._process
+                )
+                self._process = None
+                self._reset_worker_scoped_state()
+                self._replace_ipc_queues()
 
             if self._process and self._process.is_alive() and not self._init_done:
                 # Stale-handshake watchdog: if the worker process has been
