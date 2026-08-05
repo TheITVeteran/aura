@@ -16,6 +16,7 @@ import uuid
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from core.reality_reach.actuation import (
@@ -47,6 +48,13 @@ _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 class ScalarAdapterError(RuntimeError):
     """A scalar resource violated its manifest or transaction contract."""
+
+
+class ScalarTransportClass(StrEnum):
+    """Whether adapter writes target a simulated or physical transport."""
+
+    SIMULATED = "simulated"
+    PHYSICAL = "physical"
 
 
 def _digest(value: Any) -> str:
@@ -222,6 +230,7 @@ class ScalarRealityAdapter:
         profile: ScalarResourceProfile,
         *,
         initial_sample: ScalarSample,
+        transport_class: ScalarTransportClass = ScalarTransportClass.PHYSICAL,
     ) -> None:
         if not isinstance(transport, ScalarProtocolTransport):
             raise TypeError("transport must satisfy ScalarProtocolTransport")
@@ -229,8 +238,11 @@ class ScalarRealityAdapter:
             raise TypeError("profile must be a ScalarResourceProfile")
         if not profile.domain.contains(initial_sample.value):
             raise ValueError("initial sample lies outside the resource domain")
+        if not isinstance(transport_class, ScalarTransportClass):
+            raise TypeError("transport_class must be a ScalarTransportClass")
         self._transport = transport
         self._profile = profile
+        self._transport_class = transport_class
         prefix = f"{profile.protocol}.{profile.resource_id}"
         self._adapter_id = f"{prefix}.adapter"
         self._observation = ChannelDeclaration(
@@ -308,6 +320,10 @@ class ScalarRealityAdapter:
     @property
     def physical_identity_sha256(self) -> str:
         return self._profile.physical_identity_sha256
+
+    @property
+    def transport_class(self) -> ScalarTransportClass:
+        return self._transport_class
 
     @property
     def profile_sha256(self) -> str:
@@ -781,5 +797,6 @@ __all__ = [
     "ScalarRealityAdapter",
     "ScalarResourceProfile",
     "ScalarSample",
+    "ScalarTransportClass",
     "ScalarWriteResult",
 ]

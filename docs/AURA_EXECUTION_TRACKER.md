@@ -35921,3 +35921,33 @@ representative long-running actuator cancellation, physical safe-state
 convergence, live/HIL metrology, and independent custody of the metrology and
 governance trust digests remain unmeasured. CP810 and the total remain open at
 809/920 until those external campaigns are run and independently accepted.
+
+#### CP810 addendum: adapter reality-class provenance fence
+
+Acceptance execution no longer chooses its governance boundary from the
+campaign label alone. Every scalar adapter now has an immutable, typed
+`SIMULATED` or `PHYSICAL` transport class. The constructor defaults to
+`PHYSICAL`, so all existing production MQTT, OPC UA, SCPI, OpenHAB, AWS
+TwinMaker, and Azure Digital Twins adapters remain fail-safe without relying on
+transport-name conventions. Simulation fixtures must opt in explicitly.
+
+The acceptance runner checks this class before collecting a case or invoking a
+transport. A simulation campaign can execute only against a simulated adapter.
+HIL and live campaigns can execute only against a physical adapter and still
+traverse the governed ActionExecutor/Will lane. Consequently, relabeling a
+physical campaign as simulation cannot obtain ungoverned writes, and relabeling
+a simulated adapter as live cannot create physical evidence. Both mismatches
+fail before the first acceptance write.
+
+Reality-class fence evidence:
+
+- explicit simulation and physical adapter construction, both mismatch
+  directions, and zero-write rejection: 38/38 focused tests passed;
+- full affected connector, middleware, actuation, transaction, trust,
+  sensory-initializer, and WorldBridge family: 540/540 passed;
+- smoke 103/103, repository compile, governance lint, layering, local security,
+  scoped MyPy, and Ruff all passed.
+
+This closes campaign-label governance selection. The external campaigns and
+their independently held trust inputs remain unmeasured, so CP810 and the total
+remain open at 809/920.

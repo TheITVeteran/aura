@@ -44,6 +44,7 @@ from core.reality_reach.scalar_adapter import (
     ScalarRealityAdapter,
     ScalarResourceProfile,
     ScalarSample,
+    ScalarTransportClass,
     ScalarWriteResult,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
@@ -443,6 +444,7 @@ def _runner(
     evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION,
     metrology_receipt: AcquisitionReceipt | None = None,
     governed_executor: Any = None,
+    transport_class: ScalarTransportClass | None = None,
 ) -> ScalarAcceptanceRunner:
     adapter = ScalarRealityAdapter(
         transport,
@@ -461,6 +463,15 @@ def _runner(
             readback_distinct_from_command=True,
         ),
         initial_sample=initial,
+        transport_class=(
+            transport_class
+            if transport_class is not None
+            else (
+                ScalarTransportClass.SIMULATED
+                if evidence_class is AcceptanceEvidenceClass.SIMULATION
+                else ScalarTransportClass.PHYSICAL
+            )
+        ),
     )
     service = RealityReachService((adapter,), session_id="acceptance.runner.session")
     return ScalarAcceptanceRunner(
@@ -615,6 +626,42 @@ async def test_live_acceptance_refused_before_dispatch_performs_no_writes() -> N
     )
 
     with pytest.raises(AcceptanceError, match="refused_before_dispatch"):
+        await runner.run()
+
+    assert transport.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_simulation_acceptance_refuses_a_physical_adapter_before_writes() -> None:
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        transport_class=ScalarTransportClass.PHYSICAL,
+    )
+
+    with pytest.raises(AcceptanceError, match="requires_simulated_adapter"):
+        await runner.run()
+
+    assert transport.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_refuses_a_simulated_adapter_before_writes() -> None:
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        metrology_receipt=_metrology_receipt(
+            AcquisitionMode.LIVE,
+            (EvidenceSource.LIVE,),
+        ),
+        governed_executor=_governed_executor,
+        transport_class=ScalarTransportClass.SIMULATED,
+    )
+
+    with pytest.raises(AcceptanceError, match="requires_physical_adapter"):
         await runner.run()
 
     assert transport.writes == 0

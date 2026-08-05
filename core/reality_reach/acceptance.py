@@ -31,6 +31,7 @@ from core.reality_reach.scalar_adapter import (
     ScalarProtocolTransport,
     ScalarRealityAdapter,
     ScalarSample,
+    ScalarTransportClass,
     ScalarWriteResult,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
@@ -1133,9 +1134,15 @@ class ScalarAcceptanceRunner:
     async def run(self) -> ConnectorAcceptanceCertificate:
         self._governance_evidence = {}
         if self._plan.evidence_class is AcceptanceEvidenceClass.SIMULATION:
+            if self._adapter.transport_class is not ScalarTransportClass.SIMULATED:
+                raise AcceptanceError(
+                    "simulation_acceptance_requires_simulated_adapter"
+                )
             return await self._run_cases(
                 authority_receipt_id=self._plan.authority_receipt_id,
             )
+        if self._adapter.transport_class is not ScalarTransportClass.PHYSICAL:
+            raise AcceptanceError("physical_acceptance_requires_physical_adapter")
         return await self._run_governed()
 
     async def run_and_persist(
