@@ -195,6 +195,61 @@ def _model_path_is_deep_solver(model_path: str | None) -> bool:
     return any(token in lowered for token in ("72b", "solver"))
 
 
+#: Ceilings for a single worker-supplied progress value. Progress is a
+#: diagnostic; nothing downstream needs more than this, and everything
+#: upstream is a process the parent does not control.
+_PROGRESS_STR_CHARS = 200
+_PROGRESS_SEQ_ITEMS = 32
+
+
+def _sleep_inclusive_monotonic() -> float | None:
+    """A monotonic clock that keeps counting while the host is asleep.
+
+    Paired with ``time.monotonic()`` — which does not — this measures how long
+    the machine was suspended without consulting the wall clock at all, so an
+    NTP step, a manual date change, or a VM migration cannot be mistaken for a
+    host resume. Returns None where the platform offers no such clock, and the
+    caller then says it could not tell the two apart rather than guessing.
+    """
+    for name in ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC"):
+        clock_id = getattr(time, name, None)
+        if clock_id is None:
+            continue
+        if name == "CLOCK_MONOTONIC" and sys.platform != "darwin":
+            # Only Darwin's CLOCK_MONOTONIC includes suspend; elsewhere it is
+            # what time.monotonic() already returns, so the difference would
+            # be a constant zero dressed up as a measurement.
+            continue
+        try:
+            return float(time.clock_gettime(clock_id))
+        except (OSError, ValueError, AttributeError):
+            continue
+    return None
+
+
+def _bounded_progress_value(value: Any) -> Any:
+    """Clamp one worker-reported progress value to a size the parent chose.
+
+    Unknown and oversized shapes are summarized rather than dropped: that a
+    field arrived malformed is itself worth seeing, and replacing it with
+    None would report the worker as silent on a field it did answer.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value if math.isfinite(float(value)) else None
+    if isinstance(value, str):
+        return value[:_PROGRESS_STR_CHARS]
+    if isinstance(value, (list, tuple)):
+        return [_bounded_progress_value(item) for item in list(value)[:_PROGRESS_SEQ_ITEMS]]
+    if isinstance(value, Mapping):
+        return {
+            str(key)[:_PROGRESS_STR_CHARS]: _bounded_progress_value(item)
+            for key, item in list(value.items())[:_PROGRESS_SEQ_ITEMS]
+        }
+    return f"<unsupported:{type(value).__name__}>"
+
+
 def _record_mlx_degradation(
     error: BaseException,
     *,
@@ -2594,16 +2649,35 @@ async def _foreground_owner_context(
             f"waiting on {holder} (held {holder_age:.1f}s)"
         )
 
+    def _release_owner_slot() -> None:
+        """Clear EVERY field of the slot, not just the name.
+
+        The monotonic acquire/heartbeat stamps are what the stale-owner and
+        silence heuristics read. Leaving them set behind a cleared name means
+        the next holder inherits a predecessor's clock, and a fresh owner can
+        be judged silent for time it never held.
+        """
+        global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
+        global _FOREGROUND_OWNER_STALE_AFTER, _FOREGROUND_OWNER_IS_USER_FACING
+        global _FOREGROUND_OWNER_ACQUIRED_MONOTONIC
+        global _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC
+
+        if _FOREGROUND_OWNER_NAME != owner_name:
+            return
+        _FOREGROUND_OWNER_NAME = None
+        _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+        _FOREGROUND_OWNER_STALE_AFTER = None
+        _FOREGROUND_OWNER_IS_USER_FACING = False
+        _FOREGROUND_OWNER_ACQUIRED_MONOTONIC = 0.0
+        _FOREGROUND_OWNER_HEARTBEAT_MONOTONIC = 0.0
+
     try:
         yield
     finally:
         acquired = await asyncio.to_thread(_FOREGROUND_OWNER_LOCK.acquire, True, 2.0)
         if acquired:
             try:
-                if _FOREGROUND_OWNER_NAME == owner_name:
-                    _FOREGROUND_OWNER_NAME = None
-                    _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
-                    _FOREGROUND_OWNER_STALE_AFTER = None
+                _release_owner_slot()
             finally:
                 _FOREGROUND_OWNER_LOCK.release()
         else:
@@ -2612,10 +2686,7 @@ async def _foreground_owner_context(
             # Self-clear WITHOUT the lock as a last resort: we only remove
             # our own entry, so the worst race (another waiter observing the
             # cleared slot a moment early) is strictly better than a leak.
-            if _FOREGROUND_OWNER_NAME == owner_name:
-                _FOREGROUND_OWNER_NAME = None
-                _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
-                _FOREGROUND_OWNER_STALE_AFTER = None
+            _release_owner_slot()
             _record_mlx_degradation(
                 TimeoutError("foreground owner release lock timeout"),
                 action="self-cleared finished foreground ownership without the owner lock",
@@ -2717,7 +2788,13 @@ def _set_shared_future_result(future: SharedFuture | None, result: Any) -> bool:
         if not future.done():
             future.set_result(result)
 
-    future_loop.call_soon_threadsafe(_setter)
+    # is_closed() above is a check, not a hold: the loop can close between
+    # that line and this one, and call_soon_threadsafe then raises into the
+    # worker listener thread rather than merely failing to deliver.
+    try:
+        future_loop.call_soon_threadsafe(_setter)
+    except RuntimeError:
+        return False
     return True
 
 
@@ -2750,7 +2827,10 @@ def _cancel_shared_future(future: SharedFuture | None) -> None:
         if not future.done():
             future.cancel()
 
-    future_loop.call_soon_threadsafe(_canceller)
+    try:
+        future_loop.call_soon_threadsafe(_canceller)
+    except RuntimeError:
+        logger.debug("Shared future cancel skipped: target loop closed.")
 
 
 def _cancel_task_threadsafe(task: asyncio.Task | None) -> None:
@@ -2767,7 +2847,10 @@ def _cancel_task_threadsafe(task: asyncio.Task | None) -> None:
         if not task.done():
             task.cancel()
 
-    task_loop.call_soon_threadsafe(_canceller)
+    try:
+        task_loop.call_soon_threadsafe(_canceller)
+    except RuntimeError:
+        logger.debug("Task cancel skipped: target loop closed.")
 
 
 def _notify_closed_loop_output(text: str) -> None:
@@ -3192,6 +3275,9 @@ class MLXLocalClient:
         self._last_interoception: dict[str, Any] = {}
         self._clock_sample_wall = time.time()
         self._clock_sample_monotonic = time.monotonic()
+        self._clock_sample_sleep_inclusive = _sleep_inclusive_monotonic()
+        self._clock_shift_events = 0
+        self._clock_shift_total_s = 0.0
 
         # The state repository's SharedMemoryTransport may be backed by mmap on
         # restricted/macOS paths. mmap handles are not picklable under the
@@ -3627,14 +3713,24 @@ class MLXLocalClient:
             "generated_tokens",
             "termination",
         }
-        snapshot = {key: response.get(key) for key in allowed if key in response}
+        # The KEY whitelist bounds which fields survive; it says nothing about
+        # their size or type. A worker sending stage="A"*50_000_000 was inside
+        # the whitelist and retained in full, so the parent's own memory was a
+        # function of what the child chose to send.
+        snapshot = {
+            key: _bounded_progress_value(response.get(key))
+            for key in allowed
+            if key in response
+        }
+        now = time.time()
         snapshot.update(
             {
                 "request_id": request_id,
-                "received_at_unix": time.time(),
+                "received_at_unix": now,
             }
         )
         self._latent_progress_by_request[request_id] = snapshot
+        self._expire_latent_progress(now=now)
         # Bounded: evict the oldest entries beyond a small window.
         if len(self._latent_progress_by_request) > 64:
             for stale_id in sorted(
@@ -3646,6 +3742,26 @@ class MLXLocalClient:
                 self._latent_progress_by_request.pop(stale_id, None)
                 self._latent_progress_evicted += 1
 
+    #: Progress older than this describes a request nobody is waiting on.
+    _LATENT_PROGRESS_TTL_S = 900.0
+
+    def _expire_latent_progress(self, *, now: float | None = None) -> None:
+        """Drop progress for requests that have finished or gone quiet.
+
+        Capacity eviction alone kept a completed request's last snapshot
+        resident until 64 newer ones displaced it, so a quiet client reported
+        stage information for work that had ended long before.
+        """
+        moment = time.time() if now is None else now
+        for rid, snapshot in list(self._latent_progress_by_request.items()):
+            if rid == self._current_request_id or rid in self._pending_generations:
+                continue
+            received = float(snapshot.get("received_at_unix") or 0.0)
+            if received and (moment - received) <= self._LATENT_PROGRESS_TTL_S:
+                continue
+            self._latent_progress_by_request.pop(rid, None)
+            self._latent_progress_evicted += 1
+
     def _rebase_after_system_sleep(self) -> float:
         """Rebase active wall-clock anchors after host sleep/wake.
 
@@ -3655,14 +3771,51 @@ class MLXLocalClient:
         """
         now_wall = time.time()
         now_monotonic = time.monotonic()
+        now_sleep_inclusive = _sleep_inclusive_monotonic()
         wall_delta = max(0.0, now_wall - self._clock_sample_wall)
         monotonic_delta = max(0.0, now_monotonic - self._clock_sample_monotonic)
+        prior_sleep_inclusive = self._clock_sample_sleep_inclusive
         self._clock_sample_wall = now_wall
         self._clock_sample_monotonic = now_monotonic
-        sleep_gap = wall_delta - monotonic_delta
+        self._clock_sample_sleep_inclusive = now_sleep_inclusive
+
+        # Measured sleep, when the host can measure it. Both clocks here are
+        # monotonic, so neither moves when someone sets the date, NTP steps
+        # the clock, or a VM is migrated.
+        slept = 0.0
+        sleep_measured = False
+        if now_sleep_inclusive is not None and prior_sleep_inclusive is not None:
+            slept = max(0.0, (now_sleep_inclusive - prior_sleep_inclusive) - monotonic_delta)
+            sleep_measured = True
+
+        # Whatever the wall clock did beyond running time and measured sleep
+        # is the clock itself moving. It still invalidates wall-clock anchors,
+        # so it is still rebased — but it is NOT a host resume, and calling it
+        # one hid genuine clock instability and, worse, let an unrelated jump
+        # postpone every stall decision on a worker that had actually wedged.
+        clock_shift = wall_delta - monotonic_delta - slept
+        if not sleep_measured:
+            # No sleep-inclusive clock on this host: the two are
+            # indistinguishable, so attribute the gap to sleep as before
+            # rather than reporting a clock anomaly we cannot substantiate.
+            slept, clock_shift = clock_shift, 0.0
+
+        gap = slept + clock_shift
         threshold = _finite_env_float("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", 5.0, minimum=1.0)
-        if sleep_gap <= max(1.0, threshold):
+        if gap <= max(1.0, threshold):
             return 0.0
+        sleep_gap = gap
+        if sleep_measured and clock_shift > max(1.0, threshold):
+            self._clock_shift_events += 1
+            self._clock_shift_total_s += clock_shift
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"wall clock moved {clock_shift:.1f}s without host sleep "
+                    f"(slept {slept:.1f}s)"
+                ),
+                action="rebased wall-clock inference anchors after a clock adjustment",
+                severity="warning",
+            )
 
         stale_cutoff = now_wall - max(2.0, sleep_gap * 0.5)
         for attr in (
@@ -3679,10 +3832,19 @@ class MLXLocalClient:
             value = float(getattr(self, attr, 0.0) or 0.0)
             if 0.0 < value < stale_cutoff:
                 setattr(self, attr, value + sleep_gap)
-        logger.info(
-            "🌙 [MLX] Host resume detected; rebased active inference clocks by %.1fs.",
-            sleep_gap,
-        )
+        if sleep_measured and clock_shift > max(1.0, threshold):
+            logger.warning(
+                "🕐 [MLX] Wall clock moved %.1fs without host sleep (slept %.1fs); "
+                "rebased active inference clocks by %.1fs.",
+                clock_shift,
+                slept,
+                sleep_gap,
+            )
+        else:
+            logger.info(
+                "🌙 [MLX] Host resume detected; rebased active inference clocks by %.1fs.",
+                sleep_gap,
+            )
         return sleep_gap
 
     def _surface_control_receipt_slot(self) -> ContextVar[dict[str, Any] | None]:
@@ -4150,11 +4312,19 @@ class MLXLocalClient:
                     "warmup_in_flight": self._warmup_in_flight,
                 },
             )
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            _record_mlx_degradation(
-                exc,
-                action="kept lane-local degraded state after health event emission failed",
-            )
+        except Exception as exc:  # noqa: BLE001 - observation must not break the observed
+            # This runs inside generation, warmup and reboot paths purely to
+            # WRITE a diagnostic. The old clause caught three error types, so a
+            # serialization or disk failure inside record_degraded_event
+            # escaped and failed the very operation it was reporting on —
+            # turning "we noticed something degraded" into an outage.
+            try:
+                _record_mlx_degradation(
+                    exc,
+                    action="kept lane-local degraded state after health event emission failed",
+                )
+            except Exception:  # noqa: BLE001 - the fallback may itself be fail-closed
+                pass
             logger.debug("Failed to record MLX degraded event: %s", exc)
 
     def _is_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
