@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from subprocess import CompletedProcess
 
+from tests.fixtures.rlc_runtime_integrity import attach_bound_runtime_integrity
 from tools import drive_live_latent_certificate as certificate
 
 
@@ -127,6 +128,12 @@ def _passing_live_body(commit: str) -> tuple[dict[str, object], str]:
             },
         },
     }
+    # fc635dc92 added measured runtime integrity to the certificate: the
+    # receipt must now carry a worker identity and an integrity proof bound to
+    # this episode's tokens and checkpoint. The passing fixture has to satisfy
+    # the contract it certifies, or the test proves only that an incomplete
+    # receipt fails.
+    attach_bound_runtime_integrity(contract["latent_cortex_receipt"])
     return {
         "response": answer,
         "status": "cognitive_engine",

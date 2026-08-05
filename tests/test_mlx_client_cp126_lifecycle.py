@@ -223,3 +223,131 @@ class TestArtifactPromotionIsATransaction:
         assert receipt["ok"] is False
         assert receipt["state"] == "failed"
         assert receipt["reason"].startswith("recycle_failed")
+
+
+class TestForceAbortDoesNotClobberALifecycleOwner:
+    """CP126 499846c3."""
+
+    def _wedged_client(self):
+        c = MLXLocalClient(model_path=TEST_MODEL)
+        c._record_degraded_event = lambda *a, **k: None
+        c._replace_ipc_queues = lambda *a, **k: None
+        return c
+
+    def test_it_defers_reconciliation_rather_than_erasing_a_new_process(self):
+        class _Proc:
+            def __init__(self):
+                self.killed = False
+
+            def is_alive(self):
+                return not self.killed
+
+            def kill(self):
+                self.killed = True
+
+            def join(self, timeout=None):
+                return None
+
+        client = self._wedged_client()
+        published = _Proc()
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+        client._lock.acquire()
+        try:
+            client._process = published  # a concurrent spawn just published this
+            assert client.force_abort_active_generation("watchdog") is True
+        finally:
+            client._lock.release()
+        # The handle survived: erasing it would have hidden a live worker from
+        # the owner that spawned it. Reconciliation is queued for that owner.
+        assert client._process is published
+        assert client._force_abort_reconcile_pending == "watchdog"
+
+    def test_the_lock_owner_applies_the_deferred_reconciliation(self):
+        client = self._wedged_client()
+        client._force_abort_reconcile_pending = "watchdog"
+        client._process = object()
+        client._init_done = True
+        client._active_generations = 2
+        client._apply_pending_force_abort_reconcile()
+        assert client._process is None
+        assert client._init_done is False
+        assert client._active_generations == 0
+        assert client._force_abort_reconcile_pending is None
+
+    def test_applying_with_nothing_pending_is_a_no_op(self):
+        client = self._wedged_client()
+        marker = object()
+        client._process = marker
+        client._apply_pending_force_abort_reconcile()
+        assert client._process is marker
+
+    def test_it_forces_after_repeated_deferrals(self):
+        client = self._wedged_client()
+        client._process = None
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+        client._force_abort_lock_failures = 2  # two prior deferrals
+        client._lock.acquire()
+        try:
+            assert client.force_abort_active_generation("watchdog") is True
+        finally:
+            client._lock.release()
+        # The owner is presumed wedged; the abort reconciles unsynchronized.
+        assert client._process is None
+        assert client._force_abort_reconcile_pending is None
+
+    def test_the_request_lane_is_not_released_for_another_holder(self):
+        client = self._wedged_client()
+        client._request_lock.acquire()
+        client._request_lock_owner_label = "another_request"
+        client._active_generations = 0
+        client._current_request_started_at = 0.0
+        try:
+            client._release_request_lock_if_aborted("watchdog")
+            assert client._request_lock.locked()
+        finally:
+            if client._request_lock.locked():
+                client._request_lock.release()
+
+    def test_the_aborted_holder_releases_its_own_lane(self):
+        client = self._wedged_client()
+        client._request_lock.acquire()
+        client._request_lock_owner_label = "wedged"
+        client._active_generations = 1
+        client._release_request_lock_if_aborted("watchdog")
+        assert not client._request_lock.locked()
+
+
+class TestDurationSettingsAreBounded:
+    """CP126 ec9f8d32: a floor does not stop infinity."""
+
+    def test_infinity_falls_back_to_the_default(self, monkeypatch):
+        from core.brain.llm.mlx_client import _env_duration_s
+
+        monkeypatch.setenv("AURA_TEST_DURATION", "inf")
+        assert _env_duration_s("AURA_TEST_DURATION", 90.0, minimum=1.0) == 90.0
+
+    def test_an_absurd_value_falls_back_rather_than_being_honoured(self, monkeypatch):
+        from core.brain.llm.mlx_client import _env_duration_s
+
+        monkeypatch.setenv("AURA_TEST_DURATION", "86400000")
+        assert _env_duration_s("AURA_TEST_DURATION", 90.0) == 90.0
+
+    def test_a_malformed_value_does_not_raise_into_the_request_path(self, monkeypatch):
+        from core.brain.llm.mlx_client import _env_duration_s
+
+        monkeypatch.setenv("AURA_TEST_DURATION", "ninety seconds")
+        assert _env_duration_s("AURA_TEST_DURATION", 90.0) == 90.0
+
+    def test_a_reasonable_value_is_honoured(self, monkeypatch):
+        from core.brain.llm.mlx_client import _env_duration_s
+
+        monkeypatch.setenv("AURA_TEST_DURATION", "45")
+        assert _env_duration_s("AURA_TEST_DURATION", 90.0) == 45.0
+
+    def test_below_the_floor_falls_back(self, monkeypatch):
+        from core.brain.llm.mlx_client import _env_duration_s
+
+        monkeypatch.setenv("AURA_TEST_DURATION", "0.1")
+        assert _env_duration_s("AURA_TEST_DURATION", 90.0, minimum=1.0) == 90.0

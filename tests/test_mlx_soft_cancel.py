@@ -266,7 +266,21 @@ class _DeadProcess:
         return False
 
 
-def _resolver_client(*, cancel_value: int, alive: bool = True, heartbeat_fresh: bool = True):
+def _resolver_client(
+    *,
+    cancel_value: int,
+    alive: bool = True,
+    heartbeat_fresh: bool = True,
+    acknowledged: bool = False,
+    cancelled: bool = True,
+):
+    """A client mid-abandon.
+
+    ``acknowledged`` is now the ONLY thing that makes the ack wait succeed:
+    CP126 6b4337de replaced "the shared flag is zero and some heartbeat is
+    fresh" — neither of which names the cancelled request — with the worker's
+    own terminal frame for that request id.
+    """
     client = MLXLocalClient.__new__(MLXLocalClient)
     client.model_path = "/models/Qwen2.5-32B-Instruct-4bit"
     client._cancel_seq = _Value(cancel_value)
@@ -274,6 +288,26 @@ def _resolver_client(*, cancel_value: int, alive: bool = True, heartbeat_fresh: 
     client._last_heartbeat = time.time() if heartbeat_fresh else time.time() - 300.0
     client._degraded_events = []
     client._reboots = []
+    client._soft_cancel_target = (
+        {
+            "req_id": "req-abandoned",
+            "seq": 7,
+            "requested_monotonic": time.monotonic(),
+            "reason": "test",
+        }
+        if cancelled
+        else None
+    )
+    client._soft_cancel_ack = (
+        {
+            "req_id": "req-abandoned",
+            "observed_monotonic": time.monotonic() + 0.001,
+            "soft_cancelled": True,
+            "status": "ok",
+        }
+        if acknowledged
+        else None
+    )
 
     def _record(name, **kwargs):
         client._degraded_events.append((name, kwargs))
@@ -292,30 +326,72 @@ def _run(coro):
     return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
 
 
-def test_ack_wait_succeeds_when_cancel_cleared_and_worker_alive():
-    client = _resolver_client(cancel_value=0)
+def test_ack_wait_succeeds_when_the_worker_answered_this_request():
+    client = _resolver_client(cancel_value=0, acknowledged=True)
     assert _run(client._soft_cancel_acknowledged(timeout_s=1.0)) is True
 
 
 def test_ack_wait_fails_when_worker_dead():
-    client = _resolver_client(cancel_value=0, alive=False)
+    client = _resolver_client(cancel_value=0, alive=False, acknowledged=True)
     assert _run(client._soft_cancel_acknowledged(timeout_s=1.0)) is False
 
 
-def test_ack_wait_times_out_when_cancel_never_observed():
+def test_ack_wait_times_out_when_the_worker_never_answered():
     client = _resolver_client(cancel_value=99)
     start = time.monotonic()
     assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
     assert time.monotonic() - start < 5.0
 
 
-def test_ack_wait_fails_on_stale_heartbeat():
-    client = _resolver_client(cancel_value=0, heartbeat_fresh=False)
+def test_a_cleared_flag_alone_is_not_an_acknowledgement():
+    """The exact live hazard: a reboot or a new job also zeroes the flag."""
+    client = _resolver_client(cancel_value=0, acknowledged=False)
     assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
 
 
-def test_recoverable_abandon_with_ack_preserves_warm_lane():
+def test_an_answer_for_a_different_request_is_not_an_acknowledgement():
     client = _resolver_client(cancel_value=0)
+    client._soft_cancel_ack = {
+        "req_id": "req-someone-else",
+        "observed_monotonic": time.monotonic() + 1.0,
+        "soft_cancelled": True,
+        "status": "ok",
+    }
+    assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
+
+
+def test_an_answer_observed_before_the_cancel_is_not_an_acknowledgement():
+    client = _resolver_client(cancel_value=0)
+    client._soft_cancel_ack = {
+        "req_id": "req-abandoned",
+        "observed_monotonic": client._soft_cancel_target["requested_monotonic"] - 5.0,
+        "soft_cancelled": False,
+        "status": "ok",
+    }
+    assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
+
+
+def test_no_cancel_means_nothing_to_acknowledge():
+    client = _resolver_client(cancel_value=0, cancelled=False, acknowledged=False)
+    assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
+
+
+def test_the_listener_records_the_terminal_frame_as_the_acknowledgement():
+    client = _resolver_client(cancel_value=0)
+    client._note_soft_cancel_acknowledgement(
+        {"id": "req-abandoned", "status": "ok", "soft_cancelled": True}
+    )
+    assert _run(client._soft_cancel_acknowledged(timeout_s=1.0)) is True
+
+
+def test_the_listener_ignores_frames_for_other_requests():
+    client = _resolver_client(cancel_value=0)
+    client._note_soft_cancel_acknowledgement({"id": "req-other", "status": "ok"})
+    assert client._soft_cancel_ack is None
+
+
+def test_recoverable_abandon_with_ack_preserves_warm_lane():
+    client = _resolver_client(cancel_value=0, acknowledged=True)
     _run(client._resolve_deferred_reboot("recoverable_token_progress_stalled"))
     assert client._reboots == [], "acknowledged soft-cancel must not reboot the warm worker"
     assert any(
@@ -342,7 +418,7 @@ def test_nonrecoverable_abandon_reboots_immediately_marked_failed():
 
 
 def test_recoverable_but_nonpreservable_reason_still_reboots():
-    client = _resolver_client(cancel_value=0)
+    client = _resolver_client(cancel_value=0, acknowledged=True)
     _run(client._resolve_deferred_reboot("recoverable_empty_generation"))
     assert client._reboots == [("empty_generation", False)]
 

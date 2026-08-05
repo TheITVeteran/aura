@@ -203,6 +203,25 @@ _PROGRESS_STR_CHARS = 200
 _PROGRESS_SEQ_ITEMS = 32
 
 
+#: A soft-cancel acknowledgement costs about one decode step. It is spent
+#: after the caller's deadline has already expired, so it stays small and is
+#: named rather than folded into the budget it exceeds.
+_LATENT_CANCEL_ACK_GRACE_S = 2.0
+
+
+def _remaining_budget(deadline: Deadline | None, fallback_s: float) -> float:
+    """What is left of the ONE budget this request was given.
+
+    A phase that reads the original timeout instead of the remainder is not
+    bounded by the caller's deadline at all — it merely starts a new one.
+    """
+    if isinstance(deadline, Deadline):
+        remaining = deadline.remaining
+        if remaining is not None:
+            return max(0.0, float(remaining))
+    return max(0.0, float(fallback_s))
+
+
 def _sleep_inclusive_monotonic() -> float | None:
     """A monotonic clock that keeps counting while the host is asleep.
 
@@ -517,12 +536,7 @@ _GLOBAL_SPAWN_GATE = _threading.Semaphore(1)
 # Gate holders may legitimately spend minutes loading the 32B, but waiters must
 # defer quickly. A waiter is not the load owner and must never consume a whole
 # foreground turn merely waiting for the mechanical single-spawn mutex.
-try:
-    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = max(
-        0.05, float(os.environ.get("AURA_SPAWN_GATE_ACQUIRE_TIMEOUT_S", "5"))
-    )
-except (TypeError, ValueError):
-    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = 5.0
+_SPAWN_GATE_ACQUIRE_TIMEOUT_S = 5.0  # replaced below once the parser is defined
 _GLOBAL_SPAWN_GATE_STATE_LOCK = _threading.Lock()
 _GLOBAL_SPAWN_GATE_TOKEN = ""
 _GLOBAL_SPAWN_GATE_OWNER = ""
@@ -579,6 +593,12 @@ _WARMUP_STALE_AFTER_S = 300.0
 # only force an unsynchronized reboot after this many consecutive failures.
 _REBOOT_LOCK_ESCALATED_WAIT_S = 35.0
 _REBOOT_LOCK_FORCE_AFTER = 3
+#: force_abort runs on a watchdog thread and must answer fast, so it takes one
+#: short attempt at the lifecycle lock and otherwise hands reconciliation to
+#: the owner. Same discipline as reboot: do not rewrite lifecycle state you do
+#: not own until repeated attempts prove the owner is itself wedged.
+_FORCE_ABORT_LOCK_WAIT_S = 0.25
+_FORCE_ABORT_LOCK_FORCE_AFTER = 3
 # close() is terminal, so it always completes — but it waits properly first
 # instead of racing a live lifecycle operation after one second.
 _CLOSE_LOCK_WAIT_S = 10.0
@@ -702,9 +722,29 @@ def _model_is_quantized(model_path: Any) -> bool:
     return any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510"))
 
 
-def _finite_env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+#: No lifecycle wait in this module is legitimately longer than an hour. A
+#: value above it is a typo or a unit mistake (milliseconds pasted as seconds),
+#: and honouring it turns a bounded wait into a hang.
+_MAX_DURATION_S = 3600.0
+
+
+def _finite_env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
     """Env float with a fail-safe contract: malformed, NaN, or infinite
-    values fall back to the default instead of poisoning admission math."""
+    values fall back to the default instead of poisoning admission math.
+
+    CP126 ec9f8d32: several duration settings were parsed with a bare
+    ``float()`` and a ``max()`` floor. A floor does not stop infinity, so
+    ``AURA_MLX_SPAWN_FILE_LOCK_TIMEOUT_S=inf`` produced a deadline that never
+    arrived — a bounded wait turned into a permanent one by a config string.
+    Every duration now comes through here, and out-of-range means the default,
+    not the extreme.
+    """
     try:
         value = float(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
@@ -713,7 +753,26 @@ def _finite_env_float(name: str, default: float, *, minimum: float | None = None
         return default
     if minimum is not None and value < minimum:
         return default
+    if maximum is not None and value > maximum:
+        logger.warning(
+            "⚙️ [MLX] %s=%s exceeds the %.0fs ceiling; using the default %.1fs.",
+            name,
+            value,
+            maximum,
+            default,
+        )
+        return default
     return value
+
+
+def _env_duration_s(name: str, default: float, *, minimum: float = 0.0) -> float:
+    """A duration setting: finite, at least ``minimum``, at most an hour."""
+    return _finite_env_float(name, default, minimum=minimum, maximum=_MAX_DURATION_S)
+
+
+_SPAWN_GATE_ACQUIRE_TIMEOUT_S = _env_duration_s(
+    "AURA_SPAWN_GATE_ACQUIRE_TIMEOUT_S", 5.0, minimum=0.05
+)
 
 
 def _model_load_min_available_gb(model_path: str) -> float:
@@ -1861,9 +1920,8 @@ def _acquire_spawn_file_lock(lock_file: Any, *, model_path: str) -> None:
     """Acquire the cross-process spawn lock with timeout and shutdown polling."""
 
     try:
-        timeout_s = max(
-            1.0,
-            float(os.environ.get("AURA_MLX_SPAWN_FILE_LOCK_TIMEOUT_S", "90") or 90.0),
+        timeout_s = _env_duration_s(
+            "AURA_MLX_SPAWN_FILE_LOCK_TIMEOUT_S", 90.0, minimum=1.0
         )
     except (TypeError, ValueError):
         timeout_s = 90.0
@@ -3117,7 +3175,7 @@ def _normalize_probe_detail(stdout: str, stderr: str, returncode: int) -> str:
 # how many consecutive spawns it may cover. A crash that outlives this is not
 # a driver glitch; it is a broken runtime, and spawning onto it wastes a
 # 20-40GB load and strands the lane anyway.
-_LKG_PROBE_WINDOW_S = _finite_env_float("AURA_MLX_LKG_PROBE_WINDOW_S", 300.0, minimum=0.0)
+_LKG_PROBE_WINDOW_S = _env_duration_s("AURA_MLX_LKG_PROBE_WINDOW_S", 300.0)
 #: How long the out-of-process MLX availability probe may take. It starts an
 #: interpreter and imports MLX, so it is sensitive to host I/O rather than to
 #: anything about the runtime's health; on a thrashing page cache the import
@@ -3302,6 +3360,15 @@ class MLXLocalClient:
         self._lock = _threading.Lock()
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
+        #: Set when a forced abort killed the worker but could not take the
+        #: lifecycle lock; the next lock owner reconciles the state.
+        self._force_abort_reconcile_pending: str | None = None
+        self._force_abort_lock_failures = 0
+        #: What the last soft-cancel targeted, and the worker frame that
+        #: answered it. An acknowledgement must name the same request and
+        #: arrive after the cancel was written.
+        self._soft_cancel_target: dict[str, Any] | None = None
+        self._soft_cancel_ack: dict[str, Any] | None = None
         #: A validated artifact waiting for the active request to end. Held
         #: apart from _deferred_reboot_reason so a recovery verdict and a
         #: staged promotion cannot overwrite one another.
@@ -3954,7 +4021,7 @@ class MLXLocalClient:
             slept, clock_shift = clock_shift, 0.0
 
         gap = slept + clock_shift
-        threshold = _finite_env_float("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", 5.0, minimum=1.0)
+        threshold = _env_duration_s("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", 5.0, minimum=1.0)
         if gap <= max(1.0, threshold):
             return 0.0
         sleep_gap = gap
@@ -4678,7 +4745,7 @@ class MLXLocalClient:
         # previously produced premature aborts, an unbounded watchdog, or a
         # non-finite timer value.
         hard_mult = min(10.0, _finite_env_float("AURA_FIRST_TOKEN_HARD_MULT", 1.8, minimum=1.0))
-        hard_pad = min(600.0, _finite_env_float("AURA_FIRST_TOKEN_HARD_PAD_S", 20.0, minimum=0.0))
+        hard_pad = min(600.0, _env_duration_s("AURA_FIRST_TOKEN_HARD_PAD_S", 20.0))
         # The hard ceiling exists to kill LIVELOCKED generations (heartbeats,
         # zero tokens). Under live memory pressure a starved-but-healthy heavy
         # lane looks exactly like that livelock from outside — stretch the
@@ -5293,6 +5360,66 @@ class MLXLocalClient:
                         exc,
                     )
         return False
+
+    def _release_request_lock_if_aborted(self, reason: str) -> None:
+        """Release the request lane only when the aborted work owned it.
+
+        An unconditional release let a SECOND request enter while the previous
+        owner's critical section was still running — the abort's own damage
+        rather than the wedge's. When the lock is held by someone else, the
+        lane stays fenced and the holder releases it in its own finally.
+        """
+        holder = str(getattr(self, "_request_lock_owner_label", "") or "")
+        if not self._request_lock.locked():
+            return
+        aborted_owner = bool(self._current_request_started_at > 0.0 or self._active_generations)
+        if holder and not aborted_owner:
+            logger.warning(
+                "🛑 [MLX] Force-abort (%s) left the request lane held by %s — "
+                "its own holder must release it.",
+                reason,
+                holder,
+            )
+            return
+        self._release_request_lock()
+
+    def _apply_pending_force_abort_reconcile(self) -> None:
+        """Finish a forced abort's state reconciliation, under the lock.
+
+        Called by the lifecycle owner. The abort itself killed the worker and
+        completed the futures; what it deliberately did not do — clearing the
+        process handle, replacing the IPC queues, dropping the listener — is
+        done here, where publishing a new process cannot race a teardown.
+        """
+        reason = self._force_abort_reconcile_pending
+        if not reason:
+            return
+        self._force_abort_reconcile_pending = None
+        self._force_abort_lock_failures = 0
+        self._pending_generations.clear()
+        self._current_gen_future = None
+        self._active_generations = 0
+        self._warmup_in_flight = False
+        self._init_done = False
+        self._process = None
+        self._last_heartbeat = 0.0
+        self._last_progress_at = 0.0
+        self._last_token_progress_at = 0.0
+        self._process_started_at = 0.0
+        self._clear_active_generation_tracking()
+        if self._init_future is not None:
+            _cancel_shared_future(self._init_future)
+        self._init_future = None
+        if self._listener_task is not None:
+            _cancel_task_threadsafe(self._listener_task)
+            self._listener_task = None
+        self._replace_ipc_queues()
+        self._release_request_lock_if_aborted(str(reason))
+        logger.warning(
+            "🧹 [MLX] Reconciled deferred force-abort state for %s (%s).",
+            os.path.basename(self.model_path),
+            reason,
+        )
 
     def _release_request_lock(self) -> None:
         self._request_lock_owner_label = ""
@@ -6916,23 +7043,46 @@ class MLXLocalClient:
                 first_token_hard_ceiling_s=bounded_timeout_s,
                 request_seq=request_seq,
             )
+            # CP126 4cc73762. Every phase below is paid out of the SAME
+            # remaining budget. Before, the queue put took a 0.5s floor even
+            # when less than that was left, and the generation wait then
+            # restarted the caller's FULL original timeout — so owner wait +
+            # lock wait + generation + cancel-ack could run far past the
+            # deadline the caller was promised. Work that cannot start inside
+            # the budget is refused with the phase that ran out, rather than
+            # started and then abandoned.
+            dispatch_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if dispatch_budget <= 0.0:
+                return {
+                    **base,
+                    "reason": "latent_timeout:budget_exhausted",
+                    "phase": "dispatch",
+                }
             await run_io_bound(
                 self._req_q.put,
                 self._authorize_job(job, principal="mlx_client.latent_reason"),
                 True,
-                min(2.0, max(0.5, deadline.remaining or 2.0)),
+                min(2.0, dispatch_budget),
             )
+            generation_budget = _remaining_budget(deadline, bounded_timeout_s)
+            if generation_budget <= 0.0:
+                deferred_reboot = "latent_reason_deadline_unacknowledged"
+                return {
+                    **base,
+                    "reason": "latent_timeout:budget_exhausted",
+                    "phase": "generation_start",
+                }
             try:
-                res = await _await_shared_future(fut, timeout_s=bounded_timeout_s)
+                res = await _await_shared_future(fut, timeout_s=generation_budget)
             except TimeoutError:
                 self.soft_cancel_active_generation("latent_reason_deadline")
                 try:
+                    # Deliberately OUTSIDE the caller's budget, and small. The
+                    # deadline is already spent; this buys the worker one
+                    # decode step to answer, and the alternative to a clean
+                    # acknowledgement is rebooting a healthy 32B.
                     cancel_ack = await _await_shared_future(
-                        fut,
-                        timeout_s=min(
-                            12.0,
-                            max(3.0, bounded_timeout_s * 0.10),
-                        ),
+                        fut, timeout_s=_LATENT_CANCEL_ACK_GRACE_S
                     )
                 except (TimeoutError, BrokenPipeError, OSError):
                     cancel_ack = None
@@ -7554,6 +7704,17 @@ class MLXLocalClient:
             }
         try:
             cancel_seq.value = active_seq
+            # CP126 6b4337de: record WHAT was cancelled and WHEN. The old ack
+            # test read a shared flag and a heartbeat, neither bound to this
+            # request; the worker's own terminal frame for this job is the
+            # only thing that proves it stopped decoding it.
+            self._soft_cancel_target = {
+                "req_id": str(getattr(self, "_current_request_id", "") or ""),
+                "seq": active_seq,
+                "requested_monotonic": time.monotonic(),
+                "reason": reason,
+            }
+            self._soft_cancel_ack = None
         except (OSError, ValueError) as exc:
             _record_mlx_degradation(
                 exc,
@@ -7596,7 +7757,7 @@ class MLXLocalClient:
         model can be preserved instead of paying a ~60-90s reload.
         """
         if timeout_s is None:
-            timeout_s = _finite_env_float("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", 12.0, minimum=0.5)
+            timeout_s = _env_duration_s("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", 12.0, minimum=0.5)
         try:
             timeout_s = float(timeout_s)
         except (TypeError, ValueError):
@@ -7604,25 +7765,61 @@ class MLXLocalClient:
         if not math.isfinite(timeout_s):
             # An infinite ack wait would wedge cleanup forever.
             timeout_s = 12.0
-        cancel_seq = getattr(self, "_cancel_seq", None)
-        if cancel_seq is None:
+        target = self._soft_cancel_target
+        if not target:
+            # Nothing was cancelled through this channel, so there is nothing
+            # to acknowledge. Reporting True here would preserve a worker on
+            # the strength of a cancel that never happened.
             return False
         deadline = time.monotonic() + min(120.0, max(0.5, timeout_s))
         while time.monotonic() < deadline:
             process = self._process
             if process is None or not process.is_alive():
                 return False
-            try:
-                cancel_cleared = int(getattr(cancel_seq, "value", 0)) == 0
-            except (OSError, ValueError):
-                return False
-            heartbeat_fresh = (
-                self._last_heartbeat > 0.0 and (time.time() - self._last_heartbeat) < 20.0
-            )
-            if cancel_cleared and heartbeat_fresh:
+            if self._soft_cancel_ack_matches(target):
                 return True
             await asyncio.sleep(0.25)
         return False
+
+    def _soft_cancel_ack_matches(self, target: dict[str, Any]) -> bool:
+        """Whether the worker answered THIS cancel, after it was written.
+
+        The previous test was ``cancel flag is zero AND some heartbeat is
+        under 20 seconds old``. Neither signal named the cancelled request:
+        a reboot or a new job start also clears the flag, and a heartbeat
+        emitted BEFORE the cancel still counted as fresh. A worker that never
+        dropped the abandoned decode could therefore be preserved, and its
+        stale output was then live in the next turn's lane.
+        """
+        ack = self._soft_cancel_ack
+        if not ack:
+            return False
+        if str(ack.get("req_id") or "") != str(target.get("req_id") or ""):
+            return False
+        return float(ack.get("observed_monotonic") or 0.0) >= float(
+            target.get("requested_monotonic") or 0.0
+        )
+
+    def _note_soft_cancel_acknowledgement(self, res: dict[str, Any]) -> None:
+        """Record a worker terminal frame that answers an outstanding cancel.
+
+        A terminal frame for the cancelled request is proof the worker's job
+        loop reached the end of that job — whether it reports soft_cancelled,
+        an error, or a truncated result. What matters is that the decode this
+        cancel targeted is over.
+        """
+        target = self._soft_cancel_target
+        if not target:
+            return
+        req_id = str(res.get("id") or "")
+        if not req_id or req_id != str(target.get("req_id") or ""):
+            return
+        self._soft_cancel_ack = {
+            "req_id": req_id,
+            "observed_monotonic": time.monotonic(),
+            "soft_cancelled": bool(res.get("soft_cancelled")),
+            "status": str(res.get("status") or ""),
+        }
 
     async def _resolve_deferred_reboot(self, deferred: str) -> None:
         """Resolve an abandoned-request verdict: preserve the warm lane or reboot.
@@ -7760,18 +7957,59 @@ class MLXLocalClient:
             self._kill_and_join_blocking(process)
             killed_process_before_lock = True
 
-        acquired = self._lock.acquire(timeout=0.25)
+        # No escalated wait here, deliberately. This runs on a watchdog
+        # thread whose whole value is answering fast, and the urgent half of
+        # the abort — killing the worker, completing the futures — is already
+        # done above. Blocking for seconds to win a lock we can hand off is
+        # the wrong trade.
+        acquired = self._lock.acquire(timeout=_FORCE_ABORT_LOCK_WAIT_S)
         if not acquired:
-            # Emergency semantics: proceed anyway (the wedge may BE the lock
-            # holder), but leave a visible receipt that lifecycle state was
-            # mutated without ownership so a racing spawn/reboot can be
-            # diagnosed instead of silently corrupted.
+            # CP126 499846c3. The old path proceeded anyway. Its two most
+            # damaging steps are exactly the ones a concurrent spawn is in the
+            # middle of: `self._process = None` erases a process another thread
+            # has just published, and `_replace_ipc_queues()` orphans the
+            # queues that new worker is already writing to — a worker alive and
+            # talking to nobody, which is the "cortex warming forever" shape.
+            #
+            # The kill and the future completions above already happened, and
+            # neither needs ownership. What is left is state reconciliation,
+            # which belongs to the lifecycle owner. Hand it over, unless
+            # repeated attempts prove that owner is itself wedged.
+            self._force_abort_lock_failures += 1
+            if self._force_abort_lock_failures < _FORCE_ABORT_LOCK_FORCE_AFTER:
+                self._force_abort_reconcile_pending = reason
+                self._set_lane_state("recovering", f"{reason}:awaiting_lifecycle_owner")
+                _record_mlx_degradation(
+                    TimeoutError(f"force_abort_lock_unavailable:{reason}"),
+                    action=(
+                        "killed the worker and handed lifecycle reconciliation to the "
+                        "lock owner instead of mutating state without ownership"
+                    ),
+                    severity="error",
+                )
+                logger.error(
+                    "🚨 [MLX] Force-abort could not take the lifecycle lock for %s "
+                    "(attempt %d/%d); worker killed, reconciliation deferred to the owner.",
+                    os.path.basename(self.model_path),
+                    self._force_abort_lock_failures,
+                    _FORCE_ABORT_LOCK_FORCE_AFTER,
+                )
+                self._record_degraded_event(
+                    "force_aborted_generation",
+                    detail=f"{os.path.basename(self.model_path)}:{reason}",
+                    severity="error",
+                    foreground_request=True,
+                )
+                return True
             _record_mlx_degradation(
                 RuntimeError("force_abort_without_lifecycle_lock"),
                 action="force-abort mutated lifecycle state without the lifecycle lock",
                 severity="error",
             )
+        else:
+            self._force_abort_lock_failures = 0
         try:
+            self._force_abort_reconcile_pending = None
             self._pending_generations.clear()
             self._current_gen_future = None
             self._active_generations = 0
@@ -7801,7 +8039,11 @@ class MLXLocalClient:
                 self._kill_and_join_blocking(process)
 
             self._replace_ipc_queues()
-            self._release_request_lock()
+            # Only release the request lock when it belongs to the generation
+            # this abort just killed. Releasing it unconditionally admitted a
+            # SECOND request into a critical section another caller was still
+            # running — the abort's own damage, not the wedge's.
+            self._release_request_lock_if_aborted(reason)
             gc.collect()
         finally:
             if acquired:
@@ -8303,6 +8545,11 @@ class MLXLocalClient:
                     "nonparametric_ingest",
                     "latent_reason",
                 ):
+                    # Before routing: a terminal frame for a cancelled request
+                    # is the acknowledgement, and it must be recorded even when
+                    # the caller has already abandoned the future.
+                    if isinstance(res, dict):
+                        self._note_soft_cancel_acknowledgement(res)
                     future = self._pending_generations.pop(req_id, None) if req_id else None
                     if future and not future.done():
                         self._mark_progress()
@@ -8714,6 +8961,10 @@ class MLXLocalClient:
             )
             return False
         try:
+            # A forced abort may have killed the worker without owning this
+            # lock. Finish its reconciliation before deciding lane health, or
+            # a dead process reads as "already healthy".
+            self._apply_pending_force_abort_reconcile()
             if self._process and self._process.is_alive() and self._init_done:
                 self._set_lane_state("ready")
                 return True  # Already healthy, release gate
@@ -9185,7 +9436,7 @@ class MLXLocalClient:
         # generation wait path, and infinity disabled the hard cap entirely.
         hard_cap = max(
             30.0,
-            _finite_env_float("AURA_MLX_GENERATION_HARD_CAP_SECONDS", 240.0, minimum=30.0),
+            _env_duration_s("AURA_MLX_GENERATION_HARD_CAP_SECONDS", 240.0, minimum=30.0),
         )
         while (time.monotonic() - wait_started) <= hard_cap:
             remaining = deadline.remaining
@@ -11340,6 +11591,11 @@ class MLXLocalClient:
         else:
             self._reboot_lock_failures = 0
         try:
+            # A forced abort that could not take this lock left its
+            # reconciliation for whoever did. Clear it first so the reboot
+            # below is not racing a half-torn-down lane.
+            self._force_abort_reconcile_pending = None
+            self._force_abort_lock_failures = 0
             self._unbind_mycelial_worker()
             if self._process is not None:
                 # K4 accounting: the breaker classifies this death by reason
