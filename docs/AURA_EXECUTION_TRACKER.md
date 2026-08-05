@@ -36610,3 +36610,52 @@ checkpoint. It still does not manufacture independent production keys,
 publish a real pre-campaign Rekor entry, actuate real hardware, or provide
 representative tenant/device replays. Those remain empirical CP810 blockers,
 so the total remains open at 809/920.
+
+#### CP810 addendum: pre-result acceptance trust-root freeze
+
+Physical acceptance can no longer choose its ostensibly independent trust
+roots after seeing a campaign result. Every preregistration statement now
+contains a strict `AcceptanceTrustPolicy` that freezes four identities before
+execution: the metrology witness key, the governance witness key, the Rekor
+log used to timestamp the preregistration, and the separate Rekor log permitted
+to publish the final acceptance verdict. Metrology and governance roots must be
+distinct, every identity uses the verifier's canonical SHA-256 key encoding,
+and the complete policy is included in the producer-signed, append-only
+preregistration statement.
+
+Both scalar and acoustic A1 witness verification compare the cryptographically
+valid external signatures against those preregistered role roots. A valid
+signature from an unregistered custodian is therefore evidence, but not
+acceptance evidence. Preregistration verification similarly rejects a valid
+Rekor proof under an unregistered log root. Final scalar and A1 transparency
+statements explicitly disclose the precommitted final-log digest and their
+verifiers reject a correctly signed, correctly included entry when its log
+identity was not frozen before the campaign.
+
+`manage_acceptance_preregistration.py statement` now requires all four trust
+commitments as operator inputs. The receipt and statement schemas were advanced
+instead of silently accepting older artifacts that cannot prove pre-result
+root selection. Missing or malformed policy, root substitution, shared witness
+custody, and final-log substitution remain separate machine-readable blockers.
+
+Trust-root-freeze evidence:
+
+- end-to-end scalar and A1 fixtures generated witness and log keys first,
+  committed their canonical identities in preregistration, and completed the
+  full signed witness and transparency chain;
+- adversarial fixtures proved that otherwise-valid preregistration logs, final
+  logs, and role signatures are refused when their roots differ from the
+  pre-result policy; focused preregistration, witness, transparency, and A1
+  suites passed 30/30, and the complete affected Reality Reach family passed
+  183/183;
+- smoke passed 103/103; full repository compilation, governance ownership
+  baseline, architectural layering, local security, Ruff, diff hygiene, and
+  scoped production MyPy passed. The repository-wide transitive MyPy sweep
+  remains a separately tracked legacy-debt surface and was not represented as
+  green by this checkpoint.
+
+This closes post-result trust-root selection in the prepared software and
+operator chain. It does not create independently held production keys, publish
+either real public-log entry, actuate and measure a physical device, or execute
+representative tenant/device campaigns. Those remain empirical CP810 blockers,
+so the total remains open at 809/920.

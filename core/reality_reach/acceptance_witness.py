@@ -48,7 +48,7 @@ ACCEPTANCE_WITNESS_STATEMENT_SCHEMA = (
 )
 ACCEPTANCE_WITNESS_BUNDLE_SCHEMA = "aura.reality_reach.acceptance_witness_bundle.v1"
 EXTERNAL_ACCEPTANCE_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.external_acceptance_verification.v2"
+    "aura.reality_reach.external_acceptance_verification.v3"
 )
 ZERO_SHA256 = "sha256:" + "0" * 64
 
@@ -437,6 +437,7 @@ class ExternallyWitnessedAcceptanceReceipt:
     governance_witness_bundle_sha256: str
     metrology_witness_key_sha256: str
     governance_witness_key_sha256: str
+    acceptance_log_key_sha256: str
     blockers: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -453,6 +454,7 @@ class ExternallyWitnessedAcceptanceReceipt:
             "governance_witness_bundle_sha256",
             "metrology_witness_key_sha256",
             "governance_witness_key_sha256",
+            "acceptance_log_key_sha256",
         ):
             value = str(getattr(self, name))
             if value and not _DIGEST.fullmatch(value):
@@ -471,11 +473,12 @@ class ExternallyWitnessedAcceptanceReceipt:
             and self.governance_witness_bundle_sha256
         )
         preregistration_complete = bool(self.preregistration_verification_sha256)
+        trust_policy_complete = bool(self.acceptance_log_key_sha256)
         return bool(
             self.mandate_verification.accepted
             and not self.blockers
             and (
-                witness_complete and preregistration_complete
+                witness_complete and preregistration_complete and trust_policy_complete
                 if physical
                 else True
             )
@@ -500,6 +503,7 @@ class ExternallyWitnessedAcceptanceReceipt:
             ),
             "metrology_witness_key_sha256": self.metrology_witness_key_sha256,
             "governance_witness_key_sha256": self.governance_witness_key_sha256,
+            "acceptance_log_key_sha256": self.acceptance_log_key_sha256,
             "blockers": list(self.blockers),
             "accepted": self.accepted,
         }
@@ -550,10 +554,12 @@ def verify_acceptance_with_external_witnesses(
             governance_witness_bundle_sha256="",
             metrology_witness_key_sha256="",
             governance_witness_key_sha256="",
+            acceptance_log_key_sha256="",
             blockers=tuple(blockers),
         )
 
     verified_preregistration = ""
+    expected_acceptance_log_key_sha256 = ""
     if preregistration_receipt is None:
         blockers.append("acceptance_preregistration_missing")
     else:
@@ -576,6 +582,21 @@ def verify_acceptance_with_external_witnesses(
         blockers.append("acceptance_preregistration_binding_invalid")
     elif preregistration_receipt is not None:
         verified_preregistration = preregistration_receipt.sha256
+        if preregistration_receipt.trust_policy is None:
+            blockers.append("acceptance_trust_policy_missing_or_invalid")
+        else:
+            policy = preregistration_receipt.trust_policy
+            expected_acceptance_log_key_sha256 = policy.acceptance_log_key_sha256
+            if not hmac.compare_digest(
+                metrology_witness_key_sha256,
+                policy.metrology_witness_key_sha256,
+            ):
+                blockers.append("external_metrology_trust_root_not_preregistered")
+            if not hmac.compare_digest(
+                governance_witness_key_sha256,
+                policy.governance_witness_key_sha256,
+            ):
+                blockers.append("external_governance_trust_root_not_preregistered")
 
     if metrology_witness_bundle is None:
         blockers.append("external_metrology_witness_missing")
@@ -660,6 +681,7 @@ def verify_acceptance_with_external_witnesses(
         governance_witness_key_sha256=(
             governance_witness_key_sha256 if verified_governance_bundle else ""
         ),
+        acceptance_log_key_sha256=expected_acceptance_log_key_sha256,
         blockers=tuple(sorted(set(blockers))),
     )
 

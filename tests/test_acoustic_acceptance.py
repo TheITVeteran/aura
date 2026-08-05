@@ -24,6 +24,7 @@ from core.reality_reach.acceptance_mandate import (
     AcceptanceVerificationMandate,
 )
 from core.reality_reach.acceptance_preregistration import (
+    AcceptanceTrustPolicy,
     build_acceptance_preregistration_bundle,
     build_acceptance_preregistration_statement,
     verify_acceptance_preregistration,
@@ -145,6 +146,7 @@ def _transparency_bundle(
     statement: dict[str, object],
     *,
     bundle_builder=build_acoustic_a1_transparency_bundle,
+    log_key: ec.EllipticCurvePrivateKey | None = None,
 ) -> tuple[dict[str, object], bytes]:
     issued_at = int(statement["issued_at_unix"])
     statement_bytes = json.dumps(
@@ -197,7 +199,7 @@ def _transparency_bundle(
     ).encode("utf-8")
     body_b64 = base64.b64encode(body_bytes).decode("ascii")
     root = hashlib.sha256(b"\x00" + body_bytes).digest()
-    log_key = ec.generate_private_key(ec.SECP256R1())
+    log_key = log_key or ec.generate_private_key(ec.SECP256R1())
     log_public_pem = log_key.public_key().public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -418,10 +420,35 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         created=True,
         custody_sequence=mandate.custody_sequence,
     )
+    preregistration_log_key = ec.generate_private_key(ec.SECP256R1())
+    acceptance_log_key = ec.generate_private_key(ec.SECP256R1())
+    trust_policy = AcceptanceTrustPolicy(
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governed.public_key_sha256,
+        preregistration_log_key_sha256=(
+            "sha256:"
+            + hashlib.sha256(
+                preregistration_log_key.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
+        ),
+        acceptance_log_key_sha256=(
+            "sha256:"
+            + hashlib.sha256(
+                acceptance_log_key.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
+        ),
+    )
     preregistration_issued_at = record.started_at_ns // 1_000_000_000 - 2
     preregistration_statement = build_acceptance_preregistration_statement(
         mandate,
         provision_receipt,
+        trust_policy,
         sequence=1,
         previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
         previous_rekor_uuid=None,
@@ -430,6 +457,7 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
     preregistration_bundle, preregistration_log_public_pem = _transparency_bundle(
         preregistration_statement,
         bundle_builder=build_acceptance_preregistration_bundle,
+        log_key=preregistration_log_key,
     )
     preregistration = verify_acceptance_preregistration(
         mandate,
@@ -479,6 +507,22 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         governance_witness_key_sha256=metrology.public_key_sha256,
         now_ns=record.completed_at_ns + 2,
     )
+    unregistered_root = verify_acoustic_a1_with_external_witnesses(
+        record,
+        mandate,
+        preregistration_receipt=replace(
+            preregistration,
+            trust_policy=replace(
+                trust_policy,
+                metrology_witness_key_sha256="sha256:" + "8" * 64,
+            ),
+        ),
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governed,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governed.public_key_sha256,
+        now_ns=record.completed_at_ns + 2,
+    )
 
     assert verified.accepted is True
     assert verified.blockers == ()
@@ -491,6 +535,10 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
     assert "acceptance_preregistration_missing" in missing_preregistration.blockers
     assert shared_root.accepted is False
     assert "external_witness_roots_not_distinct" in shared_root.blockers
+    assert unregistered_root.accepted is False
+    assert unregistered_root.blockers == (
+        "external_metrology_trust_root_not_preregistered",
+    )
     receipt_path = tmp_path / "external-a1.json"
     assert persist_externally_witnessed_acoustic_a1_receipt(
         verified,
@@ -514,7 +562,10 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         previous_rekor_uuid=None,
         issued_at_unix=issued_at,
     )
-    bundle, log_public_pem = _transparency_bundle(statement)
+    bundle, log_public_pem = _transparency_bundle(
+        statement,
+        log_key=acceptance_log_key,
+    )
     transparent = verify_transparently_logged_acoustic_a1(
         verified,
         transparency_bundle=bundle,
@@ -523,9 +574,36 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
         expected_previous_rekor_uuid=None,
     )
+    wrong_log_receipt = replace(
+        verified,
+        acceptance_log_key_sha256="sha256:" + "9" * 64,
+    )
+    wrong_log_statement = build_acoustic_a1_transparency_statement(
+        wrong_log_receipt,
+        sequence=1,
+        previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        previous_rekor_uuid=None,
+        issued_at_unix=issued_at,
+    )
+    wrong_log_bundle, wrong_log_public_pem = _transparency_bundle(
+        wrong_log_statement,
+        log_key=acceptance_log_key,
+    )
+    wrong_log = verify_transparently_logged_acoustic_a1(
+        wrong_log_receipt,
+        transparency_bundle=wrong_log_bundle,
+        trusted_log_public_key_pem=wrong_log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
     assert transparent.accepted is True
     assert transparent.rekor_log_index == 0
     assert transparent.rekor_integrated_time == issued_at + 1
+    assert wrong_log.accepted is False
+    assert wrong_log.blockers == (
+        "acceptance_transparency_log_root_not_preregistered",
+    )
 
     missing = verify_transparently_logged_acoustic_a1(
         verified,

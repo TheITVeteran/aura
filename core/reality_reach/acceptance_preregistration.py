@@ -26,11 +26,12 @@ from core.reality_reach.acceptance_transparency import (
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
 ACCEPTANCE_PREREGISTRATION_STATEMENT_SCHEMA = (
-    "aura.reality_reach.acceptance_preregistration_statement.v1"
+    "aura.reality_reach.acceptance_preregistration_statement.v2"
 )
 ACCEPTANCE_PREREGISTRATION_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.acceptance_preregistration_verification.v1"
+    "aura.reality_reach.acceptance_preregistration_verification.v2"
 )
+ACCEPTANCE_TRUST_POLICY_SCHEMA = "aura.reality_reach.acceptance_trust_policy.v1"
 ACCEPTANCE_PREREGISTRATION_DOMAIN = (
     "aura.reality-reach.acceptance-preregistration"
 )
@@ -54,6 +55,103 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _bytes_digest(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _require_trust_policy(
+    policy: AcceptanceTrustPolicy | None,
+) -> AcceptanceTrustPolicy:
+    if policy is None:
+        raise AcceptanceTransparencyError(
+            "acceptance_trust_policy_missing_or_invalid"
+        )
+    return policy
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceTrustPolicy:
+    """Trust roots frozen before a physical campaign can produce a result."""
+
+    metrology_witness_key_sha256: str
+    governance_witness_key_sha256: str
+    preregistration_log_key_sha256: str
+    acceptance_log_key_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "metrology_witness_key_sha256",
+            "governance_witness_key_sha256",
+            "preregistration_log_key_sha256",
+            "acceptance_log_key_sha256",
+        ):
+            value = str(getattr(self, name) or "").lower()
+            if not _DIGEST.fullmatch(value):
+                raise ValueError(f"{name} must be a sha256 digest")
+            object.__setattr__(self, name, value)
+        if hmac.compare_digest(
+            self.metrology_witness_key_sha256,
+            self.governance_witness_key_sha256,
+        ):
+            raise ValueError("acceptance witness trust roots must be distinct")
+
+    @property
+    def sha256(self) -> str:
+        return _digest(self.to_dict(include_digest=False))
+
+    def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
+        document = {
+            "schema": ACCEPTANCE_TRUST_POLICY_SCHEMA,
+            "metrology_witness_key_sha256": self.metrology_witness_key_sha256,
+            "governance_witness_key_sha256": self.governance_witness_key_sha256,
+            "preregistration_log_key_sha256": self.preregistration_log_key_sha256,
+            "acceptance_log_key_sha256": self.acceptance_log_key_sha256,
+        }
+        if include_digest:
+            document["trust_policy_sha256"] = self.sha256
+        return document
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> AcceptanceTrustPolicy:
+        expected = {
+            "schema",
+            "metrology_witness_key_sha256",
+            "governance_witness_key_sha256",
+            "preregistration_log_key_sha256",
+            "acceptance_log_key_sha256",
+            "trust_policy_sha256",
+        }
+        if not isinstance(document, Mapping) or set(document) != expected:
+            raise AcceptanceTransparencyError("acceptance_trust_policy_schema_invalid")
+        if document.get("schema") != ACCEPTANCE_TRUST_POLICY_SCHEMA:
+            raise AcceptanceTransparencyError("acceptance_trust_policy_schema_invalid")
+        try:
+            policy = cls(
+                metrology_witness_key_sha256=document[
+                    "metrology_witness_key_sha256"
+                ],
+                governance_witness_key_sha256=document[
+                    "governance_witness_key_sha256"
+                ],
+                preregistration_log_key_sha256=document[
+                    "preregistration_log_key_sha256"
+                ],
+                acceptance_log_key_sha256=document["acceptance_log_key_sha256"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AcceptanceTransparencyError(
+                "acceptance_trust_policy_invalid"
+            ) from exc
+        if not hmac.compare_digest(
+            str(document.get("trust_policy_sha256") or ""),
+            policy.sha256,
+        ):
+            raise AcceptanceTransparencyError(
+                "acceptance_trust_policy_digest_invalid"
+            )
+        return policy
 
 
 def _validate_mandate_binding(
@@ -81,6 +179,7 @@ def _validate_mandate_binding(
 def build_acceptance_preregistration_statement(
     mandate: AcceptanceVerificationMandate,
     provision_receipt: AcceptanceMandateProvisionReceipt,
+    trust_policy: AcceptanceTrustPolicy,
     *,
     sequence: int,
     previous_statement_sha256: str,
@@ -90,6 +189,8 @@ def build_acceptance_preregistration_statement(
     """Commit the exact acceptance question for pre-campaign public timestamping."""
 
     _validate_mandate_binding(mandate, provision_receipt)
+    if not isinstance(trust_policy, AcceptanceTrustPolicy):
+        raise TypeError("trust_policy must be an AcceptanceTrustPolicy")
     if type(sequence) is not int or sequence <= 0:
         raise AcceptanceTransparencyError("acceptance_preregistration_sequence_invalid")
     if not _DIGEST.fullmatch(str(previous_statement_sha256 or "")):
@@ -116,6 +217,7 @@ def build_acceptance_preregistration_statement(
         "domain": ACCEPTANCE_PREREGISTRATION_DOMAIN,
         "mandate": mandate.to_dict(),
         "provision_receipt": provision_receipt.to_dict(),
+        "trust_policy": trust_policy.to_dict(),
         "sequence": sequence,
         "previous_statement_sha256": previous_statement_sha256,
         "previous_rekor_uuid": previous_rekor_uuid,
@@ -129,6 +231,7 @@ def _validate_preregistration_statement(
     *,
     mandate: AcceptanceVerificationMandate,
     provision_receipt: AcceptanceMandateProvisionReceipt,
+    trust_policy: AcceptanceTrustPolicy,
     expected_sequence: int,
     expected_previous_statement_sha256: str,
     expected_previous_rekor_uuid: str | None,
@@ -141,6 +244,7 @@ def _validate_preregistration_statement(
         "domain",
         "mandate",
         "provision_receipt",
+        "trust_policy",
         "sequence",
         "previous_statement_sha256",
         "previous_rekor_uuid",
@@ -155,6 +259,7 @@ def _validate_preregistration_statement(
     expected = build_acceptance_preregistration_statement(
         mandate,
         provision_receipt,
+        trust_policy,
         sequence=expected_sequence,
         previous_statement_sha256=expected_previous_statement_sha256,
         previous_rekor_uuid=expected_previous_rekor_uuid,
@@ -183,6 +288,7 @@ def build_acceptance_preregistration_bundle(
         provision_receipt = AcceptanceMandateProvisionReceipt.from_dict(
             statement["provision_receipt"]
         )
+        trust_policy = AcceptanceTrustPolicy.from_dict(statement["trust_policy"])
         sequence = statement["sequence"]
         previous_statement_sha256 = statement["previous_statement_sha256"]
         previous_rekor_uuid = statement["previous_rekor_uuid"]
@@ -194,6 +300,7 @@ def build_acceptance_preregistration_bundle(
         statement,
         mandate=mandate,
         provision_receipt=provision_receipt,
+        trust_policy=trust_policy,
         expected_sequence=sequence,
         expected_previous_statement_sha256=previous_statement_sha256,
         expected_previous_rekor_uuid=previous_rekor_uuid,
@@ -215,6 +322,7 @@ def build_acceptance_preregistration_bundle(
 class PreregisteredAcceptanceReceipt:
     mandate: AcceptanceVerificationMandate
     provision_receipt: AcceptanceMandateProvisionReceipt
+    trust_policy: AcceptanceTrustPolicy | None
     transparency_bundle_sha256: str
     trusted_log_key_sha256: str
     rekor_uuid: str
@@ -225,6 +333,11 @@ class PreregisteredAcceptanceReceipt:
 
     def __post_init__(self) -> None:
         _validate_mandate_binding(self.mandate, self.provision_receipt)
+        if self.trust_policy is not None and not isinstance(
+            self.trust_policy,
+            AcceptanceTrustPolicy,
+        ):
+            raise TypeError("trust_policy must be an AcceptanceTrustPolicy or None")
         for name in ("transparency_bundle_sha256", "trusted_log_key_sha256"):
             value = str(getattr(self, name) or "")
             if value and not _DIGEST.fullmatch(value):
@@ -247,6 +360,7 @@ class PreregisteredAcceptanceReceipt:
     def accepted(self) -> bool:
         return bool(
             self.transparency_bundle_sha256
+            and self.trust_policy is not None
             and not self.blockers
             and self.strictly_predates_campaign
         )
@@ -268,6 +382,9 @@ class PreregisteredAcceptanceReceipt:
             "schema": ACCEPTANCE_PREREGISTRATION_VERIFICATION_SCHEMA,
             "mandate": self.mandate.to_dict(),
             "provision_receipt": self.provision_receipt.to_dict(),
+            "trust_policy": (
+                self.trust_policy.to_dict() if self.trust_policy is not None else None
+            ),
             "transparency_bundle_sha256": self.transparency_bundle_sha256,
             "trusted_log_key_sha256": self.trusted_log_key_sha256,
             "rekor_uuid": self.rekor_uuid,
@@ -301,6 +418,16 @@ def verify_acceptance_preregistration(
     _validate_mandate_binding(mandate, provision_receipt)
     if type(campaign_started_at_ns) is not int or campaign_started_at_ns <= 0:
         raise ValueError("campaign_started_at_ns must be a positive integer")
+    trust_policy: AcceptanceTrustPolicy | None = None
+    if isinstance(transparency_bundle, Mapping):
+        raw_statement = transparency_bundle.get("statement")
+        if isinstance(raw_statement, Mapping):
+            raw_policy = raw_statement.get("trust_policy")
+            if isinstance(raw_policy, Mapping):
+                try:
+                    trust_policy = AcceptanceTrustPolicy.from_dict(raw_policy)
+                except AcceptanceTransparencyError:
+                    trust_policy = None
     artifact = verify_acceptance_transparency_artifact(
         transparency_bundle=transparency_bundle,
         trusted_log_public_key_pem=trusted_log_public_key_pem,
@@ -308,6 +435,7 @@ def verify_acceptance_preregistration(
             raw,
             mandate=mandate,
             provision_receipt=provision_receipt,
+            trust_policy=_require_trust_policy(trust_policy),
             expected_sequence=expected_sequence,
             expected_previous_statement_sha256=expected_previous_statement_sha256,
             expected_previous_rekor_uuid=expected_previous_rekor_uuid,
@@ -316,6 +444,13 @@ def verify_acceptance_preregistration(
         minimum_integrated_time=minimum_integrated_time,
     )
     blockers = list(artifact.blockers)
+    if trust_policy is None:
+        blockers.append("acceptance_trust_policy_missing_or_invalid")
+    elif artifact.accepted and not hmac.compare_digest(
+        artifact.trusted_log_key_sha256,
+        trust_policy.preregistration_log_key_sha256,
+    ):
+        blockers.append("acceptance_preregistration_log_root_not_preregistered")
     if artifact.accepted and artifact.rekor_integrated_time >= (
         campaign_started_at_ns // 1_000_000_000
     ):
@@ -323,6 +458,7 @@ def verify_acceptance_preregistration(
     return PreregisteredAcceptanceReceipt(
         mandate=mandate,
         provision_receipt=provision_receipt,
+        trust_policy=trust_policy,
         transparency_bundle_sha256=artifact.transparency_bundle_sha256,
         trusted_log_key_sha256=artifact.trusted_log_key_sha256,
         rekor_uuid=artifact.rekor_uuid,
@@ -374,6 +510,8 @@ __all__ = [
     "ACCEPTANCE_PREREGISTRATION_DOMAIN",
     "ACCEPTANCE_PREREGISTRATION_STATEMENT_SCHEMA",
     "ACCEPTANCE_PREREGISTRATION_VERIFICATION_SCHEMA",
+    "ACCEPTANCE_TRUST_POLICY_SCHEMA",
+    "AcceptanceTrustPolicy",
     "PreregisteredAcceptanceReceipt",
     "build_acceptance_preregistration_bundle",
     "build_acceptance_preregistration_statement",

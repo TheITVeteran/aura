@@ -32,6 +32,7 @@ from core.reality_reach.acceptance_mandate import (
     AcceptanceVerificationMandate,
 )
 from core.reality_reach.acceptance_preregistration import (
+    AcceptanceTrustPolicy,
     PreregisteredAcceptanceReceipt,
 )
 from core.reality_reach.acceptance_transparency import (
@@ -268,6 +269,10 @@ def _campaign() -> tuple[
 def _preregistration(
     mandate: AcceptanceVerificationMandate,
     certificate: ConnectorAcceptanceCertificate,
+    *,
+    metrology_witness_key_sha256: str,
+    governance_witness_key_sha256: str,
+    acceptance_log_key_sha256: str = _digest("acceptance-log-key"),
 ) -> PreregisteredAcceptanceReceipt:
     provision_receipt = AcceptanceMandateProvisionReceipt(
         campaign_id=mandate.campaign_id,
@@ -281,6 +286,12 @@ def _preregistration(
     return PreregisteredAcceptanceReceipt(
         mandate=mandate,
         provision_receipt=provision_receipt,
+        trust_policy=AcceptanceTrustPolicy(
+            metrology_witness_key_sha256=metrology_witness_key_sha256,
+            governance_witness_key_sha256=governance_witness_key_sha256,
+            preregistration_log_key_sha256=_digest("preregistration-log-key"),
+            acceptance_log_key_sha256=acceptance_log_key_sha256,
+        ),
         transparency_bundle_sha256=_digest("preregistration-bundle"),
         trusted_log_key_sha256=_digest("preregistration-log-key"),
         rekor_uuid="0" * 80,
@@ -330,7 +341,10 @@ def _bundle(
     )
 
 
-def _external_receipt():
+def _external_receipt(
+    *,
+    acceptance_log_key_sha256: str = _digest("acceptance-log-key"),
+):
     mandate, certificate, evidence = _campaign()
     metrology = _bundle(
         Ed25519PrivateKey.generate(),
@@ -350,7 +364,13 @@ def _external_receipt():
         certificate,
         evidence,
         mandate,
-        preregistration_receipt=_preregistration(mandate, certificate),
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=metrology.public_key_sha256,
+            governance_witness_key_sha256=governance.public_key_sha256,
+            acceptance_log_key_sha256=acceptance_log_key_sha256,
+        ),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -367,9 +387,27 @@ def test_physical_external_receipt_cannot_omit_preregistration_digest() -> None:
     assert replace(receipt, preregistration_verification_sha256="").accepted is False
 
 
-def _transparency_fixture():
-    receipt = _external_receipt()
+def _transparency_fixture(
+    *,
+    acceptance_log_key_sha256: str | None = None,
+):
     issued_at = 1_785_082_400
+    log_key = ec.generate_private_key(ec.SECP256R1())
+    log_public_pem = log_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    actual_log_key_sha256 = "sha256:" + hashlib.sha256(
+        log_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).hexdigest()
+    receipt = _external_receipt(
+        acceptance_log_key_sha256=(
+            acceptance_log_key_sha256 or actual_log_key_sha256
+        ),
+    )
     statement = build_acceptance_transparency_statement(
         receipt,
         sequence=1,
@@ -425,11 +463,6 @@ def _transparency_fixture():
     ).encode("utf-8")
     body_b64 = base64.b64encode(body_bytes).decode("ascii")
     root = hashlib.sha256(b"\x00" + body_bytes).digest()
-    log_key = ec.generate_private_key(ec.SECP256R1())
-    log_public_pem = log_key.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
     log_der = log_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -518,7 +551,12 @@ def test_two_distinct_external_roots_promote_live_acceptance() -> None:
         certificate,
         evidence,
         mandate,
-        preregistration_receipt=_preregistration(mandate, certificate),
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=metrology.public_key_sha256,
+            governance_witness_key_sha256=governance.public_key_sha256,
+        ),
         metrology_witness_bundle=metrology.to_dict(),
         governance_witness_bundle=governance.to_dict(),
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -561,6 +599,26 @@ def test_physical_acceptance_requires_verified_transparency_log_inclusion() -> N
     assert verified.rekor_log_index == 0
     assert verified.rekor_integrated_time == 1_785_082_401
     assert verified.transparency_bundle_sha256 == bundle["bundle_sha256"]
+
+
+def test_final_transparency_rejects_valid_unregistered_log_root() -> None:
+    receipt, bundle, log_public_pem = _transparency_fixture(
+        acceptance_log_key_sha256=_digest("substituted-acceptance-log-root"),
+    )
+
+    result = verify_transparently_logged_acceptance(
+        receipt,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+
+    assert result.accepted is False
+    assert result.blockers == (
+        "acceptance_transparency_log_root_not_preregistered",
+    )
 
 
 @pytest.mark.parametrize(
@@ -674,7 +732,12 @@ def test_mandate_replay_rejects_readback_channel_substitution() -> None:
         certificate,
         substituted,
         mandate,
-        preregistration_receipt=_preregistration(mandate, certificate),
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=metrology.public_key_sha256,
+            governance_witness_key_sha256=governance.public_key_sha256,
+        ),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -814,7 +877,12 @@ def test_metrology_and_governance_must_use_distinct_roots() -> None:
         certificate,
         evidence,
         mandate,
-        preregistration_receipt=_preregistration(mandate, certificate),
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=metrology.public_key_sha256,
+            governance_witness_key_sha256=_digest("distinct-governance-root"),
+        ),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -823,7 +891,50 @@ def test_metrology_and_governance_must_use_distinct_roots() -> None:
     )
 
     assert receipt.accepted is False
-    assert receipt.blockers == ("external_witness_roots_not_distinct",)
+    assert receipt.blockers == (
+        "external_governance_trust_root_not_preregistered",
+        "external_witness_roots_not_distinct",
+    )
+
+
+def test_valid_witness_from_unregistered_root_cannot_promote() -> None:
+    mandate, certificate, evidence = _campaign()
+    metrology = _bundle(
+        Ed25519PrivateKey.generate(),
+        role=AcceptanceWitnessRole.METROLOGY,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.metrology_evidence_sha256,
+    )
+    governance = _bundle(
+        Ed25519PrivateKey.generate(),
+        role=AcceptanceWitnessRole.GOVERNANCE,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.governance_evidence_sha256,
+    )
+
+    receipt = verify_acceptance_with_external_witnesses(
+        certificate,
+        evidence,
+        mandate,
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=_digest("registered-metrology-root"),
+            governance_witness_key_sha256=governance.public_key_sha256,
+        ),
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governance,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governance.public_key_sha256,
+        now_ns=VERIFIED_AT_NS,
+    )
+
+    assert receipt.accepted is False
+    assert receipt.blockers == (
+        "external_metrology_trust_root_not_preregistered",
+    )
 
 
 def test_external_receipt_is_private_create_once_and_collision_safe(
@@ -850,7 +961,12 @@ def test_external_receipt_is_private_create_once_and_collision_safe(
         certificate,
         evidence,
         mandate,
-        preregistration_receipt=_preregistration(mandate, certificate),
+        preregistration_receipt=_preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=metrology.public_key_sha256,
+            governance_witness_key_sha256=governance.public_key_sha256,
+        ),
         metrology_witness_bundle=metrology,
         governance_witness_bundle=governance,
         metrology_witness_key_sha256=metrology.public_key_sha256,
@@ -983,7 +1099,12 @@ def test_scalar_physical_witness_statement_requires_preregistration(
     ) -> PreregisteredAcceptanceReceipt:
         assert actual_mandate == mandate
         observed.append(campaign_started_at_ns)
-        return _preregistration(mandate, certificate)
+        return _preregistration(
+            mandate,
+            certificate,
+            metrology_witness_key_sha256=_digest("metrology-root"),
+            governance_witness_key_sha256=_digest("governance-root"),
+        )
 
     monkeypatch.setattr(witness_tool, "_verified_preregistration", _verified)
     assert witness_tool.main(common) == 0

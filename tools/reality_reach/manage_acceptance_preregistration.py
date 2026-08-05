@@ -24,6 +24,7 @@ from core.reality_reach.acceptance_mandate import (  # noqa: E402
     AcceptanceVerificationMandate,
 )
 from core.reality_reach.acceptance_preregistration import (  # noqa: E402
+    AcceptanceTrustPolicy,
     build_acceptance_preregistration_bundle,
     build_acceptance_preregistration_statement,
     persist_preregistered_acceptance_receipt,
@@ -119,6 +120,12 @@ def _statement(args: argparse.Namespace) -> int:
     statement = build_acceptance_preregistration_statement(
         mandate,
         provision_receipt,
+        AcceptanceTrustPolicy(
+            metrology_witness_key_sha256=args.metrology_witness_key_sha256,
+            governance_witness_key_sha256=args.governance_witness_key_sha256,
+            preregistration_log_key_sha256=args.preregistration_log_key_sha256,
+            acceptance_log_key_sha256=args.acceptance_log_key_sha256,
+        ),
         sequence=args.sequence,
         previous_statement_sha256=args.previous_statement_sha256,
         previous_rekor_uuid=args.previous_rekor_uuid,
@@ -208,6 +215,10 @@ def main(argv: list[str] | None = None) -> int:
     statement.add_argument("--mandate-state", type=Path, required=True)
     statement.add_argument("--campaign-id", required=True)
     statement.add_argument("--provision-receipt", type=Path, required=True)
+    statement.add_argument("--metrology-witness-key-sha256", required=True)
+    statement.add_argument("--governance-witness-key-sha256", required=True)
+    statement.add_argument("--preregistration-log-key-sha256", required=True)
+    statement.add_argument("--acceptance-log-key-sha256", required=True)
     statement.add_argument("--sequence", type=int, required=True)
     statement.add_argument("--previous-statement-sha256", default=ZERO_SHA256)
     statement.add_argument("--previous-rekor-uuid")

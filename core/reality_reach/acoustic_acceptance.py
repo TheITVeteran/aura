@@ -46,10 +46,10 @@ from core.runtime.state_ownership import state_root
 ACOUSTIC_A1_RECEIPT_SCHEMA = "aura.reality_reach.acoustic_a1_acceptance.v1"
 ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v2"
 EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.external_acoustic_a1_verification.v2"
+    "aura.reality_reach.external_acoustic_a1_verification.v3"
 )
 TRANSPARENT_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.transparent_acoustic_a1_verification.v1"
+    "aura.reality_reach.transparent_acoustic_a1_verification.v2"
 )
 _REKOR_UUID = re.compile(r"^[0-9a-f]{80}$")
 ACOUSTIC_A1_CONNECTOR_ID = "macos.acoustic.a1"
@@ -536,6 +536,7 @@ class ExternallyWitnessedAcousticA1Receipt:
     governance_witness_bundle_sha256: str
     metrology_witness_key_sha256: str
     governance_witness_key_sha256: str
+    acceptance_log_key_sha256: str
     blockers: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -549,6 +550,7 @@ class ExternallyWitnessedAcousticA1Receipt:
             "governance_witness_bundle_sha256",
             "metrology_witness_key_sha256",
             "governance_witness_key_sha256",
+            "acceptance_log_key_sha256",
         ):
             value = str(getattr(self, name) or "")
             if name in {"campaign_record_sha256", "mandate_sha256"}:
@@ -568,6 +570,7 @@ class ExternallyWitnessedAcousticA1Receipt:
             and self.governance_witness_bundle_sha256
             and self.metrology_witness_key_sha256
             and self.governance_witness_key_sha256
+            and self.acceptance_log_key_sha256
             and self.metrology_witness_key_sha256
             != self.governance_witness_key_sha256
         )
@@ -589,6 +592,7 @@ class ExternallyWitnessedAcousticA1Receipt:
             "governance_witness_bundle_sha256": self.governance_witness_bundle_sha256,
             "metrology_witness_key_sha256": self.metrology_witness_key_sha256,
             "governance_witness_key_sha256": self.governance_witness_key_sha256,
+            "acceptance_log_key_sha256": self.acceptance_log_key_sha256,
             "blockers": list(self.blockers),
             "accepted": self.accepted,
         }
@@ -653,6 +657,7 @@ def verify_acoustic_a1_with_external_witnesses(
 
     blockers = list(acoustic_a1_campaign_binding_blockers(record, mandate))
     verified_preregistration = ""
+    expected_acceptance_log_key_sha256 = ""
     if preregistration_receipt is None:
         blockers.append("acceptance_preregistration_missing")
     elif not isinstance(preregistration_receipt, PreregisteredAcceptanceReceipt):
@@ -666,6 +671,21 @@ def verify_acoustic_a1_with_external_witnesses(
         blockers.append("acceptance_preregistration_binding_invalid")
     else:
         verified_preregistration = preregistration_receipt.sha256
+        if preregistration_receipt.trust_policy is None:
+            blockers.append("acceptance_trust_policy_missing_or_invalid")
+        else:
+            policy = preregistration_receipt.trust_policy
+            expected_acceptance_log_key_sha256 = policy.acceptance_log_key_sha256
+            if (
+                metrology_witness_key_sha256
+                != policy.metrology_witness_key_sha256
+            ):
+                blockers.append("external_metrology_trust_root_not_preregistered")
+            if (
+                governance_witness_key_sha256
+                != policy.governance_witness_key_sha256
+            ):
+                blockers.append("external_governance_trust_root_not_preregistered")
 
     verified_metrology_bundle = ""
     verified_governance_bundle = ""
@@ -745,6 +765,7 @@ def verify_acoustic_a1_with_external_witnesses(
         governance_witness_key_sha256=(
             governance_witness_key_sha256 if verified_governance_bundle else ""
         ),
+        acceptance_log_key_sha256=expected_acceptance_log_key_sha256,
         blockers=tuple(sorted(set(blockers))),
     )
 
@@ -785,6 +806,7 @@ def build_acoustic_a1_transparency_statement(
         "campaign_id": receipt.campaign_id,
         "mandate_sha256": receipt.mandate_sha256,
         "external_verification_sha256": receipt.sha256,
+        "acceptance_log_key_sha256": receipt.acceptance_log_key_sha256,
         "metrology_witness_bundle_sha256": receipt.metrology_witness_bundle_sha256,
         "governance_witness_bundle_sha256": receipt.governance_witness_bundle_sha256,
         "sequence": sequence,
@@ -941,6 +963,12 @@ def verify_transparently_logged_acoustic_a1(
         minimum_log_index=minimum_log_index,
         minimum_integrated_time=minimum_integrated_time,
     )
+    blockers = list(artifact.blockers)
+    if (
+        artifact.accepted
+        and artifact.trusted_log_key_sha256 != receipt.acceptance_log_key_sha256
+    ):
+        blockers.append("acceptance_transparency_log_root_not_preregistered")
     return TransparentlyLoggedAcousticA1Receipt(
         external_verification=receipt,
         transparency_bundle_sha256=artifact.transparency_bundle_sha256,
@@ -948,7 +976,7 @@ def verify_transparently_logged_acoustic_a1(
         rekor_uuid=artifact.rekor_uuid,
         rekor_log_index=artifact.rekor_log_index,
         rekor_integrated_time=artifact.rekor_integrated_time,
-        blockers=artifact.blockers,
+        blockers=tuple(sorted(set(blockers))),
     )
 
 

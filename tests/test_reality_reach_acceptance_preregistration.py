@@ -23,6 +23,7 @@ from core.reality_reach.acceptance_mandate import (
     AcceptanceVerificationMandate,
 )
 from core.reality_reach.acceptance_preregistration import (
+    AcceptanceTrustPolicy,
     build_acceptance_preregistration_bundle,
     build_acceptance_preregistration_statement,
     persist_preregistered_acceptance_receipt,
@@ -69,6 +70,8 @@ def _mandate() -> tuple[
 
 def _rekor_bundle(
     statement: dict[str, object],
+    *,
+    log_key: ec.EllipticCurvePrivateKey | None = None,
 ) -> tuple[dict[str, object], bytes]:
     issued_at = int(statement["issued_at_unix"])
     statement_bytes = json.dumps(
@@ -123,7 +126,7 @@ def _rekor_bundle(
     ).encode("utf-8")
     body_b64 = base64.b64encode(body_bytes).decode("ascii")
     root = hashlib.sha256(b"\x00" + body_bytes).digest()
-    log_key = ec.generate_private_key(ec.SECP256R1())
+    log_key = log_key or ec.generate_private_key(ec.SECP256R1())
     log_public_pem = log_key.public_key().public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -206,15 +209,43 @@ def test_preregistration_proves_mandate_predates_campaign(
         == provision_receipt
     )
     issued_at = 1_785_082_400
+    preregistration_log_key = ec.generate_private_key(ec.SECP256R1())
+    acceptance_log_key = ec.generate_private_key(ec.SECP256R1())
+    trust_policy = AcceptanceTrustPolicy(
+        metrology_witness_key_sha256="sha256:" + "4" * 64,
+        governance_witness_key_sha256="sha256:" + "5" * 64,
+        preregistration_log_key_sha256=(
+            "sha256:"
+            + hashlib.sha256(
+                preregistration_log_key.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
+        ),
+        acceptance_log_key_sha256=(
+            "sha256:"
+            + hashlib.sha256(
+                acceptance_log_key.public_key().public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            ).hexdigest()
+        ),
+    )
     statement = build_acceptance_preregistration_statement(
         mandate,
         provision_receipt,
+        trust_policy,
         sequence=1,
         previous_statement_sha256=ZERO_SHA256,
         previous_rekor_uuid=None,
         issued_at_unix=issued_at,
     )
-    bundle, log_public_pem = _rekor_bundle(statement)
+    bundle, log_public_pem = _rekor_bundle(
+        statement,
+        log_key=preregistration_log_key,
+    )
     campaign_started_at_ns = (issued_at + 2) * 1_000_000_000
 
     class _MandateHandle:
@@ -253,6 +284,14 @@ def test_preregistration_proves_mandate_predates_campaign(
             mandate.campaign_id,
             "--provision-receipt",
             str(provision_path),
+            "--metrology-witness-key-sha256",
+            trust_policy.metrology_witness_key_sha256,
+            "--governance-witness-key-sha256",
+            trust_policy.governance_witness_key_sha256,
+            "--preregistration-log-key-sha256",
+            trust_policy.preregistration_log_key_sha256,
+            "--acceptance-log-key-sha256",
+            trust_policy.acceptance_log_key_sha256,
             "--sequence",
             "1",
             "--issued-at-unix",
@@ -378,7 +417,10 @@ def test_preregistration_proves_mandate_predates_campaign(
     assert reconstructed_late.strictly_predates_campaign is False
     assert reconstructed_late.accepted is False
     assert missing.accepted is False
-    assert missing.blockers == ("acceptance_transparency_bundle_missing",)
+    assert missing.blockers == (
+        "acceptance_transparency_bundle_missing",
+        "acceptance_trust_policy_missing_or_invalid",
+    )
 
     path = tmp_path / "preregistration.json"
     assert persist_preregistered_acceptance_receipt(verified, path) is True
@@ -392,6 +434,12 @@ def test_preregistration_proves_mandate_predates_campaign(
 
 def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
     mandate, provision_receipt = _mandate()
+    trust_policy = AcceptanceTrustPolicy(
+        metrology_witness_key_sha256="sha256:" + "4" * 64,
+        governance_witness_key_sha256="sha256:" + "5" * 64,
+        preregistration_log_key_sha256="sha256:" + "6" * 64,
+        acceptance_log_key_sha256="sha256:" + "7" * 64,
+    )
     with pytest.raises(
         AcceptanceTransparencyError,
         match="mandate_binding_invalid",
@@ -399,6 +447,7 @@ def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
         build_acceptance_preregistration_statement(
             replace(mandate, target=0.75),
             provision_receipt,
+            trust_policy,
             sequence=1,
             previous_statement_sha256=ZERO_SHA256,
             previous_rekor_uuid=None,
@@ -408,6 +457,7 @@ def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
         build_acceptance_preregistration_statement(
             mandate,
             provision_receipt,
+            trust_policy,
             sequence=1,
             previous_statement_sha256="sha256:" + "9" * 64,
             previous_rekor_uuid=None,
@@ -417,3 +467,51 @@ def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
     attacked["custody_sequence"] = 8
     with pytest.raises(AcceptanceMandateError, match="provision_receipt_digest_invalid"):
         AcceptanceMandateProvisionReceipt.from_dict(attacked)
+
+
+def test_preregistration_rejects_valid_unregistered_log_root() -> None:
+    mandate, provision_receipt = _mandate()
+    registered_log_key = ec.generate_private_key(ec.SECP256R1())
+    substituted_log_key = ec.generate_private_key(ec.SECP256R1())
+    registered_log_sha256 = "sha256:" + hashlib.sha256(
+        registered_log_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).hexdigest()
+    trust_policy = AcceptanceTrustPolicy(
+        metrology_witness_key_sha256="sha256:" + "4" * 64,
+        governance_witness_key_sha256="sha256:" + "5" * 64,
+        preregistration_log_key_sha256=registered_log_sha256,
+        acceptance_log_key_sha256="sha256:" + "7" * 64,
+    )
+    issued_at = 1_785_082_400
+    statement = build_acceptance_preregistration_statement(
+        mandate,
+        provision_receipt,
+        trust_policy,
+        sequence=1,
+        previous_statement_sha256=ZERO_SHA256,
+        previous_rekor_uuid=None,
+        issued_at_unix=issued_at,
+    )
+    bundle, substituted_log_public_pem = _rekor_bundle(
+        statement,
+        log_key=substituted_log_key,
+    )
+
+    result = verify_acceptance_preregistration(
+        mandate,
+        provision_receipt,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=substituted_log_public_pem,
+        campaign_started_at_ns=(issued_at + 2) * 1_000_000_000,
+        expected_sequence=1,
+        expected_previous_statement_sha256=ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+
+    assert result.accepted is False
+    assert result.blockers == (
+        "acceptance_preregistration_log_root_not_preregistered",
+    )

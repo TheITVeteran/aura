@@ -33,7 +33,7 @@ ACCEPTANCE_TRANSPARENCY_BUNDLE_SCHEMA = (
     "aura.reality_reach.acceptance_transparency_bundle.v1"
 )
 TRANSPARENT_ACCEPTANCE_VERIFICATION_SCHEMA = (
-    "aura.reality_reach.transparent_acceptance_verification.v1"
+    "aura.reality_reach.transparent_acceptance_verification.v2"
 )
 ZERO_SHA256 = "sha256:" + "0" * 64
 
@@ -114,6 +114,7 @@ def build_acceptance_transparency_statement(
         "campaign_id": mandate.campaign_id,
         "mandate_sha256": mandate.mandate_sha256,
         "external_verification_sha256": receipt.sha256,
+        "acceptance_log_key_sha256": receipt.acceptance_log_key_sha256,
         "metrology_witness_bundle_sha256": receipt.metrology_witness_bundle_sha256,
         "governance_witness_bundle_sha256": receipt.governance_witness_bundle_sha256,
         "sequence": sequence,
@@ -138,6 +139,7 @@ def validate_acceptance_transparency_statement_envelope(
         "campaign_id",
         "mandate_sha256",
         "external_verification_sha256",
+        "acceptance_log_key_sha256",
         "metrology_witness_bundle_sha256",
         "governance_witness_bundle_sha256",
         "sequence",
@@ -554,6 +556,12 @@ def verify_transparently_logged_acceptance(
         minimum_log_index=minimum_log_index,
         minimum_integrated_time=minimum_integrated_time,
     )
+    blockers = list(artifact.blockers)
+    if artifact.accepted and not hmac.compare_digest(
+        artifact.trusted_log_key_sha256,
+        receipt.acceptance_log_key_sha256,
+    ):
+        blockers.append("acceptance_transparency_log_root_not_preregistered")
     return TransparentlyLoggedAcceptanceReceipt(
         external_verification=receipt,
         transparency_bundle_sha256=artifact.transparency_bundle_sha256,
@@ -561,7 +569,7 @@ def verify_transparently_logged_acceptance(
         rekor_uuid=artifact.rekor_uuid,
         rekor_log_index=artifact.rekor_log_index,
         rekor_integrated_time=artifact.rekor_integrated_time,
-        blockers=artifact.blockers,
+        blockers=tuple(sorted(set(blockers))),
     )
 
 
