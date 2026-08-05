@@ -6,10 +6,12 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from core.runtime.model_lane_control import (
+    InProcessModelLaneLease,
     LaneClaim,
     LaneOwnerObservation,
     LaneTransactionState,
@@ -106,6 +108,123 @@ def test_commit_persists_fenced_process_owner_and_one_terminal_receipt(tmp_path:
     assert snapshot["reserved_gb"] == 0.0
     assert snapshot["owners"][0]["fencing_token"] == reserved.fencing_token
     assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+def test_same_owner_cannot_reserve_or_replace_a_live_model_implicitly(tmp_path: Path) -> None:
+    alive = AliveTable(101, 102)
+    controller = _controller(tmp_path, alive)
+    first = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:stable:cortex",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=30.0,
+            request_id="same-owner-first",
+        )
+    )
+
+    in_flight = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:stable:cortex",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=30.0,
+            request_id="same-owner-in-flight",
+        )
+    )
+    assert in_flight.admitted is False
+    assert in_flight.reason == "owner_id_reservation_in_flight:mlx:stable:cortex"
+
+    committed = controller.commit_sync(
+        first,
+        process=ProcessIdentity(101, 101.0),
+    )
+    replacement = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:stable:cortex",
+            model_path="/m/Aura-32B-cortex-v2",
+            request_gb=30.0,
+            request_id="same-owner-replacement",
+        )
+    )
+
+    assert committed.state is LaneTransactionState.COMMITTED
+    assert replacement.admitted is False
+    assert replacement.reason == "owner_id_already_committed:mlx:stable:cortex"
+    snapshot = controller.snapshot()
+    assert snapshot["committed_gb"] == pytest.approx(30.0)
+    assert snapshot["reserved_gb"] == pytest.approx(0.0)
+    assert len(snapshot["owners"]) == 1
+    assert snapshot["owners"][0]["process"] == {"pid": 101, "started_at": 101.0}
+
+
+def test_committed_replay_rejects_a_different_live_process(tmp_path: Path) -> None:
+    alive = AliveTable(101, 102)
+    controller = _controller(tmp_path, alive)
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:replay:cortex",
+            model_path="/m/Aura-32B-cortex",
+            request_gb=23.0,
+            request_id="committed-replay-process",
+        )
+    )
+    committed = controller.commit_sync(
+        decision,
+        process=ProcessIdentity(101, 101.0),
+    )
+
+    with pytest.raises(ModelLaneControlError, match="committed_replay_process_mismatch"):
+        controller.commit_sync(
+            committed,
+            process=ProcessIdentity(102, 102.0),
+        )
+
+
+def test_expired_reservation_cannot_commit_or_issue_delegation(tmp_path: Path) -> None:
+    now = [100.0]
+    alive = AliveTable(101)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=None,
+        clock=lambda: now[0],
+    )
+    commit_candidate = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:expired:commit",
+            model_path="/m/qwen-7b",
+            request_gb=5.0,
+            reservation_ttl_s=5.0,
+            request_id="expired-commit",
+        )
+    )
+    delegation_candidate = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:expired:delegation",
+            model_path="/m/qwen-7b",
+            request_gb=5.0,
+            reservation_ttl_s=5.0,
+            request_id="expired-delegation",
+        )
+    )
+    now[0] = 106.0
+
+    with pytest.raises(ModelLaneControlError, match="already_terminal:expired"):
+        controller.commit_sync(
+            commit_candidate,
+            process=ProcessIdentity(101, 101.0),
+        )
+    with pytest.raises(ModelLaneControlError, match="already_terminal:expired"):
+        controller.issue_inherited_claim_sync(delegation_candidate)
+
+    states = {
+        record["request_id"]: record["state"]
+        for record in controller.snapshot()["reservations"]
+    }
+    assert states == {
+        "expired-commit": LaneTransactionState.EXPIRED.value,
+        "expired-delegation": LaneTransactionState.EXPIRED.value,
+    }
 
 
 def test_request_replay_rejects_changed_capacity_or_disruption_claim(tmp_path: Path) -> None:
@@ -1045,6 +1164,32 @@ def test_synchronous_in_process_lease_counts_until_release(tmp_path: Path) -> No
     assert controller.snapshot()["owners"][0]["preemptible"] is True
     assert lease.release(reason="embedding_unloaded") is True
     assert controller.snapshot()["owners"] == []
+
+
+@pytest.mark.asyncio
+async def test_async_in_process_heartbeat_exception_requests_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdown_reasons: list[str] = []
+
+    class BrokenController:
+        async def heartbeat_owner(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 73
+            raise ModelLaneControlError("durable heartbeat store unavailable")
+
+    from core.runtime import shutdown_coordinator
+
+    monkeypatch.setattr(shutdown_coordinator, "request_shutdown", shutdown_reasons.append)
+    lease = object.__new__(InProcessModelLaneLease)
+    lease.controller = BrokenController()
+    lease.decision = SimpleNamespace(owner_id="in-process:test", fencing_token=73)
+    lease._heartbeat_interval_s = 0.0
+    lease._heartbeat_task = None
+    lease._released = False
+
+    await asyncio.wait_for(lease._heartbeat_loop(), timeout=0.1)
+
+    assert shutdown_reasons == ["in_process_model_lane_fence_lost:in-process:test"]
 
 
 def test_live_in_process_owner_heartbeat_expiry_fails_closed_until_recovery(

@@ -43,11 +43,22 @@ async def test_worker_heartbeat_renews_durable_lane_owner(
 
     renewed = asyncio.Event()
     calls: list[tuple[str, int]] = []
+    released: list[tuple[str, int, str]] = []
 
     class _Controller:
         async def heartbeat_owner(self, owner_id: str, *, fencing_token: int) -> bool:
             calls.append((owner_id, fencing_token))
             renewed.set()
+            return True
+
+        def release_owner_sync(
+            self,
+            owner_id: str,
+            *,
+            fencing_token: int,
+            reason: str,
+        ) -> bool:
+            released.append((owner_id, fencing_token, reason))
             return True
 
     monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
@@ -63,8 +74,10 @@ async def test_worker_heartbeat_renews_durable_lane_owner(
     finally:
         listener.cancel()
         await listener
+        client.close()
 
     assert calls == [("mlx:test:heartbeat", 77)]
+    assert released == [("mlx:test:heartbeat", 77, "client_close")]
 
 
 @pytest.mark.asyncio

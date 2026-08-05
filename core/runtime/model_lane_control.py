@@ -1344,19 +1344,17 @@ class ModelLaneController:
 
     @staticmethod
     def _capacity_totals(
-        state: Mapping[str, Any], *, exclude_owner_id: str = "", exclude_request_id: str = ""
+        state: Mapping[str, Any], *, exclude_request_id: str = ""
     ) -> tuple[float, float]:
         committed = sum(
             float(record.get("declared_gb") or 0.0)
-            for owner_id, record in dict(state.get("owners") or {}).items()
-            if owner_id != exclude_owner_id
+            for record in dict(state.get("owners") or {}).values()
         )
         reserved = sum(
             float(record.get("request_gb") or 0.0)
             for request_id, record in dict(state.get("reservations") or {}).items()
             if request_id != exclude_request_id
             and str(record.get("state") or "") in _ACTIVE_RESERVATION_STATES
-            and str(record.get("owner_id") or "") != exclude_owner_id
         )
         return committed, reserved
 
@@ -1794,13 +1792,17 @@ class ModelLaneController:
                 lane, qos = classify_lane(claim.model_path, purpose=claim.purpose)
                 committed, reserved = self._capacity_totals(
                     state,
-                    exclude_owner_id=claim.owner_id,
                     exclude_request_id=claim.request_id,
+                )
+                committed_owner_conflict = claim.owner_id in state["owners"]
+                reservation_owner_conflict = any(
+                    request_id != claim.request_id
+                    and str(record.get("owner_id") or "") == claim.owner_id
+                    and str(record.get("state") or "") in _ACTIVE_RESERVATION_STATES
+                    for request_id, record in state["reservations"].items()
                 )
                 active: list[ActiveLane] = []
                 for owner_id, owner in state["owners"].items():
-                    if owner_id == claim.owner_id:
-                        continue
                     try:
                         owner_qos = QoSClass(str(owner.get("qos") or QoSClass.BEST_EFFORT.value))
                     except ValueError:
@@ -1842,6 +1844,12 @@ class ModelLaneController:
                 # boundary and therefore never converts an envelope breach
                 # into a reservation merely because advisory mode was set.
                 admitted = bool(arithmetic.admitted)
+                if committed_owner_conflict:
+                    admitted = False
+                    reason = f"owner_id_already_committed:{claim.owner_id}"
+                elif reservation_owner_conflict:
+                    admitted = False
+                    reason = f"owner_id_reservation_in_flight:{claim.owner_id}"
                 if admitted:
                     blocked_target = next(
                         (
@@ -1870,8 +1878,7 @@ class ModelLaneController:
                     serving_owner_ids = {
                         owner_id
                         for owner_id, owner in state["owners"].items()
-                        if owner_id != claim.owner_id
-                        and str(owner.get("purpose") or "serve") == "serve"
+                        if str(owner.get("purpose") or "serve") == "serve"
                     }
                     targeted_serving = serving_owner_ids.intersection(evict_owner_ids)
                     remaining_warm = serving_owner_ids.difference(evict_owner_ids)
@@ -2135,7 +2142,6 @@ class ModelLaneController:
             self._assert_fence(record, decision)
             committed, reserved = self._capacity_totals(
                 state,
-                exclude_owner_id=decision.owner_id,
                 exclude_request_id=decision.request_id,
             )
             observer = self.resource_observer
@@ -2183,6 +2189,24 @@ class ModelLaneController:
         if str(record.get("state") or "") in _TERMINAL_RESERVATION_STATES:
             raise ModelLaneControlError(f"lane_transaction_already_terminal:{record.get('state')}")
 
+    @classmethod
+    def _assert_committed_replay(
+        cls,
+        record: Mapping[str, Any],
+        decision: LaneTransactionDecision,
+        process: ProcessIdentity,
+    ) -> None:
+        if str(record.get("transaction_id") or "") != decision.transaction_id:
+            raise ModelLaneControlError("lane_transaction_identity_mismatch")
+        if int(record.get("fencing_token") or 0) != decision.fencing_token:
+            raise ModelLaneControlError("stale_lane_fencing_token")
+        if str(record.get("owner_id") or "") != decision.owner_id:
+            raise ModelLaneControlError("lane_committed_replay_owner_mismatch")
+        if str(record.get("model_path") or "") != decision.model_path:
+            raise ModelLaneControlError("lane_committed_replay_model_mismatch")
+        if cls._identity_from_record(record, key="committed_process") != process:
+            raise ModelLaneControlError("lane_committed_replay_process_mismatch")
+
     @staticmethod
     def _claim_from_decision(decision: LaneTransactionDecision) -> LaneClaim:
         return LaneClaim(
@@ -2222,10 +2246,13 @@ class ModelLaneController:
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             state = self._load_locked()
+            if self._prune_locked(state, now):
+                self._save_locked(state)
             record = state["reservations"].get(decision.request_id)
             if not isinstance(record, dict):
                 raise ModelLaneControlError("lane_reservation_missing_at_commit")
             if str(record.get("state") or "") == LaneTransactionState.COMMITTED.value:
+                self._assert_committed_replay(record, decision, process)
                 return self._record_to_decision(record, replayed=True)
             self._assert_fence(record, decision)
             if str(record.get("state") or "") != LaneTransactionState.READY.value:
@@ -2239,8 +2266,8 @@ class ModelLaneController:
                 if delegated_process.pid > 0 and delegated_process != process:
                     raise ModelLaneControlError("candidate_process_identity_not_delegated_child")
             existing = state["owners"].get(decision.owner_id)
-            if isinstance(existing, dict) and int(existing.get("fencing_token") or 0) > decision.fencing_token:
-                raise ModelLaneControlError("newer_lane_owner_fence_exists")
+            if isinstance(existing, dict):
+                raise ModelLaneControlError("lane_owner_already_committed")
             lane, qos = classify_lane(
                 decision.model_path,
                 purpose=str(record.get("purpose") or "serve"),
@@ -2347,6 +2374,7 @@ class ModelLaneController:
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             state = self._load_locked()
+            self._prune_locked(state, now)
             record = state["reservations"].get(decision.request_id)
             if not isinstance(record, dict):
                 raise ModelLaneControlError("lane_reservation_missing_at_cancel")
@@ -2434,7 +2462,7 @@ class ModelLaneController:
         )
 
     @staticmethod
-    def _owner_holder_is_alive(owner: dict, *, owner_id: str) -> bool:
+    def _owner_holder_is_alive(owner: Mapping[str, Any], *, owner_id: str) -> bool:
         """Whether the process that registered this owner still exists.
 
         Owner ids carry their holder pid (``mlx:<pid>:<model path>``). A dead
@@ -2450,6 +2478,8 @@ class ModelLaneController:
                 if part.isdigit():
                     pid = part
                     break
+        if isinstance(pid, bool) or not isinstance(pid, (int, str)):
+            return True
         try:
             pid_int = int(pid)
         except (TypeError, ValueError):
@@ -2659,6 +2689,8 @@ class ModelLaneController:
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             state = self._load_locked()
+            if self._prune_locked(state, now):
+                self._save_locked(state)
             record = state["reservations"].get(decision.request_id)
             if not isinstance(record, dict):
                 raise ModelLaneControlError("lane_reservation_missing_for_delegation")
@@ -2916,10 +2948,18 @@ class InProcessModelLaneLease:
             await asyncio.sleep(self._heartbeat_interval_s)
             if self._released:
                 return
-            alive = await self.controller.heartbeat_owner(
-                self.decision.owner_id,
-                fencing_token=self.decision.fencing_token,
-            )
+            try:
+                alive = await self.controller.heartbeat_owner(
+                    self.decision.owner_id,
+                    fencing_token=self.decision.fencing_token,
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.error(
+                    "Asynchronous model lane heartbeat failed owner=%s: %s",
+                    self.decision.owner_id,
+                    exc,
+                )
+                alive = False
             if not alive:
                 logger.error(
                     "In-process model lane lost its fencing lease owner=%s token=%s",
