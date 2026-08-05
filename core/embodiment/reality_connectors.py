@@ -210,6 +210,65 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
+    opcua_endpoint = str(os.getenv("AURA_OPCUA_ENDPOINT") or "").strip()
+    opcua_manifest = str(os.getenv("AURA_OPCUA_RESOURCES_JSON") or "").strip()
+    opcua_installation = str(os.getenv("AURA_OPCUA_INSTALLATION_ID") or "").strip()
+    opcua_present = bool(opcua_endpoint or opcua_manifest or opcua_installation)
+    if not opcua_present:
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="opcua.manifest",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not opcua_endpoint or not opcua_manifest or not opcua_installation:
+        missing = [
+            name
+            for name, value in (
+                ("AURA_OPCUA_ENDPOINT", opcua_endpoint),
+                ("AURA_OPCUA_RESOURCES_JSON", opcua_manifest),
+                ("AURA_OPCUA_INSTALLATION_ID", opcua_installation),
+            )
+            if not value
+        ]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="opcua.manifest",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.opcua_connector import (
+                build_configured_opcua_connector,
+            )
+
+            connector = build_configured_opcua_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="opcua.manifest",
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
     return RealityConnectorCatalog(tuple(connectors), tuple(statuses))
 
 
