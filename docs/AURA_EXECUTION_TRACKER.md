@@ -36698,3 +36698,32 @@ that another organization or hardware boundary controls them. Real external
 custodians, public-log publication, physical evidence, and representative
 tenant/device campaigns remain empirical CP810 blockers, so the total remains
 open at 809/920.
+
+#### CP810 addendum: historian resource-observation ownership
+
+The refreshed all-line closeout audit found one production ownership violation:
+the Reality Reach historian made its default free-space decision by calling
+`shutil.disk_usage` directly. That bypassed the canonical resource-observation
+boundary, made the same policy depend on ambient host state in tests, and left
+the observation without the provenance carried by `ResourceObserver`.
+
+The historian now resolves its default free-space value through
+`get_resource_observer().disk(path).free_bytes` at decision time. Its existing
+explicit `disk_free_bytes` injection remains available for specialized owners,
+and the global observer is not captured at construction, so a scoped simulated
+observer supplies deterministic capacity throughout a test or bounded proof.
+No direct disk probe was allowlisted.
+
+Ownership evidence:
+
+- a simulated-observer regression proved the historian status uses the exact
+  injected free-space value while retaining its configured reserve;
+- focused historian and ownership tests passed 46/46, the full affected
+  Reality Reach/resource-observation family passed 230/230, and smoke passed
+  103/103;
+- the standalone ownership audit scanned 3,255 production Python files with
+  zero findings and zero parse errors; compile, governance ownership, layering,
+  local security, Ruff, scoped production MyPy, and diff hygiene passed.
+
+This closes the sole mechanical gate failure in the 2026-08-05 closeout audit.
+It does not change the empirical CP810 requirements or the 809/920 total.

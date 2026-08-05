@@ -24,6 +24,10 @@ from core.reality_reach.historian import (
     RealityHistorian,
 )
 from core.reality_reach.live import ChannelReading, ReadingStatus
+from core.runtime.resource_observation import (
+    SimulatedResourceObserver,
+    resource_observer_scope,
+)
 
 
 def _declaration(*, resolution: float = 1.0) -> ChannelDeclaration:
@@ -75,6 +79,21 @@ def _reading(
         source_event_id=source_event_id,
         source_quality=source_quality,
     )
+
+
+def test_historian_default_disk_capacity_uses_canonical_observer(tmp_path: Path) -> None:
+    observer = SimulatedResourceObserver(
+        scenario_id="historian-disk-capacity",
+        disk_total_bytes=2 * 1024 * 1024 * 1024,
+        disk_free_bytes=777 * 1024 * 1024,
+    )
+
+    with resource_observer_scope(observer):
+        historian = RealityHistorian(tmp_path / "history.sqlite3")
+        status = historian.status()
+
+    assert status["disk_free_bytes"] == 777 * 1024 * 1024
+    assert status["min_free_bytes"] == 512 * 1024 * 1024
 
 
 @pytest.mark.asyncio

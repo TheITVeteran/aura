@@ -15,7 +15,6 @@ import math
 import os
 import re
 import secrets
-import shutil
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
@@ -28,6 +27,7 @@ from core.reality_reach.contracts import ChannelDeclaration, ChannelKind
 from core.reality_reach.live import AdapterInventoryEntry, ChannelReading, ReadingStatus
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_lock
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.state_ownership import state_root
 
 _SCHEMA_VERSION = 2
@@ -376,7 +376,7 @@ def default_reality_historian_path() -> Path:
     test_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
     if test_root:
         return Path(test_root).expanduser() / "reality_historian.sqlite3"
-    return state_root() / "data" / "reality_historian.sqlite3"
+    return cast(Path, state_root()) / "data" / "reality_historian.sqlite3"
 
 
 def _digest(value: Any) -> str:
@@ -688,7 +688,9 @@ class RealityHistorian:
             0,
             min(int(min_free_bytes), 1024 * 1024 * 1024 * 1024),
         )
-        self._disk_free_bytes = disk_free_bytes or (lambda path: int(shutil.disk_usage(path).free))
+        self._disk_free_bytes = disk_free_bytes or (
+            lambda path: int(get_resource_observer().disk(path).free_bytes)
+        )
         self._consumer_id = f"reality.historian.{os.getpid()}.{secrets.token_hex(8)}"
         self._write_lock = checked_lock("reality_historian.write", reentrant=True)
         self._health_lock = checked_lock("reality_historian.health", reentrant=True)
