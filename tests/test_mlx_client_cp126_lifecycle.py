@@ -431,3 +431,72 @@ class TestLaneEvictionIsFenced:
         assert await mod._evict_model_lane_owner(owner, "pressure") is True
         assert rebooted == ["yield_to_lane_transaction:pressure"]
         assert not client._request_lock.locked()
+
+
+class TestBatchGenerationContract:
+    """CP126 c4bd8d0a / 189ac02a / 536f8e0d / 375fc058."""
+
+    def test_a_candidate_is_bounded_in_size_not_only_in_count(self, client):
+        from core.brain.llm.mlx_client import _BATCH_CANDIDATE_MAX_CHARS
+
+        assert _BATCH_CANDIDATE_MAX_CHARS > 0
+        oversized = "x" * (_BATCH_CANDIDATE_MAX_CHARS * 4)
+        assert len(str(oversized)[:_BATCH_CANDIDATE_MAX_CHARS]) == _BATCH_CANDIDATE_MAX_CHARS
+
+    def test_the_identity_snapshot_cannot_be_mutated_through(self, client):
+        client._worker_identity = {
+            "worker_boot_id": "boot-1",
+            "worker_pid": 42,
+            "stack": {"mlx": "0.1", "adapters": ["a"]},
+        }
+        snapshot = client.get_worker_identity_snapshot()
+        snapshot["stack"]["mlx"] = "tampered"
+        snapshot["stack"]["adapters"].append("b")
+        assert client._worker_identity["stack"]["mlx"] == "0.1"
+        assert client._worker_identity["stack"]["adapters"] == ["a"]
+
+    def test_an_absent_identity_snapshots_as_empty(self, client):
+        client._worker_identity = None
+        assert client.get_worker_identity_snapshot() == {}
+
+    @pytest.mark.asyncio
+    async def test_batch_metadata_does_not_claim_verification_without_identity(
+        self, client, monkeypatch
+    ):
+        async def _response(*_a, **_k):
+            return {
+                "texts": ["one", "two"],
+                "request_id": "req-1",
+                "tokens_used": 10,
+                "tokens_used_by_candidate": [4, 6],
+                "tokens_used_consistent": True,
+            }
+
+        monkeypatch.setattr(client, "_generate_batch_response_async", _response)
+        client._worker_identity = {}
+        out = await client.generate_batch_with_metadata_async("p")
+        meta = out["generation_metadata"]
+        assert meta["provider_verified"] is False
+        assert meta["provider_verification_basis"] == "unattested"
+
+    @pytest.mark.asyncio
+    async def test_batch_metadata_binds_the_attested_worker(self, client, monkeypatch):
+        async def _response(*_a, **_k):
+            return {
+                "texts": ["one"],
+                "request_id": "req-1",
+                "tokens_used": 4,
+                "tokens_used_by_candidate": [4],
+                "tokens_used_consistent": True,
+            }
+
+        monkeypatch.setattr(client, "_generate_batch_response_async", _response)
+        client._worker_identity = {"worker_boot_id": "boot-9", "worker_pid": 1234}
+        client._worker_generation = 3
+        meta = (await client.generate_batch_with_metadata_async("p"))["generation_metadata"]
+        assert meta["provider_verified"] is True
+        assert meta["provider_verification_basis"] == "attested_worker_identity"
+        assert meta["worker_boot_id"] == "boot-9"
+        assert meta["worker_pid"] == 1234
+        assert meta["worker_generation"] == 3
+        assert meta["model_basis"] == "path_basename"

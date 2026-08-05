@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures as cfutures
 import contextlib
+import copy
 import fcntl
 import gc
 import json
@@ -199,6 +200,9 @@ def _model_path_is_deep_solver(model_path: str | None) -> bool:
 #: Ceilings for a single worker-supplied progress value. Progress is a
 #: diagnostic; nothing downstream needs more than this, and everything
 #: upstream is a process the parent does not control.
+#: One batch candidate is a verifier draft, not a document.
+_BATCH_CANDIDATE_MAX_CHARS = 32_000
+
 _PROGRESS_STR_CHARS = 200
 _PROGRESS_SEQ_ITEMS = 32
 
@@ -5826,6 +5830,12 @@ class MLXLocalClient:
                 2.0,
             )
             res = await _await_shared_future(fut, timeout_s=admitted_timeout)
+        except asyncio.CancelledError:
+            # The caller is gone; the WORKER is not. Without this the batch
+            # kept decoding n candidates on the resident model for nobody,
+            # holding the lane and its memory until it finished on its own.
+            timed_out = True
+            raise
         except (TimeoutError, BrokenPipeError, OSError, queue.Full) as exc:
             # queue.Full included: queue saturation is expected load
             # contention and belongs inside the documented empty-response
@@ -5862,7 +5872,12 @@ class MLXLocalClient:
                 action="dropped malformed batch response payload",
             )
             return {}
-        raw_texts = [str(t or "") for t in raw_texts_value][:admitted_n]
+        # Bounded per candidate. The count was capped; the SIZE was not, so a
+        # malformed or hostile worker could hand the parent 16 arbitrarily
+        # large strings and the parent would hold every one of them.
+        raw_texts = [
+            str(t or "")[:_BATCH_CANDIDATE_MAX_CHARS] for t in raw_texts_value
+        ][:admitted_n]
         raw_candidate_tokens = list(res.get("tokens_used_by_candidate") or [])
         texts: list[str] = []
         tokens_used_by_candidate: list[int] = []
@@ -5879,8 +5894,26 @@ class MLXLocalClient:
             tokens_used = max(0, int(res.get("tokens_used") or 0))
         except (TypeError, ValueError, OverflowError):
             tokens_used = 0
+        # The aggregate and the per-candidate totals are two claims about the
+        # same decode. When they disagree the receipt is not a measurement of
+        # anything, so report the sum we can actually account for and say the
+        # worker's total was inconsistent rather than passing it on.
+        candidate_total = sum(tokens_used_by_candidate)
+        tokens_used_consistent = (not tokens_used_by_candidate) or (
+            tokens_used >= candidate_total
+        )
+        if not tokens_used_consistent:
+            _record_mlx_degradation(
+                ValueError(
+                    f"batch tokens_used={tokens_used} below candidate sum={candidate_total}"
+                ),
+                action="reported the accountable candidate total after the worker totals disagreed",
+                severity="warning",
+            )
+            tokens_used = candidate_total
         return {
             "texts": texts,
+            "tokens_used_consistent": tokens_used_consistent,
             "request_id": req_id,
             "max_tokens": admitted_max_tokens,
             "temperature": admitted_temperature,
@@ -5931,14 +5964,38 @@ class MLXLocalClient:
             return {}
         model_name = os.path.basename(str(self.model_path or "")) or "unknown"
         candidate_tokens = list(response.get("tokens_used_by_candidate") or [])
+        # CP126 536f8e0d: this said provider_verified=True because the worker
+        # said status=ok, and named the model from a PATH BASENAME. Neither
+        # proves which process produced the candidates or which weights it had
+        # loaded — a renamed directory changed the reported model, and a
+        # response from a recycled worker was attributed to the current one.
+        #
+        # Verification now means: we hold the worker's attested identity, and
+        # this response arrived while that worker generation was serving.
+        identity = self.get_worker_identity_snapshot()
+        worker_boot_id = str(identity.get("worker_boot_id") or "")
+        worker_pid = identity.get("worker_pid")
+        provider_verified = bool(
+            worker_boot_id and isinstance(worker_pid, int) and worker_pid > 0
+        )
         return {
             "texts": texts,
             "generation_metadata": {
                 "endpoint": f"MLX-BATCH:{model_name}",
                 "provider": "mlx",
                 "model": model_name,
+                "model_basis": "path_basename",
                 "is_local": True,
-                "provider_verified": True,
+                "provider_verified": provider_verified,
+                "provider_verification_basis": (
+                    "attested_worker_identity" if provider_verified else "unattested"
+                ),
+                "worker_boot_id": worker_boot_id,
+                "worker_pid": worker_pid if isinstance(worker_pid, int) else None,
+                "worker_generation": int(getattr(self, "_worker_generation", 0) or 0),
+                "batch_tokens_used_consistent": bool(
+                    response.get("tokens_used_consistent", True)
+                ),
                 "batch_request_id": response.get("request_id"),
                 "surface_control_receipt": {
                     "enabled": False,
@@ -6430,10 +6487,18 @@ class MLXLocalClient:
         return raw if len(raw) == 32 else b""
 
     def get_worker_identity_snapshot(self) -> dict[str, Any]:
-        """Return immutable identity evidence for resident-scale policy decisions."""
+        """Return immutable identity evidence for resident-scale policy decisions.
 
+        CP126 375fc058: this promised immutability and returned ``dict(...)``,
+        a SHALLOW copy. Every nested dict and list stayed shared with the
+        client's authoritative record, so a consumer holding a "snapshot"
+        could mutate the identity that later policy, admission and proof
+        decisions read — and the evidence would still look like evidence.
+        """
         identity = getattr(self, "_worker_identity", None)
-        return dict(identity) if isinstance(identity, dict) else {}
+        if not isinstance(identity, dict):
+            return {}
+        return copy.deepcopy(identity)
 
     def _attest_mycelial_worker(self, init_receipt: Mapping[str, Any]) -> None:
         """Publish the accepted worker identity to Mycelium after READY validation."""
