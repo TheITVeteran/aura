@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import inspect
 import logging
+import math
 import os
 import secrets
 import signal
@@ -194,8 +195,15 @@ class LaneOwnerObservation:
             raise ValueError("lane owner_id must be non-empty")
         if not str(self.model_path).strip():
             raise ValueError("lane model_path must be non-empty")
-        if float(self.declared_gb) <= 0.0:
+        declared_gb = float(self.declared_gb)
+        observed_gb = float(self.observed_gb)
+        lease_ttl_s = float(self.lease_ttl_s)
+        if not math.isfinite(declared_gb) or declared_gb <= 0.0:
             raise ValueError("lane declared_gb must be positive")
+        if not math.isfinite(observed_gb) or observed_gb < 0.0:
+            raise ValueError("lane observed_gb must be finite and non-negative")
+        if not math.isfinite(lease_ttl_s) or lease_ttl_s < 0.0:
+            raise ValueError("lane lease_ttl_s must be finite and non-negative")
 
 
 @dataclass(frozen=True)
@@ -221,8 +229,15 @@ class LaneClaim:
             raise ValueError("lane claim owner_id must be non-empty")
         if not str(self.model_path).strip():
             raise ValueError("lane claim model_path must be non-empty")
-        if float(self.request_gb) <= 0.0:
+        request_gb = float(self.request_gb)
+        reservation_ttl_s = float(self.reservation_ttl_s)
+        owner_lease_ttl_s = float(self.owner_lease_ttl_s)
+        if not math.isfinite(request_gb) or request_gb <= 0.0:
             raise ValueError("lane claim request_gb must be positive")
+        if not math.isfinite(reservation_ttl_s) or reservation_ttl_s < 0.0:
+            raise ValueError("lane claim reservation_ttl_s must be finite and non-negative")
+        if not math.isfinite(owner_lease_ttl_s) or owner_lease_ttl_s < 0.0:
+            raise ValueError("lane claim owner_lease_ttl_s must be finite and non-negative")
         if not str(self.request_id).strip():
             raise ValueError("lane claim request_id must be non-empty")
 
@@ -2866,6 +2881,12 @@ class ModelLaneController:
         explicitly opted into nested children may reuse their isolated process
         group, and no child may exceed the parent's admitted capacity.
         """
+        try:
+            requested_gb_value = float(requested_gb)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(requested_gb_value) or requested_gb_value <= 0.0:
+            return False
         if not self.validate_inherited_claim(
             owner_id=owner_id,
             request_id=request_id,
@@ -2912,9 +2933,7 @@ class ModelLaneController:
                 for root in allowed_roots
             ):
                 return False
-            if float(requested_gb) <= 0.0:
-                return False
-            if float(requested_gb) > float(record.get("request_gb") or 0.0):
+            if requested_gb_value > float(record.get("request_gb") or 0.0):
                 return False
             owner_metadata = dict(owner.get("metadata") or {})
             if owner_metadata.get("managed_model_process") is not True:

@@ -264,6 +264,18 @@ def test_request_replay_rejects_changed_capacity_or_disruption_claim(tmp_path: P
         )
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_model_lane_resource_claims_reject_non_finite_values(invalid: float) -> None:
+    with pytest.raises(ValueError, match="request_gb"):
+        LaneClaim(owner_id="claim", model_path="/models/test", request_gb=invalid)
+    with pytest.raises(ValueError, match="declared_gb"):
+        LaneOwnerObservation(
+            owner_id="owner",
+            model_path="/models/test",
+            declared_gb=invalid,
+        )
+
+
 def test_concurrent_controllers_cannot_spend_same_unreserved_capacity(tmp_path: Path) -> None:
     alive = AliveTable(201)
     first = _controller(tmp_path, alive)
@@ -788,6 +800,13 @@ def test_inherited_child_is_bound_to_declared_model_roots_and_purposes(
         "parent_pid": os.getppid(),
         "requested_gb": 20.0,
     }
+
+    for invalid in (float("nan"), float("inf"), float("-inf")):
+        assert controller.validate_inherited_child_claim(
+            **{**common, "requested_gb": invalid},
+            child_model_path=str(fused_root / "candidate"),
+            child_purpose="benchmark",
+        ) is False
 
     assert controller.validate_inherited_child_claim(
         **common,
