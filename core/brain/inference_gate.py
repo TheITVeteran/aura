@@ -23,6 +23,7 @@ import threading as _threading
 import time
 import weakref
 from collections import deque
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -2592,7 +2593,39 @@ class InferenceGate:
         visible_conversation_anchor = 0.0
         visible_anchor_recent = False
         if self._mlx_client and hasattr(self._mlx_client, "get_lane_status"):
-            raw = self._mlx_client.get_lane_status()
+            # Protective envelope. This is the HEALTH observation path: it is
+            # what answers "is Aura able to talk?", so it must survive a client
+            # that raises, returns a non-mapping, or hands back something with
+            # hostile property access. Bare, a malformed status crashed the
+            # very probe that would have reported the problem, and the caller
+            # saw an exception instead of a degraded-but-honest reading.
+            #
+            # An empty mapping is the right failure: every read below already
+            # supplies a default, so the lane reports what it independently
+            # knows rather than nothing at all.
+            raw: Mapping[str, Any] = {}
+            try:
+                candidate = self._mlx_client.get_lane_status()
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                # The module's typed tuple, deliberately — broad catches are
+                # forbidden in this file (tests/test_causal_gating.py) so every
+                # degradation stays classified. The tuple already covers what a
+                # malformed or hostile client can raise here: AttributeError,
+                # TypeError, ValueError, RuntimeError, OSError, LookupError.
+                _record_inference_degradation(
+                    exc,
+                    action="reported lane status from independent state after get_lane_status raised",
+                    severity="warning",
+                )
+                candidate = None
+            if isinstance(candidate, Mapping):
+                raw = candidate
+            elif candidate is not None:
+                _record_inference_degradation(
+                    TypeError(f"get_lane_status returned {type(candidate).__name__}"),
+                    action="ignored a non-mapping lane status payload",
+                    severity="warning",
+                )
             lane["state"] = str(raw.get("state", lane["state"]) or lane["state"])
             lane["last_failure_reason"] = str(
                 raw.get("last_error", "") or lane["last_failure_reason"]

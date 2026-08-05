@@ -90,11 +90,30 @@ def test_inference_gate_get_system_phi_propagates_cancellation(monkeypatch):
 
 
 def test_inference_gate_source_has_no_raw_broad_exception_catches():
+    """No broad catch in the inference gate — checked by PARSING, not grepping.
+
+    This substring-scanned the file, so it fired on the words appearing in a
+    COMMENT explaining why the typed tuple is used there. A gate that a comment
+    can trip teaches people to stop writing the comment, and the explanation is
+    the part worth keeping.
+    """
+    import ast
     from pathlib import Path
 
     source = Path("core/brain/inference_gate.py").read_text(encoding="utf-8")
-    assert "except Exception" not in source
-    assert "except BaseException" not in source
+    broad = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ExceptHandler) or node.type is None:
+            continue
+        caught = [node.type] if not isinstance(node.type, ast.Tuple) else list(node.type.elts)
+        for item in caught:
+            name = getattr(item, "id", None) or getattr(item, "attr", None)
+            if name in {"Exception", "BaseException"}:
+                broad.add(f"line {node.lineno}: except {name}")
+    assert not broad, (
+        "broad exception catches in core/brain/inference_gate.py:\n  "
+        + "\n  ".join(sorted(broad))
+    )
 
 
 def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
