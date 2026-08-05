@@ -76,15 +76,14 @@ def test_hive_node_processes_valid_gossip_item(monkeypatch):
 def test_hive_node_broadcast_removes_unreachable_peer(monkeypatch):
     recorded: list[tuple[str, str, dict[str, object]]] = []
 
-    async def failing_open_connection(*_args, **_kwargs):
-        attempted = True
-        assert attempted
-        raise OSError("peer offline")
+    class FailingGateway:
+        async def connect_stream(self, *_args, **_kwargs):
+            raise OSError("peer offline")
 
     def record_degradation(module, exc, **kwargs):
         recorded.append((module, type(exc).__name__, kwargs))
 
-    monkeypatch.setattr(hive_module.asyncio, "open_connection", failing_open_connection)
+    monkeypatch.setattr(hive_module, "get_network_gateway", lambda: FailingGateway())
     monkeypatch.setattr(hive_module, "record_degradation", record_degradation)
 
     node = HiveNode("node-a")

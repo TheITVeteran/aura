@@ -66,8 +66,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/cognitive/state_machine.py", "queue_sentence_generator", "get"),
         ("core/collective/probe_manager.py", "_listen_to_probe", "readline"),
         ("core/collective/swarm_protocol.py", "_handle_peer", "wait_closed"),
-        ("core/collective/swarm_protocol.py", "broadcast", "drain"),
-        ("core/collective/swarm_protocol.py", "broadcast", "wait_closed"),
         ("core/consciousness/aura_protocol.py", "_handle_connection", "readexactly"),
         ("core/consciousness/constitutive_expression.py", "tick", "get"),
         ("core/consciousness/heartbeat.py", "_gather_state", "get"),
@@ -84,7 +82,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/multimodal/coordinator.py", "subscribe", "get"),
         ("core/networking/hive_node.py", "_close_server", "wait_closed"),
         ("core/networking/hive_node.py", "_handle_peer", "wait_closed"),
-        ("core/networking/hive_node.py", "broadcast_work_item", "wait_closed"),
         ("core/ops/daemon.py", "_handle_api_connection", "drain"),
         ("core/ops/daemon.py", "_handle_api_connection", "readline"),
         ("core/ops/daemon.py", "run", "wait"),
@@ -109,8 +106,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/senses/interaction_signals.py", "_typing_consumer", "get"),
         ("core/senses/interaction_signals.py", "_vision_consumer", "get"),
         ("core/senses/interaction_signals.py", "_voice_consumer", "get"),
-        ("core/senses/soma.py", "_check_latency", "wait_closed"),
-        ("core/skills/sovereign_network.py", "probe", "wait_closed"),
         ("core/skills/sovereign_terminal.py", "_open_target", "wait"),
         ("core/state/state_repository.py", "_mutation_consumer_loop", "get"),
         ("core/utils/context_assembler.py", "gather_full_context", "get"),
@@ -157,8 +152,9 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
         }
 
         class Visitor(ast.NodeVisitor):
-            def __init__(self, rel_path: str) -> None:
+            def __init__(self, rel_path: str, async_methods: set[str]) -> None:
                 self.rel_path = rel_path
+                self.local_async_methods = async_methods
                 self.async_stack: list[str] = []
                 self.timeout_ctx_depth = 0
 
@@ -210,7 +206,7 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
                     # Restricted to a `self.` receiver on purpose. `await
                     # queue.get()` stays flagged even in a file that happens to
                     # define a method called `get`.
-                    if _is_self_call(value) and name in local_async_methods:
+                    if _is_self_call(value) and name in self.local_async_methods:
                         self.generic_visit(node)
                         return
                     flagged = (
@@ -222,7 +218,7 @@ def _scan_offenders() -> set[tuple[str, str, str]]:
                         offenders.add((self.rel_path, self.async_stack[-1], name))
                 self.generic_visit(node)
 
-        Visitor(rel).visit(tree)
+        Visitor(rel, local_async_methods).visit(tree)
     return offenders
 
 

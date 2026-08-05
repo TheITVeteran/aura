@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
@@ -108,6 +109,26 @@ class _FakeWebSocket:
 
     async def close(self, *, code: int, reason: str) -> None:
         self.closed.append((code, reason))
+
+
+class _FakeStreamWriter:
+    def __init__(self, peer: str, certificate: bytes | None = None) -> None:
+        self.peer = peer
+        self.certificate = certificate
+        self.closed = False
+
+    def get_extra_info(self, name: str) -> object:
+        if name == "peername":
+            return (self.peer, 5025)
+        if name == "ssl_object" and self.certificate is not None:
+            return SimpleNamespace(getpeercert=lambda binary_form: self.certificate)
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -273,3 +294,91 @@ async def test_websocket_admission_never_connects_to_cloud_metadata(
         )
 
     assert attempted is False
+
+
+@pytest.mark.asyncio
+async def test_stream_admission_pins_address_and_tls_certificate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    certificate = b"instrument-certificate"
+    certificate_sha256 = "sha256:" + hashlib.sha256(certificate).hexdigest()
+    writer = _FakeStreamWriter("192.168.50.10", certificate)
+    reader = object()
+    captured: dict[str, object] = {}
+
+    async def resolve(
+        host: str,
+        port: int,
+        *,
+        timeout_s: float,
+        error_prefix: str,
+    ) -> tuple[str, ...]:
+        captured["resolution"] = (host, port, timeout_s, error_prefix)
+        return ("192.168.50.10",)
+
+    async def open_connection(**kwargs: object) -> tuple[object, _FakeStreamWriter]:
+        captured["connect"] = kwargs
+        return reader, writer
+
+    monkeypatch.setattr("core.runtime.network_gateway._resolve_network_addresses", resolve)
+    monkeypatch.setattr("core.runtime.network_gateway.asyncio.open_connection", open_connection)
+    monkeypatch.setattr("core.runtime.network_gateway.governance_runtime_active", lambda: False)
+
+    admission = await NetworkGateway().connect_stream(
+        "tls://instrument.example.test:5025",
+        source="tests.instrument",
+        read_only=True,
+        allow_private_target=True,
+        expected_certificate_sha256=certificate_sha256,
+    )
+
+    assert admission.reader is reader
+    assert admission.writer is writer
+    assert admission.peer_address == "192.168.50.10"
+    assert admission.peer_certificate_sha256 == certificate_sha256
+    assert captured["resolution"] == (
+        "instrument.example.test",
+        5025,
+        10.0,
+        "stream",
+    )
+    options = captured["connect"]
+    assert isinstance(options, dict)
+    assert options["host"] == "192.168.50.10"
+    assert options["port"] == 5025
+    assert options["server_hostname"] == "instrument.example.test"
+
+
+@pytest.mark.asyncio
+async def test_stream_admission_closes_on_certificate_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = _FakeStreamWriter("192.168.50.10", b"wrong-certificate")
+
+    async def resolve(
+        host: str,
+        port: int,
+        *,
+        timeout_s: float,
+        error_prefix: str,
+    ) -> tuple[str, ...]:
+        return ("192.168.50.10",)
+
+    async def open_connection(**kwargs: object) -> tuple[object, _FakeStreamWriter]:
+        return object(), writer
+
+    monkeypatch.setattr("core.runtime.network_gateway._resolve_network_addresses", resolve)
+    monkeypatch.setattr("core.runtime.network_gateway.asyncio.open_connection", open_connection)
+    monkeypatch.setattr("core.runtime.network_gateway.governance_runtime_active", lambda: False)
+
+    expected = "sha256:" + hashlib.sha256(b"expected-certificate").hexdigest()
+    with pytest.raises(NetworkEffectDenied, match="stream_peer_certificate_mismatch"):
+        await NetworkGateway().connect_stream(
+            "tls://instrument.example.test:5025",
+            source="tests.instrument",
+            read_only=True,
+            allow_private_target=True,
+            expected_certificate_sha256=expected,
+        )
+
+    assert writer.closed is True

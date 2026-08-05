@@ -261,7 +261,10 @@ class RealityEventFlowRuntime:
 
     async def _worker_loop(self) -> None:
         while self._running:
-            await self._wake.wait()
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=1.0)
+            except TimeoutError:
+                continue
             self._wake.clear()
             while self._running:
                 try:

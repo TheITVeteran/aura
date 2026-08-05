@@ -5,7 +5,8 @@ import socket
 import time
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import NetworkEffectDenied, record_degradation
+from core.runtime.network_gateway import build_stream_endpoint, get_network_gateway
 from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
@@ -148,20 +149,46 @@ class SwarmProtocol:
             await self.broadcast({"type": "skill_approved", "skill_id": skill_id, "node_id": self.node_id})
 
     async def broadcast(self, message: dict[str, Any]):
-        message["node_id"] = self.node_id
-        message["timestamp"] = time.time()
-        payload = json.dumps(message).encode()
+        payload = json.dumps(
+            {**message, "node_id": self.node_id, "timestamp": time.time()},
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
         
         for peer in list(self.peers):
+            writer = None
             try:
                 # Skip if it's our own IP (if discovered)
-                reader, writer = await asyncio.open_connection(peer, self.port)
+                admission = await get_network_gateway().connect_stream(
+                    build_stream_endpoint(peer, self.port),
+                    open_timeout=3.0,
+                    source="collective:swarm_protocol.broadcast",
+                    read_only=False,
+                    allow_private_target=True,
+                )
+                writer = admission.writer
                 writer.write(payload)
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
-                self.peers.remove(peer)
+                await asyncio.wait_for(writer.drain(), timeout=3.0)
+            except asyncio.CancelledError:
+                raise
+            except (
+                NetworkEffectDenied,
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                AttributeError,
+                ValueError,
+            ):
+                self.peers.discard(peer)
+            finally:
+                if writer is not None:
+                    writer.close()
+                    try:
+                        await asyncio.wait_for(writer.wait_closed(), timeout=3.0)
+                    except (ConnectionError, OSError, RuntimeError):
+                        logger.debug("Swarm peer writer close failed", exc_info=True)
+                    except TimeoutError:
+                        logger.debug("Swarm peer writer close timed out")
 
     async def _broadcast_loop(self):
         while self.running:

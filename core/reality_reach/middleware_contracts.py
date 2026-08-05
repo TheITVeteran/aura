@@ -410,8 +410,20 @@ class ActionContext:
     def cancel_requested(self) -> bool:
         return self._cancel_event.is_set()
 
-    async def wait_cancelled(self) -> None:
-        await self._cancel_event.wait()
+    async def wait_cancelled(self, *, timeout_s: float = 60.0) -> bool:
+        if isinstance(timeout_s, bool):
+            raise TypeError("timeout_s must be numeric")
+        try:
+            timeout = float(timeout_s)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("timeout_s must be numeric") from exc
+        if not 0.001 <= timeout <= 3600.0:
+            raise ValueError("timeout_s must lie inside [0.001, 3600]")
+        try:
+            await asyncio.wait_for(self._cancel_event.wait(), timeout=timeout)
+        except TimeoutError:
+            return False
+        return True
 
     async def publish_feedback(self, progress: float, payload: Mapping[str, Any]) -> None:
         await self._feedback(progress, payload)

@@ -35489,3 +35489,53 @@ peer behavior, LAWC-05 extension, live acceptance, frontier evidence, release,
 and `WOW Signal` remain open. This is total checkpoint 808 of the current
 920-checkpoint completion envelope, approximately 87.8% by count; long soaks
 remain deferred.
+
+### 2026-08-05 - CP809 implementation slice: governed instrument and robot fabrics
+
+The concrete Reality Reach connector plane now includes manifest-bound openHAB,
+MQTT, OPC UA, ROS 2/rosbridge, and SCPI adapters behind the shared attachment,
+trust, observation, actuation, WorldBridge, and independent-effect-verification
+contracts. The ROS 2 path supports declared topics, bounded services, and
+feedback/cancellation-aware actions without introducing a second authority
+plane. The SCPI path supports declared scalar measurements and setpoints rather
+than an arbitrary instrument console: every query, numeric domain, command
+template, safe value, tolerance, uncertainty, and rate limit is fixed by the
+boot manifest.
+
+SCPI control requires TLS, a pinned peer certificate, and an exact hashed
+`*IDN?` instrument identity. Every write requires live governance at the
+transport boundary, completes through `*OPC?`, checks `SYST:ERR?`, and remains
+incomplete until the shared scalar adapter obtains fresh independent readback.
+Observation-only plaintext requires an explicit runtime opt-in, cannot expose
+control, and cannot acquire persistent physical identity. Discovery has one
+connector-wide deadline, so a large or unavailable instrument manifest returns
+partial truthful inventory instead of serially blocking boot.
+
+The underlying network boundary now owns governed TCP/TLS streams with one-time
+DNS resolution, admitted-address dialing, post-connect peer verification,
+metadata-address refusal, private-target scoping, PKI verification, optional
+leaf-certificate pinning, bounded reads/timeouts, and bounded close. Five legacy
+`asyncio.open_connection` consumers (swarm, Aura protocol, Hive, Soma, and
+sovereign peer discovery) now use that boundary. Failed loopback telemetry is
+reported as unmeasured rather than fabricated as a one-millisecond sample, and
+the bounded-await debt ratchet shrank for every migrated close/drain path.
+
+Validation while the resident 32B campaign owns the model lane:
+
+- concrete connector, attachment, middleware, and network-gateway family:
+  115/115 passed;
+- migrated networking, cancellation, event-flow, and bounded-await family:
+  140/140 passed;
+- post-review SCPI identity, governance, aggregate-deadline, and gateway slice:
+  44/44 passed;
+- smoke: 103/103 passed;
+- Ruff, Python compilation, governance effect ownership, layering, and diff
+  integrity passed.
+
+No configured SCPI instrument or robot was available for hardware-in-loop
+acceptance, so this slice does not claim a live physical effect. The cloud-twin
+connector, cross-protocol hardware-in-loop matrix, restart and fault-injection
+acceptance, and every remaining RR-01 through RR-11 item remain open. CP809 is
+therefore still in progress: the total remains 808 of the 920-checkpoint
+completion envelope, approximately 87.8% by count. Reasoning gain, frontier,
+release, and `WOW Signal` claims also remain open; long soaks remain deferred.

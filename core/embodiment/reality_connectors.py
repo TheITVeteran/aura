@@ -334,6 +334,71 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
+    scpi_endpoint = str(os.getenv("AURA_SCPI_ENDPOINT") or "").strip()
+    scpi_manifest = str(os.getenv("AURA_SCPI_RESOURCES_JSON") or "").strip()
+    scpi_installation = str(os.getenv("AURA_SCPI_INSTALLATION_ID") or "").strip()
+    scpi_expected_idn = str(os.getenv("AURA_SCPI_EXPECTED_IDN_SHA256") or "").strip()
+    scpi_present = bool(
+        scpi_endpoint or scpi_manifest or scpi_installation or scpi_expected_idn
+    )
+    if not scpi_present:
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="scpi.manifest",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not all(
+        (scpi_endpoint, scpi_manifest, scpi_installation, scpi_expected_idn)
+    ):
+        missing = [
+            name
+            for name, value in (
+                ("AURA_SCPI_ENDPOINT", scpi_endpoint),
+                ("AURA_SCPI_RESOURCES_JSON", scpi_manifest),
+                ("AURA_SCPI_INSTALLATION_ID", scpi_installation),
+                ("AURA_SCPI_EXPECTED_IDN_SHA256", scpi_expected_idn),
+            )
+            if not value
+        ]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="scpi.manifest",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.scpi_connector import (
+                build_configured_scpi_connector,
+            )
+
+            connector = build_configured_scpi_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="scpi.manifest",
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
     return RealityConnectorCatalog(tuple(connectors), tuple(statuses))
 
 

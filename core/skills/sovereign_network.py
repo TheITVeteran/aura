@@ -11,7 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import NetworkEffectDenied, record_degradation
+from core.runtime.network_gateway import build_stream_endpoint, get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.task_ownership import create_tracked_task
 from core.skills.base_skill import BaseSkill
@@ -265,13 +266,20 @@ class SovereignNetworkSkill(BaseSkill):
         async def probe(host: str) -> dict[str, Any] | None:
             async with semaphore:
                 try:
-                    reader, writer = await asyncio.wait_for(
-                        asyncio.open_connection(host, first_port),
-                        timeout=TCP_DISCOVERY_TIMEOUT_S,
+                    admission = await get_network_gateway().connect_stream(
+                        build_stream_endpoint(host, first_port),
+                        open_timeout=TCP_DISCOVERY_TIMEOUT_S,
+                        source="skills:sovereign_network.peer_discovery",
+                        read_only=True,
+                        allow_private_target=True,
                     )
+                    writer = admission.writer
                     writer.close()
                     try:
-                        await writer.wait_closed()
+                        await asyncio.wait_for(
+                            writer.wait_closed(),
+                            timeout=TCP_DISCOVERY_TIMEOUT_S,
+                        )
                     except asyncio.CancelledError:
                         raise
                     except (RuntimeError, OSError, TimeoutError, AttributeError) as close_exc:
@@ -279,7 +287,13 @@ class SovereignNetworkSkill(BaseSkill):
                     return {"address": host, "rpc_port": first_port, "source": "tcp_connect"}
                 except asyncio.CancelledError:
                     raise
-                except (RuntimeError, OSError, TimeoutError, AttributeError) as e:
+                except (
+                    NetworkEffectDenied,
+                    RuntimeError,
+                    OSError,
+                    TimeoutError,
+                    AttributeError,
+                ) as e:
                     logger.debug("TCP peer probe failed for %s:%s: %s", host, first_port, e)
                     return None
 

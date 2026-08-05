@@ -15,7 +15,13 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.errors import (
+    FallbackClassification,
+    NetworkEffectDenied,
+    Severity,
+    record_degradation,
+)
+from core.runtime.network_gateway import build_stream_endpoint, get_network_gateway
 from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Network.HiveNode")
@@ -37,6 +43,7 @@ _HIVE_ERRORS = (
     TypeError,
     ValueError,
     json.JSONDecodeError,
+    NetworkEffectDenied,
 )
 
 
@@ -230,10 +237,14 @@ class HiveNode:
         for peer in list(self.peers.values()):
             writer: asyncio.StreamWriter | None = None
             try:
-                _reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(peer.ip, peer.port),
-                    timeout=CONNECT_TIMEOUT_S,
+                admission = await get_network_gateway().connect_stream(
+                    build_stream_endpoint(peer.ip, peer.port),
+                    open_timeout=CONNECT_TIMEOUT_S,
+                    source="networking:hive_node.broadcast_work_item",
+                    read_only=False,
+                    allow_private_target=True,
                 )
+                writer = admission.writer
                 writer.write(payload)
                 await asyncio.wait_for(writer.drain(), timeout=CONNECT_TIMEOUT_S)
                 sent += 1
@@ -251,7 +262,10 @@ class HiveNode:
                 if writer is not None:
                     writer.close()
                     try:
-                        await writer.wait_closed()
+                        await asyncio.wait_for(
+                            writer.wait_closed(),
+                            timeout=CONNECT_TIMEOUT_S,
+                        )
                     except _HIVE_ERRORS as _exc:
                         logger.debug("Suppressed %s in core.networking.hive_node: %s", type(_exc).__name__, _exc)
         return {"sent": sent, "failed": failed}

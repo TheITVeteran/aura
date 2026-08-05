@@ -19,6 +19,7 @@ from core.reality_reach.contracts import (
 )
 from core.reality_reach.live import ChannelReading, RealityReachService
 from core.reality_reach.middleware import (
+    ActionContext,
     ActionEndpoint,
     ActionRecord,
     ActionState,
@@ -35,6 +36,19 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 
 IDENTITY = "sha256:" + "a" * 64
 EFFECT = "sha256:" + "b" * 64
+
+
+@pytest.mark.asyncio
+async def test_action_cancellation_wait_is_bounded_and_observable() -> None:
+    event = asyncio.Event()
+
+    async def feedback(_progress: float, _payload: dict[str, Any]) -> None:
+        return None
+
+    context = ActionContext("goal.cancel", event, feedback)
+    assert await context.wait_cancelled(timeout_s=0.001) is False
+    event.set()
+    assert await context.wait_cancelled(timeout_s=0.1) is True
 
 
 def _channel() -> ChannelDeclaration:

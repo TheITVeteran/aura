@@ -7,7 +7,9 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import re
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +42,10 @@ _NETWORK_RECOVERABLE_ERRORS = (
 )
 _HTTP_METHODS = {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
 _WEBSOCKET_SCHEMES = {"ws", "wss"}
+_STREAM_SCHEMES = {"tcp", "tls"}
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*\.?$"
+)
 _CLOUD_METADATA_ADDRESSES = frozenset(
     {"169.254.169.254", "100.100.100.200", "fd00:ec2::254"}
 )
@@ -63,6 +69,21 @@ class WebSocketAdmission:
     destination_port: int
     peer_address: str
     secure: bool
+    source: str
+    read_only: bool
+
+
+@dataclass(frozen=True)
+class StreamAdmission:
+    """One admitted, address-pinned byte stream with no credential material."""
+
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+    destination_host: str
+    destination_port: int
+    peer_address: str
+    secure: bool
+    peer_certificate_sha256: str
     source: str
     read_only: bool
 
@@ -382,6 +403,134 @@ class NetworkGateway:
         cause = failures[-1] if failures else RuntimeError("no approved address was attempted")
         raise NetworkEffectDenied("websocket_connection_failed") from cause
 
+    async def connect_stream(
+        self,
+        endpoint: str,
+        *,
+        open_timeout: float = 10.0,
+        read_limit: int = 65_536,
+        source: str = "unknown",
+        read_only: bool = False,
+        allow_private_target: bool = False,
+        expected_certificate_sha256: str = "",
+    ) -> StreamAdmission:
+        """Open a governed TCP/TLS byte stream pinned to an admitted address."""
+
+        endpoint_text, host, port, secure = _coerce_stream_endpoint(endpoint)
+        timeout_s = _coerce_timeout(open_timeout)
+        read_limit_value = _coerce_positive_int(
+            read_limit,
+            name="read_limit",
+            maximum=16_777_216,
+        )
+        certificate_pin = str(expected_certificate_sha256 or "").strip().lower()
+        if certificate_pin and not _is_sha256_digest(certificate_pin):
+            raise ValueError("expected_certificate_sha256 must be a sha256 digest")
+        if certificate_pin and not secure:
+            raise ValueError("a certificate pin requires a TLS stream")
+
+        try:
+            from core.security.defensive_runtime import validate_outbound_network
+
+            defensive_receipt = validate_outbound_network(
+                method="CONNECT",
+                url=endpoint_text,
+                data_length=0,
+                source=source,
+            )
+            verdict = read_verdict(defensive_receipt)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "network_gateway.stream_preflight",
+                exc,
+                severity="warning",
+                action="refused stream admission after defensive preflight failed",
+                enforce_failure_policy=False,
+            )
+            raise NetworkEffectDenied("stream_defensive_preflight_failed") from exc
+        if not verdict.allows:
+            reason = str(
+                defensive_receipt.get("reason")
+                or verdict.reason
+                or "blocked_by_defensive_runtime"
+            )
+            raise NetworkEffectDenied(f"stream_admission_denied:{reason}")
+        if not read_only and governance_runtime_active():
+            require_governance(
+                f"network_gateway.connect_stream:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+
+        addresses = await _resolve_network_addresses(
+            host,
+            port,
+            timeout_s=min(timeout_s, 10.0),
+            error_prefix="stream",
+        )
+        approved = _approve_network_addresses(
+            addresses,
+            allow_private_target=allow_private_target,
+            error_prefix="stream",
+        )
+        context = ssl.create_default_context() if secure else None
+        failures: list[BaseException] = []
+        for address in approved:
+            writer: asyncio.StreamWriter | None = None
+            try:
+                async with asyncio.timeout(timeout_s):
+                    reader, writer = await asyncio.open_connection(
+                        host=address,
+                        port=port,
+                        ssl=context,
+                        server_hostname=host if secure else None,
+                        limit=read_limit_value,
+                    )
+                peer_address = _stream_peer_address(writer)
+                if _normalize_ip(peer_address, error_prefix="stream") != _normalize_ip(
+                    address,
+                    error_prefix="stream",
+                ):
+                    await _close_stream_writer(writer)
+                    raise NetworkEffectDenied("stream_peer_address_mismatch")
+                certificate_sha256 = _stream_certificate_sha256(writer)
+                if secure and not certificate_sha256:
+                    await _close_stream_writer(writer)
+                    raise NetworkEffectDenied("stream_peer_certificate_unavailable")
+                if certificate_pin and certificate_sha256 != certificate_pin:
+                    await _close_stream_writer(writer)
+                    raise NetworkEffectDenied("stream_peer_certificate_mismatch")
+                logger.info(
+                    "Stream admitted source=%s host=%s port=%s peer=%s secure=%s read_only=%s",
+                    source,
+                    host,
+                    port,
+                    peer_address,
+                    secure,
+                    read_only,
+                )
+                return StreamAdmission(
+                    reader=reader,
+                    writer=writer,
+                    destination_host=host,
+                    destination_port=port,
+                    peer_address=peer_address,
+                    secure=secure,
+                    peer_certificate_sha256=certificate_sha256,
+                    source=source,
+                    read_only=read_only,
+                )
+            except NetworkEffectDenied:
+                if writer is not None:
+                    await _close_stream_writer(writer)
+                raise
+            except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+                failures.append(exc)
+                if writer is not None:
+                    await _close_stream_writer(writer)
+        cause = failures[-1] if failures else RuntimeError("no approved address was attempted")
+        raise NetworkEffectDenied("stream_connection_failed") from cause
+
 
 def _coerce_method(method: str) -> str:
     if not isinstance(method, str):
@@ -421,6 +570,60 @@ def _coerce_websocket_url(url: str) -> tuple[str, str, int, bool]:
     return url_text, parsed.hostname.lower(), port, scheme == "wss"
 
 
+def _coerce_stream_endpoint(endpoint: str) -> tuple[str, str, int, bool]:
+    if not isinstance(endpoint, str):
+        raise TypeError("stream endpoint must be a string")
+    endpoint_text = endpoint.strip()
+    if any(character in endpoint_text for character in ("\n", "\r", "\x00", " ")):
+        raise ValueError("stream endpoint contains whitespace or control characters")
+    parsed = urllib.parse.urlparse(endpoint_text)
+    scheme = parsed.scheme.lower()
+    if (
+        scheme not in _STREAM_SCHEMES
+        or not parsed.hostname
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("stream endpoints must be absolute tcp:// or tls:// authorities")
+    if parsed.username or parsed.password:
+        raise ValueError("stream endpoint must not contain credentials")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("stream endpoint has an invalid port") from exc
+    if port is None:
+        raise ValueError("stream endpoint requires an explicit port")
+    return endpoint_text, parsed.hostname.lower(), port, scheme == "tls"
+
+
+def build_stream_endpoint(host: str, port: int, *, secure: bool = False) -> str:
+    """Build one unambiguous stream endpoint from a host and numeric port."""
+
+    if not isinstance(host, str):
+        raise TypeError("stream host must be a string")
+    normalized = host.strip()
+    if any(character in normalized for character in ("\n", "\r", "\x00", " ")):
+        raise ValueError("stream host contains whitespace or control characters")
+    try:
+        ip = ipaddress.ip_address(normalized.split("%", 1)[0])
+    except ValueError:
+        if not _HOSTNAME.fullmatch(normalized):
+            raise ValueError("stream host must be an IP address or DNS name") from None
+        authority_host = normalized.rstrip(".").lower()
+    else:
+        authority_host = f"[{normalized}]" if ip.version == 6 else normalized
+    if isinstance(port, bool):
+        raise TypeError("stream port must be an integer")
+    try:
+        normalized_port = int(port)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("stream port must be an integer") from exc
+    if not 1 <= normalized_port <= 65_535:
+        raise ValueError("stream port must lie inside [1, 65535]")
+    return f"{'tls' if secure else 'tcp'}://{authority_host}:{normalized_port}"
+
+
 def _coerce_timeout(timeout: float) -> float:
     try:
         timeout_s = float(timeout)
@@ -444,6 +647,21 @@ def _coerce_positive_int(value: int, *, name: str, maximum: int) -> int:
 
 
 async def _resolve_websocket_addresses(host: str, port: int, *, timeout_s: float) -> tuple[str, ...]:
+    return await _resolve_network_addresses(
+        host,
+        port,
+        timeout_s=timeout_s,
+        error_prefix="websocket",
+    )
+
+
+async def _resolve_network_addresses(
+    host: str,
+    port: int,
+    *,
+    timeout_s: float,
+    error_prefix: str,
+) -> tuple[str, ...]:
     loop = asyncio.get_running_loop()
     try:
         async with asyncio.timeout(timeout_s):
@@ -454,19 +672,19 @@ async def _resolve_websocket_addresses(host: str, port: int, *, timeout_s: float
                 proto=socket.IPPROTO_TCP,
             )
     except (OSError, TimeoutError, ValueError) as exc:
-        raise NetworkEffectDenied("websocket_destination_resolution_failed") from exc
+        raise NetworkEffectDenied(f"{error_prefix}_destination_resolution_failed") from exc
     addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos if info[4]))
     if not addresses:
-        raise NetworkEffectDenied("websocket_destination_resolved_to_no_addresses")
+        raise NetworkEffectDenied(f"{error_prefix}_destination_resolved_to_no_addresses")
     return addresses
 
 
-def _normalize_ip(value: str) -> str:
+def _normalize_ip(value: str, *, error_prefix: str = "websocket") -> str:
     candidate = str(value or "").split("%", 1)[0]
     try:
         return str(ipaddress.ip_address(candidate))
     except ValueError as exc:
-        raise NetworkEffectDenied("websocket_peer_address_invalid") from exc
+        raise NetworkEffectDenied(f"{error_prefix}_peer_address_invalid") from exc
 
 
 def _approve_websocket_addresses(
@@ -474,17 +692,32 @@ def _approve_websocket_addresses(
     *,
     allow_private_target: bool,
 ) -> tuple[str, ...]:
+    return _approve_network_addresses(
+        addresses,
+        allow_private_target=allow_private_target,
+        error_prefix="websocket",
+    )
+
+
+def _approve_network_addresses(
+    addresses: tuple[str, ...],
+    *,
+    allow_private_target: bool,
+    error_prefix: str,
+) -> tuple[str, ...]:
     approved: list[str] = []
     for address in addresses:
-        normalized = _normalize_ip(address)
+        normalized = _normalize_ip(address, error_prefix=error_prefix)
         ip = ipaddress.ip_address(normalized)
         if normalized in _CLOUD_METADATA_ADDRESSES:
-            raise NetworkEffectDenied("websocket_cloud_metadata_target_denied")
+            raise NetworkEffectDenied(f"{error_prefix}_cloud_metadata_target_denied")
         if ip.is_multicast or ip.is_unspecified or ip.is_reserved:
-            raise NetworkEffectDenied("websocket_non_unicast_target_denied")
+            raise NetworkEffectDenied(f"{error_prefix}_non_unicast_target_denied")
         non_public = ip.is_private or ip.is_loopback or ip.is_link_local
         if non_public and not allow_private_target:
-            raise NetworkEffectDenied("websocket_private_target_requires_explicit_scope")
+            raise NetworkEffectDenied(
+                f"{error_prefix}_private_target_requires_explicit_scope"
+            )
         approved.append(normalized)
     return tuple(approved)
 
@@ -495,6 +728,39 @@ def _websocket_peer_address(connection: Any) -> str:
     if not isinstance(peer, tuple) or not peer:
         raise NetworkEffectDenied("websocket_peer_address_unavailable")
     return str(peer[0])
+
+
+def _stream_peer_address(writer: asyncio.StreamWriter) -> str:
+    peer = writer.get_extra_info("peername")
+    if not isinstance(peer, tuple) or not peer:
+        raise NetworkEffectDenied("stream_peer_address_unavailable")
+    return str(peer[0])
+
+
+def _stream_certificate_sha256(writer: asyncio.StreamWriter) -> str:
+    ssl_object = writer.get_extra_info("ssl_object")
+    certificate = ssl_object.getpeercert(binary_form=True) if ssl_object is not None else None
+    if not isinstance(certificate, bytes) or not certificate:
+        return ""
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(certificate).hexdigest()
+
+
+async def _close_stream_writer(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+    except (ConnectionError, OSError, RuntimeError):
+        logger.debug("Stream writer raised while closing", exc_info=True)
+    except TimeoutError:
+        logger.warning("Stream writer close exceeded the 2s shutdown budget")
+
+
+def _is_sha256_digest(value: str) -> bool:
+    if not value.startswith("sha256:") or len(value) != 71:
+        return False
+    return all(character in "0123456789abcdef" for character in value[7:])
 
 
 def _coerce_headers(headers: dict[str, str] | None) -> dict[str, str]:
@@ -555,4 +821,10 @@ def get_network_gateway() -> NetworkGateway:
     return _gateway
 
 
-__all__ = ["NetworkGateway", "WebSocketAdmission", "get_network_gateway"]
+__all__ = [
+    "NetworkGateway",
+    "StreamAdmission",
+    "WebSocketAdmission",
+    "build_stream_endpoint",
+    "get_network_gateway",
+]

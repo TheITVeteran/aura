@@ -84,6 +84,28 @@ def test_scanner_resolves_aliases_factories_and_path_mutations() -> None:
     assert all(key[2] == "<module>.perform" for key in buckets)
 
 
+def test_scanner_recognizes_async_streams_and_their_gateway_owner() -> None:
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            import asyncio
+            from core.runtime.network_gateway import get_network_gateway
+
+            async def connect() -> None:
+                await asyncio.open_connection("127.0.0.1", 5025)
+                await get_network_gateway().connect_stream(
+                    "tcp://127.0.0.1:5025",
+                    read_only=True,
+                )
+            """
+        )
+    )
+
+    buckets = _scan_tree_scoped(tree, "core/synthetic.py")
+    assert {key[0] for key in buckets} == {"network_gateway", "raw_network"}
+    assert sum(buckets.values()) == 2
+
+
 def test_inventory_comparison_rejects_growth_and_stale_reductions() -> None:
     base = EffectBucket(
         category="raw_subprocess",

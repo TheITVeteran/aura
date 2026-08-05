@@ -315,6 +315,7 @@ _SUBPROCESS_CALLS = frozenset(
 )
 _NETWORK_EXACT_CALLS = frozenset(
     {
+        "asyncio.open_connection",
         "http.client.HTTPConnection",
         "http.client.HTTPSConnection",
         "socket.create_connection",
@@ -469,7 +470,9 @@ _GATEWAY_FACTORIES = {
 }
 _GATEWAY_METHODS = {
     "subprocess_gateway": frozenset({"run", "run_async", "spawn"}),
-    "network_gateway": frozenset({"connect_websocket", "request", "request_async"}),
+    "network_gateway": frozenset(
+        {"connect_stream", "connect_websocket", "request", "request_async"}
+    ),
     "file_write_gateway": frozenset(
         {
             "append_text",

@@ -6105,6 +6105,22 @@
       "scope": "<module>.WebClient.get"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/collective/swarm_protocol.py",
+      "scope": "<module>.SwarmProtocol.broadcast"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/consciousness/aura_protocol.py",
+      "scope": "<module>.AuraProtocolClient.connect"
+    },
+    {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -6129,12 +6145,28 @@
       "scope": "<module>.RosbridgeWebSocketTransport.connect"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/embodiment/scpi_connector.py",
+      "scope": "<module>.SCPIStreamTransport._ensure_connected"
+    },
+    {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
       "canonical_owner": false,
       "category": "network_gateway",
       "count": 1,
       "path": "core/environment/environment_awareness.py",
       "scope": "<module>.get_location_from_ip"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/networking/hive_node.py",
+      "scope": "<module>.HiveNode.broadcast_work_item"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
@@ -6193,6 +6225,14 @@
       "scope": "<module>.GpsInterface._fetch_location"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/senses/soma.py",
+      "scope": "<module>.Soma._check_latency"
+    },
+    {
       "callee": "<network_gateway>.request",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -6231,6 +6271,14 @@
       "count": 1,
       "path": "core/skills/reach_gateway.py",
       "scope": "<module>.ReachGateway.request"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/skills/sovereign_network.py",
+      "scope": "<module>.SovereignNetworkSkill._perform_tcp_peer_discovery.probe"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
@@ -14497,6 +14545,14 @@
       "scope": "<module>._port_open"
     },
     {
+      "callee": "asyncio.open_connection",
+      "canonical_owner": true,
+      "category": "raw_network",
+      "count": 1,
+      "path": "core/runtime/network_gateway.py",
+      "scope": "<module>.NetworkGateway.connect_stream"
+    },
+    {
       "callee": "websockets.connect",
       "canonical_owner": true,
       "category": "raw_network",
@@ -16026,6 +16082,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "12b43eff62db161557dbb7a21a8940ceea573a94ba43a009c8a5c76d30d7680f",
+  "inventory_sha256": "0bed4496fa09c8f6e9083b9de8cb02d149119a31fbd7c057222e9693048e9b50",
   "schema_version": 1
 }

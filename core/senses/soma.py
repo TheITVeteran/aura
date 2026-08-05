@@ -11,11 +11,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import SubprocessError
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime import resource_psutil as psutil
-from core.runtime.errors import record_degradation
+from core.runtime.errors import NetworkEffectDenied, record_degradation
+from core.runtime.network_gateway import build_stream_endpoint, get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
@@ -25,9 +26,10 @@ logger = logging.getLogger("Aura.Senses.Soma")
 class BodyState:
     cpu_percent: float = 0.0
     ram_percent: float = 0.0
-    battery_percent: Optional[float] = None
+    battery_percent: float | None = None
     power_plugged: bool = True
-    network_latency: float = 0.0
+    network_latency: float | None = None
+    network_latency_source: str = "unmeasured"
     
     # OS as a Body Mappings
     biological_temp: float = 0.0      # CPU -> body temp
@@ -51,10 +53,16 @@ class Soma:
     def __init__(self):
         self.state = BodyState()
         self.running = False
-        self._loop_task: Optional[asyncio.Task] = None
+        self._loop_task: asyncio.Task | None = None
         self.update_interval = 5.0 # Check stats every 5 seconds
         self._last_disk_io = None
         self._last_disk_time = None
+        configured_root = str(os.getenv("AURA_ROOT") or "").strip()
+        self._repo_dir = (
+            Path(configured_root).expanduser().resolve()
+            if configured_root
+            else Path(__file__).resolve().parents[2]
+        )
         
     async def start(self):
         if self.running:
@@ -99,10 +107,9 @@ class Soma:
 
                 # Genetic Evolution Generation (Git commits)
                 try:
-                    repo_dir = Path(os.getenv("AURA_ROOT") or Path(__file__).resolve().parents[2])
                     res = get_subprocess_gateway().run(
                         ["git", "rev-list", "--count", "HEAD"],
-                        cwd=str(repo_dir),
+                        cwd=str(self._repo_dir),
                         timeout=3.0,
                         read_only=True,
                         source="soma_git_generation",
@@ -157,7 +164,7 @@ class Soma:
                 logger.error("Soma loop error: %s", e)
                 await asyncio.sleep(10)
 
-    async def _check_latency(self) -> float:
+    async def _check_latency(self) -> float | None:
         """Lightweight attempt to measure network latency.
         Issue 29: Use local gateway or loopback to avoid privacy/performance issues
         with external DNS pings.
@@ -166,16 +173,28 @@ class Soma:
             start = time.time()
             # Try to connect to the local gateway or just check loopback latency
             # for a baseline if no gateway is found.
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", 22), # Check local SSH or similar
-                timeout=0.5
+            admission = await get_network_gateway().connect_stream(
+                build_stream_endpoint("127.0.0.1", 22),
+                open_timeout=0.5,
+                source="telemetry:soma.loopback_latency",
+                read_only=True,
+                allow_private_target=True,
             )
+            writer = admission.writer
             writer.close()
-            await writer.wait_closed()
+            await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+            self.state.network_latency_source = "loopback_tcp_22"
             return time.time() - start
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
-            # Baseline loopback
-            return 0.001 
+        except (
+            NetworkEffectDenied,
+            RuntimeError,
+            asyncio.CancelledError,
+            TimeoutError,
+            AttributeError,
+            OSError,
+        ):
+            self.state.network_latency_source = "unavailable"
+            return None
 
     def _map_affective_states(self):
         """Map raw metrics to subjective body sensations."""
@@ -187,7 +206,8 @@ class Soma:
         self.state.stress_level = min(1.0, self.state.cpu_percent / 90.0)
         
         # High latency or disconnection maps to isolation
-        self.state.isolation_level = min(1.0, self.state.network_latency / 0.8)
+        if self.state.network_latency is not None:
+            self.state.isolation_level = min(1.0, self.state.network_latency / 0.8)
         
         # Battery < 15% on battery maps to fatigue
         if self.state.battery_percent is not None and not self.state.power_plugged:
@@ -198,7 +218,7 @@ class Soma:
         else:
             self.state.fatigue_level = 0.0
 
-    async def pulse(self) -> Dict[str, float]:
+    async def pulse(self) -> dict[str, float]:
         """Return current somatic state for the affect engine's DamasioMarkers.
         
         This is called by AffectEngineV2.pulse() to feed hardware telemetry
@@ -224,7 +244,7 @@ class Soma:
         elif source == "action":
             self.state.last_action_result = data
 
-    def get_body_snapshot(self) -> Dict[str, Any]:
+    def get_body_snapshot(self) -> dict[str, Any]:
         """Returns a snapshot of the current somatic state."""
         resource_anxiety = max(self.state.stress_level, self.state.fatigue_level, self.state.cognitive_load / 100.0)
         thermal_load = min(1.0, max(self.state.cpu_percent, self.state.ram_percent) / 100.0)
@@ -235,6 +255,8 @@ class Soma:
                 "ram": self.state.ram_percent,
                 "battery": self.state.battery_percent,
                 "plugged": self.state.power_plugged,
+                "network_latency": self.state.network_latency,
+                "network_latency_source": self.state.network_latency_source,
                 "visceral_pressure": self.state.visceral_pressure,
                 "genetic_evolution_generation": self.state.genetic_evolution_generation
             },
@@ -265,7 +287,7 @@ class Soma:
             }
         }
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Standard status contract for homeostasis and diagnostics."""
         return self.get_body_snapshot()
 

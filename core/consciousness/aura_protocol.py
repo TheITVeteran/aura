@@ -48,7 +48,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from core.container import ServiceContainer
-from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.errors import (
+    FallbackClassification,
+    NetworkEffectDenied,
+    record_degradation,
+)
+from core.runtime.network_gateway import build_stream_endpoint, get_network_gateway
 
 logger = logging.getLogger("Consciousness.AuraProtocol")
 
@@ -69,6 +74,7 @@ _AURA_PROTOCOL_RECOVERABLE_ERRORS = (
     AttributeError,
     TypeError,
     ValueError,
+    NetworkEffectDenied,
 )
 
 
@@ -588,10 +594,14 @@ class AuraProtocolClient:
     async def connect(self) -> bool:
         """Connect to the remote Aura instance."""
         try:
-            self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self._host, self._port),
-                timeout=self._CONNECT_TIMEOUT,
+            admission = await get_network_gateway().connect_stream(
+                build_stream_endpoint(self._host, self._port),
+                open_timeout=self._CONNECT_TIMEOUT,
+                source="consciousness:aura_protocol.client",
+                read_only=False,
+                allow_private_target=True,
             )
+            self._reader, self._writer = admission.reader, admission.writer
             self._connected = True
             logger.info(
                 "AuraProtocolClient connected to %s:%d",
@@ -599,7 +609,7 @@ class AuraProtocolClient:
                 self._port,
             )
             return True
-        except (TimeoutError, OSError) as e:
+        except (NetworkEffectDenied, TimeoutError, OSError, RuntimeError, ValueError) as e:
             _record_aura_protocol_degradation(
                 e,
                 action="kept aura protocol client disconnected after connect failure",

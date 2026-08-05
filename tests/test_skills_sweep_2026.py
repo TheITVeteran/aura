@@ -11,6 +11,7 @@ import ast
 import asyncio
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,13 +128,17 @@ async def test_sovereign_network_discovery_falls_back_without_nmap(monkeypatch):
         async def wait_closed(self):
             self.wait_closed_called = True
 
-    async def fake_open_connection(host, port):
-        if host == "192.168.1.2" and port == 8000:
-            return object(), FakeWriter()
-        raise OSError("closed")
+    class Gateway:
+        async def connect_stream(self, endpoint, **_kwargs):
+            if endpoint == "tcp://192.168.1.2:8000":
+                return SimpleNamespace(writer=FakeWriter())
+            raise OSError("closed")
 
     monkeypatch.setattr("core.skills.sovereign_network.shutil.which", lambda name: None)
-    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        "core.skills.sovereign_network.get_network_gateway",
+        lambda: Gateway(),
+    )
 
     result = await skill.execute(
         NetworkInput(mode="discovery", target="192.168.1.0/30", ports="8000"),
@@ -152,18 +157,22 @@ async def test_sovereign_network_discovery_batches_tcp_fallback(monkeypatch):
     active = 0
     peak = 0
 
-    async def fake_open_connection(_host, _port):
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        try:
-            await asyncio.sleep(0.01)
-            raise OSError("closed")
-        finally:
-            active -= 1
+    class Gateway:
+        async def connect_stream(self, _endpoint, **_kwargs):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(0.01)
+                raise OSError("closed")
+            finally:
+                active -= 1
 
     monkeypatch.setattr("core.skills.sovereign_network.shutil.which", lambda name: None)
-    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
+    monkeypatch.setattr(
+        "core.skills.sovereign_network.get_network_gateway",
+        lambda: Gateway(),
+    )
 
     result = await skill.execute(
         NetworkInput(mode="discovery", target="192.168.1.0/27", ports="8000"),
