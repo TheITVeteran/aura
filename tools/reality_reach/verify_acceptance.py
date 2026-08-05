@@ -21,13 +21,21 @@ from core.reality_reach.acceptance import (  # noqa: E402
 from core.reality_reach.acceptance_mandate import (  # noqa: E402
     AcceptanceMandateStore,
 )
+from core.reality_reach.acceptance_transparency import (  # noqa: E402
+    ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
+)
+from core.reality_reach.acceptance_transparency import (  # noqa: E402
+    persist_transparently_logged_acceptance_receipt,
+    verify_transparently_logged_acceptance,
+)
 from core.reality_reach.acceptance_verifier import (  # noqa: E402
     persist_verification_receipt,
     verify_acceptance_evidence,
 )
 from core.reality_reach.acceptance_witness import (  # noqa: E402
-    ZERO_SHA256,
-    persist_externally_witnessed_acceptance_receipt,
+    ZERO_SHA256 as WITNESS_ZERO_SHA256,
+)
+from core.reality_reach.acceptance_witness import (  # noqa: E402
     verify_acceptance_with_external_witnesses,
 )
 from core.runtime.secure_path_custody import (  # noqa: E402
@@ -61,6 +69,15 @@ def _read_json(path: Path) -> Mapping[str, Any]:
     return document
 
 
+def _read_bytes(path: Path, *, maximum: int) -> bytes:
+    target = path.expanduser().absolute()
+    try:
+        with DirectoryCustody.acquire(target.parent, create=False) as custody:
+            return custody.read_bytes(target.name, max_bytes=maximum)
+    except SecurePathCustodyError as exc:
+        raise ValueError("acceptance_trust_material_read_failed") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
@@ -83,12 +100,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--governance-witness-sequence", type=int, default=1)
     parser.add_argument(
         "--metrology-previous-statement-sha256",
-        default=ZERO_SHA256,
+        default=WITNESS_ZERO_SHA256,
     )
     parser.add_argument(
         "--governance-previous-statement-sha256",
-        default=ZERO_SHA256,
+        default=WITNESS_ZERO_SHA256,
     )
+    parser.add_argument("--transparency-bundle", type=Path)
+    parser.add_argument("--transparency-log-public-key-pem", type=Path)
+    parser.add_argument("--transparency-sequence", type=int, default=1)
+    parser.add_argument(
+        "--transparency-previous-statement-sha256",
+        default=TRANSPARENCY_ZERO_SHA256,
+    )
+    parser.add_argument("--transparency-previous-rekor-uuid")
+    parser.add_argument("--transparency-minimum-log-index", type=int)
+    parser.add_argument("--transparency-minimum-integrated-time", type=int)
     parser.add_argument("--receipt-output", type=Path)
     args = parser.parse_args(argv)
 
@@ -124,15 +151,42 @@ def main(argv: list[str] | None = None) -> int:
                     args.governance_previous_statement_sha256
                 ),
             )
+            transparent_receipt = verify_transparently_logged_acceptance(
+                external_receipt,
+                transparency_bundle=(
+                    _read_json(args.transparency_bundle)
+                    if args.transparency_bundle is not None
+                    else None
+                ),
+                trusted_log_public_key_pem=(
+                    _read_bytes(
+                        args.transparency_log_public_key_pem,
+                        maximum=64 * 1024,
+                    )
+                    if args.transparency_log_public_key_pem is not None
+                    else None
+                ),
+                expected_sequence=args.transparency_sequence,
+                expected_previous_statement_sha256=(
+                    args.transparency_previous_statement_sha256
+                ),
+                expected_previous_rekor_uuid=(
+                    args.transparency_previous_rekor_uuid
+                ),
+                minimum_log_index=args.transparency_minimum_log_index,
+                minimum_integrated_time=(
+                    args.transparency_minimum_integrated_time
+                ),
+            )
         finally:
             mandate_store.close()
         if args.receipt_output is not None:
-            persist_externally_witnessed_acceptance_receipt(
-                external_receipt,
+            persist_transparently_logged_acceptance_receipt(
+                transparent_receipt,
                 args.receipt_output,
             )
-        output = external_receipt.to_dict()
-        accepted = external_receipt.accepted
+        output = transparent_receipt.to_dict()
+        accepted = transparent_receipt.accepted
     else:
         missing = [
             flag

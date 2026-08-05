@@ -36213,3 +36213,45 @@ This closes the runtime gap between precommit and dispatch. It does not supply
 an external transparency timestamp, third-party key custody, or a real
 representative hardware/tenant campaign. CP810 and the total therefore remain
 open at 809/920.
+
+#### CP810 addendum: append-only transparency evidence
+
+The dual-root acceptance verdict can now be bound to an externally timestamped,
+append-only transparency log rather than relying on signer-declared wall time.
+`core/security/rekor_transparency.py` is the shared offline verifier for both
+SPARK research custody and Reality Reach. It validates the exact producer
+artifact and X.509 signature, pinned Rekor log identity, signed entry timestamp,
+RFC 6962 inclusion proof, signed checkpoint, certificate-validity interval,
+derived entry UUID, maximum publication delay, and caller-pinned monotonic log
+index/integrated-time floors. The former SPARK-specific cryptographic copy was
+removed and its existing falsification battery still passes against the shared
+implementation.
+
+Reality Reach now commits the accepted mandate replay plus both external role
+witness bundles into a separate chained transparency statement. Genesis and
+successor statements bind sequence, predecessor statement, and predecessor
+Rekor UUID. Physical promotion through the independent verifier requires the
+portable transparency bundle and pinned log public key; simulation rejects
+unexpected physical-transparency evidence. The final create-once receipt carries
+the Rekor UUID, log index, integrated time, log-key digest, and complete prior
+verdict. Missing bundles, SET/checkpoint/inclusion tampering, statement rebinding,
+log-key substitution, UUID drift, and rollback floors all fail closed.
+
+Aura still performs no private-key or network operation in this path. The
+operator tool `tools/reality_reach/manage_acceptance_transparency.py` emits the
+exact canonical statement for external signing/submission and assembles a
+bundle only after fully verifying returned Rekor evidence. The independent
+`verify_acceptance.py` path now consumes that bundle for physical promotion.
+
+Transparency evidence:
+
+- shared SPARK and Reality Reach SET, inclusion, checkpoint, UUID, certificate,
+  binding, rollback, and operator-assembly tests: 25/25 passed;
+- full affected Reality Reach, cognitive-sensory, and external-witness family:
+  519/519 passed;
+- smoke 103/103, compile, Ruff, diff hygiene, and scoped production MyPy passed.
+
+This closes the software path for externally timestamped evidence. No public
+Rekor entry, independent custodian signature, or representative hardware/tenant
+campaign has been produced in this checkpoint, so those empirical claims remain
+open. CP810 and the total therefore remain open at 809/920.

@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.x509.oid import NameOID
 
 from core.reality_reach.acceptance import (
     ACCEPTANCE_GOVERNANCE_SCHEMA,
@@ -22,6 +27,14 @@ from core.reality_reach.acceptance import (
     ConnectorAcceptanceCertificate,
 )
 from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_transparency import (
+    ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
+)
+from core.reality_reach.acceptance_transparency import (
+    build_acceptance_transparency_bundle,
+    build_acceptance_transparency_statement,
+    verify_transparently_logged_acceptance,
+)
 from core.reality_reach.acceptance_witness import (
     ZERO_SHA256,
     AcceptanceWitnessBundle,
@@ -43,6 +56,17 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 
 def _digest(value: Any) -> str:
     return str(sha256_hex(canonical_json(value)))
+
+
+def _transparency_digest(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _case_evidence() -> dict[str, dict[str, Any]]:
@@ -263,6 +287,164 @@ def _bundle(
     )
 
 
+def _external_receipt():
+    mandate, certificate, evidence = _campaign()
+    metrology = _bundle(
+        Ed25519PrivateKey.generate(),
+        role=AcceptanceWitnessRole.METROLOGY,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.metrology_evidence_sha256,
+    )
+    governance = _bundle(
+        Ed25519PrivateKey.generate(),
+        role=AcceptanceWitnessRole.GOVERNANCE,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.governance_evidence_sha256,
+    )
+    receipt = verify_acceptance_with_external_witnesses(
+        certificate,
+        evidence,
+        mandate,
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governance,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governance.public_key_sha256,
+        now_ns=5_000,
+    )
+    assert receipt.accepted is True
+    return receipt
+
+
+def _transparency_fixture():
+    receipt = _external_receipt()
+    issued_at = 1_785_082_400
+    statement = build_acceptance_transparency_statement(
+        receipt,
+        sequence=1,
+        previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        previous_rekor_uuid=None,
+        issued_at_unix=issued_at,
+    )
+    statement_bytes = json.dumps(
+        statement,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    producer_key = Ed25519PrivateKey.generate()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Acceptance fixture")])
+    start = datetime.fromtimestamp(issued_at - 60, tz=UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(producer_key.public_key())
+        .serial_number(1)
+        .not_valid_before(start)
+        .not_valid_after(start + timedelta(days=1))
+        .sign(producer_key, algorithm=None)
+        .public_bytes(serialization.Encoding.PEM)
+    )
+    signature = producer_key.sign(statement_bytes)
+    body = {
+        "apiVersion": "0.0.1",
+        "kind": "rekord",
+        "spec": {
+            "data": {
+                "hash": {
+                    "algorithm": "sha256",
+                    "value": hashlib.sha256(statement_bytes).hexdigest(),
+                }
+            },
+            "signature": {
+                "content": base64.b64encode(signature).decode("ascii"),
+                "format": "x509",
+                "publicKey": {"content": base64.b64encode(certificate).decode("ascii")},
+            },
+        },
+    }
+    body_bytes = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    body_b64 = base64.b64encode(body_bytes).decode("ascii")
+    root = hashlib.sha256(b"\x00" + body_bytes).digest()
+    log_key = ec.generate_private_key(ec.SECP256R1())
+    log_public_pem = log_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    log_der = log_key.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    log_id = hashlib.sha256(log_der).hexdigest()
+    checkpoint_text = (
+        "rekor.sigstore.dev - 123\n"
+        "1\n"
+        f"{base64.b64encode(root).decode('ascii')}\n"
+    )
+    checkpoint_signature = log_key.sign(
+        checkpoint_text.encode("utf-8"),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    checkpoint = (
+        checkpoint_text
+        + "\n— rekor.sigstore.dev "
+        + base64.b64encode(bytes.fromhex(log_id[:8]) + checkpoint_signature).decode(
+            "ascii"
+        )
+        + "\n"
+    )
+    entry = {
+        "body": body_b64,
+        "integratedTime": issued_at + 1,
+        "logID": log_id,
+        "logIndex": 0,
+        "verification": {
+            "inclusionProof": {
+                "checkpoint": checkpoint,
+                "hashes": [],
+                "logIndex": 0,
+                "rootHash": root.hex(),
+                "treeSize": 1,
+            },
+            "signedEntryTimestamp": "",
+        },
+    }
+    set_payload = json.dumps(
+        {
+            "body": body_b64,
+            "integratedTime": issued_at + 1,
+            "logID": log_id,
+            "logIndex": 0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    entry["verification"]["signedEntryTimestamp"] = base64.b64encode(
+        log_key.sign(set_payload, ec.ECDSA(hashes.SHA256()))
+    ).decode("ascii")
+    rekor_uuid = f"{123:016x}{root.hex()}"
+    bundle = build_acceptance_transparency_bundle(
+        statement=statement,
+        producer_signature=signature,
+        producer_certificate_pem=certificate,
+        rekor_uuid=rekor_uuid,
+        rekor_entry=entry,
+        trusted_log_public_key_pem=log_public_pem,
+    )
+    return receipt, bundle, log_public_pem
+
+
 def test_two_distinct_external_roots_promote_live_acceptance() -> None:
     mandate, certificate, evidence = _campaign()
     metrology_key = Ed25519PrivateKey.generate()
@@ -298,6 +480,99 @@ def test_two_distinct_external_roots_promote_live_acceptance() -> None:
     assert receipt.mandate_verification.accepted is True
     assert receipt.metrology_witness_bundle_sha256 == metrology.sha256
     assert receipt.governance_witness_bundle_sha256 == governance.sha256
+
+
+def test_physical_acceptance_requires_verified_transparency_log_inclusion() -> None:
+    receipt, bundle, log_public_pem = _transparency_fixture()
+
+    missing = verify_transparently_logged_acceptance(
+        receipt,
+        transparency_bundle=None,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+    verified = verify_transparently_logged_acceptance(
+        receipt,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+
+    assert missing.accepted is False
+    assert missing.blockers == ("acceptance_transparency_bundle_missing",)
+    assert verified.accepted is True
+    assert verified.blockers == ()
+    assert verified.rekor_log_index == 0
+    assert verified.rekor_integrated_time == 1_785_082_401
+    assert verified.transparency_bundle_sha256 == bundle["bundle_sha256"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "blocker"),
+    [
+        (
+            lambda value: value["rekor_entry"]["verification"].__setitem__(
+                "signedEntryTimestamp",
+                base64.b64encode(b"forged").decode("ascii"),
+            ),
+            "acceptance_transparency_set_signature_invalid",
+        ),
+        (
+            lambda value: value["rekor_entry"]["verification"][
+                "inclusionProof"
+            ].__setitem__("rootHash", "3" * 64),
+            "acceptance_transparency_inclusion_proof_root_mismatch",
+        ),
+        (
+            lambda value: value["statement"].__setitem__(
+                "campaign_id",
+                "campaign.substituted",
+            ),
+            "acceptance_transparency_statement_digest_invalid",
+        ),
+    ],
+)
+def test_transparency_log_tamper_fails_closed(mutation, blocker) -> None:
+    receipt, bundle, log_public_pem = _transparency_fixture()
+    attacked = copy.deepcopy(bundle)
+    mutation(attacked)
+    body = dict(attacked)
+    body.pop("bundle_sha256")
+    attacked["bundle_sha256"] = _transparency_digest(body)
+
+    result = verify_transparently_logged_acceptance(
+        receipt,
+        transparency_bundle=attacked,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+
+    assert result.accepted is False
+    assert result.blockers == (blocker,)
+
+
+def test_transparency_rollback_pins_fail_closed() -> None:
+    receipt, bundle, log_public_pem = _transparency_fixture()
+
+    result = verify_transparently_logged_acceptance(
+        receipt,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+        minimum_log_index=0,
+        minimum_integrated_time=1_785_082_402,
+    )
+
+    assert result.accepted is False
+    assert result.blockers == ("acceptance_transparency_log_index_rollback",)
 
 
 def test_physical_acceptance_cannot_promote_from_raw_producer_digests() -> None:
@@ -587,3 +862,62 @@ def test_operator_assembler_verifies_detached_signature(tmp_path: Path) -> None:
     )
     assert failed.returncode != 0
     assert "acceptance_witness_signature_invalid" in failed.stderr
+
+
+def test_transparency_operator_assembles_only_verified_rekor_evidence(
+    tmp_path: Path,
+) -> None:
+    _receipt, bundle, log_public_pem = _transparency_fixture()
+    statement_path = tmp_path / "transparency-statement.json"
+    signature_path = tmp_path / "producer-signature.raw"
+    certificate_path = tmp_path / "producer-certificate.pem"
+    entry_path = tmp_path / "rekor-entry.json"
+    log_key_path = tmp_path / "rekor-log-key.pem"
+    output_path = tmp_path / "transparency-bundle.json"
+    statement_path.write_text(json.dumps(bundle["statement"]), encoding="utf-8")
+    signature_path.write_bytes(
+        base64.b64decode(bundle["producer_signature_b64"], validate=True)
+    )
+    certificate_path.write_bytes(
+        base64.b64decode(bundle["producer_certificate_pem_b64"], validate=True)
+    )
+    entry_path.write_text(json.dumps(bundle["rekor_entry"]), encoding="utf-8")
+    log_key_path.write_bytes(log_public_pem)
+    command = [
+        sys.executable,
+        "tools/reality_reach/manage_acceptance_transparency.py",
+        "assemble",
+        "--statement",
+        str(statement_path),
+        "--producer-signature",
+        str(signature_path),
+        "--producer-certificate-pem",
+        str(certificate_path),
+        "--rekor-uuid",
+        bundle["rekor_uuid"],
+        "--rekor-entry",
+        str(entry_path),
+        "--trusted-log-public-key-pem",
+        str(log_key_path),
+        "--output",
+        str(output_path),
+    ]
+
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8")) == bundle
+
+    attacked_entry = copy.deepcopy(bundle["rekor_entry"])
+    attacked_entry["verification"]["signedEntryTimestamp"] = base64.b64encode(
+        b"forged"
+    ).decode("ascii")
+    entry_path.write_text(json.dumps(attacked_entry), encoding="utf-8")
+    failed = subprocess.run(
+        [*command[:-1], str(tmp_path / "attacked-bundle.json")],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert failed.returncode != 0
+    assert "acceptance_transparency_set_signature_invalid" in failed.stderr
