@@ -1103,7 +1103,17 @@ def test_runtime_registry_batch_two_service_seams():
         assert swarm.objectives[0]["context"] == {"target_skill": "web_search"}
 
         chamber = adaptive_test_chamber.register_test_chamber()
-        assert chamber.get_status()["healthy"] is True
+        # A freshly registered chamber has recorded nothing, so it reports
+        # healthy=None with a reason — not True.
+        #
+        # This asserted True from when "healthy" was a hard-coded literal. The
+        # chamber deliberately stopped doing that: a health field that cannot
+        # return False is a decoration on a dictionary, and it reads as a
+        # PASSED CHECK to everything downstream. Demanding True here would
+        # require reinstating exactly that.
+        fresh = chamber.get_status()
+        assert fresh["healthy"] is None
+        assert fresh["reason"] == "no results recorded yet"
         assert [item[0] for item in registered if item[0] in {"glados_test_chamber", "glados"}] == [
             "glados_test_chamber",
             "glados",
