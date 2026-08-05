@@ -226,6 +226,54 @@ def _remaining_budget(deadline: Deadline | None, fallback_s: float) -> float:
     return max(0.0, float(fallback_s))
 
 
+#: One latent episode's prompt. Larger than any real turn and far smaller
+#: than what an unbounded caller could hand over.
+_LATENT_PROMPT_MAX_CHARS = 200_000
+_LATENT_MESSAGES_MAX_ITEMS = 256
+_LATENT_MESSAGE_MAX_CHARS = 200_000
+_LATENT_TOTAL_MAX_CHARS = 400_000
+_LATENT_ROLES = frozenset({"system", "user", "assistant", "tool"})
+
+
+def _latent_request_schema_error(
+    *, prompt: Any = None, messages: Any = None
+) -> str:
+    """Reject a latent payload the parent should not spend work on.
+
+    Returns "" when the payload is admissible, otherwise a typed reason. The
+    checks are shape and size only — meaning belongs to the worker — but they
+    run BEFORE the copy, the canonical serialisation and the SHA-256 that
+    would otherwise be paid for a request no episode could run.
+    """
+    total = 0
+    if prompt is not None:
+        if not isinstance(prompt, str):
+            return "invalid_prompt_type"
+        if len(prompt) > _LATENT_PROMPT_MAX_CHARS:
+            return "prompt_too_large"
+        total += len(prompt)
+    if messages is not None:
+        if not isinstance(messages, list):
+            return "invalid_messages_type"
+        if len(messages) > _LATENT_MESSAGES_MAX_ITEMS:
+            return "too_many_messages"
+        for message in messages:
+            if not isinstance(message, dict):
+                return "invalid_message_type"
+            role = message.get("role")
+            if not isinstance(role, str) or role not in _LATENT_ROLES:
+                return "invalid_message_role"
+            content = message.get("content")
+            if not isinstance(content, str):
+                return "invalid_message_content"
+            if len(content) > _LATENT_MESSAGE_MAX_CHARS:
+                return "message_too_large"
+            total += len(content)
+    if total > _LATENT_TOTAL_MAX_CHARS:
+        return "request_too_large"
+    return ""
+
+
 def _sleep_inclusive_monotonic() -> float | None:
     """A monotonic clock that keeps counting while the host is asleep.
 
@@ -7350,6 +7398,15 @@ class MLXLocalClient:
             isinstance(messages, list) and messages
         ):
             return {**base, "reason": "empty_prompt"}
+        # CP126 a09d6218. Everything below this point copies, serialises and
+        # HASHES these structures — before worker readiness and before memory
+        # admission. So an oversized or malformed payload spent real parent
+        # CPU and memory on an episode that could never run, and "messages is
+        # a non-empty list" was the only thing ever checked about a list whose
+        # items reach the worker.
+        schema_error = _latent_request_schema_error(prompt=prompt, messages=messages)
+        if schema_error:
+            return {**base, "reason": schema_error}
         if type(foreground_request) is not bool:
             return {**base, "reason": "invalid_foreground_request"}
         if config is not None and not isinstance(config, dict):
@@ -8394,7 +8451,33 @@ class MLXLocalClient:
                 else "cancel_channel_unavailable",
             }
         try:
+            # CP126 2656d71d. The cancel channel is a lock-free shared word by
+            # design — the worker polls it every decode step and a semaphore
+            # there would cost a token loop and could deadlock on a dying
+            # worker. What was missing is that a WRITE could be silently lost:
+            # a concurrent job start clears a superseded sequence, and the
+            # parent still reported the cancel as requested. Write, read back,
+            # and say what actually happened.
             cancel_seq.value = active_seq
+            written = int(getattr(cancel_seq, "value", 0))
+            if written != active_seq:
+                cancel_seq.value = active_seq
+                written = int(getattr(cancel_seq, "value", 0))
+            if written != active_seq:
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"cooperative cancel for seq {active_seq} was overwritten "
+                        f"by {written} before the worker could observe it"
+                    ),
+                    action="reported the soft cancel as not requested rather than assuming delivery",
+                    severity="warning",
+                )
+                return {
+                    "requested": False,
+                    "reason": reason,
+                    "active_seq": active_seq,
+                    "detail": "cancel_write_lost",
+                }
             # CP126 6b4337de: record WHAT was cancelled and WHEN. The old ack
             # test read a shared flag and a heartbeat, neither bound to this
             # request; the worker's own terminal frame for this job is the
@@ -9284,23 +9367,15 @@ class MLXLocalClient:
                                 severity="critical",
                             )
                             self._deferred_reboot_reason = "model_lane_fence_lost"
-                            process, self._process = self._process, None
-                            if process is not None:
-                                await asyncio.to_thread(self._kill_and_join_blocking, process)
-                            from core.runtime.model_lane_control import (
-                                unregister_model_lane_owner_adapter,
-                            )
-
-                            unregister_model_lane_owner_adapter(owner_id)
-                            with self._model_lane_state_lock:
-                                if self._model_lane_fencing_token == fencing_token:
-                                    self._model_lane_fencing_token = 0
-                                    self._model_lane_terminal_receipt_id = ""
-                            # Fail every waiter BEFORE exiting the listener:
-                            # killing the worker and returning stranded all
-                            # pending generation/init futures until their own
-                            # timeouts fired (the waiter fast-path only trips
-                            # while _process is non-None).
+                            # CP126 1321b74b. Fail every waiter BEFORE the
+                            # handle is dropped, not after. The generation
+                            # waiter's fast-fail only trips while _process is
+                            # non-None and dead; between `self._process = None`
+                            # and the resolution below there was a window in
+                            # which neither condition held, and a waiter that
+                            # sampled it sat until its own deadline or the
+                            # hard cap — the worst outcome for a foreground
+                            # turn whose lane had already been declared lost.
                             for req_id, pending in list(self._pending_generations.items()):
                                 if pending is not None and not pending.done():
                                     _set_shared_future_result(
@@ -9325,6 +9400,23 @@ class MLXLocalClient:
                                 )
                             if self._init_future is not None and not self._init_future.done():
                                 _cancel_shared_future(self._init_future)
+                            self._pending_generations.clear()
+                            self._current_gen_future = None
+                            self._active_generations = 0
+
+                            # Only now drop the handle and tear the worker down.
+                            process, self._process = self._process, None
+                            if process is not None:
+                                await asyncio.to_thread(self._kill_and_join_blocking, process)
+                            from core.runtime.model_lane_control import (
+                                unregister_model_lane_owner_adapter,
+                            )
+
+                            unregister_model_lane_owner_adapter(owner_id)
+                            with self._model_lane_state_lock:
+                                if self._model_lane_fencing_token == fencing_token:
+                                    self._model_lane_fencing_token = 0
+                                    self._model_lane_terminal_receipt_id = ""
                             self._set_lane_state("cold", "model_lane_fence_lost")
                             return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
@@ -12713,20 +12805,40 @@ class MLXLocalClient:
         if process is not None and getattr(process, "pid", None):
             freed_bytes = _observed_process_rss_bytes(int(process.pid))
 
-        # Re-check safety immediately before the teardown to shrink the race
-        # window against a request that arrived since the first check.
-        blocker = self._unload_safety_blocker()
-        if blocker:
-            return {"unloaded": False, "reason": blocker}
-
-        logger.info(
-            "🧹 [MLX] Idle VRAM scavenge: unloading %s after %.0fs idle (pressure=%s, ~%.1fGB).",
-            os.path.basename(self.model_path),
-            age,
-            under_pressure,
-            freed_bytes / float(1024**3),
+        # CP126 dcae0f1f. Two lock-free safety checks only SHRINK the window;
+        # they cannot close it. A request admitted between the last check and
+        # the reboot was killed by the scavenger — on the primary lane that is
+        # a person's turn dying into a 120-second cold start, caused by the
+        # very reclaim meant to keep the machine responsive.
+        #
+        # Hold the request lane across the final check and the teardown, so
+        # nothing can be admitted in between. Same fence, same ordering
+        # (request lane, then lifecycle lock) as a lane eviction.
+        fenced = await self._acquire_request_lock(
+            owner_label="idle_vram_scavenge",
+            deadline=get_deadline(_LANE_EVICTION_FENCE_WAIT_S),
+            foreground_request=False,
         )
-        await self.reboot_worker(reason="idle_vram_scavenge")
+        if not fenced:
+            return {"unloaded": False, "reason": "request_lane_busy"}
+        try:
+            # Re-check under the fence. Now a clean result cannot go stale
+            # before the teardown acts on it.
+            blocker = self._unload_safety_blocker()
+            if blocker:
+                return {"unloaded": False, "reason": blocker}
+
+            logger.info(
+                "🧹 [MLX] Idle VRAM scavenge: unloading %s after %.0fs idle "
+                "(pressure=%s, ~%.1fGB).",
+                os.path.basename(self.model_path),
+                age,
+                under_pressure,
+                freed_bytes / float(1024**3),
+            )
+            await self.reboot_worker(reason="idle_vram_scavenge")
+        finally:
+            self._release_request_lock()
         return {
             "unloaded": True,
             "model": os.path.basename(self.model_path),

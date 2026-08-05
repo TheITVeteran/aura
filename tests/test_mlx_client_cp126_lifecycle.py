@@ -1321,3 +1321,203 @@ class TestBackoffAndReadinessNeedCauses:
     def test_an_ordinary_recovery_reason_still_marks_recovering(self, client):
         client.note_lane_recovering("worker_died")
         assert client._lane_state == "recovering"
+
+
+class TestLatentRequestSchema:
+    """CP126 a09d6218: unbounded, weakly typed payloads hashed before admission."""
+
+    def _err(self, **kwargs):
+        from core.brain.llm.mlx_client import _latent_request_schema_error
+
+        return _latent_request_schema_error(**kwargs)
+
+    def test_an_ordinary_request_is_admissible(self):
+        assert self._err(prompt="hello") == ""
+        assert self._err(messages=[{"role": "user", "content": "hi"}]) == ""
+
+    def test_an_oversized_prompt_is_refused_before_any_hashing(self):
+        assert self._err(prompt="x" * 400_000) == "prompt_too_large"
+
+    def test_a_non_string_prompt_is_refused(self):
+        assert self._err(prompt=b"bytes") == "invalid_prompt_type"
+
+    def test_too_many_messages_is_refused(self):
+        assert (
+            self._err(messages=[{"role": "user", "content": "x"}] * 5000)
+            == "too_many_messages"
+        )
+
+    def test_a_message_that_is_not_a_mapping_is_refused(self):
+        assert self._err(messages=["just a string"]) == "invalid_message_type"
+
+    def test_an_unknown_role_is_refused(self):
+        assert (
+            self._err(messages=[{"role": "root", "content": "x"}])
+            == "invalid_message_role"
+        )
+
+    def test_non_string_content_is_refused(self):
+        assert (
+            self._err(messages=[{"role": "user", "content": {"nested": True}}])
+            == "invalid_message_content"
+        )
+
+    def test_a_single_huge_message_is_refused(self):
+        assert (
+            self._err(messages=[{"role": "user", "content": "y" * 400_000}])
+            == "message_too_large"
+        )
+
+    def test_many_medium_messages_are_refused_in_aggregate(self):
+        assert (
+            self._err(
+                messages=[{"role": "user", "content": "z" * 50_000} for _ in range(20)]
+            )
+            == "request_too_large"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_entry_point_refuses_before_touching_the_worker(self, client):
+        client._closed = False
+        client._req_q = None  # any worker access would fail loudly
+        result = await client.latent_reason_async(prompt="x" * 400_000)
+        assert result["reason"] == "prompt_too_large"
+
+
+class TestTheCancelChannelReportsDelivery:
+    """CP126 2656d71d: a lock-free write that could be silently lost."""
+
+    class _Overwritten:
+        """A shared word another writer clears the instant we set it."""
+
+        def __init__(self):
+            self._value = 0
+
+        @property
+        def value(self):
+            return self._value
+
+        @value.setter
+        def value(self, new):
+            self._value = 0 if new else new
+
+    def test_a_lost_cancel_write_is_reported_not_assumed(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        client._cancel_seq = self._Overwritten()
+        client._current_request_started_at = time.time()
+        client._current_request_seq = 7
+
+        receipt = client.soft_cancel_active_generation("preemption")
+        assert receipt["requested"] is False
+        assert receipt["detail"] == "cancel_write_lost"
+        assert any("overwritten" in msg for msg in recorded)
+
+    def test_a_lost_write_leaves_no_acknowledgement_to_wait_for(self, client):
+        client._cancel_seq = self._Overwritten()
+        client._current_request_started_at = time.time()
+        client._current_request_seq = 7
+        client._soft_cancel_target = None
+
+        client.soft_cancel_active_generation("preemption")
+        # Nothing was delivered, so nothing may claim to be awaiting an ack.
+        assert client._soft_cancel_target is None
+
+    def test_a_delivered_cancel_is_recorded_as_requested(self, client):
+        class _Word:
+            value = 0
+
+        client._cancel_seq = _Word()
+        client._current_request_started_at = time.time()
+        client._current_request_seq = 7
+        client._current_request_id = "req-live"
+
+        receipt = client.soft_cancel_active_generation("preemption")
+        assert receipt["requested"] is True
+        assert client._cancel_seq.value == 7
+        assert client._soft_cancel_target["seq"] == 7
+        assert client._soft_cancel_target["req_id"] == "req-live"
+
+
+class TestIdleScavengeIsFenced:
+    """CP126 dcae0f1f: two lock-free checks only shrink the window."""
+
+    def _scavengeable(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path="/models/tiny-1B")
+        monkeypatch.setattr(client, "_unload_safety_blocker", lambda: "")
+        monkeypatch.setattr(client, "idle_age", lambda: 10_000.0)
+        monkeypatch.setattr(client, "_is_primary_lane", lambda: False)
+        monkeypatch.setattr(
+            mod, "get_memory_pressure_snapshot",
+            lambda: SimpleNamespace(warning=True, refuse_heavy_local_generation=False),
+        )
+        client._process = None
+        return client
+
+    @pytest.mark.asyncio
+    async def test_a_busy_request_lane_is_never_unloaded(self, monkeypatch):
+        client = self._scavengeable(monkeypatch)
+        import core.brain.llm.mlx_client as mod
+
+        monkeypatch.setattr(mod, "_LANE_EVICTION_FENCE_WAIT_S", 0.3)
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+        client._request_lock.acquire()
+        try:
+            result = await client.maybe_unload_idle()
+            assert result["unloaded"] is False
+            assert result["reason"] == "request_lane_busy"
+            assert rebooted == []
+        finally:
+            client._request_lock.release()
+
+    @pytest.mark.asyncio
+    async def test_a_request_admitted_under_the_fence_cancels_the_unload(
+        self, monkeypatch
+    ):
+        client = self._scavengeable(monkeypatch)
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+
+        # The final safety check now runs while the lane is held, so a blocker
+        # discovered there cannot go stale before the teardown.
+        calls = {"n": 0}
+
+        def _blocker():
+            calls["n"] += 1
+            return "" if calls["n"] == 1 else "generation_active"
+
+        monkeypatch.setattr(client, "_unload_safety_blocker", _blocker)
+        result = await client.maybe_unload_idle()
+        assert result["unloaded"] is False
+        assert result["reason"] == "generation_active"
+        assert rebooted == []
+        assert not client._request_lock.locked(), "the fence must be released"
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_idle_lane_still_unloads(self, monkeypatch):
+        client = self._scavengeable(monkeypatch)
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+        result = await client.maybe_unload_idle()
+        assert result["unloaded"] is True
+        assert rebooted == ["idle_vram_scavenge"]
+        assert not client._request_lock.locked()
