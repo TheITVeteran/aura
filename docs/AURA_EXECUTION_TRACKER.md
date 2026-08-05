@@ -36470,3 +36470,50 @@ This closes the append-only A1 promotion implementation, not the empirical
 campaign. A real speaker/microphone run, independently held production signer
 roots, a public Rekor entry, and independent representative tenant replay still
 have not occurred. CP810 and the total therefore remain open at 809/920.
+
+#### CP810 addendum: executable A1 evidence-operations closeout
+
+The external-evidence chain is now operable through the maintained Reality
+Reach command-line tools instead of requiring an engineer to translate A1
+objects by hand. `manage_acceptance_witness.py` accepts an explicit
+`acoustic-a1` artifact kind, reloads the create-once campaign and Keychain-held
+mandate, independently replays their full binding, selects the role-specific
+physical or governance evidence digest, and emits the exact canonical bytes for
+an external Ed25519 custodian. It refuses to create a statement for a negative,
+drifted, or mismatched campaign.
+
+`manage_acceptance_transparency.py` now reconstructs the accepted A1 dual-root
+verdict from externally supplied witness bundles, emits the exact domain-bound
+statement for producer signing and Rekor submission, and assembles returned
+evidence only through the shared cryptographic verifier. Its scalar mode is
+unchanged. `verify_acceptance.py` has a separate A1 branch that requires the
+Keychain mandate, reloads the immutable campaign record, verifies both witness
+roots and public-log evidence, applies caller-pinned rollback floors, persists
+the final transparency verdict create-once, and exits nonzero unless the whole
+chain is accepted. A1 cannot use the legacy simulation-only verification path.
+
+The campaign-record governance digest is now a first-class derived property,
+and campaign/mandate replay is exposed as one shared fail-closed validator used
+by both the verifier and operator statement path. That removes a previous risk
+that offline preparation and independent replay could implement subtly
+different acceptance questions.
+
+Operator evidence:
+
+- an end-to-end operator fixture emitted an A1 metrology witness statement,
+  checked its artifact and evidence bindings, emitted the A1 transparency
+  statement, assembled signed Rekor evidence through a separate CLI process,
+  independently replayed the complete campaign, and persisted an accepted
+  create-once verdict;
+- existing scalar operator, witness, transparency, simulation, and physical
+  verification regressions remained green; 63/63 focused acceptance tests and
+  176/176 affected Reality Reach tests passed;
+- smoke 103/103, full repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This closes the software and operator preparation needed to run the real A1
+campaign without post-run evidence surgery. It does not create independently
+held production keys, publish a real Rekor entry, actuate the speaker, sample
+the microphone, or provide representative tenant/device results. Those remain
+empirical CP810 blockers, so the total remains open at 809/920.

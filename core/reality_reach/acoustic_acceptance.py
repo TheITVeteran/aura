@@ -454,6 +454,10 @@ class AcousticA1CampaignRecord:
         )
 
     @property
+    def governance_evidence_sha256(self) -> str:
+        return _digest(self.governance_evidence)
+
+    @property
     def sha256(self) -> str:
         return _digest(self.to_dict(include_digest=False))
 
@@ -584,21 +588,11 @@ class ExternallyWitnessedAcousticA1Receipt:
         return document
 
 
-def verify_acoustic_a1_with_external_witnesses(
+def acoustic_a1_campaign_binding_blockers(
     record: AcousticA1CampaignRecord,
     mandate: AcceptanceVerificationMandate,
-    *,
-    metrology_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
-    governance_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
-    metrology_witness_key_sha256: str,
-    governance_witness_key_sha256: str,
-    metrology_sequence: int = 1,
-    governance_sequence: int = 1,
-    metrology_previous_statement_sha256: str = "sha256:" + "0" * 64,
-    governance_previous_statement_sha256: str = "sha256:" + "0" * 64,
-    now_ns: int | None = None,
-) -> ExternallyWitnessedAcousticA1Receipt:
-    """Independently bind A1 physical and governance evidence to two roots."""
+) -> tuple[str, ...]:
+    """Replay the immutable A1 campaign question before external promotion."""
 
     if not isinstance(record, AcousticA1CampaignRecord):
         raise TypeError("record must be an AcousticA1CampaignRecord")
@@ -628,6 +622,26 @@ def verify_acoustic_a1_with_external_witnesses(
         blockers.append("acoustic_a1_config_digest_mismatch")
     if not record.accepted:
         blockers.append("acoustic_a1_producer_record_not_accepted")
+    return tuple(sorted(set(blockers)))
+
+
+def verify_acoustic_a1_with_external_witnesses(
+    record: AcousticA1CampaignRecord,
+    mandate: AcceptanceVerificationMandate,
+    *,
+    metrology_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
+    governance_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
+    metrology_witness_key_sha256: str,
+    governance_witness_key_sha256: str,
+    metrology_sequence: int = 1,
+    governance_sequence: int = 1,
+    metrology_previous_statement_sha256: str = "sha256:" + "0" * 64,
+    governance_previous_statement_sha256: str = "sha256:" + "0" * 64,
+    now_ns: int | None = None,
+) -> ExternallyWitnessedAcousticA1Receipt:
+    """Independently bind A1 physical and governance evidence to two roots."""
+
+    blockers = list(acoustic_a1_campaign_binding_blockers(record, mandate))
 
     verified_metrology_bundle = ""
     verified_governance_bundle = ""
@@ -781,7 +795,7 @@ def _validate_acoustic_a1_transparency_statement(
         raise AcceptanceTransparencyError(
             "acceptance_transparency_statement_binding_invalid"
         )
-    return statement
+    return dict(statement)
 
 
 def build_acoustic_a1_transparency_bundle(
@@ -800,7 +814,7 @@ def build_acoustic_a1_transparency_bundle(
         raise AcceptanceTransparencyError(
             "acceptance_transparency_statement_binding_invalid"
         )
-    return build_acceptance_transparency_artifact_bundle(
+    bundle = build_acceptance_transparency_artifact_bundle(
         statement=statement_document,
         producer_signature=producer_signature,
         producer_certificate_pem=producer_certificate_pem,
@@ -808,6 +822,9 @@ def build_acoustic_a1_transparency_bundle(
         rekor_entry=rekor_entry,
         trusted_log_public_key_pem=trusted_log_public_key_pem,
     )
+    if not isinstance(bundle, dict):
+        raise AcceptanceTransparencyError("acceptance_transparency_bundle_invalid")
+    return dict(bundle)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1286,6 +1303,7 @@ __all__ = [
     "AcousticTrialDriver",
     "ExternallyWitnessedAcousticA1Receipt",
     "TransparentlyLoggedAcousticA1Receipt",
+    "acoustic_a1_campaign_binding_blockers",
     "build_acoustic_a1_transparency_bundle",
     "build_acoustic_a1_transparency_statement",
     "persist_externally_witnessed_acoustic_a1_receipt",

@@ -34,6 +34,13 @@ from core.reality_reach.acceptance_witness import (  # noqa: E402  # noqa: E402
     ExternallyWitnessedAcceptanceReceipt,
     verify_acceptance_with_external_witnesses,
 )
+from core.reality_reach.acoustic_acceptance import (  # noqa: E402
+    AcousticA1CampaignStore,
+    ExternallyWitnessedAcousticA1Receipt,
+    build_acoustic_a1_transparency_bundle,
+    build_acoustic_a1_transparency_statement,
+    verify_acoustic_a1_with_external_witnesses,
+)
 from core.runtime.secure_path_custody import (  # noqa: E402
     DirectoryCustody,
     SecurePathCustodyError,
@@ -93,15 +100,33 @@ def _write_once(path: Path, payload: bytes, *, mode: int) -> bool:
 
 def _external_receipt(
     args: argparse.Namespace,
-) -> ExternallyWitnessedAcceptanceReceipt:
-    certificate_store = AcceptanceCertificateStore(args.root)
-    certificate = certificate_store.load(args.campaign_id)
-    evidence = certificate_store.load_evidence(certificate)
+) -> ExternallyWitnessedAcceptanceReceipt | ExternallyWitnessedAcousticA1Receipt:
     mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
     try:
         mandate = mandate_store.get(args.campaign_id)
     finally:
         mandate_store.close()
+    if args.artifact_kind == "acoustic-a1":
+        record = AcousticA1CampaignStore(args.root).load(args.campaign_id)
+        return verify_acoustic_a1_with_external_witnesses(
+            record,
+            mandate,
+            metrology_witness_bundle=_read_json(args.metrology_witness_bundle),
+            governance_witness_bundle=_read_json(args.governance_witness_bundle),
+            metrology_witness_key_sha256=args.metrology_witness_key_sha256,
+            governance_witness_key_sha256=args.governance_witness_key_sha256,
+            metrology_sequence=args.metrology_witness_sequence,
+            governance_sequence=args.governance_witness_sequence,
+            metrology_previous_statement_sha256=(
+                args.metrology_previous_statement_sha256
+            ),
+            governance_previous_statement_sha256=(
+                args.governance_previous_statement_sha256
+            ),
+        )
+    certificate_store = AcceptanceCertificateStore(args.root)
+    certificate = certificate_store.load(args.campaign_id)
+    evidence = certificate_store.load_evidence(certificate)
     return verify_acceptance_with_external_witnesses(
         certificate,
         evidence,
@@ -124,7 +149,12 @@ def _external_receipt(
 def _statement(args: argparse.Namespace) -> int:
     receipt = _external_receipt(args)
     issued_at_unix = args.issued_at_unix or int(time.time())
-    statement = build_acceptance_transparency_statement(
+    builder = (
+        build_acoustic_a1_transparency_statement
+        if args.artifact_kind == "acoustic-a1"
+        else build_acceptance_transparency_statement
+    )
+    statement = builder(
         receipt,
         sequence=args.sequence,
         previous_statement_sha256=args.previous_statement_sha256,
@@ -158,7 +188,12 @@ def _statement(args: argparse.Namespace) -> int:
 
 
 def _assemble(args: argparse.Namespace) -> int:
-    bundle = build_acceptance_transparency_bundle(
+    builder = (
+        build_acoustic_a1_transparency_bundle
+        if args.artifact_kind == "acoustic-a1"
+        else build_acceptance_transparency_bundle
+    )
+    bundle = builder(
         statement=_read_json(args.statement),
         producer_signature=_read_bytes(args.producer_signature, maximum=64 * 1024),
         producer_certificate_pem=_read_bytes(
@@ -187,6 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         help="emit a mandate-bound verdict for external signing and Rekor submission",
     )
     statement.add_argument("--root", type=Path, required=True)
+    statement.add_argument(
+        "--artifact-kind",
+        choices=("scalar", "acoustic-a1"),
+        default="scalar",
+    )
     statement.add_argument("--mandate-state", type=Path, required=True)
     statement.add_argument("--campaign-id", required=True)
     statement.add_argument("--metrology-witness-bundle", type=Path, required=True)
@@ -217,6 +257,11 @@ def main(argv: list[str] | None = None) -> int:
     assemble = commands.add_parser(
         "assemble",
         help="verify Rekor evidence and assemble an offline transparency bundle",
+    )
+    assemble.add_argument(
+        "--artifact-kind",
+        choices=("scalar", "acoustic-a1"),
+        default="scalar",
     )
     assemble.add_argument("--statement", type=Path, required=True)
     assemble.add_argument("--producer-signature", type=Path, required=True)

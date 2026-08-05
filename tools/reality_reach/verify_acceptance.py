@@ -38,6 +38,12 @@ from core.reality_reach.acceptance_witness import (  # noqa: E402
 from core.reality_reach.acceptance_witness import (  # noqa: E402
     verify_acceptance_with_external_witnesses,
 )
+from core.reality_reach.acoustic_acceptance import (  # noqa: E402
+    AcousticA1CampaignStore,
+    persist_transparently_logged_acoustic_a1_receipt,
+    verify_acoustic_a1_with_external_witnesses,
+    verify_transparently_logged_acoustic_a1,
+)
 from core.runtime.secure_path_custody import (  # noqa: E402
     DirectoryCustody,
     SecurePathCustodyError,
@@ -73,14 +79,22 @@ def _read_bytes(path: Path, *, maximum: int) -> bytes:
     target = path.expanduser().absolute()
     try:
         with DirectoryCustody.acquire(target.parent, create=False) as custody:
-            return custody.read_bytes(target.name, max_bytes=maximum)
+            payload = custody.read_bytes(target.name, max_bytes=maximum)
     except SecurePathCustodyError as exc:
         raise ValueError("acceptance_trust_material_read_failed") from exc
+    if not isinstance(payload, bytes):
+        raise ValueError("acceptance_trust_material_read_failed")
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument(
+        "--artifact-kind",
+        choices=("scalar", "acoustic-a1"),
+        default="scalar",
+    )
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--mandate-state", type=Path)
     parser.add_argument("--source-commit-sha256")
@@ -119,16 +133,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--receipt-output", type=Path)
     args = parser.parse_args(argv)
 
-    store = AcceptanceCertificateStore(args.root)
-    certificate = store.load(args.campaign_id)
-    evidence = store.load_evidence(certificate)
-    if args.mandate_state is not None:
+    if args.artifact_kind == "acoustic-a1":
+        if args.mandate_state is None:
+            parser.error("acoustic A1 verification requires --mandate-state")
+        record = AcousticA1CampaignStore(args.root).load(args.campaign_id)
         mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
         try:
             mandate = mandate_store.get(args.campaign_id)
-            external_receipt = verify_acceptance_with_external_witnesses(
-                certificate,
-                evidence,
+            external_receipt = verify_acoustic_a1_with_external_witnesses(
+                record,
                 mandate,
                 metrology_witness_bundle=(
                     _read_json(args.metrology_witness_bundle)
@@ -151,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.governance_previous_statement_sha256
                 ),
             )
-            transparent_receipt = verify_transparently_logged_acceptance(
+            transparent_receipt = verify_transparently_logged_acoustic_a1(
                 external_receipt,
                 transparency_bundle=(
                     _read_json(args.transparency_bundle)
@@ -181,47 +194,116 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             mandate_store.close()
         if args.receipt_output is not None:
-            persist_transparently_logged_acceptance_receipt(
+            persist_transparently_logged_acoustic_a1_receipt(
                 transparent_receipt,
                 args.receipt_output,
             )
         output = transparent_receipt.to_dict()
         accepted = transparent_receipt.accepted
     else:
-        missing = [
-            flag
-            for flag, value in (
-                ("--source-commit-sha256", args.source_commit_sha256),
-                ("--physical-identity-sha256", args.physical_identity_sha256),
-                ("--expected-evidence-class", args.expected_evidence_class),
+        store = AcceptanceCertificateStore(args.root)
+        certificate = store.load(args.campaign_id)
+        evidence = store.load_evidence(certificate)
+        if args.mandate_state is not None:
+            mandate_store = AcceptanceMandateStore.from_system(args.mandate_state)
+            try:
+                mandate = mandate_store.get(args.campaign_id)
+                external_receipt = verify_acceptance_with_external_witnesses(
+                    certificate,
+                    evidence,
+                    mandate,
+                    metrology_witness_bundle=(
+                        _read_json(args.metrology_witness_bundle)
+                        if args.metrology_witness_bundle is not None
+                        else None
+                    ),
+                    governance_witness_bundle=(
+                        _read_json(args.governance_witness_bundle)
+                        if args.governance_witness_bundle is not None
+                        else None
+                    ),
+                    metrology_witness_key_sha256=args.metrology_witness_key_sha256,
+                    governance_witness_key_sha256=args.governance_witness_key_sha256,
+                    metrology_sequence=args.metrology_witness_sequence,
+                    governance_sequence=args.governance_witness_sequence,
+                    metrology_previous_statement_sha256=(
+                        args.metrology_previous_statement_sha256
+                    ),
+                    governance_previous_statement_sha256=(
+                        args.governance_previous_statement_sha256
+                    ),
+                )
+                transparent_receipt = verify_transparently_logged_acceptance(
+                    external_receipt,
+                    transparency_bundle=(
+                        _read_json(args.transparency_bundle)
+                        if args.transparency_bundle is not None
+                        else None
+                    ),
+                    trusted_log_public_key_pem=(
+                        _read_bytes(
+                            args.transparency_log_public_key_pem,
+                            maximum=64 * 1024,
+                        )
+                        if args.transparency_log_public_key_pem is not None
+                        else None
+                    ),
+                    expected_sequence=args.transparency_sequence,
+                    expected_previous_statement_sha256=(
+                        args.transparency_previous_statement_sha256
+                    ),
+                    expected_previous_rekor_uuid=(
+                        args.transparency_previous_rekor_uuid
+                    ),
+                    minimum_log_index=args.transparency_minimum_log_index,
+                    minimum_integrated_time=(
+                        args.transparency_minimum_integrated_time
+                    ),
+                )
+            finally:
+                mandate_store.close()
+            if args.receipt_output is not None:
+                persist_transparently_logged_acceptance_receipt(
+                    transparent_receipt,
+                    args.receipt_output,
+                )
+            output = transparent_receipt.to_dict()
+            accepted = transparent_receipt.accepted
+        else:
+            missing = [
+                flag
+                for flag, value in (
+                    ("--source-commit-sha256", args.source_commit_sha256),
+                    ("--physical-identity-sha256", args.physical_identity_sha256),
+                    ("--expected-evidence-class", args.expected_evidence_class),
+                )
+                if not value
+            ]
+            if missing:
+                parser.error(
+                    "without --mandate-state these arguments are required: "
+                    + ", ".join(missing)
+                )
+            if args.expected_evidence_class != AcceptanceEvidenceClass.SIMULATION.value:
+                parser.error(
+                    "physical acceptance requires --mandate-state and distinct "
+                    "external metrology/governance witness bundles"
+                )
+            legacy_receipt = verify_acceptance_evidence(
+                certificate,
+                evidence,
+                expected_source_commit_sha256=args.source_commit_sha256,
+                expected_physical_identity_sha256=args.physical_identity_sha256,
+                expected_evidence_class=AcceptanceEvidenceClass(
+                    args.expected_evidence_class
+                ),
+                trusted_metrology_evidence_sha256=args.metrology_evidence_sha256,
+                trusted_governance_evidence_sha256=args.governance_evidence_sha256,
             )
-            if not value
-        ]
-        if missing:
-            parser.error(
-                "without --mandate-state these arguments are required: "
-                + ", ".join(missing)
-            )
-        if args.expected_evidence_class != AcceptanceEvidenceClass.SIMULATION.value:
-            parser.error(
-                "physical acceptance requires --mandate-state and distinct "
-                "external metrology/governance witness bundles"
-            )
-        legacy_receipt = verify_acceptance_evidence(
-            certificate,
-            evidence,
-            expected_source_commit_sha256=args.source_commit_sha256,
-            expected_physical_identity_sha256=args.physical_identity_sha256,
-            expected_evidence_class=AcceptanceEvidenceClass(
-                args.expected_evidence_class
-            ),
-            trusted_metrology_evidence_sha256=args.metrology_evidence_sha256,
-            trusted_governance_evidence_sha256=args.governance_evidence_sha256,
-        )
-        if args.receipt_output is not None:
-            persist_verification_receipt(legacy_receipt, args.receipt_output)
-        output = legacy_receipt.to_dict()
-        accepted = legacy_receipt.accepted
+            if args.receipt_output is not None:
+                persist_verification_receipt(legacy_receipt, args.receipt_output)
+            output = legacy_receipt.to_dict()
+            accepted = legacy_receipt.accepted
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if accepted else 2
 

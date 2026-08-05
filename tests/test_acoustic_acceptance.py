@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import math
+import subprocess
+import sys
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -44,6 +47,9 @@ from core.reality_reach.acoustic_acceptance import (
 )
 from core.reality_reach.scalar_adapter import ScalarSample
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from tools.reality_reach import manage_acceptance_transparency as transparency_tool
+from tools.reality_reach import manage_acceptance_witness as witness_tool
+from tools.reality_reach import verify_acceptance as verify_tool
 
 
 class _TransferDriver:
@@ -322,7 +328,11 @@ async def test_a1_receipt_and_campaign_record_round_trip_derived_verdicts() -> N
 
 
 @pytest.mark.asyncio
-async def test_a1_requires_distinct_valid_external_witness_roots(tmp_path) -> None:
+async def test_a1_requires_distinct_valid_external_witness_roots(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
     receipt = await run_acoustic_a1_acceptance(
         _TransferDriver(),
         AcousticAcceptanceConfig(campaign_id="fixture-external-witness"),
@@ -504,6 +514,202 @@ async def test_a1_requires_distinct_valid_external_witness_roots(tmp_path) -> No
             replace(transparent, blockers=("tampered",)),
             transparent_path,
         )
+
+    class _MandateHandle:
+        def get(self, campaign_id: str) -> AcceptanceVerificationMandate:
+            assert campaign_id == record.campaign_id
+            return mandate
+
+        def close(self) -> None:
+            return None
+
+    class _MandateStoreFacade:
+        @staticmethod
+        def from_system(_path):
+            return _MandateHandle()
+
+    class _CampaignStoreFacade:
+        def __init__(self, _root) -> None:
+            pass
+
+        def load(self, campaign_id: str) -> AcousticA1CampaignRecord:
+            assert campaign_id == record.campaign_id
+            return record
+
+    monkeypatch.setattr(
+        witness_tool,
+        "AcceptanceMandateStore",
+        _MandateStoreFacade,
+    )
+    monkeypatch.setattr(
+        witness_tool,
+        "AcousticA1CampaignStore",
+        _CampaignStoreFacade,
+    )
+    operator_statement_path = tmp_path / "operator-a1-witness.json"
+    operator_payload_path = tmp_path / "operator-a1-witness.payload"
+    assert witness_tool.main(
+        [
+            "statement",
+            "--artifact-kind",
+            "acoustic-a1",
+            "--root",
+            str(tmp_path),
+            "--mandate-state",
+            str(tmp_path / "mandates.json"),
+            "--campaign-id",
+            record.campaign_id,
+            "--role",
+            AcceptanceWitnessRole.METROLOGY.value,
+            "--witness-id",
+            "operator.fixture.metrology",
+            "--sequence",
+            "1",
+            "--witnessed-at-ns",
+            str(record.completed_at_ns + 1),
+            "--statement-output",
+            str(operator_statement_path),
+            "--payload-output",
+            str(operator_payload_path),
+        ]
+    ) == 0
+    operator_statement = json.loads(operator_statement_path.read_text())
+    assert operator_statement["certificate_sha256"] == record.sha256
+    assert operator_statement["evidence_sha256"] == record.receipt.sha256
+    capsys.readouterr()
+
+    statement_path = tmp_path / "a1-transparency-statement.json"
+    signature_path = tmp_path / "a1-producer-signature.raw"
+    certificate_path = tmp_path / "a1-producer-certificate.pem"
+    entry_path = tmp_path / "a1-rekor-entry.json"
+    log_key_path = tmp_path / "a1-rekor-log-key.pem"
+    assembled_path = tmp_path / "a1-transparency-bundle.json"
+    statement_path.write_text(json.dumps(bundle["statement"]), encoding="utf-8")
+    signature_path.write_bytes(
+        base64.b64decode(bundle["producer_signature_b64"], validate=True)
+    )
+    certificate_path.write_bytes(
+        base64.b64decode(bundle["producer_certificate_pem_b64"], validate=True)
+    )
+    entry_path.write_text(json.dumps(bundle["rekor_entry"]), encoding="utf-8")
+    log_key_path.write_bytes(log_public_pem)
+    assembled = await asyncio.to_thread(
+        subprocess.run,
+        [
+            sys.executable,
+            "tools/reality_reach/manage_acceptance_transparency.py",
+            "assemble",
+            "--artifact-kind",
+            "acoustic-a1",
+            "--statement",
+            str(statement_path),
+            "--producer-signature",
+            str(signature_path),
+            "--producer-certificate-pem",
+            str(certificate_path),
+            "--rekor-uuid",
+            str(bundle["rekor_uuid"]),
+            "--rekor-entry",
+            str(entry_path),
+            "--trusted-log-public-key-pem",
+            str(log_key_path),
+            "--output",
+            str(assembled_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert assembled.returncode == 0, assembled.stderr
+    assert json.loads(assembled_path.read_text()) == bundle
+
+    metrology_path = tmp_path / "a1-metrology-witness.json"
+    governance_path = tmp_path / "a1-governance-witness.json"
+    metrology_path.write_text(json.dumps(metrology.to_dict()), encoding="utf-8")
+    governance_path.write_text(json.dumps(governed.to_dict()), encoding="utf-8")
+    monkeypatch.setattr(
+        transparency_tool,
+        "AcceptanceMandateStore",
+        _MandateStoreFacade,
+    )
+    monkeypatch.setattr(
+        transparency_tool,
+        "AcousticA1CampaignStore",
+        _CampaignStoreFacade,
+    )
+    operator_transparency_statement = tmp_path / "operator-a1-transparency.json"
+    operator_transparency_payload = tmp_path / "operator-a1-transparency.payload"
+    assert transparency_tool.main(
+        [
+            "statement",
+            "--artifact-kind",
+            "acoustic-a1",
+            "--root",
+            str(tmp_path),
+            "--mandate-state",
+            str(tmp_path / "mandates.json"),
+            "--campaign-id",
+            record.campaign_id,
+            "--metrology-witness-bundle",
+            str(metrology_path),
+            "--governance-witness-bundle",
+            str(governance_path),
+            "--metrology-witness-key-sha256",
+            metrology.public_key_sha256,
+            "--governance-witness-key-sha256",
+            governed.public_key_sha256,
+            "--sequence",
+            "1",
+            "--issued-at-unix",
+            str(issued_at),
+            "--statement-output",
+            str(operator_transparency_statement),
+            "--payload-output",
+            str(operator_transparency_payload),
+        ]
+    ) == 0
+    assert json.loads(operator_transparency_statement.read_text()) == statement
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        verify_tool,
+        "AcceptanceMandateStore",
+        _MandateStoreFacade,
+    )
+    monkeypatch.setattr(
+        verify_tool,
+        "AcousticA1CampaignStore",
+        _CampaignStoreFacade,
+    )
+    independent_path = tmp_path / "a1-independent-verdict.json"
+    assert verify_tool.main(
+        [
+            "--artifact-kind",
+            "acoustic-a1",
+            "--root",
+            str(tmp_path),
+            "--campaign-id",
+            record.campaign_id,
+            "--mandate-state",
+            str(tmp_path / "mandates.json"),
+            "--metrology-witness-bundle",
+            str(metrology_path),
+            "--governance-witness-bundle",
+            str(governance_path),
+            "--metrology-witness-key-sha256",
+            metrology.public_key_sha256,
+            "--governance-witness-key-sha256",
+            governed.public_key_sha256,
+            "--transparency-bundle",
+            str(assembled_path),
+            "--transparency-log-public-key-pem",
+            str(log_key_path),
+            "--receipt-output",
+            str(independent_path),
+        ]
+    ) == 0
+    assert json.loads(independent_path.read_text())["accepted"] is True
+    capsys.readouterr()
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,10 @@ from core.reality_reach.acceptance_witness import (  # noqa: E402
     AcceptanceWitnessRole,
     AcceptanceWitnessStatement,
 )
+from core.reality_reach.acoustic_acceptance import (  # noqa: E402
+    AcousticA1CampaignStore,
+    acoustic_a1_campaign_binding_blockers,
+)
 from core.runtime.secure_path_custody import (  # noqa: E402
     DirectoryCustody,
     SecurePathCustodyError,
@@ -88,25 +92,40 @@ def _statement(args: argparse.Namespace) -> int:
         mandate = mandate_store.get(args.campaign_id)
     finally:
         mandate_store.close()
-    certificate = AcceptanceCertificateStore(args.root).load(args.campaign_id)
     role = AcceptanceWitnessRole(args.role)
-    evidence_sha256 = (
-        certificate.metrology_evidence_sha256
-        if role is AcceptanceWitnessRole.METROLOGY
-        else certificate.governance_evidence_sha256
-    )
+    if args.artifact_kind == "acoustic-a1":
+        record = AcousticA1CampaignStore(args.root).load(args.campaign_id)
+        blockers = acoustic_a1_campaign_binding_blockers(record, mandate)
+        if blockers:
+            raise ValueError("acoustic_a1_campaign_binding_failed:" + ",".join(blockers))
+        artifact_sha256 = record.sha256
+        evidence_sha256 = (
+            record.receipt.sha256
+            if role is AcceptanceWitnessRole.METROLOGY
+            else str(record.governance_evidence_sha256)
+        )
+        completed_at_ns = record.completed_at_ns
+    else:
+        certificate = AcceptanceCertificateStore(args.root).load(args.campaign_id)
+        artifact_sha256 = certificate.sha256
+        evidence_sha256 = (
+            certificate.metrology_evidence_sha256
+            if role is AcceptanceWitnessRole.METROLOGY
+            else certificate.governance_evidence_sha256
+        )
+        completed_at_ns = certificate.completed_at_ns
     if not evidence_sha256:
         raise ValueError(f"acceptance_{role.value}_evidence_missing")
     witnessed_at_ns = args.witnessed_at_ns or max(
         time.time_ns(),
-        certificate.completed_at_ns + 1,
+        completed_at_ns + 1,
     )
     statement = AcceptanceWitnessStatement(
         role=role,
         witness_id=args.witness_id,
         campaign_id=mandate.campaign_id,
         mandate_sha256=mandate.sha256,
-        certificate_sha256=certificate.sha256,
+        certificate_sha256=artifact_sha256,
         evidence_sha256=evidence_sha256,
         sequence=args.sequence,
         previous_statement_sha256=args.previous_statement_sha256,
@@ -178,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
         help="emit canonical bytes for an external custodian to sign",
     )
     statement.add_argument("--root", type=Path, required=True)
+    statement.add_argument(
+        "--artifact-kind",
+        choices=("scalar", "acoustic-a1"),
+        default="scalar",
+    )
     statement.add_argument("--mandate-state", type=Path, required=True)
     statement.add_argument("--campaign-id", required=True)
     statement.add_argument(
