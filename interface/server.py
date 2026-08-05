@@ -922,6 +922,7 @@ from interface.routes import mission_control as mission_control_routes
 from interface.routes import multimodal as multimodal_routes
 from interface.routes import performance as performance_routes
 from interface.routes import privacy as privacy_routes
+from interface.routes import reality_reach as reality_reach_routes
 from interface.routes import rpc as rpc_routes
 from interface.routes import settings as settings_routes
 from interface.routes import subsystems as subsystem_routes
@@ -940,6 +941,7 @@ app.include_router(subsystem_routes.router, prefix="/api", tags=["subsystems"])
 app.include_router(memory_routes.router, prefix="/api", tags=["memory-api"])
 app.include_router(interaction_signal_routes.router, prefix="/api", tags=["interaction-signals"])
 app.include_router(privacy_routes.router, prefix="/api", tags=["privacy"])
+app.include_router(reality_reach_routes.router, prefix="/api", tags=["reality-reach"])
 app.include_router(rpc_routes.router, prefix="/rpc", tags=["rpc"])
 app.include_router(inner_state_routes.router, tags=["proof-surface"])
 app.include_router(allostasis_routes.router, prefix="/api", tags=["allostasis"])

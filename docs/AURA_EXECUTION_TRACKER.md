@@ -35991,3 +35991,57 @@ This closes unrelated/pre-recorded measurement promotion and makes the
 remaining physical campaigns executable with causal evidence. No real tenant
 or device was attached during this checkpoint, and trusted digest custody is
 still external evidence. CP810 and the total remain open at 809/920.
+
+#### CP810 addendum: boot-pinned operational acceptance owner
+
+Acceptance is now a live runtime service rather than a runner that must be
+assembled by ad hoc Python. The cognitive-sensory initializer captures the
+exact runtime source identity off the event loop, pins it at boot, constructs
+one `RealityAcceptanceService`, and registers that owner as a required,
+fail-closed service beside metrology. A provenance-capture failure closes only
+certification: raw sensing, ordinary governed actuation, metrology, middleware,
+and the rest of the physical runtime continue with an explicit critical
+degradation receipt.
+
+The service serializes campaigns, resolves one exact registered scalar adapter,
+builds the live/HIL acquisition task from that adapter's declared independent
+readback channels, runs the complete physical lifecycle through the governed
+acceptance runner, and create-once publishes the certificate and replay
+evidence. It derives the certificate's source digest from the actual pinned Git
+commit instead of trusting a caller label. Before and after execution it
+requires a bound, clean runtime identity that still matches the boot pin and
+the caller's independently expected commit digest. Dirty source, checkout drift,
+an unverified installed-app identity, or a mismatched expected commit therefore
+fails before publication; pre-dispatch failures perform zero writes. Successful
+results also report the exact clean workspace-state digest. Failure status
+retains only error type and content digests, not exception text or campaign
+identifiers.
+
+An owner-only API now exposes bounded status and typed campaign execution at
+`/api/reality-reach/acceptance`. Both routes require the internal-origin guard
+and API-token guard; the mutating route is also in the protected-local-POST
+set. Paired devices cannot use it. The endpoint does not provide an actuation
+bypass: physical campaigns still enter the canonical ActionExecutor/Will
+transaction, causal metrology enclosure, independent readback, and verified
+restoration path implemented by the runner.
+
+Operational-owner evidence:
+
+- source-label substitution, boot-to-run checkout drift, dirty boot source,
+  zero-write refusal, secret-safe failure status, HIL partition validation,
+  route auth, typed request construction, unavailable-service closure, and
+  boot-degradation isolation: 83/83 focused tests passed;
+- all tests importing the Reality Reach runtime across connectors, attachment,
+  metrology, transaction, acceptance, route, and cognitive-sensory boot paths:
+  434/434 passed;
+- smoke 103/103, repository compile, governance ownership lint, architectural
+  layering, local security, Ruff, and scoped core MyPy passed. Normal
+  dependency-following MyPy reported no error in the new route itself while
+  retaining the existing repository-wide typing baseline outside this slice.
+
+This closes the missing operational owner and authenticated invocation surface.
+It still does not create external credentials, a representative physical
+installation, independent trust-root custody, or the resulting timestamped
+tenant/device observations. CP810 and the total remain open at 809/920 until
+real live and hardware-in-loop campaigns are executed and independently
+accepted.

@@ -44,6 +44,7 @@ LOCAL_UI_ORIGINS = {
     "http://127.0.0.1:8000",
 }
 PROTECTED_LOCAL_POST_PATHS = {
+    "/api/reality-reach/acceptance/run",
     "/api/skill/execute",
     "/api/reboot",
     "/api/system/hot-reload",

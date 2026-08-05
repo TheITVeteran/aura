@@ -166,6 +166,17 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.acceptance_service",
+        RealityAcceptanceService=Service,
+        capture_runtime_source_identity=lambda: {
+            "identity_bound": True,
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+            "workspace_state_sha256": "b" * 64,
+        },
+    )
+    _install_module(
+        monkeypatch,
         "core.reality_reach.event_flow",
         RealityEventFlowRuntime=Service,
     )
@@ -287,6 +298,17 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_metrology"].args[0] is orchestrator.reality_reach
     assert registered["reality_metrology"].kwargs["state_path"].name == ("reality_metrology.json")
     assert registered["reality_metrology"].started is True
+    assert registered["reality_acceptance"] is orchestrator.reality_acceptance
+    assert registered["reality_acceptance"].args == (
+        orchestrator.reality_reach,
+        orchestrator.reality_metrology,
+    )
+    assert registered["reality_acceptance"].kwargs["pinned_source_identity"] == {
+        "identity_bound": True,
+        "source_commit": "a" * 40,
+        "source_dirty": False,
+        "workspace_state_sha256": "b" * 64,
+    }
     assert registered["reality_middleware"].args[0] is orchestrator.reality_reach
     assert registered["reality_middleware"].kwargs["state_path"].name == ("reality_middleware.json")
     assert registered["reality_middleware"].started is True
@@ -508,6 +530,38 @@ async def test_metrology_failure_closes_measurement_claims_without_erasing_raw_s
     assert registered["reality_reach"] is orchestrator.reality_reach
     assert orchestrator.reality_metrology is None
     assert "reality_metrology" not in registered
+
+
+@pytest.mark.asyncio
+async def test_acceptance_source_pin_failure_does_not_erase_physical_runtime(
+    monkeypatch,
+) -> None:
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    _install_success_modules(monkeypatch)
+
+    def _broken_source_identity():
+        raise RuntimeError("synthetic source identity failure")
+
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.acceptance_service",
+        RealityAcceptanceService=Service,
+        capture_runtime_source_identity=_broken_source_identity,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert report["degraded"]["reality_acceptance"]["severity"] == "critical"
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert registered["reality_actuation"] is orchestrator.reality_actuation
+    assert registered["reality_metrology"] is orchestrator.reality_metrology
+    assert orchestrator.reality_acceptance is None
+    assert "reality_acceptance" not in registered
 
 
 @pytest.mark.asyncio

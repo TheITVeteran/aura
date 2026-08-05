@@ -27,6 +27,10 @@ from core.reality_reach.acceptance import (
     ScalarAcceptanceRunner,
     ScalarFault,
 )
+from core.reality_reach.acceptance_service import (
+    RealityAcceptanceService,
+    ScalarAcceptanceRequest,
+)
 from core.reality_reach.acceptance_verifier import (
     persist_verification_receipt,
     verify_acceptance_evidence,
@@ -709,6 +713,242 @@ async def test_live_acceptance_uses_real_enclosing_metrology_service(tmp_path) -
     assert receipt.completed_at_ns >= certificate.completed_at_ns
     assert any(item.value == pytest.approx(7.0) for item in receipt.measurements)
     assert transport.value == 1.0
+
+
+@pytest.mark.asyncio
+async def test_operational_service_runs_and_persists_live_campaign(tmp_path) -> None:
+    source_commit = "d" * 40
+    source_identity = {
+        "identity_bound": True,
+        "source_commit": source_commit,
+        "source_dirty": False,
+        "workspace_state_sha256": "e" * 64,
+    }
+    transport = _Transport()
+    initial = await transport.read_scalar("fixture.level")
+    adapter = ScalarRealityAdapter(
+        transport,
+        ScalarResourceProfile(
+            resource_id="fixture.level",
+            observable="fixture_level",
+            unit="percent",
+            domain=NumericDomain(0.0, 100.0),
+            resolution=0.1,
+            tolerance=0.2,
+            writable=True,
+            physical_identity_sha256=_digest("physical.fixture"),
+            owner="tests.reality_reach_acceptance",
+            protocol="acceptance_fixture",
+            safe_value=1.0,
+            readback_distinct_from_command=True,
+        ),
+        initial_sample=initial,
+    )
+    reality = RealityReachService((adapter,), session_id="acceptance.service.session")
+    metrology = RealityMetrologyService(
+        reality,
+        state_path=tmp_path / "metrology.json",
+    )
+    await metrology.start()
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    service = RealityAcceptanceService(
+        reality,
+        metrology,
+        store=store,
+        governed_executor=_governed_executor,
+        pinned_source_identity=source_identity,
+        source_identity_provider=lambda: source_identity,
+    )
+
+    result = await service.run(
+        ScalarAcceptanceRequest(
+            campaign_id="cp810.operational.live",
+            connector_id="fixture.connector",
+            adapter_id=adapter.adapter_id,
+            target=7.0,
+            expected_source_commit_sha256=_digest(source_commit),
+            evidence_class=AcceptanceEvidenceClass.LIVE,
+            deadline_s=0.5,
+            sample_interval_s=0.1,
+            effect_hold_s=0.25,
+        )
+    )
+
+    certificate = store.load("cp810.operational.live")
+    assert result["certificate_sha256"] == certificate.sha256
+    assert result["live_acceptance_passed"] is True
+    assert result["metrology_evidence_sha256"]
+    assert result["governance_evidence_sha256"]
+    assert result["source_commit_sha256"] == _digest(source_commit)
+    assert result["workspace_state_sha256"] == f"sha256:{'e' * 64}"
+    assert service.status()["generation"] == 1
+    assert service.status()["active_campaign_id"] == ""
+    assert transport.value == 1.0
+
+
+@pytest.mark.asyncio
+async def test_operational_service_refuses_caller_supplied_source_identity(tmp_path) -> None:
+    transport = _Transport()
+    initial = await transport.read_scalar("fixture.level")
+    adapter = ScalarRealityAdapter(
+        transport,
+        ScalarResourceProfile(
+            resource_id="fixture.level",
+            observable="fixture_level",
+            unit="percent",
+            domain=NumericDomain(0.0, 100.0),
+            resolution=0.1,
+            tolerance=0.2,
+            writable=True,
+            physical_identity_sha256=_digest("physical.fixture"),
+            owner="tests.reality_reach_acceptance",
+            protocol="acceptance_fixture",
+            safe_value=1.0,
+            readback_distinct_from_command=True,
+        ),
+        initial_sample=initial,
+    )
+    reality = RealityReachService((adapter,), session_id="acceptance.source.session")
+    metrology = RealityMetrologyService(reality, state_path=tmp_path / "metrology.json")
+    await metrology.start()
+    service = RealityAcceptanceService(
+        reality,
+        metrology,
+        store=AcceptanceCertificateStore(tmp_path / "acceptance"),
+        governed_executor=_governed_executor,
+        pinned_source_identity={
+            "identity_bound": True,
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+            "workspace_state_sha256": "b" * 64,
+        },
+        source_identity_provider=lambda: {
+            "identity_bound": True,
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+            "workspace_state_sha256": "b" * 64,
+        },
+    )
+    request = ScalarAcceptanceRequest(
+        campaign_id="cp810.operational.source-mismatch",
+        connector_id="fixture.connector",
+        adapter_id=adapter.adapter_id,
+        target=7.0,
+        expected_source_commit_sha256=_digest("caller-controlled-source"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+    )
+
+    with pytest.raises(AcceptanceError, match="source_commit_mismatch"):
+        await service.run(request)
+
+    status = service.status()
+    assert transport.writes == 0
+    assert status["last_failure"]["error_type"] == "AcceptanceError"
+    assert "caller-controlled-source" not in json.dumps(status)
+    assert set(status["last_failure"]) == {
+        "campaign_id_sha256",
+        "error_type",
+        "error_sha256",
+        "started_at_ns",
+        "failed_at_ns",
+    }
+
+    drifted = RealityAcceptanceService(
+        reality,
+        metrology,
+        store=AcceptanceCertificateStore(tmp_path / "drifted"),
+        governed_executor=_governed_executor,
+        pinned_source_identity={
+            "identity_bound": True,
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+            "workspace_state_sha256": "b" * 64,
+        },
+        source_identity_provider=lambda: {
+            "identity_bound": True,
+            "source_commit": "c" * 40,
+            "source_dirty": False,
+            "workspace_state_sha256": "d" * 64,
+        },
+    )
+    drift_request = replace(
+        request,
+        campaign_id="cp810.operational.source-drift",
+        expected_source_commit_sha256=_digest("a" * 40),
+    )
+    with pytest.raises(AcceptanceError, match="source_drifted_since_boot"):
+        await drifted.run(drift_request)
+    assert transport.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_operational_service_exposes_dirty_boot_source_as_not_ready(tmp_path) -> None:
+    transport = _Transport()
+    initial = await transport.read_scalar("fixture.level")
+    adapter = ScalarRealityAdapter(
+        transport,
+        ScalarResourceProfile(
+            resource_id="fixture.level",
+            observable="fixture_level",
+            unit="percent",
+            domain=NumericDomain(0.0, 100.0),
+            resolution=0.1,
+            tolerance=0.2,
+            writable=True,
+            physical_identity_sha256=_digest("physical.fixture"),
+            owner="tests.reality_reach_acceptance",
+            protocol="acceptance_fixture",
+            safe_value=1.0,
+            readback_distinct_from_command=True,
+        ),
+        initial_sample=initial,
+    )
+    reality = RealityReachService((adapter,), session_id="acceptance.dirty.session")
+    metrology = RealityMetrologyService(reality, state_path=tmp_path / "metrology.json")
+    await metrology.start()
+    dirty_identity = {
+        "identity_bound": True,
+        "source_commit": "a" * 40,
+        "source_dirty": True,
+        "workspace_state_sha256": "b" * 64,
+    }
+    service = RealityAcceptanceService(
+        reality,
+        metrology,
+        pinned_source_identity=dirty_identity,
+        source_identity_provider=lambda: dirty_identity,
+    )
+
+    status = service.status()
+    assert status["ready"] is False
+    assert status["source_identity_blocker"] == "acceptance_runtime_source_dirty"
+    assert service.is_alive() is True
+    assert service.is_ready() is False
+
+    with pytest.raises(AcceptanceError, match="runtime_source_dirty"):
+        await service.run(
+            ScalarAcceptanceRequest(
+                campaign_id="cp810.operational.dirty",
+                connector_id="fixture.connector",
+                adapter_id=adapter.adapter_id,
+                target=7.0,
+                expected_source_commit_sha256=_digest("a" * 40),
+                evidence_class=AcceptanceEvidenceClass.LIVE,
+            )
+        )
+    assert transport.writes == 0
+
+
+def test_operational_service_request_requires_complete_hil_partition() -> None:
+    with pytest.raises(ValueError, match="scenario and simulated channels"):
+        ScalarAcceptanceRequest(
+            campaign_id="cp810.operational.hil",
+            connector_id="fixture.connector",
+            adapter_id="fixture.adapter",
+            target=7.0,
+            expected_source_commit_sha256=_digest("dae896754"),
+            evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        )
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import math
 import re
-import threading
 import time
 import uuid
 from collections.abc import Iterable
@@ -26,9 +25,9 @@ from core.reality_reach.contracts import (
 )
 from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.lockdep import checked_lock
 from core.runtime.resource_observation import ObservationSource, get_resource_observer
 from core.runtime.service_registry import register_runtime_service
-from core.runtime.lockdep import checked_lock
 
 _SQLITE_INT_MAX = (1 << 63) - 1
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -576,6 +575,17 @@ class RealityReachService:
             return None
         with self._lock:
             return self._actuator_adapters.get(channel_id)
+
+    def scalar_acceptance_adapter(self, adapter_id: str) -> Any | None:
+        """Resolve one exact scalar adapter for the governed acceptance owner."""
+
+        if not isinstance(adapter_id, str) or not adapter_id:
+            raise ValueError("adapter_id must be non-empty")
+        from core.reality_reach.scalar_adapter import ScalarRealityAdapter
+
+        with self._lock:
+            adapter = self._adapters.get(adapter_id)
+            return adapter if isinstance(adapter, ScalarRealityAdapter) else None
 
     def actuator_capability(self, channel_id: str) -> ActuatorCapability | None:
         if channel_id not in self.executable_actuator_channels():

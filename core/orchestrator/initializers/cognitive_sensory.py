@@ -195,6 +195,10 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
     async def _reality_reach() -> None:
         from core.environment.runtime_workspace import environment_runtime_file
+        from core.reality_reach.acceptance_service import (
+            RealityAcceptanceService,
+            capture_runtime_source_identity,
+        )
         from core.reality_reach.digital_twin import RealityDigitalTwinGraph
         from core.reality_reach.event_flow import RealityEventFlowRuntime
         from core.reality_reach.historian import RealityHistorian
@@ -236,6 +240,28 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 severity="critical",
             )
         orchestrator.reality_metrology = metrology
+        acceptance = None
+        if metrology is not None:
+            try:
+                source_identity = await asyncio.to_thread(capture_runtime_source_identity)
+                acceptance = RealityAcceptanceService(
+                    service,
+                    metrology,
+                    pinned_source_identity=source_identity,
+                )
+            except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+                _record_cognitive_sensory_degradation(
+                    orchestrator,
+                    exc,
+                    phase="reality_acceptance",
+                    action=(
+                        "Kept physical sensing and ordinary governed actuation available "
+                        "but closed connector acceptance until runtime source identity "
+                        "can be pinned"
+                    ),
+                    severity="critical",
+                )
+        orchestrator.reality_acceptance = acceptance
         middleware = None
         try:
             middleware_path = environment_runtime_file(
@@ -361,6 +387,18 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 required_for=(
                     "calibrated synchronized acquisition, uncertainty propagation, "
                     "and live/simulation/HIL evidence separation"
+                ),
+                failure_policy="fail-closed",
+            )
+        if acceptance is not None:
+            ServiceContainer.register_instance(
+                "reality_acceptance",
+                acceptance,
+                required=True,
+                owner="core/reality_reach/acceptance_service.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=(
+                    "governed live and hardware-in-loop connector acceptance"
                 ),
                 failure_policy="fail-closed",
             )
