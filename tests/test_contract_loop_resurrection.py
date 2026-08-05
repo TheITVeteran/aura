@@ -65,7 +65,20 @@ class TestUnifiedRuntimePressure:
             _init_done=False,
             _warmup_in_flight=True,
         )
-        fake_module = SimpleNamespace(_CLIENTS={"resident": fake_client})
+        # The probe reads the registry through clients_snapshot(), not by
+        # touching _CLIENTS: iterating the dict directly raised "dictionary
+        # changed size during iteration" live on 2026-08-03, and because the
+        # inference gate is fail-closed that RuntimeError held the runtime
+        # DEGRADED across health pulses.
+        #
+        # A double that exposes only _CLIENTS therefore looks like an EMPTY
+        # registry, and the probe correctly reports "cold" — so this test was
+        # asserting against a fake that no longer resembles the real module.
+        # clients_snapshot returns a list of (name, client) pairs.
+        fake_module = SimpleNamespace(
+            _CLIENTS={"resident": fake_client},
+            clients_snapshot=lambda: [("resident", fake_client)],
+        )
         monkeypatch.setitem(
             sys.modules,
             "core.brain.llm.mlx_client",

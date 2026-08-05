@@ -44,7 +44,17 @@ def test_registered_spawn_main_worker_is_counted_exactly_once(monkeypatch):
     worker = _Process(111)
     unrelated = _Process(222)
     governor._proc = SimpleNamespace(children=lambda recursive=True: [worker, worker, unrelated])
-    fake_module = SimpleNamespace(_CLIENTS={"/models/32b": _client(worker)})
+    # Mirror the real module's surface: the governor reads the registry
+    # through clients_snapshot(), which exists because iterating _CLIENTS
+    # directly raised "dictionary changed size during iteration" live. A fake
+    # exposing only _CLIENTS reads as an EMPTY registry, so the governor
+    # correctly finds no worker to protect and this test failed against a
+    # double that no longer resembles what it stands in for.
+    _fake_client = _client(worker)
+    fake_module = SimpleNamespace(
+        _CLIENTS={"/models/32b": _fake_client},
+        clients_snapshot=lambda: [("/models/32b", _fake_client)],
+    )
     monkeypatch.setitem(sys.modules, "core.brain.llm.mlx_client", fake_module)
 
     managed = list(governor._iter_managed_runtime_processes())
