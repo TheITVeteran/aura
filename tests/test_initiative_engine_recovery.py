@@ -41,6 +41,30 @@ class _Memory:
         self.entries.append((role, content))
 
 
+class _QuietWindowOwner:
+    """An orchestrator with NO quiet window in force.
+
+    CP126 eb01cf8b made the quiet-window control fail closed: an absent
+    orchestrator means permission to speak cannot be established, so the
+    engine stays silent. That is correct, and it is upstream of what these
+    tests are about — they assert what EXECUTIVE AUTHORITY does once
+    proactivity is permitted. Returning `default` for every service left the
+    orchestrator absent, so the engine suppressed for a different (also
+    correct) reason and the assertions measured the wrong control.
+    """
+
+    _suppress_unsolicited_proactivity_until = 0.0
+
+
+def _service_get_with_orchestrator(orchestrator):
+    def _get(name, default=None):
+        if name == "orchestrator":
+            return orchestrator
+        return default
+
+    return _get
+
+
 @pytest.mark.asyncio
 async def test_denied_proactive_release_does_not_bypass_authority_to_voice(monkeypatch):
     voice = _Voice()
@@ -57,7 +81,7 @@ async def test_denied_proactive_release_does_not_bypass_authority_to_voice(monke
     )
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
-        lambda _name, default=None: default,
+        staticmethod(_service_get_with_orchestrator(_QuietWindowOwner())),
     )
 
     await engine._trigger_autonomous_conversation()
@@ -83,7 +107,7 @@ async def test_successful_proactive_release_accepts_sync_memory_append(monkeypat
     )
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
-        lambda _name, default=None: default,
+        staticmethod(_service_get_with_orchestrator(_QuietWindowOwner())),
     )
 
     await engine._trigger_autonomous_conversation()
@@ -119,9 +143,13 @@ async def test_proactive_loop_records_failure_and_backs_off(monkeypatch):
             engine.stop()
 
     monkeypatch.setattr(initiative_module.asyncio, "sleep", fake_sleep)
+    # Same premise as the tests above. Without an orchestrator the fail-closed
+    # quiet-window guard suppresses the trigger, the loop only ever sleeps its
+    # idle 60s, and fake_sleep's stop() never fires — this test SPUN FOREVER
+    # rather than failing, which is why the whole file hung.
     monkeypatch.setattr(
         "core.container.ServiceContainer.get",
-        lambda _name, default=None: default,
+        staticmethod(_service_get_with_orchestrator(_QuietWindowOwner())),
     )
 
     await engine.start_proactive_loop()

@@ -1768,3 +1768,94 @@ class TestTheListenerIsTheOnlyConsumer:
         # The listener is the sole consumer of the worker's response queue, so
         # any unbounded await here stalls every request on the lane.
         assert 0.0 < _LEASE_RENEWAL_TIMEOUT_S <= 15.0
+
+
+class TestWorkerScopedStateDoesNotSurviveASpawn:
+    """CP126 066ebe25 / 7f9e9cf4."""
+
+    def test_a_spawn_clears_the_previous_workers_claims(self, client):
+        client._worker_identity = {"worker_boot_id": "old"}
+        client._recurrent_depth_status = {"active": True, "loops": 2}
+        client._recurrent_adapter_activation = {"active": True}
+        client._steering_liveness_observed = True
+        client._last_interoception = {"stale": True}
+        client._last_surface_control_receipt = {"enabled": True}
+        client._soft_cancel_target = {"req_id": "old"}
+
+        client._reset_worker_scoped_state()
+
+        assert client._worker_identity == {}
+        assert client._recurrent_depth_status == {}
+        assert client._recurrent_adapter_activation == {}
+        assert client._steering_liveness_observed is False
+        assert client._last_interoception == {}
+        assert client._last_surface_control_receipt == {}
+        assert client._soft_cancel_target is None
+
+    def test_an_ordinary_history_passes_through(self):
+        from core.brain.llm.mlx_client import _bounded_chat_messages
+
+        rows, faults = _bounded_chat_messages(
+            [{"role": "system", "content": "be good"}, {"role": "user", "content": "hi"}]
+        )
+        assert faults == []
+        assert [r["role"] for r in rows] == ["system", "user"]
+
+    def test_a_non_mapping_entry_is_dropped_and_named(self):
+        from core.brain.llm.mlx_client import _bounded_chat_messages
+
+        rows, faults = _bounded_chat_messages([{"role": "user", "content": "hi"}, "junk"])
+        assert "messages:non_mapping_dropped" in faults
+        assert len(rows) == 1
+
+    def test_an_entry_without_a_role_is_dropped(self):
+        from core.brain.llm.mlx_client import _bounded_chat_messages
+
+        rows, faults = _bounded_chat_messages([{"content": "orphan"}])
+        assert "messages:invalid_role" in faults
+        assert rows == []
+
+    def test_non_string_content_is_coerced_and_named(self):
+        from core.brain.llm.mlx_client import _bounded_chat_messages
+
+        rows, faults = _bounded_chat_messages([{"role": "user", "content": {"a": 1}}])
+        assert "messages:non_string_content" in faults
+        assert isinstance(rows[0]["content"], str)
+
+    def test_an_oversized_message_is_clipped(self):
+        from core.brain.llm.mlx_client import (
+            _CHAT_MESSAGE_MAX_CHARS,
+            _bounded_chat_messages,
+        )
+
+        rows, faults = _bounded_chat_messages(
+            [{"role": "user", "content": "x" * (_CHAT_MESSAGE_MAX_CHARS * 2)}]
+        )
+        assert "messages:content_too_long" in faults
+        assert len(rows[0]["content"]) == _CHAT_MESSAGE_MAX_CHARS
+
+    def test_too_many_messages_keeps_the_system_turn_and_the_recent_ones(self):
+        from core.brain.llm.mlx_client import (
+            _CHAT_MESSAGES_MAX_ITEMS,
+            _bounded_chat_messages,
+        )
+
+        history = [{"role": "system", "content": "policy"}]
+        history += [
+            {"role": "user", "content": f"turn-{i}"}
+            for i in range(_CHAT_MESSAGES_MAX_ITEMS + 50)
+        ]
+        rows, faults = _bounded_chat_messages(history)
+        assert "messages:too_many" in faults
+        assert len(rows) == _CHAT_MESSAGES_MAX_ITEMS
+        assert rows[0]["content"] == "policy", "the policy turn must survive"
+        assert rows[-1]["content"].endswith(str(_CHAT_MESSAGES_MAX_ITEMS + 49))
+
+    def test_an_aggregate_blowup_stops_before_templating(self):
+        from core.brain.llm.mlx_client import _bounded_chat_messages
+
+        rows, faults = _bounded_chat_messages(
+            [{"role": "user", "content": "y" * 150_000} for _ in range(20)]
+        )
+        assert "messages:aggregate_too_large" in faults
+        assert len(rows) < 20

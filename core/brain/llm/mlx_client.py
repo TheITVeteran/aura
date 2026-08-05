@@ -236,6 +236,64 @@ _LATENT_TOTAL_MAX_CHARS = 400_000
 _LATENT_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
 
+#: Chat-history ceilings for the public text interface. Generous on purpose:
+#: no real conversation approaches these, and the point is that a pathological
+#: or hostile one cannot reach template rendering unbounded.
+_CHAT_MESSAGES_MAX_ITEMS = 512
+_CHAT_MESSAGE_MAX_CHARS = 200_000
+_CHAT_TOTAL_MAX_CHARS = 800_000
+
+
+def _bounded_chat_messages(messages: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Bound and type a chat history before it is flattened or templated.
+
+    CP126 7f9e9cf4: the public interface checked that messages was a non-empty
+    list and then called ``messages[0].get`` and ``dict(m)`` across every
+    entry. Non-mapping elements were already handled; roles, content types,
+    the message COUNT and the aggregate size were not, so an oversized or
+    mistyped history reached template rendering — the most expensive place to
+    discover it, and outside the generation failure contract.
+
+    The most RECENT messages are kept when the count is exceeded, along with a
+    leading system message: dropping the system turn to preserve old chatter
+    would lose the policy the turn runs under.
+    """
+    faults: list[str] = []
+    rows = [m for m in (messages or []) if isinstance(m, dict)]
+    if len(rows) != len(messages or []):
+        faults.append("messages:non_mapping_dropped")
+
+    if len(rows) > _CHAT_MESSAGES_MAX_ITEMS:
+        faults.append("messages:too_many")
+        head = rows[:1] if str(rows[0].get("role") or "") == "system" else []
+        keep = _CHAT_MESSAGES_MAX_ITEMS - len(head)
+        rows = head + rows[-keep:]
+
+    bounded: list[dict[str, Any]] = []
+    total = 0
+    for row in rows:
+        role = row.get("role")
+        if not isinstance(role, str) or not role.strip():
+            faults.append("messages:invalid_role")
+            continue
+        entry = dict(row)
+        content = entry.get("content")
+        if content is None:
+            entry["content"] = ""
+        elif not isinstance(content, str):
+            faults.append("messages:non_string_content")
+            entry["content"] = str(content)
+        if len(entry["content"]) > _CHAT_MESSAGE_MAX_CHARS:
+            faults.append("messages:content_too_long")
+            entry["content"] = entry["content"][:_CHAT_MESSAGE_MAX_CHARS]
+        total += len(entry["content"])
+        if total > _CHAT_TOTAL_MAX_CHARS:
+            faults.append("messages:aggregate_too_large")
+            break
+        bounded.append(entry)
+    return bounded, faults
+
+
 def _latent_request_schema_error(
     *, prompt: Any = None, messages: Any = None
 ) -> str:
@@ -9047,10 +9105,31 @@ class MLXLocalClient:
         self._set_lane_state("cold", reason)
         return True
 
+    def _reset_worker_scoped_state(self) -> None:
+        """Drop everything the PREVIOUS worker established.
+
+        CP126 066ebe25: these fields are only replaced when the new worker's
+        init receipt carries them. A spawn that fails partway, or a receipt
+        missing a field, therefore left the old worker's claim in place — and
+        an old `active: true` recurrence status could certify a replacement
+        that never attached recurrence at all. Clearing them at spawn time
+        means the absence of evidence reads as absence, not as the last
+        worker's evidence.
+        """
+        self._worker_identity = {}
+        self._recurrent_depth_status = {}
+        self._recurrent_adapter_activation = {}
+        self._steering_liveness_observed = False
+        self._last_interoception = {}
+        self._last_surface_control_receipt = {}
+        self._soft_cancel_target = None
+        self._soft_cancel_ack = None
+
     def _spawn_worker_blocking(self) -> mp.Process:
         """Isolated spawn logic for the MLX worker, run in a background thread."""
         if _shutdown_blocks_model_work(self.model_path, action="worker spawn"):
             raise RuntimeError("runtime_shutdown")
+        self._reset_worker_scoped_state()
         # [STABILITY v60] Reclaim the old/orphan worker BEFORE the memory
         # admission check. A recycle (or crash respawn) replaces a worker that
         # is still resident; killing it below frees its ~20GB. Running the
@@ -10901,16 +10980,17 @@ class MLXLocalClient:
         system_prompt = kwargs.pop("system_prompt", None)
         tools = kwargs.pop("tools", None)
         if isinstance(messages, list) and messages:
-            # Harden the public boundary: a malformed (non-mapping) element
-            # previously raised AttributeError below, outside the normal
-            # generation failure contract.
-            well_formed = [m for m in messages if isinstance(m, dict)]
-            if len(well_formed) != len(messages):
+            # Harden the public boundary: a malformed element previously raised
+            # AttributeError below, outside the normal generation failure
+            # contract — and roles, content types, the count and the aggregate
+            # size reached template rendering unchecked.
+            messages, message_faults = _bounded_chat_messages(messages)
+            if message_faults:
                 _record_mlx_degradation(
-                    TypeError("non-mapping chat message dropped"),
-                    action="dropped malformed message entries before flattening",
+                    TypeError(f"chat history out of contract: {sorted(set(message_faults))}"),
+                    action="bounded and typed the chat history before flattening",
                 )
-            messages = well_formed or None
+            messages = messages or None
         if messages and system_prompt:
             # A separate system prompt alongside conversation history was
             # silently DISCARDED (the messages branch below skips it) —
