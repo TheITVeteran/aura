@@ -35539,3 +35539,38 @@ acceptance, and every remaining RR-01 through RR-11 item remain open. CP809 is
 therefore still in progress: the total remains 808 of the 920-checkpoint
 completion envelope, approximately 87.8% by count. Reasoning gain, frontier,
 release, and `WOW Signal` claims also remain open; long soaks remain deferred.
+
+The CP809 connector plane now also contains an Azure Digital Twins data-plane
+adapter. Its boot manifest binds every resource to an exact instance, twin,
+versioned DTDL model, device-reported JSON Pointer, optional distinct desired
+JSON Pointer, numeric domain, resolution, uncertainty, tolerance, safe value,
+rate limit, cooldown, and freshness budget. Entra client credentials are read
+only from the runtime environment, exchanged through the governed network
+boundary, cached with an expiry margin, and represented in durable identity by
+tenant/client hashes rather than credentials or bearer tokens.
+
+Cloud acknowledgement is deliberately not treated as physical evidence.
+Control requires a prior model-verified GET, uses the returned ETag as an
+`If-Match` precondition on the JSON Patch, invalidates that precondition after
+every attempt, and records only transport completion. The shared scalar effect
+coordinator must then observe the distinct device-reported property before it
+can verify the requested effect. Strict JSON, duplicate-key rejection, bounded
+documents, exact host/model/twin checks, JSON Pointer validation, idempotency,
+explicit timestamp provenance, bounded discovery, and secret-free receipts
+close the principal remote-twin ambiguity and replay paths.
+
+Additional CP809 validation while the resident 32B campaign owns the model
+lane:
+
+- Azure identity, manifest, OAuth, read, ETag/PATCH, readback, attachment,
+  timestamp, and catalog contracts: 8/8 passed;
+- complete configured connector family across Azure Digital Twins, MQTT,
+  openHAB, OPC UA, ROS 2, SCPI, and shared attachments: 81/81 passed;
+- Ruff formatting/lint and governance effect ownership passed; the new network
+  effects introduce no unowned `ActionExecutor` debt.
+
+No configured Azure tenant or physical device-reported twin was available, so
+this remains deterministic protocol evidence rather than live cloud or physical
+acceptance. AWS IoT TwinMaker, the cross-protocol hardware-in-loop matrix,
+restart/fault-injection acceptance, and the remaining RR obligations keep CP809
+open and the total at 808/920 (approximately 87.8%).

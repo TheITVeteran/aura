@@ -55,11 +55,7 @@ class RealityConnectorCatalog:
             replace(
                 status,
                 registered=status.connector_id in registered,
-                state=(
-                    "registered"
-                    if status.connector_id in registered
-                    else status.state
-                ),
+                state=("registered" if status.connector_id in registered else status.state),
             )
             for status in self._statuses
         )
@@ -117,9 +113,7 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                 registered=False,
                 state="invalid",
                 error=(
-                    "AURA_OPENHAB_URL is missing"
-                    if not url
-                    else "AURA_OPENHAB_TOKEN is missing"
+                    "AURA_OPENHAB_URL is missing" if not url else "AURA_OPENHAB_TOKEN is missing"
                 ),
             )
         )
@@ -270,15 +264,9 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                 )
             )
     rosbridge_url = str(os.getenv("AURA_ROSBRIDGE_URL") or "").strip()
-    rosbridge_manifest = str(
-        os.getenv("AURA_ROSBRIDGE_NODE_MANIFEST_JSON") or ""
-    ).strip()
-    rosbridge_installation = str(
-        os.getenv("AURA_ROSBRIDGE_INSTALLATION_ID") or ""
-    ).strip()
-    rosbridge_present = bool(
-        rosbridge_url or rosbridge_manifest or rosbridge_installation
-    )
+    rosbridge_manifest = str(os.getenv("AURA_ROSBRIDGE_NODE_MANIFEST_JSON") or "").strip()
+    rosbridge_installation = str(os.getenv("AURA_ROSBRIDGE_INSTALLATION_ID") or "").strip()
+    rosbridge_present = bool(rosbridge_url or rosbridge_manifest or rosbridge_installation)
     if not rosbridge_present:
         statuses.append(
             ConnectorBootStatus(
@@ -338,9 +326,7 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
     scpi_manifest = str(os.getenv("AURA_SCPI_RESOURCES_JSON") or "").strip()
     scpi_installation = str(os.getenv("AURA_SCPI_INSTALLATION_ID") or "").strip()
     scpi_expected_idn = str(os.getenv("AURA_SCPI_EXPECTED_IDN_SHA256") or "").strip()
-    scpi_present = bool(
-        scpi_endpoint or scpi_manifest or scpi_installation or scpi_expected_idn
-    )
+    scpi_present = bool(scpi_endpoint or scpi_manifest or scpi_installation or scpi_expected_idn)
     if not scpi_present:
         statuses.append(
             ConnectorBootStatus(
@@ -350,9 +336,7 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                 state="not_configured",
             )
         )
-    elif not all(
-        (scpi_endpoint, scpi_manifest, scpi_installation, scpi_expected_idn)
-    ):
+    elif not all((scpi_endpoint, scpi_manifest, scpi_installation, scpi_expected_idn)):
         missing = [
             name
             for name, value in (
@@ -383,6 +367,63 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
             statuses.append(
                 ConnectorBootStatus(
                     connector_id="scpi.manifest",
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
+    azure_dt_values = {
+        "AURA_AZURE_DT_ENDPOINT": str(os.getenv("AURA_AZURE_DT_ENDPOINT") or "").strip(),
+        "AURA_AZURE_DT_INSTANCE_ID": str(os.getenv("AURA_AZURE_DT_INSTANCE_ID") or "").strip(),
+        "AURA_AZURE_DT_RESOURCES_JSON": str(
+            os.getenv("AURA_AZURE_DT_RESOURCES_JSON") or ""
+        ).strip(),
+        "AURA_AZURE_DT_TENANT_ID": str(os.getenv("AURA_AZURE_DT_TENANT_ID") or "").strip(),
+        "AURA_AZURE_DT_CLIENT_ID": str(os.getenv("AURA_AZURE_DT_CLIENT_ID") or "").strip(),
+        "AURA_AZURE_DT_CLIENT_SECRET": str(os.getenv("AURA_AZURE_DT_CLIENT_SECRET") or "").strip(),
+    }
+    if not any(azure_dt_values.values()):
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="azure.digital_twins",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not all(azure_dt_values.values()):
+        missing = [name for name, value in azure_dt_values.items() if not value]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="azure.digital_twins",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.azure_digital_twins_connector import (
+                build_configured_azure_digital_twins_connector,
+            )
+
+            connector = build_configured_azure_digital_twins_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="azure.digital_twins",
                     configured=True,
                     registered=False,
                     state="invalid",
