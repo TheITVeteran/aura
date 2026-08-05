@@ -14,7 +14,7 @@ import re
 import stat
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -44,9 +44,12 @@ _MAX_CASES = 128
 _MAX_FAULT_RECEIPTS = 4096
 _MAX_CERTIFICATE_BYTES = 1024 * 1024
 _MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
-_CERTIFICATE_SCHEMA = "aura.reality_reach.acceptance_certificate.v1"
-_CERTIFICATE_VERSION = 1
-_EVIDENCE_SCHEMA = "aura.reality_reach.acceptance_evidence.v1"
+_CERTIFICATE_SCHEMA = "aura.reality_reach.acceptance_certificate.v2"
+_CERTIFICATE_VERSION = 2
+_EVIDENCE_SCHEMA = "aura.reality_reach.acceptance_evidence.v2"
+ACCEPTANCE_GOVERNANCE_SCHEMA = "aura.reality_reach.acceptance_governance.v1"
+
+AcceptanceExecutor = Callable[..., Awaitable[Mapping[str, Any]]]
 
 REQUIRED_SCALAR_ACCEPTANCE_CASES = (
     "observation.fresh",
@@ -230,6 +233,8 @@ class ConnectorAcceptanceCertificate:
     cases: tuple[AcceptanceCaseResult, ...]
     scenario_id: str = ""
     metrology_evidence_sha256: str = ""
+    governance_evidence_sha256: str = ""
+    governance_accepted: bool = False
 
     def __post_init__(self) -> None:
         for name in ("campaign_id", "connector_id", "adapter_id"):
@@ -267,6 +272,14 @@ class ConnectorAcceptanceCertificate:
                 name="metrology_evidence_sha256",
             )
         object.__setattr__(self, "metrology_evidence_sha256", metrology)
+        governance = str(self.governance_evidence_sha256 or "").strip().lower()
+        if governance:
+            governance = _sha256(governance, name="governance_evidence_sha256")
+        object.__setattr__(self, "governance_evidence_sha256", governance)
+        if not isinstance(self.governance_accepted, bool):
+            raise TypeError("governance_accepted must be a bool")
+        if self.governance_accepted and not governance:
+            raise ValueError("accepted governance requires bound evidence")
         if (
             any(item.evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP for item in cases)
             and not scenario
@@ -281,6 +294,16 @@ class ConnectorAcceptanceCertificate:
 
     @property
     def live_acceptance_passed(self) -> bool:
+        return bool(
+            self.physical_evidence_passed
+            and self.governance_accepted
+            and self.governance_evidence_sha256
+        )
+
+    @property
+    def physical_evidence_passed(self) -> bool:
+        """Producer-side physical/metrology verdict before governance replay."""
+
         return bool(
             self.deterministic_passed
             and self.metrology_evidence_sha256
@@ -321,6 +344,8 @@ class ConnectorAcceptanceCertificate:
             "completed_at_ns": self.completed_at_ns,
             "scenario_id": self.scenario_id,
             "metrology_evidence_sha256": self.metrology_evidence_sha256,
+            "governance_evidence_sha256": self.governance_evidence_sha256,
+            "governance_accepted": self.governance_accepted,
             "cases": [item.to_dict() for item in self.cases],
             "deterministic_passed": self.deterministic_passed,
             "live_acceptance_passed": self.live_acceptance_passed,
@@ -338,6 +363,8 @@ class ConnectorAcceptanceCertificate:
             "completed_at_ns",
             "scenario_id",
             "metrology_evidence_sha256",
+            "governance_evidence_sha256",
+            "governance_accepted",
             "cases",
             "deterministic_passed",
             "live_acceptance_passed",
@@ -359,6 +386,8 @@ class ConnectorAcceptanceCertificate:
                 cases=tuple(AcceptanceCaseResult.from_dict(item) for item in raw_cases),
                 scenario_id=document["scenario_id"],
                 metrology_evidence_sha256=document["metrology_evidence_sha256"],
+                governance_evidence_sha256=document["governance_evidence_sha256"],
+                governance_accepted=document["governance_accepted"],
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise AcceptanceError("acceptance_certificate_body_invalid") from exc
@@ -475,6 +504,7 @@ class AcceptanceCertificateStore:
         case_evidence: Mapping[str, Any],
         *,
         metrology_receipt: AcquisitionReceipt | None = None,
+        governance_evidence: Mapping[str, Any] | None = None,
     ) -> bool:
         """Create-once publish the evidence needed for independent replay."""
 
@@ -499,12 +529,26 @@ class AcceptanceCertificateStore:
                 raise AcceptanceError("acceptance_evidence_metrology_mismatch")
         elif metrology_receipt is not None:
             raise AcceptanceError("acceptance_evidence_unbound_metrology")
+        governance = (
+            _strict_json_loads(_canonical_json_bytes(governance_evidence))
+            if governance_evidence is not None
+            else {}
+        )
+        if certificate.governance_evidence_sha256:
+            if (
+                not isinstance(governance, Mapping)
+                or _digest(governance) != certificate.governance_evidence_sha256
+            ):
+                raise AcceptanceError("acceptance_evidence_governance_mismatch")
+        elif governance:
+            raise AcceptanceError("acceptance_evidence_unbound_governance")
         document = {
             "schema": _EVIDENCE_SCHEMA,
             "campaign_id": certificate.campaign_id,
             "certificate_sha256": certificate.sha256,
             "case_evidence": canonical_evidence,
             "metrology_receipt": metrology,
+            "governance_evidence": governance,
         }
         payload = _canonical_json_bytes(document, max_bytes=_MAX_EVIDENCE_BYTES)
         filename = self._evidence_filename(certificate.campaign_id)
@@ -546,12 +590,14 @@ class AcceptanceCertificateStore:
                 "certificate_sha256",
                 "case_evidence",
                 "metrology_receipt",
+                "governance_evidence",
             }
             or document.get("schema") != _EVIDENCE_SCHEMA
             or document.get("campaign_id") != certificate.campaign_id
             or document.get("certificate_sha256") != certificate.sha256
             or not isinstance(document.get("case_evidence"), dict)
             or not isinstance(document.get("metrology_receipt"), dict)
+            or not isinstance(document.get("governance_evidence"), dict)
         ):
             raise AcceptanceError("acceptance_evidence_envelope_invalid")
         expected_cases = {item.case_id: item for item in certificate.cases}
@@ -561,6 +607,12 @@ class AcceptanceCertificateStore:
         for case_id, result in expected_cases.items():
             if _digest(evidence[case_id]) != result.evidence_sha256:
                 raise AcceptanceError("acceptance_evidence_case_digest_mismatch")
+        governance = document["governance_evidence"]
+        if certificate.governance_evidence_sha256:
+            if _digest(governance) != certificate.governance_evidence_sha256:
+                raise AcceptanceError("acceptance_evidence_governance_mismatch")
+        elif governance:
+            raise AcceptanceError("acceptance_evidence_unbound_governance")
         if payload != _canonical_json_bytes(document, max_bytes=_MAX_EVIDENCE_BYTES):
             raise AcceptanceError("acceptance_evidence_noncanonical")
         return document
@@ -641,7 +693,7 @@ class ScalarAcceptancePlan:
 
 
 class ScalarAcceptanceRunner:
-    """Exercise one scalar adapter without minting governance or authority."""
+    """Exercise one scalar adapter under external governance for physical runs."""
 
     _CASE_IDS = REQUIRED_SCALAR_ACCEPTANCE_CASES
 
@@ -650,6 +702,8 @@ class ScalarAcceptanceRunner:
         adapter: ScalarRealityAdapter,
         service: RealityReachService,
         plan: ScalarAcceptancePlan,
+        *,
+        governed_executor: AcceptanceExecutor | None = None,
     ) -> None:
         if not isinstance(adapter, ScalarRealityAdapter):
             raise TypeError("adapter must be a ScalarRealityAdapter")
@@ -668,7 +722,9 @@ class ScalarAcceptanceRunner:
         self._adapter = adapter
         self._service = service
         self._plan = plan
+        self._governed_executor = governed_executor
         self._case_evidence: dict[str, Any] = {}
+        self._governance_evidence: dict[str, Any] = {}
 
     @property
     def case_evidence(self) -> dict[str, Any]:
@@ -681,7 +737,20 @@ class ScalarAcceptanceRunner:
     def metrology_receipt(self) -> AcquisitionReceipt | None:
         return self._plan.metrology_receipt
 
-    def _lease(self, command_sha256: str, *, suffix: str) -> ActuationLease:
+    @property
+    def governance_evidence(self) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _strict_json_loads(_canonical_json_bytes(self._governance_evidence)),
+        )
+
+    def _lease(
+        self,
+        command_sha256: str,
+        *,
+        suffix: str,
+        authority_receipt_id: str,
+    ) -> ActuationLease:
         now_wall = time.time_ns()
         now_mono = time.monotonic_ns()
         duration_ns = int(self._plan.deadline_s * 1_000_000_000)
@@ -690,7 +759,7 @@ class ScalarAcceptanceRunner:
             command_sha256=command_sha256,
             adapter_id=self._adapter.adapter_id,
             session_id=self._service.session_id,
-            authority_receipt_id=self._plan.authority_receipt_id,
+            authority_receipt_id=authority_receipt_id,
             issued_at_ns=now_wall,
             expires_at_ns=now_wall + duration_ns,
             issued_monotonic_ns=now_mono,
@@ -737,7 +806,7 @@ class ScalarAcceptanceRunner:
             detail=error_type,
         )
 
-    async def run(self) -> ConnectorAcceptanceCertificate:
+    async def _run_cases(self, *, authority_receipt_id: str) -> ConnectorAcceptanceCertificate:
         self._case_evidence = {}
         started_at_ns = max(1, time.time_ns())
         results: dict[str, AcceptanceCaseResult] = {}
@@ -778,7 +847,11 @@ class ScalarAcceptanceRunner:
                     idempotency_key=f"{self._plan.campaign_id}.cancel",
                     source="reality_reach.acceptance",
                 )
-                cancel_lease = self._lease(cancel_command.sha256, suffix="cancel")
+                cancel_lease = self._lease(
+                    cancel_command.sha256,
+                    suffix="cancel",
+                    authority_receipt_id=authority_receipt_id,
+                )
                 cancel_prepared = await self._adapter.prepare(
                     cancel_command,
                     cancel_lease,
@@ -821,7 +894,11 @@ class ScalarAcceptanceRunner:
                     idempotency_key=f"{self._plan.campaign_id}.actuate",
                     source="reality_reach.acceptance",
                 )
-                lease = self._lease(command.sha256, suffix="actuate")
+                lease = self._lease(
+                    command.sha256,
+                    suffix="actuate",
+                    authority_receipt_id=authority_receipt_id,
+                )
                 prepared = await self._adapter.prepare(command, lease)
                 results["actuation.prepare"] = self._result(
                     "actuation.prepare",
@@ -940,6 +1017,127 @@ class ScalarAcceptanceRunner:
             ),
         )
 
+    @staticmethod
+    def _governance_document(result: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema": ACCEPTANCE_GOVERNANCE_SCHEMA,
+            "action_id": str(result.get("action_id") or ""),
+            "request_digest": str(result.get("request_digest") or ""),
+            "will_receipt_id": str(result.get("will_receipt_id") or ""),
+            "post_action_receipt_id": str(result.get("post_action_receipt_id") or ""),
+            "post_action_output_hash": str(result.get("post_action_output_hash") or ""),
+            "status": str(result.get("status") or ""),
+            "transport_succeeded": result.get("transport_succeeded") is True,
+            "effect_verified": result.get("effect_verified") is True,
+            "receipt_persisted": result.get("receipt_persisted") is True,
+            "welfare_transaction_completed": (
+                result.get("welfare_transaction_completed") is True
+            ),
+        }
+
+    @staticmethod
+    def _governance_accepted(evidence: Mapping[str, Any]) -> bool:
+        return bool(
+            evidence.get("schema") == ACCEPTANCE_GOVERNANCE_SCHEMA
+            and evidence.get("action_id")
+            and evidence.get("request_digest")
+            and evidence.get("will_receipt_id")
+            and evidence.get("post_action_receipt_id")
+            and _DIGEST.fullmatch(str(evidence.get("request_digest") or ""))
+            and _DIGEST.fullmatch(str(evidence.get("post_action_output_hash") or ""))
+            and evidence.get("status") == "success_verified"
+            and evidence.get("transport_succeeded") is True
+            and evidence.get("effect_verified") is True
+            and evidence.get("receipt_persisted") is True
+            and evidence.get("welfare_transaction_completed") is True
+        )
+
+    async def _run_governed(self) -> ConnectorAcceptanceCertificate:
+        from core.governance.will import ActionDomain
+        from core.runtime.action_executor import ActionExecutor
+        from core.runtime.skill_contract import ActionExpectation
+
+        executor = self._governed_executor or ActionExecutor.execute
+        completed: dict[str, ConnectorAcceptanceCertificate] = {}
+
+        async def effect_handler(context: Mapping[str, Any]) -> Mapping[str, Any]:
+            authority_receipt_id = str(context.get("will_receipt_id") or "")
+            if not _IDENTIFIER.fullmatch(authority_receipt_id):
+                raise AcceptanceError("acceptance_governance_receipt_invalid")
+            certificate = await self._run_cases(
+                authority_receipt_id=authority_receipt_id,
+            )
+            completed["certificate"] = certificate
+            dispatch = next(
+                item for item in certificate.cases if item.case_id == "actuation.dispatch"
+            )
+            return {
+                "ok": certificate.deterministic_passed,
+                "transport_succeeded": dispatch.verdict is AcceptanceVerdict.PASS,
+                "acceptance_certificate_sha256": certificate.sha256,
+                "metrology_evidence_sha256": certificate.metrology_evidence_sha256,
+            }
+
+        async def effect_verifier(_context: Mapping[str, Any]) -> Mapping[str, Any]:
+            certificate = completed.get("certificate")
+            return {
+                "effect_verified": bool(
+                    certificate is not None and certificate.physical_evidence_passed
+                ),
+                "acceptance_certificate_sha256": (
+                    certificate.sha256 if certificate is not None else ""
+                ),
+            }
+
+        raw_result = await executor(
+            domain=ActionDomain.ENVIRONMENT_ACTION,
+            action_name=f"reality_reach.acceptance.{self._plan.connector_id}",
+            params={
+                "campaign_id": self._plan.campaign_id,
+                "adapter_id": self._adapter.adapter_id,
+                "physical_identity_sha256": self._adapter.physical_identity_sha256,
+                "evidence_class": self._plan.evidence_class.value,
+                "target": self._plan.target,
+            },
+            source="reality_reach.acceptance",
+            rollback_target="adapter.rollback_or_safe_state",
+            expectation=ActionExpectation(
+                objective="exercise and restore one declared physical effect",
+                required_evidence=[
+                    "acceptance_certificate_sha256",
+                    "metrology_evidence_sha256",
+                ],
+                rollback_hint="restore the pre-dispatch value or declared safe state",
+                allow_partial=False,
+            ),
+            effect_handler=effect_handler,
+            effect_verifier=effect_verifier,
+            execution_timeout_s=self._plan.deadline_s,
+            verification_timeout_s=self._plan.deadline_s,
+            action_id=f"acceptance.{self._plan.campaign_id}"[:128],
+        )
+        if not isinstance(raw_result, Mapping):
+            raise AcceptanceError("acceptance_governance_result_invalid")
+        certificate = completed.get("certificate")
+        if certificate is None:
+            raise AcceptanceError("acceptance_governance_refused_before_dispatch")
+        governance = self._governance_document(raw_result)
+        self._governance_evidence = governance
+        accepted = self._governance_accepted(governance)
+        return replace(
+            certificate,
+            governance_evidence_sha256=_digest(governance),
+            governance_accepted=accepted,
+        )
+
+    async def run(self) -> ConnectorAcceptanceCertificate:
+        self._governance_evidence = {}
+        if self._plan.evidence_class is AcceptanceEvidenceClass.SIMULATION:
+            return await self._run_cases(
+                authority_receipt_id=self._plan.authority_receipt_id,
+            )
+        return await self._run_governed()
+
     async def run_and_persist(
         self,
         store: AcceptanceCertificateStore | None = None,
@@ -955,6 +1153,9 @@ class ScalarAcceptanceRunner:
             certificate,
             self.case_evidence,
             metrology_receipt=self.metrology_receipt,
+            governance_evidence=(
+                self.governance_evidence if certificate.governance_evidence_sha256 else None
+            ),
         )
         return certificate
 
@@ -1206,6 +1407,7 @@ class FaultInjectingScalarTransport:
 
 
 __all__ = [
+    "ACCEPTANCE_GOVERNANCE_SCHEMA",
     "AcceptanceCertificateStore",
     "AcceptanceCaseResult",
     "AcceptanceError",

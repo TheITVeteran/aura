@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from core.reality_reach.acceptance import (
+    ACCEPTANCE_GOVERNANCE_SCHEMA,
     REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceError,
     AcceptanceEvidenceClass,
@@ -20,7 +21,7 @@ from core.reality_reach.acceptance import (
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
-VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v2"
+VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v3"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -172,6 +173,65 @@ def _metrology_blockers(
     return blockers
 
 
+def _governance_blockers(
+    certificate: ConnectorAcceptanceCertificate,
+    evidence_document: Mapping[str, Any],
+    trusted_digest: str,
+) -> list[str]:
+    governance = evidence_document.get("governance_evidence")
+    if not isinstance(governance, Mapping):
+        return ["governance_evidence_missing"]
+    expected = {
+        "schema",
+        "action_id",
+        "request_digest",
+        "will_receipt_id",
+        "post_action_receipt_id",
+        "post_action_output_hash",
+        "status",
+        "transport_succeeded",
+        "effect_verified",
+        "receipt_persisted",
+        "welfare_transaction_completed",
+    }
+    if set(governance) != expected:
+        return ["governance_evidence_schema_invalid"]
+    blockers: list[str] = []
+    if governance.get("schema") != ACCEPTANCE_GOVERNANCE_SCHEMA:
+        blockers.append("governance_evidence_schema_invalid")
+    for field in (
+        "action_id",
+        "request_digest",
+        "will_receipt_id",
+        "post_action_receipt_id",
+    ):
+        if not str(governance.get(field) or "").strip():
+            blockers.append(f"governance_{field}_missing")
+    if not _DIGEST.fullmatch(str(governance.get("request_digest") or "")):
+        blockers.append("governance_request_digest_invalid")
+    if not _DIGEST.fullmatch(str(governance.get("post_action_output_hash") or "")):
+        blockers.append("governance_post_action_output_hash_invalid")
+    if governance.get("status") != "success_verified":
+        blockers.append("governance_status_not_verified")
+    for field in (
+        "transport_succeeded",
+        "effect_verified",
+        "receipt_persisted",
+        "welfare_transaction_completed",
+    ):
+        if governance.get(field) is not True:
+            blockers.append(f"governance_{field}_false")
+    governance_sha = _digest(dict(governance))
+    if (
+        governance_sha != certificate.governance_evidence_sha256
+        or governance_sha != trusted_digest
+    ):
+        blockers.append("trusted_governance_mismatch")
+    if certificate.governance_accepted is not True:
+        blockers.append("producer_governance_not_accepted")
+    return blockers
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceVerificationReceipt:
     campaign_id: str
@@ -180,6 +240,7 @@ class AcceptanceVerificationReceipt:
     expected_physical_identity_sha256: str
     expected_evidence_class: AcceptanceEvidenceClass
     trusted_metrology_evidence_sha256: str
+    trusted_governance_evidence_sha256: str
     replayed_cases: tuple[str, ...]
     blockers: tuple[str, ...]
     deterministic_accepted: bool
@@ -201,6 +262,10 @@ class AcceptanceVerificationReceipt:
             self.trusted_metrology_evidence_sha256
         ):
             raise ValueError("trusted_metrology_evidence_sha256 must be empty or a digest")
+        if self.trusted_governance_evidence_sha256 and not _DIGEST.fullmatch(
+            self.trusted_governance_evidence_sha256
+        ):
+            raise ValueError("trusted_governance_evidence_sha256 must be empty or a digest")
         if len(self.replayed_cases) != len(set(self.replayed_cases)):
             raise ValueError("replayed_cases must be unique")
         if len(self.blockers) != len(set(self.blockers)):
@@ -231,6 +296,7 @@ class AcceptanceVerificationReceipt:
             "expected_physical_identity_sha256": self.expected_physical_identity_sha256,
             "expected_evidence_class": self.expected_evidence_class.value,
             "trusted_metrology_evidence_sha256": self.trusted_metrology_evidence_sha256,
+            "trusted_governance_evidence_sha256": self.trusted_governance_evidence_sha256,
             "replayed_cases": list(self.replayed_cases),
             "blockers": list(self.blockers),
             "deterministic_accepted": self.deterministic_accepted,
@@ -250,6 +316,7 @@ def verify_acceptance_evidence(
     expected_physical_identity_sha256: str,
     expected_evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION,
     trusted_metrology_evidence_sha256: str = "",
+    trusted_governance_evidence_sha256: str = "",
     required_cases: Sequence[str] = REQUIRED_SCALAR_ACCEPTANCE_CASES,
 ) -> AcceptanceVerificationReceipt:
     """Recompute case verdicts without trusting producer-derived booleans."""
@@ -266,6 +333,10 @@ def verify_acceptance_evidence(
         trusted_metrology_evidence_sha256
     ):
         raise ValueError("trusted_metrology_evidence_sha256 must be empty or a digest")
+    if trusted_governance_evidence_sha256 and not _DIGEST.fullmatch(
+        trusted_governance_evidence_sha256
+    ):
+        raise ValueError("trusted_governance_evidence_sha256 must be empty or a digest")
     raw_evidence = evidence_document.get("case_evidence")
     if not isinstance(raw_evidence, Mapping):
         raise AcceptanceError("acceptance_replay_evidence_missing")
@@ -284,8 +355,21 @@ def verify_acceptance_evidence(
     if expected_evidence_class is AcceptanceEvidenceClass.SIMULATION:
         if trusted_metrology_evidence_sha256:
             blockers.append("unexpected_trusted_metrology")
+        if trusted_governance_evidence_sha256:
+            blockers.append("unexpected_trusted_governance")
+        if (
+            certificate.governance_evidence_sha256
+            or certificate.governance_accepted
+            or evidence_document.get("governance_evidence")
+        ):
+            blockers.append("unexpected_governance_evidence")
     elif not trusted_metrology_evidence_sha256:
         blockers.append("trusted_metrology_missing")
+    if (
+        expected_evidence_class is not AcceptanceEvidenceClass.SIMULATION
+        and not trusted_governance_evidence_sha256
+    ):
+        blockers.append("trusted_governance_missing")
 
     replayed: list[str] = []
     normalized: dict[str, Mapping[str, Any]] = {}
@@ -325,6 +409,13 @@ def verify_acceptance_evidence(
                 expected_evidence_class,
             )
         )
+        blockers.extend(
+            _governance_blockers(
+                certificate,
+                evidence_document,
+                trusted_governance_evidence_sha256,
+            )
+        )
     deterministic = not blockers and certificate.deterministic_passed
     return AcceptanceVerificationReceipt(
         campaign_id=certificate.campaign_id,
@@ -333,6 +424,7 @@ def verify_acceptance_evidence(
         expected_physical_identity_sha256=expected_physical_identity_sha256,
         expected_evidence_class=expected_evidence_class,
         trusted_metrology_evidence_sha256=trusted_metrology_evidence_sha256,
+        trusted_governance_evidence_sha256=trusted_governance_evidence_sha256,
         replayed_cases=tuple(replayed),
         blockers=tuple(sorted(set(blockers))),
         deterministic_accepted=deterministic,

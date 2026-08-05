@@ -35,6 +35,7 @@ def main() -> int:
         help="Externally declared burden; simulation, HIL, and live are not interchangeable.",
     )
     parser.add_argument("--metrology-evidence-sha256", default="")
+    parser.add_argument("--governance-evidence-sha256", default="")
     parser.add_argument("--receipt-output", type=Path)
     args = parser.parse_args()
 
@@ -48,6 +49,7 @@ def main() -> int:
         expected_physical_identity_sha256=args.physical_identity_sha256,
         expected_evidence_class=AcceptanceEvidenceClass(args.expected_evidence_class),
         trusted_metrology_evidence_sha256=args.metrology_evidence_sha256,
+        trusted_governance_evidence_sha256=args.governance_evidence_sha256,
     )
     if args.receipt_output is not None:
         persist_verification_receipt(receipt, args.receipt_output)

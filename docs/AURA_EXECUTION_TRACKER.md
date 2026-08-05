@@ -35879,3 +35879,45 @@ long-running actuator cancellation, physical safe-state convergence, and
 live/HIL metrology remain unmeasured. CP810 and the total remain open at
 809/920 until those campaigns run against external trust inputs and the exact
 requested evidence class is independently accepted.
+
+#### CP810 addendum: governed physical-acceptance execution
+
+HIL and live acceptance can no longer exercise an actuator using an authority
+identifier supplied by the acceptance plan. Their complete observe, cancel,
+dispatch, independently verify, and restore lifecycle now runs inside one
+canonical `ActionExecutor` transaction. The runner takes the actual Will
+receipt from that governed context and binds it into every actuation lease. A
+policy refusal before dispatch raises a distinct acceptance error and performs
+zero transport writes. Deterministic simulation remains isolated and keeps its
+explicit fixture authority rather than being mislabeled as governed physical
+evidence.
+
+The resulting certificate binds a versioned governance evidence document:
+action and request identities, the actual Will receipt, durable post-action
+receipt and output digest, verified status, transport/effect verdicts, receipt
+persistence, and welfare transaction closure. Producer-side live acceptance
+now requires both the independently measured physical lifecycle and this
+governance result. The independent verifier does not trust that boolean: HIL
+and live replay require a separately supplied trusted governance digest,
+recompute the document digest and exact schema, and reject missing fields,
+nonterminal statuses, failed closure flags, digest substitution, or a producer
+that did not accept its own governance result. Simulation rejects governance
+evidence or a governance trust input, preventing cross-class promotion.
+
+Governed-acceptance evidence:
+
+- governed live dispatch, actual-Will lease binding, reversible effect,
+  refusal-before-dispatch, zero-write refusal, external governance-digest
+  substitution, and fresh-process live CLI replay: 29/29 focused tests passed;
+- full affected connector, middleware, actuation, transaction, trust,
+  sensory-initializer, and WorldBridge family: 538/538 passed;
+- smoke 103/103, repository compile, governance lint, layering, local security,
+  scoped MyPy, and Ruff all passed.
+
+This closes the direct physical-acceptance governance bypass. It does not turn
+a locally supplied digest into an external trust root or manufacture physical
+observations. Real AWS/Azure tenants, real network loss and credential expiry,
+representative long-running actuator cancellation, physical safe-state
+convergence, live/HIL metrology, and independent custody of the metrology and
+governance trust digests remain unmeasured. CP810 and the total remain open at
+809/920 until those external campaigns are run and independently accepted.

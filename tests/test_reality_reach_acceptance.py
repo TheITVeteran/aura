@@ -230,6 +230,8 @@ def _certificate(
     *,
     scenario_id: str = "",
     metrology_evidence_sha256: str = "",
+    governance_evidence_sha256: str = "",
+    governance_accepted: bool = False,
 ) -> ConnectorAcceptanceCertificate:
     return ConnectorAcceptanceCertificate(
         campaign_id="cp810.connector.acceptance",
@@ -242,7 +244,25 @@ def _certificate(
         cases=cases,
         scenario_id=scenario_id,
         metrology_evidence_sha256=metrology_evidence_sha256,
+        governance_evidence_sha256=governance_evidence_sha256,
+        governance_accepted=governance_accepted,
     )
+
+
+def _governance_evidence() -> dict[str, Any]:
+    return {
+        "schema": "aura.reality_reach.acceptance_governance.v1",
+        "action_id": "acceptance.cp810.fixture",
+        "request_digest": _digest("governed-request"),
+        "will_receipt_id": "will.cp810.fixture",
+        "post_action_receipt_id": "post.cp810.fixture",
+        "post_action_output_hash": _digest("governed-output"),
+        "status": "success_verified",
+        "transport_succeeded": True,
+        "effect_verified": True,
+        "receipt_persisted": True,
+        "welfare_transaction_completed": True,
+    }
 
 
 def test_simulation_certificate_can_pass_deterministically_but_not_live() -> None:
@@ -280,6 +300,8 @@ def test_hil_certificate_requires_scenario_and_every_required_case() -> None:
         tuple(_case(item.case_id, item.evidence_class) for item in cases),
         scenario_id="physical-rig-1",
         metrology_evidence_sha256=_digest("verified-hil-metrology"),
+        governance_evidence_sha256=_digest(_governance_evidence()),
+        governance_accepted=True,
     )
     assert complete.deterministic_passed is True
     assert complete.live_acceptance_passed is True
@@ -418,6 +440,9 @@ def _runner(
     *,
     initial: ScalarSample,
     target: float = 7.0,
+    evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION,
+    metrology_receipt: AcquisitionReceipt | None = None,
+    governed_executor: Any = None,
 ) -> ScalarAcceptanceRunner:
     adapter = ScalarRealityAdapter(
         transport,
@@ -447,8 +472,31 @@ def _runner(
             target=target,
             source_commit_sha256=_digest("dae896754"),
             authority_receipt_id="authority.cp810.fixture",
+            evidence_class=evidence_class,
+            metrology_receipt=metrology_receipt,
         ),
+        governed_executor=governed_executor,
     )
+
+
+async def _governed_executor(**kwargs: Any) -> dict[str, Any]:
+    context = {"will_receipt_id": "will.cp810.actual"}
+    dispatch = dict(await kwargs["effect_handler"](context))
+    verification = dict(await kwargs["effect_verifier"](context))
+    return {
+        **dispatch,
+        **verification,
+        "action_id": kwargs["action_id"],
+        "request_digest": _digest("governed-request"),
+        "will_receipt_id": context["will_receipt_id"],
+        "post_action_receipt_id": "post.cp810.actual",
+        "post_action_output_hash": _digest("governed-output"),
+        "status": "success_verified",
+        "transport_succeeded": True,
+        "effect_verified": True,
+        "receipt_persisted": True,
+        "welfare_transaction_completed": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -467,6 +515,109 @@ async def test_scalar_acceptance_runner_proves_complete_reversible_lifecycle() -
     assert certificate.live_acceptance_passed is False
     assert transport.value == 1.0
     assert transport.writes == 2
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_is_governed_and_independently_replayed(tmp_path) -> None:
+    transport = _Transport()
+    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        metrology_receipt=metrology,
+        governed_executor=_governed_executor,
+    )
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+
+    certificate = await runner.run_and_persist(store)
+    evidence = store.load_evidence(certificate)
+    receipt = verify_acceptance_evidence(
+        certificate,
+        evidence,
+        expected_source_commit_sha256=certificate.source_commit_sha256,
+        expected_physical_identity_sha256=certificate.physical_identity_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+        trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+        trusted_governance_evidence_sha256=certificate.governance_evidence_sha256,
+    )
+
+    assert runner.governance_evidence["will_receipt_id"] == "will.cp810.actual"
+    assert certificate.governance_accepted is True
+    assert certificate.live_acceptance_passed is True
+    assert transport.value == 1.0
+    assert transport.writes == 2
+    assert receipt.accepted is True
+    assert receipt.blockers == ()
+
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "tools/reality_reach/verify_acceptance.py",
+        "--root",
+        str(store.root),
+        "--campaign-id",
+        certificate.campaign_id,
+        "--source-commit-sha256",
+        certificate.source_commit_sha256,
+        "--physical-identity-sha256",
+        certificate.physical_identity_sha256,
+        "--expected-evidence-class",
+        "live",
+        "--metrology-evidence-sha256",
+        metrology.evidence_sha256,
+        "--governance-evidence-sha256",
+        certificate.governance_evidence_sha256,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
+
+    assert process.returncode == 0, stderr.decode()
+    replay = json.loads(stdout)
+    assert replay["accepted"] is True
+    assert replay["expected_evidence_class"] == "live"
+    assert replay["trusted_governance_evidence_sha256"] == (
+        certificate.governance_evidence_sha256
+    )
+
+    substituted = verify_acceptance_evidence(
+        certificate,
+        evidence,
+        expected_source_commit_sha256=certificate.source_commit_sha256,
+        expected_physical_identity_sha256=certificate.physical_identity_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+        trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+        trusted_governance_evidence_sha256=_digest("substituted-governance"),
+    )
+    assert substituted.accepted is False
+    assert "trusted_governance_mismatch" in substituted.blockers
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_refused_before_dispatch_performs_no_writes() -> None:
+    async def refused_executor(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "status": "blocked_by_policy",
+            "will_receipt_id": "will.cp810.refused",
+        }
+
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        metrology_receipt=_metrology_receipt(
+            AcquisitionMode.LIVE,
+            (EvidenceSource.LIVE,),
+        ),
+        governed_executor=refused_executor,
+    )
+
+    with pytest.raises(AcceptanceError, match="refused_before_dispatch"):
+        await runner.run()
+
+    assert transport.writes == 0
 
 
 @pytest.mark.asyncio
@@ -615,12 +766,15 @@ async def test_acceptance_cli_replays_in_fresh_process(tmp_path) -> None:
 
 def test_live_replay_requires_recomputed_trusted_metrology() -> None:
     metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    governance = _governance_evidence()
     cases = tuple(
         _case(case_id, AcceptanceEvidenceClass.LIVE) for case_id in REQUIRED_SCALAR_ACCEPTANCE_CASES
     )
     certificate = _certificate(
         cases,
         metrology_evidence_sha256=metrology.evidence_sha256,
+        governance_evidence_sha256=_digest(governance),
+        governance_accepted=True,
     )
     evidence = {
         "case_evidence": {
@@ -628,6 +782,7 @@ def test_live_replay_requires_recomputed_trusted_metrology() -> None:
             for case in cases
         },
         "metrology_receipt": metrology.to_dict(),
+        "governance_evidence": governance,
     }
 
     receipt = verify_acceptance_evidence(
@@ -637,6 +792,7 @@ def test_live_replay_requires_recomputed_trusted_metrology() -> None:
         expected_physical_identity_sha256=certificate.physical_identity_sha256,
         expected_evidence_class=AcceptanceEvidenceClass.LIVE,
         trusted_metrology_evidence_sha256=_digest("wrong-metrology"),
+        trusted_governance_evidence_sha256=_digest(governance),
     )
 
     assert receipt.live_accepted is False
@@ -649,16 +805,20 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
     runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
     simulated = await runner.run()
     metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    governance = _governance_evidence()
     live_certificate = replace(
         simulated,
         cases=tuple(
             replace(item, evidence_class=AcceptanceEvidenceClass.LIVE) for item in simulated.cases
         ),
         metrology_evidence_sha256=metrology.evidence_sha256,
+        governance_evidence_sha256=_digest(governance),
+        governance_accepted=True,
     )
     evidence = {
         "case_evidence": runner.case_evidence,
         "metrology_receipt": metrology.to_dict(),
+        "governance_evidence": governance,
     }
 
     accepted = verify_acceptance_evidence(
@@ -668,6 +828,7 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
         expected_physical_identity_sha256=live_certificate.physical_identity_sha256,
         expected_evidence_class=AcceptanceEvidenceClass.LIVE,
         trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+        trusted_governance_evidence_sha256=_digest(governance),
     )
     substituted = verify_acceptance_evidence(
         live_certificate,
@@ -676,6 +837,7 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
         expected_physical_identity_sha256=live_certificate.physical_identity_sha256,
         expected_evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
         trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+        trusted_governance_evidence_sha256=_digest(governance),
     )
 
     assert accepted.accepted is True
