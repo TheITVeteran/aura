@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.reality_reach.acceptance import (
+    REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceCertificateStore,
     AcceptanceError,
     AcceptanceEvidenceClass,
@@ -193,6 +194,8 @@ class RealityAcceptanceService:
             "adapter_id": adapter.adapter_id,
             "physical_identity_sha256": adapter.physical_identity_sha256,
             "transport_class": adapter.transport_class.value,
+            "target_tolerance": adapter.effect_tolerance,
+            "required_cases": list(REQUIRED_SCALAR_ACCEPTANCE_CASES),
             "observation_channels": list(observation_channels),
             "supported_evidence_classes": list(evidence_classes),
             **source,

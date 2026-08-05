@@ -36076,3 +36076,50 @@ This closes campaign preparation ambiguity and request-size amplification. It
 does not make producer-observed identity independent: external trust-root
 custody and real tenant/device campaigns remain required, so CP810 and the
 total remain open at 809/920.
+
+#### CP810 addendum: precommitted acceptance mandate custody
+
+Physical acceptance now has a create-once verification mandate that fixes the
+question before the campaign begins. The mandate binds the campaign,
+connector, adapter, boot-pinned source digest, physical-device identity,
+evidence class, HIL scenario, scalar target, exact tolerance, and canonical
+required case set. Provisioning time and the original custody sequence are
+also inside the mandate digest. An idempotent replay returns the original commitment; any
+attempt to reuse the campaign id with a different contract fails without
+advancing state.
+
+Mandates live in a dedicated `AuraRealityReachAcceptance` macOS Keychain
+namespace rather than the physical-attachment trust namespace. The filesystem
+contains only an AES-256-GCM ciphertext envelope; the encryption key and
+monotonic commit anchor remain in Keychain. Valid older envelopes, divergent
+heads, missing custody roots, ciphertext edits, symlinks, and permissive file
+modes therefore fail closed through the existing rollback-resistant custody
+boundary. The precommit tool
+`tools/reality_reach/provision_acceptance_mandate.py` provisions this state,
+and the independent verifier can consume it through `--mandate-state`.
+
+Mandate-bound replay refuses post-result substitution of campaign, connector,
+adapter, source, device, evidence class, target, tolerance, or required cases.
+It also rejects scenario substitution and any certificate whose declared start
+predates the committed mandate. Its create-once receipt binds both the mandate
+digest and the complete independent replay receipt. Producer preflight now exposes the exact adapter
+effect tolerance and required case set needed to prepare the mandate, while
+retaining the explicit `producer_observation_not_independent_acceptance`
+boundary.
+
+Mandate-custody evidence:
+
+- ciphertext-only persistence, restart recovery, exact idempotency,
+  conflicting reprovision refusal, rollback rejection, all identity/target
+  substitution cases, pre-mandate evidence rejection, and private create-once
+  receipt collision checks: 68/68 focused acceptance, route, and custody tests
+  passed;
+- full affected Reality Reach import family: 447/447 passed;
+- smoke 103/103, repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This closes after-the-fact verifier-question selection under machine-local,
+rollback-resistant custody. It is not independent witness custody: a separate
+metrology/governance trust root and real tenant/device campaigns are still
+required. CP810 and the total therefore remain open at 809/920.

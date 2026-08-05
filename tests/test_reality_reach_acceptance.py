@@ -792,6 +792,8 @@ async def test_operational_service_runs_and_persists_live_campaign(tmp_path) -> 
         "adapter_id": adapter.adapter_id,
         "physical_identity_sha256": adapter.physical_identity_sha256,
         "transport_class": "physical",
+        "target_tolerance": adapter.effect_tolerance,
+        "required_cases": list(REQUIRED_SCALAR_ACCEPTANCE_CASES),
         "observation_channels": [
             adapter.actuator_capabilities()[0].observation_channels[0]
         ],

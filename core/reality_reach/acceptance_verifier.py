@@ -18,10 +18,14 @@ from core.reality_reach.acceptance import (
     AcceptanceVerdict,
     ConnectorAcceptanceCertificate,
 )
+from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
 VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v4"
+MANDATED_VERIFICATION_RECEIPT_SCHEMA = (
+    "aura.reality_reach.acceptance_mandated_verification.v1"
+)
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -349,6 +353,57 @@ class AcceptanceVerificationReceipt:
         return document
 
 
+@dataclass(frozen=True, slots=True)
+class MandatedAcceptanceVerificationReceipt:
+    """A replay verdict bound to the question fixed before execution."""
+
+    campaign_id: str
+    mandate_sha256: str
+    mandate_contract_sha256: str
+    verification: AcceptanceVerificationReceipt
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.campaign_id:
+            raise ValueError("campaign_id must be non-empty")
+        for name in ("mandate_sha256", "mandate_contract_sha256"):
+            if not _DIGEST.fullmatch(str(getattr(self, name))):
+                raise ValueError(f"{name} must be a sha256 digest")
+        if not isinstance(self.verification, AcceptanceVerificationReceipt):
+            raise TypeError("verification must be an AcceptanceVerificationReceipt")
+        if len(self.blockers) != len(set(self.blockers)):
+            raise ValueError("blockers must be unique")
+        if (
+            self.verification.campaign_id != self.campaign_id
+            and "mandate_campaign_mismatch" not in self.blockers
+        ):
+            raise ValueError(
+                "campaign mismatch must be represented by a mandate blocker"
+            )
+
+    @property
+    def accepted(self) -> bool:
+        return bool(not self.blockers and self.verification.accepted)
+
+    @property
+    def sha256(self) -> str:
+        return _digest(self.to_dict(include_digest=False))
+
+    def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
+        document = {
+            "schema": MANDATED_VERIFICATION_RECEIPT_SCHEMA,
+            "campaign_id": self.campaign_id,
+            "mandate_sha256": self.mandate_sha256,
+            "mandate_contract_sha256": self.mandate_contract_sha256,
+            "verification": self.verification.to_dict(),
+            "blockers": list(self.blockers),
+            "accepted": self.accepted,
+        }
+        if include_digest:
+            document["mandated_verification_sha256"] = self.sha256
+        return document
+
+
 def verify_acceptance_evidence(
     certificate: ConnectorAcceptanceCertificate,
     evidence_document: Mapping[str, Any],
@@ -473,18 +528,76 @@ def verify_acceptance_evidence(
     )
 
 
-def persist_verification_receipt(
-    receipt: AcceptanceVerificationReceipt,
-    path: str | Path,
-) -> bool:
-    """Create-once publish one independently reconstructed verdict."""
+def verify_acceptance_against_mandate(
+    certificate: ConnectorAcceptanceCertificate,
+    evidence_document: Mapping[str, Any],
+    mandate: AcceptanceVerificationMandate,
+    *,
+    trusted_metrology_evidence_sha256: str = "",
+    trusted_governance_evidence_sha256: str = "",
+) -> MandatedAcceptanceVerificationReceipt:
+    """Replay evidence against a create-once pre-execution mandate."""
 
-    if not isinstance(receipt, AcceptanceVerificationReceipt):
-        raise TypeError("receipt must be an AcceptanceVerificationReceipt")
+    if not isinstance(mandate, AcceptanceVerificationMandate):
+        raise TypeError("mandate must be an AcceptanceVerificationMandate")
+    blockers: list[str] = []
+    if certificate.campaign_id != mandate.campaign_id:
+        blockers.append("mandate_campaign_mismatch")
+    if certificate.connector_id != mandate.connector_id:
+        blockers.append("mandate_connector_mismatch")
+    if certificate.adapter_id != mandate.adapter_id:
+        blockers.append("mandate_adapter_mismatch")
+    if certificate.source_commit_sha256 != mandate.expected_source_commit_sha256:
+        blockers.append("mandate_source_commit_mismatch")
+    if (
+        certificate.physical_identity_sha256
+        != mandate.expected_physical_identity_sha256
+    ):
+        blockers.append("mandate_physical_identity_mismatch")
+    observed_classes = {
+        item.evidence_class for item in certificate.cases if item.required
+    }
+    if observed_classes != {mandate.expected_evidence_class}:
+        blockers.append("mandate_evidence_class_mismatch")
+    if certificate.target != mandate.target:
+        blockers.append("mandate_target_mismatch")
+    if certificate.target_tolerance != mandate.target_tolerance:
+        blockers.append("mandate_target_tolerance_mismatch")
+    if certificate.scenario_id != mandate.scenario_id:
+        blockers.append("mandate_scenario_mismatch")
+    if tuple(item.case_id for item in certificate.cases) != mandate.required_cases:
+        blockers.append("mandate_required_case_set_mismatch")
+    if certificate.started_at_ns < mandate.provisioned_at_ns:
+        blockers.append("campaign_predates_mandate")
+    verification = verify_acceptance_evidence(
+        certificate,
+        evidence_document,
+        expected_source_commit_sha256=mandate.expected_source_commit_sha256,
+        expected_physical_identity_sha256=mandate.expected_physical_identity_sha256,
+        expected_evidence_class=mandate.expected_evidence_class,
+        trusted_metrology_evidence_sha256=trusted_metrology_evidence_sha256,
+        trusted_governance_evidence_sha256=trusted_governance_evidence_sha256,
+        required_cases=mandate.required_cases,
+    )
+    return MandatedAcceptanceVerificationReceipt(
+        campaign_id=mandate.campaign_id,
+        mandate_sha256=mandate.sha256,
+        mandate_contract_sha256=mandate.contract_sha256,
+        verification=verification,
+        blockers=tuple(sorted(set(blockers))),
+    )
+
+
+def _persist_receipt_document(
+    document: Mapping[str, Any],
+    path: str | Path,
+    *,
+    collision_code: str,
+) -> bool:
     target = Path(path).expanduser().absolute()
     if not target.name or target.name in {".", ".."}:
         raise AcceptanceError("acceptance_verification_path_invalid")
-    payload = canonical_json(receipt.to_dict())
+    payload = canonical_json(dict(document))
     try:
         with DirectoryCustody.acquire(target.parent, create=True, private=True) as custody:
             published = bool(custody.write_bytes_once(target.name, payload, mode=0o600))
@@ -498,13 +611,47 @@ def persist_verification_receipt(
     except SecurePathCustodyError as exc:
         raise AcceptanceError("acceptance_verification_custody_invalid") from exc
     if existing != payload:
-        raise AcceptanceError("acceptance_verification_receipt_collision")
+        raise AcceptanceError(collision_code)
     return published
+
+
+def persist_verification_receipt(
+    receipt: AcceptanceVerificationReceipt,
+    path: str | Path,
+) -> bool:
+    """Create-once publish one independently reconstructed verdict."""
+
+    if not isinstance(receipt, AcceptanceVerificationReceipt):
+        raise TypeError("receipt must be an AcceptanceVerificationReceipt")
+    return _persist_receipt_document(
+        receipt.to_dict(),
+        path,
+        collision_code="acceptance_verification_receipt_collision",
+    )
+
+
+def persist_mandated_verification_receipt(
+    receipt: MandatedAcceptanceVerificationReceipt,
+    path: str | Path,
+) -> bool:
+    """Create-once publish a mandate-bound independently replayed verdict."""
+
+    if not isinstance(receipt, MandatedAcceptanceVerificationReceipt):
+        raise TypeError("receipt must be a MandatedAcceptanceVerificationReceipt")
+    return _persist_receipt_document(
+        receipt.to_dict(),
+        path,
+        collision_code="acceptance_mandated_verification_receipt_collision",
+    )
 
 
 __all__ = [
     "AcceptanceVerificationReceipt",
+    "MANDATED_VERIFICATION_RECEIPT_SCHEMA",
+    "MandatedAcceptanceVerificationReceipt",
     "VERIFICATION_RECEIPT_SCHEMA",
+    "persist_mandated_verification_receipt",
     "persist_verification_receipt",
+    "verify_acceptance_against_mandate",
     "verify_acceptance_evidence",
 ]
