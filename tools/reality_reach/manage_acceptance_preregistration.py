@@ -117,15 +117,50 @@ def _system_mandate(path: Path, campaign_id: str) -> AcceptanceVerificationManda
 def _statement(args: argparse.Namespace) -> int:
     mandate = _system_mandate(args.mandate_state, args.campaign_id)
     provision_receipt = _provision_receipt(args.provision_receipt)
-    statement = build_acceptance_preregistration_statement(
-        mandate,
-        provision_receipt,
-        AcceptanceTrustPolicy(
+    digest_values = (
+        args.metrology_witness_key_sha256,
+        args.governance_witness_key_sha256,
+        args.preregistration_log_key_sha256,
+        args.acceptance_log_key_sha256,
+    )
+    key_paths = (
+        args.metrology_witness_public_key,
+        args.governance_witness_public_key,
+        args.preregistration_log_public_key_pem,
+        args.acceptance_log_public_key_pem,
+    )
+    if all(digest_values) and not any(key_paths):
+        trust_policy = AcceptanceTrustPolicy(
             metrology_witness_key_sha256=args.metrology_witness_key_sha256,
             governance_witness_key_sha256=args.governance_witness_key_sha256,
             preregistration_log_key_sha256=args.preregistration_log_key_sha256,
             acceptance_log_key_sha256=args.acceptance_log_key_sha256,
-        ),
+        )
+    elif all(key_paths) and not any(digest_values):
+        trust_policy = AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=_read_bytes(
+                args.metrology_witness_public_key,
+                maximum=64 * 1024,
+            ),
+            governance_witness_public_key=_read_bytes(
+                args.governance_witness_public_key,
+                maximum=64 * 1024,
+            ),
+            preregistration_log_public_key_pem=_read_bytes(
+                args.preregistration_log_public_key_pem,
+                maximum=64 * 1024,
+            ),
+            acceptance_log_public_key_pem=_read_bytes(
+                args.acceptance_log_public_key_pem,
+                maximum=64 * 1024,
+            ),
+        )
+    else:
+        raise ValueError("acceptance_preregistration_trust_source_invalid")
+    statement = build_acceptance_preregistration_statement(
+        mandate,
+        provision_receipt,
+        trust_policy,
         sequence=args.sequence,
         previous_statement_sha256=args.previous_statement_sha256,
         previous_rekor_uuid=args.previous_rekor_uuid,
@@ -215,10 +250,14 @@ def main(argv: list[str] | None = None) -> int:
     statement.add_argument("--mandate-state", type=Path, required=True)
     statement.add_argument("--campaign-id", required=True)
     statement.add_argument("--provision-receipt", type=Path, required=True)
-    statement.add_argument("--metrology-witness-key-sha256", required=True)
-    statement.add_argument("--governance-witness-key-sha256", required=True)
-    statement.add_argument("--preregistration-log-key-sha256", required=True)
-    statement.add_argument("--acceptance-log-key-sha256", required=True)
+    statement.add_argument("--metrology-witness-key-sha256")
+    statement.add_argument("--governance-witness-key-sha256")
+    statement.add_argument("--preregistration-log-key-sha256")
+    statement.add_argument("--acceptance-log-key-sha256")
+    statement.add_argument("--metrology-witness-public-key", type=Path)
+    statement.add_argument("--governance-witness-public-key", type=Path)
+    statement.add_argument("--preregistration-log-public-key-pem", type=Path)
+    statement.add_argument("--acceptance-log-public-key-pem", type=Path)
     statement.add_argument("--sequence", type=int, required=True)
     statement.add_argument("--previous-statement-sha256", default=ZERO_SHA256)
     statement.add_argument("--previous-rekor-uuid")

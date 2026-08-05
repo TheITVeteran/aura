@@ -36659,3 +36659,42 @@ operator chain. It does not create independently held production keys, publish
 either real public-log entry, actuate and measure a physical device, or execute
 representative tenant/device campaigns. Those remain empirical CP810 blockers,
 so the total remains open at 809/920.
+
+#### CP810 addendum: canonical public-key admission
+
+Acceptance preregistration no longer requires an operator to hand-calculate
+four opaque key digests. `AcceptanceTrustPolicy.from_public_key_material`
+accepts only public key material, normalizes each identity exactly as its later
+verifier does, and constructs the pre-result policy from those canonical
+bytes. Witness roots accept raw or PEM Ed25519 public keys and hash the raw
+32-byte key. Rekor roots accept public elliptic-curve PEM keys and hash their
+DER SubjectPublicKeyInfo representation. This makes harmless PEM formatting
+irrelevant while preventing a manually computed digest from referring to the
+wrong encoding or algorithm.
+
+The preregistration operator supports two explicit, nonmixable modes: all four
+already-audited digests, or all four public-key files. Partial and mixed modes
+fail before statement emission. Private-key PEM, malformed material, wrong key
+algorithms, oversized files, and identical witness roots are rejected. The
+file path inherits descriptor-based custody and bounded reads, so key admission
+does not add a symlink or replacement path and never requires Aura to ingest
+private signing material.
+
+Public-key-admission evidence:
+
+- raw and PEM Ed25519 identities, DER-normalized Rekor identities, policy
+  round-trip, public-file operator statement generation, and exact statement
+  equivalence passed;
+- private witness and log keys, wrong witness/log algorithms, shared witness
+  roots, and mixed digest/file inputs failed before publication; the focused
+  preregistration suite passed 4/4, the complete affected Reality Reach family
+  passed 184/184, and smoke passed 103/103;
+- Ruff, scoped production MyPy, and diff hygiene passed before aggregate
+  repository gates.
+
+This removes key-encoding ambiguity and private-key ingestion from campaign
+preparation. Public keys and self-consistent custody labels still cannot prove
+that another organization or hardware boundary controls them. Real external
+custodians, public-log publication, physical evidence, and representative
+tenant/device campaigns remain empirical CP810 blockers, so the total remains
+open at 809/920.

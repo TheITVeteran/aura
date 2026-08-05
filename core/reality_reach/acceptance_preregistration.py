@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from core.reality_reach.acceptance_mandate import (
     AcceptanceMandateProvisionReceipt,
     AcceptanceVerificationMandate,
@@ -59,6 +63,48 @@ def _digest(value: Any) -> str:
 
 def _bytes_digest(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _witness_public_key_digest(material: bytes, *, role: str) -> str:
+    if not isinstance(material, bytes) or not material or len(material) > 64 * 1024:
+        raise AcceptanceTransparencyError(f"acceptance_{role}_key_invalid")
+    try:
+        if len(material) == 32:
+            key = Ed25519PublicKey.from_public_bytes(material)
+        else:
+            loaded = serialization.load_pem_public_key(material)
+            if not isinstance(loaded, Ed25519PublicKey):
+                raise AcceptanceTransparencyError(
+                    f"acceptance_{role}_key_type_invalid"
+                )
+            key = loaded
+        raw = key.public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+    except AcceptanceTransparencyError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise AcceptanceTransparencyError(f"acceptance_{role}_key_invalid") from exc
+    return _bytes_digest(raw)
+
+
+def _log_public_key_digest(material: bytes, *, role: str) -> str:
+    if not isinstance(material, bytes) or not material or len(material) > 64 * 1024:
+        raise AcceptanceTransparencyError(f"acceptance_{role}_key_invalid")
+    try:
+        key = serialization.load_pem_public_key(material)
+        if not isinstance(key, ec.EllipticCurvePublicKey):
+            raise AcceptanceTransparencyError(f"acceptance_{role}_key_type_invalid")
+        der = key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    except AcceptanceTransparencyError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise AcceptanceTransparencyError(f"acceptance_{role}_key_invalid") from exc
+    return _bytes_digest(der)
 
 
 def _require_trust_policy(
@@ -112,6 +158,36 @@ class AcceptanceTrustPolicy:
         if include_digest:
             document["trust_policy_sha256"] = self.sha256
         return document
+
+    @classmethod
+    def from_public_key_material(
+        cls,
+        *,
+        metrology_witness_public_key: bytes,
+        governance_witness_public_key: bytes,
+        preregistration_log_public_key_pem: bytes,
+        acceptance_log_public_key_pem: bytes,
+    ) -> AcceptanceTrustPolicy:
+        """Derive verifier-canonical identities without importing private keys."""
+
+        return cls(
+            metrology_witness_key_sha256=_witness_public_key_digest(
+                metrology_witness_public_key,
+                role="metrology_witness",
+            ),
+            governance_witness_key_sha256=_witness_public_key_digest(
+                governance_witness_public_key,
+                role="governance_witness",
+            ),
+            preregistration_log_key_sha256=_log_public_key_digest(
+                preregistration_log_public_key_pem,
+                role="preregistration_log",
+            ),
+            acceptance_log_key_sha256=_log_public_key_digest(
+                acceptance_log_public_key_pem,
+                role="acceptance_log",
+            ),
+        )
 
     @classmethod
     def from_dict(cls, document: Mapping[str, Any]) -> AcceptanceTrustPolicy:

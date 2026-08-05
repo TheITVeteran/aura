@@ -209,29 +209,31 @@ def test_preregistration_proves_mandate_predates_campaign(
         == provision_receipt
     )
     issued_at = 1_785_082_400
+    metrology_witness_key = Ed25519PrivateKey.generate()
+    governance_witness_key = Ed25519PrivateKey.generate()
     preregistration_log_key = ec.generate_private_key(ec.SECP256R1())
     acceptance_log_key = ec.generate_private_key(ec.SECP256R1())
-    trust_policy = AcceptanceTrustPolicy(
-        metrology_witness_key_sha256="sha256:" + "4" * 64,
-        governance_witness_key_sha256="sha256:" + "5" * 64,
-        preregistration_log_key_sha256=(
-            "sha256:"
-            + hashlib.sha256(
-                preregistration_log_key.public_key().public_bytes(
-                    serialization.Encoding.DER,
-                    serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-            ).hexdigest()
-        ),
-        acceptance_log_key_sha256=(
-            "sha256:"
-            + hashlib.sha256(
-                acceptance_log_key.public_key().public_bytes(
-                    serialization.Encoding.DER,
-                    serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-            ).hexdigest()
-        ),
+    metrology_witness_public_pem = metrology_witness_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    governance_witness_public_pem = governance_witness_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    preregistration_log_public_pem = preregistration_log_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    acceptance_log_public_pem = acceptance_log_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    trust_policy = AcceptanceTrustPolicy.from_public_key_material(
+        metrology_witness_public_key=metrology_witness_public_pem,
+        governance_witness_public_key=governance_witness_public_pem,
+        preregistration_log_public_key_pem=preregistration_log_public_pem,
+        acceptance_log_public_key_pem=acceptance_log_public_pem,
     )
     statement = build_acceptance_preregistration_statement(
         mandate,
@@ -275,6 +277,14 @@ def test_preregistration_proves_mandate_predates_campaign(
     )
     operator_statement_path = tmp_path / "operator-preregistration.json"
     operator_payload_path = tmp_path / "operator-preregistration.payload"
+    metrology_key_path = tmp_path / "metrology-witness-public.pem"
+    governance_key_path = tmp_path / "governance-witness-public.pem"
+    preregistration_log_key_path = tmp_path / "preregistration-log-public.pem"
+    acceptance_log_key_path = tmp_path / "acceptance-log-public.pem"
+    metrology_key_path.write_bytes(metrology_witness_public_pem)
+    governance_key_path.write_bytes(governance_witness_public_pem)
+    preregistration_log_key_path.write_bytes(preregistration_log_public_pem)
+    acceptance_log_key_path.write_bytes(acceptance_log_public_pem)
     assert prereg_tool.main(
         [
             "statement",
@@ -284,14 +294,14 @@ def test_preregistration_proves_mandate_predates_campaign(
             mandate.campaign_id,
             "--provision-receipt",
             str(provision_path),
-            "--metrology-witness-key-sha256",
-            trust_policy.metrology_witness_key_sha256,
-            "--governance-witness-key-sha256",
-            trust_policy.governance_witness_key_sha256,
-            "--preregistration-log-key-sha256",
-            trust_policy.preregistration_log_key_sha256,
-            "--acceptance-log-key-sha256",
-            trust_policy.acceptance_log_key_sha256,
+            "--metrology-witness-public-key",
+            str(metrology_key_path),
+            "--governance-witness-public-key",
+            str(governance_key_path),
+            "--preregistration-log-public-key-pem",
+            str(preregistration_log_key_path),
+            "--acceptance-log-public-key-pem",
+            str(acceptance_log_key_path),
             "--sequence",
             "1",
             "--issued-at-unix",
@@ -304,6 +314,37 @@ def test_preregistration_proves_mandate_predates_campaign(
     ) == 0
     assert json.loads(operator_statement_path.read_text()) == statement
     capsys.readouterr()
+    with pytest.raises(
+        ValueError,
+        match="acceptance_preregistration_trust_source_invalid",
+    ):
+        prereg_tool.main(
+            [
+                "statement",
+                "--mandate-state",
+                str(tmp_path / "mandates.encrypted.json"),
+                "--campaign-id",
+                mandate.campaign_id,
+                "--provision-receipt",
+                str(provision_path),
+                "--metrology-witness-public-key",
+                str(metrology_key_path),
+                "--governance-witness-public-key",
+                str(governance_key_path),
+                "--preregistration-log-public-key-pem",
+                str(preregistration_log_key_path),
+                "--acceptance-log-key-sha256",
+                trust_policy.acceptance_log_key_sha256,
+                "--sequence",
+                "1",
+                "--issued-at-unix",
+                str(issued_at),
+                "--statement-output",
+                str(tmp_path / "mixed-source-statement.json"),
+                "--payload-output",
+                str(tmp_path / "mixed-source-payload.bin"),
+            ]
+        )
 
     signature_path = tmp_path / "producer-signature.raw"
     certificate_path = tmp_path / "producer-certificate.pem"
@@ -467,6 +508,96 @@ def test_preregistration_rejects_posthoc_or_rebound_questions() -> None:
     attacked["custody_sequence"] = 8
     with pytest.raises(AcceptanceMandateError, match="provision_receipt_digest_invalid"):
         AcceptanceMandateProvisionReceipt.from_dict(attacked)
+
+
+def test_trust_policy_admits_only_canonical_public_key_material() -> None:
+    metrology = Ed25519PrivateKey.generate()
+    governance = Ed25519PrivateKey.generate()
+    preregistration_log = ec.generate_private_key(ec.SECP256R1())
+    acceptance_log = ec.generate_private_key(ec.SECP256R1())
+    metrology_raw = metrology.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    governance_pem = governance.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    preregistration_log_pem = preregistration_log.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    acceptance_log_pem = acceptance_log.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    policy = AcceptanceTrustPolicy.from_public_key_material(
+        metrology_witness_public_key=metrology_raw,
+        governance_witness_public_key=governance_pem,
+        preregistration_log_public_key_pem=preregistration_log_pem,
+        acceptance_log_public_key_pem=acceptance_log_pem,
+    )
+
+    assert policy.metrology_witness_key_sha256 == (
+        "sha256:" + hashlib.sha256(metrology_raw).hexdigest()
+    )
+    assert AcceptanceTrustPolicy.from_dict(policy.to_dict()) == policy
+    with pytest.raises(
+        AcceptanceTransparencyError,
+        match="acceptance_metrology_witness_key_invalid",
+    ):
+        AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=metrology.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            governance_witness_public_key=governance_pem,
+            preregistration_log_public_key_pem=preregistration_log_pem,
+            acceptance_log_public_key_pem=acceptance_log_pem,
+        )
+    with pytest.raises(
+        AcceptanceTransparencyError,
+        match="acceptance_metrology_witness_key_type_invalid",
+    ):
+        AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=preregistration_log_pem,
+            governance_witness_public_key=governance_pem,
+            preregistration_log_public_key_pem=preregistration_log_pem,
+            acceptance_log_public_key_pem=acceptance_log_pem,
+        )
+    with pytest.raises(
+        AcceptanceTransparencyError,
+        match="acceptance_preregistration_log_key_type_invalid",
+    ):
+        AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=metrology_raw,
+            governance_witness_public_key=governance_pem,
+            preregistration_log_public_key_pem=governance_pem,
+            acceptance_log_public_key_pem=acceptance_log_pem,
+        )
+    with pytest.raises(
+        AcceptanceTransparencyError,
+        match="acceptance_acceptance_log_key_invalid",
+    ):
+        AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=metrology_raw,
+            governance_witness_public_key=governance_pem,
+            preregistration_log_public_key_pem=preregistration_log_pem,
+            acceptance_log_public_key_pem=acceptance_log.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+        )
+    with pytest.raises(ValueError, match="witness trust roots must be distinct"):
+        AcceptanceTrustPolicy.from_public_key_material(
+            metrology_witness_public_key=metrology_raw,
+            governance_witness_public_key=metrology_raw,
+            preregistration_log_public_key_pem=preregistration_log_pem,
+            acceptance_log_public_key_pem=acceptance_log_pem,
+        )
 
 
 def test_preregistration_rejects_valid_unregistered_log_root() -> None:
