@@ -14,8 +14,14 @@ LEARNED_SERVICE_MODULES = {
     "topology_evolution": ("core.cognitive.topology_evolution", "TopologyEvolution"),
     "autopoiesis": ("core.cognitive.autopoiesis", "get_autopoiesis_engine"),
     "adaptive_immune_system": ("core.adaptation.adaptive_immunity", "get_adaptive_immune_system"),
-    "autonomous_resilience_mesh": ("core.adaptation.autonomous_resilience", "get_autonomous_resilience_mesh"),
-    "criticality_regulator": ("core.consciousness.criticality_regulator", "get_criticality_regulator"),
+    "autonomous_resilience_mesh": (
+        "core.adaptation.autonomous_resilience",
+        "get_autonomous_resilience_mesh",
+    ),
+    "criticality_regulator": (
+        "core.consciousness.criticality_regulator",
+        "get_criticality_regulator",
+    ),
     "alife_dynamics": ("core.consciousness.alife_dynamics", "ALifeDynamics"),
     "alife_extensions": ("core.consciousness.alife_extensions", "ALifeExtensions"),
     "endogenous_fitness": ("core.consciousness.endogenous_fitness", "get_endogenous_fitness"),
@@ -85,6 +91,16 @@ class RealityActuationService(Service):
     def is_alive(self):
         return True
 
+    async def recover_all_after_restart(self, *, max_transactions=128):
+        self.recovery_max_transactions = max_transactions
+        return {
+            "schema": "aura.reality-reach-restart-recovery-report.v1",
+            "complete": True,
+            "failures": [],
+            "legacy_unrecoverable_transaction_sha256": [],
+            "deferred": 0,
+        }
+
 
 def test_cognitive_sensory_initializer_degradation_audit_is_clean():
     from tools.audit_degradation import analyze_file
@@ -110,7 +126,9 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         register_all_fictional_engines=lambda orchestrator: {"registered": True},
     )
     _install_module(monkeypatch, "core.brain.personality_engine", PersonalityEngine=Service)
-    _install_module(monkeypatch, "core.managers.drive_controller", DriveController=DriveControllerService)
+    _install_module(
+        monkeypatch, "core.managers.drive_controller", DriveController=DriveControllerService
+    )
     _install_module(monkeypatch, "core.senses.voice_engine", get_voice_engine=lambda: Service())
     _install_module(
         monkeypatch,
@@ -176,7 +194,9 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         "core.embodiment.iot_bridge",
         get_iot_bridge=lambda: Service(),
     )
-    _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
+    _install_module(
+        monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service
+    )
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
     _install_module(monkeypatch, "core.guardians.memory_guard", MemoryGuard=Service)
     _install_module(monkeypatch, "core.soma.resilience_engine", ResilienceEngine=Service)
@@ -206,7 +226,9 @@ def _patch_container(monkeypatch):
     def _get(name, default=None):
         return default
 
-    monkeypatch.setattr(cognitive_sensory.ServiceContainer, "register_instance", staticmethod(_register_instance))
+    monkeypatch.setattr(
+        cognitive_sensory.ServiceContainer, "register_instance", staticmethod(_register_instance)
+    )
     monkeypatch.setattr(cognitive_sensory.ServiceContainer, "get", staticmethod(_get))
     return registered
 
@@ -220,9 +242,13 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
 
     report = await init_cognitive_sensory_layer(orchestrator)
+    await orchestrator.reality_actuation_recovery_task
 
     assert report["degraded"] == {}
-    assert report["learned_services"] == {"registered": len(LEARNED_SERVICE_MODULES), "expected": len(LEARNED_SERVICE_MODULES)}
+    assert report["learned_services"] == {
+        "registered": len(LEARNED_SERVICE_MODULES),
+        "expected": len(LEARNED_SERVICE_MODULES),
+    }
     assert "identity_personality" in report["completed"]
     assert "reality_reach" in report["completed"]
     assert "cellular_substrate" in report["completed"]
@@ -234,17 +260,15 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_reach"].refreshed is True
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
+    assert registered["reality_actuation"].recovery_max_transactions == 64
+    assert orchestrator.reality_actuation_recovery["complete"] is True
     assert registered["reality_middleware"] is orchestrator.reality_middleware
     assert registered["reality_metrology"] is orchestrator.reality_metrology
     assert registered["reality_metrology"].args[0] is orchestrator.reality_reach
-    assert registered["reality_metrology"].kwargs["state_path"].name == (
-        "reality_metrology.json"
-    )
+    assert registered["reality_metrology"].kwargs["state_path"].name == ("reality_metrology.json")
     assert registered["reality_metrology"].started is True
     assert registered["reality_middleware"].args[0] is orchestrator.reality_reach
-    assert registered["reality_middleware"].kwargs["state_path"].name == (
-        "reality_middleware.json"
-    )
+    assert registered["reality_middleware"].kwargs["state_path"].name == ("reality_middleware.json")
     assert registered["reality_middleware"].started is True
     assert registered["reality_event_flow"] is orchestrator.reality_event_flow
     assert registered["reality_event_flow"].kwargs["middleware"] is (
@@ -258,15 +282,9 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_historian"] is orchestrator.reality_historian
     assert registered["reality_historian"].args[0].name == "reality_historian.sqlite3"
     assert registered["reality_digital_twin"] is orchestrator.reality_digital_twin
-    assert registered["reality_digital_twin"].args[0].name == (
-        "reality_digital_twin.sqlite3"
-    )
-    assert registered["reality_digital_twin"].kwargs["session_id"] == (
-        "test.cognitive-sensory"
-    )
-    assert registered["reality_digital_twin"].reconciled_service is (
-        orchestrator.reality_reach
-    )
+    assert registered["reality_digital_twin"].args[0].name == ("reality_digital_twin.sqlite3")
+    assert registered["reality_digital_twin"].kwargs["session_id"] == ("test.cognitive-sensory")
+    assert registered["reality_digital_twin"].reconciled_service is (orchestrator.reality_reach)
     assert registered["reality_observation_router"] is orchestrator.reality_observation_router
     assert (
         registered["reality_observation_router"].kwargs["historian"]
@@ -288,7 +306,9 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["hardware_manager"] is orchestrator.hardware_manager
     assert registered["hardware_manager"].started is True
     assert registered["hardware_manager"].configured_devices_registered is True
-    assert registered["hardware_manager"].observation_router is orchestrator.reality_observation_router
+    assert (
+        registered["hardware_manager"].observation_router is orchestrator.reality_observation_router
+    )
     assert registered["iot_bridge"] is orchestrator.iot_bridge
     assert registered["iot_bridge"].started is True
     assert registered["iot_bridge"].reality_reach is orchestrator.reality_reach
@@ -306,7 +326,9 @@ async def test_cognitive_sensory_initializer_replaces_nonlive_drive_placeholder(
     registered = _patch_container(monkeypatch)
     stale_controller = SimpleNamespace(get_status=lambda: {"energy": 100})
     orchestrator = SimpleNamespace(
-        affect=SimpleNamespace(_drive_controller=stale_controller, drive_controller=stale_controller)
+        affect=SimpleNamespace(
+            _drive_controller=stale_controller, drive_controller=stale_controller
+        )
     )
 
     report = await init_cognitive_sensory_layer(orchestrator)

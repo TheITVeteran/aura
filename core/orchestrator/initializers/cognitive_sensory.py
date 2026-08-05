@@ -10,6 +10,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import Severity, record_degradation
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger(__name__)
 
@@ -383,9 +384,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 required=True,
                 owner="core/reality_reach/event_flow.py",
                 registered_by="init_cognitive_sensory_layer",
-                required_for=(
-                    "typed durable sensing, reasoning, and governed physical workflows"
-                ),
+                required_for=("typed durable sensing, reasoning, and governed physical workflows"),
                 failure_policy="fail-closed",
             )
         if historian is not None:
@@ -444,9 +443,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         historian = getattr(orchestrator, "reality_historian", None)
         digital_twin = getattr(orchestrator, "reality_digital_twin", None)
         if digital_twin is None:
-            raise RuntimeError(
-                "Reality digital twin is required for the canonical sensory fabric"
-            )
+            raise RuntimeError("Reality digital twin is required for the canonical sensory fabric")
         router = RealityObservationRouter(
             reality_reach,
             historian=historian,
@@ -530,9 +527,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
         broker = getattr(orchestrator, "reality_attachment_broker", None)
         if broker is None:
-            raise RuntimeError(
-                "Reality attachment broker must exist before connector registration"
-            )
+            raise RuntimeError("Reality attachment broker must exist before connector registration")
         catalog = build_configured_reality_connector_catalog()
         if catalog.connectors:
             catalog.register_with(broker)
@@ -546,9 +541,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             required_for="portable protocol connector boot and configuration truth",
             failure_policy="degrade_with_receipt",
         )
-        report["registered"]["reality_connector_catalog"] = (
-            catalog.__class__.__name__
-        )
+        report["registered"]["reality_connector_catalog"] = catalog.__class__.__name__
         for status in catalog.status()["connectors"]:
             if status["state"] != "invalid":
                 continue
@@ -641,6 +634,63 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         "Environmental coupling remained offline; physical IoT effects stay unavailable",
         _iot_bridge,
         severity="warning",
+    )
+
+    async def _reality_restart_recovery() -> None:
+        coordinator = getattr(orchestrator, "reality_actuation", None)
+        recover = getattr(coordinator, "recover_all_after_restart", None)
+        if not callable(recover):
+            raise RuntimeError("Reality actuation restart recovery is unavailable")
+
+        async def _recover_in_background() -> None:
+            try:
+                recovery_report = await recover(max_transactions=64)
+            except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+                _record_cognitive_sensory_degradation(
+                    orchestrator,
+                    exc,
+                    phase="reality_actuation_restart_recovery",
+                    action=(
+                        "Kept requested physical effects closed and retained pending "
+                        "transactions for a later source-bound recovery sweep"
+                    ),
+                    severity="critical",
+                )
+                return
+            orchestrator.reality_actuation_recovery = recovery_report
+            if not bool(recovery_report.get("complete")):
+                error = RuntimeError(
+                    "reality_actuation_restart_recovery_incomplete:"
+                    f"failures={len(recovery_report.get('failures') or [])}:"
+                    "legacy="
+                    f"{len(recovery_report.get('legacy_unrecoverable_transaction_sha256') or [])}:"
+                    f"deferred={int(recovery_report.get('deferred') or 0)}"
+                )
+                _record_cognitive_sensory_degradation(
+                    orchestrator,
+                    error,
+                    phase="reality_actuation_restart_recovery",
+                    action=(
+                        "Recovered every currently source-bound effect that reached "
+                        "observed safe state and retained the remainder as explicit "
+                        "manual or deferred reconciliation debt"
+                    ),
+                    severity="critical",
+                )
+
+        orchestrator.reality_actuation_recovery_task = create_tracked_task(
+            _recover_in_background(),
+            name="reality_reach.restart_recovery",
+            owner="core.orchestrator.initializers.cognitive_sensory",
+            bounded=True,
+        )
+
+    await _run_phase(
+        orchestrator,
+        "reality_restart_recovery",
+        "Physical restart recovery was not scheduled; pending effects remain closed",
+        _reality_restart_recovery,
+        severity="critical",
     )
 
     async def _multimodal_orchestrator() -> None:

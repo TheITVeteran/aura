@@ -35,9 +35,11 @@ from core.runtime.atomic_writer import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_lock
+from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 from core.runtime.skill_contract import ActionExpectation
 
 TRANSACTION_SCHEMA = "aura.reality-reach-actuation-transaction.v1"
+COMMAND_CAPSULE_SCHEMA = "aura.reality-reach-actuation-command.v1"
 _TERMINAL = frozenset(
     {
         ActuationState.EFFECT_VERIFIED,
@@ -60,8 +62,11 @@ _NO_AUTOMATIC_REPLAY = frozenset(
 )
 Executor = Callable[..., Awaitable[dict[str, Any]]]
 _MAX_TRANSACTION_BYTES = 1024 * 1024
+_MAX_RECOVERY_SCAN_ENTRIES = 8192
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+_TRANSACTION_FILENAME = re.compile(r"^(?P<stem>[0-9a-f]{64})\.json$")
+_COMMAND_CAPSULE_FILENAME = re.compile(r"^(?P<stem>[0-9a-f]{64})\.command$")
 
 
 class RealityActuationError(RuntimeError):
@@ -87,6 +92,11 @@ def _record_path(root: Path, idempotency_key: str) -> Path:
     return root / f"{digest}.json"
 
 
+def _command_capsule_filename(idempotency_key: str) -> str:
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"{digest}.command"
+
+
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
     return json.dumps(
         dict(value),
@@ -95,6 +105,38 @@ def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
         ensure_ascii=True,
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _strict_json_mapping(payload: bytes, *, role: str) -> dict[str, Any]:
+    if not payload or len(payload) > _MAX_TRANSACTION_BYTES:
+        raise RealityActuationError(f"reality_actuation_{role}_size_invalid")
+
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise RealityActuationError(f"reality_actuation_{role}_duplicate_json_key")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> None:
+        raise RealityActuationError(f"reality_actuation_{role}_non_finite_number")
+
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=object_pairs,
+            parse_constant=reject_constant,
+        )
+    except RealityActuationError:
+        raise
+    except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+        raise RealityActuationError(f"reality_actuation_{role}_unreadable") from exc
+    if not isinstance(value, dict):
+        raise RealityActuationError(f"reality_actuation_{role}_not_mapping")
+    if payload != _canonical_bytes(value):
+        raise RealityActuationError(f"reality_actuation_{role}_noncanonical")
+    return value
 
 
 def _private_root(path: Path) -> Path:
@@ -295,11 +337,9 @@ class RealityActuationCoordinator:
                 raise RealityActuationError("reality_actuation_transaction_type_invalid")
             try:
                 raw = _read_record_bytes(path)
-                value = json.loads(raw.decode("utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                value = _strict_json_mapping(raw, role="transaction")
+            except OSError as exc:
                 raise RealityActuationError("reality_actuation_transaction_unreadable") from exc
-            if not isinstance(value, Mapping):
-                raise RealityActuationError("reality_actuation_transaction_not_mapping")
             record = _validate_record(value)
             if (
                 record["command_id"] != command.command_id
@@ -308,6 +348,71 @@ class RealityActuationCoordinator:
             ):
                 raise RealityActuationError("reality_actuation_idempotency_collision")
             return record
+
+    @staticmethod
+    def _command_capsule_document(command: ActuationCommand) -> dict[str, Any]:
+        return {
+            "schema": COMMAND_CAPSULE_SCHEMA,
+            "command": command.to_dict(),
+            "command_sha256": command.sha256,
+        }
+
+    @staticmethod
+    def _verify_capsule_mode(custody: DirectoryCustody, filename: str) -> None:
+        fd = custody.open_file(filename, os.O_RDONLY)
+        try:
+            if stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
+                raise RealityActuationError("reality_actuation_command_capsule_mode_invalid")
+        finally:
+            os.close(fd)
+
+    def _persist_command_capsule(self, command: ActuationCommand) -> None:
+        filename = _command_capsule_filename(command.idempotency_key)
+        payload = _canonical_bytes(self._command_capsule_document(command))
+        try:
+            with DirectoryCustody.acquire(self._root, create=True, private=True) as custody:
+                custody.write_bytes_once(filename, payload, mode=0o600)
+                self._verify_capsule_mode(custody, filename)
+                existing = custody.read_bytes(
+                    filename,
+                    max_bytes=_MAX_TRANSACTION_BYTES,
+                )
+        except RealityActuationError:
+            raise
+        except SecurePathCustodyError as exc:
+            raise RealityActuationError(
+                "reality_actuation_command_capsule_custody_invalid"
+            ) from exc
+        if existing != payload:
+            raise RealityActuationError("reality_actuation_command_capsule_collision")
+
+    @classmethod
+    def _load_command_capsule(
+        cls,
+        custody: DirectoryCustody,
+        filename: str,
+    ) -> ActuationCommand:
+        if not _COMMAND_CAPSULE_FILENAME.fullmatch(filename):
+            raise RealityActuationError("reality_actuation_command_capsule_name_invalid")
+        cls._verify_capsule_mode(custody, filename)
+        payload = custody.read_bytes(filename, max_bytes=_MAX_TRANSACTION_BYTES)
+        document = _strict_json_mapping(payload, role="command_capsule")
+        if set(document) != {"schema", "command", "command_sha256"} or (
+            document.get("schema") != COMMAND_CAPSULE_SCHEMA
+            or not isinstance(document.get("command"), Mapping)
+        ):
+            raise RealityActuationError("reality_actuation_command_capsule_schema_invalid")
+        try:
+            command = ActuationCommand.from_dict(document["command"])
+        except (TypeError, ValueError) as exc:
+            raise RealityActuationError(
+                "reality_actuation_command_capsule_command_invalid"
+            ) from exc
+        if document.get("command_sha256") != command.sha256:
+            raise RealityActuationError("reality_actuation_command_capsule_digest_invalid")
+        if filename != _command_capsule_filename(command.idempotency_key):
+            raise RealityActuationError("reality_actuation_command_capsule_identity_invalid")
+        return command
 
     def is_alive(self) -> bool:
         try:
@@ -324,11 +429,13 @@ class RealityActuationCoordinator:
             "ready": self.is_ready(),
             "executable_actuator_channels": list(self._service.executable_actuator_channels()),
             "transaction_schema": TRANSACTION_SCHEMA,
+            "command_capsule_schema": COMMAND_CAPSULE_SCHEMA,
         }
 
     def _create(self, command: ActuationCommand) -> dict[str, Any]:
         path = _record_path(self._root, command.idempotency_key)
         with interprocess_file_lock(self._lock_path):
+            self._persist_command_capsule(command)
             if path.is_symlink():
                 raise RealityActuationError("reality_actuation_transaction_symlink_refused")
             if path.exists():
@@ -360,6 +467,62 @@ class RealityActuationCoordinator:
             record = {**body, "transaction_sha256": _sha256(body)}
             atomic_write_bytes(path, _canonical_bytes(record), mode=0o600)
             return _validate_record(record)
+
+    def _discover_recovery_commands(
+        self,
+        max_transactions: int,
+    ) -> tuple[tuple[ActuationCommand, ...], tuple[str, ...], tuple[str, ...], int]:
+        command_names: dict[str, str] = {}
+        transaction_stems: set[str] = set()
+        scanned = 0
+        try:
+            with (
+                interprocess_file_lock(self._lock_path),
+                DirectoryCustody.acquire(
+                    self._root,
+                    create=True,
+                    private=True,
+                ) as custody,
+            ):
+                with os.scandir(custody.fileno()) as entries:
+                    for entry in entries:
+                        scanned += 1
+                        if scanned > _MAX_RECOVERY_SCAN_ENTRIES:
+                            raise RealityActuationError(
+                                "reality_actuation_recovery_scan_limit_exceeded"
+                            )
+                        name = str(entry.name)
+                        command_match = _COMMAND_CAPSULE_FILENAME.fullmatch(name)
+                        transaction_match = _TRANSACTION_FILENAME.fullmatch(name)
+                        if command_match is not None:
+                            command_names[command_match.group("stem")] = name
+                        elif transaction_match is not None:
+                            transaction_stems.add(transaction_match.group("stem"))
+                capsule_stems = set(command_names)
+                legacy = tuple(sorted(transaction_stems - capsule_stems))
+                capsule_without_transaction = tuple(sorted(capsule_stems - transaction_stems))
+                commands: list[ActuationCommand] = []
+                deferred = 0
+                for stem in sorted(capsule_stems & transaction_stems):
+                    command = self._load_command_capsule(custody, command_names[stem])
+                    record = self._load(command)
+                    if record is None or ActuationState(record["state"]) not in {
+                        ActuationState.PLANNED,
+                        ActuationState.ADMITTED,
+                        ActuationState.DISPATCHED,
+                        ActuationState.EXECUTED,
+                        ActuationState.INDETERMINATE,
+                    }:
+                        continue
+                    if len(commands) < max_transactions:
+                        commands.append(command)
+                    else:
+                        deferred += 1
+        except RealityActuationError:
+            raise
+        except (OSError, SecurePathCustodyError) as exc:
+            raise RealityActuationError("reality_actuation_recovery_scan_custody_invalid") from exc
+        return tuple(commands), legacy, capsule_without_transaction, deferred
 
     def _transition(
         self,
@@ -632,6 +795,65 @@ class RealityActuationCoordinator:
                     },
                 )
             return self._replay(latest)
+
+    async def recover_all_after_restart(
+        self,
+        *,
+        max_transactions: int = 128,
+    ) -> dict[str, Any]:
+        """Boundedly recover every reconstructable nonterminal transaction."""
+
+        if (
+            isinstance(max_transactions, bool)
+            or not isinstance(max_transactions, int)
+            or not 1 <= max_transactions <= 1024
+        ):
+            raise ValueError("max_transactions must lie inside [1, 1024]")
+        commands, legacy, capsule_only, deferred = await asyncio.to_thread(
+            self._discover_recovery_commands,
+            max_transactions,
+        )
+        recovered: list[dict[str, Any]] = []
+        failures: list[dict[str, str]] = []
+        for command in commands:
+            before = await asyncio.to_thread(self._load, command)
+            before_state = str((before or {}).get("state") or "missing")
+            try:
+                result = await self.recover_after_restart(command)
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                failures.append(
+                    {
+                        "command_sha256": command.sha256,
+                        "error_type": type(exc).__name__,
+                        "error_sha256": _sha256(str(exc)),
+                    }
+                )
+                continue
+            record = result.get("reality_reach_transaction")
+            after_state = (
+                str(record.get("state") or "missing") if isinstance(record, Mapping) else "missing"
+            )
+            recovered.append(
+                {
+                    "command_sha256": command.sha256,
+                    "before_state": before_state,
+                    "after_state": after_state,
+                    "manual_reconciliation_required": bool(
+                        result.get("manual_reconciliation_required")
+                    ),
+                }
+            )
+        return {
+            "schema": "aura.reality-reach-restart-recovery-report.v1",
+            "eligible": len(commands) + deferred,
+            "processed": len(commands),
+            "deferred": deferred,
+            "recovered": recovered,
+            "failures": failures,
+            "legacy_unrecoverable_transaction_sha256": [f"sha256:{item}" for item in legacy],
+            "capsule_without_transaction_sha256": [f"sha256:{item}" for item in capsule_only],
+            "complete": not failures and not legacy and not capsule_only and deferred == 0,
+        }
 
     async def _dispatch_adapter(
         self,
@@ -977,6 +1199,7 @@ def get_reality_actuation_coordinator(
 
 
 __all__ = [
+    "COMMAND_CAPSULE_SCHEMA",
     "RealityActuationCoordinator",
     "RealityActuationError",
     "TRANSACTION_SCHEMA",

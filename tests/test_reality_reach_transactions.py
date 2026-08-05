@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -281,6 +284,22 @@ def _command(service: RealityReachService) -> ActuationCommand:
         expected_effects=("temperature_changed",),
         abort_predicates=("thermal_limit",),
     )
+
+
+def _capsule_path(root: Path) -> Path:
+    return next(root.glob("*.command"))
+
+
+def test_actuation_command_round_trips_through_strict_document() -> None:
+    adapter = TransactionAdapter()
+    command = _command(_service(adapter))
+
+    restored = ActuationCommand.from_dict(command.to_dict())
+
+    assert restored == command
+    assert restored.sha256 == command.sha256
+    with pytest.raises(ValueError, match="schema"):
+        ActuationCommand.from_dict({**command.to_dict(), "unexpected": True})
 
 
 @pytest.mark.asyncio
@@ -582,6 +601,156 @@ async def test_restart_recovery_refuses_inventory_drift_before_safe_state(
             monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
         ).recover_after_restart(drifted)
     assert adapter.safe_state_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_reconstructs_command_and_recovers_without_caller_object(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    first_process = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    first_process._create(command)
+    first_process._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.DISPATCHED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.1",
+        },
+    )
+    del command
+    restarted = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS + 1,
+        monotonic_clock_ns=lambda: MONOTONIC_NS + 1,
+    )
+
+    report = await restarted.recover_all_after_restart()
+
+    assert report["complete"] is True
+    assert report["eligible"] == 1
+    assert report["processed"] == 1
+    assert report["recovered"][0]["before_state"] == "dispatched"
+    assert report["recovered"][0]["after_state"] == "safe_state"
+    assert adapter.safe_state_calls == 1
+    assert adapter.actuation_calls == 0
+    capsule = _capsule_path(tmp_path)
+    assert stat.S_IMODE(capsule.stat().st_mode) == 0o600
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_reports_legacy_transaction_without_command_capsule(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    _capsule_path(tmp_path).unlink()
+
+    report = await coordinator.recover_all_after_restart()
+
+    assert report["complete"] is False
+    assert report["processed"] == 0
+    assert len(report["legacy_unrecoverable_transaction_sha256"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_bounds_work_and_reports_deferred_transactions(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    base = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    for index in range(3):
+        command = replace(
+            base,
+            command_id=f"test.command.{index + 1}",
+            request_id=f"test.request.{index + 1}",
+            idempotency_key=f"test.idempotency.{index + 1}",
+        )
+        coordinator._create(command)
+
+    report = await coordinator.recover_all_after_restart(max_transactions=2)
+
+    assert report["eligible"] == 3
+    assert report["processed"] == 2
+    assert report["deferred"] == 1
+    assert report["complete"] is False
+
+
+def test_command_capsule_collision_and_tampering_fail_closed(tmp_path: Path) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    with pytest.raises(RealityActuationError, match="command_capsule_collision"):
+        coordinator._create(replace(command, command_id="test.command.collision"))
+
+    capsule = _capsule_path(tmp_path)
+    document = json.loads(capsule.read_bytes())
+    document["command"]["target"] = 99.0
+    capsule.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    capsule.chmod(0o600)
+    with pytest.raises(RealityActuationError, match="command_capsule_digest_invalid"):
+        coordinator._discover_recovery_commands(10)
+
+
+def test_command_capsule_symlink_replacement_fails_closed(tmp_path: Path) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    capsule = _capsule_path(tmp_path)
+    outside = tmp_path / "outside"
+    capsule.replace(outside)
+    capsule.symlink_to(outside)
+
+    with pytest.raises(RealityActuationError, match="scan_custody_invalid"):
+        coordinator._discover_recovery_commands(10)
 
 
 @pytest.mark.asyncio

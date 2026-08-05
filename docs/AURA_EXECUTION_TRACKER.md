@@ -35716,3 +35716,48 @@ a process boundary, but an unattended boot sweep needs a versioned command
 capsule, secure pending-record enumeration, and deterministic recovery
 scheduling. That work, live credential rotation against real tenants, HIL, and
 external receipt review keep CP810 open and the total unchanged at 809/920.
+
+#### CP810 addendum: boot-reconstructable physical-effect recovery
+
+The caller-retained-command limitation above is now closed for every new or
+subsequently revisited transaction. Before the mutable transaction record is
+published, the coordinator create-once publishes a private canonical command
+capsule containing the exact typed `ActuationCommand` and its digest. The
+decoder requires the exact schema, exact numeric safe envelope, JSON parameters,
+identifier sequences, canonical bytes, matching command digest, and a filename
+derived from the idempotency key. Different commands cannot reuse one capsule.
+Capsule mode, owner, link count, path ancestry, symlink status, size, and held
+directory identity are checked through descriptor custody.
+
+A bounded restart sweep enumerates capsule/transaction pairs through the held
+directory descriptor, reconstructs only exact commands, excludes terminal
+transactions, and invokes the conservative restart operation without a caller
+retaining a Python object. Work beyond the configured batch is reported as
+deferred. A transaction without a capsule is reported as legacy-unrecoverable;
+a capsule without a transaction is also surfaced. Neither class is silently
+discarded or counted as recovered.
+
+The cognitive-sensory boot path schedules this sweep as an owned bounded task
+only after Reality Reach, its sensory fabric, configured connectors, hardware
+manager, and IoT bridge have initialized. Conversation readiness does not wait
+for physical recovery. The complete report remains on the orchestrator; any
+failure, legacy orphan, or deferred work records a critical degradation while
+keeping requested effects closed. The task cancels work that never dispatched
+and drives uncertain external effects to independently observed safe state; it
+never retries the original requested effect.
+
+Boot-recovery evidence:
+
+- typed command round-trip, create-once capsule, process-object loss,
+  reconstruction, bounded deferral, legacy visibility, collision, tamper,
+  symlink, private mode, boot scheduling, and safe-state contracts: 38/38
+  passed;
+- full affected Reality Reach and cognitive-sensory initializer family:
+  214/214 passed;
+- scoped MyPy and Ruff passed for all changed runtime modules.
+
+This closes deterministic command reconstruction and boot scheduling, not the
+external acceptance requirement. Real AWS/Azure credential rotation, real
+network-loss restoration, representative long-running cancellation, physical
+safe-state convergence, live/HIL metrology, and independent receipt replay
+remain unmeasured. CP810 and the total therefore remain open at 809/920.

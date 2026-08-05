@@ -241,7 +241,9 @@ class ActuationCommand:
             raise TypeError("safe_envelope must be a NumericDomain")
         object.__setattr__(self, "target", _finite(self.target, name="target", minimum=-math.inf))
         object.__setattr__(self, "tolerance", _finite(self.tolerance, name="tolerance"))
-        object.__setattr__(self, "magnitude", _finite(self.magnitude, name="magnitude", minimum=-math.inf))
+        object.__setattr__(
+            self, "magnitude", _finite(self.magnitude, name="magnitude", minimum=-math.inf)
+        )
         if not self.safe_envelope.contains(self.magnitude):
             raise ValueError("magnitude lies outside the command safe envelope")
         object.__setattr__(
@@ -273,6 +275,70 @@ class ActuationCommand:
             "expected_effects": list(self.expected_effects),
             "abort_predicates": list(self.abort_predicates),
         }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, Any]) -> ActuationCommand:
+        expected = {
+            "command_id",
+            "request_id",
+            "adapter_id",
+            "channel_id",
+            "observable",
+            "unit",
+            "target",
+            "tolerance",
+            "magnitude",
+            "idempotency_key",
+            "inventory_sha256",
+            "deadline_ns",
+            "safe_envelope",
+            "parameters",
+            "preconditions",
+            "expected_effects",
+            "abort_predicates",
+        }
+        if not isinstance(document, Mapping) or set(document) != expected:
+            raise ValueError("actuation command document schema is invalid")
+        safe_envelope = document.get("safe_envelope")
+        if not isinstance(safe_envelope, Mapping) or set(safe_envelope) != {
+            "minimum",
+            "maximum",
+        }:
+            raise ValueError("actuation command safe envelope is invalid")
+        parameters = document.get("parameters")
+        if not isinstance(parameters, Mapping):
+            raise ValueError("actuation command parameters are invalid")
+        sequences: dict[str, tuple[str, ...]] = {}
+        for name in ("preconditions", "expected_effects", "abort_predicates"):
+            value = document.get(name)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError(f"actuation command {name} are invalid")
+            sequences[name] = tuple(value)
+        try:
+            return cls(
+                command_id=document["command_id"],
+                request_id=document["request_id"],
+                adapter_id=document["adapter_id"],
+                channel_id=document["channel_id"],
+                observable=document["observable"],
+                unit=document["unit"],
+                target=document["target"],
+                tolerance=document["tolerance"],
+                magnitude=document["magnitude"],
+                idempotency_key=document["idempotency_key"],
+                inventory_sha256=document["inventory_sha256"],
+                deadline_ns=document["deadline_ns"],
+                safe_envelope=NumericDomain(
+                    safe_envelope["minimum"],
+                    safe_envelope["maximum"],
+                ),
+                parameters=dict(parameters),
+                preconditions=sequences["preconditions"],
+                expected_effects=sequences["expected_effects"],
+                abort_predicates=sequences["abort_predicates"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("actuation command document is invalid") from exc
 
     @property
     def sha256(self) -> str:
@@ -511,7 +577,10 @@ class RollbackReceipt:
             raise ValueError("rollback receipt state is invalid")
         _boolean(self.independently_observed, name="independently_observed")
         _positive_int(self.recorded_at_ns, name="recorded_at_ns")
-        if self.state in {ActuationState.ROLLED_BACK, ActuationState.SAFE_STATE} and not self.independently_observed:
+        if (
+            self.state in {ActuationState.ROLLED_BACK, ActuationState.SAFE_STATE}
+            and not self.independently_observed
+        ):
             raise ValueError("safe or rolled-back state requires independent observation")
 
     def to_dict(self) -> dict[str, Any]:
