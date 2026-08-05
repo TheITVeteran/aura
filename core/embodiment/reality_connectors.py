@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from dataclasses import dataclass, replace
 from typing import Any
@@ -82,6 +83,15 @@ class RealityConnectorCatalog:
     def is_ready(self) -> bool:
         return bool(self.status()["ready"])
 
+    async def stop(self) -> None:
+        for connector in reversed(self._connectors):
+            stop = getattr(connector, "stop", None)
+            if not callable(stop):
+                continue
+            result = stop()
+            if inspect.isawaitable(result):
+                await result
+
 
 def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
     """Build configured connectors; absence is valid, partial config is explicit."""
@@ -125,6 +135,65 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
             statuses.append(
                 ConnectorBootStatus(
                     connector_id=_OPENHAB_CONNECTOR_ID,
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
+    mqtt_url = str(os.getenv("AURA_MQTT_BROKER_URL") or "").strip()
+    mqtt_manifest = str(os.getenv("AURA_MQTT_RESOURCES_JSON") or "").strip()
+    mqtt_installation = str(os.getenv("AURA_MQTT_INSTALLATION_ID") or "").strip()
+    mqtt_present = bool(mqtt_url or mqtt_manifest or mqtt_installation)
+    if not mqtt_present:
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="mqtt.manifest",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not mqtt_url or not mqtt_manifest or not mqtt_installation:
+        missing = [
+            name
+            for name, value in (
+                ("AURA_MQTT_BROKER_URL", mqtt_url),
+                ("AURA_MQTT_RESOURCES_JSON", mqtt_manifest),
+                ("AURA_MQTT_INSTALLATION_ID", mqtt_installation),
+            )
+            if not value
+        ]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="mqtt.manifest",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.mqtt_connector import (
+                build_configured_mqtt_connector,
+            )
+
+            connector = build_configured_mqtt_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="mqtt.manifest",
                     configured=True,
                     registered=False,
                     state="invalid",

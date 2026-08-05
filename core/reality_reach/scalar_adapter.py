@@ -76,6 +76,9 @@ class ScalarSample:
     source_event_id: str
     quality: str = "good"
     uncertainty: float | None = None
+    wall_clock_source: str = "system.time_ns"
+    source_epoch: str = ""
+    source_sequence: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "value", _finite(self.value, name="value"))
@@ -85,6 +88,18 @@ class ScalarSample:
             raise ValueError("source_event_id must be a sha256 digest")
         quality = _identifier(self.quality, name="quality")
         object.__setattr__(self, "quality", quality)
+        if not isinstance(self.wall_clock_source, str) or not self.wall_clock_source:
+            raise ValueError("wall_clock_source must be non-empty")
+        if not isinstance(self.source_epoch, str) or len(self.source_epoch) > 256:
+            raise ValueError("source_epoch must be a bounded string")
+        if (
+            isinstance(self.source_sequence, bool)
+            or not isinstance(self.source_sequence, int)
+            or self.source_sequence < 0
+        ):
+            raise ValueError("source_sequence must be a non-negative integer")
+        if self.source_sequence and not self.source_epoch:
+            raise ValueError("source_sequence requires source_epoch")
         if self.uncertainty is not None:
             uncertainty = _finite(self.uncertainty, name="uncertainty")
             if uncertainty < 0.0:
@@ -341,8 +356,9 @@ class ScalarRealityAdapter:
                 if sample.uncertainty is not None
                 else self._profile.resolution
             ),
-            wall_clock_source=f"{self._profile.protocol}.source_clock",
-            source_epoch=self._profile.physical_identity_sha256[:128],
+            wall_clock_source=sample.wall_clock_source,
+            source_epoch=sample.source_epoch,
+            source_sequence=sample.source_sequence,
             source_event_id=sample.source_event_id,
             source_quality=sample.quality,
         )
