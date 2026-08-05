@@ -573,6 +573,7 @@ class OvertActionLoop:
             "acceptance_criteria",
             "required_evidence",
             "required_evidence_present",
+            "semantic_predicates",
             "user_visible_effect",
             "repair_hint",
             "rollback_hint",

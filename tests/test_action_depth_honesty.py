@@ -561,3 +561,81 @@ def test_environment_info_full_detail_returns_real_diagnostics():
     assert "disk" in info
     assert info["disk"]["total_gb"] > 0
     assert "uptime_hours" in info
+
+
+def test_semantic_predicates_distinguish_false_from_unmeasured() -> None:
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        PredicateOperator,
+        SemanticPredicate,
+        SkillExecutionResult,
+        SkillStatus,
+        apply_action_expectation,
+    )
+
+    checked = apply_action_expectation(
+        SkillExecutionResult(
+            skill="research_report",
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output={"evidence": {"read_count": 2}},
+            expectation=ActionExpectation(
+                objective="read three sources and write a synthesis",
+                semantic_predicates=[
+                    SemanticPredicate(
+                        predicate_id="three_sources_read",
+                        evidence_path="evidence.read_count",
+                        operator=PredicateOperator.GREATER_THAN_OR_EQUAL,
+                        expected=3,
+                        repair_hint="read_one_more_source",
+                    ),
+                    SemanticPredicate(
+                        predicate_id="synthesis_present",
+                        evidence_path="evidence.synthesis",
+                        operator=PredicateOperator.NONEMPTY_TEXT,
+                        repair_hint="write_synthesis",
+                    ),
+                ],
+            ),
+        )
+    )
+
+    verdict = checked.verification_evidence["expectation_verdict"]
+    assert checked.status == SkillStatus.PARTIAL_SUCCESS
+    assert verdict["unsatisfied_predicates"] == ["three_sources_read"]
+    assert verdict["unknown_predicates"] == ["synthesis_present"]
+    assert verdict["repair_steps"] == ["read_one_more_source", "write_synthesis"]
+    assert [item["state"] for item in verdict["predicate_results"]] == [
+        "unsatisfied",
+        "unknown",
+    ]
+
+
+def test_semantic_predicate_mapping_is_closed_and_serializable() -> None:
+    from core.runtime.skill_contract import ActionExpectation, semantic_predicate_from_mapping
+
+    predicate = semantic_predicate_from_mapping(
+        {
+            "id": "artifact_saved",
+            "path": "artifacts.pdf_count",
+            "operator": "gte",
+            "expected": 1,
+        }
+    )
+    payload = ActionExpectation(semantic_predicates=[predicate]).to_dict()
+
+    assert payload["semantic_predicates"] == [
+        {
+            "predicate_id": "artifact_saved",
+            "evidence_path": "artifacts.pdf_count",
+            "operator": "gte",
+            "expected": 1,
+            "description": "",
+            "repair_hint": "",
+            "required": True,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="unsupported semantic predicate operator"):
+        semantic_predicate_from_mapping(
+            {"id": "unsafe", "path": "x", "operator": "python_eval"}
+        )

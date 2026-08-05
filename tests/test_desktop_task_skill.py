@@ -1405,20 +1405,29 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
                         "more intense extreme-weather risks, and adaptation needs for cities."
                     ),
                     "citations": [
-                        {
-                            "title": "Climate assessment",
-                            "url": "https://example.test/climate-assessment",
-                            "snippet": "Observed warming is changing risk patterns.",
-                        },
+                            {
+                                "title": "Climate assessment",
+                                "url": "https://example.test/climate-assessment",
+                                "snippet": (
+                                    "Observed warming is changing measured risk patterns across "
+                                    "multiple regions and independently maintained climate records."
+                                ),
+                            },
                         {
                             "title": "Adaptation briefing",
                             "url": "https://example.test/adaptation",
-                            "snippet": "Cities are adapting infrastructure and emergency plans.",
+                                "snippet": (
+                                    "Cities are adapting infrastructure and emergency plans while "
+                                    "tracking which interventions reduce heat and flood exposure."
+                                ),
                         },
                         {
                             "title": "Extreme weather report",
                             "url": "https://example.test/extreme-weather",
-                            "snippet": "Heat and precipitation extremes are increasing.",
+                                "snippet": (
+                                    "Heat and precipitation extremes are increasing across the "
+                                    "multi-decade observations analyzed in this report."
+                                ),
                         },
                     ],
                 }
@@ -2732,9 +2741,9 @@ async def test_collect_research_synthesizes_first_person_opinion_without_hidden_
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                    {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "warming"},
-                    {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "adaptation"},
-                    {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "extremes"},
+                        {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "This article reports observed warming trends across several independently measured climate records."},
+                        {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "This article documents adaptation programs and their measured effects in several cities."},
+                        {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "This article analyzes changing extremes using a complete multi-decade weather dataset."},
                 ],
             }
 
@@ -2793,9 +2802,9 @@ async def test_collect_research_model_synthesis_is_explicit_and_memory_guarded(m
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                    {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "warming"},
-                    {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "adaptation"},
-                    {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "extremes"},
+                        {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "This article reports observed warming trends across several independently measured climate records."},
+                        {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "This article documents adaptation programs and their measured effects in several cities."},
+                        {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "This article analyzes changing extremes using a complete multi-decade weather dataset."},
                 ],
             }
 
@@ -2938,10 +2947,11 @@ async def test_research_source_shortfall_runs_bounded_replacement_search(monkeyp
                     {
                         "title": f"Orca article {name}",
                         "url": f"https://example.test/orcas/{name}",
-                        "snippet": (
-                            "This recent article reports evidence about orca cognition, "
-                            "culture, and stable cooperative behavior in the wild."
-                        ),
+                            "snippet": (
+                                "This recent article reports evidence about orca cognition, "
+                                "culture, and stable cooperative behavior in the wild."
+                            ),
+                            "published_at": "2026-07-20",
                     }
                     for name in urls
                 ],
@@ -3005,8 +3015,11 @@ async def test_requested_opinion_rejects_non_opinion_placeholder(monkeypatch):
                 ],
             }
 
+    calls = []
+
     class PlaceholderRouter:
         async def generate(self, **_kwargs):
+            calls.append(_kwargs)
             return (
                 "I have not formed an opinion here. This document only repeats the "
                 "source material, so ask me again if you want an actual assessment."
@@ -3030,3 +3043,134 @@ async def test_requested_opinion_rejects_non_opinion_placeholder(monkeypatch):
 
     assert "did not satisfy" in ctx["desktop_task_research_error"]
     assert "desktop_task_research_synthesis" not in ctx
+    assert len(calls) == 2
+    assert "REVISION REQUIREMENT" in calls[1]["prompt"]
+
+
+def test_research_semantic_completion_proves_every_requested_predicate() -> None:
+    from core.runtime.skill_contract import (
+        SkillExecutionResult,
+        SkillStatus,
+        evaluate_action_expectation,
+    )
+
+    objective = (
+        "Create a folder called Orca Demo in my Documents folder. Find 3 recent "
+        "articles about orcas, read them, and write a synthesis with your own "
+        "opinion into a PDF saved inside that Orca Demo folder."
+    )
+    sources = [
+        {
+            "title": f"Orca evidence {index}",
+            "url": f"https://example.test/2026/orcas/{index}",
+            "snippet": "A complete article body with enough grounded reporting to verify that it was read.",
+            "read_verified": True,
+            "recency_verified": True,
+            "recency_evidence": "published_at:2026-07-20",
+        }
+        for index in range(3)
+    ]
+    synthesis = (
+        "The three reports converge on socially learned hunting traditions while "
+        "showing meaningful variation among populations. In my view, that pattern "
+        "is strong evidence that culture is causally important to orca survival."
+    )
+    receipts = [
+        {
+            "action": "create_folder",
+            "ok": True,
+            "effect_verified": True,
+            "result": {"path": "/Users/bryan/Documents/Orca Demo"},
+        },
+        {
+            "action": "render_text_pdf",
+            "ok": True,
+            "effect_verified": True,
+            "result": {"path": "/Users/bryan/Documents/Orca Demo/orca_synthesis.pdf"},
+        },
+    ]
+    context = {
+        "desktop_task_research_sources": sources,
+        "desktop_task_research_synthesis": synthesis,
+        "desktop_task_research_authored": True,
+    }
+
+    evidence = DesktopTaskSkill._semantic_completion_evidence(
+        objective=objective,
+        task_context=context,
+        receipts=receipts,
+        all_effects_verified=True,
+    )
+    verdict = evaluate_action_expectation(
+        SkillExecutionResult(
+            skill="desktop_task",
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output={"semantic_evidence": evidence},
+            expectation=DesktopTaskSkill._semantic_completion_contract(objective),
+        )
+    )
+
+    assert verdict is not None and verdict.passed is True
+    assert evidence["research"]["read_source_count"] == 3
+    assert evidence["research"]["recent_source_count"] == 3
+    assert evidence["research"]["independent_position_present"] is True
+    assert evidence["artifacts"]["pdf_in_requested_folder"] is True
+
+
+def test_research_semantic_completion_rejects_mechanical_only_success() -> None:
+    from core.runtime.skill_contract import (
+        SkillExecutionResult,
+        SkillStatus,
+        evaluate_action_expectation,
+    )
+
+    objective = (
+        "Find 3 recent articles about orcas, read them, and write a synthesis "
+        "with your own opinion into a PDF."
+    )
+    context = {
+        "desktop_task_research_sources": [
+            {
+                "title": "General species page",
+                "url": "https://example.test/orcas",
+                "snippet": "A generic page without verified publication date.",
+                "read_verified": True,
+                "recency_verified": False,
+            }
+        ],
+        "desktop_task_research_synthesis": (
+            "On my own opinion, which you asked for: I have not formed one here."
+        ),
+        "desktop_task_research_authored": False,
+    }
+    evidence = DesktopTaskSkill._semantic_completion_evidence(
+        objective=objective,
+        task_context=context,
+        receipts=[
+            {
+                "action": "render_text_pdf",
+                "ok": True,
+                "effect_verified": True,
+                "result": {"path": "/Users/bryan/Documents/orca.pdf"},
+            }
+        ],
+        all_effects_verified=True,
+    )
+    verdict = evaluate_action_expectation(
+        SkillExecutionResult(
+            skill="desktop_task",
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output={"semantic_evidence": evidence},
+            expectation=DesktopTaskSkill._semantic_completion_contract(objective),
+        )
+    )
+
+    assert verdict is not None and verdict.passed is False
+    assert set(verdict.unsatisfied_predicates) == {
+        "requested_source_count_read",
+        "cross_source_synthesis_present",
+        "requested_sources_recent",
+        "synthesis_authored_by_cortex",
+        "independent_position_present",
+    }
+    assert verdict.next_step == "replace_unreadable_sources_and_read_article_bodies"

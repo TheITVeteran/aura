@@ -35342,3 +35342,56 @@ recovery after this checkpoint. No physical-effect, reasoning-gain, frontier,
 release, or `WOW Signal` claim is made. This is total checkpoint 805 of the
 current 920-checkpoint completion envelope, approximately 87.5% by count; long
 soaks remain deferred.
+
+### 2026-08-05 - CP806 semantic outcome completion and bounded repair
+
+Aura's action contract now distinguishes an effect that fired from the complete
+outcome the user requested. `ActionExpectation` carries a closed set of typed,
+serializable semantic predicates over named evidence paths. Operators are data,
+not executable expressions; missing evidence is `unknown`, observed mismatch is
+`unsatisfied`, and neither state can become verified success. Verdicts retain
+every predicate result, repair step, and the distinction between false and
+unmeasured evidence. The same predicate schema survives capability execution,
+the canonical action executor, autonomous overt action, and child-step context
+isolation.
+
+The desktop research lane now publishes a task-level completion ledger instead
+of inferring success from step counts. It verifies distinct source count, actual
+article-body reading when the request requires reading, publication-date or
+canonical-year evidence when the request requires recent material, completed
+cross-source synthesis, Cortex authorship, an independently worded first-person
+position when requested, non-empty PDF readback, requested folder creation, and
+PDF placement inside that folder. Collection-only requests are not forced to
+author an unrequested synthesis; read/review/synthesis requests cannot pass on
+links or one-word snippets. Named folder/location requests remain exact, while
+an unnamed folder request is verified against the observed created path rather
+than a runtime-generated name.
+
+Unreadable, stale, duplicate, or undated sources are replaced through the
+existing bounded search pass before artifacts are written. A rejected authored
+draft receives one bounded Cortex revision with the exact failed content
+contract; a second rejection terminates as incomplete. The deterministic
+source-extraction fallback is retained for collection-only work, but its honest
+"no opinion formed" disclosure cannot satisfy an opinion predicate or produce a
+completed task claim. Mechanically successful folder/PDF receipts with one
+undated general page and no authored position now return `partial_success` with
+repairable missing predicates.
+
+Validation is source-only while the resident 32B campaign owns the model lane:
+
+- focused expectation, desktop, research-quality, and capability-policy family:
+  184/184 passed;
+- runtime action, substrate, planner-feedback, step/task-boundary, and server
+  selection: 129/129 passed (215 unrelated tests deselected);
+- smoke: 103/103 passed;
+- repository compile, Ruff lint, layering, governance effect-ownership, diff
+  integrity, and isolated strict MyPy for the shared contract passed.
+
+The repository-wide strict MyPy sweep remains red on inherited unrelated type
+debt and is not claimed green. No live Aura.app or external web acceptance was
+run beside training, and no reasoning gain, frontier result, release readiness,
+or `WOW Signal` is claimed. The earlier CP799 forecast tentatively assigned
+CP806 to concrete protocol connectors; that scope is not closed or removed and
+is carried forward as CP808 after the already-landed CP807 messaging
+implementation. This is total checkpoint 806 of the current 920-checkpoint
+completion envelope, approximately 87.6% by count; long soaks remain deferred.

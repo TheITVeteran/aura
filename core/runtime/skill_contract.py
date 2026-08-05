@@ -16,12 +16,13 @@ flagged by the conformance suite.
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from enum import StrEnum
+from typing import Any
 
 
-class SkillStatus(str, Enum):
+class SkillStatus(StrEnum):
     SUCCESS_VERIFIED = "success_verified"
     SUCCESS_UNVERIFIED = "success_unverified"
     PARTIAL_SUCCESS = "partial_success"
@@ -29,6 +30,80 @@ class SkillStatus(str, Enum):
     FAILED_FATAL = "failed_fatal"
     BLOCKED_BY_POLICY = "blocked_by_policy"
     NEEDS_HUMAN_APPROVAL = "needs_human_approval"
+
+
+class PredicateOperator(StrEnum):
+    """Closed, machine-checkable operations for semantic task predicates."""
+
+    PRESENT = "present"
+    TRUTHY = "truthy"
+    EQUALS = "equals"
+    NONEMPTY_TEXT = "nonempty_text"
+    MIN_COUNT = "min_count"
+    MAX_COUNT = "max_count"
+    GREATER_THAN_OR_EQUAL = "gte"
+    LESS_THAN_OR_EQUAL = "lte"
+
+
+class PredicateState(StrEnum):
+    SATISFIED = "satisfied"
+    UNSATISFIED = "unsatisfied"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class SemanticPredicate:
+    """One falsifiable requirement from the user's requested outcome.
+
+    Predicates name an evidence path rather than executable code. This keeps
+    verification deterministic, serializable, and safe to accept from planners.
+    Missing evidence is ``unknown`` rather than an implicit pass.
+    """
+
+    predicate_id: str
+    evidence_path: str
+    operator: PredicateOperator = PredicateOperator.TRUTHY
+    expected: Any = True
+    description: str = ""
+    repair_hint: str = ""
+    required: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "predicate_id": self.predicate_id,
+            "evidence_path": self.evidence_path,
+            "operator": self.operator.value,
+            "expected": self.expected,
+            "description": self.description,
+            "repair_hint": self.repair_hint,
+            "required": self.required,
+        }
+
+
+@dataclass(frozen=True)
+class PredicateOutcome:
+    predicate_id: str
+    state: PredicateState
+    evidence_path: str
+    operator: PredicateOperator
+    expected: Any
+    observed: Any = None
+    description: str = ""
+    repair_hint: str = ""
+    required: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "predicate_id": self.predicate_id,
+            "state": self.state.value,
+            "evidence_path": self.evidence_path,
+            "operator": self.operator.value,
+            "expected": self.expected,
+            "observed": self.observed,
+            "description": self.description,
+            "repair_hint": self.repair_hint,
+            "required": self.required,
+        }
 
 
 @dataclass(frozen=True)
@@ -40,20 +115,29 @@ class ActionExpectation:
     """
 
     objective: str = ""
-    acceptance_criteria: List[str] = field(default_factory=list)
-    required_evidence: List[str] = field(default_factory=list)
-    required_evidence_present: List[str] = field(default_factory=list)
-    user_visible_effect: Optional[str] = None
+    acceptance_criteria: list[str] = field(default_factory=list)
+    required_evidence: list[str] = field(default_factory=list)
+    required_evidence_present: list[str] = field(default_factory=list)
+    semantic_predicates: list[SemanticPredicate] = field(default_factory=list)
+    user_visible_effect: str | None = None
     repair_hint: str = ""
     rollback_hint: str = ""
     allow_partial: bool = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "objective": self.objective,
             "acceptance_criteria": list(self.acceptance_criteria),
             "required_evidence": list(self.required_evidence),
             "required_evidence_present": list(self.required_evidence_present),
+            "semantic_predicates": [
+                (
+                    predicate.to_dict()
+                    if isinstance(predicate, SemanticPredicate)
+                    else semantic_predicate_from_mapping(predicate).to_dict()
+                )
+                for predicate in self.semantic_predicates
+            ],
             "user_visible_effect": self.user_visible_effect,
             "repair_hint": self.repair_hint,
             "rollback_hint": self.rollback_hint,
@@ -65,13 +149,17 @@ class ActionExpectation:
 class ExpectationVerdict:
     passed: bool
     status: SkillStatus
-    satisfied_criteria: List[str] = field(default_factory=list)
-    missing_criteria: List[str] = field(default_factory=list)
-    present_evidence: List[str] = field(default_factory=list)
-    missing_evidence: List[str] = field(default_factory=list)
+    satisfied_criteria: list[str] = field(default_factory=list)
+    missing_criteria: list[str] = field(default_factory=list)
+    present_evidence: list[str] = field(default_factory=list)
+    missing_evidence: list[str] = field(default_factory=list)
+    predicate_results: list[dict[str, Any]] = field(default_factory=list)
+    unsatisfied_predicates: list[str] = field(default_factory=list)
+    unknown_predicates: list[str] = field(default_factory=list)
+    repair_steps: list[str] = field(default_factory=list)
     next_step: str = ""
 
-    def to_evidence(self) -> Dict[str, Any]:
+    def to_evidence(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
             "status": self.status.value,
@@ -79,6 +167,10 @@ class ExpectationVerdict:
             "missing_criteria": list(self.missing_criteria),
             "present_evidence": list(self.present_evidence),
             "missing_evidence": list(self.missing_evidence),
+            "predicate_results": list(self.predicate_results),
+            "unsatisfied_predicates": list(self.unsatisfied_predicates),
+            "unknown_predicates": list(self.unknown_predicates),
+            "repair_steps": list(self.repair_steps),
             "next_step": self.next_step,
         }
 
@@ -88,17 +180,17 @@ class SkillContract:
     name: str
     version: str
     description: str
-    input_schema: Dict[str, Any] = field(default_factory=dict)
-    output_schema: Dict[str, Any] = field(default_factory=dict)
-    preconditions: List[str] = field(default_factory=list)
-    postconditions: List[str] = field(default_factory=list)
-    required_tools: List[str] = field(default_factory=list)
-    required_permissions: List[str] = field(default_factory=list)
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    output_schema: dict[str, Any] = field(default_factory=dict)
+    preconditions: list[str] = field(default_factory=list)
+    postconditions: list[str] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
+    required_permissions: list[str] = field(default_factory=list)
     timeout_seconds: float = 30.0
     retry_policy: str = "none"
     rollback_supported: bool = False
-    verifier: Optional[str] = None
-    benchmark: Optional[str] = None
+    verifier: str | None = None
+    benchmark: str | None = None
     memory_policy: str = "session"
     autonomy_level_required: int = 0
 
@@ -108,10 +200,10 @@ class SkillExecutionResult:
     skill: str
     status: SkillStatus
     output: Any = None
-    receipt_id: Optional[str] = None
-    verification_evidence: Dict[str, Any] = field(default_factory=dict)
-    failure_reason: Optional[str] = None
-    expectation: Optional[ActionExpectation] = None
+    receipt_id: str | None = None
+    verification_evidence: dict[str, Any] = field(default_factory=dict)
+    failure_reason: str | None = None
+    expectation: ActionExpectation | None = None
 
     @property
     def ok(self) -> bool:
@@ -126,12 +218,12 @@ def _normalize_label(value: Any) -> str:
     return str(value).strip().casefold()
 
 
-def _truthy_path(mapping: Dict[str, Any], key: str) -> bool:
+def _truthy_path(mapping: dict[str, Any], key: str) -> bool:
     found, current = _path_value(mapping, key)
     return bool(found and current)
 
 
-def _path_value(mapping: Dict[str, Any], key: str) -> tuple[bool, Any]:
+def _path_value(mapping: dict[str, Any], key: str) -> tuple[bool, Any]:
     current: Any = mapping
     for part in str(key).split("."):
         if not isinstance(current, dict) or part not in current:
@@ -140,7 +232,83 @@ def _path_value(mapping: Dict[str, Any], key: str) -> tuple[bool, Any]:
     return True, current
 
 
-def _criteria_claims(evidence: Dict[str, Any]) -> set[str]:
+def semantic_predicate_from_mapping(value: Mapping[str, Any]) -> SemanticPredicate:
+    """Parse a planner/runtime predicate without accepting executable logic."""
+
+    raw_operator = str(value.get("operator") or PredicateOperator.TRUTHY.value).strip()
+    try:
+        operator = PredicateOperator(raw_operator)
+    except ValueError as exc:
+        raise ValueError(f"unsupported semantic predicate operator: {raw_operator}") from exc
+    predicate_id = str(value.get("predicate_id") or value.get("id") or "").strip()
+    evidence_path = str(value.get("evidence_path") or value.get("path") or "").strip()
+    if not predicate_id or not evidence_path:
+        raise ValueError("semantic predicates require predicate_id and evidence_path")
+    return SemanticPredicate(
+        predicate_id=predicate_id,
+        evidence_path=evidence_path,
+        operator=operator,
+        expected=value.get("expected", True),
+        description=str(value.get("description") or "").strip(),
+        repair_hint=str(value.get("repair_hint") or "").strip(),
+        required=bool(value.get("required", True)),
+    )
+
+
+def _evaluate_semantic_predicate(
+    predicate: SemanticPredicate,
+    evidence: dict[str, Any],
+) -> PredicateOutcome:
+    found, observed = _path_value(evidence, predicate.evidence_path)
+    if not found:
+        state = PredicateState.UNKNOWN
+    else:
+        try:
+            if predicate.operator == PredicateOperator.PRESENT:
+                passed = True
+            elif predicate.operator == PredicateOperator.TRUTHY:
+                passed = bool(observed)
+            elif predicate.operator == PredicateOperator.EQUALS:
+                passed = observed == predicate.expected
+            elif predicate.operator == PredicateOperator.NONEMPTY_TEXT:
+                passed = bool(str(observed or "").strip())
+            elif predicate.operator in {
+                PredicateOperator.MIN_COUNT,
+                PredicateOperator.MAX_COUNT,
+            }:
+                if isinstance(observed, (str, bytes, list, tuple, set, dict)):
+                    count = len(observed)
+                else:
+                    count = int(observed)
+                threshold = int(predicate.expected)
+                passed = (
+                    count >= threshold
+                    if predicate.operator == PredicateOperator.MIN_COUNT
+                    else count <= threshold
+                )
+            elif predicate.operator == PredicateOperator.GREATER_THAN_OR_EQUAL:
+                passed = float(observed) >= float(predicate.expected)
+            elif predicate.operator == PredicateOperator.LESS_THAN_OR_EQUAL:
+                passed = float(observed) <= float(predicate.expected)
+            else:  # pragma: no cover - closed enum, retained as a fail-honest guard
+                passed = False
+            state = PredicateState.SATISFIED if passed else PredicateState.UNSATISFIED
+        except (TypeError, ValueError, OverflowError):
+            state = PredicateState.UNSATISFIED
+    return PredicateOutcome(
+        predicate_id=predicate.predicate_id,
+        state=state,
+        evidence_path=predicate.evidence_path,
+        operator=predicate.operator,
+        expected=predicate.expected,
+        observed=observed,
+        description=predicate.description,
+        repair_hint=predicate.repair_hint,
+        required=predicate.required,
+    )
+
+
+def _criteria_claims(evidence: dict[str, Any]) -> set[str]:
     claims: set[str] = set()
     for key in ("satisfied_criteria", "criteria_satisfied"):
         raw = evidence.get(key)
@@ -153,7 +321,7 @@ def _criteria_claims(evidence: Dict[str, Any]) -> set[str]:
     return {claim for claim in claims if claim}
 
 
-def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[ExpectationVerdict]:
+def evaluate_action_expectation(result: SkillExecutionResult) -> ExpectationVerdict | None:
     expectation = result.expectation
     if expectation is None:
         return None
@@ -165,8 +333,8 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         combined = evidence
 
     claims = _criteria_claims(combined)
-    satisfied: List[str] = []
-    missing_criteria: List[str] = []
+    satisfied: list[str] = []
+    missing_criteria: list[str] = []
     for criterion in expectation.acceptance_criteria:
         label = _normalize_label(criterion)
         if label in claims or _truthy_path(combined, str(criterion)):
@@ -174,8 +342,8 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         else:
             missing_criteria.append(str(criterion))
 
-    present_evidence: List[str] = []
-    missing_evidence: List[str] = []
+    present_evidence: list[str] = []
+    missing_evidence: list[str] = []
     for key in expectation.required_evidence:
         if _truthy_path(combined, key):
             present_evidence.append(key)
@@ -189,6 +357,35 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         else:
             missing_evidence.append(key)
 
+    predicates = [
+        predicate
+        if isinstance(predicate, SemanticPredicate)
+        else semantic_predicate_from_mapping(predicate)
+        for predicate in expectation.semantic_predicates
+    ]
+    predicate_outcomes = [
+        _evaluate_semantic_predicate(predicate, combined) for predicate in predicates
+    ]
+    unsatisfied_predicates = [
+        outcome.predicate_id
+        for outcome in predicate_outcomes
+        if outcome.required and outcome.state == PredicateState.UNSATISFIED
+    ]
+    unknown_predicates = [
+        outcome.predicate_id
+        for outcome in predicate_outcomes
+        if outcome.required and outcome.state == PredicateState.UNKNOWN
+    ]
+    repair_steps = list(
+        dict.fromkeys(
+            outcome.repair_hint
+            for outcome in predicate_outcomes
+            if outcome.required
+            and outcome.state != PredicateState.SATISFIED
+            and outcome.repair_hint
+        )
+    )
+
     if expectation.user_visible_effect:
         visible_proven = bool(
             combined.get("user_visible_effect")
@@ -200,13 +397,29 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         else:
             missing_criteria.append(f"user-visible effect: {expectation.user_visible_effect}")
 
-    passed = not missing_criteria and not missing_evidence
+    passed = not (
+        missing_criteria
+        or missing_evidence
+        or unsatisfied_predicates
+        or unknown_predicates
+    )
     if passed:
         status = result.status
         next_step = ""
     elif missing_criteria:
         status = SkillStatus.PARTIAL_SUCCESS if expectation.allow_partial else SkillStatus.FAILED_RECOVERABLE
-        next_step = expectation.repair_hint or "repair_missing_acceptance_criteria"
+        next_step = (
+            repair_steps[0]
+            if repair_steps
+            else expectation.repair_hint or "repair_missing_acceptance_criteria"
+        )
+    elif unsatisfied_predicates or unknown_predicates:
+        status = SkillStatus.PARTIAL_SUCCESS if expectation.allow_partial else SkillStatus.FAILED_RECOVERABLE
+        next_step = (
+            repair_steps[0]
+            if repair_steps
+            else expectation.repair_hint or "repair_unsatisfied_semantic_predicates"
+        )
     else:
         status = SkillStatus.SUCCESS_UNVERIFIED
         next_step = expectation.repair_hint or "collect_missing_verification_evidence"
@@ -218,6 +431,10 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         missing_criteria=missing_criteria,
         present_evidence=present_evidence,
         missing_evidence=missing_evidence,
+        predicate_results=[outcome.to_dict() for outcome in predicate_outcomes],
+        unsatisfied_predicates=unsatisfied_predicates,
+        unknown_predicates=unknown_predicates,
+        repair_steps=repair_steps,
         next_step=next_step,
     )
 
@@ -237,7 +454,12 @@ def apply_action_expectation(result: SkillExecutionResult) -> SkillExecutionResu
     if verdict.passed and verdict.status == result.status:
         return replace(result, verification_evidence=evidence)
 
-    missing_parts = verdict.missing_criteria or verdict.missing_evidence
+    missing_parts = (
+        verdict.missing_criteria
+        or verdict.missing_evidence
+        or verdict.unsatisfied_predicates
+        or verdict.unknown_predicates
+    )
     failure_reason = result.failure_reason
     if missing_parts:
         failure_reason = (
@@ -256,9 +478,9 @@ def apply_action_expectation(result: SkillExecutionResult) -> SkillExecutionResu
 
 def apply_action_expectation_payload(
     skill: str,
-    payload: Dict[str, Any],
-    expectation: Optional[ActionExpectation],
-) -> Dict[str, Any]:
+    payload: dict[str, Any],
+    expectation: ActionExpectation | None,
+) -> dict[str, Any]:
     """Apply one expectation to a dictionary result without emitting receipts.
 
     Runtime boundaries can share the exact same status/evidence semantics and
@@ -304,9 +526,9 @@ def apply_action_expectation_payload(
 
 
 class SkillRegistry:
-    def __init__(self):
-        self._contracts: Dict[str, SkillContract] = {}
-        self._verifiers: Dict[str, Callable[[SkillExecutionResult], SkillExecutionResult]] = {}
+    def __init__(self) -> None:
+        self._contracts: dict[str, SkillContract] = {}
+        self._verifiers: dict[str, Callable[[SkillExecutionResult], SkillExecutionResult]] = {}
 
     def register(self, contract: SkillContract) -> None:
         self._contracts[contract.name] = contract
@@ -318,7 +540,7 @@ class SkillRegistry:
     ) -> None:
         self._verifiers[name] = verifier
 
-    def get(self, name: str) -> Optional[SkillContract]:
+    def get(self, name: str) -> SkillContract | None:
         return self._contracts.get(name)
 
     def all(self) -> Sequence[SkillContract]:
@@ -344,11 +566,11 @@ class SkillRegistry:
             verified = replace(verified, expectation=result.expectation)
         return apply_action_expectation(verified)
 
-    def unverified_skills(self) -> List[str]:
+    def unverified_skills(self) -> list[str]:
         return [name for name in self._contracts if name not in self._verifiers]
 
 
-_global_skills: Optional[SkillRegistry] = None
+_global_skills: SkillRegistry | None = None
 
 
 def get_skill_registry() -> SkillRegistry:

@@ -45,6 +45,7 @@ from core.runtime.skill_contract import (
     ActionExpectation,
     SkillStatus,
     apply_action_expectation_payload,
+    semantic_predicate_from_mapping,
 )
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.state.state_gateway import get_state_gateway
@@ -1277,6 +1278,11 @@ def _coerce_expectation(
         acceptance_criteria=_string_list(raw.get("acceptance_criteria")),
         required_evidence=_string_list(raw.get("required_evidence")),
         required_evidence_present=_string_list(raw.get("required_evidence_present")),
+        semantic_predicates=[
+            semantic_predicate_from_mapping(item)
+            for item in list(raw.get("semantic_predicates") or [])[:64]
+            if isinstance(item, Mapping)
+        ],
         user_visible_effect=(
             str(raw.get("user_visible_effect"))[:1000]
             if raw.get("user_visible_effect") is not None

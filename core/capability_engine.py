@@ -6220,6 +6220,7 @@ class CapabilityEngine(AuraBaseModule):
             "acceptance_criteria",
             "required_evidence",
             "required_evidence_present",
+            "semantic_predicates",
             "user_visible_effect",
             "repair_hint",
             "rollback_hint",
@@ -6233,8 +6234,19 @@ class CapabilityEngine(AuraBaseModule):
         criteria = cls._str_list(source.get("acceptance_criteria") or source.get("criteria"))
         evidence = cls._str_list(source.get("required_evidence") or source.get("evidence_required"))
         evidence_present = cls._str_list(source.get("required_evidence_present"))
+        raw_predicates = source.get("semantic_predicates") or []
+        if not isinstance(raw_predicates, (list, tuple)):
+            raw_predicates = []
+        from core.runtime.skill_contract import semantic_predicate_from_mapping
+
+        predicates = []
+        for item in raw_predicates[:64]:
+            if hasattr(item, "predicate_id") and hasattr(item, "evidence_path"):
+                predicates.append(item)
+            elif isinstance(item, dict):
+                predicates.append(semantic_predicate_from_mapping(item))
         visible_effect = source.get("user_visible_effect") or source.get("visible_effect")
-        if not criteria and not evidence and not evidence_present and not visible_effect:
+        if not criteria and not evidence and not evidence_present and not predicates and not visible_effect:
             default_expectation = cls._default_action_expectation_for(
                 skill_name,
                 params,
@@ -6258,6 +6270,7 @@ class CapabilityEngine(AuraBaseModule):
             acceptance_criteria=criteria,
             required_evidence=evidence,
             required_evidence_present=evidence_present,
+            semantic_predicates=predicates,
             user_visible_effect=str(visible_effect) if visible_effect else None,
             repair_hint=str(source.get("repair_hint") or ""),
             rollback_hint=str(source.get("rollback_hint") or ""),

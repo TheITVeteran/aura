@@ -8,6 +8,8 @@ import re
 import time
 import urllib.parse
 from collections.abc import Mapping
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from core.perception.observation_evidence import (
         Observation as ObservationEvidence,
     )
+    from core.runtime.skill_contract import ActionExpectation
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +538,18 @@ class DesktopTaskSkill(BaseSkill):
         return bool(
             re.search(
                 r"\b(?:recent|latest|current|newly published|new reporting)\b",
+                str(objective or ""),
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _objective_requests_source_reading(cls, objective: str) -> bool:
+        if cls._objective_requests_authored_synthesis(objective):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:read|review|study|inspect|compare|evaluate|assess|look through)\b",
                 str(objective or ""),
                 flags=re.IGNORECASE,
             )
@@ -2130,6 +2145,62 @@ class DesktopTaskSkill(BaseSkill):
                 )
         return [merged[key] for key in order]
 
+    @staticmethod
+    def _source_recency_evidence(source: Mapping[str, Any]) -> tuple[bool, str]:
+        """Verify recency from source metadata, never from search rank alone."""
+
+        raw = str(source.get("published_at") or "").strip()
+        published: datetime | None = None
+        if raw:
+            try:
+                published = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    published = parsedate_to_datetime(raw)
+                except (TypeError, ValueError, OverflowError):
+                    published = None
+        now = datetime.now(UTC)
+        if published is not None:
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=UTC)
+            age_days = (now - published.astimezone(UTC)).total_seconds() / 86400.0
+            return (-7.0 <= age_days <= 366.0), f"published_at:{raw}"
+
+        # Some providers omit a date field while retaining the publication year
+        # in the canonical article URL/title. This is weaker than a full date but
+        # still auditable evidence; accept only the current or immediately prior
+        # year, never the fact that the query contained the word "recent".
+        haystack = f"{source.get('url') or ''} {source.get('title') or ''}"
+        years = {int(value) for value in re.findall(r"\b(?:19|20)\d{2}\b", haystack)}
+        if years & {now.year, now.year - 1}:
+            return True, f"article_year:{max(years)}"
+        return False, "publication_date_unverified"
+
+    @classmethod
+    def _usable_research_sources(
+        cls,
+        sources: list[dict[str, Any]],
+        *,
+        require_recent: bool,
+        require_read: bool,
+    ) -> list[dict[str, Any]]:
+        usable: list[dict[str, Any]] = []
+        for source in sources:
+            item = dict(source)
+            read_verified = bool(item.get("accessible")) and bool(
+                str(item.get("snippet") or "").strip()
+            )
+            recent_verified, recency_evidence = cls._source_recency_evidence(item)
+            item["read_verified"] = read_verified
+            item["recency_verified"] = recent_verified
+            item["recency_evidence"] = recency_evidence
+            if (require_read and not read_verified) or (
+                require_recent and not recent_verified
+            ):
+                continue
+            usable.append(item)
+        return usable
+
     # Reputable-domain signals (peer review, gov/edu, established institutions).
     _REPUTABLE_TLDS = (".gov", ".edu", ".mil", ".int", ".ac.uk", ".edu.au")
     _REPUTABLE_DOMAINS = (
@@ -2619,9 +2690,17 @@ class DesktopTaskSkill(BaseSkill):
                 "desktop_task_research_deep": deep_search,
                 "desktop_task_research_pressure_limited": pressure_limited,
             }
-        sources = self._research_sources_from_result(result)
-        required_sources = self._requested_research_source_count(objective)
-        if required_sources and len(sources) < required_sources:
+        candidate_sources = self._research_sources_from_result(result)
+        requested_sources = self._requested_research_source_count(objective)
+        required_sources = max(1, requested_sources)
+        require_recent = self._objective_requests_recent_sources(objective)
+        require_read = self._objective_requests_source_reading(objective)
+        sources = self._usable_research_sources(
+            candidate_sources,
+            require_recent=require_recent,
+            require_read=require_read,
+        )
+        if len(sources) < required_sources:
             missing = required_sources - len(sources)
             replacement_query = (
                 f"{query} latest independent reporting"
@@ -2649,9 +2728,14 @@ class DesktopTaskSkill(BaseSkill):
                     },
                 )
                 if isinstance(replacement, dict) and bool(replacement.get("ok", True)):
-                    sources = self._merge_research_sources(
-                        sources,
+                    candidate_sources = self._merge_research_sources(
+                        candidate_sources,
                         self._research_sources_from_result(replacement),
+                    )
+                    sources = self._usable_research_sources(
+                        candidate_sources,
+                        require_recent=require_recent,
+                        require_read=require_read,
                     )
             except (
                 AttributeError,
@@ -2671,7 +2755,7 @@ class DesktopTaskSkill(BaseSkill):
                 (time.perf_counter() - replacement_started) * 1000.0,
                 1,
             )
-        if required_sources and len(sources) < required_sources:
+        if len(sources) < required_sources:
             research_timing_ms["total"] = round(
                 (time.perf_counter() - research_started) * 1000.0,
                 1,
@@ -2679,16 +2763,18 @@ class DesktopTaskSkill(BaseSkill):
             return {
                 "desktop_task_research_query": query,
                 "desktop_task_research_error": (
-                    f"research returned {len(sources)} usable source(s), "
+                    f"research verified {len(sources)}"
+                    f"{' readable' if require_read else ''}"
+                    f"{' recent' if require_recent else ''} source(s), "
                     f"but the objective requires {required_sources}"
                 ),
                 "desktop_task_research_deep": deep_search,
                 "desktop_task_research_pressure_limited": pressure_limited,
-                "desktop_task_research_sources": sources,
+                "desktop_task_research_sources": candidate_sources,
                 "desktop_task_research_timing_ms": research_timing_ms,
             }
-        if required_sources:
-            sources = sources[:required_sources]
+        if requested_sources:
+            sources = sources[:requested_sources]
         summary = str(
             result.get("summary")
             or result.get("answer")
@@ -2730,12 +2816,27 @@ class DesktopTaskSkill(BaseSkill):
                 ),
             )
             synthesis_started = time.perf_counter()
-            model_synthesis = await self._synthesize_research_document(
-                objective=objective,
-                query=query,
-                summary=summary,
-                sources=sources,
-            )
+            model_synthesis = ""
+            repair_feedback = ""
+            for _synthesis_attempt in range(2):
+                model_synthesis = await self._synthesize_research_document(
+                    objective=objective,
+                    query=query,
+                    summary=summary,
+                    sources=sources,
+                    repair_feedback=repair_feedback,
+                )
+                if self._research_synthesis_satisfies_objective(
+                    objective,
+                    model_synthesis,
+                ):
+                    break
+                repair_feedback = (
+                    "The previous draft failed the semantic completion check: it was "
+                    "missing a complete cross-source synthesis or the requested "
+                    "independent first-person position. Rewrite the document itself; "
+                    "do not discuss the failure or promise a later answer."
+                )
             research_timing_ms["synthesis"] = round(
                 (time.perf_counter() - synthesis_started) * 1000.0,
                 1,
@@ -2823,6 +2924,7 @@ class DesktopTaskSkill(BaseSkill):
         query: str,
         summary: str,
         sources: list[dict[str, str]],
+        repair_feedback: str = "",
     ) -> str:
         """Compose a first-person summary (and opinion, when asked) of the
         research through the canonical model router. Bounded and best-effort:
@@ -2878,6 +2980,7 @@ class DesktopTaskSkill(BaseSkill):
             "Write in the first person as Aura, in clean prose. Do not mention tools, "
             "steps, dispatch, commitments, or that you are executing a task — this is the "
             "finished document the reader will see, not a status update."
+            + (f"\n\nREVISION REQUIREMENT: {repair_feedback}" if repair_feedback else "")
         )
         try:
             text = await asyncio.wait_for(
@@ -4582,6 +4685,7 @@ class DesktopTaskSkill(BaseSkill):
         "required_evidence",
         "evidence_required",
         "required_evidence_present",
+        "semantic_predicates",
         "user_visible_effect",
         "visible_effect",
         "repair_hint",
@@ -4672,6 +4776,245 @@ class DesktopTaskSkill(BaseSkill):
                 "verification proving the requested desktop effect."
             )
         return False, "missing objective-specific os automation effect evidence"
+
+    @classmethod
+    def _semantic_completion_contract(cls, objective: str) -> ActionExpectation:
+        """Compile the requested outcome into evidence-backed task predicates."""
+
+        from core.runtime.skill_contract import (
+            ActionExpectation,
+            PredicateOperator,
+            SemanticPredicate,
+        )
+
+        predicates = [
+            SemanticPredicate(
+                predicate_id="all_planned_effects_verified",
+                evidence_path="semantic_evidence.mechanical.all_effects_verified",
+                operator=PredicateOperator.TRUTHY,
+                description="Every required planned effect completed and was observed.",
+                repair_hint="repair_failed_or_missing_desktop_effects",
+            )
+        ]
+        if cls._objective_requests_research_document(objective):
+            required_sources = max(1, cls._requested_research_source_count(objective))
+            requires_reading = cls._objective_requests_source_reading(objective)
+            predicates.append(
+                SemanticPredicate(
+                    predicate_id=(
+                        "requested_source_count_read"
+                        if requires_reading
+                        else "requested_source_count_found"
+                    ),
+                    evidence_path=(
+                        "semantic_evidence.research.read_source_count"
+                        if requires_reading
+                        else "semantic_evidence.research.distinct_source_count"
+                    ),
+                    operator=PredicateOperator.GREATER_THAN_OR_EQUAL,
+                    expected=required_sources,
+                    description=(
+                        "The requested number of distinct article bodies were read."
+                        if requires_reading
+                        else "The requested number of distinct article links were verified."
+                    ),
+                    repair_hint=(
+                        "replace_unreadable_sources_and_read_article_bodies"
+                        if requires_reading
+                        else "find_additional_distinct_article_sources"
+                    ),
+                )
+            )
+            if cls._objective_requests_authored_synthesis(objective):
+                predicates.extend(
+                    [
+                        SemanticPredicate(
+                        predicate_id="cross_source_synthesis_present",
+                        evidence_path="semantic_evidence.research.synthesis_present",
+                        operator=PredicateOperator.TRUTHY,
+                        description="The artifact contains a completed cross-source synthesis.",
+                        repair_hint="author_and_reverify_cross_source_synthesis",
+                        ),
+                        SemanticPredicate(
+                            predicate_id="synthesis_authored_by_cortex",
+                            evidence_path="semantic_evidence.research.authored_synthesis",
+                            operator=PredicateOperator.TRUTHY,
+                            description="Aura authored the requested synthesis rather than emitting extraction or a template.",
+                            repair_hint="rerun_cortex_authorship_with_semantic_feedback",
+                        ),
+                    ]
+                )
+            if cls._objective_requests_recent_sources(objective):
+                predicates.append(
+                    SemanticPredicate(
+                        predicate_id="requested_sources_recent",
+                        evidence_path="semantic_evidence.research.recent_source_count",
+                        operator=PredicateOperator.GREATER_THAN_OR_EQUAL,
+                        expected=required_sources,
+                        description="Publication evidence verifies the requested sources are recent.",
+                        repair_hint="replace_sources_without_recent_publication_evidence",
+                    )
+                )
+            if cls._objective_requests_opinion(objective):
+                predicates.append(
+                    SemanticPredicate(
+                        predicate_id="independent_position_present",
+                        evidence_path="semantic_evidence.research.independent_position_present",
+                        operator=PredicateOperator.TRUTHY,
+                        description="The requested first-person assessment is present and passed the content contract.",
+                        repair_hint="form_and_write_an_evidence_grounded_first_person_position",
+                    )
+                )
+        lowered = str(objective or "").casefold()
+        if cls._explicit_pdf_requested(objective):
+            predicates.append(
+                SemanticPredicate(
+                    predicate_id="requested_pdf_verified",
+                    evidence_path="semantic_evidence.artifacts.verified_pdf_count",
+                    operator=PredicateOperator.GREATER_THAN_OR_EQUAL,
+                    expected=1,
+                    description="At least one non-empty PDF was rendered and read back.",
+                    repair_hint="render_and_read_back_requested_pdf",
+                )
+            )
+        if "folder" in lowered or "directory" in lowered:
+            predicates.append(
+                SemanticPredicate(
+                    predicate_id="requested_folder_verified",
+                    evidence_path="semantic_evidence.artifacts.requested_folder_verified",
+                    operator=PredicateOperator.TRUTHY,
+                    description="The requested folder exists at the requested location.",
+                    repair_hint="create_and_read_back_requested_folder",
+                )
+            )
+            if cls._explicit_pdf_requested(objective):
+                predicates.append(
+                    SemanticPredicate(
+                        predicate_id="pdf_saved_in_requested_folder",
+                        evidence_path="semantic_evidence.artifacts.pdf_in_requested_folder",
+                        operator=PredicateOperator.TRUTHY,
+                        description="The verified PDF path is inside the requested folder.",
+                        repair_hint="move_or_render_pdf_into_requested_folder_and_read_back",
+                    )
+                )
+        return ActionExpectation(
+            objective=objective,
+            semantic_predicates=predicates,
+            repair_hint="repair_unsatisfied_desktop_task_predicates",
+            rollback_hint="preserve_verified_effects_and_repair_only_missing_predicates",
+            allow_partial=True,
+        )
+
+    @classmethod
+    def _semantic_completion_evidence(
+        cls,
+        *,
+        objective: str,
+        task_context: Mapping[str, Any],
+        receipts: list[dict[str, Any]],
+        all_effects_verified: bool,
+    ) -> dict[str, Any]:
+        sources = [
+            dict(item)
+            for item in (task_context.get("desktop_task_research_sources") or [])
+            if isinstance(item, Mapping)
+        ]
+        read_sources = [item for item in sources if item.get("read_verified") is True]
+        recent_sources = [item for item in read_sources if item.get("recency_verified") is True]
+        synthesis = str(task_context.get("desktop_task_research_synthesis") or "").strip()
+        authored = task_context.get("desktop_task_research_authored") is True
+        independent_position = bool(
+            authored
+            and cls._objective_requests_opinion(objective)
+            and cls._research_synthesis_satisfies_objective(objective, synthesis)
+        )
+
+        verified = [
+            receipt
+            for receipt in receipts
+            if receipt.get("ok") is True and receipt.get("effect_verified") is True
+        ]
+        pdf_paths: list[str] = []
+        folder_paths: list[str] = []
+        for receipt in verified:
+            result = receipt.get("result")
+            result = result if isinstance(result, Mapping) else {}
+            path = str(result.get("path") or "").strip()
+            if receipt.get("action") == "render_text_pdf" and path.lower().endswith(".pdf"):
+                pdf_paths.append(path)
+            if receipt.get("action") == "create_folder" and path:
+                folder_paths.append(path)
+
+        lowered = str(objective or "").casefold()
+        wants_folder = "folder" in lowered or "directory" in lowered
+        requested_folder_verified = not wants_folder
+        pdf_in_requested_folder = not (wants_folder and cls._explicit_pdf_requested(objective))
+        if wants_folder:
+            exact_folder_requested = cls._has_explicit_folder_name(objective)
+            if exact_folder_requested:
+                folder_name = cls._extract_folder_name(objective)
+                root = cls._extract_root_hint(objective)
+                requested = Path(f"{root}/{folder_name}" if root else folder_name).expanduser()
+
+                def _matches_requested(path: str) -> bool:
+                    candidate = Path(path).expanduser()
+                    try:
+                        return candidate == requested or candidate.resolve() == requested.resolve()
+                    except OSError:
+                        return str(candidate).casefold().rstrip("/") == str(requested).casefold().rstrip("/")
+
+            else:
+                requested_folders = {
+                    str(Path(path).expanduser()).casefold().rstrip("/")
+                    for path in folder_paths
+                }
+
+                def _matches_requested(path: str) -> bool:
+                    return str(Path(path).expanduser()).casefold().rstrip("/") in requested_folders
+
+            requested_folder_verified = any(_matches_requested(path) for path in folder_paths)
+            if pdf_paths:
+                pdf_in_requested_folder = all(
+                    _matches_requested(str(Path(path).expanduser().parent)) for path in pdf_paths
+                )
+
+        return {
+            "mechanical": {"all_effects_verified": all_effects_verified},
+            "research": {
+                "distinct_source_count": len(
+                    {
+                        str(item.get("url") or item.get("title") or "").casefold()
+                        for item in sources
+                        if str(item.get("url") or item.get("title") or "").strip()
+                    }
+                ),
+                "read_source_count": len(read_sources),
+                "recent_source_count": len(recent_sources),
+                "synthesis_present": bool(
+                    synthesis
+                    and cls._research_synthesis_satisfies_objective(objective, synthesis)
+                ),
+                "authored_synthesis": authored,
+                "independent_position_present": independent_position,
+                "source_evidence": [
+                    {
+                        "title": item.get("title"),
+                        "url": item.get("url"),
+                        "read_verified": item.get("read_verified"),
+                        "recency_verified": item.get("recency_verified"),
+                        "recency_evidence": item.get("recency_evidence"),
+                    }
+                    for item in sources
+                ],
+            },
+            "artifacts": {
+                "verified_pdf_count": len(pdf_paths),
+                "pdf_paths": pdf_paths,
+                "requested_folder_verified": requested_folder_verified,
+                "folder_paths": folder_paths,
+                "pdf_in_requested_folder": pdf_in_requested_folder,
+            },
+        }
 
     async def _execute_os_automation_escalation(
         self,
@@ -5342,7 +5685,13 @@ class DesktopTaskSkill(BaseSkill):
         )
         completed_count = sum(1 for receipt in receipts if receipt.get("ok"))
         observation = self._observation_evidence(receipts, objective)
-        return {
+        semantic_evidence = self._semantic_completion_evidence(
+            objective=objective,
+            task_context=task_context,
+            receipts=receipts,
+            all_effects_verified=ok,
+        )
+        payload = {
             "ok": ok,
             "status": status,
             **(
@@ -5400,4 +5749,33 @@ class DesktopTaskSkill(BaseSkill):
                 or f"Desktop task completed {completed_count}/{len(steps)} governed "
                 f"computer-use steps through {planner or 'unknown'} planning."
             ),
+            "semantic_evidence": semantic_evidence,
         }
+        from core.runtime.skill_contract import (
+            SkillExecutionResult,
+            SkillStatus,
+            evaluate_action_expectation,
+        )
+
+        expectation = self._semantic_completion_contract(objective)
+        verdict = evaluate_action_expectation(
+            SkillExecutionResult(
+                skill=self.name,
+                status=SkillStatus.SUCCESS_VERIFIED,
+                output=payload,
+                expectation=expectation,
+            )
+        )
+        if verdict is not None:
+            payload["action_expectation"] = expectation.to_dict()
+            payload["semantic_completion"] = verdict.to_evidence()
+            if not verdict.passed and ok:
+                missing = verdict.unsatisfied_predicates + verdict.unknown_predicates
+                payload["ok"] = False
+                payload["status"] = verdict.status.value
+                payload["error"] = "semantic completion incomplete: " + "; ".join(missing)
+                payload["summary"] = (
+                    f"Desktop task completed {completed_count}/{len(steps)} mechanical steps, "
+                    f"but still requires: {', '.join(missing)}."
+                )
+        return payload
