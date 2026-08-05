@@ -99,6 +99,27 @@ async def test_transport_is_idempotent_and_recovery_returns_to_noise_floor() -> 
 
 
 @pytest.mark.asyncio
+async def test_transport_exposes_bounded_trial_measurements_without_raw_audio() -> None:
+    backend = _AcousticBackend(coupling=0.5)
+    transport = MacOSAcousticScalarTransport(backend)
+
+    sample = await transport.measure_stimulus(
+        0.02,
+        trial_id="campaign.fixture.closed-loop.1",
+    )
+
+    assert sample.value > -80.0
+    assert sample.source_event_id.startswith("sha256:")
+    assert len(sample.source_event_id) == 71
+    assert sample.source_sequence == 1
+    with pytest.raises(Exception, match="acoustic_amplitude_out_of_bounds"):
+        await transport.measure_stimulus(
+            0.5,
+            trial_id="campaign.fixture.overdrive",
+        )
+
+
+@pytest.mark.asyncio
 async def test_adapter_is_physical_reversible_and_identity_bound() -> None:
     backend = _AcousticBackend()
     adapter = await build_macos_acoustic_reality_adapter(backend)

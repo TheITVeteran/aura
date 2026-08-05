@@ -36295,3 +36295,42 @@ training process owned the host. The real device run, two genuinely independent
 custodian signatures, public Rekor inclusion, and representative tenant replay
 remain empirical requirements. CP810 and the total therefore remain open at
 809/920.
+
+#### CP810 addendum: preregistered acoustic A1 acceptance protocol
+
+The representative acoustic candidate now has the quantitative RR-10 A1
+experiment that was previously missing. Before any held-out trial, the protocol
+fixes the bounded amplitude ladder, repeat counts, held-out quantiles, minimum
+signal span, baseline and ceiling margins, required 50% error reduction,
+restoration tolerance, and deterministic schedule seed. It calibrates the
+physical speaker-to-microphone transfer with repeated measurements, applies
+isotonic regression so noise cannot manufacture a non-monotone inverse, derives
+held-out target levels strictly inside the measured range, and compares the
+calibrated controller against an equal-trial nominal open-loop arm in a
+digest-bound interleaved order.
+
+The acceptance receipt carries every trial, arm, target, commanded amplitude,
+measured scalar, source-event digest, order, and error. It retains no audio and
+fails closed unless the physical signal span is adequate, calibrated mean
+absolute error is at least 50% lower than the equal-work open-loop control, and
+the final silence measurement returns within tolerance of the preregistered
+baseline. Silence restoration is attempted after success, measurement failure,
+or cancellation; a restoration failure cannot be reported as an accepted run
+and does not erase the original failure cause.
+
+Protocol evidence:
+
+- nonlinear-transfer success, nominal/no-gain rejection, equal-work arms,
+  deterministic blind scheduling, receipt validation, no raw-audio retention,
+  bounded transport measurements, and restoration after injected failures:
+  11/11 focused tests passed;
+- full affected Reality Reach, acceptance, transaction, route, scalar-adapter,
+  and acoustic family: 180/180 passed;
+- smoke 103/103, compile, Ruff, and scoped production MyPy passed.
+
+These tests prove the preregistered analysis and failure semantics against
+adversarial deterministic transfer functions. They do not substitute for the
+real built-in speaker/microphone experiment. Runtime governance wiring, a real
+device result, two genuinely independent custodian signatures, public Rekor
+inclusion, and representative tenant replay remain open. CP810 and the total
+therefore remain open at 809/920.

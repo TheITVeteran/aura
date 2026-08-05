@@ -281,6 +281,38 @@ class MacOSAcousticScalarTransport:
             observed = await asyncio.to_thread(self._measure, self._current_amplitude)
             return self._sample(observed, amplitude=self._current_amplitude)
 
+    async def measure_stimulus(
+        self,
+        amplitude: float,
+        *,
+        trial_id: str,
+    ) -> ScalarSample:
+        """Measure one bounded stimulus inside an enclosing governed experiment."""
+
+        bounded = _finite(amplitude, name="amplitude")
+        if not 0.0 <= bounded <= self._maximum_amplitude:
+            raise MacOSAcousticRealityError("acoustic_amplitude_out_of_bounds")
+        if not trial_id or len(trial_id) > 128:
+            raise ValueError("trial_id must be a bounded non-empty string")
+        async with self._lock:
+            observed = await asyncio.to_thread(self._measure, bounded)
+            sample = self._sample(observed, amplitude=bounded)
+            return ScalarSample(
+                value=sample.value,
+                captured_at_ns=sample.captured_at_ns,
+                source_event_id=_digest(
+                    {
+                        "sample_sha256": sample.source_event_id,
+                        "trial_id": trial_id,
+                    }
+                ),
+                quality=sample.quality,
+                uncertainty=sample.uncertainty,
+                wall_clock_source=sample.wall_clock_source,
+                source_epoch=sample.source_epoch,
+                source_sequence=sample.source_sequence,
+            )
+
     async def write_scalar(
         self,
         resource_id: str,
