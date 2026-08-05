@@ -764,3 +764,119 @@ class TestMaintenanceCounterContract:
         res = await client.ingest_nonparametric_async()
         assert res["status"] == "skipped_foreground_active_after_lane"
         assert not client._request_lock.locked(), "the lane must be handed back"
+
+
+class TestWorkerDeathIsProven:
+    """CP126 9a4f99da / 1399e019."""
+
+    class _Immortal:
+        pid = 4321
+
+        def is_alive(self):
+            return True
+
+        def kill(self):
+            return None
+
+        def join(self, timeout=None):
+            return None
+
+    def test_a_survivor_is_reported_not_assumed_dead(self, client):
+        assert client._kill_and_join_blocking(self._Immortal()) is False
+
+    def test_an_unobservable_process_counts_as_alive(self, client):
+        class _Opaque:
+            pid = 99
+
+            def __init__(self):
+                self._calls = 0
+
+            def is_alive(self):
+                self._calls += 1
+                if self._calls == 1:
+                    return True
+                raise OSError("cannot observe")
+
+            def kill(self):
+                return None
+
+            def join(self, timeout=None):
+                return None
+
+        assert client._kill_and_join_blocking(_Opaque()) is False
+
+    def test_a_forced_abort_that_leaves_a_survivor_reports_failure(self, client):
+        client._record_degraded_event = lambda *a, **k: None
+        client._replace_ipc_queues = lambda *a, **k: None
+        survivor = self._Immortal()
+        client._process = survivor
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+
+        assert client.force_abort_active_generation("watchdog") is False
+        # The handle is retained: a None handle tells the next spawn admission
+        # that no worker of ours is running.
+        assert client._process is survivor
+
+    def test_a_clean_abort_still_reports_success(self, client, monkeypatch):
+        class _Mortal:
+            pid = 1
+
+            def __init__(self):
+                self.killed = False
+
+            def is_alive(self):
+                return not self.killed
+
+            def kill(self):
+                self.killed = True
+
+            def join(self, timeout=None):
+                return None
+
+        client._record_degraded_event = lambda *a, **k: None
+        client._replace_ipc_queues = lambda *a, **k: None
+        client._release_durable_model_lane_owner_sync = lambda **k: None
+        client._process = _Mortal()
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+
+        assert client.force_abort_active_generation("watchdog") is True
+        assert client._process is None
+
+    def test_spawn_refuses_when_reclamation_is_blind_and_a_worker_may_live(
+        self, client, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        class _BlindObserver:
+            def processes(self):
+                raise OSError("process table unavailable")
+
+        monkeypatch.setattr(mod, "get_resource_observer", lambda: _BlindObserver())
+        monkeypatch.setattr(mod, "_shutdown_blocks_model_work", lambda *a, **k: False)
+        client._process = self._Immortal()
+
+        with pytest.raises(RuntimeError) as excinfo:
+            client._spawn_worker_blocking()
+        assert "orphan_reclamation_unobservable_refused_worker_spawn" in str(excinfo.value)
+
+    def test_spawn_proceeds_when_blind_but_no_prior_worker_exists(
+        self, client, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        class _BlindObserver:
+            def processes(self):
+                raise OSError("process table unavailable")
+
+        monkeypatch.setattr(mod, "get_resource_observer", lambda: _BlindObserver())
+        monkeypatch.setattr(mod, "_shutdown_blocks_model_work", lambda *a, **k: False)
+        client._process = None
+
+        # Past the orphan gate; whatever it fails on next is not this finding.
+        # (The blind observer raises again from a later scan — that is the
+        # spawn continuing, which is the point.)
+        with pytest.raises((RuntimeError, OSError)) as excinfo:
+            client._spawn_worker_blocking()
+        assert "orphan_reclamation_unobservable" not in str(excinfo.value)

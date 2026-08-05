@@ -988,6 +988,15 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine._llm_failure_count, 0)
 
     async def test_affect_opt_in_parse_failure_uses_heuristic_appraisal(self):
+        """A model that answers in prose must not cost the appraisal.
+
+        a7bc6b48f moved the fallback OUT of _appraise_with_llm and into its
+        caller, which is the better place for it: the inner call now reports
+        that the response could not be parsed instead of returning a number it
+        did not measure. The contract this test exists for — an unparseable
+        response still yields a heuristic appraisal — is asserted where it
+        now lives.
+        """
         with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
 
@@ -1001,8 +1010,15 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
         }
 
         with swap("core.container.ServiceContainer.get", return_value=gate):
-            appraisal = await engine._appraise_with_llm("error and frustration", {"intensity": 0.6})
+            with self.assertRaises(ValueError) as caught:
+                await engine._appraise_with_llm("error and frustration", {"intensity": 0.6})
+        self.assertEqual(str(caught.exception), "parse_failure")
 
+        # And the caller still produces a real appraisal from that failure.
+        engine.react = _AsyncCallRecorder(side_effect=ValueError("parse_failure"))
+        result = await engine.apply_stimulus("error and frustration", 6.0)
+        self.assertEqual(result["status"], "heuristic_fallback")
+        appraisal = result["appraisal"]
         self.assertLess(appraisal["v"], 0.0)
         self.assertGreater(appraisal["a"], 0.0)
 

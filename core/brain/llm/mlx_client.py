@@ -5861,7 +5861,11 @@ class MLXLocalClient:
                 # One more attempt before reporting a survivor.
                 p.kill()
                 p.join(timeout=2.0)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
+            # OSError included: kill(), join() and is_alive() all reach the OS,
+            # and an OSError escaping here left the CALLER — a reboot or a
+            # forced abort — to fail on a diagnostic while the worker's fate
+            # went unrecorded and unproven.
             _record_mlx_degradation(
                 e,
                 action="continued process cleanup after worker kill/join failed",
@@ -5870,8 +5874,16 @@ class MLXLocalClient:
             logger.warning("Error killing process: %s", e)
         try:
             still_alive = bool(p.is_alive())
-        except (RuntimeError, AttributeError, ValueError):
-            still_alive = False
+        except (RuntimeError, AttributeError, ValueError, OSError) as exc:
+            # Unknown is not dead. Reporting an unobservable process as
+            # terminated is what lets a surviving worker keep the accelerator
+            # while the client believes the lane is free.
+            _record_mlx_degradation(
+                exc,
+                action="treated an unobservable worker as alive after kill/join",
+                severity="critical",
+            )
+            still_alive = True
         if still_alive:
             _record_mlx_degradation(
                 RuntimeError(f"worker_survived_kill:pid={getattr(p, 'pid', '?')}"),
@@ -8304,6 +8316,7 @@ class MLXLocalClient:
             )
 
         killed_process_before_lock = False
+        worker_survived = False
         if process is not None and process.is_alive():
             logger.error(
                 "🛑 [MLX] Killing worker immediately for forced abort before lifecycle lock cleanup (%s).",
@@ -8313,8 +8326,20 @@ class MLXLocalClient:
             # Consume the lifetime anchor so no later seam double-counts
             # this death (reboot_worker / the self-died respawn branch).
             self._process_started_at = 0.0
-            self._kill_and_join_blocking(process)
-            killed_process_before_lock = True
+            # CP126 9a4f99da: the return value was discarded. The helper
+            # already proves death and reports a survivor; the abort ignored
+            # it, cleared the process handle, replaced the queues and returned
+            # success. A worker that outlived the kill then held the
+            # accelerator as an UNTRACKED process while the client believed
+            # the lane was cold and free to spawn into.
+            worker_survived = not self._kill_and_join_blocking(process)
+            killed_process_before_lock = not worker_survived
+            if worker_survived:
+                logger.critical(
+                    "🚨 [MLX] Worker for %s SURVIVED the forced abort; keeping the "
+                    "handle and refusing to report a completed abort.",
+                    os.path.basename(self.model_path),
+                )
 
         # No escalated wait here, deliberately. This runs on a watchdog
         # thread whose whole value is answering fast, and the urgent half of
@@ -8375,7 +8400,12 @@ class MLXLocalClient:
             self._deferred_reboot_reason = None
             self._warmup_in_flight = False
             self._init_done = False
-            self._process = None
+            # Keep the handle when the worker outlived the kill. A None handle
+            # is the client saying "no worker of mine is running", and the next
+            # spawn admission believes it — which is how a survivor becomes a
+            # SECOND resident model rather than a tracked one to reap.
+            if not worker_survived:
+                self._process = None
             self._last_heartbeat = 0.0
             self._last_progress_at = 0.0
             self._last_token_progress_at = 0.0
@@ -8395,7 +8425,11 @@ class MLXLocalClient:
             if process is not None and process.is_alive() and not killed_process_before_lock:
                 _note_lane_worker_death(self, reason)
                 self._process_started_at = 0.0
-                self._kill_and_join_blocking(process)
+                if self._kill_and_join_blocking(process):
+                    worker_survived = False
+                    self._process = None
+                else:
+                    worker_survived = True
 
             self._replace_ipc_queues()
             # Only release the request lock when it belongs to the generation
@@ -8420,6 +8454,21 @@ class MLXLocalClient:
             severity="error",
             foreground_request=True,
         )
+        if worker_survived:
+            # The abort did not achieve its purpose. Its caller uses this
+            # verdict to decide whether the lane is free to use again, and a
+            # lane whose old worker is still decoding on the accelerator is
+            # not. Say so, and leave the lane named as fenced rather than cold.
+            self._set_lane_state("recovering", f"{reason}:worker_survived_abort")
+            _record_mlx_degradation(
+                RuntimeError(f"force_abort_worker_survived:{reason}"),
+                action=(
+                    "reported the forced abort as INCOMPLETE; the worker outlived "
+                    "kill escalation and the handle was retained for reaping"
+                ),
+                severity="critical",
+            )
+            return False
         try:
             self._release_durable_model_lane_owner_sync(reason=reason)
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -8452,6 +8501,7 @@ class MLXLocalClient:
         #
         # [STABILITY v51] Orphan reclamation: kill any existing MLXWorker
         # processes for this model path before spawning a new one.
+        orphan_scan_completed = False
         try:
             model_basename = os.path.basename(self.model_path)
             target_name = f"MLXWorker-{model_basename}"
@@ -8485,12 +8535,53 @@ class MLXLocalClient:
                             )
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
+            orphan_scan_completed = True
         except (OSError, ConnectionError, TimeoutError) as orphan_exc:
             _record_mlx_degradation(
                 orphan_exc,
                 action="continued worker spawn after orphan reclamation scan failed",
             )
-            logger.debug("Orphan reclamation scan failed (non-fatal): %s", orphan_exc)
+            logger.debug("Orphan reclamation scan failed: %s", orphan_exc)
+
+        # CP126 1399e019. A failed scan used to be logged "non-fatal" and the
+        # spawn proceeded. That is safe only if no worker of ours survives —
+        # and a failed scan is precisely the case where we do not know. For a
+        # SAME-CLIENT replacement the consequence is a second copy of a 20GB
+        # model resident at once, which exhausts unified memory long before
+        # durable accounting notices.
+        #
+        # So: when the scan could not run, this client's own prior handle must
+        # be provably terminal before we spawn beside it. Unobservable counts
+        # as alive.
+        if not orphan_scan_completed:
+            prior = self._process
+            prior_terminal = prior is None
+            if prior is not None:
+                try:
+                    prior_terminal = not bool(prior.is_alive())
+                except (RuntimeError, AttributeError, ValueError, OSError):
+                    prior_terminal = False
+            if not prior_terminal:
+                error = RuntimeError(
+                    "orphan_reclamation_unobservable_refused_worker_spawn:"
+                    f"{os.path.basename(self.model_path)}"
+                )
+                _record_mlx_degradation(
+                    error,
+                    action=(
+                        "refused a same-client worker replacement while orphan "
+                        "reclamation was unobservable and the prior process was not "
+                        "proven terminal"
+                    ),
+                    severity="critical",
+                )
+                logger.critical(
+                    "🚨 [MLX] Refusing to spawn a replacement worker for %s: the "
+                    "orphan scan could not run and the previous process is not "
+                    "proven dead. Spawning would risk two resident copies.",
+                    os.path.basename(self.model_path),
+                )
+                raise error
 
         memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
 
