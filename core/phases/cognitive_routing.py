@@ -4,6 +4,7 @@ import re
 import time
 from typing import Any
 
+from core.conversation.request_mood import assess_request_mood
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
@@ -17,7 +18,12 @@ from core.runtime.skill_task_bridge import (
     looks_like_multi_step_skill_request,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
-from core.runtime.turn_analysis import analyze_turn, canonical_turn_text, looks_like_deep_mind_probe
+from core.runtime.turn_analysis import (
+    analyze_turn,
+    canonical_turn_text,
+    looks_like_deep_mind_probe,
+    previous_user_turn_text,
+)
 from core.utils.queues import decode_stringified_priority_message, role_for_origin
 from core.utils.task_tracker import get_task_tracker
 
@@ -372,6 +378,12 @@ class CognitiveRoutingPhase(BasePhase):
 
         input_text = _safe_text(raw_input_text)
         lower_input = input_text.lower()
+        previous_user_text = previous_user_turn_text(
+            state.cognition.working_memory,
+            current_text=input_text,
+        )
+        skill_input_text = canonical_turn_text(input_text) or input_text
+        request_mood = assess_request_mood(skill_input_text, previous_user_text)
         is_autonomous = bool(active_objective) and routing_origin not in user_origins
         is_execution_report = looks_like_execution_report(input_text)
         is_deep_mind_probe = looks_like_deep_mind_probe(input_text)
@@ -502,6 +514,13 @@ class CognitiveRoutingPhase(BasePhase):
             new_state.cognition.current_origin = routing_origin
             new_state.response_modifiers["intent_type"] = "CHAT"
             new_state.response_modifiers["semantic_intent"] = "casual"
+            new_state.response_modifiers["request_mood"] = request_mood.mood.value
+            new_state.response_modifiers["request_mood_reasons"] = list(
+                request_mood.reasons
+            )
+            new_state.response_modifiers["temporal_scope"] = (
+                request_mood.temporal_scope
+            )
             new_state.response_modifiers["model_tier"] = "primary"
             new_state.response_modifiers["deep_handoff"] = False
             new_state.response_modifiers.pop("matched_skills", None)
@@ -515,7 +534,6 @@ class CognitiveRoutingPhase(BasePhase):
 
         # Fast skill detection before any LLM routing so tool use stays reliable
         matched_skills: list[str] = []
-        skill_input_text = canonical_turn_text(input_text) or input_text
         is_learning_bundle = looks_like_learning_resource_bundle(
             input_text
         ) or looks_like_learning_resource_bundle(skill_input_text)
@@ -531,6 +549,7 @@ class CognitiveRoutingPhase(BasePhase):
                 and not is_deep_mind_probe
                 and not is_learning_bundle
                 and not is_capability_inventory_dialogue
+                and not request_mood.is_about_rather_than_asking
             ):
                 matched_skills = list(cap.detect_intent(skill_input_text) or [])
                 if matched_skills:
@@ -582,7 +601,12 @@ class CognitiveRoutingPhase(BasePhase):
         # When the user pastes a URL, auto-invoke sovereign_browser to FETCH
         # the page content. Without this, URLs are treated as plain text and
         # Aura hallucinates about content she never accessed.
-        if routing_origin in user_origins and not matched_skills and not is_learning_bundle:
+        if (
+            routing_origin in user_origins
+            and not matched_skills
+            and not is_learning_bundle
+            and not request_mood.is_about_rather_than_asking
+        ):
             url_matches = _URL_PATTERN.findall(skill_input_text)
             if url_matches:
                 logger.info(
@@ -605,10 +629,19 @@ class CognitiveRoutingPhase(BasePhase):
                 )
                 return new_state
 
-        analysis = analyze_turn(input_text, matched_skills=matched_skills)
+        analysis = analyze_turn(
+            input_text,
+            matched_skills=matched_skills,
+            previous_user_text=previous_user_text,
+        )
         cognitive_mode = CognitiveMode.REACTIVE
         new_state.response_modifiers["intent_type"] = analysis.intent_type
         new_state.response_modifiers["semantic_intent"] = analysis.semantic_mode
+        new_state.response_modifiers["request_mood"] = analysis.request_mood
+        new_state.response_modifiers["request_mood_reasons"] = list(
+            analysis.request_mood_reasons
+        )
+        new_state.response_modifiers["temporal_scope"] = analysis.temporal_scope
         logger.info(
             "🧭 CognitiveRouting: deterministic intent=%s semantic=%s live_voice=%s",
             analysis.intent_type,
@@ -662,7 +695,7 @@ class CognitiveRoutingPhase(BasePhase):
             cognitive_mode = CognitiveMode.DELIBERATE
 
         # 2. Heuristic fast-path
-        if any(cmd in lower_input for cmd in ["reboot", "restart", "shutdown", "sleep"]):
+        if analysis.intent_type == "SYSTEM":
             logger.info("🧭 Routing: SYSTEM intent detected via heuristics.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE
             new_state.cognition.current_objective = input_text
@@ -723,7 +756,11 @@ class CognitiveRoutingPhase(BasePhase):
         ):
             try:
                 cap = self.container.get("capability_engine", default=None)
-                if cap and hasattr(cap, "detect_intent"):
+                if (
+                    cap
+                    and hasattr(cap, "detect_intent")
+                    and analysis.request_mood != "mention"
+                ):
                     new_state.response_modifiers["matched_skills"] = list(
                         cap.detect_intent(input_text) or []
                     )

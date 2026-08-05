@@ -36,10 +36,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class RequestMood(str, Enum):
+class RequestMood(StrEnum):
     DIRECTIVE = "directive"
     MENTION = "mention"
     AMBIGUOUS = "ambiguous"
@@ -49,6 +49,7 @@ class RequestMood(str, Enum):
 class MoodVerdict:
     mood: RequestMood
     reasons: tuple[str, ...] = ()
+    temporal_scope: str = "present"
 
     @property
     def asks_for_action(self) -> bool:
@@ -59,7 +60,11 @@ class MoodVerdict:
         return self.mood is RequestMood.MENTION
 
     def as_metrics(self) -> dict[str, object]:
-        return {"request_mood": self.mood.value, "reasons": list(self.reasons)}
+        return {
+            "request_mood": self.mood.value,
+            "reasons": list(self.reasons),
+            "temporal_scope": self.temporal_scope,
+        }
 
 
 #: Verbs that, at the head of a clause, make it an instruction. These are
@@ -70,7 +75,9 @@ _ACTION_VERBS = (
     "email|post|ask|tell|reply|respond|answer|show|pull|load|check|read|write|"
     "save|delete|move|copy|close|switch|log|sign|install|update|play|pause|"
     "take|make|create|build|generate|draw|compose|summarise|summarize|"
-    "translate|compare|compile|deploy|test|call|ping|talk|chat|converse|"
+    "translate|compile|deploy|test|call|ping|talk|chat|converse|"
+    "proceed|continue|resume|finish|complete|apply|actuate|connect|configure|"
+    "restart|reboot|shutdown|sleep|wake|"
     # Memory instructions are instructions. "Remember for future sessions that
     # my codename is glass orchard" asks her to STORE something; reading it as
     # a remark about remembering loses the fact.
@@ -95,6 +102,39 @@ _SECOND_PERSON_REQUEST_RE = re.compile(
     r"|\bgo\s+ahead\s+and\b"
     r"|\byour\s+(?:job|task)\s+is\s+to\b",
     re.IGNORECASE,
+)
+
+_INDIRECT_REQUEST_RE = re.compile(
+    r"\b(?:it|that)\s+would\s+(?:help|be\s+(?:great|useful|helpful|ideal|awesome))\s+"
+    r"if\s+you\b"
+    r"|\bi(?:'d|\s+would)\s+appreciate\s+it\s+if\s+you\b"
+    r"|\bi\s+(?:wonder|was\s+wondering)\s+(?:if|whether)\s+you\s+could\b"
+    r"|\bwould\s+it\s+be\s+possible\s+for\s+you\s+to\b"
+    r"|\bwould\s+you\s+mind\b"
+    r"|\b(?:maybe|perhaps)\s+you\s+(?:could|can|should)\b"
+    r"|\b(?:feel\s+free|you\s+need|you\s+should|you\s+have)\s+to\b"
+    r"|\bthe\s+next\s+(?:useful|best|right|logical)\s+(?:move|step)\s+is\s+to\b"
+    r"|\bi\s+(?:need|want|would\s+like)\s+(?:a|an|the)\b.{0,100}"
+    r"\b(?:created|built|written|saved|downloaded|opened|sent|finished|completed)\b",
+    re.IGNORECASE,
+)
+
+_SCHEDULED_REQUEST_RE = re.compile(
+    r"^\s*(?:tomorrow|later|tonight|next\s+\w+|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|"
+    r"after\s+[^,]{1,80}|when\s+[^,]{1,80})\s*,?\s+"
+    rf"(?:please\s+)?(?:{_ACTION_VERBS})\b",
+    re.IGNORECASE,
+)
+
+_FOLLOWUP_ACTION_RE = re.compile(
+    r"^\s*(?:yes[,\s]+please|go\s+ahead|do\s+that|do\s+it|proceed|continue|"
+    r"resume|finish\s+it|make\s+it\s+so|that\s+works[,\s]+do\s+it)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_QUOTED_UTTERANCE_RE = re.compile(
+    r"^\s*([\"']).+\1\s*[.!?]?\s*$",
+    re.DOTALL,
 )
 
 #: Frames that talk ABOUT a thing. Each one is a construction, not a topic.
@@ -124,9 +164,17 @@ _MENTION_FRAMES = (
      "retrospective_request"),
     (r"\bhow\s+did\s+(?:it|that|the\s+\w+)\s+go\b", "retrospective_request"),
     # explicitly NOT an instruction
-    (r"\b(?:don'?t|do not|no need to|you don'?t have to|not asking you to|"
-     r"without)\s+(?:go|open|visit|ask|message|search|use)\b", "refusal_to_act"),
-    (r"\bif\s+you\s+(?:were|had|could)\s+to?\b|\bhypothetically\b", "hypothetical"),
+    (rf"\b(?:don'?t|do not|no need to|you don'?t have to|not asking you to|"
+     rf"i\s+do not\s+want\s+you\s+to|i\s+don'?t\s+want\s+you\s+to|without)\s+"
+     rf"(?:{_ACTION_VERBS})\b", "refusal_to_act"),
+    (r"\b(?:if\s+you\s+(?:were\s+to|had\s+to|could)|if\s+(?:i|we)\s+"
+     r"(?:asked|told|requested)\s+you\s+to|hypothetically|in\s+theory|"
+     r"suppose\s+you|imagine\s+you|what\s+would\s+happen\s+if\s+you)\b",
+     "hypothetical"),
+    (r"\b(?:explain|describe|tell\s+me)\s+(?:how|what)\s+you\s+would\b",
+     "hypothetical"),
+    (r"\b(?:why|when|how)\s+did\s+you\s+"
+     rf"(?:{_ACTION_VERBS})\b", "retrospective_request"),
     # copular claims about the thing
     (r"\b(?:is|are|was|were)\s+(?:a|an|the|just|basically|really|kind of|pretty)\b", "copular_claim"),
 )
@@ -163,7 +211,10 @@ def _is_plain_declarative(text: str) -> bool:
     return bool(_FINITE_STATEMENT_RE.search(text))
 
 
-def assess_request_mood(message: str) -> MoodVerdict:
+def assess_request_mood(
+    message: str,
+    previous_message: str = "",
+) -> MoodVerdict:
     """Decide whether the turn instructs an action or talks about something."""
 
     text = " ".join(str(message or "").split())
@@ -175,10 +226,38 @@ def assess_request_mood(message: str) -> MoodVerdict:
         directive_reasons.append("imperative_clause")
     if _SECOND_PERSON_REQUEST_RE.search(text):
         directive_reasons.append("second_person_request")
+    if _INDIRECT_REQUEST_RE.search(text):
+        directive_reasons.append("indirect_request")
+    if _SCHEDULED_REQUEST_RE.search(text):
+        directive_reasons.append("scheduled_request")
+
+    if _QUOTED_UTTERANCE_RE.fullmatch(text):
+        return MoodVerdict(RequestMood.MENTION, ("quoted_utterance",), "quoted")
+
+    if _FOLLOWUP_ACTION_RE.fullmatch(text):
+        previous_verdict = (
+            assess_request_mood(previous_message)
+            if str(previous_message or "").strip()
+            else None
+        )
+        if previous_verdict is not None and previous_verdict.asks_for_action:
+            return MoodVerdict(
+                RequestMood.DIRECTIVE,
+                ("contextual_action_followup",),
+                previous_verdict.temporal_scope,
+            )
 
     mention_reasons = [
         name for pattern, name in _MENTION_FRAMES if re.search(pattern, text, re.IGNORECASE)
     ]
+    if (
+        "indirect_request" in directive_reasons
+        and "hypothetical" in mention_reasons
+        and re.search(r"\bi\s+(?:wonder|was\s+wondering)\b", text, re.IGNORECASE)
+    ):
+        mention_reasons = [
+            reason for reason in mention_reasons if reason != "hypothetical"
+        ]
     if not mention_reasons and _is_plain_declarative(text):
         mention_reasons.append("declarative_statement")
 
@@ -192,12 +271,29 @@ def assess_request_mood(message: str) -> MoodVerdict:
     # Plain recollection markers ("yesterday", "last time") do NOT cancel —
     # "Ask ChatGPT what it said yesterday" is still an instruction.
     cancelling = {"refusal_to_act", "hypothetical", "retrospective_request"}
+    temporal_scope = (
+        "hypothetical"
+        if "hypothetical" in mention_reasons
+        else "retrospective"
+        if "retrospective_request" in mention_reasons
+        else "scheduled"
+        if "scheduled_request" in directive_reasons
+        else "present"
+    )
     if directive_reasons and not (set(mention_reasons) & cancelling):
-        return MoodVerdict(RequestMood.DIRECTIVE, tuple(directive_reasons))
+        return MoodVerdict(
+            RequestMood.DIRECTIVE,
+            tuple(directive_reasons),
+            temporal_scope,
+        )
     if mention_reasons:
-        return MoodVerdict(RequestMood.MENTION, tuple(mention_reasons))
+        return MoodVerdict(RequestMood.MENTION, tuple(mention_reasons), temporal_scope)
     if directive_reasons:
-        return MoodVerdict(RequestMood.DIRECTIVE, tuple(directive_reasons))
+        return MoodVerdict(
+            RequestMood.DIRECTIVE,
+            tuple(directive_reasons),
+            temporal_scope,
+        )
     return MoodVerdict(RequestMood.AMBIGUOUS, ("no_frame_matched",))
 
 

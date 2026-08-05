@@ -524,6 +524,7 @@ def install_runtime_validation() -> dict[str, Any]:
         "structural_verification",
         "active_health",
         "integrity_reporting",
+        "semantic_autonomous_action",
     )
     suite.add_model(model)
 
@@ -642,6 +643,31 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/runtime/taint.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="semantic_action_routing_preserves_speech_act",
+            description=(
+                "indirect self-chosen objectives reach semantic planning while "
+                "hypothetical or negated tool language remains non-executing"
+            ),
+            required_capability="semantic_autonomous_action",
+            observation=Observation(
+                name="speech_act_preserved",
+                value=True,
+                source=(
+                    "core/conversation/request_mood.py and "
+                    "core/runtime/overt_action_loop.py contract tests"
+                ),
+            ),
+            predict=lambda _m: _semantic_autonomy_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="semantic autonomous-action routing",
+            ),
+            owner="core/runtime/turn_analysis.py",
+        )
+    )
 
     for statement, test_name, asserted_in in (
         (
@@ -674,6 +700,11 @@ def install_runtime_validation() -> dict[str, Any]:
             "health_verdicts_are_not_reported_over_hidden_damage",
             "core/runtime/taint.py",
         ),
+        (
+            "Action routing follows the turn's semantic speech act rather than requiring a trigger phrase.",
+            "semantic_action_routing_preserves_speech_act",
+            "core/runtime/turn_analysis.py",
+        ),
     ):
         suite.add_claim(
             Claim(statement=statement, test=test_name, owner=asserted_in, asserted_in=asserted_in)
@@ -692,6 +723,32 @@ def _lockdep() -> dict[str, Any]:
     from core.runtime.lockdep import lockdep_report
 
     return lockdep_report()
+
+
+def _semantic_autonomy_contract_holds() -> bool:
+    from core.conversation.request_mood import assess_request_mood
+    from core.runtime.overt_action_loop import OvertActionLoop
+
+    indirect = assess_request_mood(
+        "It would help if you compared the current evidence and saved the result."
+    )
+    hypothetical = assess_request_mood(
+        "If I asked you to open Notes, how would you decide whether to do it?"
+    )
+    selection = OvertActionLoop()._choose_skill_and_params(
+        {
+            "goal": "Compare the current evidence and preserve a verified result.",
+            "source": "cognitive_loop",
+        },
+        {},
+    )
+    return bool(
+        indirect.asks_for_action
+        and hypothetical.is_about_rather_than_asking
+        and selection.actionable
+        and selection.execution_mode == "planned_goal"
+        and selection.provenance == "semantic_plan:live_capability_catalog"
+    )
 
 
 def _health() -> dict[str, Any]:

@@ -14,7 +14,12 @@ from core.runtime.skill_task_bridge import (
     looks_like_multi_step_skill_request,
 )
 from core.runtime.structured_input import looks_like_learning_resource_bundle
-from core.runtime.turn_analysis import analyze_turn, canonical_turn_text, looks_like_deep_mind_probe
+from core.runtime.turn_analysis import (
+    analyze_turn,
+    canonical_turn_text,
+    looks_like_deep_mind_probe,
+    previous_user_turn_text,
+)
 from core.state.aura_state import AuraState, CognitiveMode
 
 if TYPE_CHECKING:
@@ -281,6 +286,8 @@ class CognitiveRoutingPhase(Phase):
         )
         lowered = str(text or "").lower()
 
+        if getattr(analysis, "request_mood", "") == "mention":
+            return False
         if any(keyword in lowered for keyword in _DEEP_HANDOFF_KEYWORDS):
             return True
         if not bool(metadata.get("coding_request")):
@@ -469,13 +476,25 @@ class CognitiveRoutingPhase(Phase):
 
         contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing and not is_benchmark)
         new_state.response_modifiers["response_contract"] = contract.to_dict()
-        analysis = analyze_turn(objective)
+        previous_user_text = previous_user_turn_text(
+            state.cognition.working_memory,
+            current_text=objective,
+        )
+        analysis = analyze_turn(
+            objective,
+            previous_user_text=previous_user_text,
+        )
         route_meta = self._build_coding_route_metadata(
             objective,
             analysis=analysis,
             intent_type=analysis.intent_type,
         )
         new_state.response_modifiers["semantic_intent"] = analysis.semantic_mode
+        new_state.response_modifiers["request_mood"] = analysis.request_mood
+        new_state.response_modifiers["request_mood_reasons"] = list(
+            analysis.request_mood_reasons
+        )
+        new_state.response_modifiers["temporal_scope"] = analysis.temporal_scope
 
         if is_benchmark:
             logger.info(
@@ -518,7 +537,11 @@ class CognitiveRoutingPhase(Phase):
             # prevented the 32B from coming back.
             return new_state
 
-        if contract.requires_search and contract.required_skill:
+        if (
+            contract.requires_search
+            and contract.required_skill
+            and analysis.request_mood != "mention"
+        ):
             logger.info("🧭 Routing: Response contract requires grounded search.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE
             self._stamp_llm_route(
@@ -592,7 +615,7 @@ class CognitiveRoutingPhase(Phase):
         lower_obj = objective.lower()
         is_deep_mind_probe = looks_like_deep_mind_probe(objective)
 
-        if any(cmd in lower_obj for cmd in ["reboot", "restart", "shutdown", "sleep mode"]):
+        if analysis.intent_type == "SYSTEM":
             logger.info("🧭 Routing: SYSTEM intent detected via heuristics.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE
             self._stamp_llm_route(
@@ -617,7 +640,9 @@ class CognitiveRoutingPhase(Phase):
             "external mcp",
             "query mcp",
         )
-        if any(sig in lower_obj for sig in _mcp_signals):
+        if any(sig in lower_obj for sig in _mcp_signals) and (
+            not is_user_facing or analysis.request_mood == "directive"
+        ):
             logger.info("🧭 Routing: MCP Client autonomous trigger detected.")
             new_state.cognition.current_mode = CognitiveMode.DELIBERATE
             self._stamp_llm_route(
@@ -639,47 +664,6 @@ class CognitiveRoutingPhase(Phase):
             )
             return new_state
 
-        _task_signals = (
-            "create ",
-            "build ",
-            "write a ",
-            "write me ",
-            "generate a ",
-            "set up ",
-            "automate ",
-            "organize ",
-            "plan ",
-            "schedule ",
-            "make me ",
-            "develop ",
-            "implement ",
-            "design ",
-            "prepare ",
-            "put together ",
-            "compose a ",
-        )
-        import re as _re
-
-        _task_hit = any(
-            (s in lower_obj if " " in s else bool(_re.search(s, lower_obj))) for s in _task_signals
-        )
-        _is_long_goal = len(objective.split()) > 10 and any(
-            lower_obj.startswith(v)
-            for v in (
-                "can you ",
-                "please ",
-                "i need you to ",
-                "i want you to ",
-                "could you ",
-                "would you ",
-                "help me ",
-                "write ",
-                "create ",
-                "build ",
-                "make ",
-                "generate ",
-            )
-        )
         if is_user_facing and _looks_like_simple_dialogue_request(objective):
             logger.info("🧭 Routing: simple dialogue request kept on CHAT lane.")
             new_state.cognition.current_mode = CognitiveMode.REACTIVE
@@ -692,8 +676,8 @@ class CognitiveRoutingPhase(Phase):
                 route_meta=route_meta,
             )
             return new_state
-        if not is_deep_mind_probe and (_task_hit or _is_long_goal):
-            logger.info("🧭 Routing: TASK detected via heuristics for: %s", objective[:60])
+        if not is_deep_mind_probe and analysis.intent_type == "TASK":
+            logger.info("🧭 Routing: TASK detected semantically for: %s", objective[:60])
             new_state.cognition.current_mode = CognitiveMode.DELIBERATE
             self._stamp_llm_route(
                 new_state,
@@ -719,6 +703,7 @@ class CognitiveRoutingPhase(Phase):
                 and not is_deep_mind_probe
                 and not objective.startswith("CORE DIRECTIVE")
                 and not is_learning_bundle
+                and analysis.request_mood != "mention"
             ):
                 matched = cap.detect_intent(skill_objective)
                 if matched:

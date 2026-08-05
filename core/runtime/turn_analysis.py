@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from core.conversation.request_mood import assess_request_mood
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
     looks_like_explanatory_dialogue_request,
@@ -217,6 +218,29 @@ def canonical_turn_text(text: str) -> str:
     return normalize_memory_intent_text(raw)
 
 
+def previous_user_turn_text(
+    working_memory: object,
+    *,
+    current_text: str = "",
+) -> str:
+    """Return the prior user turn without confusing the current turn for it."""
+    if not isinstance(working_memory, (list, tuple)):
+        return ""
+    current = canonical_turn_text(current_text)
+    skipped_current = False
+    for item in reversed(working_memory):
+        if not isinstance(item, dict) or str(item.get("role") or "").lower() != "user":
+            continue
+        candidate = canonical_turn_text(str(item.get("content") or ""))
+        if not candidate:
+            continue
+        if not skipped_current and current and candidate == current:
+            skipped_current = True
+            continue
+        return candidate
+    return ""
+
+
 def looks_like_deep_mind_probe(text: str) -> bool:
     normalized = canonical_turn_text(text)
     return _matches_any(normalized.lower(), _DEEP_MIND_PROBE_PATTERNS)
@@ -230,14 +254,25 @@ class TurnAnalysis:
     everyday_chat_safe: bool
     suggests_deliberate_mode: bool
     is_execution_report: bool
+    request_mood: str
+    request_mood_reasons: tuple[str, ...]
+    temporal_scope: str
 
 
-def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> TurnAnalysis:
+def analyze_turn(
+    text: str,
+    *,
+    matched_skills: bool | list[str] = False,
+    previous_user_text: str = "",
+) -> TurnAnalysis:
     normalized = canonical_turn_text(text)
     lower = normalized.lower()
     word_count = len(lower.split())
     matched_skill_list = normalize_matched_skills(matched_skills)
-    has_matched_skills = bool(matched_skill_list)
+    request_mood = assess_request_mood(normalized, previous_user_text)
+    has_matched_skills = bool(
+        matched_skill_list and not request_mood.is_about_rather_than_asking
+    )
     is_execution_report = looks_like_execution_report(normalized)
     is_deep_mind_probe = looks_like_deep_mind_probe(normalized)
     is_learning_bundle = looks_like_learning_resource_bundle(str(text or ""))
@@ -262,7 +297,10 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
             r"\bneed\s+to\s+sleep\b",
             r"\bgoing\s+to\s+sleep\b",
         )
-        if _matches_any(lower, metaphorical_markers):
+        if (
+            request_mood.is_about_rather_than_asking
+            or _matches_any(lower, metaphorical_markers)
+        ):
             intent_type = "CHAT"
         else:
             intent_type = "SYSTEM"
@@ -276,6 +314,8 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
         # State/stance/identity turns want Aura's live voice in this
         # reply — never a skill run or a background-task receipt.
         intent_type = "CHAT"
+    elif request_mood.is_about_rather_than_asking:
+        intent_type = "CHAT"
     elif looks_like_multi_step_skill_request(normalized, matched_skill_list):
         intent_type = "TASK"
     elif has_matched_skills or _matches_any(lower, _SKILL_PATTERNS):
@@ -288,6 +328,12 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
             and normalized[:12].lower().startswith(("create ", "build ", "write ", "implement ", "design "))
         )
     ) and not looks_like_inline_answer_request(normalized):
+        intent_type = "TASK"
+    elif request_mood.asks_for_action:
+        # The request is grammatical even when no skill regex recognizes its
+        # wording. TASK hands the objective to the semantic planner, which
+        # selects from the live capability catalog and fails honestly if none
+        # can realize it.
         intent_type = "TASK"
     else:
         intent_type = "CHAT"
@@ -338,4 +384,7 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
         everyday_chat_safe=everyday_chat_safe,
         suggests_deliberate_mode=suggests_deliberate,
         is_execution_report=is_execution_report,
+        request_mood=request_mood.mood.value,
+        request_mood_reasons=request_mood.reasons,
+        temporal_scope=request_mood.temporal_scope,
     )

@@ -1255,6 +1255,11 @@ class ContextAssembler:
                 )
                 if skills_summary:
                     skills_summary += (
+                        "\n- These available tools are action affordances of your current body. "
+                        "You may choose them from the meaning and context of a request, an active "
+                        "commitment, or a self-chosen governed objective; no magic phrase is required.\n"
+                        "- A hypothetical, quotation, negation, memory, or passive observation that "
+                        "mentions a tool is not by itself an instruction to execute it.\n"
                         "\n- If a task is genuinely multi-step, execute it instead of only describing a plan.\n"
                         "- If a needed tool is unavailable, say so plainly instead of pretending.\n"
                     )

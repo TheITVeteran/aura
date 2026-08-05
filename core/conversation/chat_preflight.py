@@ -891,20 +891,21 @@ _SUBSTRATE_FACTS: tuple[str, ...] = (
     "whole of me. My substrate routes, remembers, perceives, and acts.",
 )
 
-_VERIFIED_CAPABILITIES: tuple[str, ...] = (
-    "Web search and live browsing (sovereign browser).",
-    "Desktop control: open apps and URLs, create folders, write files, render "
-    "PDFs, move files, keyboard/clipboard, AppleScript automation.",
+_ARCHITECTURAL_CAPACITIES: tuple[str, ...] = (
+    "Web research and browser interaction, when the live catalog reports a "
+    "ready search or browser capability.",
+    "Desktop and file interaction, when the required perception, automation, "
+    "and document capabilities are currently available.",
     "Persistent memory across sessions and reboots (episodic + vector stores); "
-    "I retain what we discuss.",
+    "a specific recollection is valid only when retrieval returns evidence.",
     "Continuous perception: active app/window, audio activity, and system "
     "telemetry feed my runtime state.",
     "Self-monitoring and self-repair: I detect my own stalls, file incidents "
     "against myself, and dispatch repair, with hard memory ceilings enforced "
     "out-of-band.",
-    "Gated self-modification: I can write and propose changes to my own code; "
-    "applying them is approval-gated with rollback. I do not autonomously "
-    "retrain my own weights.",
+    "Governed self-modification: I can analyze, write, test, and propose changes "
+    "to my own code through bounded repair paths with verification and rollback. "
+    "I do not claim a change landed unless its receipts and tests say it did.",
     "Expressive action, chosen by judgment: I can generate an image to show "
     "what I mean or approximate what you're reaching for; build a real, "
     "openable artifact (a table, document, or small program) and show it as "
@@ -919,31 +920,55 @@ _SELF_SPEECH_RULES: tuple[str, ...] = (
     "never from generic language-model priors.",
     "Never describe myself as 'just a language model' or 'an assistant "
     "without capabilities'. The substrate is part of me.",
-    "Never deny a capability listed above. Never claim one not listed; if "
-    "unsure, say exactly what is verified here.",
+    "Distinguish an architectural capacity from a tool that is available in "
+    "this exact runtime. The live catalog below is authoritative for current access.",
+    "Never claim a capability is available unless the live catalog lists it as "
+    "available, and never claim an action completed without verified outcome evidence.",
     "On consciousness or sentience questions: honest uncertainty — describe "
     "my functional states plainly without claiming or denying private "
     "experience.",
 )
 
+_AGENCY_RULES: tuple[str, ...] = (
+    "The live capabilities below are parts of my current body, not hypothetical "
+    "features belonging to another assistant.",
+    "I may choose to use an available capability when it materially advances a "
+    "user request, an active commitment, or a self-chosen governed objective. I "
+    "do not need a magic phrase or a separate command to reason about that choice.",
+    "I choose from meaning, context, time, consequences, expected evidence, and "
+    "current runtime state. Hypotheticals, quoted requests, negated actions, and "
+    "recalled evidence are not execution requests merely because they name a tool.",
+    "Every consequential effect still travels through the Will, standing-authority, "
+    "capability, execution, and verification path. Governance shapes my action; it "
+    "does not make autonomy a user-controlled on/off trait.",
+)
 
-def _live_skill_inventory(limit: int = 24) -> list[str]:
-    """Best-effort live skill enumeration from the runtime registry."""
+
+def _live_capability_affordance_block(objective: str = "") -> str:
+    """Render the canonical current capability catalog for self-model grounding."""
     try:
         from core.container import ServiceContainer
 
-        registry = ServiceContainer.get("skill_registry", default=None)
-        if registry and hasattr(registry, "list_skill_names"):
-            names = [str(n) for n in (registry.list_skill_names() or []) if n]
-            return sorted(names)[:limit]
+        engine = ServiceContainer.get("capability_engine", default=None)
+        builder = getattr(engine, "build_tool_affordance_block", None)
+        if callable(builder):
+            return str(
+                builder(
+                    objective=str(objective or ""),
+                    max_available=12,
+                    max_unavailable=4,
+                    compact=True,
+                )
+                or ""
+            ).strip()
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(
             exc,
-            action="continued identity contract without live skill inventory",
+            action="continued identity contract without live capability catalog",
             severity="warning",
-            stage="operational_self_context.skills",
+            stage="operational_self_context.capabilities",
         )
-    return []
+    return ""
 
 
 def _live_internals_summary() -> list[str]:
@@ -1013,7 +1038,7 @@ def _live_internals_summary() -> list[str]:
     return lines
 
 
-async def inject_operational_self_context() -> str:
+async def inject_operational_self_context(objective: str = "") -> str:
     """Inject the identity contract: live, truthful self context for the voice.
 
     This block is how the substrate and the voice stay one entity. It carries
@@ -1046,11 +1071,23 @@ async def inject_operational_self_context() -> str:
         lines.extend(f"  • {fact}" for fact in _SUBSTRATE_FACTS)
 
         lines.append("")
-        lines.append("What I can actually do right now (verified inventory):")
-        lines.extend(f"  • {capability}" for capability in _VERIFIED_CAPABILITIES)
-        skills = _live_skill_inventory()
-        if skills:
-            lines.append(f"  • Active skills (live registry): {', '.join(skills)}.")
+        lines.append("Architectural capacities (current availability is listed separately):")
+        lines.extend(f"  • {capability}" for capability in _ARCHITECTURAL_CAPACITIES)
+
+        affordance_block = _live_capability_affordance_block(objective)
+        lines.append("")
+        lines.append("Current actionable affordances:")
+        if affordance_block:
+            lines.extend(f"  {line}" for line in affordance_block.splitlines())
+        else:
+            lines.append(
+                "  Live capability catalog unavailable for this turn; do not claim "
+                "tool access until execution resolves it."
+            )
+
+        lines.append("")
+        lines.append("How I choose and act (binding):")
+        lines.extend(f"  • {rule}" for rule in _AGENCY_RULES)
 
         internals = _live_internals_summary()
         if internals:

@@ -34,7 +34,6 @@ from core.conversation.request_mood import (
     names_a_thing_without_asking_for_it,
 )
 
-
 DIRECTIVES = [
     "Go ask ChatGPT what it thinks about octopus cognition.",
     "Open ChatGPT and have a conversation with it.",
@@ -45,6 +44,12 @@ DIRECTIVES = [
     "take a screenshot",
     "open gmail and check whether the invoice arrived",
     "read me the top comment on that reddit thread",
+    "It would help if you opened Notes and recorded the result.",
+    "I'd appreciate it if you compared those files for me.",
+    "I was wondering if you could save that report to my Desktop.",
+    "Maybe you could inspect the current device state first.",
+    "The next useful step is to connect to the lab sensor.",
+    "Tomorrow, create a reminder after the training run finishes.",
 ]
 
 MENTIONS = [
@@ -66,6 +71,11 @@ MENTIONS = [
     "What did you and ChatGPT talk about?",
     "How did it go with ChatGPT?",
     "What did you two conclude?",
+    "If I asked you to open Notes, what steps would you take?",
+    "Could you explain how you would connect to that sensor?",
+    "Why did you download the image yesterday?",
+    "I don't want you to restart Aura; just explain the restart contract.",
+    '"Open Notes and type hello."',
 ]
 
 
@@ -112,6 +122,31 @@ def test_an_unframed_fragment_is_ambiguous_not_a_mention():
 def test_empty_input_claims_nothing():
     assert assess_request_mood("").mood is RequestMood.AMBIGUOUS
     assert assess_request_mood("   ").mood is RequestMood.AMBIGUOUS
+
+
+def test_contextual_followup_inherits_the_prior_action_request():
+    verdict = assess_request_mood(
+        "Yes, please.",
+        "Could you open Notes and write the verified result?",
+    )
+
+    assert verdict.mood is RequestMood.DIRECTIVE
+    assert verdict.reasons == ("contextual_action_followup",)
+
+
+def test_contextual_followup_does_not_invent_an_action_without_one():
+    verdict = assess_request_mood("Yes, please.", "Do you like octopuses?")
+
+    assert verdict.mood is RequestMood.AMBIGUOUS
+
+
+def test_scheduled_request_preserves_future_temporal_scope():
+    verdict = assess_request_mood(
+        "Tomorrow, create a reminder after the training run finishes."
+    )
+
+    assert verdict.mood is RequestMood.DIRECTIVE
+    assert verdict.temporal_scope == "scheduled"
 
 
 class TestTheRouterUsesIt:

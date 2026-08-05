@@ -52,6 +52,9 @@ def test_build_system_prompt_uses_compact_turn_specific_tool_affordances(monkeyp
     prompt = ContextAssembler.build_system_prompt(state)
 
     assert "## LIVE TOOL OPTIONS" in prompt
+    assert "action affordances of your current body" in prompt
+    assert "no magic phrase is required" in prompt
+    assert "hypothetical, quotation, negation, memory" in prompt
     assert "If you need facts, USE web_search/search_web/free_search." not in prompt
     assert engine.calls == 1
     assert engine.kwargs[0]["objective"] == "What time is it right now?"

@@ -181,6 +181,69 @@ async def test_explicit_search_request_routes_to_skill_before_everyday_chat(monk
 
 
 @pytest.mark.asyncio
+async def test_hypothetical_tool_language_stays_chat_on_unitary_route(monkeypatch):
+    kernel = SimpleNamespace(orchestrator=SimpleNamespace(cycle_count=100))
+    phase = CognitiveRoutingPhase(kernel)
+    state = AuraState.default()
+    detect_calls = []
+    capability_engine = SimpleNamespace(
+        detect_intent=lambda text: detect_calls.append(text) or ["computer_use"]
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                capability_engine if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective="If I asked you to open Notes, how would you decide whether to do it?",
+        priority=True,
+    )
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert new_state.response_modifiers["request_mood"] == "mention"
+    assert "matched_skills" not in new_state.response_modifiers
+    assert detect_calls == []
+
+
+@pytest.mark.asyncio
+async def test_indirect_request_reaches_task_on_unitary_route(monkeypatch):
+    kernel = SimpleNamespace(orchestrator=SimpleNamespace(cycle_count=100))
+    phase = CognitiveRoutingPhase(kernel)
+    state = AuraState.default()
+    detect_calls = []
+    capability_engine = SimpleNamespace(
+        detect_intent=lambda text: detect_calls.append(text) or []
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                capability_engine if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=(
+            "It would help if you compared the latest runtime incidents and "
+            "saved the verified findings."
+        ),
+        priority=True,
+    )
+
+    assert new_state.cognition.current_mode == CognitiveMode.DELIBERATE
+    assert new_state.response_modifiers["intent_type"] == "TASK"
+    assert new_state.response_modifiers["request_mood"] == "directive"
+    assert detect_calls == []
+
+
+@pytest.mark.asyncio
 async def test_continuity_resume_context_does_not_false_trigger_skill_route(monkeypatch):
     kernel = SimpleNamespace(orchestrator=SimpleNamespace(cycle_count=100))
     phase = CognitiveRoutingPhase(kernel)

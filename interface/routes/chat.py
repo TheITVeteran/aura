@@ -20312,7 +20312,9 @@ async def api_chat(
                 _self_context = (
                     ""
                     if conversation_only_surface
-                    else await inject_operational_self_context()
+                    else await inject_operational_self_context(
+                        _original_user_message
+                    )
                 )
                 if _self_context:
                     body.message = f"{_self_context}{body.message}"

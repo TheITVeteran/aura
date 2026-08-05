@@ -479,11 +479,11 @@ class TestIdentityContract(unittest.TestCase):
     def test_contract_carries_verified_capability_inventory(self):
         block = self._render()
         for needle in (
-            "Web search",
-            "Desktop control",
+            "Web research",
+            "Desktop and file interaction",
             "Persistent memory across sessions",
             "self-repair",
-            "Gated self-modification",
+            "Governed self-modification",
         ):
             self.assertIn(needle, block)
 
@@ -492,7 +492,14 @@ class TestIdentityContract(unittest.TestCase):
         self.assertIn("How I speak about myself (binding):", block)
         self.assertIn("never from generic language-model priors", block)
         self.assertIn("'just a language model'", block)
-        self.assertIn("Never deny a capability listed above", block)
+        self.assertIn("live catalog below is authoritative", block)
+
+    def test_contract_binds_autonomous_semantic_choice(self):
+        block = self._render()
+        self.assertIn("How I choose and act (binding):", block)
+        self.assertIn("self-chosen governed objective", block)
+        self.assertIn("do not need a magic phrase", block)
+        self.assertIn("Governance shapes my action", block)
 
     def test_contract_keeps_evidence_boundary(self):
         block = self._render()
@@ -505,20 +512,40 @@ class TestIdentityContract(unittest.TestCase):
         block = self._render()
         self.assertLessEqual(len(block), cp.MAX_OPERATIONAL_SELF_CONTEXT_CHARS)
 
-    def test_contract_includes_live_skill_registry_when_available(self):
+    def test_contract_includes_ranked_live_capability_catalog_when_available(self):
         import asyncio
 
         from core.container import ServiceContainer
         from core.conversation.chat_preflight import inject_operational_self_context
 
-        class Registry:
-            def list_skill_names(self):
-                return ["web_search", "sovereign_browser", "desktop_task"]
+        calls = []
 
-        ServiceContainer.register_instance("skill_registry", Registry(), required=False)
+        class CapabilityEngine:
+            def build_tool_affordance_block(self, **kwargs):
+                calls.append(kwargs)
+                return (
+                    "## LIVE TOOL OPTIONS\n"
+                    "Most relevant right now:\n"
+                    "- reality_reach: inspect and actuate a connected environment"
+                )
+
+        ServiceContainer.register_instance(
+            "capability_engine",
+            CapabilityEngine(),
+            required=False,
+        )
         try:
-            block = asyncio.run(inject_operational_self_context())
-            self.assertIn("Active skills (live registry):", block)
-            self.assertIn("sovereign_browser", block)
+            block = asyncio.run(
+                inject_operational_self_context(
+                    "Use the connected lab sensor if that would clarify this."
+                )
+            )
+            self.assertIn("Current actionable affordances:", block)
+            self.assertIn("reality_reach", block)
+            self.assertEqual(
+                calls[0]["objective"],
+                "Use the connected lab sensor if that would clarify this.",
+            )
+            self.assertTrue(calls[0]["compact"])
         finally:
             ServiceContainer.clear()
