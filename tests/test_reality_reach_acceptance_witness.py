@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import subprocess
 import sys
@@ -180,6 +181,8 @@ def _campaign() -> tuple[
         target=7.0,
         target_tolerance=0.2,
         scenario_id="",
+        expected_live_channel_ids=("fixture.live",),
+        expected_simulated_channel_ids=(),
         required_cases=REQUIRED_SCALAR_ACCEPTANCE_CASES,
         provisioned_at_ns=1_000,
         custody_sequence=1,
@@ -314,6 +317,46 @@ def test_physical_acceptance_cannot_promote_from_raw_producer_digests() -> None:
     }
     assert "trusted_metrology_missing" in receipt.mandate_verification.verification.blockers
     assert "trusted_governance_missing" in receipt.mandate_verification.verification.blockers
+
+
+def test_mandate_replay_rejects_readback_channel_substitution() -> None:
+    mandate, certificate, evidence = _campaign()
+    metrology_key = Ed25519PrivateKey.generate()
+    governance_key = Ed25519PrivateKey.generate()
+    metrology = _bundle(
+        metrology_key,
+        role=AcceptanceWitnessRole.METROLOGY,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.metrology_evidence_sha256,
+    )
+    governance = _bundle(
+        governance_key,
+        role=AcceptanceWitnessRole.GOVERNANCE,
+        mandate=mandate,
+        certificate=certificate,
+        evidence_sha256=certificate.governance_evidence_sha256,
+    )
+    substituted = copy.deepcopy(evidence)
+    substituted["metrology_receipt"]["measurements"][0]["channel_id"] = (
+        "fixture.substituted"
+    )
+
+    receipt = verify_acceptance_with_external_witnesses(
+        certificate,
+        substituted,
+        mandate,
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governance,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governance.public_key_sha256,
+        now_ns=5_000,
+    )
+
+    assert receipt.accepted is False
+    assert "mandate_live_channel_set_mismatch" in (
+        receipt.mandate_verification.blockers
+    )
 
 
 def test_witness_signature_tamper_and_wrong_pinned_root_fail_closed() -> None:

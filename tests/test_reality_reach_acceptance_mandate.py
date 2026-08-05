@@ -337,3 +337,41 @@ def test_mandated_verification_receipt_is_private_and_create_once(tmp_path: Path
         match="acceptance_mandated_verification_receipt_collision",
     ):
         persist_mandated_verification_receipt(attacked, receipt_path)
+
+
+def test_physical_mandates_require_exact_evidence_topology(tmp_path: Path) -> None:
+    store = _store(tmp_path / "mandates.json", _FakeKeychain())
+    common = {
+        "connector_id": "connector.fixture",
+        "adapter_id": "adapter.fixture",
+        "expected_source_commit_sha256": _digest("source"),
+        "expected_physical_identity_sha256": _digest("device"),
+        "target": 2.0,
+        "target_tolerance": 0.05,
+    }
+
+    with pytest.raises(ValueError, match="requires live channels"):
+        store.provision(
+            campaign_id="campaign.live-no-readback",
+            expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+            **common,
+        )
+    with pytest.raises(ValueError, match="requires simulated channels"):
+        store.provision(
+            campaign_id="campaign.hil-no-companion",
+            expected_evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+            scenario_id="hil.fixture",
+            expected_live_channel_ids=("fixture.live",),
+            **common,
+        )
+    receipt = store.provision(
+        campaign_id="campaign.hil-complete",
+        expected_evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        scenario_id="hil.fixture",
+        expected_live_channel_ids=("fixture.live",),
+        expected_simulated_channel_ids=("fixture.simulated",),
+        **common,
+    )
+    mandate = store.get(receipt.campaign_id)
+    assert mandate.expected_live_channel_ids == ("fixture.live",)
+    assert mandate.expected_simulated_channel_ids == ("fixture.simulated",)

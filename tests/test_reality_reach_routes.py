@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
 from core.reality_reach.acceptance import AcceptanceError, AcceptanceEvidenceClass
+from interface.auth import PROTECTED_LOCAL_POST_PATHS
 from interface.routes import reality_reach as routes
 
 
@@ -30,6 +31,17 @@ class _Service:
             "trust_boundary": "producer_observation_not_independent_acceptance",
         }
 
+    async def precommit(self, request: Any) -> dict[str, Any]:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return {
+            "mandate": {
+                "campaign_id": request.campaign_id,
+                "mandate_sha256": "sha256:" + "c" * 64,
+            }
+        }
+
 
 def _payload() -> routes.ScalarAcceptancePayload:
     return routes.ScalarAcceptancePayload(
@@ -39,6 +51,7 @@ def _payload() -> routes.ScalarAcceptancePayload:
         target=7.0,
         expected_source_commit_sha256="sha256:" + "b" * 64,
         evidence_class=AcceptanceEvidenceClass.LIVE,
+        mandate_sha256="sha256:" + "c" * 64,
     )
 
 
@@ -50,6 +63,7 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
     }
     assert set(acceptance_routes) == {
         "/reality-reach/acceptance/preflight",
+        "/reality-reach/acceptance/mandate",
         "/reality-reach/acceptance/status",
         "/reality-reach/acceptance/run",
     }
@@ -57,6 +71,8 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
         assert routes._require_internal in dependencies
         assert routes._verify_token in dependencies
+    assert "/api/reality-reach/acceptance/mandate" in PROTECTED_LOCAL_POST_PATHS
+    assert "/api/reality-reach/acceptance/run" in PROTECTED_LOCAL_POST_PATHS
 
 
 @pytest.mark.asyncio
@@ -85,6 +101,27 @@ async def test_acceptance_route_constructs_typed_runtime_request(monkeypatch) ->
     assert len(service.requests) == 1
     assert service.requests[0].evidence_class is AcceptanceEvidenceClass.LIVE
     assert service.requests[0].expected_source_commit_sha256 == "sha256:" + "b" * 64
+
+
+@pytest.mark.asyncio
+async def test_acceptance_mandate_route_constructs_typed_precommit(monkeypatch) -> None:
+    service = _Service()
+    monkeypatch.setattr(routes.ServiceContainer, "get", lambda *_args, **_kwargs: service)
+    payload = routes.ScalarAcceptanceMandatePayload(
+        campaign_id="cp810.route.live",
+        connector_id="fixture.connector",
+        adapter_id="fixture.adapter",
+        target=7.0,
+        expected_source_commit_sha256="sha256:" + "b" * 64,
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+    )
+
+    response = await routes.precommit_acceptance_mandate(payload, None, None)
+
+    assert response.status_code == 201
+    assert len(service.requests) == 1
+    assert service.requests[0].evidence_class is AcceptanceEvidenceClass.LIVE
+    assert service.requests[0].campaign_id == "cp810.route.live"
 
 
 @pytest.mark.asyncio

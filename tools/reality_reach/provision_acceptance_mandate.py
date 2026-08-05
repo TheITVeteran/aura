@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", type=float, required=True)
     parser.add_argument("--target-tolerance", type=float, required=True)
     parser.add_argument("--scenario-id", default="")
+    parser.add_argument("--live-channel", action="append", default=None)
+    parser.add_argument("--simulated-channel", action="append", default=None)
     parser.add_argument(
         "--required-case",
         action="append",
@@ -57,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target,
             target_tolerance=args.target_tolerance,
             scenario_id=args.scenario_id,
+            expected_live_channel_ids=tuple(args.live_channel or ()),
+            expected_simulated_channel_ids=tuple(args.simulated_channel or ()),
             required_cases=tuple(args.required_case or REQUIRED_SCALAR_ACCEPTANCE_CASES),
         )
         mandate = store.get(args.campaign_id)

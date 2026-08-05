@@ -10,7 +10,10 @@ from pydantic import BaseModel, Field
 
 from core.container import ServiceContainer
 from core.reality_reach.acceptance import AcceptanceError, AcceptanceEvidenceClass
-from core.reality_reach.acceptance_service import ScalarAcceptanceRequest
+from core.reality_reach.acceptance_service import (
+    ScalarAcceptanceMandateRequest,
+    ScalarAcceptanceRequest,
+)
 from interface.auth import _require_internal, _verify_token
 
 router = APIRouter(prefix="/reality-reach/acceptance")
@@ -26,6 +29,10 @@ class ScalarAcceptancePayload(BaseModel):
         Field(pattern=r"^sha256:[0-9a-f]{64}$"),
     ]
     evidence_class: AcceptanceEvidenceClass
+    mandate_sha256: Annotated[
+        str,
+        Field(pattern=r"^(?:|sha256:[0-9a-f]{64})$"),
+    ] = ""
     scenario_id: Annotated[str, Field(max_length=128)] = ""
     simulated_channel_ids: Annotated[
         tuple[Annotated[str, Field(min_length=1, max_length=256)], ...],
@@ -38,6 +45,23 @@ class ScalarAcceptancePayload(BaseModel):
 
 class ScalarAcceptancePreflightPayload(BaseModel):
     adapter_id: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class ScalarAcceptanceMandatePayload(BaseModel):
+    campaign_id: Annotated[str, Field(min_length=1, max_length=128)]
+    connector_id: Annotated[str, Field(min_length=1, max_length=128)]
+    adapter_id: Annotated[str, Field(min_length=1, max_length=256)]
+    target: float
+    expected_source_commit_sha256: Annotated[
+        str,
+        Field(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ]
+    evidence_class: AcceptanceEvidenceClass
+    scenario_id: Annotated[str, Field(max_length=128)] = ""
+    simulated_channel_ids: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=256)], ...],
+        Field(max_length=63),
+    ] = ()
 
 
 def _service() -> Any:
@@ -86,11 +110,30 @@ async def run_acceptance(
     return JSONResponse(result, status_code=201)
 
 
+@router.post("/mandate")
+async def precommit_acceptance_mandate(
+    payload: ScalarAcceptanceMandatePayload,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+) -> JSONResponse:
+    try:
+        result = await _service().precommit(
+            ScalarAcceptanceMandateRequest(**payload.model_dump())
+        )
+    except AcceptanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(result, status_code=201)
+
+
 __all__ = [
+    "ScalarAcceptanceMandatePayload",
     "ScalarAcceptancePayload",
     "ScalarAcceptancePreflightPayload",
     "acceptance_preflight",
     "acceptance_status",
+    "precommit_acceptance_mandate",
     "router",
     "run_acceptance",
 ]

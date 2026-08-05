@@ -27,8 +27,14 @@ from core.reality_reach.acceptance import (
     ScalarAcceptanceRunner,
     ScalarFault,
 )
+from core.reality_reach.acceptance_mandate import (
+    AcceptanceMandateError,
+    AcceptanceMandateProvisionReceipt,
+    AcceptanceVerificationMandate,
+)
 from core.reality_reach.acceptance_service import (
     RealityAcceptanceService,
+    ScalarAcceptanceMandateRequest,
     ScalarAcceptanceRequest,
 )
 from core.reality_reach.acceptance_verifier import (
@@ -102,6 +108,44 @@ class _Transport:
                 "recovery": recovery,
             },
         )
+
+
+class _MandateStore:
+    def __init__(self) -> None:
+        self.mandates: dict[str, AcceptanceVerificationMandate] = {}
+
+    def provision(self, **kwargs: Any) -> AcceptanceMandateProvisionReceipt:
+        proposed = AcceptanceVerificationMandate(
+            **kwargs,
+            provisioned_at_ns=time.time_ns(),
+            custody_sequence=len(self.mandates) + 1,
+        )
+        existing = self.mandates.get(proposed.campaign_id)
+        if existing is not None and existing.contract_sha256 != proposed.contract_sha256:
+            raise AcceptanceMandateError("acceptance_mandate_conflict")
+        mandate = existing or proposed
+        self.mandates[mandate.campaign_id] = mandate
+        return AcceptanceMandateProvisionReceipt(
+            campaign_id=mandate.campaign_id,
+            mandate_sha256=mandate.sha256,
+            contract_sha256=mandate.contract_sha256,
+            custody_identity_sha256=_digest("test-mandate-custody"),
+            provisioned_at_ns=mandate.provisioned_at_ns,
+            created=existing is None,
+            custody_sequence=mandate.custody_sequence,
+        )
+
+    def get(self, campaign_id: str) -> AcceptanceVerificationMandate:
+        try:
+            return self.mandates[campaign_id]
+        except KeyError as exc:
+            raise AcceptanceMandateError("acceptance_mandate_not_found") from exc
+
+    def status(self) -> dict[str, Any]:
+        return {"healthy": True, "mandate_count": len(self.mandates)}
+
+    def close(self) -> None:
+        return None
 
 
 def _proxy(delegate: _Transport | None = None) -> FaultInjectingScalarTransport:
@@ -748,28 +792,47 @@ async def test_operational_service_runs_and_persists_live_campaign(tmp_path) -> 
     )
     await metrology.start()
     store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    mandate_store = _MandateStore()
     service = RealityAcceptanceService(
         reality,
         metrology,
         store=store,
+        mandate_store=mandate_store,
         governed_executor=_governed_executor,
         pinned_source_identity=source_identity,
         source_identity_provider=lambda: source_identity,
     )
-
-    result = await service.run(
-        ScalarAcceptanceRequest(
+    mandate_result = await service.precommit(
+        ScalarAcceptanceMandateRequest(
             campaign_id="cp810.operational.live",
             connector_id="fixture.connector",
             adapter_id=adapter.adapter_id,
             target=7.0,
             expected_source_commit_sha256=_digest(source_commit),
             evidence_class=AcceptanceEvidenceClass.LIVE,
-            deadline_s=0.5,
-            sample_interval_s=0.1,
-            effect_hold_s=0.25,
         )
     )
+    mandate_sha256 = mandate_result["mandate"]["mandate_sha256"]
+
+    request = ScalarAcceptanceRequest(
+        campaign_id="cp810.operational.live",
+        connector_id="fixture.connector",
+        adapter_id=adapter.adapter_id,
+        target=7.0,
+        expected_source_commit_sha256=_digest(source_commit),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        mandate_sha256=mandate_sha256,
+        deadline_s=0.5,
+        sample_interval_s=0.1,
+        effect_hold_s=0.25,
+    )
+    with pytest.raises(AcceptanceError, match="mandate_sha256_missing"):
+        await service.run(replace(request, mandate_sha256=""))
+    with pytest.raises(AcceptanceError, match="mandate_target_mismatch"):
+        await service.run(replace(request, target=8.0))
+    assert transport.writes == 0
+
+    result = await service.run(request)
 
     certificate = store.load("cp810.operational.live")
     assert result["certificate_sha256"] == certificate.sha256
@@ -778,7 +841,8 @@ async def test_operational_service_runs_and_persists_live_campaign(tmp_path) -> 
     assert result["governance_evidence_sha256"]
     assert result["source_commit_sha256"] == _digest(source_commit)
     assert result["workspace_state_sha256"] == f"sha256:{'e' * 64}"
-    assert service.status()["generation"] == 1
+    assert result["mandate_sha256"] == mandate_sha256
+    assert service.status()["generation"] == 3
     assert service.status()["active_campaign_id"] == ""
     assert transport.value == 1.0
 
@@ -829,6 +893,7 @@ async def test_operational_service_refuses_caller_supplied_source_identity(tmp_p
         reality,
         metrology,
         store=AcceptanceCertificateStore(tmp_path / "acceptance"),
+        mandate_store=_MandateStore(),
         governed_executor=_governed_executor,
         pinned_source_identity={
             "identity_bound": True,
@@ -871,6 +936,7 @@ async def test_operational_service_refuses_caller_supplied_source_identity(tmp_p
         reality,
         metrology,
         store=AcceptanceCertificateStore(tmp_path / "drifted"),
+        mandate_store=_MandateStore(),
         governed_executor=_governed_executor,
         pinned_source_identity={
             "identity_bound": True,
@@ -929,6 +995,7 @@ async def test_operational_service_exposes_dirty_boot_source_as_not_ready(tmp_pa
     service = RealityAcceptanceService(
         reality,
         metrology,
+        mandate_store=_MandateStore(),
         pinned_source_identity=dirty_identity,
         source_identity_provider=lambda: dirty_identity,
     )

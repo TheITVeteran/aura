@@ -36165,3 +36165,51 @@ that a real third-party custodian has signed a real device campaign yet. The
 signature's time is signer-attested rather than transparency-log timestamped,
 and representative tenant/device runs remain unmeasured. CP810 and the total
 therefore remain open at 809/920.
+
+#### CP810 addendum: boot-owned mandate enforcement
+
+The acceptance mandate is now part of the live causal runtime rather than an
+offline verifier option. Cognitive-sensory boot provisions a dedicated
+Keychain-anchored mandate store before constructing the required acceptance
+service and injects that exact owner into the service. If custody or source
+pinning fails, ordinary sensing and governed actuation remain available, but
+connector acceptance stays critically degraded and cannot advertise ready.
+The failure path closes the partially provisioned store.
+
+An authenticated owner-only `POST /api/reality-reach/acceptance/mandate`
+surface now precommits a typed scalar campaign. The service derives the source
+digest, physical-device identity, adapter tolerance, and live readback channels
+from the boot-pinned runtime and registered adapter rather than trusting caller
+labels. HIL mandates additionally bind the scenario and exact simulated
+companion channels. The mandate schema was advanced to v2 so the signed
+question now includes that complete evidence topology. Both mandate and run
+routes require internal-origin and API-token guards and are protected local
+POST paths unavailable to paired devices.
+
+Before any physical write, live/HIL execution now requires the exact mandate
+digest and reloads the create-once commitment off the event loop. It refuses
+missing or substituted campaign, connector, adapter, source, physical identity,
+evidence class, target, adapter tolerance, scenario, live channels, simulated
+channels, or required cases. Independent replay also reconstructs live and
+simulated channel sets from metrology evidence and rejects topology
+substitution. Successful campaign results carry the mandate digest. The normal
+health/status path uses a cached custody snapshot; it does not reopen encrypted
+state or call Keychain synchronously on every poll.
+
+Boot-enforcement evidence:
+
+- precommit derivation and idempotency, missing/altered mandate zero-write
+  refusal, successful mandated live execution, topology validation and replay,
+  route typing/authentication, protected-local POST coverage, source drift,
+  dirty-source closure, and boot degradation cleanup: 89/89 focused tests
+  passed;
+- full affected Reality Reach and cognitive-sensory family: 502/502 passed;
+- smoke 103/103, repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped core
+  MyPy passed. The route-only skipped-import MyPy invocation retains the known
+  FastAPI/Pydantic decorator `Any` artifacts rather than implementation errors.
+
+This closes the runtime gap between precommit and dispatch. It does not supply
+an external transparency timestamp, third-party key custody, or a real
+representative hardware/tenant campaign. CP810 and the total therefore remain
+open at 809/920.

@@ -567,6 +567,29 @@ def verify_acceptance_against_mandate(
         blockers.append("mandate_scenario_mismatch")
     if tuple(item.case_id for item in certificate.cases) != mandate.required_cases:
         blockers.append("mandate_required_case_set_mismatch")
+    if mandate.expected_evidence_class in {
+        AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        AcceptanceEvidenceClass.LIVE,
+    }:
+        metrology = evidence_document.get("metrology_receipt")
+        measurements = (
+            metrology.get("measurements") if isinstance(metrology, Mapping) else None
+        )
+        if isinstance(measurements, list):
+            observed_live = {
+                str(item.get("channel_id") or "")
+                for item in measurements
+                if isinstance(item, Mapping) and item.get("source") == "live"
+            }
+            observed_simulated = {
+                str(item.get("channel_id") or "")
+                for item in measurements
+                if isinstance(item, Mapping) and item.get("source") == "simulated"
+            }
+            if observed_live != set(mandate.expected_live_channel_ids):
+                blockers.append("mandate_live_channel_set_mismatch")
+            if observed_simulated != set(mandate.expected_simulated_channel_ids):
+                blockers.append("mandate_simulated_channel_set_mismatch")
     if certificate.started_at_ns < mandate.provisioned_at_ns:
         blockers.append("campaign_predates_mandate")
     verification = verify_acceptance_evidence(

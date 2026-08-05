@@ -32,8 +32,8 @@ from core.runtime.atomic_writer import interprocess_file_lock
 from core.runtime.state_ownership import state_root
 from core.security.zenith_secrets import KeychainBackend, require_keychain_backend
 
-ACCEPTANCE_MANDATE_SCHEMA = "aura.reality_reach.acceptance_mandate.v1"
-ACCEPTANCE_MANDATE_STATE_SCHEMA = "aura.reality_reach.acceptance_mandates.v1"
+ACCEPTANCE_MANDATE_SCHEMA = "aura.reality_reach.acceptance_mandate.v2"
+ACCEPTANCE_MANDATE_STATE_SCHEMA = "aura.reality_reach.acceptance_mandates.v2"
 ACCEPTANCE_MANDATE_RECEIPT_SCHEMA = (
     "aura.reality_reach.acceptance_mandate_provision.v1"
 )
@@ -42,9 +42,12 @@ _MANDATE_KEYCHAIN_SERVICE = "AuraRealityReachAcceptance"
 _MANDATE_KEYRING_ACCOUNT = "acceptance-mandate-keyring-v1"
 _MANDATE_ANCHOR_ACCOUNT = "acceptance-mandate-anchor-v1"
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
+_CHANNEL_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,255}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_MANDATES = 4096
 _MAX_REQUIRED_CASES = 128
+_MAX_LIVE_CHANNELS = 64
+_MAX_HIL_COMPANION_CHANNELS = 63
 
 
 class AcceptanceMandateError(RuntimeError):
@@ -82,6 +85,13 @@ def _sha256(value: object, *, name: str) -> str:
     return normalized
 
 
+def _channel_identifier(value: object, *, name: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if not _CHANNEL_IDENTIFIER.fullmatch(normalized):
+        raise ValueError(f"{name} must be a canonical channel identifier")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceVerificationMandate:
     """The exact acceptance question committed before physical execution."""
@@ -95,6 +105,8 @@ class AcceptanceVerificationMandate:
     target: float
     target_tolerance: float
     scenario_id: str
+    expected_live_channel_ids: tuple[str, ...]
+    expected_simulated_channel_ids: tuple[str, ...]
     required_cases: tuple[str, ...]
     provisioned_at_ns: int
     custody_sequence: int
@@ -118,6 +130,38 @@ class AcceptanceVerificationMandate:
         ):
             raise ValueError("HIL acceptance mandate requires a scenario_id")
         object.__setattr__(self, "scenario_id", scenario_id)
+        live_channels = tuple(
+            _channel_identifier(channel_id, name="expected_live_channel_id")
+            for channel_id in self.expected_live_channel_ids
+        )
+        simulated_channels = tuple(
+            _channel_identifier(channel_id, name="expected_simulated_channel_id")
+            for channel_id in self.expected_simulated_channel_ids
+        )
+        if len(live_channels) != len(set(live_channels)) or len(
+            simulated_channels
+        ) != len(set(simulated_channels)):
+            raise ValueError("acceptance mandate channels must be unique")
+        if len(live_channels) > _MAX_LIVE_CHANNELS or len(
+            simulated_channels
+        ) > _MAX_HIL_COMPANION_CHANNELS:
+            raise ValueError("acceptance mandate channel count is invalid")
+        if self.expected_evidence_class is AcceptanceEvidenceClass.SIMULATION:
+            if live_channels or simulated_channels:
+                raise ValueError("simulation mandate cannot bind physical channels")
+        elif not live_channels:
+            raise ValueError("physical acceptance mandate requires live channels")
+        if self.expected_evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP:
+            if not simulated_channels:
+                raise ValueError("HIL acceptance mandate requires simulated channels")
+        elif simulated_channels:
+            raise ValueError("only HIL acceptance can bind simulated channels")
+        object.__setattr__(self, "expected_live_channel_ids", live_channels)
+        object.__setattr__(
+            self,
+            "expected_simulated_channel_ids",
+            simulated_channels,
+        )
         target = float(self.target)
         tolerance = float(self.target_tolerance)
         if not math.isfinite(target) or not math.isfinite(tolerance) or tolerance < 0.0:
@@ -167,6 +211,10 @@ class AcceptanceVerificationMandate:
             "target": self.target,
             "target_tolerance": self.target_tolerance,
             "scenario_id": self.scenario_id,
+            "expected_live_channel_ids": list(self.expected_live_channel_ids),
+            "expected_simulated_channel_ids": list(
+                self.expected_simulated_channel_ids
+            ),
             "required_cases": list(self.required_cases),
         }
 
@@ -195,6 +243,8 @@ class AcceptanceVerificationMandate:
             "target",
             "target_tolerance",
             "scenario_id",
+            "expected_live_channel_ids",
+            "expected_simulated_channel_ids",
             "required_cases",
             "provisioned_at_ns",
             "custody_sequence",
@@ -204,7 +254,13 @@ class AcceptanceVerificationMandate:
         if not isinstance(document, Mapping) or set(document) != expected:
             raise AcceptanceMandateError("acceptance_mandate_schema_invalid")
         raw_cases = document.get("required_cases")
-        if not isinstance(raw_cases, list):
+        raw_live_channels = document.get("expected_live_channel_ids")
+        raw_simulated_channels = document.get("expected_simulated_channel_ids")
+        if (
+            not isinstance(raw_cases, list)
+            or not isinstance(raw_live_channels, list)
+            or not isinstance(raw_simulated_channels, list)
+        ):
             raise AcceptanceMandateError("acceptance_mandate_required_cases_invalid")
         try:
             mandate = cls(
@@ -223,6 +279,8 @@ class AcceptanceVerificationMandate:
                 target=document["target"],
                 target_tolerance=document["target_tolerance"],
                 scenario_id=document["scenario_id"],
+                expected_live_channel_ids=tuple(raw_live_channels),
+                expected_simulated_channel_ids=tuple(raw_simulated_channels),
                 required_cases=tuple(raw_cases),
                 provisioned_at_ns=document["provisioned_at_ns"],
                 custody_sequence=document["custody_sequence"],
@@ -432,6 +490,8 @@ class AcceptanceMandateStore:
         target: float,
         target_tolerance: float,
         scenario_id: str = "",
+        expected_live_channel_ids: Sequence[str] = (),
+        expected_simulated_channel_ids: Sequence[str] = (),
         required_cases: Sequence[str] = REQUIRED_SCALAR_ACCEPTANCE_CASES,
     ) -> AcceptanceMandateProvisionReceipt:
         created = False
@@ -450,6 +510,10 @@ class AcceptanceMandateStore:
                 target=target,
                 target_tolerance=target_tolerance,
                 scenario_id=scenario_id,
+                expected_live_channel_ids=tuple(expected_live_channel_ids),
+                expected_simulated_channel_ids=tuple(
+                    expected_simulated_channel_ids
+                ),
                 required_cases=tuple(required_cases),
                 provisioned_at_ns=max(1, time.time_ns()),
                 custody_sequence=next_sequence,

@@ -68,6 +68,9 @@ class Service:
     def setup_hooks(self, orchestrator):
         self.hooked = orchestrator
 
+    def close(self):
+        self.closed = True
+
 
 class SelfModelService(Service):
     @classmethod
@@ -163,6 +166,15 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         monkeypatch,
         "core.reality_reach.metrology",
         RealityMetrologyService=Service,
+    )
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.acceptance_mandate",
+        AcceptanceMandateStore=type(
+            "AcceptanceMandateStore",
+            (),
+            {"provision_system": staticmethod(lambda path: Service(path))},
+        ),
     )
     _install_module(
         monkeypatch,
@@ -309,6 +321,8 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
         "source_dirty": False,
         "workspace_state_sha256": "b" * 64,
     }
+    mandate_store = registered["reality_acceptance"].kwargs["mandate_store"]
+    assert mandate_store.args[0].name == "reality_acceptance_mandates.encrypted.json"
     assert registered["reality_middleware"].args[0] is orchestrator.reality_reach
     assert registered["reality_middleware"].kwargs["state_path"].name == ("reality_middleware.json")
     assert registered["reality_middleware"].started is True

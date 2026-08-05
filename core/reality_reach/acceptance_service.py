@@ -20,6 +20,11 @@ from core.reality_reach.acceptance import (
     ScalarAcceptancePlan,
     ScalarAcceptanceRunner,
 )
+from core.reality_reach.acceptance_mandate import (
+    AcceptanceMandateError,
+    AcceptanceMandateStore,
+    AcceptanceVerificationMandate,
+)
 from core.reality_reach.live import RealityReachService
 from core.reality_reach.metrology import (
     AcquisitionChannel,
@@ -32,6 +37,7 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_async_lock
 
 _GIT_OID = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_HIL_COMPANION_CHANNELS = 63
 SourceIdentityProvider = Callable[[], Mapping[str, Any]]
 
@@ -87,6 +93,7 @@ class ScalarAcceptanceRequest:
     target: float
     expected_source_commit_sha256: str
     evidence_class: AcceptanceEvidenceClass
+    mandate_sha256: str = ""
     scenario_id: str = ""
     simulated_channel_ids: tuple[str, ...] = ()
     deadline_s: float = 5.0
@@ -94,6 +101,10 @@ class ScalarAcceptanceRequest:
     effect_hold_s: float = 0.25
 
     def __post_init__(self) -> None:
+        mandate_sha256 = str(self.mandate_sha256 or "").strip().lower()
+        if mandate_sha256 and not _SHA256.fullmatch(mandate_sha256):
+            raise ValueError("mandate_sha256 must be empty or a sha256 digest")
+        object.__setattr__(self, "mandate_sha256", mandate_sha256)
         channels = tuple(self.simulated_channel_ids)
         if len(channels) > _MAX_HIL_COMPANION_CHANNELS:
             raise ValueError(
@@ -122,6 +133,41 @@ class ScalarAcceptanceRequest:
             raise ValueError("effect_hold_s must span at least two sample intervals")
 
 
+@dataclass(frozen=True, slots=True)
+class ScalarAcceptanceMandateRequest:
+    campaign_id: str
+    connector_id: str
+    adapter_id: str
+    target: float
+    expected_source_commit_sha256: str
+    evidence_class: AcceptanceEvidenceClass
+    scenario_id: str = ""
+    simulated_channel_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.evidence_class, AcceptanceEvidenceClass):
+            raise TypeError("evidence_class must be an AcceptanceEvidenceClass")
+        if not _SHA256.fullmatch(str(self.expected_source_commit_sha256 or "")):
+            raise ValueError("expected_source_commit_sha256 must be a sha256 digest")
+        channels = tuple(self.simulated_channel_ids)
+        if len(channels) > _MAX_HIL_COMPANION_CHANNELS:
+            raise ValueError(
+                "simulated_channel_ids exceeds the HIL companion-channel bound"
+            )
+        if len(channels) != len(set(channels)):
+            raise ValueError("simulated_channel_ids must be unique")
+        object.__setattr__(self, "simulated_channel_ids", channels)
+        if self.evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP:
+            if not self.scenario_id or not channels:
+                raise ValueError("HIL mandate requires a scenario and simulated channels")
+        elif channels:
+            raise ValueError("only HIL mandates can bind simulated channels")
+        target = float(self.target)
+        if not math.isfinite(target):
+            raise ValueError("acceptance mandate target must be finite")
+        object.__setattr__(self, "target", target)
+
+
 class RealityAcceptanceService:
     """Serialize, execute, persist, and summarize physical acceptance runs."""
 
@@ -131,6 +177,7 @@ class RealityAcceptanceService:
         metrology: RealityMetrologyService,
         *,
         store: AcceptanceCertificateStore | None = None,
+        mandate_store: AcceptanceMandateStore | None = None,
         governed_executor: AcceptanceExecutor | None = None,
         pinned_source_identity: Mapping[str, Any],
         source_identity_provider: SourceIdentityProvider | None = None,
@@ -142,6 +189,12 @@ class RealityAcceptanceService:
         self._reality = reality
         self._metrology = metrology
         self._store = store or AcceptanceCertificateStore()
+        self._mandate_store = mandate_store
+        self._mandate_status: dict[str, Any] = {
+            "healthy": mandate_store is not None,
+            "state": "available" if mandate_store is not None else "unavailable",
+            "error_type": "" if mandate_store is not None else "mandate_store_unavailable",
+        }
         self._governed_executor = governed_executor
         if not isinstance(pinned_source_identity, Mapping):
             raise TypeError("pinned_source_identity must be a mapping")
@@ -154,6 +207,16 @@ class RealityAcceptanceService:
         self._active_campaign_id = ""
         self._last_result: dict[str, Any] | None = None
         self._last_failure: dict[str, Any] | None = None
+
+    @staticmethod
+    def _observation_channels(adapter: Any) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                channel_id
+                for capability in tuple(adapter.actuator_capabilities())
+                for channel_id in capability.observation_channels
+            )
+        )
 
     async def _source_binding(self, expected_sha256: str | None) -> dict[str, str]:
         raw = await asyncio.to_thread(self._source_identity_provider)
@@ -174,13 +237,7 @@ class RealityAcceptanceService:
             raise AcceptanceError("acceptance_scalar_adapter_not_registered")
         source = await self._source_binding(None)
         capabilities = tuple(adapter.actuator_capabilities())
-        observation_channels = tuple(
-            dict.fromkeys(
-                channel_id
-                for capability in capabilities
-                for channel_id in capability.observation_channels
-            )
-        )
+        observation_channels = self._observation_channels(adapter)
         evidence_classes = (
             (AcceptanceEvidenceClass.SIMULATION.value,)
             if adapter.transport_class.value == "simulated"
@@ -190,7 +247,12 @@ class RealityAcceptanceService:
             )
         )
         return {
-            "ready": bool(capabilities and observation_channels and self._metrology.is_ready()),
+            "ready": bool(
+                capabilities
+                and observation_channels
+                and self._metrology.is_ready()
+                and self._mandate_status.get("healthy") is True
+            ),
             "adapter_id": adapter.adapter_id,
             "physical_identity_sha256": adapter.physical_identity_sha256,
             "transport_class": adapter.transport_class.value,
@@ -201,6 +263,112 @@ class RealityAcceptanceService:
             **source,
             "trust_boundary": "producer_observation_not_independent_acceptance",
         }
+
+    async def precommit(
+        self,
+        request: ScalarAcceptanceMandateRequest,
+    ) -> dict[str, Any]:
+        if not isinstance(request, ScalarAcceptanceMandateRequest):
+            raise TypeError("request must be a ScalarAcceptanceMandateRequest")
+        if self._mandate_store is None:
+            raise AcceptanceError("acceptance_mandate_custody_unavailable")
+        adapter = self._reality.scalar_acceptance_adapter(request.adapter_id)
+        if adapter is None:
+            raise AcceptanceError("acceptance_scalar_adapter_not_registered")
+        transport_class = adapter.transport_class.value
+        if request.evidence_class is AcceptanceEvidenceClass.SIMULATION:
+            if transport_class != "simulated":
+                raise AcceptanceError("acceptance_simulation_transport_mismatch")
+            live_channels: tuple[str, ...] = ()
+        else:
+            if transport_class != "physical":
+                raise AcceptanceError("acceptance_physical_transport_required")
+            live_channels = self._observation_channels(adapter)
+            if not live_channels:
+                raise AcceptanceError("acceptance_adapter_has_no_observation_channels")
+        source = await self._source_binding(request.expected_source_commit_sha256)
+        try:
+            receipt = await asyncio.to_thread(
+                self._mandate_store.provision,
+                campaign_id=request.campaign_id,
+                connector_id=request.connector_id,
+                adapter_id=request.adapter_id,
+                expected_source_commit_sha256=source["source_commit_sha256"],
+                expected_physical_identity_sha256=(
+                    adapter.physical_identity_sha256
+                ),
+                expected_evidence_class=request.evidence_class,
+                target=request.target,
+                target_tolerance=adapter.effect_tolerance,
+                scenario_id=request.scenario_id,
+                expected_live_channel_ids=live_channels,
+                expected_simulated_channel_ids=request.simulated_channel_ids,
+                required_cases=REQUIRED_SCALAR_ACCEPTANCE_CASES,
+            )
+            mandate = await asyncio.to_thread(
+                self._mandate_store.get,
+                request.campaign_id,
+            )
+            self._mandate_status = dict(
+                await asyncio.to_thread(self._mandate_store.status)
+            )
+        except AcceptanceMandateError as exc:
+            self._mandate_status = {
+                "healthy": False,
+                "state": "degraded",
+                "error_type": type(exc).__name__,
+            }
+            raise AcceptanceError(str(exc)) from exc
+        return {
+            "mandate": mandate.to_dict(),
+            "provision_receipt": receipt.to_dict(),
+            "source_commit_sha256": source["source_commit_sha256"],
+            "workspace_state_sha256": source["workspace_state_sha256"],
+            "trust_boundary": "machine_local_precommit_not_external_witness",
+        }
+
+    async def _require_physical_mandate(
+        self,
+        request: ScalarAcceptanceRequest,
+        adapter: Any,
+        source: Mapping[str, str],
+    ) -> AcceptanceVerificationMandate:
+        if self._mandate_store is None:
+            raise AcceptanceError("acceptance_mandate_custody_unavailable")
+        if not request.mandate_sha256:
+            raise AcceptanceError("acceptance_mandate_sha256_missing")
+        try:
+            mandate = await asyncio.to_thread(
+                self._mandate_store.get,
+                request.campaign_id,
+            )
+        except AcceptanceMandateError as exc:
+            self._mandate_status = {
+                "healthy": False,
+                "state": "degraded",
+                "error_type": type(exc).__name__,
+            }
+            raise AcceptanceError(str(exc)) from exc
+        expected = {
+            "campaign_id": request.campaign_id,
+            "connector_id": request.connector_id,
+            "adapter_id": request.adapter_id,
+            "expected_source_commit_sha256": source["source_commit_sha256"],
+            "expected_physical_identity_sha256": adapter.physical_identity_sha256,
+            "expected_evidence_class": request.evidence_class,
+            "target": request.target,
+            "target_tolerance": adapter.effect_tolerance,
+            "scenario_id": request.scenario_id,
+            "expected_live_channel_ids": self._observation_channels(adapter),
+            "expected_simulated_channel_ids": request.simulated_channel_ids,
+            "required_cases": REQUIRED_SCALAR_ACCEPTANCE_CASES,
+        }
+        if mandate.sha256 != request.mandate_sha256:
+            raise AcceptanceError("acceptance_mandate_digest_mismatch")
+        for field, value in expected.items():
+            if getattr(mandate, field) != value:
+                raise AcceptanceError(f"acceptance_mandate_{field}_mismatch")
+        return mandate
 
     def _record_failure(
         self,
@@ -278,6 +446,16 @@ class RealityAcceptanceService:
                 source_before = await self._source_binding(
                     request.expected_source_commit_sha256
                 )
+                mandate = None
+                if request.evidence_class in {
+                    AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+                    AcceptanceEvidenceClass.LIVE,
+                }:
+                    mandate = await self._require_physical_mandate(
+                        request,
+                        adapter,
+                        source_before,
+                    )
                 plan = ScalarAcceptancePlan(
                     campaign_id=request.campaign_id,
                     connector_id=request.connector_id,
@@ -324,6 +502,7 @@ class RealityAcceptanceService:
                     certificate,
                     started_at_ns=started_at_ns,
                     source_identity=source_after,
+                    mandate=mandate,
                 )
                 self._last_result = result
                 self._last_failure = None
@@ -343,6 +522,7 @@ class RealityAcceptanceService:
         *,
         started_at_ns: int,
         source_identity: Mapping[str, str],
+        mandate: AcceptanceVerificationMandate | None,
     ) -> dict[str, Any]:
         return {
             "campaign_id": certificate.campaign_id,
@@ -354,6 +534,7 @@ class RealityAcceptanceService:
             "governance_evidence_sha256": certificate.governance_evidence_sha256,
             "source_commit_sha256": source_identity["source_commit_sha256"],
             "workspace_state_sha256": source_identity["workspace_state_sha256"],
+            "mandate_sha256": mandate.sha256 if mandate is not None else "",
             "started_at_ns": started_at_ns,
             "completed_at_ns": time.time_ns(),
         }
@@ -364,12 +545,14 @@ class RealityAcceptanceService:
             _normalize_source_identity(self._pinned_source_identity)
         except AcceptanceError as exc:
             source_blocker = str(exc)
+        mandate_status = dict(self._mandate_status)
         return {
             "alive": True,
             "ready": bool(
                 not self._active_campaign_id
                 and not source_blocker
                 and self._metrology.is_ready()
+                and mandate_status.get("healthy") is True
             ),
             "source_identity_blocker": source_blocker,
             "generation": self._generation,
@@ -377,6 +560,7 @@ class RealityAcceptanceService:
             "last_result": dict(self._last_result) if self._last_result else None,
             "last_failure": dict(self._last_failure) if self._last_failure else None,
             "store_root": str(self._store.root),
+            "mandate_custody": mandate_status,
         }
 
     def is_alive(self) -> bool:
@@ -385,9 +569,14 @@ class RealityAcceptanceService:
     def is_ready(self) -> bool:
         return bool(self.status()["ready"])
 
+    def close(self) -> None:
+        if self._mandate_store is not None:
+            self._mandate_store.close()
+
 
 __all__ = [
     "RealityAcceptanceService",
+    "ScalarAcceptanceMandateRequest",
     "ScalarAcceptanceRequest",
     "SourceIdentityProvider",
     "capture_runtime_source_identity",

@@ -195,6 +195,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
     async def _reality_reach() -> None:
         from core.environment.runtime_workspace import environment_runtime_file
+        from core.reality_reach.acceptance_mandate import AcceptanceMandateStore
         from core.reality_reach.acceptance_service import (
             RealityAcceptanceService,
             capture_runtime_source_identity,
@@ -242,22 +243,35 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         orchestrator.reality_metrology = metrology
         acceptance = None
         if metrology is not None:
+            mandate_store = None
             try:
+                mandate_path = environment_runtime_file(
+                    "shared",
+                    "reality_acceptance_mandates.encrypted.json",
+                    purpose="state",
+                )
+                mandate_store = await asyncio.to_thread(
+                    AcceptanceMandateStore.provision_system,
+                    mandate_path,
+                )
                 source_identity = await asyncio.to_thread(capture_runtime_source_identity)
                 acceptance = RealityAcceptanceService(
                     service,
                     metrology,
+                    mandate_store=mandate_store,
                     pinned_source_identity=source_identity,
                 )
             except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+                if mandate_store is not None:
+                    await asyncio.to_thread(mandate_store.close)
                 _record_cognitive_sensory_degradation(
                     orchestrator,
                     exc,
                     phase="reality_acceptance",
                     action=(
                         "Kept physical sensing and ordinary governed actuation available "
-                        "but closed connector acceptance until runtime source identity "
-                        "can be pinned"
+                        "but closed connector acceptance until source identity and "
+                        "rollback-resistant mandate custody can be pinned"
                     ),
                     severity="critical",
                 )
