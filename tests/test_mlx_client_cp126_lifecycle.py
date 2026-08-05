@@ -1657,3 +1657,62 @@ class TestSamplingParametersHaveAContract:
         req, faults = self._normalize(stop_sequences="STOP")
         assert "stop_sequences:not_a_sequence" in faults
         assert req["stop_sequences"] == []
+
+
+class TestAgentLoopEstablishesItsOwnAuthority:
+    """CP126 9cddd95c: an untyped caller mapping became execution authority."""
+
+    def _ctx(self, context):
+        from core.brain.llm.mlx_client import _agent_execution_context
+
+        return _agent_execution_context(
+            context,
+            objective="do the thing",
+            tool_name="shell",
+            tool_call_id="call_1",
+            model_path="/models/Qwen2.5-32B-Instruct-4bit",
+        )
+
+    def test_ordinary_context_passes_through(self):
+        out = self._ctx({"route": "desktop", "origin": "api", "timeout_s": 30})
+        assert out["route"] == "desktop"
+        assert out["origin"] == "api"
+        assert out["timeout_s"] == 30
+
+    def test_a_caller_cannot_declare_itself_confirmed(self):
+        out = self._ctx({"confirmed": True, "route": "desktop"})
+        assert "confirmed" not in out
+        assert out["route"] == "desktop"
+        assert out["agent_loop"]["refused_authority_keys"] == ["confirmed"]
+
+    def test_a_caller_cannot_declare_standing_authority(self):
+        out = self._ctx({"_standing_authority_verified": True})
+        assert "_standing_authority_verified" not in out
+        assert "_standing_authority_verified" in out["agent_loop"]["refused_authority_keys"]
+
+    def test_proof_and_seal_claims_are_refused(self):
+        out = self._ctx(
+            {"proof_run": True, "sealed_validation": {"ok": True}, "proof_validation": 1}
+        )
+        for key in ("proof_run", "sealed_validation", "proof_validation"):
+            assert key not in out
+        assert len(out["agent_loop"]["refused_authority_keys"]) == 3
+
+    def test_the_loop_stamps_its_own_provenance(self):
+        out = self._ctx({"route": "desktop"})
+        loop = out["agent_loop"]
+        assert loop["source"] == "mlx_client.think_and_act"
+        assert loop["tool"] == "shell"
+        assert loop["tool_call_id"] == "call_1"
+        assert loop["model"] == "Qwen2.5-32B-Instruct-4bit"
+        assert len(loop["objective_sha256"]) == 64
+
+    def test_no_context_still_yields_a_stamped_context(self):
+        out = self._ctx(None)
+        assert out["source"] == "think_and_act"
+        assert out["agent_loop"]["refused_authority_keys"] == []
+
+    def test_a_non_mapping_context_is_refused_not_forwarded(self):
+        out = self._ctx(["definitely", "not", "a", "mapping"])
+        assert out["source"] == "think_and_act"
+        assert out["agent_loop"]["refused_authority_keys"] == ["<non_mapping:list>"]

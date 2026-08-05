@@ -6,6 +6,7 @@ import contextlib
 import copy
 import fcntl
 import gc
+import hashlib
 import json
 import logging
 import math
@@ -12169,7 +12170,13 @@ class MLXLocalClient:
                     raw_result = await adapter_or_cap.execute(
                         tool_name,
                         tool_args,
-                        context or {"source": "think_and_act"},
+                        _agent_execution_context(
+                            context,
+                            objective=objective,
+                            tool_name=tool_name,
+                            tool_call_id=tool_call_id,
+                            model_path=self.model_path,
+                        ),
                     )
             except (ImportError, AttributeError, RuntimeError) as exc:
                 raw_result = {
@@ -13146,6 +13153,85 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     created = MLXLocalClient(model_path=runtime_path, **kwargs)
     with _CLIENTS_LOCK:
         return _CLIENTS.setdefault(client_key, created)
+
+
+#: Context keys that CONFER AUTHORITY. A caller handing an untyped mapping to
+#: the agent loop must not be able to set any of them: they are the answers
+#: the governance path exists to compute, not inputs to it.
+_AUTHORITY_BEARING_CONTEXT_KEYS = frozenset(
+    {
+        "_standing_authority_verified",
+        "confirmed",
+        "sealed_validation",
+        "proof_run",
+        "proof_validation",
+        "proof_evaluation_contract",
+        "executive_constraints",
+        "standing_authority_token",
+        "signed_capability",
+        "authority_payload",
+        "operation_authority",
+        "principal",
+    }
+)
+
+
+def _agent_execution_context(
+    context: Any,
+    *,
+    objective: str,
+    tool_name: str,
+    tool_call_id: str,
+    model_path: str,
+) -> dict[str, Any]:
+    """The execution context this loop is willing to vouch for.
+
+    CP126 9cddd95c: think_and_act forwarded an untyped caller mapping straight
+    into CapabilityEngine as authority-bearing execution context, and
+    established no principal, scope or provenance of its own. Safety depended
+    entirely on every caller and on how each downstream reader interpreted the
+    keys — including keys like ``confirmed`` and ``_standing_authority_verified``
+    that are the ANSWERS the governance path computes, not inputs to it.
+
+    Ordinary context still passes through: this loop needs the caller's route,
+    memory handles and origin to work. What it refuses is the set of keys that
+    grant authority, and it stamps its own provenance so a downstream reader
+    can tell a claim made BY the agent loop from one made THROUGH it.
+    """
+    forwarded: dict[str, Any] = {}
+    refused: list[str] = []
+    if isinstance(context, Mapping):
+        for key, value in context.items():
+            name = str(key)
+            if name in _AUTHORITY_BEARING_CONTEXT_KEYS:
+                refused.append(name)
+                continue
+            forwarded[name] = value
+    elif context:
+        refused.append(f"<non_mapping:{type(context).__name__}>")
+
+    if refused:
+        _record_mlx_degradation(
+            PermissionError(
+                f"agent loop refused authority-bearing context keys: {sorted(set(refused))}"
+            ),
+            action="executed the tool without caller-supplied authority claims",
+            severity="warning",
+        )
+
+    forwarded.setdefault("source", "think_and_act")
+    forwarded["agent_loop"] = {
+        "schema": "aura.mlx.agent_loop_provenance.v1",
+        "source": "mlx_client.think_and_act",
+        "objective_sha256": hashlib.sha256(
+            str(objective or "").encode("utf-8", "ignore")
+        ).hexdigest(),
+        "tool": str(tool_name or ""),
+        "tool_call_id": str(tool_call_id or ""),
+        "model": os.path.basename(str(model_path or "")) or "unknown",
+        "refused_authority_keys": sorted(set(refused)),
+    }
+    return forwarded
 
 
 _TOOL_ARGS_MAX_KEYS = 64
