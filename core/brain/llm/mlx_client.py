@@ -3137,6 +3137,11 @@ class MLXLocalClient:
         self._lane_transition_at = time.time()
         self._active_generations = 0
         self._active_generation_started_at = 0.0
+        #: True when an adapter swap timed out with its command still queued,
+        #: so which adapter is resident is genuinely not known until identity
+        #: is re-read. Surfaced in supervision status; cleared by a swap that
+        #: completes and returns a worker identity.
+        self._expert_adapter_state_unknown = False
         self._warmup_attempted = False
         self._warmup_in_flight = False
         # Singleflight handle + its OWN start timestamp (CP126 4d8a7d6b):
@@ -4654,6 +4659,9 @@ class MLXLocalClient:
             "state": self._lane_state,
             "alive": self.is_alive(),
             "active_generations": int(self._active_generations),
+            "expert_adapter_state_unknown": bool(
+                getattr(self, "_expert_adapter_state_unknown", False)
+            ),
             "process_uptime_s": max(0.0, now - self._process_started_at)
             if self._process_started_at
             else 0.0,
@@ -5608,6 +5616,15 @@ class MLXLocalClient:
         if not adapter_exists:
             return {"ok": False, "reason": f"adapter_missing:{path}"}
 
+        # Re-check after the filesystem await. The check above is a
+        # time-of-check/time-of-use race: it reads the counter, then this
+        # coroutine yields for a directory stat, and a generation can begin in
+        # that window. The swap would then be dispatched against a worker that
+        # is mid-decode, which is exactly what the exclusion above exists to
+        # prevent — and the caller would be told the swap was cleanly excluded.
+        if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
+            return {"ok": False, "reason": "generation_active_after_stat"}
+
         req_id = uuid.uuid4().hex
         fut = _new_shared_future()
         self._pending_generations[req_id] = fut
@@ -5624,14 +5641,39 @@ class MLXLocalClient:
             res = await _await_shared_future(fut, timeout_s=max(10.0, float(timeout_s)))
         except (TimeoutError, BrokenPipeError, OSError) as exc:
             self._pending_generations.pop(req_id, None)
+            # Do NOT claim the model was left unchanged. The command is already
+            # on the worker's queue; dropping our future only stops US from
+            # hearing about it. The adapter can still attach afterwards, and
+            # the previous receipt asserted the opposite — a false statement
+            # about which weights are resident, which is the one thing an
+            # adapter receipt exists to get right.
+            #
+            # Ask the worker to abandon it, then report the state as UNKNOWN
+            # rather than unchanged. An unknown adapter is recoverable by
+            # re-reading identity; a wrongly-asserted one is not.
+            with contextlib.suppress(Exception):
+                self.soft_cancel_active_generation(
+                    reason=f"adapter_swap_timeout:{req_id[:12]}"
+                )
+            self._expert_adapter_state_unknown = True
             _record_mlx_degradation(
                 exc,
-                action="left resident model unchanged after expert adapter swap timed out",
-                severity="warning",
+                action=(
+                    "expert adapter swap timed out with the command already queued; "
+                    "resident adapter state is UNKNOWN until identity is re-read"
+                ),
+                severity="error",
             )
-            return {"ok": False, "reason": f"swap_timeout:{type(exc).__name__}"}
+            return {
+                "ok": False,
+                "reason": f"swap_timeout:{type(exc).__name__}",
+                "resident_adapter_state": "unknown",
+            }
 
         if res and res.get("status") == "ok":
+            # A completed swap that reports identity resolves the uncertainty
+            # a previous timeout may have left behind.
+            self._expert_adapter_state_unknown = False
             raw_worker_identity = res.get("worker_identity")
             try:
                 transitioned_identity = self._accept_worker_identity_transition(
