@@ -480,6 +480,17 @@ class AutonomousTaskEngine:
                 return str(step.result_summary)[:180]
         return str(plan.final_result or "")[:180]
 
+    @staticmethod
+    def _requires_plan_level_approval(
+        plan: TaskPlan,
+        context: dict[str, Any] | None,
+    ) -> bool:
+        """Return explicit plan-review intent; effect gates still run per step."""
+        return bool(
+            plan.requires_approval
+            or bool((context or {}).get("requires_human_approval", False))
+        )
+
     # === AUDIT FIXES: Logic & Safety ===
 
     async def _invoke_tool(
@@ -489,6 +500,7 @@ class AutonomousTaskEngine:
         token_id: str | None = None,
         is_shadow: bool = False,
         origin: str | None = None,
+        payload_context: dict[str, Any] | None = None,
     ) -> Any:
         """Invoke a registered tool with capability enforcement and shadow mode support."""
         origin = self._normalize_origin(origin)
@@ -522,6 +534,12 @@ class AutonomousTaskEngine:
                 and self._callable_accepts_kwarg(tool_fn, "origin")
             ):
                 call_args["origin"] = origin
+            if (
+                payload_context
+                and "payload_context" not in call_args
+                and self._callable_accepts_kwarg(tool_fn, "payload_context")
+            ):
+                call_args["payload_context"] = dict(payload_context)
             result = tool_fn(**call_args)
             if inspect.isawaitable(result):
                 return await result
@@ -534,6 +552,8 @@ class AutonomousTaskEngine:
             orchestrator = ServiceContainer.get("orchestrator", default=None)
             if orchestrator and hasattr(orchestrator, "execute_tool"):
                 kwargs = {"origin": origin} if origin else {}
+                if payload_context:
+                    kwargs["payload_context"] = dict(payload_context)
                 return await orchestrator.execute_tool(tool_name, args, **kwargs)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("autonomous_task_engine", e)
@@ -705,9 +725,10 @@ class AutonomousTaskEngine:
                 trace_id=trace_id,
             )
 
-        # 1.5. Escalation & Capability Checks
-        if len(plan.steps) > 5 or any(s.tool == "run_python" for s in plan.steps):
-            plan.requires_approval = True
+        # 1.5. Plan-level review is explicit. Step count and tool names are not
+        # proxies for user consent: each real effect is independently governed
+        # at execution time by its capability and standing-authority contract.
+        plan.requires_approval = self._requires_plan_level_approval(plan, context)
 
         # Register a token for the plan (static allow-list)
         tools_needed = [s.tool for s in plan.steps]
@@ -2437,6 +2458,7 @@ Respond ONLY with a JSON array, no other text:
                         plan.token_id,
                         plan.is_shadow,
                         origin=self._context_origin(plan.context),
+                        payload_context=plan.context,
                     ),
                     timeout=step_timeout,
                 )
@@ -2841,6 +2863,7 @@ Respond ONLY with a JSON array, no other text:
                     token_id=plan.token_id,
                     is_shadow=plan.is_shadow,
                     origin=self._context_origin(plan.context),
+                    payload_context=plan.context,
                 )
                 # A rollback that returned a failure value did not restore
                 # state — do not mark the step ROLLED_BACK on a bare
@@ -3037,9 +3060,17 @@ Respond ONLY with a JSON array, no other text:
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch:
                     origin = self._normalize_origin(kwargs.get("origin"))
+                    payload_context = kwargs.get("payload_context")
                     if origin:
                         return await orch.execute_tool(
-                            "web_search", {"query": query}, origin=origin
+                            "web_search",
+                            {"query": query},
+                            origin=origin,
+                            payload_context=(
+                                dict(payload_context)
+                                if isinstance(payload_context, dict)
+                                else None
+                            ),
                         )
                     return await orch.execute_tool(
                         "web_search",
@@ -3063,9 +3094,17 @@ Respond ONLY with a JSON array, no other text:
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch and hasattr(orch, "execute_tool"):
                     origin = self._normalize_origin(kwargs.get("origin"))
+                    payload_context = kwargs.get("payload_context")
                     if origin:
                         result = await orch.execute_tool(
-                            "run_python", {"code": code}, origin=origin
+                            "run_python",
+                            {"code": code},
+                            origin=origin,
+                            payload_context=(
+                                dict(payload_context)
+                                if isinstance(payload_context, dict)
+                                else None
+                            ),
                         )
                     else:
                         result = await orch.execute_tool("run_python", {"code": code})
@@ -3075,21 +3114,34 @@ Respond ONLY with a JSON array, no other text:
                 return f"Python execution failed: {e}"
             return "Python execution not available"
 
-        async def _write_file(path: str, content: str, **kwargs) -> str:
-            """Write content to a file."""
+        async def _write_file(path: str, content: str, **kwargs) -> Any:
+            """Write through the canonical governed file capability."""
             try:
-                from core.runtime.file_write_gateway import get_file_write_gateway
+                from core.container import ServiceContainer
 
-                await asyncio.to_thread(
-                    get_file_write_gateway().write_text,
-                    path,
-                    content,
-                    source="autonomous_task_engine.write_file_tool",
-                )
-                return f"Written to {path}"
-            except OSError as e:
+                orch = ServiceContainer.get("orchestrator", default=None)
+                if orch and hasattr(orch, "execute_tool"):
+                    origin = self._normalize_origin(kwargs.get("origin")) or (
+                        "autonomous_task_engine"
+                    )
+                    payload_context = kwargs.get("payload_context")
+                    return await orch.execute_tool(
+                        "file_operation",
+                        {"action": "write", "path": path, "content": content},
+                        origin=origin,
+                        payload_context=(
+                            dict(payload_context)
+                            if isinstance(payload_context, dict)
+                            else {
+                                "origin": origin,
+                                "objective": "autonomous task file output",
+                            }
+                        ),
+                    )
+            except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation("autonomous_task_engine", e)
                 return f"Write failed: {e}"
+            return "Write failed: governed file capability unavailable"
 
         async def _read_file(path: str, **kwargs) -> str:
             """Read content from a file."""

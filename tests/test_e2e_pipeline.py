@@ -392,8 +392,12 @@ class TestTaskCommitment:
 class TestApprovalGate:
     """Verify AutonomousTaskEngine plan approval mechanics."""
 
-    def test_plan_requires_approval_when_steps_gt_5(self):
-        from core.agency.autonomous_task_engine import TaskPlan, TaskStep
+    def test_plan_complexity_does_not_manufacture_human_approval(self):
+        from core.agency.autonomous_task_engine import (
+            AutonomousTaskEngine,
+            TaskPlan,
+            TaskStep,
+        )
 
         steps = [
             TaskStep(
@@ -408,11 +412,11 @@ class TestApprovalGate:
         ]
         plan = TaskPlan(plan_id="test_plan", goal="complex task", steps=steps, trace_id="t1")
 
-        # The engine sets requires_approval when len(steps) > 5
-        if len(plan.steps) > 5:
-            plan.requires_approval = True
-
-        assert plan.requires_approval is True
+        assert AutonomousTaskEngine._requires_plan_level_approval(plan, {}) is False
+        assert AutonomousTaskEngine._requires_plan_level_approval(
+            plan,
+            {"requires_human_approval": True},
+        ) is True
 
     def test_approve_and_reject_plan_methods_exist(self, monkeypatch):
         """Verify approve_plan and reject_plan work on the _approval_events dict."""

@@ -372,6 +372,7 @@ async def test_task_engine_resolves_prior_tool_results_into_later_step_args():
         None,
         False,
         origin="user",
+        payload_context={"origin": "user"},
     )
     assert write_step.status == StepStatus.SUCCEEDED
 
@@ -436,6 +437,111 @@ async def test_task_engine_invoke_tool_preserves_user_origin_for_orchestrator(mo
     assert result["ok"] is True
     assert calls[0][0] == "computer_use"
     assert calls[0][2]["origin"] == "api"
+
+
+@pytest.mark.asyncio
+async def test_task_engine_invoke_tool_preserves_full_governance_context(monkeypatch):
+    calls = []
+
+    class _FakeOrchestrator:
+        async def execute_tool(self, tool_name, args, **kwargs):
+            calls.append((tool_name, args, kwargs))
+            return {"ok": True, "verified": True}
+
+    def _fake_get(name, default=None):
+        if name == "orchestrator":
+            return _FakeOrchestrator()
+        return default
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(_fake_get))
+
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: None)}, state=None)
+    engine = AutonomousTaskEngine(kernel)
+    engine._capability_manager = SimpleNamespace(verify_access=lambda *_args, **_kwargs: True)
+    governance = {
+        "origin": "overt_action_loop",
+        "autonomous": True,
+        "will_receipt_id": "will-structured-1",
+        "requested_authority_scope": "overt_action_loop:action-1:computer_use",
+    }
+
+    result = await engine._invoke_tool(
+        "computer_use",
+        {"action": "open_app", "target": "Terminal"},
+        origin="overt_action_loop",
+        payload_context=governance,
+    )
+
+    assert result["ok"] is True
+    assert calls[0][2]["payload_context"] == governance
+
+
+def test_task_engine_plan_review_is_explicit_not_a_complexity_proxy():
+    steps = [
+        TaskStep(
+            step_id=f"plan_s{index}",
+            description=f"Step {index}",
+            tool="run_python" if index == 0 else "think",
+            args={},
+            success_criterion="verified",
+        )
+        for index in range(6)
+    ]
+    plan = TaskPlan(plan_id="plan", goal="Work", steps=steps, trace_id="trace")
+
+    assert AutonomousTaskEngine._requires_plan_level_approval(plan, {}) is False
+    assert AutonomousTaskEngine._requires_plan_level_approval(
+        plan,
+        {"requires_human_approval": True},
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_task_engine_write_alias_uses_governed_file_capability(monkeypatch):
+    calls = []
+
+    class _FakeOrchestrator:
+        async def execute_tool(self, tool_name, args, **kwargs):
+            calls.append((tool_name, args, kwargs))
+            return {"ok": True, "effect_verified": True}
+
+    def _fake_get(name, default=None):
+        if name == "orchestrator":
+            return _FakeOrchestrator()
+        return default
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(_fake_get))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: None)}, state=None)
+    engine = AutonomousTaskEngine(kernel)
+    engine._capability_manager = SimpleNamespace(verify_access=lambda *_args, **_kwargs: True)
+    governance = {
+        "origin": "overt_action_loop",
+        "will_receipt_id": "will-file-1",
+        "autonomous": True,
+    }
+
+    result = await engine._invoke_tool(
+        "write_file",
+        {"path": "report.md", "content": "Verified report."},
+        origin="overt_action_loop",
+        payload_context=governance,
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        (
+            "file_operation",
+            {
+                "action": "write",
+                "path": "report.md",
+                "content": "Verified report.",
+            },
+            {
+                "origin": "overt_action_loop",
+                "payload_context": governance,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

@@ -323,14 +323,16 @@ async def test_overt_action_loop_quarantines_retained_memory_prose_instead_of_se
 
     assert result["status"] == "skipped"
     assert result["error"] == (
-        "initiative_not_actionable:missing_structured_action_contract"
+        "initiative_not_actionable:retained_memory_is_evidence_not_an_action"
     )
-    assert result["selection_provenance"] == "unstructured"
-    assert result["next_step_hint"] == "require_structured_action_contract"
+    assert result["selection_provenance"] == "non_action_evidence"
+    assert result["next_step_hint"] == "retain_as_evidence_without_execution"
     assert result["autonomy_receipt_id"].startswith("autonomy-")
     receipt = loop.receipt_store.get(result["autonomy_receipt_id"])
     assert receipt.metadata["status"] == "skipped"
-    assert receipt.metadata["selection_reason"] == "missing_structured_action_contract"
+    assert receipt.metadata["selection_reason"] == (
+        "retained_memory_is_evidence_not_an_action"
+    )
     assert engine.calls == []
     assert loop.status()["actions_started"] == 0
 
@@ -369,7 +371,143 @@ def test_overt_action_selection_requires_explicit_web_intent_or_structured_skill
     assert structured.params["query"] == "current veterinary guidance"
     assert structured.provenance == "structured:web_search"
     assert incidental.actionable is False
-    assert incidental.reason == "missing_structured_action_contract"
+    assert incidental.reason == "retained_memory_is_evidence_not_an_action"
+
+
+def test_overt_action_selection_semantically_plans_paraphrased_objectives(tmp_path):
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    loop = OvertActionLoop(receipt_store=ReceiptStore(tmp_path / "receipts"))
+    objectives = (
+        "It would help to compare the latest three runtime incidents and save the findings.",
+        "I should examine what changed after the last recovery and preserve the evidence.",
+        "The next useful move is finding the current device state before deciding what to adjust.",
+    )
+
+    selections = [
+        loop._choose_skill_and_params(
+            {"goal": objective, "source": "cognitive_loop"},
+            {},
+        )
+        for objective in objectives
+    ]
+
+    assert all(selection.actionable for selection in selections)
+    assert all(selection.execution_mode == "planned_goal" for selection in selections)
+    assert all(selection.skill == "autonomous_task_engine" for selection in selections)
+    assert [selection.params["goal"] for selection in selections] == list(objectives)
+
+
+@pytest.mark.asyncio
+async def test_overt_action_loop_executes_self_chosen_semantic_plan_with_provenance(
+    tmp_path,
+    monkeypatch,
+):
+    from core.agency.autonomous_task_engine import TaskResult
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    objective = "Compare recent runtime failures and record the verified common cause."
+    calls = []
+
+    class FakeTaskEngine:
+        async def execute_goal(self, goal, context=None):
+            calls.append((goal, dict(context or {})))
+            return TaskResult(
+                plan_id="plan-semantic-1",
+                goal=goal,
+                succeeded=True,
+                summary="Compared and recorded with evidence.",
+                trace_id="trace-semantic-1",
+                steps_completed=3,
+                steps_total=3,
+                evidence=["artifact:incident-comparison"],
+            )
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={
+                    "goal": objective,
+                    "source": "cognitive_loop",
+                    "urgency": 0.72,
+                },
+                will_receipt_id="will-semantic-1",
+            )
+
+    monkeypatch.setattr(
+        "core.runtime.service_access.resolve_task_engine",
+        lambda default=None: FakeTaskEngine(),
+    )
+    receipt_store = ReceiptStore(tmp_path / "receipts")
+    loop = OvertActionLoop(
+        capability_engine=SimpleNamespace(),
+        synthesizer=FakeSynth(),
+        receipt_store=receipt_store,
+        state_provider=lambda: SimpleNamespace(
+            cognition=SimpleNamespace(pending_initiatives=[])
+        ),
+    )
+    loop._record_life_trace = lambda result, raw: setattr(
+        result,
+        "life_trace_id",
+        "life-semantic-1",
+    )
+
+    result = await loop.run_once(force=True)
+
+    assert result["status"] == "verified"
+    assert result["execution_mode"] == "planned_goal"
+    assert result["selection_provenance"] == "semantic_plan:live_capability_catalog"
+    assert result["skill"] == "autonomous_task_engine"
+    assert calls[0][0] == objective
+    context = calls[0][1]
+    assert context["requested_by"] == "aura"
+    assert context["autonomous"] is True
+    assert context["will_receipt_id"] == "will-semantic-1"
+    assert context["action_selection"]["execution_mode"] == "planned_goal"
+    receipt = receipt_store.get(result["tool_receipt_id"])
+    assert receipt.metadata["execution_mode"] == "planned_goal"
+    assert receipt.metadata["selection_provenance"] == (
+        "semantic_plan:live_capability_catalog"
+    )
+
+
+@pytest.mark.asyncio
+async def test_overt_action_semantic_plan_never_claims_partial_work_completed(monkeypatch):
+    from core.agency.autonomous_task_engine import TaskResult
+    from core.runtime.overt_action_loop import OvertActionLoop
+
+    class PartialTaskEngine:
+        async def execute_goal(self, goal, context=None):
+            return TaskResult(
+                plan_id="plan-partial",
+                goal=goal,
+                succeeded=True,
+                summary="One step remains.",
+                trace_id="trace-partial",
+                steps_completed=2,
+                steps_total=3,
+            )
+
+    monkeypatch.setattr(
+        "core.runtime.service_access.resolve_task_engine",
+        lambda default=None: PartialTaskEngine(),
+    )
+
+    raw = await OvertActionLoop()._execute_planned_goal(
+        "Complete all three steps.",
+        governance_context={"will_receipt_id": "will-partial"},
+    )
+
+    assert raw["ok"] is False
+    assert raw["status"] == "execution_not_completed"
+    assert raw["steps_completed"] == 2
+    assert raw["steps_total"] == 3
 
 
 @pytest.mark.asyncio

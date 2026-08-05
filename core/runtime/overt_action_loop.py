@@ -82,6 +82,7 @@ class OvertActionResult:
     expectation_receipt_id: str = ""
     selection_provenance: str = ""
     selection_reason: str = ""
+    execution_mode: str = "skill"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -95,10 +96,15 @@ class ActionSelection:
     params: dict[str, Any] = field(default_factory=dict)
     provenance: str = ""
     reason: str = ""
+    execution_mode: str = "skill"
 
     @property
     def actionable(self) -> bool:
-        return bool(self.skill and not self.reason)
+        if self.reason:
+            return False
+        if self.execution_mode == "planned_goal":
+            return bool(str(self.params.get("goal") or "").strip())
+        return bool(self.skill)
 
 
 def _json_digest(payload: Any) -> str:
@@ -243,7 +249,12 @@ class OvertActionLoop:
         result.will_receipt_id = will_receipt_id
         result.selection_provenance = selection.provenance
         result.selection_reason = reason
-        result.next_step_hint = "require_structured_action_contract"
+        result.execution_mode = selection.execution_mode
+        result.next_step_hint = (
+            "retain_as_evidence_without_execution"
+            if "evidence" in reason or "memory" in reason
+            else "supply_an_actionable_objective"
+        )
         self._emit_selection_skip_receipt(result)
         self._record_selection_skip_trace(result)
         return result
@@ -355,6 +366,7 @@ class OvertActionLoop:
             action_expectation=expectation.to_dict() if expectation is not None else {},
             selection_provenance=selection.provenance,
             selection_reason=selection.reason,
+            execution_mode=selection.execution_mode,
         )
         governance_context = {
             "origin": "overt_action_loop",
@@ -369,6 +381,7 @@ class OvertActionLoop:
             "action_selection": {
                 "provenance": selection.provenance,
                 "reason": selection.reason,
+                "execution_mode": selection.execution_mode,
             },
         }
         orchestrator = self._orchestrator()
@@ -377,7 +390,12 @@ class OvertActionLoop:
         if expectation is not None:
             governance_context["action_expectation"] = expectation.to_dict()
 
-        if registry.get_actuator(skill) is not None:
+        if selection.execution_mode == "planned_goal":
+            raw = await self._execute_planned_goal(
+                objective,
+                governance_context=governance_context,
+            )
+        elif registry.get_actuator(skill) is not None:
             try:
                 actuator_res = await registry.execute_action_async(
                     skill,
@@ -470,6 +488,63 @@ class OvertActionLoop:
                 extra={"action_id": action_id, "skill": skill},
             )
         return self._finish(result, raw_result=raw)
+
+    async def _execute_planned_goal(
+        self,
+        objective: str,
+        *,
+        governance_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compile a self-chosen objective into governed, verified tool steps."""
+        try:
+            from core.runtime.service_access import resolve_task_engine
+
+            task_engine = resolve_task_engine(default=None)
+            if task_engine is None or not hasattr(task_engine, "execute_goal"):
+                raise RuntimeError("autonomous_task_engine_unavailable")
+            task_result = await task_engine.execute_goal(
+                objective,
+                context={
+                    **governance_context,
+                    "requested_by": "aura",
+                    "requested_via": "overt_action_loop",
+                    "foreground_request": False,
+                },
+            )
+        except (ImportError, RuntimeError, OSError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop.semantic_plan",
+                exc,
+                severity="warning",
+                action="failed the selected autonomous objective without claiming execution",
+                extra={"objective": objective[:240]},
+            )
+            return {
+                "ok": False,
+                "status": "semantic_plan_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+        task_payload = asdict(task_result)
+        steps_total = int(task_result.steps_total or 0)
+        steps_completed = int(task_result.steps_completed or 0)
+        completed = bool(
+            task_result.succeeded
+            and steps_total > 0
+            and steps_completed == steps_total
+        )
+        return {
+            "ok": completed,
+            "status": "completed_verified" if completed else "execution_not_completed",
+            "summary": task_result.summary,
+            "plan_id": task_result.plan_id,
+            "trace_id": task_result.trace_id,
+            "steps_completed": steps_completed,
+            "steps_total": steps_total,
+            "evidence": list(task_result.evidence or []),
+            "result": task_payload,
+            "error": "" if completed else task_result.summary,
+        }
 
     @classmethod
     def _action_expectation_for(
@@ -660,6 +735,13 @@ class OvertActionLoop:
                 reason="invalid_explicit_action:" + ",".join(invalid_reasons)[:240],
             )
 
+        evidence_reason = self._non_action_evidence_reason(initiative, goal, action_text)
+        if evidence_reason:
+            return ActionSelection(
+                provenance="non_action_evidence",
+                reason=evidence_reason,
+            )
+
         for pattern in _WEB_SEARCH_INTENT_PATTERNS:
             match = pattern.fullmatch(action_text)
             if match:
@@ -700,10 +782,54 @@ class OvertActionLoop:
                 provenance="natural_language:clock",
             )
 
+        if action_text:
+            return ActionSelection(
+                skill="autonomous_task_engine",
+                params={"goal": action_text},
+                provenance="semantic_plan:live_capability_catalog",
+                execution_mode="planned_goal",
+            )
+
         return ActionSelection(
             provenance="unstructured",
-            reason="missing_structured_action_contract",
+            reason="missing_action_objective",
         )
+
+    @staticmethod
+    def _non_action_evidence_reason(
+        initiative: dict[str, Any],
+        goal: dict[str, Any],
+        action_text: str,
+    ) -> str:
+        """Keep recalled evidence and passive observations out of the action lane."""
+        metadata = dict(initiative.get("metadata", {}) or {})
+        source = " ".join(
+            str(value or "").strip().casefold()
+            for value in (
+                initiative.get("source"),
+                goal.get("source"),
+                metadata.get("source"),
+            )
+            if value
+        )
+        raw = " ".join(
+            str(value or "").casefold()
+            for value in (
+                initiative.get("goal"),
+                initiative.get("objective"),
+                goal.get("objective"),
+            )
+        )
+        if (
+            "retained memory evidence" in raw
+            or "source=durable_memory" in raw
+            or "durable_memory" in source
+            or "conversation_memory" in source
+        ):
+            return "retained_memory_is_evidence_not_an_action"
+        if not action_text.strip():
+            return "passive_observation_has_no_action_objective"
+        return ""
 
     @staticmethod
     def _action_text(initiative: dict[str, Any], goal: dict[str, Any]) -> str:
@@ -966,6 +1092,8 @@ class OvertActionLoop:
                     metadata={
                         "action_id": result.action_id,
                         "source": "overt_action_loop",
+                        "execution_mode": result.execution_mode,
+                        "selection_provenance": result.selection_provenance,
                         "expectation_next_step": result.next_step_hint,
                         "expectation_passed": bool(
                             result.expectation_verdict.get("passed", result.verified)
@@ -983,6 +1111,8 @@ class OvertActionLoop:
                     metadata={
                         "action_id": result.action_id,
                         "tool_receipt_id": tool_receipt.receipt_id,
+                        "execution_mode": result.execution_mode,
+                        "selection_provenance": result.selection_provenance,
                         "expectation_receipt_id": result.expectation_receipt_id,
                         "expectation_passed": bool(
                             result.expectation_verdict.get("passed", result.verified)
