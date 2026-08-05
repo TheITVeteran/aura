@@ -1,6 +1,7 @@
 """CP126: cancellation attribution, clock discrimination, bounded worker input."""
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -500,3 +501,67 @@ class TestBatchGenerationContract:
         assert meta["worker_pid"] == 1234
         assert meta["worker_generation"] == 3
         assert meta["model_basis"] == "path_basename"
+
+
+class TestBatchBudgetAndAdapterCancellation:
+    """The remaining halves of CP126 0bdb9f4d and c4bd8d0a."""
+
+    @pytest.mark.asyncio
+    async def test_a_widened_batch_budget_is_reported_not_silent(
+        self, client, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        client._req_q = SimpleNamespace(put=lambda *a, **k: None)
+        client._closed = False
+        monkeypatch.setattr(
+            mod, "get_memory_pressure_snapshot",
+            lambda: SimpleNamespace(refuse_heavy_local_generation=False, reason=""),
+        )
+
+        async def _alive(**_kw):
+            return True
+
+        async def _put(*_a, **_k):
+            raise TimeoutError("stop here; the admission decision already happened")
+
+        monkeypatch.setattr(client, "_ensure_worker_alive", _alive)
+        monkeypatch.setattr(mod, "run_io_bound", _put)
+
+        assert await client._generate_batch_response_async("p", timeout_s=3.0) == {}
+        assert any("outside the admissible range" in msg for msg in recorded)
+
+    @pytest.mark.asyncio
+    async def test_cancelling_an_adapter_swap_marks_the_state_unknown(
+        self, client, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        client._req_q = SimpleNamespace(put=lambda *a, **k: None)
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        client._expert_adapter_state_unknown = False
+
+        async def _put(*_a, **_k):
+            return None
+
+        async def _cancelled(*_a, **_k):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(mod, "run_io_bound", _put)
+        monkeypatch.setattr(mod, "_await_shared_future", _cancelled)
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as adapter_dir:
+            with pytest.raises(asyncio.CancelledError):
+                await client.set_expert_adapter(adapter_dir)
+
+        # The command is on the worker's queue; the caller going away does not
+        # stop it from attaching.
+        assert client._expert_adapter_state_unknown is True
+        assert client._pending_generations == {}

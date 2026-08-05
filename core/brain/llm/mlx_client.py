@@ -5795,7 +5795,21 @@ class MLXLocalClient:
         if not math.isfinite(admitted_timeout):
             # Infinity previously created an UNBOUNDED wait on the future.
             admitted_timeout = 180.0
+        requested_timeout = admitted_timeout
         admitted_timeout = min(600.0, max(10.0, admitted_timeout))
+        if admitted_timeout != requested_timeout:
+            # A batch decode cannot finish in three seconds, so the floor
+            # stands — but the caller must not believe its budget was honoured
+            # when the wait it actually gets is longer. Widening in silence is
+            # how a bounded caller ends up unbounded.
+            _record_mlx_degradation(
+                ValueError(
+                    f"batch timeout {requested_timeout:.1f}s outside the admissible "
+                    f"range; using {admitted_timeout:.1f}s"
+                ),
+                action="admitted a batch decode on a budget the caller did not request",
+                severity="warning",
+            )
         req_id = uuid.uuid4().hex
         req = {
             "id": req_id,
@@ -5915,6 +5929,8 @@ class MLXLocalClient:
             "texts": texts,
             "tokens_used_consistent": tokens_used_consistent,
             "request_id": req_id,
+            "requested_timeout_s": requested_timeout,
+            "admitted_timeout_s": admitted_timeout,
             "max_tokens": admitted_max_tokens,
             "temperature": admitted_temperature,
             "tokens_used": tokens_used,
@@ -6236,6 +6252,28 @@ class MLXLocalClient:
                 2.0,
             )
             res = await _await_shared_future(fut, timeout_s=max(10.0, float(timeout_s)))
+        except asyncio.CancelledError:
+            # Identical hazard to the timeout below, and it had no handler at
+            # all: the swap command is already queued, so cancelling the
+            # CALLER does not stop the worker from attaching the adapter. The
+            # future must be unregistered, the worker asked to abandon it, and
+            # the resident adapter state marked unknown — otherwise the next
+            # reader believes weights that may already have changed.
+            self._pending_generations.pop(req_id, None)
+            with contextlib.suppress(Exception):
+                self.soft_cancel_active_generation(
+                    reason=f"adapter_swap_cancelled:{req_id[:12]}"
+                )
+            self._expert_adapter_state_unknown = True
+            _record_mlx_degradation(
+                RuntimeError("expert adapter swap cancelled with the command queued"),
+                action=(
+                    "resident adapter state is UNKNOWN after caller cancellation; "
+                    "re-read worker identity before trusting it"
+                ),
+                severity="error",
+            )
+            raise
         except (TimeoutError, BrokenPipeError, OSError) as exc:
             self._pending_generations.pop(req_id, None)
             # Do NOT claim the model was left unchanged. The command is already
