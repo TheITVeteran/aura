@@ -2861,7 +2861,12 @@ def force_clear_foreground_owner(
     # The cancel runs outside _FOREGROUND_OWNER_LOCK on purpose: it reaches
     # into every client and takes their locks, and holding the owner lock
     # across that is an ABBA deadlock waiting to happen.
-    soft_cancel = soft_cancel_active_generations(reason=f"owner_cleared:{reason}")
+    # Scoped to the wedged holder. Clearing ONE stuck foreground owner used to
+    # cancel every active decode in the process, including background work on
+    # other models that had nothing to do with the wedge.
+    soft_cancel = soft_cancel_active_generations(
+        reason=f"owner_cleared:{reason}", owner_label=holder
+    )
 
     with _FOREGROUND_OWNER_LOCK:
         # Compare-and-clear. Releasing the lock above means the world may have
@@ -2906,14 +2911,43 @@ def force_clear_foreground_owner(
     }
 
 
-def soft_cancel_active_generations(*, reason: str) -> list[dict[str, Any]]:
-    """Request cooperative cancel on every client with an active generation.
+def soft_cancel_active_generations(
+    *, reason: str, owner_label: str | None = None
+) -> list[dict[str, Any]]:
+    """Request cooperative cancel on clients with an active generation.
 
     Returns the per-client receipts for the clients that accepted a cancel
     request; clients with nothing running are skipped.
+
+    CP126 2538a912: this always swept EVERY client. One wedged foreground
+    owner therefore cancelled a background lane's legitimate decode on a
+    different model, for a reason that had nothing to do with it. Pass
+    ``owner_label`` — the same label the request lane was acquired under — and
+    only the clients actually serving that owner are asked to yield.
+
+    The broadening is explicit and recorded: if no client claims the named
+    owner, the sweep falls back to all of them, because a recovery path that
+    cancels nothing is worse than one that cancels too much. What it must not
+    do is take the wide action silently while a narrow one was available.
     """
     receipts: list[dict[str, Any]] = []
-    for _client_path, client in _clients_snapshot():
+    snapshot = _clients_snapshot()
+    wanted = str(owner_label or "").strip()
+    targeted = [
+        (path, client)
+        for path, client in snapshot
+        if wanted
+        and str(getattr(client, "_request_lock_owner_label", "") or "").strip() == wanted
+    ]
+    if wanted and not targeted:
+        logger.info(
+            "🧹 [MLX] No client claims foreground owner %s; cancelling every active "
+            "generation for %s.",
+            wanted,
+            reason,
+        )
+    selected = targeted or snapshot
+    for _client_path, client in selected:
         try:
             receipt = client.soft_cancel_active_generation(reason)
         except (AttributeError, OSError, RuntimeError, ValueError) as exc:
@@ -2925,6 +2959,7 @@ def soft_cancel_active_generations(*, reason: str) -> list[dict[str, Any]]:
             continue
         if receipt.get("requested"):
             receipt["model"] = os.path.basename(getattr(client, "model_path", "") or "")
+            receipt["targeted_owner"] = wanted if targeted else ""
             receipts.append(receipt)
     return receipts
 
@@ -8224,7 +8259,13 @@ class MLXLocalClient:
             )
         await self.reboot_worker(reason=reason, mark_failed=not recoverable)
 
-    def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
+    def force_abort_active_generation(
+        self,
+        reason: str = "hard_generation_deadline",
+        *,
+        expected_request_id: str = "",
+        expected_request_seq: int = 0,
+    ) -> bool:
         """Thread-safe emergency abort for a wedged generation.
 
         Normal cancellations should flow through ``reboot_worker``. This path is
@@ -8249,6 +8290,34 @@ class MLXLocalClient:
         had_process = bool(process is not None and process.is_alive())
         if not had_active_request and not had_process:
             return False
+
+        # CP126 ccb125e0. A caller that knows WHICH generation it is chasing
+        # can say so, and this refuses to kill anything else. Without it the
+        # only thing standing between a stale watchdog and a healthy resident
+        # model was an arbitrary reason string.
+        if expected_request_id:
+            active_id = str(getattr(self, "_current_request_id", "") or "")
+            if active_id != str(expected_request_id):
+                logger.info(
+                    "🛈 [MLX] Abort for %s targets request %s but %s is running; "
+                    "leaving the worker alone.",
+                    os.path.basename(self.model_path),
+                    str(expected_request_id)[:12],
+                    active_id[:12] or "nothing",
+                )
+                return False
+        if expected_request_seq:
+            active_seq = int(getattr(self, "_current_request_seq", 0) or 0)
+            if active_seq != int(expected_request_seq):
+                logger.info(
+                    "🛈 [MLX] Abort for %s targets generation seq %d but seq %d is "
+                    "running; leaving the worker alone.",
+                    os.path.basename(self.model_path),
+                    int(expected_request_seq),
+                    active_seq,
+                )
+                return False
+
         if not had_active_request:
             # The generation this abort was chasing already finished. That is a
             # race the timeout will always sometimes lose, not damage: the live
@@ -8260,21 +8329,36 @@ class MLXLocalClient:
             #
             # Nothing to abort is a no-op, and a worker with no work is not a
             # worker to kill.
-            if _ABORT_RACE_MARKERS_RE.search(str(reason or "")):
-                logger.info(
-                    "🛈 [MLX] Abort for %s arrived after the generation "
-                    "finished (%s); nothing to abort, leaving the worker up.",
-                    os.path.basename(self.model_path),
-                    reason,
-                )
-                return False
-            # Any OTHER reason killing an idle-but-alive worker is an arbitrary
-            # emergency kill and must stay visible.
-            _record_mlx_degradation(
-                RuntimeError(f"force_abort_without_active_request:{reason}"),
-                action="force-aborted an idle worker with no pending request",
-                severity="warning",
+            # CP126 ccb125e0. This used to consult _ABORT_RACE_MARKERS_RE — a
+            # LEXICAL test on the reason string — and killed the idle worker
+            # whenever the phrasing missed. So whether a healthy resident 20GB
+            # model survived depended on how a caller worded its reason, which
+            # is not a property of the worker or of the work.
+            #
+            # There is nothing to abort. That is the whole fact, and it is true
+            # regardless of why the abort was requested. A worker with no work
+            # is not a worker to kill; a caller that genuinely wants the lane
+            # recycled has reboot_worker for that.
+            level = (
+                logger.info
+                if _ABORT_RACE_MARKERS_RE.search(str(reason or ""))
+                else logger.warning
             )
+            level(
+                "🛈 [MLX] Abort for %s arrived with no active generation (%s); "
+                "nothing to abort, leaving the worker up.",
+                os.path.basename(self.model_path),
+                reason,
+            )
+            if not _ABORT_RACE_MARKERS_RE.search(str(reason or "")):
+                # Not a lost race, so somebody is aborting on a stale premise.
+                # Visible, but no longer lethal.
+                _record_mlx_degradation(
+                    RuntimeError(f"force_abort_without_active_request:{reason}"),
+                    action="declined to force-abort an idle worker with no pending request",
+                    severity="warning",
+                )
+            return False
 
         logger.error(
             "🛑 [MLX] Force-aborting active generation for %s (%s).",

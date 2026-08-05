@@ -880,3 +880,120 @@ class TestWorkerDeathIsProven:
         with pytest.raises((RuntimeError, OSError)) as excinfo:
             client._spawn_worker_blocking()
         assert "orphan_reclamation_unobservable" not in str(excinfo.value)
+
+
+class TestAbortAndCancelHaveTargets:
+    """CP126 ccb125e0 / 2538a912."""
+
+    def _idle_client(self):
+        c = MLXLocalClient(model_path=TEST_MODEL)
+        c._record_degraded_event = lambda *a, **k: None
+        c._replace_ipc_queues = lambda *a, **k: None
+        c._process = SimpleNamespace(is_alive=lambda: True, pid=7, kill=lambda: None,
+                                     join=lambda timeout=None: None)
+        return c
+
+    def test_an_idle_worker_is_never_killed_for_an_unrecognised_reason(self):
+        """The phrasing of a reason string must not decide a worker's life."""
+        client = self._idle_client()
+        assert client.force_abort_active_generation("something_unexpected") is False
+        assert client._process is not None
+
+    def test_an_idle_worker_is_not_killed_for_a_race_reason_either(self):
+        client = self._idle_client()
+        assert client.force_abort_active_generation("first_token_timeout") is False
+        assert client._process is not None
+
+    def test_an_abort_for_another_request_is_a_no_op(self):
+        client = self._idle_client()
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+        client._current_request_id = "req-live"
+        assert (
+            client.force_abort_active_generation(
+                "watchdog", expected_request_id="req-already-finished"
+            )
+            is False
+        )
+        assert client._process is not None
+
+    def test_an_abort_for_another_generation_sequence_is_a_no_op(self):
+        client = self._idle_client()
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+        client._current_request_seq = 9
+        assert (
+            client.force_abort_active_generation("watchdog", expected_request_seq=4) is False
+        )
+        assert client._process is not None
+
+    def test_an_abort_for_the_live_request_still_proceeds(self):
+        client = self._idle_client()
+        client._release_durable_model_lane_owner_sync = lambda **k: None
+        killed = {"value": False}
+        client._process = SimpleNamespace(
+            is_alive=lambda: not killed["value"],
+            pid=7,
+            kill=lambda: killed.__setitem__("value", True),
+            join=lambda timeout=None: None,
+        )
+        client._active_generations = 1
+        client._current_request_started_at = time.time() - 500.0
+        client._current_request_id = "req-live"
+        client._current_request_seq = 9
+        assert (
+            client.force_abort_active_generation(
+                "watchdog", expected_request_id="req-live", expected_request_seq=9
+            )
+            is True
+        )
+        assert killed["value"] is True
+
+    def test_the_cancel_sweep_spares_clients_serving_another_owner(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        wedged = MLXLocalClient(model_path=TEST_MODEL)
+        wedged._request_lock_owner_label = "latent_cortex_foreground"
+        bystander = MLXLocalClient(model_path="/models/other-7B")
+        bystander._request_lock_owner_label = "background_curiosity"
+
+        cancelled = []
+        for client in (wedged, bystander):
+            client.soft_cancel_active_generation = (
+                lambda reason, _c=client: (
+                    cancelled.append(_c.model_path),
+                    {"requested": True, "reason": reason},
+                )[1]
+            )
+
+        monkeypatch.setattr(
+            mod, "_clients_snapshot",
+            lambda: [(wedged.model_path, wedged), (bystander.model_path, bystander)],
+        )
+        receipts = mod.soft_cancel_active_generations(
+            reason="owner_cleared:wedge", owner_label="latent_cortex_foreground"
+        )
+        assert cancelled == [TEST_MODEL]
+        assert receipts and receipts[0]["targeted_owner"] == "latent_cortex_foreground"
+
+    def test_the_sweep_broadens_when_nobody_claims_the_owner(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        a = MLXLocalClient(model_path=TEST_MODEL)
+        b = MLXLocalClient(model_path="/models/other-7B")
+        cancelled = []
+        for client in (a, b):
+            client._request_lock_owner_label = ""
+            client.soft_cancel_active_generation = (
+                lambda reason, _c=client: (
+                    cancelled.append(_c.model_path),
+                    {"requested": True, "reason": reason},
+                )[1]
+            )
+        monkeypatch.setattr(
+            mod, "_clients_snapshot", lambda: [(a.model_path, a), (b.model_path, b)]
+        )
+        mod.soft_cancel_active_generations(reason="r", owner_label="nobody")
+        # Cancelling nothing during recovery is worse than cancelling widely —
+        # but the widening is explicit and shows in the receipt.
+        assert len(cancelled) == 2

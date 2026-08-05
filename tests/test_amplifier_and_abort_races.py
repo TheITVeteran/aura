@@ -89,24 +89,55 @@ class TestALostAbortRaceIsNotDamage:
     def test_arbitrary_kills_are_not_races(self, marker_re, reason):
         assert not marker_re.search(reason)
 
+    def _idle_but_alive_client(self):
+        """A healthy resident worker with nothing running on it."""
+        from types import SimpleNamespace
+
+        from core.brain.llm.mlx_client import MLXLocalClient
+
+        client = MLXLocalClient(model_path="/models/Qwen2.5-32B-Instruct-4bit")
+        client._record_degraded_event = lambda *a, **k: None
+        client._replace_ipc_queues = lambda *a, **k: None
+        self.killed = False
+
+        def _kill():
+            self.killed = True
+
+        client._process = SimpleNamespace(
+            is_alive=lambda: not self.killed,
+            pid=99,
+            kill=_kill,
+            join=lambda timeout=None: None,
+        )
+        return client
+
     def test_the_race_path_leaves_the_worker_up(self):
+        """Behaviour, not source layout: a lost race must not cost a reload."""
+        client = self._idle_but_alive_client()
+        assert client.force_abort_active_generation("first_token_timeout") is False
+        assert self.killed is False, "a worker with no work is not a worker to kill"
+
+    def test_an_arbitrary_idle_kill_no_longer_happens_and_is_still_recorded(self):
+        """CP126 ccb125e0: the reason's WORDING used to decide this.
+
+        A reason matching the race markers spared the worker; anything else
+        killed a healthy resident model. Whether a 20GB worker survived
+        therefore depended on how a caller phrased a string, which is not a
+        property of the worker or of the work. Now nothing is killed when
+        nothing is running — and an abort on a stale premise stays visible.
+        """
         from core.brain.llm import mlx_client
 
-        src = inspect.getsource(mlx_client)
-        block = src[src.index("if not had_active_request:") :][:1800]
-        race = block[block.index("_ABORT_RACE_MARKERS_RE") :][:400]
-        assert "return False" in race, (
-            "a worker with no work is not a worker to kill"
-        )
-        assert "_record_mlx_degradation" not in race, (
-            "losing a race the timeout will always sometimes lose is not a fault"
-        )
+        recorded = []
+        original = mlx_client._record_mlx_degradation
+        mlx_client._record_mlx_degradation = lambda exc, **kw: recorded.append(str(exc))
+        try:
+            client = self._idle_but_alive_client()
+            assert client.force_abort_active_generation("operator_requested_kill") is False
+        finally:
+            mlx_client._record_mlx_degradation = original
 
-    def test_an_arbitrary_idle_kill_is_still_recorded(self):
-        from core.brain.llm import mlx_client
-
-        src = inspect.getsource(mlx_client)
-        block = src[src.index("if not had_active_request:") :][:2200]
-        assert "force_abort_without_active_request" in block, (
-            "an emergency kill of an idle worker must stay visible"
+        assert self.killed is False
+        assert any("force_abort_without_active_request" in msg for msg in recorded), (
+            "an abort on a stale premise must stay visible"
         )
