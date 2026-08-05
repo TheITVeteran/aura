@@ -35846,3 +35846,36 @@ real network loss and credential expiry, representative long-running actuator
 cancellation, physical safe-state convergence, and live/HIL metrology remain
 unmeasured; CP810 and the total remain open at 809/920 until those external
 campaigns are actually run and independently accepted.
+
+#### CP810 addendum: evidence-class-bound independent verdicts
+
+Independent replay can no longer return a successful process status for the
+wrong evidentiary burden. The verifier's external trust contract now binds the
+exact expected class: simulation, hardware-in-loop, or live. Every required
+case must carry that class. HIL and live replay require an independently
+supplied trusted metrology digest; simulation rejects one. The expected class,
+class-specific verdict, blockers, and final `accepted` decision are included in
+the content-digested version-two verification receipt.
+
+The fresh-process CLI requires `--expected-evidence-class` rather than inferring
+operator intent from producer-controlled evidence. Its exit code now follows
+the requested burden: deterministic acceptance is sufficient only for an
+explicit simulation campaign, while HIL or live requests require the complete
+metrology-bound live verdict. A valid deterministic simulation certificate
+therefore exits nonzero when invoked as a live campaign instead of being
+accidentally promotable by CI or release automation.
+
+Evidence-class validation:
+
+- exact live acceptance and live-versus-HIL substitution, missing trust input,
+  and fresh-process simulation-versus-live promotion regressions: 27/27 passed;
+- full affected Reality Reach connector, metrology, acceptance, actuation,
+  transaction, event-flow, and middleware family: 201/201 passed;
+- scoped strict MyPy and Ruff passed for the verifier and CLI.
+
+This closes verifier intent substitution, not the external campaigns. Real
+AWS/Azure tenants, real network loss and credential expiry, representative
+long-running actuator cancellation, physical safe-state convergence, and
+live/HIL metrology remain unmeasured. CP810 and the total remain open at
+809/920 until those campaigns run against external trust inputs and the exact
+requested evidence class is independently accepted.

@@ -577,6 +577,8 @@ async def test_acceptance_cli_replays_in_fresh_process(tmp_path) -> None:
         certificate.source_commit_sha256,
         "--physical-identity-sha256",
         certificate.physical_identity_sha256,
+        "--expected-evidence-class",
+        "simulation",
         "--receipt-output",
         str(receipt_path),
         stdout=asyncio.subprocess.PIPE,
@@ -588,6 +590,8 @@ async def test_acceptance_cli_replays_in_fresh_process(tmp_path) -> None:
     receipt = json.loads(stdout)
     assert receipt["deterministic_accepted"] is True
     assert receipt["live_accepted"] is False
+    assert receipt["expected_evidence_class"] == "simulation"
+    assert receipt["accepted"] is True
     assert json.loads(receipt_path.read_bytes()) == receipt
     assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
 
@@ -631,11 +635,88 @@ def test_live_replay_requires_recomputed_trusted_metrology() -> None:
         evidence,
         expected_source_commit_sha256=certificate.source_commit_sha256,
         expected_physical_identity_sha256=certificate.physical_identity_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
         trusted_metrology_evidence_sha256=_digest("wrong-metrology"),
     )
 
     assert receipt.live_accepted is False
     assert "trusted_metrology_mismatch" in receipt.blockers
+
+
+@pytest.mark.asyncio
+async def test_independent_replay_binds_exact_external_evidence_class() -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    simulated = await runner.run()
+    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    live_certificate = replace(
+        simulated,
+        cases=tuple(
+            replace(item, evidence_class=AcceptanceEvidenceClass.LIVE) for item in simulated.cases
+        ),
+        metrology_evidence_sha256=metrology.evidence_sha256,
+    )
+    evidence = {
+        "case_evidence": runner.case_evidence,
+        "metrology_receipt": metrology.to_dict(),
+    }
+
+    accepted = verify_acceptance_evidence(
+        live_certificate,
+        evidence,
+        expected_source_commit_sha256=live_certificate.source_commit_sha256,
+        expected_physical_identity_sha256=live_certificate.physical_identity_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+        trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+    )
+    substituted = verify_acceptance_evidence(
+        live_certificate,
+        evidence,
+        expected_source_commit_sha256=live_certificate.source_commit_sha256,
+        expected_physical_identity_sha256=live_certificate.physical_identity_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        trusted_metrology_evidence_sha256=metrology.evidence_sha256,
+    )
+
+    assert accepted.accepted is True
+    assert accepted.live_accepted is True
+    assert accepted.blockers == ()
+    assert substituted.accepted is False
+    assert "evidence_class_mismatch" in substituted.blockers
+    assert "metrology_mode_mismatch" in substituted.blockers
+
+
+@pytest.mark.asyncio
+async def test_acceptance_cli_refuses_simulation_when_live_was_requested(tmp_path) -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    certificate = await runner.run_and_persist(store)
+
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "tools/reality_reach/verify_acceptance.py",
+        "--root",
+        str(store.root),
+        "--campaign-id",
+        certificate.campaign_id,
+        "--source-commit-sha256",
+        certificate.source_commit_sha256,
+        "--physical-identity-sha256",
+        certificate.physical_identity_sha256,
+        "--expected-evidence-class",
+        "live",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
+
+    assert process.returncode == 2, stderr.decode()
+    receipt = json.loads(stdout)
+    assert receipt["deterministic_accepted"] is False
+    assert receipt["accepted"] is False
+    assert "evidence_class_mismatch" in receipt["blockers"]
+    assert "trusted_metrology_missing" in receipt["blockers"]
 
 
 @pytest.mark.asyncio

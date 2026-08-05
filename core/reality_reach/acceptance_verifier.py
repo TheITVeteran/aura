@@ -20,7 +20,7 @@ from core.reality_reach.acceptance import (
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
-VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v1"
+VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v2"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -113,6 +113,7 @@ def _metrology_blockers(
     certificate: ConnectorAcceptanceCertificate,
     evidence_document: Mapping[str, Any],
     trusted_digest: str,
+    expected_evidence_class: AcceptanceEvidenceClass,
 ) -> list[str]:
     metrology = evidence_document.get("metrology_receipt")
     if not isinstance(metrology, Mapping):
@@ -145,15 +146,10 @@ def _metrology_blockers(
         blockers.append("trusted_metrology_mismatch")
     if metrology.get("restored_mode") != "live":
         blockers.append("metrology_mode_not_restored")
-    modes = {
-        item.evidence_class
-        for item in certificate.cases
-        if item.required
-        and item.evidence_class
-        in {AcceptanceEvidenceClass.HARDWARE_IN_LOOP, AcceptanceEvidenceClass.LIVE}
-    }
     expected_mode = (
-        "hardware_in_loop" if AcceptanceEvidenceClass.HARDWARE_IN_LOOP in modes else "live"
+        "hardware_in_loop"
+        if expected_evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP
+        else "live"
     )
     if metrology.get("mode") != expected_mode:
         blockers.append("metrology_mode_mismatch")
@@ -182,6 +178,7 @@ class AcceptanceVerificationReceipt:
     certificate_sha256: str
     expected_source_commit_sha256: str
     expected_physical_identity_sha256: str
+    expected_evidence_class: AcceptanceEvidenceClass
     trusted_metrology_evidence_sha256: str
     replayed_cases: tuple[str, ...]
     blockers: tuple[str, ...]
@@ -198,6 +195,8 @@ class AcceptanceVerificationReceipt:
         ):
             if not _DIGEST.fullmatch(str(getattr(self, name))):
                 raise ValueError(f"{name} must be a sha256 digest")
+        if not isinstance(self.expected_evidence_class, AcceptanceEvidenceClass):
+            raise TypeError("expected_evidence_class must be an AcceptanceEvidenceClass")
         if self.trusted_metrology_evidence_sha256 and not _DIGEST.fullmatch(
             self.trusted_metrology_evidence_sha256
         ):
@@ -215,6 +214,14 @@ class AcceptanceVerificationReceipt:
     def sha256(self) -> str:
         return _digest(self.to_dict(include_digest=False))
 
+    @property
+    def accepted(self) -> bool:
+        """Return the verdict for the externally declared evidence burden."""
+
+        if self.expected_evidence_class is AcceptanceEvidenceClass.SIMULATION:
+            return self.deterministic_accepted
+        return self.live_accepted
+
     def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
         document = {
             "schema": VERIFICATION_RECEIPT_SCHEMA,
@@ -222,11 +229,13 @@ class AcceptanceVerificationReceipt:
             "certificate_sha256": self.certificate_sha256,
             "expected_source_commit_sha256": self.expected_source_commit_sha256,
             "expected_physical_identity_sha256": self.expected_physical_identity_sha256,
+            "expected_evidence_class": self.expected_evidence_class.value,
             "trusted_metrology_evidence_sha256": self.trusted_metrology_evidence_sha256,
             "replayed_cases": list(self.replayed_cases),
             "blockers": list(self.blockers),
             "deterministic_accepted": self.deterministic_accepted,
             "live_accepted": self.live_accepted,
+            "accepted": self.accepted,
         }
         if include_digest:
             document["verification_sha256"] = self.sha256
@@ -239,6 +248,7 @@ def verify_acceptance_evidence(
     *,
     expected_source_commit_sha256: str,
     expected_physical_identity_sha256: str,
+    expected_evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION,
     trusted_metrology_evidence_sha256: str = "",
     required_cases: Sequence[str] = REQUIRED_SCALAR_ACCEPTANCE_CASES,
 ) -> AcceptanceVerificationReceipt:
@@ -250,6 +260,8 @@ def verify_acceptance_evidence(
         raise ValueError("expected_source_commit_sha256 must be a sha256 digest")
     if not _DIGEST.fullmatch(str(expected_physical_identity_sha256)):
         raise ValueError("expected_physical_identity_sha256 must be a sha256 digest")
+    if not isinstance(expected_evidence_class, AcceptanceEvidenceClass):
+        raise TypeError("expected_evidence_class must be an AcceptanceEvidenceClass")
     if trusted_metrology_evidence_sha256 and not _DIGEST.fullmatch(
         trusted_metrology_evidence_sha256
     ):
@@ -266,6 +278,14 @@ def verify_acceptance_evidence(
         blockers.append("source_commit_mismatch")
     if certificate.physical_identity_sha256 != expected_physical_identity_sha256:
         blockers.append("physical_identity_mismatch")
+    observed_evidence_classes = {item.evidence_class for item in certificate.cases if item.required}
+    if observed_evidence_classes != {expected_evidence_class}:
+        blockers.append("evidence_class_mismatch")
+    if expected_evidence_class is AcceptanceEvidenceClass.SIMULATION:
+        if trusted_metrology_evidence_sha256:
+            blockers.append("unexpected_trusted_metrology")
+    elif not trusted_metrology_evidence_sha256:
+        blockers.append("trusted_metrology_missing")
 
     replayed: list[str] = []
     normalized: dict[str, Mapping[str, Any]] = {}
@@ -292,18 +312,17 @@ def verify_acceptance_evidence(
         prior_nonpass = prior_nonpass or result.verdict is not AcceptanceVerdict.PASS
     blockers.extend(_cross_case_blockers(normalized))
 
-    live_evidence = any(
-        item.evidence_class
-        in {AcceptanceEvidenceClass.HARDWARE_IN_LOOP, AcceptanceEvidenceClass.LIVE}
-        for item in certificate.cases
-        if item.required
-    )
+    live_evidence = expected_evidence_class in {
+        AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        AcceptanceEvidenceClass.LIVE,
+    }
     if live_evidence:
         blockers.extend(
             _metrology_blockers(
                 certificate,
                 evidence_document,
                 trusted_metrology_evidence_sha256,
+                expected_evidence_class,
             )
         )
     deterministic = not blockers and certificate.deterministic_passed
@@ -312,6 +331,7 @@ def verify_acceptance_evidence(
         certificate_sha256=certificate.sha256,
         expected_source_commit_sha256=expected_source_commit_sha256,
         expected_physical_identity_sha256=expected_physical_identity_sha256,
+        expected_evidence_class=expected_evidence_class,
         trusted_metrology_evidence_sha256=trusted_metrology_evidence_sha256,
         replayed_cases=tuple(replayed),
         blockers=tuple(sorted(set(blockers))),
