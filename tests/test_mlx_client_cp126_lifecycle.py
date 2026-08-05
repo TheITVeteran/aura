@@ -1521,3 +1521,64 @@ class TestIdleScavengeIsFenced:
         assert result["unloaded"] is True
         assert rebooted == ["idle_vram_scavenge"]
         assert not client._request_lock.locked()
+
+
+class TestProofLaneIdentityIsMeasured:
+    """CP126 0ad66338: two artifacts with compatible names both passed."""
+
+    def test_a_measured_fingerprint_is_returned(self, tmp_path, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        monkeypatch.setattr(
+            mod, "get_model_artifact_profile",
+            lambda _p: SimpleNamespace(measured=True, fingerprint="abc123"),
+            raising=False,
+        )
+        import core.brain.llm.model_artifact_profile as profile_mod
+
+        monkeypatch.setattr(
+            profile_mod, "get_model_artifact_profile",
+            lambda _p: SimpleNamespace(measured=True, fingerprint="abc123"),
+        )
+        assert mod._measured_artifact_fingerprint("/models/x") == "abc123"
+
+    def test_an_unmeasured_artifact_returns_empty_not_a_match(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+        import core.brain.llm.model_artifact_profile as profile_mod
+
+        monkeypatch.setattr(
+            profile_mod, "get_model_artifact_profile",
+            lambda _p: SimpleNamespace(measured=False, fingerprint="whatever"),
+        )
+        assert mod._measured_artifact_fingerprint("/models/x") == ""
+
+    def test_an_unreadable_artifact_returns_empty(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+        import core.brain.llm.model_artifact_profile as profile_mod
+
+        def _boom(_p):
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(profile_mod, "get_model_artifact_profile", _boom)
+        assert mod._measured_artifact_fingerprint("/models/x") == ""
+
+    def test_two_same_named_checkpoints_are_distinguishable(self, monkeypatch):
+        """The exact hazard: same basename, different weights."""
+        import core.brain.llm.mlx_client as mod
+        import core.brain.llm.model_artifact_profile as profile_mod
+
+        digests = {"/a/Qwen2.5-32B-Instruct-4bit": "aaa", "/b/Qwen2.5-32B-Instruct-4bit": "bbb"}
+        monkeypatch.setattr(
+            profile_mod, "get_model_artifact_profile",
+            lambda p: SimpleNamespace(measured=True, fingerprint=digests.get(str(p), "")),
+        )
+        left = mod._measured_artifact_fingerprint("/a/Qwen2.5-32B-Instruct-4bit")
+        right = mod._measured_artifact_fingerprint("/b/Qwen2.5-32B-Instruct-4bit")
+        assert left and right and left != right
+
+        from core.brain.llm.model_registry import model_identities_compatible
+
+        # The old test said these were the same model.
+        assert model_identities_compatible(
+            "Qwen2.5-32B-Instruct-4bit", "Qwen2.5-32B-Instruct-4bit"
+        )

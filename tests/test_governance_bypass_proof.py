@@ -83,8 +83,28 @@ def refusing_will(monkeypatch):
     return will
 
 
+@pytest.fixture
+def approval_overlay_off(monkeypatch):
+    """Pin the operator-confirmation overlay OFF.
+
+    Same repair as tests/test_forensic_audit_regressions.py. This test proves
+    that a REFUSING WILL blocks tool execution. It used to pass by inheriting
+    the developer's live `governance.approval_mode`; with the real default of
+    "destructive", `rm -rf /` correctly requires confirmation and the gateway
+    returns "approval_required" BEFORE the Will is consulted. The bypass is
+    still blocked either way — but the test then proves the confirmation
+    prompt, not the Will, which is not what it claims. Declare the mode it
+    needs so the assertion measures its own subject.
+    """
+    monkeypatch.setattr(
+        "core.runtime.runtime_settings.runtime_approval_mode", lambda: "none"
+    )
+
+
 @pytest.mark.asyncio
-async def test_tool_execution_blocked_without_will_approval(refusing_will):
+async def test_tool_execution_blocked_without_will_approval(
+    refusing_will, approval_overlay_off
+):
     """Tool execution MUST fail when the Unified Will refuses."""
     from core.executive.authority_gateway import AuthorityGateway
 

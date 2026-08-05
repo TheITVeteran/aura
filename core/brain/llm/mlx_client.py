@@ -987,6 +987,24 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
 #: already reads the checkpoint's own config and safetensors index and reports
 #: whether its answer was measured; these helpers ask it first and fall back to
 #: naming only when the artifact could not be read.
+def _measured_artifact_fingerprint(model_path: Any) -> str:
+    """The checkpoint's own measured fingerprint, or "" when unmeasurable.
+
+    Empty means the artifact could not be read — NOT that it differs. Callers
+    must treat the two differently: an unreadable checkpoint is a reason to
+    say so, never a reason to declare a match.
+    """
+    try:
+        from core.brain.llm.model_artifact_profile import get_model_artifact_profile
+
+        profile = get_model_artifact_profile(str(model_path or ""))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return ""
+    if not getattr(profile, "measured", False):
+        return ""
+    return str(getattr(profile, "fingerprint", "") or "")
+
+
 def _measured_size_class(model_path: Any) -> str | None:
     """The artifact's measured weight class, or None when unmeasured."""
     try:
@@ -12964,12 +12982,41 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
             target_path = _real_model_path(runtime_path)
             primary_name = os.path.basename(primary_path)
             target_name = os.path.basename(target_path)
-            if target_name != primary_name and not model_identities_compatible(
+            # CP126 0ad66338. Name comparison and a size-tag compatibility
+            # predicate cannot tell two artifacts apart: two directories both
+            # called Qwen2.5-32B-Instruct-4bit, holding different weights,
+            # both satisfied the proof lane. A proof run is precisely where
+            # "probably the same model" is not good enough.
+            #
+            # The artifact profile measures a fingerprint from the checkpoint's
+            # own config and safetensors index. When both sides can be
+            # measured, that is the comparison. Names are the fallback only
+            # when the artifacts cannot be read — and the fallback says so.
+            primary_fingerprint = _measured_artifact_fingerprint(primary_path)
+            target_fingerprint = _measured_artifact_fingerprint(target_path)
+            if primary_fingerprint and target_fingerprint:
+                if primary_fingerprint != target_fingerprint:
+                    raise RuntimeError(
+                        "Proof-primary run refused a different checkpoint: "
+                        f"{target_name}({target_fingerprint[:12]}) != "
+                        f"{primary_name}({primary_fingerprint[:12]})"
+                    )
+            elif target_name != primary_name and not model_identities_compatible(
                 target_name, primary_name
             ):
                 raise RuntimeError(
                     "Proof-primary run refused lower local model lane: "
                     f"{target_name} != {primary_name}"
+                )
+            elif not (primary_fingerprint and target_fingerprint):
+                _record_mlx_degradation(
+                    RuntimeError(
+                        "proof-primary lane admitted on NAME comparison; the "
+                        f"checkpoint fingerprint could not be measured for "
+                        f"{'primary' if not primary_fingerprint else 'target'}"
+                    ),
+                    action="admitted a proof-primary lane without an artifact-identity match",
+                    severity="warning",
                 )
     except ImportError as _exc:
         # CP126 84a18b06: swallowing this import failure disabled proof-primary
