@@ -35446,3 +35446,46 @@ connectors remain CP808 scope, and live Messages, hardware, desktop, reasoning,
 frontier, release, and `WOW Signal` acceptance remain open. This is total
 checkpoint 807 of the current 920-checkpoint completion envelope, approximately
 87.7% by count; long soaks remain deferred.
+
+### 2026-08-05 - CP808 foreground workload arbitration
+
+The desktop shell now publishes one explicit `idle`, `foreground`, or `hidden`
+workload state from the actual chat submission and Cortex generation lane. A
+mode transition is observable through a typed browser event and body-state
+marker, so optional surfaces use the same foreground fact rather than guessing
+from unrelated animation or connection state.
+
+Control-plane health polling, WebSocket liveness, delivery reconciliation, and
+completion acknowledgements retain their normal cadence. Optional read-model
+work now yields: bootstrap hydration moves from 30 to 90 seconds during a turn;
+desktop permission reprobes move from 15 to 60 seconds; imagination and
+knowledge-graph refresh move from 4/10 to 12/30 seconds. Hidden windows skip
+those fetches and rebase their timers instead of accumulating work to burst on
+resume. Each lane uses recursive one-shot scheduling, so a slow response cannot
+overlap with its next interval. Tab-bound imagination and graph loops terminate
+when their panel is inactive.
+
+Frame telemetry retains real request-animation-frame samples while visible but
+batches them for 15 seconds during foreground work, stops sampling while hidden,
+and bounds its in-memory sample window. The performance collector still emits
+action acknowledgement latency immediately; resource arbitration therefore
+cannot erase completion evidence or disguise a slow governed action.
+
+Validation while the resident 32B campaign owns the model lane:
+
+- executable JavaScript workload and access contract: passed, including mode
+  transitions, delay factors, max-delay bounds, foreground batching, hidden
+  suppression, acknowledgement preservation, and script compilation;
+- desktop/runtime/device-pairing family: 127/127 passed;
+- smoke: 103/103 passed.
+
+No Aura.app boot or visual performance trace was run beside training, so this
+checkpoint proves deterministic scheduling behavior but not a measured live
+latency reduction. The resident role-v6 campaign advanced durably from migrated
+step 37 to signed checkpoint sequence 39, step 38, with restart count zero while
+this work ran. Concrete Reality Reach connectors are carried forward to CP809;
+metric provenance, public naming semantics, clustered graph layout, epistemic-
+peer behavior, LAWC-05 extension, live acceptance, frontier evidence, release,
+and `WOW Signal` remain open. This is total checkpoint 808 of the current
+920-checkpoint completion envelope, approximately 87.8% by count; long soaks
+remain deferred.

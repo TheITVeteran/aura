@@ -51,8 +51,12 @@ const state = {
     voiceSummary: null,
     desktopAccess: null,
     desktopAccessPollInFlight: false,
+    desktopAccessTimer: null,
     bootstrapLoaded: false,
     bootstrapTimer: null,
+    knowledgeGraphTimer: null,
+    knowledgeGraphPollInFlight: false,
+    surfaceWorkloadMode: null,
     lastNeuralPulseAt: 0,
     lastSemanticThoughtAt: 0,
     lastHealthSnapshotFingerprint: null,
@@ -132,6 +136,9 @@ const HEALTH_POLL_MAX_MS = 60000;
 const HEALTH_POLL_TIMEOUT_MS = 6000;
 const HEALTH_POLL_REMINDER_MS = 5 * 60 * 1000;
 const HEALTH_POLL_JITTER_RATIO = 0.15;
+const DESKTOP_ACCESS_POLL_MS = 15000;
+const BOOTSTRAP_POLL_MS = 30000;
+const KNOWLEDGE_GRAPH_POLL_MS = 10000;
 const RUNTIME_REVISION_STORAGE_KEY = 'aura.runtime_revision';
 const RUNTIME_REVISION_RELOAD_STORAGE_KEY = 'aura.runtime_revision_reload';
 const RUNTIME_REVISION_RECORD_SCHEMA = 'aura.runtime_revision.client.v2';
@@ -1602,6 +1609,23 @@ async function pollDesktopAccess() {
     }
 }
 
+function scheduleDesktopAccessPoll(delayMs = null) {
+    if (state.desktopAccessTimer) clearTimeout(state.desktopAccessTimer);
+    state.desktopAccessTimer = null;
+    if (!accessCapabilityAllowed('desktop_control')) return;
+    const delay = delayMs == null
+        ? optionalSurfacePollDelay(DESKTOP_ACCESS_POLL_MS, {
+            foregroundFactor: 4,
+            hiddenFactor: 8,
+        })
+        : Math.max(0, Number(delayMs) || 0);
+    state.desktopAccessTimer = setTimeout(async () => {
+        state.desktopAccessTimer = null;
+        if (!document.hidden) await pollDesktopAccess();
+        scheduleDesktopAccessPoll();
+    }, delay);
+}
+
 async function runDesktopAccessAction(action) {
     const normalized = String(action || '').trim().toLowerCase();
     const endpointByAction = {
@@ -1866,6 +1890,21 @@ async function hydrateBootstrap({ hydrateConversationHistory = true, quiet = tru
         if (!quiet) console.warn('[UI] Bootstrap hydration failed:', err);
         return null;
     }
+}
+
+function scheduleBootstrapPoll(delayMs = null) {
+    if (state.bootstrapTimer) clearTimeout(state.bootstrapTimer);
+    const delay = delayMs == null
+        ? optionalSurfacePollDelay(BOOTSTRAP_POLL_MS, {
+            foregroundFactor: 3,
+            hiddenFactor: 6,
+        })
+        : Math.max(0, Number(delayMs) || 0);
+    state.bootstrapTimer = setTimeout(async () => {
+        state.bootstrapTimer = null;
+        if (!document.hidden) await hydrateBootstrap({ quiet: true });
+        scheduleBootstrapPoll();
+    }, delay);
 }
 
 // ── Tab switching ────────────────────────────────────────
@@ -4300,6 +4339,7 @@ async function runChatRequest(value, { messageAlreadyRendered = false } = {}) {
     const typingInd = $('typing-ind');
     if (typingInd) typingInd.classList.add('show');
     state.isSubmitting = true;
+    publishSurfaceWorkload('chat_submit');
     state.activeChatRequest = item;
     persistChatHandoff({ force: true });
 
@@ -4451,6 +4491,7 @@ async function runChatRequest(value, { messageAlreadyRendered = false } = {}) {
         persistChatHandoff({ force: true });
     } finally {
         state.isSubmitting = false;
+        publishSurfaceWorkload('chat_settled');
         if (state.activeChatRequestId === requestId) {
             state.activeChatRequestId = null;
         }
@@ -4967,6 +5008,38 @@ function laneHasActiveGeneration(lane) {
         || reason === 'active_generation_in_flight';
 }
 
+function surfaceWorkloadMode() {
+    if (document.hidden || state.surfaceSuspended) return 'hidden';
+    if (state.isSubmitting || laneHasActiveGeneration(state.conversationLane)) return 'foreground';
+    return 'idle';
+}
+
+function optionalSurfacePollDelay(
+    baseMs,
+    { foregroundFactor = 3, hiddenFactor = 6, maxMs = 5 * 60 * 1000 } = {}
+) {
+    const base = Math.max(250, Number(baseMs) || 250);
+    const mode = surfaceWorkloadMode();
+    const factor = mode === 'hidden'
+        ? Math.max(1, Number(hiddenFactor) || 1)
+        : mode === 'foreground'
+            ? Math.max(1, Number(foregroundFactor) || 1)
+            : 1;
+    return Math.min(Math.max(base, Number(maxMs) || base), Math.round(base * factor));
+}
+
+function publishSurfaceWorkload(reason = 'state_change') {
+    const mode = surfaceWorkloadMode();
+    if (mode === state.surfaceWorkloadMode) return mode;
+    const previous = state.surfaceWorkloadMode;
+    state.surfaceWorkloadMode = mode;
+    document.body.dataset.auraWorkload = mode;
+    window.dispatchEvent(new CustomEvent('aura:workload-mode', {
+        detail: { mode, previous, reason },
+    }));
+    return mode;
+}
+
 function laneFailureClass(lane) {
     if (!lane || typeof lane !== 'object') return '';
     const reason = String(lane.last_failure_reason || '').toLowerCase();
@@ -5284,6 +5357,7 @@ function applyConversationLane(lane, healthStatus = '') {
 
     state.conversationLane = effectiveLane;
     state.conversationReady = !!effectiveLane.conversation_ready;
+    publishSurfaceWorkload('conversation_lane');
     updateLanePlaceholder();
 
     const laneText = conversationLaneStatusText(effectiveLane);
@@ -7036,6 +7110,8 @@ function initBeliefGraph() {
 }
 
 async function refreshKnowledgeGraph() {
+    if (state.knowledgeGraphPollInFlight) return;
+    state.knowledgeGraphPollInFlight = true;
     try {
         const res = await fetch('/api/knowledge/graph');
         if (!res.ok) throw new Error(`Knowledge graph fetch failed (${res.status})`);
@@ -7049,8 +7125,30 @@ async function refreshKnowledgeGraph() {
     } catch (e) {
         console.warn('[KnowledgeGraph] Failed to refresh:', e.message || e);
         showBriefNotification('Knowledge graph unavailable');
+    } finally {
+        state.knowledgeGraphPollInFlight = false;
     }
-    if (state.activeTab === 'telemetry') setTimeout(refreshKnowledgeGraph, 10000);
+    scheduleKnowledgeGraphPoll();
+}
+
+function scheduleKnowledgeGraphPoll(delayMs = null) {
+    if (state.knowledgeGraphTimer) clearTimeout(state.knowledgeGraphTimer);
+    state.knowledgeGraphTimer = null;
+    if (state.activeTab !== 'telemetry') return;
+    const delay = delayMs == null
+        ? optionalSurfacePollDelay(KNOWLEDGE_GRAPH_POLL_MS, {
+            foregroundFactor: 3,
+            hiddenFactor: 8,
+        })
+        : Math.max(0, Number(delayMs) || 0);
+    state.knowledgeGraphTimer = setTimeout(() => {
+        state.knowledgeGraphTimer = null;
+        if (document.hidden) {
+            scheduleKnowledgeGraphPoll();
+            return;
+        }
+        void refreshKnowledgeGraph();
+    }, delay);
 }
 
 // ── Header buttons ───────────────────────────────────────
@@ -7493,7 +7591,10 @@ function startProfileBoundFeatures() {
             .catch(err => console.warn(`[UI] ${name} startup failed:`, err));
     };
     if (accessCapabilityAllowed('desktop_control')) {
-        startOnce('desktop_access', () => pollDesktopAccess());
+        startOnce('desktop_access', async () => {
+            await pollDesktopAccess();
+            scheduleDesktopAccessPoll();
+        });
     }
     if (accessCapabilityAllowed('voice_stream')) {
         startOnce('voice_stream', () => voicePlayer.init());
@@ -7520,8 +7621,14 @@ if (DOM.neuralReadableToggle) {
 connect();
 pollHealth();
 vadStream = new VADStream('neural-vad-canvas');
-setInterval(pollDesktopAccess, 15000);
-state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 30000);
+publishSurfaceWorkload('startup');
+scheduleBootstrapPoll();
+
+window.addEventListener('aura:workload-mode', () => {
+    if (state.bootstrapTimer) scheduleBootstrapPoll();
+    if (state.desktopAccessTimer) scheduleDesktopAccessPoll();
+    if (state.knowledgeGraphTimer) scheduleKnowledgeGraphPoll();
+});
 
 // ── Settings & Preferences ────────────────────────────────
 const SETTINGS_KEY = 'aura_settings';
@@ -8328,6 +8435,7 @@ document.addEventListener('visibilitychange', () => {
     } else {
         reconnectLiveSurface('visibility_visible');
     }
+    publishSurfaceWorkload('visibility_change');
 });
 
 window.addEventListener('pageshow', () => reconnectLiveSurface('pageshow'));
@@ -8504,6 +8612,7 @@ function attachPlainLanguageTooltips() {
 const imagination = (() => {
     const POLL_MS = 4000;
     let timer = null;
+    let active = false;
     let inFlight = false;
     let lastFrameId = null;
     let rendering = false;
@@ -8545,14 +8654,35 @@ const imagination = (() => {
 
     function activate() {
         bindControls();
-        if (timer) return;
-        refresh();
-        timer = setInterval(refresh, POLL_MS);
+        if (active) return;
+        active = true;
+        void poll();
     }
 
     function deactivate() {
-        clearInterval(timer);
+        active = false;
+        clearTimeout(timer);
         timer = null;
+    }
+
+    function schedule() {
+        clearTimeout(timer);
+        timer = null;
+        if (!active) return;
+        const delay = optionalSurfacePollDelay(POLL_MS, {
+            foregroundFactor: 3,
+            hiddenFactor: 8,
+        });
+        timer = setTimeout(() => {
+            timer = null;
+            void poll();
+        }, delay);
+    }
+
+    async function poll() {
+        if (!active) return;
+        if (!document.hidden) await refresh();
+        schedule();
     }
 
     async function refresh() {
@@ -8948,6 +9078,10 @@ const imagination = (() => {
             </a>`;
         }).join('');
     }
+
+    window.addEventListener('aura:workload-mode', () => {
+        if (active) schedule();
+    });
 
     return { activate, deactivate, refresh, visualize };
 })();

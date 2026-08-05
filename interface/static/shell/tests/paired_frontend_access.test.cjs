@@ -27,6 +27,10 @@ async function provePerformanceNegotiation() {
       const callback = listeners.get('aura:access-profile');
       if (callback) callback({ detail: profile });
     },
+    dispatchWorkload(mode) {
+      const callback = listeners.get('aura:workload-mode');
+      if (callback) callback({ detail: { mode } });
+    },
   };
   const context = {
     window,
@@ -71,10 +75,74 @@ async function provePerformanceNegotiation() {
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0][0], '/api/performance/frame');
 
+  window.dispatchWorkload('foreground');
+  frameCallback(18100);
+  frameCallback(27000);
+  frameCallback(27200);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(calls.length, 2, 'foreground telemetry ignored its longer batch window');
+  assert.strictEqual(calls[1][0], '/api/performance/frame');
+
+  window.dispatchWorkload('hidden');
+  frameCallback(33000);
+  frameCallback(33100);
+  frameCallback(50000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(calls.length, 2, 'hidden surface continued frame telemetry');
+
   window.auraRecordAck('owner', 18);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.strictEqual(calls.length, 2);
-  assert.strictEqual(calls[1][0], '/api/performance/ack');
+  assert.strictEqual(calls.length, 3);
+  assert.strictEqual(calls[2][0], '/api/performance/ack');
+}
+
+function proveWorkloadBudget() {
+  const source = read('aura.js');
+  const start = source.indexOf('function laneHasActiveGeneration');
+  const end = source.indexOf('function laneFailureClass', start);
+  assert.ok(start >= 0 && end > start, 'workload budget source block missing');
+
+  const events = [];
+  const context = {
+    state: {
+      isSubmitting: false,
+      surfaceSuspended: false,
+      surfaceWorkloadMode: null,
+      conversationLane: { state: 'ready', active_generations: 0 },
+    },
+    document: { hidden: false, body: { dataset: {} } },
+    window: { dispatchEvent(event) { events.push(event); } },
+    CustomEvent: class CustomEvent {
+      constructor(type, options) {
+        this.type = type;
+        this.detail = options.detail;
+      }
+    },
+    Number,
+    String,
+    Array,
+    Math,
+  };
+  vm.runInNewContext(source.slice(start, end), context, {
+    filename: 'aura.js#workload-budget',
+  });
+
+  assert.strictEqual(context.surfaceWorkloadMode(), 'idle');
+  assert.strictEqual(context.optionalSurfacePollDelay(1000), 1000);
+  context.state.isSubmitting = true;
+  assert.strictEqual(context.publishSurfaceWorkload('test'), 'foreground');
+  assert.strictEqual(context.optionalSurfacePollDelay(1000), 3000);
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].detail.reason, 'test');
+  context.publishSurfaceWorkload('duplicate');
+  assert.strictEqual(events.length, 1, 'unchanged mode emitted duplicate workload event');
+  context.document.hidden = true;
+  assert.strictEqual(context.publishSurfaceWorkload('hidden'), 'hidden');
+  assert.strictEqual(context.optionalSurfacePollDelay(1000), 6000);
+  assert.strictEqual(
+    context.optionalSurfacePollDelay(100000, { hiddenFactor: 8, maxMs: 300000 }),
+    300000,
+  );
 }
 
 function proveSourceContracts() {
@@ -89,9 +157,17 @@ function proveSourceContracts() {
     "accessCapabilityAllowed('voice_stream')",
     "accessCapabilityAllowed('tools_catalog')",
     "accessCapabilityAllowed('learning_status')",
+    'function optionalSurfacePollDelay',
+    "publishSurfaceWorkload('chat_submit')",
+    "publishSurfaceWorkload('chat_settled')",
+    'function scheduleDesktopAccessPoll',
+    'function scheduleBootstrapPoll',
+    'function scheduleKnowledgeGraphPoll',
   ]) {
     assert.ok(legacy.includes(marker), `missing legacy access marker: ${marker}`);
   }
+  assert.ok(!legacy.includes('setInterval(pollDesktopAccess, 15000)'));
+  assert.ok(!legacy.includes('bootstrapTimer = setInterval'));
 
   const reactShell = read('shell/src/App.jsx');
   assert.ok(reactShell.includes('conversation_only: true'));
@@ -127,6 +203,7 @@ async function main() {
   compileLegacyScripts();
   proveSourceContracts();
   await provePerformanceNegotiation();
+  proveWorkloadBudget();
   process.stdout.write('paired frontend access contract passed\n');
 }
 

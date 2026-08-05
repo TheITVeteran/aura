@@ -1002,7 +1002,9 @@ def test_desktop_access_panel_uses_dedicated_probe_endpoint():
 
     assert "async function pollDesktopAccess()" in aura_js
     assert "fetch('/api/system/desktop-access'" in aura_js
-    assert "setInterval(pollDesktopAccess, 15000)" in aura_js
+    assert "function scheduleDesktopAccessPoll" in aura_js
+    assert "optionalSurfacePollDelay(DESKTOP_ACCESS_POLL_MS" in aura_js
+    assert "setInterval(pollDesktopAccess, 15000)" not in aura_js
     assert "pollDesktopAccess();" in aura_js
     assert 'id="desktop-access-actions"' in aura_html
     assert "async function runDesktopAccessAction(action)" in aura_js
