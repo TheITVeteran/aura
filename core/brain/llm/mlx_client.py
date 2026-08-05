@@ -828,6 +828,69 @@ def _read_recurrent_loop_env(name: str, default: int) -> int:
         return default
 
 
+def _manifest_recurrent_loops(artifact_path: Any) -> int | None:
+    """The recurrent depth an artifact was actually TRAINED at, or None.
+
+    Read from the adapter/checkpoint's own execution spec, which is written by
+    the training pipeline and travels with the weights. Unlike an environment
+    variable it cannot be changed by whoever launched the process, and unlike
+    a path token it cannot be changed by a rename.
+    """
+    root = Path(str(artifact_path or "")).expanduser()
+    if not root.is_dir():
+        return None
+    spec_path = root / "execution_spec.json"
+    if not spec_path.is_file():
+        return None
+    try:
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(spec, dict):
+        return None
+    try:
+        steps = int(spec.get("recurrent_steps") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return steps if steps > 0 else None
+
+
+def _note_recurrent_depth_basis_disagreement(
+    model_path: str, adapter_path: Any, expected: int
+) -> None:
+    """Report when the configured depth disagrees with the trained one.
+
+    CP126 cc31c15f: readiness decides the required loop count from a path
+    token and a mutable environment variable, neither of which is a property
+    of the weights in the worker. The artifact states the depth it was trained
+    at; when the two disagree, one of them is wrong about the model that is
+    actually loaded, and silence picks a side without evidence.
+
+    Deliberately observational. Making the manifest authoritative would change
+    the readiness verdict for a lane a training campaign is mid-flight on, and
+    a remediation must not do that as a side effect. What it can do is stop
+    the disagreement from being invisible.
+    """
+    for candidate in (adapter_path, model_path):
+        trained = _manifest_recurrent_loops(candidate)
+        if trained is None:
+            continue
+        if trained != expected:
+            _record_mlx_degradation(
+                RuntimeError(
+                    f"recurrent depth expectation {expected} disagrees with the "
+                    f"artifact's trained depth {trained} "
+                    f"({os.path.basename(str(candidate or ''))})"
+                ),
+                action=(
+                    "kept the configured readiness expectation and recorded the "
+                    "artifact's own trained depth alongside it"
+                ),
+                severity="warning",
+            )
+        return
+
+
 def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     """Return the expected recurrent-depth loop count for a local MLX lane.
 
@@ -2298,6 +2361,11 @@ def _prompt_within_prefill_ceiling(prompt: Any, *, model_path: str = "") -> str:
     return bounded
 
 
+#: The largest budget a caller-supplied output contract may demand. Past this
+#: it is not a reply contract; it is an unbounded request wearing one.
+_MAX_OUTPUT_CONTRACT_FLOOR_TOKENS = 8192
+
+
 def _bounded_generation_max_tokens(
     requested: Any,
     bridged: Any,
@@ -2325,7 +2393,24 @@ def _bounded_generation_max_tokens(
             admitted_cap = min(admitted_cap, max(1, int(hard_output_ceiling)))
         except (TypeError, ValueError, OverflowError):
             pass
-    return max(bounded, min(contract_floor, admitted_cap))
+    admitted = max(bounded, min(contract_floor, admitted_cap))
+    if admitted > bounded:
+        # CP126 a6db6c23. `bounded` is what adaptive shrinkage decided this
+        # machine can afford right now; this line raises it back up because an
+        # unsatisfiable typed contract produces a truncated reply, which is
+        # worse than a slow one. That trade is deliberate — but it was made
+        # SILENTLY, off an unauthenticated plain dictionary, and nothing
+        # downstream could see that the pressure budget had been overridden or
+        # by how much. Now it is bounded and it is visible.
+        _record_mlx_degradation(
+            RuntimeError(
+                f"typed output contract raised the generation budget "
+                f"{bounded}->{admitted} above adaptive shrinkage"
+            ),
+            action="honoured a typed reply contract over the memory-pressure budget",
+            severity="warning",
+        )
+    return admitted
 
 
 def _requested_output_contract_generation_floor(contract: Any) -> int:
@@ -2341,9 +2426,17 @@ def _requested_output_contract_generation_floor(contract: Any) -> int:
         if utf8_bytes > 0:
             # Any supported tokenizer needs no more content tokens than UTF-8
             # bytes, plus one slot for EOS/stop termination.
-            return utf8_bytes + 1
+            #
+            # Capped: the contract is a plain dictionary from the caller, and
+            # an exact_reply_utf8_bytes of ten million would demand a floor
+            # this lane cannot serve and would override every pressure budget
+            # trying to reach it.
+            return min(_MAX_OUTPUT_CONTRACT_FLOOR_TOKENS, utf8_bytes + 1)
     try:
-        return max(0, int(contract.get("semantic_token_cap") or 0))
+        return min(
+            _MAX_OUTPUT_CONTRACT_FLOOR_TOKENS,
+            max(0, int(contract.get("semantic_token_cap") or 0)),
+        )
     except (TypeError, ValueError, OverflowError):
         return 0
 
@@ -6802,6 +6895,9 @@ class MLXLocalClient:
 
         # Recurrence: if this lane requires depth, the receipt must prove it.
         required_loops = _expected_recurrent_loops_from_model_path(self.model_path)
+        _note_recurrent_depth_basis_disagreement(
+            self.model_path, self._expert_adapter_path, required_loops
+        )
         recurrent_status = res.get("recurrent_depth")
         if required_loops > 1:
             if not isinstance(recurrent_status, dict):

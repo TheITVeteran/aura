@@ -1093,3 +1093,98 @@ class TestReceiptsSayWhereTheyCameFrom:
         assert options["recurrent_loops_requested"] == 4
         assert options["recurrent_loops_reduced_by_pressure"] is True
         assert any("reduced to 1 under a token cap" in msg for msg in recorded)
+
+
+class TestExpectationsAreGroundedInArtifacts:
+    """CP126 cc31c15f / a6db6c23."""
+
+    def test_the_trained_depth_is_read_from_the_execution_spec(self, tmp_path):
+        from core.brain.llm.mlx_client import _manifest_recurrent_loops
+
+        artifact = tmp_path / "adapter"
+        artifact.mkdir()
+        (artifact / "execution_spec.json").write_text('{"recurrent_steps": 4}')
+        assert _manifest_recurrent_loops(artifact) == 4
+
+    def test_a_missing_spec_is_unmeasured_not_a_default(self, tmp_path):
+        from core.brain.llm.mlx_client import _manifest_recurrent_loops
+
+        artifact = tmp_path / "bare"
+        artifact.mkdir()
+        assert _manifest_recurrent_loops(artifact) is None
+        assert _manifest_recurrent_loops("/nowhere") is None
+
+    def test_an_unreadable_spec_is_unmeasured(self, tmp_path):
+        from core.brain.llm.mlx_client import _manifest_recurrent_loops
+
+        artifact = tmp_path / "broken"
+        artifact.mkdir()
+        (artifact / "execution_spec.json").write_text("{oops")
+        assert _manifest_recurrent_loops(artifact) is None
+
+    def test_a_disagreement_with_the_configured_depth_is_recorded(
+        self, tmp_path, monkeypatch
+    ):
+        import core.brain.llm.mlx_client as mod
+
+        artifact = tmp_path / "adapter"
+        artifact.mkdir()
+        (artifact / "execution_spec.json").write_text('{"recurrent_steps": 4}')
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        mod._note_recurrent_depth_basis_disagreement("/models/x", str(artifact), 2)
+        assert any("trained depth 4" in msg for msg in recorded)
+
+    def test_agreement_is_silent(self, tmp_path, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        artifact = tmp_path / "adapter"
+        artifact.mkdir()
+        (artifact / "execution_spec.json").write_text('{"recurrent_steps": 2}')
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        mod._note_recurrent_depth_basis_disagreement("/models/x", str(artifact), 2)
+        assert recorded == []
+
+    def test_an_output_contract_cannot_demand_an_unbounded_budget(self):
+        from core.brain.llm.mlx_client import (
+            _MAX_OUTPUT_CONTRACT_FLOOR_TOKENS,
+            _requested_output_contract_generation_floor,
+        )
+
+        absurd = {"exact_reply": True, "exact_reply_utf8_bytes": 10_000_000}
+        assert (
+            _requested_output_contract_generation_floor(absurd)
+            == _MAX_OUTPUT_CONTRACT_FLOOR_TOKENS
+        )
+        assert (
+            _requested_output_contract_generation_floor({"semantic_token_cap": 10_000_000})
+            == _MAX_OUTPUT_CONTRACT_FLOOR_TOKENS
+        )
+
+    def test_overriding_the_pressure_budget_is_recorded(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        admitted = mod._bounded_generation_max_tokens(
+            2048, 128, 4096, 512, {"semantic_token_cap": 900}
+        )
+        assert admitted > 128
+        assert any("above adaptive shrinkage" in msg for msg in recorded)
+
+    def test_a_contract_within_the_budget_is_silent(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        recorded = []
+        monkeypatch.setattr(
+            mod, "_record_mlx_degradation", lambda exc, **kw: recorded.append(str(exc))
+        )
+        mod._bounded_generation_max_tokens(2048, 2048, 4096, 512, {"semantic_token_cap": 100})
+        assert recorded == []
