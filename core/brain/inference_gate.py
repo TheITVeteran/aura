@@ -720,6 +720,39 @@ def admission_permits(
     return True, ""
 
 
+
+#: How long a hot spare may take to warm before maintenance gives up on it.
+#: Generous — a cold 32B legitimately takes minutes — but finite, because the
+#: await used to have no bound at all and a wedged load parked the maintenance
+#: task indefinitely.
+_HOT_SPARE_WARMUP_BUDGET_S = 300.0
+
+
+def _hot_spare_is_ready(client: Any) -> bool:
+    """Whether a warmed spare is actually ready, not merely running.
+
+    ``is_alive()`` says a process exists. It does not say the model finished
+    loading, that the lane left a transient state, or that a generation could
+    be served — and readiness here used to be exactly that one call, so a spare
+    still spawning counted as ready and the next caller routed into a lane that
+    could not answer.
+
+    Uses the richer supervision view when the client exposes one, and falls
+    back to liveness only when it does not.
+    """
+    if not (hasattr(client, "is_alive") and client.is_alive()):
+        return False
+    status = getattr(client, "get_supervision_status", None)
+    if not callable(status):
+        return True
+    try:
+        state = str((status() or {}).get("state", "") or "").strip().lower()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return True
+    # A lane still moving toward readiness is not a spare anyone can use.
+    return state not in {"spawning", "handshaking", "warming", "recovering", "cold"}
+
+
 class InferenceGate:
     """Isolated inference gateway for Aura's managed local runtime + cloud fallback."""
 
@@ -2248,7 +2281,30 @@ class InferenceGate:
             return False
 
         try:
-            await client.warmup(foreground_request=False)
+            # BOUNDED. This is maintenance, and an unbounded await here parks
+            # the maintenance task for as long as a cold multi-GB load takes —
+            # or forever if the load wedges. The budget is generous because a
+            # legitimate cold spare genuinely takes minutes, and finite because
+            # an unbounded wait is the wedge, not the warmup.
+            await asyncio.wait_for(
+                client.warmup(foreground_request=False),
+                timeout=_HOT_SPARE_WARMUP_BUDGET_S,
+            )
+        except TimeoutError as exc:
+            _record_inference_degradation(
+                exc,
+                action=(
+                    f"abandoned hot-spare warmup for {endpoint_name} after "
+                    f"{_HOT_SPARE_WARMUP_BUDGET_S:.0f}s; the spare stays cold"
+                ),
+                severity="warning",
+            )
+            logger.warning(
+                "⏱️ Hot-spare warmup for %s exceeded %.0fs — leaving it cold.",
+                endpoint_name,
+                _HOT_SPARE_WARMUP_BUDGET_S,
+            )
+            return False
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
@@ -2256,7 +2312,7 @@ class InferenceGate:
             )
             logger.debug("Hot-spare warmup failed for %s: %s", endpoint_name, exc)
             return False
-        return bool(hasattr(client, "is_alive") and client.is_alive())
+        return _hot_spare_is_ready(client)
 
     async def _recycle_idle_local_clients(self) -> None:
         if self._foreground_user_turn_active() or self._foreground_owner_active():
