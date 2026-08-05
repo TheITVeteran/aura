@@ -24,6 +24,12 @@ class _Service:
             raise self.error
         return {"campaign_id": request.campaign_id, "certificate_sha256": "sha256:" + "a" * 64}
 
+    async def preflight(self, adapter_id: str) -> dict[str, Any]:
+        return {
+            "adapter_id": adapter_id,
+            "trust_boundary": "producer_observation_not_independent_acceptance",
+        }
+
 
 def _payload() -> routes.ScalarAcceptancePayload:
     return routes.ScalarAcceptancePayload(
@@ -43,6 +49,7 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         if isinstance(route, APIRoute)
     }
     assert set(acceptance_routes) == {
+        "/reality-reach/acceptance/preflight",
         "/reality-reach/acceptance/status",
         "/reality-reach/acceptance/run",
     }
@@ -50,6 +57,21 @@ def test_acceptance_routes_require_both_internal_and_token_guards() -> None:
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
         assert routes._require_internal in dependencies
         assert routes._verify_token in dependencies
+
+
+@pytest.mark.asyncio
+async def test_acceptance_preflight_keeps_producer_trust_boundary_explicit(monkeypatch) -> None:
+    service = _Service()
+    monkeypatch.setattr(routes.ServiceContainer, "get", lambda *_args, **_kwargs: service)
+
+    response = await routes.acceptance_preflight(
+        routes.ScalarAcceptancePreflightPayload(adapter_id="fixture.adapter"),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"producer_observation_not_independent_acceptance" in response.body
 
 
 @pytest.mark.asyncio

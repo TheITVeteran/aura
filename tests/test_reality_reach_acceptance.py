@@ -570,6 +570,7 @@ async def test_scalar_acceptance_runner_proves_complete_reversible_lifecycle() -
     assert certificate.deterministic_passed is True
     assert certificate.live_acceptance_passed is False
     assert transport.value == 1.0
+
     assert transport.writes == 2
 
 
@@ -785,6 +786,21 @@ async def test_operational_service_runs_and_persists_live_campaign(tmp_path) -> 
     assert service.status()["active_campaign_id"] == ""
     assert transport.value == 1.0
 
+    preflight = await service.preflight(adapter.adapter_id)
+    assert preflight == {
+        "ready": True,
+        "adapter_id": adapter.adapter_id,
+        "physical_identity_sha256": adapter.physical_identity_sha256,
+        "transport_class": "physical",
+        "observation_channels": [
+            adapter.actuator_capabilities()[0].observation_channels[0]
+        ],
+        "supported_evidence_classes": ["hardware_in_loop", "live"],
+        "source_commit_sha256": _digest(source_commit),
+        "workspace_state_sha256": f"sha256:{'e' * 64}",
+        "trust_boundary": "producer_observation_not_independent_acceptance",
+    }
+
 
 @pytest.mark.asyncio
 async def test_operational_service_refuses_caller_supplied_source_identity(tmp_path) -> None:
@@ -948,6 +964,30 @@ def test_operational_service_request_requires_complete_hil_partition() -> None:
             target=7.0,
             expected_source_commit_sha256=_digest("dae896754"),
             evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        )
+
+    with pytest.raises(ValueError, match="companion-channel bound"):
+        ScalarAcceptanceRequest(
+            campaign_id="cp810.operational.hil-too-wide",
+            connector_id="fixture.connector",
+            adapter_id="fixture.adapter",
+            target=7.0,
+            expected_source_commit_sha256=_digest("dae896754"),
+            evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+            scenario_id="hil.scenario",
+            simulated_channel_ids=tuple(f"simulated.{index}" for index in range(64)),
+        )
+
+    with pytest.raises(ValueError, match="must be unique"):
+        ScalarAcceptanceRequest(
+            campaign_id="cp810.operational.hil-duplicate",
+            connector_id="fixture.connector",
+            adapter_id="fixture.adapter",
+            target=7.0,
+            expected_source_commit_sha256=_digest("dae896754"),
+            evidence_class=AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+            scenario_id="hil.scenario",
+            simulated_channel_ids=("simulated.same", "simulated.same"),
         )
 
 

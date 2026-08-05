@@ -27,12 +27,17 @@ class ScalarAcceptancePayload(BaseModel):
     ]
     evidence_class: AcceptanceEvidenceClass
     scenario_id: Annotated[str, Field(max_length=128)] = ""
-    simulated_channel_ids: tuple[
-        Annotated[str, Field(min_length=1, max_length=256)], ...
+    simulated_channel_ids: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=256)], ...],
+        Field(max_length=63),
     ] = ()
     deadline_s: Annotated[float, Field(ge=0.5, le=60.0)] = 5.0
     sample_interval_s: Annotated[float, Field(ge=0.01, le=0.5)] = 0.1
     effect_hold_s: Annotated[float, Field(ge=0.05, le=5.0)] = 0.25
+
+
+class ScalarAcceptancePreflightPayload(BaseModel):
+    adapter_id: Annotated[str, Field(min_length=1, max_length=256)]
 
 
 def _service() -> Any:
@@ -53,6 +58,19 @@ async def acceptance_status(
     return JSONResponse(_service().status())
 
 
+@router.post("/preflight")
+async def acceptance_preflight(
+    payload: ScalarAcceptancePreflightPayload,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+) -> JSONResponse:
+    try:
+        result = await _service().preflight(payload.adapter_id)
+    except AcceptanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse(result)
+
+
 @router.post("/run")
 async def run_acceptance(
     payload: ScalarAcceptancePayload,
@@ -68,4 +86,11 @@ async def run_acceptance(
     return JSONResponse(result, status_code=201)
 
 
-__all__ = ["ScalarAcceptancePayload", "acceptance_status", "router", "run_acceptance"]
+__all__ = [
+    "ScalarAcceptancePayload",
+    "ScalarAcceptancePreflightPayload",
+    "acceptance_preflight",
+    "acceptance_status",
+    "router",
+    "run_acceptance",
+]

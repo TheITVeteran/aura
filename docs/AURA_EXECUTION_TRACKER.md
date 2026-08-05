@@ -36045,3 +36045,34 @@ installation, independent trust-root custody, or the resulting timestamped
 tenant/device observations. CP810 and the total remain open at 809/920 until
 real live and hardware-in-loop campaigns are executed and independently
 accepted.
+
+#### CP810 addendum: bounded producer preflight
+
+The authenticated acceptance surface can now preflight one exact scalar
+adapter before a campaign. It rechecks the clean source against Aura's boot
+pin, reports the adapter's immutable physical identity and transport class,
+derives its independent observation channels from declared capabilities, and
+states the evidence classes that transport can legitimately support. The
+response carries the explicit boundary
+`producer_observation_not_independent_acceptance`: these identities are useful
+for preparing an external mandate, but cannot substitute for independently
+held verifier inputs or promote their own campaign.
+
+HIL request construction now also rejects duplicate simulated channels and
+more than 63 companion channels before acquisition planning. Together with the
+metrology service's existing channel, sample, and total-measurement ceilings,
+this gives the operator surface an early bounded refusal instead of allowing an
+oversized evidence matrix to reach runtime setup.
+
+Preflight evidence:
+
+- producer-boundary labeling, exact source/adapter/channel projection, route
+  auth, duplicate-channel refusal, and companion-channel ceiling: 44/44 focused
+  acceptance and route tests passed;
+- full Reality Reach import family: 435/435 passed;
+- Ruff and repository diff hygiene passed.
+
+This closes campaign preparation ambiguity and request-size amplification. It
+does not make producer-observed identity independent: external trust-root
+custody and real tenant/device campaigns remain required, so CP810 and the
+total remain open at 809/920.

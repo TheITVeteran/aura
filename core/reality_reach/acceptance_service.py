@@ -31,6 +31,7 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_async_lock
 
 _GIT_OID = re.compile(r"^[0-9a-f]{40}$")
+_MAX_HIL_COMPANION_CHANNELS = 63
 SourceIdentityProvider = Callable[[], Mapping[str, Any]]
 
 
@@ -92,6 +93,14 @@ class ScalarAcceptanceRequest:
     effect_hold_s: float = 0.25
 
     def __post_init__(self) -> None:
+        channels = tuple(self.simulated_channel_ids)
+        if len(channels) > _MAX_HIL_COMPANION_CHANNELS:
+            raise ValueError(
+                "simulated_channel_ids exceeds the HIL companion-channel bound"
+            )
+        if len(set(channels)) != len(channels):
+            raise ValueError("simulated_channel_ids must be unique")
+        object.__setattr__(self, "simulated_channel_ids", channels)
         if self.evidence_class is AcceptanceEvidenceClass.SIMULATION:
             if self.simulated_channel_ids:
                 raise ValueError("simulation acceptance does not use HIL companion channels")
@@ -145,15 +154,50 @@ class RealityAcceptanceService:
         self._last_result: dict[str, Any] | None = None
         self._last_failure: dict[str, Any] | None = None
 
-    async def _source_binding(self, expected_sha256: str) -> dict[str, str]:
+    async def _source_binding(self, expected_sha256: str | None) -> dict[str, str]:
         raw = await asyncio.to_thread(self._source_identity_provider)
         pinned = _normalize_source_identity(self._pinned_source_identity)
         current = _normalize_source_identity(raw)
         if current != pinned:
             raise AcceptanceError("acceptance_runtime_source_drifted_since_boot")
-        if current["source_commit_sha256"] != expected_sha256:
+        if (
+            expected_sha256 is not None
+            and current["source_commit_sha256"] != expected_sha256
+        ):
             raise AcceptanceError("acceptance_runtime_source_commit_mismatch")
         return current
+
+    async def preflight(self, adapter_id: str) -> dict[str, Any]:
+        adapter = self._reality.scalar_acceptance_adapter(adapter_id)
+        if adapter is None:
+            raise AcceptanceError("acceptance_scalar_adapter_not_registered")
+        source = await self._source_binding(None)
+        capabilities = tuple(adapter.actuator_capabilities())
+        observation_channels = tuple(
+            dict.fromkeys(
+                channel_id
+                for capability in capabilities
+                for channel_id in capability.observation_channels
+            )
+        )
+        evidence_classes = (
+            (AcceptanceEvidenceClass.SIMULATION.value,)
+            if adapter.transport_class.value == "simulated"
+            else (
+                AcceptanceEvidenceClass.HARDWARE_IN_LOOP.value,
+                AcceptanceEvidenceClass.LIVE.value,
+            )
+        )
+        return {
+            "ready": bool(capabilities and observation_channels and self._metrology.is_ready()),
+            "adapter_id": adapter.adapter_id,
+            "physical_identity_sha256": adapter.physical_identity_sha256,
+            "transport_class": adapter.transport_class.value,
+            "observation_channels": list(observation_channels),
+            "supported_evidence_classes": list(evidence_classes),
+            **source,
+            "trust_boundary": "producer_observation_not_independent_acceptance",
+        }
 
     def _record_failure(
         self,
