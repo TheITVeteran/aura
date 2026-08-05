@@ -357,6 +357,18 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         # comprehensively research the user preference…". Literal fragments of
         # the runtime's own machinery, not a judgement about quality.
         "internal_task_prompt_leak",
+        # Engineering diagnostics spoken as an answer: "fix the live parity
+        # harness first", "headless test is exercising the generator in
+        # isolation". Literal strings from this runtime's own debugging, not a
+        # judgement about quality.
+        #
+        # This defaulted to REPAIR, which is servable — and the last-resort
+        # site serves the draft AS-IS precisely because repair could not run.
+        # So the one path where the text is guaranteed unrepaired was the one
+        # that would hand Bryan "fix the live parity harness first" as the
+        # answer to his question. Every other *_leak reason the assessor emits
+        # was already unspeakable; this one was missed.
+        "stale_diagnostic_floor_leak",
     }
 )
 
