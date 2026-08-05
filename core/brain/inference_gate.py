@@ -721,6 +721,24 @@ def admission_permits(
 
 
 
+def _generation_actually_stopped(client: Any) -> bool:
+    """Whether this client really has no generation running.
+
+    Returns True when the client cannot answer: a client with no observable
+    generation count has not been shown to be still running, and treating
+    "cannot tell" as "still wedged" would make every such client permanently
+    un-abortable. The clients that matter — the MLX lanes — do expose it.
+    """
+    status = getattr(client, "get_supervision_status", None)
+    if not callable(status):
+        return True
+    try:
+        active = int((status() or {}).get("active_generations", 0) or 0)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return True
+    return active <= 0
+
+
 #: How long a hot spare may take to warm before maintenance gives up on it.
 #: Generous — a cold 32B legitimately takes minutes — but finite, because the
 #: await used to have no bound at all and a wedged load parked the maintenance
@@ -2033,8 +2051,7 @@ class InferenceGate:
             if not callable(abort):
                 continue
             try:
-                if abort(reason=reason):
-                    aborted += 1
+                requested = bool(abort(reason=reason))
             except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 _record_inference_degradation(
                     exc,
@@ -2042,6 +2059,33 @@ class InferenceGate:
                     severity="error",
                 )
                 logger.warning("Force-abort failed for local inference client: %s", exc)
+                continue
+            if not requested:
+                continue
+            # Count what STOPPED, not what was asked to stop.
+            #
+            # This is the emergency boundary a watchdog acts on, and the number
+            # it returns is that watchdog's evidence. Incrementing from the
+            # client's own truthy return meant "I sent the request" was
+            # reported as "the generation ended" — so a wedged decode that
+            # ignored the abort still counted, and the watchdog stood down
+            # believing the lane was free.
+            if _generation_actually_stopped(client):
+                aborted += 1
+            else:
+                _record_inference_degradation(
+                    RuntimeError(f"force_abort_unconfirmed:{reason}"),
+                    action=(
+                        "force-abort was accepted but the client still reports an "
+                        "active generation; not counting it as aborted"
+                    ),
+                    severity="error",
+                )
+                logger.error(
+                    "🛑 Force-abort accepted but generation still active on %s — "
+                    "refusing to report it as stopped.",
+                    getattr(client, "model_path", "local client"),
+                )
         return aborted
 
     _SHUTDOWN_TASK_ATTRS = (
