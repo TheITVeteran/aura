@@ -195,6 +195,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
     async def _reality_reach() -> None:
         from core.environment.runtime_workspace import environment_runtime_file
         from core.reality_reach.digital_twin import RealityDigitalTwinGraph
+        from core.reality_reach.event_flow import RealityEventFlowRuntime
         from core.reality_reach.historian import RealityHistorian
         from core.reality_reach.live import get_reality_reach_service
         from core.reality_reach.middleware import RealityMiddlewareRuntime
@@ -233,6 +234,32 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 severity="critical",
             )
         orchestrator.reality_middleware = middleware
+        event_flow = None
+        if middleware is not None:
+            try:
+                flow_path = environment_runtime_file(
+                    "shared",
+                    "reality_event_flows.json",
+                    purpose="state",
+                )
+                event_flow = RealityEventFlowRuntime(
+                    middleware=middleware,
+                    state_path=flow_path,
+                    worker_enabled=True,
+                )
+                await event_flow.start()
+            except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+                _record_cognitive_sensory_degradation(
+                    orchestrator,
+                    exc,
+                    phase="reality_event_flow",
+                    action=(
+                        "Kept direct managed physical endpoints available but closed "
+                        "durable multi-step event flows until graph-state recovery"
+                    ),
+                    severity="critical",
+                )
+        orchestrator.reality_event_flow = event_flow
         historian = None
         try:
             historian_path = environment_runtime_file(
@@ -310,6 +337,18 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 ),
                 failure_policy="fail-closed",
             )
+        if event_flow is not None:
+            ServiceContainer.register_instance(
+                "reality_event_flow",
+                event_flow,
+                required=True,
+                owner="core/reality_reach/event_flow.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=(
+                    "typed durable sensing, reasoning, and governed physical workflows"
+                ),
+                failure_policy="fail-closed",
+            )
         if historian is not None:
             ServiceContainer.register_instance(
                 "reality_historian",
@@ -337,6 +376,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         report["registered"]["reality_actuation"] = coordinator.__class__.__name__
         if middleware is not None:
             report["registered"]["reality_middleware"] = middleware.__class__.__name__
+        if event_flow is not None:
+            report["registered"]["reality_event_flow"] = event_flow.__class__.__name__
         if historian is not None:
             report["registered"]["reality_historian"] = historian.__class__.__name__
         if digital_twin is not None:

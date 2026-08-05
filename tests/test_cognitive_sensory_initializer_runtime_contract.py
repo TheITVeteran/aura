@@ -129,6 +129,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.event_flow",
+        RealityEventFlowRuntime=Service,
+    )
+    _install_module(
+        monkeypatch,
         "core.reality_reach.historian",
         RealityHistorian=Service,
     )
@@ -230,6 +235,15 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
         "reality_middleware.json"
     )
     assert registered["reality_middleware"].started is True
+    assert registered["reality_event_flow"] is orchestrator.reality_event_flow
+    assert registered["reality_event_flow"].kwargs["middleware"] is (
+        orchestrator.reality_middleware
+    )
+    assert registered["reality_event_flow"].kwargs["state_path"].name == (
+        "reality_event_flows.json"
+    )
+    assert registered["reality_event_flow"].kwargs["worker_enabled"] is True
+    assert registered["reality_event_flow"].started is True
     assert registered["reality_historian"] is orchestrator.reality_historian
     assert registered["reality_historian"].args[0].name == "reality_historian.sqlite3"
     assert registered["reality_digital_twin"] is orchestrator.reality_digital_twin
