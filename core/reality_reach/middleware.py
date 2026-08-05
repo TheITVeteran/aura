@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from core.bus.qos import QosBus
+from core.governance_context import local_internal_governed_scope
 from core.reality_reach.live import ChannelReading, RealityReachService
 from core.reality_reach.middleware_contracts import (
     INFLIGHT_ACTION_STATES as _INFLIGHT_ACTION_STATES,
@@ -56,13 +57,10 @@ from core.reality_reach.middleware_contracts import (
     sha256_digest as _digest,
 )
 from core.reality_reach.middleware_services import RealityServiceLane
-from core.runtime.atomic_writer import (
-    async_atomic_write_json,
-    ensure_private_directory,
-    read_json_envelope,
-)
+from core.runtime.atomic_writer import read_json_envelope
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lifecycle import ManagedOrgan, State
 from core.runtime.state_ownership import state_root
 from core.utils.task_tracker import get_task_tracker
@@ -197,13 +195,22 @@ class RealityMiddlewareRuntime(RealityServiceLane):
                 ],
             }
             payload["state_sha256"] = str(sha256_hex(canonical_json(payload)))
-            await asyncio.to_thread(ensure_private_directory, self._state_path.parent)
-            await async_atomic_write_json(
-                self._state_path,
-                payload,
-                schema_version=_STATE_SCHEMA_VERSION,
-                schema_name=_STATE_SCHEMA,
-            )
+            with local_internal_governed_scope(
+                "reality_reach.middleware.persist",
+                domain="state_mutation",
+            ):
+                gateway = get_file_write_gateway()
+                await gateway.ensure_directory_async(
+                    self._state_path.parent,
+                    source="reality_reach.middleware.persist",
+                )
+                await gateway.write_json_async(
+                    self._state_path,
+                    payload,
+                    schema_version=_STATE_SCHEMA_VERSION,
+                    schema_name=_STATE_SCHEMA,
+                    source="reality_reach.middleware.persist",
+                )
 
     async def start(self) -> None:
         async with self._lock:

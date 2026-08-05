@@ -98,10 +98,15 @@ class TestTheRealBoundaryIsTheFilesystem:
         import core.runtime.store_locality as module
 
         monkeypatch.setattr(module, "_fstype_darwin_native", lambda _path: "apfs")
+
+        class SubprocessMustNotRun:
+            def run(self, *args, **kwargs):
+                pytest.fail("mount subprocess must not run")
+
         monkeypatch.setattr(
-            module.subprocess,
-            "run",
-            lambda *args, **kwargs: pytest.fail("mount subprocess must not run"),
+            module,
+            "get_subprocess_gateway",
+            lambda: SubprocessMustNotRun(),
         )
 
         assert module._fstype_darwin(tmp_path) == "apfs"
@@ -112,15 +117,20 @@ class TestTheRealBoundaryIsTheFilesystem:
         import core.runtime.store_locality as module
 
         monkeypatch.setattr(module, "_fstype_darwin_native", lambda _path: "")
+
+        class MountProbe:
+            def run(self, *args, **kwargs):
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="/dev/disk3s5 on / (apfs, local, journaled)\n",
+                    stderr="",
+                )
+
         monkeypatch.setattr(
-            module.subprocess,
-            "run",
-            lambda *args, **kwargs: subprocess.CompletedProcess(
-                args=args,
-                returncode=0,
-                stdout="/dev/disk3s5 on / (apfs, local, journaled)\n",
-                stderr="",
-            ),
+            module,
+            "get_subprocess_gateway",
+            lambda: MountProbe(),
         )
 
         assert module._fstype_darwin(tmp_path) == "apfs"

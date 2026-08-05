@@ -36,11 +36,11 @@ import ctypes
 import logging
 import os
 import platform
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.StoreLocality")
 
@@ -163,14 +163,16 @@ def _fstype_darwin_mount(path: Path) -> str:
     """Compatibility fallback for Darwin implementations without ``statfs``."""
 
     try:
-        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        out = get_subprocess_gateway().run(
             ["/sbin/mount"],
             capture_output=True,
             text=True,
             timeout=5.0,
             check=False,
+            read_only=True,
+            source="runtime.store_locality.mount_probe",
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         return ""
     best_len, best_type = -1, ""
     for line in out.splitlines():

@@ -277,14 +277,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/advanced_cognition/ontology_invention.py",
-      "scope": "<module>.OntologyInventionEngine.save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/advanced_cognition/world_model.py",
       "scope": "<module>.MultiDomainWorldModel.save"
     },
@@ -3273,6 +3265,14 @@
       "scope": "<module>.NetHackAdapter.start"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/advanced_cognition/ontology_invention.py",
+      "scope": "<module>._write_ontology_state"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4647,6 +4647,22 @@
       "count": 1,
       "path": "core/reality_reach/historian.py",
       "scope": "<module>.RealityHistorian._initialize"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/middleware.py",
+      "scope": "<module>.RealityMiddlewareRuntime._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/middleware.py",
+      "scope": "<module>.RealityMiddlewareRuntime._persist"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -14538,14 +14554,6 @@
     },
     {
       "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/runtime/store_locality.py",
-      "scope": "<module>._fstype_darwin"
-    },
-    {
-      "callee": "subprocess.run",
       "canonical_owner": true,
       "category": "raw_subprocess",
       "count": 1,
@@ -15133,6 +15141,14 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
+      "path": "core/runtime/store_locality.py",
+      "scope": "<module>._fstype_darwin_mount"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
       "path": "core/runtime/thermal.py",
       "scope": "<module>._read_pmset"
     },
@@ -15223,6 +15239,14 @@
       "count": 1,
       "path": "core/security/sandbox.py",
       "scope": "<module>.LocalCommandSandbox.execute_sandboxed_command"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/self/source_excerpt.py",
+      "scope": "<module>.snippet_verdict"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15962,6 +15986,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "cd20c1e32c4945c283f9543b83d029ec23bb4c54519cf123b0d50aa643684005",
+  "inventory_sha256": "a29b87f20a6f8ce8f0c9827b44b7f62d07bb783d583ab79ee5417ea40ec970a3",
   "schema_version": 1
 }

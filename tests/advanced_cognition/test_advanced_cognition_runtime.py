@@ -185,16 +185,16 @@ def test_failed_ontology_commit_publishes_no_receipt_and_retry_is_durable(
     from core.advanced_cognition import ontology_invention
 
     runtime = AdvancedCognitionRuntime(state_dir=tmp_path)
-    original_write = ontology_invention.atomic_write_text
+    original_write = ontology_invention._write_ontology_state
     attempts = {"count": 0}
 
-    def _fail_once(path, payload):
+    def _fail_once(path, payload, *, source):
         attempts["count"] += 1
         if attempts["count"] == 1:
             raise OSError("synthetic durability failure")
-        return original_write(path, payload)
+        return original_write(path, payload, source=source)
 
-    monkeypatch.setattr(ontology_invention, "atomic_write_text", _fail_once)
+    monkeypatch.setattr(ontology_invention, "_write_ontology_state", _fail_once)
     kwargs = {
         "source": "reality:test.sensor",
         "confidence": 0.8,

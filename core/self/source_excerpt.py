@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 logger = logging.getLogger("Aura.Self.SourceExcerpt")
 
 #: Bounds. An excerpt is for reading in a chat window, not for dumping a file.
@@ -698,8 +700,6 @@ def snippet_verdict(code: str) -> tuple[str, str]:
     lines = _distinctive_lines(code)
     if not lines or not _SOURCE_ROOT.is_dir():
         return ("unchecked", "")
-    import subprocess
-
     # Bounded to the SOURCE, not the checkout. Searching the whole root walks
     # .venv, .git, artifacts and data — hundreds of thousands of files — and
     # took over 30 seconds, which on the foreground lane is not a check, it
@@ -728,13 +728,15 @@ def snippet_verdict(code: str) -> tuple[str, str]:
         escaped = re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", line)
         patterns.extend(("-e", rf"^[[:space:]]*{escaped}"))
     try:
-        found = subprocess.run(
+        found = get_subprocess_gateway().run(
             ["grep", "-rlsE", "--include=*.py", *excludes, *patterns, *roots],
             capture_output=True,
             text=True,
             timeout=10,
+            read_only=True,
+            source="self.source_excerpt.snippet_verdict",
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         return ("unchecked", "")
     if found.returncode == 0 and found.stdout.strip():
         # ANY line matching ANY file used to certify the whole snippet. The

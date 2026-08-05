@@ -12,12 +12,19 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text, interprocess_file_lock
+from core.governance_context import local_internal_governed_scope
+from core.runtime.atomic_writer import interprocess_file_lock
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lockdep import checked_lock
 
 from .schemas import Observation, clamp, jaccard, stable_hash
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{1,48}|[@#$%&*!?<>/\-+=]+")
+
+
+def _write_ontology_state(path: Path, payload: str, *, source: str) -> None:
+    with local_internal_governed_scope(source, domain="state_mutation"):
+        get_file_write_gateway().write_text(path, payload, source=source)
 
 
 @dataclass
@@ -148,7 +155,11 @@ class OntologyInventionEngine:
                 encoded = self._encoded_state_locked() if self.state_path else None
             try:
                 if encoded is not None:
-                    atomic_write_text(self.state_path, encoded)
+                    _write_ontology_state(
+                        self.state_path,
+                        encoded,
+                        source="advanced_cognition.ontology.ingest",
+                    )
             except BaseException:
                 with self._lock:
                     if prior_model is None:
@@ -225,7 +236,11 @@ class OntologyInventionEngine:
                 encoded = self._encoded_state_locked() if self.state_path else None
             try:
                 if encoded is not None:
-                    atomic_write_text(self.state_path, encoded)
+                    _write_ontology_state(
+                        self.state_path,
+                        encoded,
+                        source="advanced_cognition.ontology.prediction_error",
+                    )
             except BaseException:
                 with self._lock:
                     del self.residuals[domain][prior_residual_count:]
@@ -483,7 +498,11 @@ class OntologyInventionEngine:
         with interprocess_file_lock(transaction_path):
             with self._lock:
                 encoded = self._encoded_state_locked()
-            atomic_write_text(target, encoded)
+            _write_ontology_state(
+                target,
+                encoded,
+                source="advanced_cognition.ontology.save",
+            )
 
     def load(self, path: str | Path) -> None:
         target = Path(path)
