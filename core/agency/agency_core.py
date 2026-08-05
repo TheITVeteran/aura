@@ -57,6 +57,10 @@ _SPATIAL_EMPATHY_STARTUP_DELAY_SECONDS = 5.0
 _MAX_OBSERVATION_CHARS = 600
 _MAX_AMBIENT_CONTEXT_CHARS = 2000
 _VIRTUAL_BODY_REHEARSAL_STEPS = 5
+_GOAL_EXECUTION_LEASE_SECONDS = 30 * 60
+_GOAL_RETRY_BASE_SECONDS = 60
+_GOAL_RETRY_MAX_SECONDS = 60 * 60
+_GOAL_MAX_FAILURES = 5
 
 
 def _record_agency_degradation(
@@ -794,6 +798,7 @@ class AgencyCore:
             "social_hunger": self._pathway_social_hunger,
             "curiosity_drive": self._pathway_curiosity_drive,
             "sensory_reactivity": self._pathway_sensory_reactivity,
+            "physical_affordance": self._pathway_physical_affordance,
             "goal_persistence": self._pathway_goal_persistence,
             "temporal_rhythm": self._pathway_temporal_rhythm,
             "emotional_expression": self._pathway_emotional_expression,
@@ -817,6 +822,7 @@ class AgencyCore:
         self._last_pulse = time.time()
         self._current_monologue: str = ""
         self._last_world_check: float = 0.0
+        self._last_physical_affordance: float = 0.0
         self._last_meta_audit: float = 0.0
         self._last_canvas_update: float = 0.0
         self._last_social_reflection: float = 0.0
@@ -1059,8 +1065,6 @@ class AgencyCore:
     async def _commit_action_side_effects(self, action: dict[str, Any], now: float) -> bool:
         """Apply state mutations that are valid only after an action is approved."""
         action_type = action.get("type")
-        if action_type == "pursue_goal" and action.get("goal"):
-            self.complete_goal_by_match(action.get("goal"), status="completed")
         if action.get("_consume_observation"):
             if self.state.unshared_observations:
                 self.state.unshared_observations.pop(0)
@@ -1588,8 +1592,14 @@ class AgencyCore:
             return True
         return False
 
-    def complete_goal_by_match(self, goal: dict, status: str = "completed") -> bool:
-        """Mark a persistent goal matching the given dictionary as completed or another status."""
+    def complete_goal_by_match(
+        self,
+        goal: dict[str, Any],
+        status: str = "completed",
+        *,
+        execution_result: dict[str, Any] | None = None,
+    ) -> bool:
+        """Update a persistent goal only from a governed lifecycle transition."""
         if not isinstance(goal, dict):
             return False
 
@@ -1613,17 +1623,190 @@ class AgencyCore:
 
         target_goal = self.state.pending_goals[target_index]
         # Approve mutation via get_constitutional_core preflight check
+        bounded_result = dict(execution_result or {})
+        if bounded_result:
+            bounded_result = {
+                "summary": _bounded_text(bounded_result.get("summary", ""), limit=600),
+                "error": _bounded_text(bounded_result.get("error", ""), limit=600),
+                "evidence": [
+                    _bounded_text(item, limit=300)
+                    for item in list(bounded_result.get("evidence", []) or [])[:8]
+                ],
+                "plan_id": _bounded_text(bounded_result.get("plan_id", ""), limit=160),
+                "trace_id": _bounded_text(bounded_result.get("trace_id", ""), limit=160),
+            }
         if not self._approve_agency_state_mutation(
             kind="complete_goal",
-            content={"goal": target_goal, "new_status": status},
+            content={
+                "goal": target_goal,
+                "new_status": status,
+                "execution_result": bounded_result,
+            },
             priority=self._coerce_priority(target_goal.get("priority", 0.6), default=0.6),
         ):
             return False
 
         target_goal["status"] = status
+        target_goal["last_attempt_at"] = time.time()
+        if bounded_result:
+            target_goal["last_execution"] = bounded_result
+        if status == "completed":
+            target_goal["completed_at"] = time.time()
         goal_label = str(goal_text or "")
         logger.info("🎯 Goal %s updated to: %s", goal_label[:60], status)
         return True
+
+    def claim_goal_for_execution(
+        self,
+        goal: dict[str, Any],
+        *,
+        execution_id: str,
+        now: float | None = None,
+        lease_seconds: float = _GOAL_EXECUTION_LEASE_SECONDS,
+    ) -> bool:
+        """Atomically claim a due goal after dispatch authority is approved."""
+        now = float(now if now is not None else time.time())
+        execution_id = str(execution_id or "").strip()
+        if not execution_id or not isinstance(goal, dict):
+            return False
+        target = self._matching_pending_goal(goal)
+        if target is None or target.get("status") != "pending":
+            return False
+        if float(target.get("next_eligible_at", 0.0) or 0.0) > now:
+            return False
+        bounded_lease = max(30.0, min(float(lease_seconds), 4 * 60 * 60))
+        if not self._approve_agency_state_mutation(
+            kind="claim_goal_execution",
+            content={
+                "goal": target,
+                "execution_id": execution_id,
+                "lease_expires_at": now + bounded_lease,
+            },
+            priority=self._coerce_priority(target.get("priority", 0.6), default=0.6),
+        ):
+            return False
+        target.update(
+            {
+                "status": "in_progress",
+                "active_execution_id": execution_id,
+                "execution_lease_expires_at": now + bounded_lease,
+                "last_attempt_at": now,
+                "execution_attempts": int(target.get("execution_attempts", 0) or 0) + 1,
+            }
+        )
+        return True
+
+    def settle_goal_execution(
+        self,
+        goal: dict[str, Any],
+        *,
+        execution_id: str,
+        succeeded: bool,
+        execution_result: dict[str, Any] | None = None,
+        now: float | None = None,
+    ) -> str | None:
+        """Commit one claimed execution outcome and return the resulting status."""
+        now = float(now if now is not None else time.time())
+        target = self._matching_pending_goal(goal)
+        if target is None:
+            return None
+        if (
+            target.get("status") != "in_progress"
+            or str(target.get("active_execution_id", "") or "") != str(execution_id or "")
+        ):
+            return None
+        bounded_result = self._bounded_goal_execution_result(execution_result)
+        failures = int(target.get("execution_failures", 0) or 0)
+        if succeeded:
+            new_status = "completed"
+            next_eligible_at = 0.0
+        else:
+            failures += 1
+            new_status = "blocked" if failures >= _GOAL_MAX_FAILURES else "pending"
+            delay = min(
+                _GOAL_RETRY_MAX_SECONDS,
+                _GOAL_RETRY_BASE_SECONDS * (2 ** max(0, failures - 1)),
+            )
+            next_eligible_at = now + delay
+        if not self._approve_agency_state_mutation(
+            kind="settle_goal_execution",
+            content={
+                "goal": target,
+                "execution_id": execution_id,
+                "succeeded": bool(succeeded),
+                "new_status": new_status,
+                "execution_result": bounded_result,
+            },
+            priority=self._coerce_priority(target.get("priority", 0.6), default=0.6),
+        ):
+            return None
+        target.update(
+            {
+                "status": new_status,
+                "active_execution_id": "",
+                "execution_lease_expires_at": 0.0,
+                "last_attempt_at": now,
+                "last_execution": bounded_result,
+                "execution_failures": failures,
+                "next_eligible_at": next_eligible_at,
+            }
+        )
+        if succeeded:
+            target["completed_at"] = now
+        return new_status
+
+    def recover_stale_goal_claims(self, *, now: float | None = None) -> int:
+        """Return expired execution leases to bounded retry or blocked state."""
+        now = float(now if now is not None else time.time())
+        recovered = 0
+        for target in self.state.pending_goals:
+            if target.get("status") != "in_progress":
+                continue
+            lease_expires = float(target.get("execution_lease_expires_at", 0.0) or 0.0)
+            if lease_expires > now:
+                continue
+            execution_id = str(target.get("active_execution_id", "") or "")
+            status = self.settle_goal_execution(
+                target,
+                execution_id=execution_id,
+                succeeded=False,
+                execution_result={"error": "execution lease expired before a terminal receipt"},
+                now=now,
+            )
+            if status is not None:
+                recovered += 1
+        return recovered
+
+    def _matching_pending_goal(self, goal: dict[str, Any]) -> dict[str, Any] | None:
+        goal_id = goal.get("id")
+        goal_text = goal.get("text") or goal.get("description") or goal.get("objective")
+        for candidate in self.state.pending_goals:
+            if goal_id is not None and candidate.get("id") == goal_id:
+                return candidate
+            candidate_text = (
+                candidate.get("text")
+                or candidate.get("description")
+                or candidate.get("objective")
+            )
+            if goal_text and candidate_text == goal_text:
+                return candidate
+        return None
+
+    @staticmethod
+    def _bounded_goal_execution_result(
+        execution_result: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        raw = dict(execution_result or {})
+        return {
+            "summary": _bounded_text(raw.get("summary", ""), limit=600),
+            "error": _bounded_text(raw.get("error", ""), limit=600),
+            "evidence": [
+                _bounded_text(item, limit=300)
+                for item in list(raw.get("evidence", []) or [])[:8]
+            ],
+            "plan_id": _bounded_text(raw.get("plan_id", ""), limit=160),
+            "trace_id": _bounded_text(raw.get("trace_id", ""), limit=160),
+        }
 
     def add_topic(self, topic: str) -> bool:
         """Add something Aura wants to discuss with the user."""
@@ -1992,11 +2175,25 @@ class AgencyCore:
         if idle_seconds < 120:
             return None  # Give user a chance to continue
 
-        # Find the highest-priority pending goal
-        pending = [g for g in self.state.pending_goals if g.get("status") == "pending"]
+        self.recover_stale_goal_claims(now=now)
+
+        # Find the highest-priority due goal. Failed attempts retain the goal
+        # but impose bounded backoff so one broken dependency cannot hot-loop.
+        pending = [
+            g
+            for g in self.state.pending_goals
+            if g.get("status") == "pending"
+            and float(g.get("next_eligible_at", 0.0) or 0.0) <= now
+        ]
         if not pending:
             return None
 
+        pending.sort(
+            key=lambda item: (
+                -self._coerce_priority(item.get("priority", 0.5), default=0.5),
+                float(item.get("created_at", now) or now),
+            )
+        )
         goal = pending[0]
         age = now - goal.get("created_at", now)
 
@@ -2008,6 +2205,104 @@ class AgencyCore:
             "goal": goal,
             "source": "goal_persistence",
             "priority": priority,
+        }
+
+    def _pathway_physical_affordance(
+        self,
+        now: float,
+        idle_seconds: float,
+    ) -> dict[str, Any] | None:
+        """Choose a bounded physical affordance from live Reality Reach state."""
+        if idle_seconds < 120 or self.state.initiative_energy < 0.35:
+            return None
+        if now - self._last_physical_affordance < 300:
+            return None
+
+        broker = ServiceContainer.get("reality_attachment_broker", default=None)
+        if broker is not None:
+            try:
+                requests = tuple(broker.requests())
+                requested_candidates = {
+                    str(getattr(request, "candidate_id", "") or "") for request in requests
+                }
+                candidates = [
+                    candidate
+                    for candidate in tuple(broker.candidates())
+                    if str(getattr(candidate, "candidate_id", "") or "")
+                    not in requested_candidates
+                    and not bool(getattr(candidate, "privacy_sensitive", False))
+                ]
+            except _AGENCY_BOUNDARY_ERRORS as exc:
+                _record_agency_degradation(
+                    exc,
+                    action="physical-affordance candidate inspection skipped",
+                )
+                candidates = []
+            if candidates:
+                candidates.sort(
+                    key=lambda candidate: (
+                        not bool(getattr(candidate, "persistent_identity", False)),
+                        str(getattr(candidate, "candidate_id", "") or ""),
+                    )
+                )
+                candidate = candidates[0]
+                candidate_id = str(getattr(candidate, "candidate_id", "") or "")
+                self._last_physical_affordance = now
+                return {
+                    "type": "autonomous_action",
+                    "skill": "embodiment",
+                    "params": {
+                        "action": "request_connection",
+                        "candidate_id": candidate_id,
+                        "access": "observe",
+                        "persistent": False,
+                    },
+                    "message": "I found a declared physical surface and chose to request bounded observation access.",
+                    "source": "physical_affordance",
+                    "priority": 0.58,
+                    "reasoning": "A live, non-private, unclaimed Reality Reach candidate is available.",
+                }
+
+        router = ServiceContainer.get("reality_observation_router", default=None)
+        if router is None:
+            return None
+        try:
+            observations = list(dict(router.latest()).values())
+        except _AGENCY_BOUNDARY_ERRORS as exc:
+            _record_agency_degradation(
+                exc,
+                action="physical-affordance observation inspection skipped",
+            )
+            return None
+        salient = [
+            observation
+            for observation in observations
+            if float(observation.get("salience", 0.0) or 0.0) >= 0.75
+            and str(observation.get("channel_id", "") or "")
+        ]
+        if not salient:
+            return None
+        salient.sort(
+            key=lambda observation: (
+                -float(observation.get("salience", 0.0) or 0.0),
+                str(observation.get("channel_id", "") or ""),
+            )
+        )
+        channel_id = str(salient[0]["channel_id"])
+        self._last_physical_affordance = now
+        return {
+            "type": "autonomous_action",
+            "skill": "embodiment",
+            "params": {
+                "action": "focus_sensor",
+                "channel_id": channel_id,
+                "duration_s": 30.0,
+                "max_rate_hz": 4.0,
+            },
+            "message": "I chose to focus my physical attention on a salient live signal.",
+            "source": "physical_affordance",
+            "priority": min(0.78, 0.5 + float(salient[0].get("salience", 0.0)) * 0.25),
+            "reasoning": "A high-salience Reality Reach observation warrants bounded attention.",
         }
 
     def _pathway_temporal_rhythm(self, now: float, idle_seconds: float) -> dict[str, Any] | None:

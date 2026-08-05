@@ -6,6 +6,9 @@ import asyncio
 import logging
 import random
 import time
+import uuid
+from collections.abc import Awaitable
+from typing import Any
 
 from core.health.degraded_events import record_degraded_event
 from core.runtime.background_policy import background_activity_reason
@@ -25,6 +28,53 @@ _AUTONOMY_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+def _agency_execution_succeeded(result: object) -> bool:
+    """Require explicit, non-contradictory positive execution evidence."""
+    if result is None:
+        return False
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, (list, tuple)):
+        return bool(result)
+    if isinstance(result, dict):
+        if result.get("error"):
+            return False
+        status = str(result.get("status", "") or "").strip().lower()
+        if status in {
+            "blocked",
+            "cancelled",
+            "deferred",
+            "denied",
+            "error",
+            "failed",
+            "refused",
+            "timeout",
+        }:
+            return False
+        positive = [
+            result[key]
+            for key in ("ok", "success", "verified_success", "succeeded")
+            if key in result and isinstance(result[key], bool)
+        ]
+        if positive:
+            return all(positive)
+        return status in {"accepted", "complete", "completed", "ok", "success", "succeeded"}
+    succeeded = getattr(result, "succeeded", None)
+    return succeeded if isinstance(succeeded, bool) else False
+
+
+def _agency_execution_summary(result: object) -> str:
+    if isinstance(result, dict):
+        for key in ("summary", "message", "error", "status"):
+            if result.get(key):
+                return str(result[key])[:600]
+    for key in ("summary", "error"):
+        value = getattr(result, key, None)
+        if value:
+            return str(value)[:600]
+    return str(result or "")[:600]
 
 
 def _record_autonomy_degradation(
@@ -48,6 +98,227 @@ class AutonomyMixin:
             or now
         )
         return max(0.0, now - start_time)
+
+    @staticmethod
+    def _initiative_evidence(authority_decision: object | None) -> dict[str, Any]:
+        """Bind completed initiative preflight evidence into downstream execution."""
+        if authority_decision is None:
+            return {}
+        return {
+            "executive_intent_id": str(
+                getattr(authority_decision, "executive_intent_id", "") or ""
+            ),
+            "substrate_receipt_id": str(
+                getattr(authority_decision, "substrate_receipt_id", "") or ""
+            ),
+            "will_receipt_id": str(
+                getattr(authority_decision, "will_receipt_id", "") or ""
+            ),
+            "reason": str(getattr(authority_decision, "reason", "") or "")[:240],
+            "domain": str(getattr(authority_decision, "domain", "") or ""),
+            "source": str(getattr(authority_decision, "source", "") or ""),
+            "preflight_complete": True,
+        }
+
+    def _schedule_authorized_agency_work(
+        self,
+        awaitable: Awaitable[Any],
+        *,
+        name: str,
+        authority_decision: object | None,
+    ) -> object | None:
+        """Schedule governed work and preserve a failed-scheduling receipt."""
+        task = self._fire_and_forget(awaitable, name=name)
+        if task is None:
+            record_degraded_event(
+                "orchestrator",
+                "agency_execution_not_scheduled",
+                detail=name[:160],
+                severity="error",
+                classification="background_degraded",
+                context={"initiative": self._initiative_evidence(authority_decision)},
+            )
+        return task
+
+    async def _run_authorized_agency_work(
+        self,
+        awaitable: Awaitable[Any],
+        *,
+        authority_decision: object | None,
+    ) -> None:
+        """Run non-tool agency work and validate its returned outcome."""
+        try:
+            result = await awaitable
+            if not _agency_execution_succeeded(result):
+                record_degraded_event(
+                    "orchestrator",
+                    "agency_background_work_failed",
+                    detail=_agency_execution_summary(result) or "no positive result evidence",
+                    severity="warning",
+                    classification="background_degraded",
+                    context={"initiative": self._initiative_evidence(authority_decision)},
+                )
+        except _AUTONOMY_RECOVERABLE_ERRORS as exc:
+            _record_autonomy_degradation(
+                exc,
+                action="recorded failed authorized agency background work",
+                severity="error",
+            )
+
+    async def _execute_agency_skill(
+        self,
+        *,
+        action: dict[str, Any],
+        skill_name: str,
+        params: dict[str, Any],
+        authority_decision: object | None,
+    ) -> None:
+        """Execute Aura's structured choice without re-routing it through prose."""
+        source = str(action.get("source", "agency_core") or "agency_core")
+        objective = str(
+            action.get("objective")
+            or action.get("query")
+            or action.get("message")
+            or f"Execute {skill_name}"
+        )
+        context = {
+            "origin": "autonomy",
+            "intent_source": "autonomy",
+            "proposal_source": source,
+            "requested_by": "aura",
+            "requested_via": "agency_core",
+            "autonomous": True,
+            "foreground_request": False,
+            "objective": objective,
+            "agency_action_id": str(action.get("id", "") or ""),
+            "agency_action_type": str(action.get("type", "") or ""),
+            "initiative_preflight": self._initiative_evidence(authority_decision),
+        }
+        result: object = None
+        success = False
+        error = ""
+        try:
+            result = await self.execute_tool(
+                skill_name,
+                params,
+                origin="autonomy",
+                payload_context=context,
+            )
+            success = _agency_execution_succeeded(result)
+            if not success:
+                error = _agency_execution_summary(result) or "agency skill returned no success evidence"
+                record_degraded_event(
+                    "orchestrator",
+                    "agency_skill_execution_failed",
+                    detail=f"{skill_name}:{error[:160]}",
+                    severity="warning",
+                    classification="background_degraded",
+                    context={"skill": skill_name, "source": source},
+                )
+        except _AUTONOMY_RECOVERABLE_ERRORS as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            _record_autonomy_degradation(
+                exc,
+                action=f"recorded failed direct agency execution for {skill_name}",
+                severity="error",
+            )
+
+    async def _execute_agency_goal(
+        self,
+        *,
+        action: dict[str, Any],
+        goal: dict[str, Any],
+        description: str,
+        execution_id: str,
+        authority_decision: object | None,
+    ) -> None:
+        """Plan and execute a self-chosen goal, then commit its real outcome."""
+        result: object = None
+        success = False
+        error = ""
+        try:
+            from core.agency.autonomous_task_engine import get_task_engine
+
+            kernel = ServiceContainer.get("aura_kernel", default=None) or ServiceContainer.get(
+                "kernel", default=None
+            )
+            result = await get_task_engine(kernel).execute_goal(
+                description,
+                context={
+                    "origin": "autonomous_task_engine",
+                    "intent_source": "autonomous_task_engine",
+                    "proposal_source": str(action.get("source", "agency_core") or "agency_core"),
+                    "requested_by": "aura",
+                    "requested_via": "agency_core",
+                    "autonomous": True,
+                    "foreground_request": False,
+                    "objective": description,
+                    "goal_id": str(goal.get("id", "") or ""),
+                    "agency_action_id": str(action.get("id", "") or ""),
+                    "agency_execution_id": execution_id,
+                    "initiative_preflight": self._initiative_evidence(authority_decision),
+                },
+            )
+            success = _agency_execution_succeeded(result)
+            error = "" if success else _agency_execution_summary(result)
+        except asyncio.CancelledError:
+            error = "agency goal execution cancelled before a terminal receipt"
+            raise
+        except _AUTONOMY_RECOVERABLE_ERRORS as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            _record_autonomy_degradation(
+                exc,
+                action="kept autonomous goal retryable after task execution failed",
+                severity="error",
+            )
+        finally:
+            agency = getattr(self, "_agency_core", None)
+            updater = getattr(agency, "settle_goal_execution", None)
+            lifecycle_status = None
+            try:
+                if callable(updater):
+                    evidence = list(getattr(result, "evidence", []) or [])[:8]
+                    lifecycle_status = updater(
+                        goal,
+                        execution_id=execution_id,
+                        succeeded=success,
+                        execution_result={
+                            "summary": _agency_execution_summary(result),
+                            "error": error,
+                            "evidence": evidence,
+                            "plan_id": str(getattr(result, "plan_id", "") or ""),
+                            "trace_id": str(getattr(result, "trace_id", "") or ""),
+                        },
+                    )
+            except _AUTONOMY_RECOVERABLE_ERRORS as exc:
+                _record_autonomy_degradation(
+                    exc,
+                    action="left autonomous goal claim recoverable after lifecycle settlement failed",
+                    severity="error",
+                )
+            if lifecycle_status is None:
+                record_degraded_event(
+                    "orchestrator",
+                    "agency_goal_settlement_failed",
+                    detail=f"{description[:120]}:{execution_id[:40]}",
+                    severity="error",
+                    classification="background_degraded",
+                    context={"goal_id": str(goal.get("id", "") or "")},
+                )
+            if not success:
+                record_degraded_event(
+                    "orchestrator",
+                    "agency_goal_execution_failed",
+                    detail=f"{description[:120]}:{error[:120]}",
+                    severity="warning",
+                    classification="background_degraded",
+                    context={
+                        "goal_id": str(goal.get("id", "") or ""),
+                        "execution_id": execution_id,
+                        "lifecycle_status": lifecycle_status,
+                        "initiative": self._initiative_evidence(authority_decision),
+                    },
+                )
 
     async def _run_autonomous_brain_reflection(self, boredom_seconds: float) -> bool:
         """Fallback reflective path using the direct autonomous brain."""
@@ -352,11 +623,13 @@ class AutonomyMixin:
             action = self._normalize_to_dict(raw_action)
             action_type = action.get("type")
 
-            async def _allow_agency_dispatch(tag: str, detail: str = "") -> bool:
+            async def _authorize_agency_dispatch(
+                tag: str, detail: str = ""
+            ) -> tuple[bool, object | None]:
                 try:
                     from core.constitution import get_constitutional_core
 
-                    allowed, reason, _authority_decision = await get_constitutional_core(
+                    allowed, reason, authority_decision = await get_constitutional_core(
                         self
                     ).approve_initiative(
                         f"agency_core.{tag}:{detail[:160]}",
@@ -378,7 +651,7 @@ class AutonomyMixin:
                         context={"action_type": action_type, "detail": detail[:160]},
                         exc=exc,
                     )
-                    return False
+                    return False, None
 
                 if not allowed:
                     record_degraded_event(
@@ -389,8 +662,8 @@ class AutonomyMixin:
                         classification="background_degraded",
                         context={"action_type": action_type, "reason": reason},
                     )
-                    return False
-                return True
+                    return False, authority_decision
+                return True, authority_decision
 
             # Internal monologue — just emit to thought stream
             if action.get("internal_only"):
@@ -443,16 +716,22 @@ class AutonomyMixin:
                 # Trigger a web search skill
                 query = action.get("query")
                 if query:
-                    if not await _allow_agency_dispatch("autonomous_research", query):
+                    allowed, authority_decision = await _authorize_agency_dispatch(
+                        "autonomous_research", query
+                    )
+                    if not allowed:
                         return
                     self._emit_thought_stream(f"🔍 Agency: Curiosity-driven research: {query}")
-                    if not self.message_queue.full():
-                        self.enqueue_message(
-                            f"Perform a web search for {query}",
-                            priority=15,
-                            origin="agency_core",
-                            _authority_checked=True,
-                        )
+                    self._schedule_authorized_agency_work(
+                        self._execute_agency_skill(
+                            action=action,
+                            skill_name="web_search",
+                            params={"query": query},
+                            authority_decision=authority_decision,
+                        ),
+                        name="orchestrator.agency.research.web_search",
+                        authority_decision=authority_decision,
+                    )
 
             elif action_type == "genesis_goal":
                 # Phase 6: Open-Ended Goal Genesis
@@ -467,53 +746,128 @@ class AutonomyMixin:
                             priority=action.get("priority", 0.8),
                         )
                         # Autonomously break this large goal down in the background
-                        if goal_id and await _allow_agency_dispatch("goal_subgoal_proposal", topic):
-                            self._fire_and_forget(
-                                self.goal_hierarchy.propose_subgoals(goal_id),
-                                name="orchestrator.goal_hierarchy.propose_subgoals",
+                        if goal_id:
+                            allowed, authority_decision = await _authorize_agency_dispatch(
+                                "goal_subgoal_proposal", topic
                             )
+                            if allowed:
+                                self._schedule_authorized_agency_work(
+                                    self._run_authorized_agency_work(
+                                        self.goal_hierarchy.propose_subgoals(goal_id),
+                                        authority_decision=authority_decision,
+                                    ),
+                                    name="orchestrator.goal_hierarchy.propose_subgoals",
+                                    authority_decision=authority_decision,
+                                )
 
             # Direct autonomous actions (Bypasses LLM Intent Routing)
             elif action_type == "autonomous_action":
                 tool = action.get("skill")
                 params = action.get("params", {})
-                msg = action.get("message", f"Executing {tool} autonomously.")
                 desc = action.get("source", "agency_core")
-                if not await _allow_agency_dispatch("autonomous_action", str(tool or desc)):
+                if not isinstance(tool, str) or not tool.strip() or not isinstance(params, dict):
+                    record_degraded_event(
+                        "orchestrator",
+                        "agency_action_invalid",
+                        detail=f"skill={tool!r}; params_type={type(params).__name__}",
+                        severity="warning",
+                        classification="background_degraded",
+                        context={"source": str(desc)},
+                    )
+                    return
+                tool = tool.strip()
+                allowed, authority_decision = await _authorize_agency_dispatch(
+                    "autonomous_action", tool
+                )
+                if not allowed:
                     return
 
                 self._emit_thought_stream(f"⚡ Agency: Autonomous Action ({desc}) -> {tool}")
-
-                self.enqueue_message(
-                    {
-                        "content": msg,
-                        "origin": f"agency_core_{desc}",
-                        "context": {
-                            "intent_hint": {
-                                "tool": tool,
-                                "params": params,
-                                "constitutional_hint": True,
-                            }
-                        },
-                    },
-                    priority=15,
-                    origin=f"agency_core_{desc}",
-                    _authority_checked=True,
+                self._schedule_authorized_agency_work(
+                    self._execute_agency_skill(
+                        action=action,
+                        skill_name=tool,
+                        params=params,
+                        authority_decision=authority_decision,
+                    ),
+                    name=f"orchestrator.agency.skill.{tool}",
+                    authority_decision=authority_decision,
                 )
 
             elif action_type == "pursue_goal":
                 goal = action.get("goal", {})
-                desc = goal.get("text") or goal.get("description") or goal.get("objective") or "unknown goal"
-                if not await _allow_agency_dispatch("pursue_goal", desc):
+                if not isinstance(goal, dict):
+                    record_degraded_event(
+                        "orchestrator",
+                        "agency_goal_invalid",
+                        detail=f"goal_type={type(goal).__name__}",
+                        severity="warning",
+                        classification="background_degraded",
+                        context={"source": str(action.get("source", "agency_core"))},
+                    )
+                    return
+                desc = str(
+                    goal.get("text")
+                    or goal.get("description")
+                    or goal.get("objective")
+                    or ""
+                ).strip()
+                if not desc:
+                    record_degraded_event(
+                        "orchestrator",
+                        "agency_goal_invalid",
+                        detail="goal description is empty",
+                        severity="warning",
+                        classification="background_degraded",
+                        context={"source": str(action.get("source", "agency_core"))},
+                    )
+                    return
+                allowed, authority_decision = await _authorize_agency_dispatch(
+                    "pursue_goal", desc
+                )
+                if not allowed:
+                    return
+                execution_id = f"agency-goal-{uuid.uuid4().hex}"
+                claimer = getattr(agency, "claim_goal_for_execution", None)
+                if not callable(claimer) or not claimer(
+                    goal,
+                    execution_id=execution_id,
+                ):
+                    record_degraded_event(
+                        "orchestrator",
+                        "agency_goal_claim_failed",
+                        detail=desc[:160],
+                        severity="warning",
+                        classification="background_degraded",
+                        context={
+                            "goal_id": str(goal.get("id", "") or ""),
+                            "execution_id": execution_id,
+                        },
+                    )
                     return
                 self._emit_thought_stream(f"🎯 Agency: Pursuing persistent goal: {desc}")
-                if not self.message_queue.full():
-                    self.enqueue_message(
-                        f"Continue working on: {desc}",
-                        priority=12,
-                        origin="agency_core",
-                        _authority_checked=True,
-                    )
+                scheduled = self._schedule_authorized_agency_work(
+                    self._execute_agency_goal(
+                        action=action,
+                        goal=goal,
+                        description=desc,
+                        execution_id=execution_id,
+                        authority_decision=authority_decision,
+                    ),
+                    name="orchestrator.agency.goal.execute",
+                    authority_decision=authority_decision,
+                )
+                if scheduled is None:
+                    settler = getattr(agency, "settle_goal_execution", None)
+                    if callable(settler):
+                        settler(
+                            goal,
+                            execution_id=execution_id,
+                            succeeded=False,
+                            execution_result={
+                                "error": "agency execution could not be scheduled"
+                            },
+                        )
 
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_autonomy_degradation(

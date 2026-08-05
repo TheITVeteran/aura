@@ -48,7 +48,29 @@ async def test_goal_completion_lifecycle_by_match(monkeypatch: pytest.MonkeyPatc
     }
 
     await agency._commit_action_side_effects(action, time.time())
-    assert agency.state.pending_goals[0]["status"] == "completed"
+    assert agency.state.pending_goals[0]["status"] == "pending"
+
+    assert agency.claim_goal_for_execution(
+        {"id": "goal_123"},
+        execution_id="execution_123",
+    )
+    status = agency.settle_goal_execution(
+        {"id": "goal_123"},
+        execution_id="execution_123",
+        succeeded=True,
+        execution_result={
+            "summary": "Verified objective complete",
+            "evidence": ["receipt:goal_123"],
+            "plan_id": "plan_123",
+            "trace_id": "trace_123",
+        },
+    )
+    assert status == "completed"
+    stored = agency.state.pending_goals[0]
+    assert stored["status"] == "completed"
+    assert stored["last_execution"]["summary"] == "Verified objective complete"
+    assert stored["last_execution"]["evidence"] == ["receipt:goal_123"]
+    assert stored["completed_at"] >= stored["last_attempt_at"]
 
 
 @pytest.mark.asyncio
