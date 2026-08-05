@@ -1195,6 +1195,29 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
     return owners
 
 
+#: How long an eviction waits to fence a lane before giving up. Short on
+#: purpose: a lane that will not go quiet quickly is a lane doing work, and
+#: the answer to that is to refuse the eviction, not to outwait it.
+_LANE_EVICTION_FENCE_WAIT_S = 2.0
+
+
+def _lane_owner_is_working(target: Any) -> bool:
+    """Whether this client has work in flight, by every signal it publishes."""
+    return bool(
+        int(getattr(target, "_active_generations", 0) or 0) > 0
+        or getattr(target, "_warmup_in_flight", False)
+        or getattr(target, "_current_request_started_at", 0.0) > 0.0
+        or any(
+            future is not None and not future.done()
+            for future in (
+                *getattr(target, "_pending_generations", {}).values(),
+                getattr(target, "_current_gen_future", None),
+                getattr(target, "_init_future", None),
+            )
+        )
+    )
+
+
 async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
     """Evict one exact local MLX owner and prove its worker is dead."""
 
@@ -1210,30 +1233,50 @@ async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
         from core.runtime.model_lane_control import evict_managed_process_owner
 
         return await evict_managed_process_owner(owner, reason)
-    active = bool(
-        int(getattr(target, "_active_generations", 0) or 0) > 0
-        or getattr(target, "_warmup_in_flight", False)
-        or getattr(target, "_current_request_started_at", 0.0) > 0.0
-        or any(
-            future is not None and not future.done()
-            for future in (
-                *getattr(target, "_pending_generations", {}).values(),
-                getattr(target, "_current_gen_future", None),
-                getattr(target, "_init_future", None),
-            )
-        )
-    )
-    if active:
+    if _lane_owner_is_working(target):
         logger.info(
             "MLX model-lane preemption refused during active work owner=%s reason=%s",
             owner.owner_id,
             reason,
         )
         return False
-    await target.reboot_worker(
-        reason=f"yield_to_lane_transaction:{reason}",
-        mark_failed=False,
+
+    # CP126 518e876f: the idleness test above reads mutable fields and the
+    # reboot below is an await. A generation that started in that window was
+    # killed mid-decode by an eviction whose whole premise was that nothing
+    # was running — the "refused during active work" branch above existed
+    # precisely to prevent that, and the gap made it advisory.
+    #
+    # Take the request lane first, so nothing can start, then re-test what is
+    # true while holding it.
+    lane_deadline = get_deadline(_LANE_EVICTION_FENCE_WAIT_S)
+    fenced = await target._acquire_request_lock(
+        owner_label=f"lane_eviction:{reason}",
+        deadline=lane_deadline,
+        foreground_request=False,
     )
+    if not fenced:
+        logger.info(
+            "MLX model-lane preemption refused: request lane busy owner=%s reason=%s",
+            owner.owner_id,
+            reason,
+        )
+        return False
+    try:
+        if _lane_owner_is_working(target):
+            logger.info(
+                "MLX model-lane preemption refused: work started during the fence "
+                "owner=%s reason=%s",
+                owner.owner_id,
+                reason,
+            )
+            return False
+        await target.reboot_worker(
+            reason=f"yield_to_lane_transaction:{reason}",
+            mark_failed=False,
+        )
+    finally:
+        target._release_request_lock()
     try:
         alive = bool(target.is_alive())
     except (AttributeError, RuntimeError, OSError, ValueError):

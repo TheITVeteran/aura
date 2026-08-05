@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -351,3 +352,82 @@ class TestDurationSettingsAreBounded:
 
         monkeypatch.setenv("AURA_TEST_DURATION", "0.1")
         assert _env_duration_s("AURA_TEST_DURATION", 90.0, minimum=1.0) == 90.0
+
+
+class TestLaneEvictionIsFenced:
+    """CP126 518e876f: idle-check and eviction were not atomic."""
+
+    @pytest.mark.asyncio
+    async def test_work_started_during_the_fence_refuses_the_eviction(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        owner = SimpleNamespace(owner_id="owner-1", model_path=TEST_MODEL)
+        monkeypatch.setattr(mod, "_clients_snapshot", lambda: [(TEST_MODEL, client)])
+        monkeypatch.setattr(mod, "_model_lane_owner_id", lambda _c: "owner-1")
+
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+
+        # A generation begins in the window the old code left open: after the
+        # idle check, before the reboot.
+        real_acquire = client._acquire_request_lock
+
+        async def _acquire_then_work(**kwargs):
+            got = await real_acquire(**kwargs)
+            client._active_generations = 1
+            return got
+
+        monkeypatch.setattr(client, "_acquire_request_lock", _acquire_then_work)
+
+        assert await mod._evict_model_lane_owner(owner, "pressure") is False
+        assert rebooted == [], "a lane with work in flight must not be recycled"
+        assert not client._request_lock.locked(), "the fence must be released"
+
+    @pytest.mark.asyncio
+    async def test_a_busy_request_lane_refuses_the_eviction(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        owner = SimpleNamespace(owner_id="owner-1", model_path=TEST_MODEL)
+        monkeypatch.setattr(mod, "_clients_snapshot", lambda: [(TEST_MODEL, client)])
+        monkeypatch.setattr(mod, "_model_lane_owner_id", lambda _c: "owner-1")
+        monkeypatch.setattr(mod, "_LANE_EVICTION_FENCE_WAIT_S", 0.2)
+
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+        client._request_lock.acquire()
+        try:
+            assert await mod._evict_model_lane_owner(owner, "pressure") is False
+            assert rebooted == []
+        finally:
+            client._request_lock.release()
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_idle_lane_is_evicted(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        owner = SimpleNamespace(owner_id="owner-1", model_path=TEST_MODEL)
+        monkeypatch.setattr(mod, "_clients_snapshot", lambda: [(TEST_MODEL, client)])
+        monkeypatch.setattr(mod, "_model_lane_owner_id", lambda _c: "owner-1")
+
+        rebooted = []
+
+        async def _reboot(reason="", mark_failed=True):
+            rebooted.append(reason)
+
+        monkeypatch.setattr(client, "reboot_worker", _reboot)
+        monkeypatch.setattr(client, "is_alive", lambda: False)
+
+        assert await mod._evict_model_lane_owner(owner, "pressure") is True
+        assert rebooted == ["yield_to_lane_transaction:pressure"]
+        assert not client._request_lock.locked()

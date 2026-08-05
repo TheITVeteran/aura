@@ -782,3 +782,39 @@ class TestAskingToBeShownIsACueNotAPhraseList:
     )
     def test_still_not_a_request_for_her_source(self, message):
         assert not self._asks(message), message
+
+
+def test_a_question_that_merely_touches_her_internals_keeps_its_answer():
+    """The wide gate decided to CHECK; it must not decide to REPLACE.
+
+    Live regression 2026-08-04: "Can you still reason through the desktop
+    path?" scored as a source question, and a correct answer about the
+    reasoning lane was swapped for a code excerpt nobody had asked for.
+    """
+    from core.utils.own_source_intent import (
+        asks_for_own_source,
+        reply_denies_showing_source,
+    )
+
+    question = "Can you still reason through the desktop path?"
+    answer = (
+        "Yes. I am still reasoning through the desktop CognitiveEngine path, "
+        "and I am keeping the answer on this live turn instead of switching lanes."
+    )
+    assert not asks_for_own_source(question)
+    assert not reply_denies_showing_source(answer)
+
+
+def test_a_false_capability_denial_still_earns_a_real_excerpt():
+    from core.utils.own_source_intent import reply_denies_showing_source
+
+    assert reply_denies_showing_source("I can't show you code files directly.")
+    assert reply_denies_showing_source("I'm not able to share my source with you.")
+    assert reply_denies_showing_source("I cannot open my own implementation files.")
+
+
+def test_an_ordinary_refusal_about_something_else_is_not_a_source_denial():
+    from core.utils.own_source_intent import reply_denies_showing_source
+
+    assert not reply_denies_showing_source("I can't show you Bryan's private files.")
+    assert not reply_denies_showing_source("I won't show you how to bypass that.")

@@ -10039,8 +10039,8 @@ async def _run_cognitive_engine_chat_turn(
                 source_tree_is_readable,
             )
 
-            # A turn about her code that neither shows any nor cites a file
-            # has not reached her source at all.
+            # A REQUEST to see her code that neither shows any nor cites a
+            # file has not reached her source at all.
             #
             # Live 2026-08-04: "show me how you're actually built" arrived
             # with real excerpts attached and she answered "I can't show you
@@ -10049,8 +10049,27 @@ async def _run_cognitive_engine_chat_turn(
             # — the third form of one defect, after inventing a snippet and
             # after disowning a real one. All three end with the person
             # believing something untrue about what she can do.
+            #
+            # But this substitution used to run on the WIDE gate above — "the
+            # turn may concern her source" — which is the right question for
+            # deciding whether to CHECK and the wrong one for deciding to
+            # REPLACE. It scored True on "Can you still reason through the
+            # desktop path?" and swapped a correct answer about the reasoning
+            # lane for a code excerpt nobody asked for. A reply that simply
+            # contains no code is not a reply that denied having any.
+            #
+            # So: substitute when she was asked to show source, or when the
+            # reply says she cannot — never merely because the subject came up.
+            from core.utils.own_source_intent import (
+                asks_for_own_source as _asks_for_own_source,
+                reply_denies_showing_source as _reply_denies_showing_source,
+            )
+
+            _asked_to_be_shown = bool(_asks_for_own_source(visible))
+            _denied_capability = bool(_reply_denies_showing_source(text))
             if (
                 not _fabricated
+                and (_asked_to_be_shown or _denied_capability)
                 and source_tree_is_readable()
                 and not await asyncio.to_thread(reply_is_grounded_in_source, text)
             ):
