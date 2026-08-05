@@ -120,31 +120,14 @@ _FILE_REF_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(?:\.{0,2}/|/)?[A-Za-z0-9_.~/-]+\.(?:py|md|json|toml|ya?ml|txt|js|ts|tsx|sh|swift|rs|go|cpp|c|h)"
 )
 
-_SIMPLE_DIALOGUE_RE = re.compile(
-    r"\b("
-    r"capital of france|15\s*\*\s*12|square root of 64|3 apples|"
-    r"who wrote (?:the play )?hamlet|three programming languages|"
-    r"color is the sky|translate ['\"]?good morning|"
-    r"continuity check|what did we just verify|live chat path|"
-    r"conversation lane|reply path|response path|"
-    r"you ok|you okay|are you ok|are you okay|"
-    r"what feels most important|what should you do differently|"
-    r"write (?:a )?(?:short )?(?:poem|joke|haiku)|"
-    r"compose (?:a )?(?:short )?(?:poem|joke|haiku)"
-    r")\b",
-    re.IGNORECASE,
+# The conversational-vs-work judgement lives in one place now:
+# core/utils/conversational_shape.py. Two routing phases each carried
+# their own literal phrase list, and two copies of a judgement is how
+# one phase answers a question the other answers differently.
+from core.utils.conversational_shape import (  # noqa: E402
+    _SIMPLE_DIALOGUE_RE,
+    looks_like_simple_dialogue_request as _looks_like_simple_dialogue_request,
 )
-
-
-def _looks_like_simple_dialogue_request(text: str) -> bool:
-    body = str(text or "").strip()
-    if not body:
-        return False
-    if looks_like_explanatory_dialogue_request(body):
-        return True
-    if len(body.split()) > 28:
-        return False
-    return bool(_SIMPLE_DIALOGUE_RE.search(body))
 
 
 class CognitiveRoutingPhase(Phase):

@@ -316,6 +316,21 @@ def looks_like_explanatory_dialogue_request(text: str) -> bool:
     return False
 
 
+#: Asks whose deliverable is speech, not an external effect. "Tell me a
+#: story" is a request; what it requests is words.
+_CONVERSATIONAL_ASK_RE = re.compile(
+    r"\b(?:"
+    r"tell\s+me\s+(?:about\s+(?:yourself|you)|something|a\s+story|more|"
+    r"what|how|why|when|whether|if)"
+    r"|talk\s+to\s+me\s+about"
+    r"|say\s+something"
+    r"|give\s+me\s+(?:your\s+)?(?:take|opinion|thoughts?|read)"
+    r"|what'?s\s+(?:your\s+)?(?:take|opinion|read)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def looks_like_inline_answer_request(text: str) -> bool:
     """True when the turn's deliverable is words in the current reply.
 
@@ -342,6 +357,14 @@ def looks_like_inline_answer_request(text: str) -> bool:
     ):
         return False
     if _INTROSPECTIVE_STATE_RE.search(lowered):
+        return True
+    # "Tell me about yourself", "tell me something", "tell me a story".
+    # The deliverable is words in THIS reply. Without this the last-resort
+    # asks_for_action branch in turn_analysis classified them TASK, and a
+    # person asking Aura to say something about herself got "Task accepted
+    # into governed background execution" — the exact receipt-for-an-answer
+    # failure this function's docstring was written about.
+    if _CONVERSATIONAL_ASK_RE.search(lowered):
         return True
     return "?" in lowered and bool(_QUESTION_WORD_RE.search(lowered))
 

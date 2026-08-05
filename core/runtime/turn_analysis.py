@@ -329,11 +329,20 @@ def analyze_turn(
         )
     ) and not looks_like_inline_answer_request(normalized):
         intent_type = "TASK"
-    elif request_mood.asks_for_action:
+    elif request_mood.asks_for_action and not looks_like_inline_answer_request(
+        normalized
+    ):
         # The request is grammatical even when no skill regex recognizes its
         # wording. TASK hands the objective to the semantic planner, which
         # selects from the live capability catalog and fails honestly if none
         # can realize it.
+        #
+        # The inline-answer guard is the same one the _TASK_PATTERNS branch
+        # above already carries, and its absence here was the whole defect:
+        # "Tell me something about yourself" asks for an action in the
+        # grammatical sense, so this branch made it a TASK and the person got
+        # a background-execution receipt instead of an answer. A request whose
+        # deliverable is words in this reply is not work to schedule.
         intent_type = "TASK"
     else:
         intent_type = "CHAT"
