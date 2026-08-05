@@ -33,10 +33,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,14 +47,16 @@ from core.embodiment.home_assistant_reality import (
     HomeAssistantRealityAdapter,
     HomeAssistantTransport,
 )
+from core.reality_reach.actuation import TargetCommandCompiler
 from core.reality_reach.body_projection import (
     PhysicalBodyProjection,
     project_adapter_to_body,
     remove_body_projection,
 )
+from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 from core.runtime.lockdep import checked_async_lock
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IoTBridge")
 
@@ -372,6 +375,100 @@ class IoTBridge:
             "reality_reach_transaction": output.get("reality_reach_transaction"),
         }
 
+    async def apply_target_authorized(
+        self,
+        channel_id: str,
+        target_value: float,
+        *,
+        capability_token: str,
+        timeout_s: float = 30.0,
+        idempotency_key: str = "",
+        source: str = "iot_bridge",
+    ) -> dict[str, Any]:
+        """Compile a registered scalar target only after WorldBridge authority."""
+        token = str(capability_token or "").strip()
+        if not token:
+            raise PermissionError("iot_capability_token_required")
+        canonical_channel = str(channel_id or "").strip().lower()
+        if not canonical_channel:
+            raise ValueError("reality_channel_id_required")
+        if isinstance(target_value, bool):
+            raise TypeError("reality_target_value_must_be_numeric")
+        target = float(target_value)
+        if isinstance(timeout_s, bool):
+            raise TypeError("reality_target_timeout_must_be_numeric")
+        deadline_s = float(timeout_s)
+        if not math.isfinite(target):
+            raise ValueError("reality_target_value_must_be_finite")
+        if not math.isfinite(deadline_s) or not 0.1 <= deadline_s <= 300.0:
+            raise ValueError("reality_target_timeout_out_of_bounds")
+
+        service, coordinator = self._ensure_runtime_binding()
+        adapter = service.actuator_adapter(canonical_channel)
+        if adapter is None:
+            raise LookupError(f"physical_channel_not_executable:{canonical_channel}")
+        if not isinstance(adapter, TargetCommandCompiler):
+            raise TypeError(
+                "physical_channel_target_compiler_unavailable:"
+                f"{canonical_channel}"
+            )
+        inventory_sha256 = str(service.status().get("registry_sha256") or "")
+        stable_idempotency = str(idempotency_key or "").strip()
+        if not stable_idempotency:
+            authority_sha256 = sha256_hex(token.encode("utf-8"))
+            request_sha256 = sha256_hex(
+                canonical_json(
+                    {
+                        "authority_sha256": authority_sha256,
+                        "channel_id": canonical_channel,
+                        "target_value": target,
+                    }
+                )
+            )
+            stable_idempotency = (
+                "reality.target.auth."
+                + request_sha256.removeprefix("sha256:")[:32]
+            )
+        command = await adapter.compile_target(
+            target,
+            inventory_sha256=inventory_sha256,
+            deadline_s=deadline_s,
+            idempotency_key=stable_idempotency,
+            source=source,
+        )
+        try:
+            raw_output = await coordinator.execute(command)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            record_degradation("iot_bridge", exc)
+            raise
+        if not isinstance(raw_output, Mapping):
+            raise RuntimeError("reality_actuation_result_not_mapping")
+        output = dict(raw_output)
+        transport_succeeded = bool(
+            output.get("transport_succeeded") is True
+            or output.get("executed") is True
+        )
+        effect_verified = output.get("effect_verified") is True
+        failures = [] if effect_verified else [
+            str(output.get("error") or output.get("reason") or "effect_unverified")[:300]
+        ]
+        return {
+            "channel_id": canonical_channel,
+            "target_value": target,
+            "effects": [
+                {
+                    "adapter_id": str(getattr(adapter, "adapter_id", "")),
+                    "channel_id": canonical_channel,
+                    "command_sha256": str(getattr(command, "sha256", "")),
+                    "output": output,
+                }
+            ],
+            "transport_succeeded": transport_succeeded,
+            "effect_verified": effect_verified,
+            "failures": failures,
+            "reality_reach_transaction": output.get("reality_reach_transaction"),
+        }
+
     async def discover_authorized(
         self,
         *,
@@ -631,6 +728,24 @@ async def _environmental_change_handler(
             ),
             "effect_verified": verified,
         }
+    if operation == "reality_target":
+        channel_id = str(payload.get("channel_id") or "").strip().lower()
+        target_value = payload.get("target_value")
+        timeout_s = payload.get("timeout_s", 30.0)
+        if not channel_id:
+            raise ValueError("reality_channel_id_required")
+        if target_value is None or isinstance(target_value, bool):
+            raise ValueError("reality_target_value_must_be_numeric")
+        if isinstance(timeout_s, bool):
+            raise ValueError("reality_target_timeout_must_be_numeric")
+        return await bridge.apply_target_authorized(
+            channel_id,
+            float(target_value),
+            capability_token=capability_token,
+            timeout_s=float(timeout_s),
+            idempotency_key=str(payload.get("idempotency_key") or ""),
+            source=str(payload.get("source") or "world_bridge.environmental_change"),
+        )
     if operation not in {"apply", "home_assistant_apply"}:
         raise ValueError(f"unknown_iot_operation:{operation}")
     target = str(payload.get("target") or "").strip().lower()

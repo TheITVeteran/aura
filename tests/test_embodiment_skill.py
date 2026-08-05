@@ -108,42 +108,8 @@ async def test_attached_target_compiler_uses_canonical_reality_transaction(
 ) -> None:
     import core.skills.embodiment_skill as skill_module
 
-    compiled = SimpleNamespace(command_id="command.scalar.test")
-
-    class Adapter:
-        async def compile_target(self, target, **kwargs):
-            assert target == 63.0
-            assert kwargs["inventory_sha256"] == "sha256:" + "a" * 64
-            assert kwargs["deadline_s"] == 12.0
-            assert kwargs["source"] == "embodiment_skill"
-            assert kwargs["idempotency_key"] == "demo.scalar.63"
-            return compiled
-
-    class Reality:
-        @staticmethod
-        def actuator_adapter(channel_id):
-            assert channel_id == "openhab.item.desklight.command"
-            return Adapter()
-
-        @staticmethod
-        def status():
-            return {"registry_sha256": "sha256:" + "a" * 64}
-
-    class Coordinator:
-        @staticmethod
-        async def execute(command):
-            assert command is compiled
-            return {
-                "ok": True,
-                "effect_verified": True,
-                "transport_succeeded": True,
-            }
-
-    services = {
-        "reality_reach": Reality(),
-        "reality_actuation": Coordinator(),
-    }
-    monkeypatch.setattr(skill_module, "_service", lambda name: services.get(name))
+    world = WorldBridge()
+    monkeypatch.setattr(skill_module, "get_world_bridge", lambda: world)
 
     result = await EmbodimentSkill().execute(
         {
@@ -156,12 +122,23 @@ async def test_attached_target_compiler_uses_canonical_reality_transaction(
         {},
     )
 
-    assert result == {
-        "ok": True,
-        "effect_verified": True,
-        "transport_succeeded": True,
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["channel_id"] == "openhab.item.desklight.command"
+    assert result["target_value"] == 63.0
+    args, kwargs = world.calls[0]
+    assert args == (skill_module.Channel.ENVIRONMENTAL_CHANGE,)
+    assert kwargs["action"] == (
+        "physical:openhab.item.desklight.command:set_target"
+    )
+    assert kwargs["payload"] == {
+        "operation": "reality_target",
         "channel_id": "openhab.item.desklight.command",
         "target_value": 63.0,
+        "timeout_s": 12.0,
+        "idempotency_key": "demo.scalar.63",
+        "reason": "Aura selected a physical target",
+        "source": "embodiment_skill",
     }
 
 

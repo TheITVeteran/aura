@@ -11,7 +11,6 @@ from core.container import ServiceContainer
 from core.embodiment.world_bridge import Channel, get_world_bridge
 from core.governance.capability_chain import CapabilityViolation, get_capability_issuer
 from core.governance.will import ActionDomain, get_will
-from core.reality_reach.actuation import TargetCommandCompiler
 from core.reality_reach.attachment_authority import (
     ATTACHMENT_AUTHORITY_ACTION,
     MANIFEST_MIGRATION_AUTHORITY_ACTION,
@@ -819,27 +818,6 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
     async def _command(params: Mapping[str, Any]) -> dict[str, Any]:
         channel_id = str(params.get("channel_id") or "").strip().lower()
         if channel_id:
-            reality = _service("reality_reach")
-            coordinator = _service("reality_actuation")
-            if reality is None or coordinator is None:
-                return {
-                    "ok": False,
-                    "error": "Reality Reach actuation is offline",
-                }
-            adapter = reality.actuator_adapter(channel_id)
-            if adapter is None:
-                return {
-                    "ok": False,
-                    "error": f"physical channel is not executable: {channel_id}",
-                }
-            if not isinstance(adapter, TargetCommandCompiler):
-                return {
-                    "ok": False,
-                    "error": (
-                        "the attached actuator does not expose transport-neutral "
-                        f"target compilation: {channel_id}"
-                    ),
-                }
             target = params.get("target_value", params.get("value"))
             if target is None or isinstance(target, bool):
                 return {
@@ -855,17 +833,26 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                     minimum=0.1,
                     maximum=300.0,
                 )
-                compiled = await adapter.compile_target(
-                    target_value,
-                    inventory_sha256=str(reality.status()["registry_sha256"]),
-                    deadline_s=deadline_s,
-                    idempotency_key=str(
-                        params.get("idempotency_key")
-                        or f"embodiment.target.{uuid.uuid4().hex}"
-                    ),
-                    source="embodiment_skill",
+                reason = str(
+                    params.get("reason") or "Aura selected a physical target"
+                )[:240]
+                result = await get_world_bridge().call(
+                    Channel.ENVIRONMENTAL_CHANGE,
+                    action=f"physical:{channel_id}:set_target",
+                    intent=reason,
+                    payload={
+                        "operation": "reality_target",
+                        "channel_id": channel_id,
+                        "target_value": target_value,
+                        "timeout_s": deadline_s,
+                        "idempotency_key": str(
+                            params.get("idempotency_key")
+                            or f"embodiment.target.{uuid.uuid4().hex}"
+                        ),
+                        "reason": reason,
+                        "source": "embodiment_skill",
+                    },
                 )
-                result = await coordinator.execute(compiled)
             except (
                 LookupError,
                 OSError,
@@ -879,10 +866,9 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                     "error": f"{type(exc).__name__}:{exc}"[:320],
                     "channel_id": channel_id,
                 }
-            output = dict(result) if isinstance(result, Mapping) else {"result": result}
+            output = _world_result(result)
             return {
                 **output,
-                "ok": bool(output.get("ok", output.get("effect_verified", False))),
                 "channel_id": channel_id,
                 "target_value": target_value,
             }

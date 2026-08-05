@@ -407,9 +407,94 @@ async def test_environmental_handler_fails_when_no_physical_transport_exists(
 
 
 @pytest.mark.asyncio
+async def test_environmental_handler_compiles_registered_target_after_authority(
+    monkeypatch,
+) -> None:
+    from core.embodiment import iot_bridge as iot_module
+
+    compiled = SimpleNamespace(
+        sha256="sha256:" + "c" * 64,
+    )
+
+    class Adapter:
+        adapter_id = "mqtt.office.temperature.adapter"
+
+        async def compile_target(self, target, **kwargs):
+            assert target == 22.5
+            assert kwargs == {
+                "inventory_sha256": "sha256:" + "a" * 64,
+                "deadline_s": 12.0,
+                "idempotency_key": "demo.target.22-5",
+                "source": "embodiment_skill",
+            }
+            return compiled
+
+    class Reality:
+        @staticmethod
+        def register_adapter(_adapter):
+            return None
+
+        @staticmethod
+        def actuator_adapter(channel_id):
+            assert channel_id == "mqtt.office.temperature.command"
+            return Adapter()
+
+        @staticmethod
+        def status():
+            return {"registry_sha256": "sha256:" + "a" * 64}
+
+    class Coordinator:
+        @staticmethod
+        async def execute(command):
+            assert command is compiled
+            return {
+                "transport_succeeded": True,
+                "effect_verified": True,
+                "reality_reach_transaction": {"transaction_id": "tx-1"},
+            }
+
+    bridge = iot_module.IoTBridge()
+    bridge.bind_reality_reach(Reality(), Coordinator())
+    monkeypatch.setattr(iot_module, "_BRIDGE", bridge)
+
+    result = await iot_module._environmental_change_handler(
+        {
+            "operation": "reality_target",
+            "channel_id": "MQTT.OFFICE.TEMPERATURE.COMMAND",
+            "target_value": 22.5,
+            "timeout_s": 12,
+            "idempotency_key": "demo.target.22-5",
+            "source": "embodiment_skill",
+        },
+        capability_token="CT-test",
+    )
+
+    assert result["transport_succeeded"] is True
+    assert result["effect_verified"] is True
+    assert result["channel_id"] == "mqtt.office.temperature.command"
+    assert result["target_value"] == 22.5
+    assert result["effects"][0]["adapter_id"] == (
+        "mqtt.office.temperature.adapter"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_reality_target_requires_world_bridge_capability_token() -> None:
+    from core.embodiment.iot_bridge import IoTBridge
+
+    with pytest.raises(PermissionError, match="iot_capability_token_required"):
+        await IoTBridge().apply_target_authorized(
+            "mqtt.office.temperature.command",
+            22.5,
+            capability_token="",
+        )
+
+
+@pytest.mark.asyncio
 async def test_legacy_affect_actuator_delegates_to_world_bridge(monkeypatch) -> None:
     from core.autonomic import iot_bridge as legacy_module
 
+    monkeypatch.setenv("AURA_HASS_TOKEN", "test-token")
     calls: list[tuple[tuple, dict]] = []
 
     class Bridge:
@@ -423,7 +508,7 @@ async def test_legacy_affect_actuator_delegates_to_world_bridge(monkeypatch) -> 
             )
 
     monkeypatch.setattr(legacy_module, "get_world_bridge", lambda: Bridge())
-    actuator = legacy_module.PhysicalActuator()
+    actuator = legacy_module.PhysicalActuator("https://hass.example.test:8123")
 
     result = await actuator.broadcast_affect_state({"P": 2.0, "A": 2.0})
 
