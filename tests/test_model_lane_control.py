@@ -20,6 +20,7 @@ from core.runtime.model_lane_control import (
     ModelLaneController,
     ProcessIdentity,
     StandaloneModelLaneLease,
+    SynchronousInProcessModelLaneLease,
     acquire_in_process_model_lane,
     acquire_standalone_model_lane,
     acquire_synchronous_in_process_model_lane,
@@ -1260,6 +1261,75 @@ async def test_async_in_process_heartbeat_exception_requests_shutdown(
     await asyncio.wait_for(lease._heartbeat_loop(), timeout=0.1)
 
     assert shutdown_reasons == ["in_process_model_lane_fence_lost:in-process:test"]
+
+
+@pytest.mark.asyncio
+async def test_async_in_process_release_retries_after_durable_refusal() -> None:
+    release_results = iter((False, True))
+    release_calls: list[str] = []
+
+    class Controller:
+        async def heartbeat_owner(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 74
+            return True
+
+        async def release_owner(
+            self,
+            _owner_id: str,
+            *,
+            fencing_token: int,
+            reason: str,
+        ) -> bool:
+            assert fencing_token == 74
+            release_calls.append(reason)
+            return next(release_results)
+
+    lease = InProcessModelLaneLease(
+        controller=Controller(),
+        decision=SimpleNamespace(owner_id="in-process:retry", fencing_token=74),
+        heartbeat_interval_s=60.0,
+    )
+
+    assert await lease.release(reason="first-attempt") is False
+    assert lease._released is False
+    assert lease._heartbeat_task is not None
+    assert await lease.release(reason="second-attempt") is True
+    assert lease._released is True
+    assert release_calls == ["first-attempt", "second-attempt"]
+
+
+def test_sync_in_process_release_retries_after_durable_refusal() -> None:
+    release_results = iter((False, True))
+    release_calls: list[str] = []
+
+    class Controller:
+        def heartbeat_owner_sync(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 75
+            return True
+
+        def release_owner_sync(
+            self,
+            _owner_id: str,
+            *,
+            fencing_token: int,
+            reason: str,
+        ) -> bool:
+            assert fencing_token == 75
+            release_calls.append(reason)
+            return next(release_results)
+
+    lease = SynchronousInProcessModelLaneLease(
+        controller=Controller(),
+        decision=SimpleNamespace(owner_id="in-process-sync:retry", fencing_token=75),
+        heartbeat_interval_s=60.0,
+    )
+
+    assert lease.release(reason="first-attempt") is False
+    assert lease._released is False
+    assert lease._heartbeat_thread.is_alive()
+    assert lease.release(reason="second-attempt") is True
+    assert lease._released is True
+    assert release_calls == ["first-attempt", "second-attempt"]
 
 
 def test_live_in_process_owner_heartbeat_expiry_fails_closed_until_recovery(

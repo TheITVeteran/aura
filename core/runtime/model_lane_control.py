@@ -2974,12 +2974,19 @@ class InProcessModelLaneLease:
         self.controller = controller
         self.decision = decision
         self._heartbeat_interval_s = max(1.0, float(heartbeat_interval_s))
+        self._released = False
+        self._release_in_progress = False
+        self._heartbeat_task: asyncio.Task[Any] | None = None
+        self._start_heartbeat()
+
+    def _start_heartbeat(self) -> None:
+        if self._released or self._heartbeat_task is not None:
+            return
         from core.utils.task_tracker import get_task_tracker
 
-        self._heartbeat_task: asyncio.Task[Any] | None = get_task_tracker().create_task(
-            self._heartbeat_loop(), name=f"ModelLaneHeartbeat:{decision.owner_id}"
+        self._heartbeat_task = get_task_tracker().create_task(
+            self._heartbeat_loop(), name=f"ModelLaneHeartbeat:{self.decision.owner_id}"
         )
-        self._released = False
 
     async def _heartbeat_loop(self) -> None:
         while not self._released:
@@ -3010,20 +3017,32 @@ class InProcessModelLaneLease:
                 return
 
     async def release(self, *, reason: str = "in_process_model_released") -> bool:
-        if self._released:
+        if self._released or self._release_in_progress:
             return False
-        self._released = True
+        self._release_in_progress = True
         task, self._heartbeat_task = self._heartbeat_task, None
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        try:
+            released = await self.controller.release_owner(
+                self.decision.owner_id,
+                fencing_token=self.decision.fencing_token,
+                reason=reason,
+            )
+        except BaseException:
+            self._release_in_progress = False
+            self._start_heartbeat()
+            raise
+        if not released:
+            self._release_in_progress = False
+            self._start_heartbeat()
+            return False
         unregister_model_lane_owner_adapter(self.decision.owner_id)
-        return await self.controller.release_owner(
-            self.decision.owner_id,
-            fencing_token=self.decision.fencing_token,
-            reason=reason,
-        )
+        self._released = True
+        self._release_in_progress = False
+        return True
 
     async def set_preemptible(self, preemptible: bool) -> bool:
         if self._released:
@@ -3049,12 +3068,23 @@ class SynchronousInProcessModelLaneLease:
         self.decision = decision
         self._heartbeat_interval_s = max(1.0, float(heartbeat_interval_s))
         self._released = False
+        self._release_in_progress = False
         self._stop_event = threading.Event()
-        self._heartbeat_thread = threading.Thread(
+        self._heartbeat_thread = self._new_heartbeat_thread()
+        self._heartbeat_thread.start()
+
+    def _new_heartbeat_thread(self) -> threading.Thread:
+        return threading.Thread(
             target=self._heartbeat_loop,
-            name=f"ModelLaneHeartbeatSync:{decision.owner_id}",
+            name=f"ModelLaneHeartbeatSync:{self.decision.owner_id}",
             daemon=True,
         )
+
+    def _restart_heartbeat(self) -> None:
+        if self._released or self._heartbeat_thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._heartbeat_thread = self._new_heartbeat_thread()
         self._heartbeat_thread.start()
 
     def _heartbeat_loop(self) -> None:
@@ -3086,18 +3116,33 @@ class SynchronousInProcessModelLaneLease:
             return
 
     def release(self, *, reason: str = "sync_in_process_model_released") -> bool:
-        if self._released:
+        if self._released or self._release_in_progress:
             return False
-        self._released = True
+        self._release_in_progress = True
         self._stop_event.set()
         if self._heartbeat_thread is not threading.current_thread():
             self._heartbeat_thread.join(timeout=max(1.0, self._heartbeat_interval_s + 0.5))
+        if self._heartbeat_thread.is_alive():
+            self._release_in_progress = False
+            return False
+        try:
+            released = self.controller.release_owner_sync(
+                self.decision.owner_id,
+                fencing_token=self.decision.fencing_token,
+                reason=reason,
+            )
+        except BaseException:
+            self._release_in_progress = False
+            self._restart_heartbeat()
+            raise
+        if not released:
+            self._release_in_progress = False
+            self._restart_heartbeat()
+            return False
         unregister_model_lane_owner_adapter(self.decision.owner_id)
-        return self.controller.release_owner_sync(
-            self.decision.owner_id,
-            fencing_token=self.decision.fencing_token,
-            reason=reason,
-        )
+        self._released = True
+        self._release_in_progress = False
+        return True
 
     def set_preemptible(self, preemptible: bool) -> bool:
         if self._released:
@@ -3331,14 +3376,17 @@ class StandaloneModelLaneLease:
     def release(self, *, reason: str = "standalone_model_tool_finished") -> bool:
         if self._released:
             return False
-        self._released = True
         if self.inherited or self.controller is None or self.decision is None:
+            self._released = True
             return False
-        return self.controller.release_owner_sync(
+        released = self.controller.release_owner_sync(
             self.decision.owner_id,
             fencing_token=self.decision.fencing_token,
             reason=reason,
         )
+        if released:
+            self._released = True
+        return released
 
 
 def _run_standalone_async(awaitable: Awaitable[Any]) -> Any:

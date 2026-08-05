@@ -36731,7 +36731,7 @@ It does not change the empirical CP810 requirements or the 809/920 total.
 #### Every-line semantic review addendum: model-lane transaction integrity
 
 `core/runtime/model_lane_control.py` received a complete semantic review of its
-original 3,463 lines plus the 78-line hardened delta, for 3,541 current lines
+original 3,463 lines plus the 126-line hardened delta, for 3,589 current lines
 across process identity, external discovery, capacity accounting,
 reserve/evict/commit/cancel transitions, compensation, delegation, and all
 three lease wrappers. The review found that mechanical gate success had hidden
@@ -36760,7 +36760,11 @@ Closed in this bounded checkpoint:
 - retained compensators survive a failed restoration attempt and are removed
   only after a successful retry; and
 - preemptibility updates preserve each owner's negotiated lease TTL rather
-  than silently extending it to the global default.
+  than silently extending it to the global default; and
+- async and synchronous in-process releases stop their heartbeat owner first,
+  unregister adapters only after durable release succeeds, and restart the
+  heartbeat after refusal or persistence failure so exact-fence cleanup remains
+  retryable. Standalone leases likewise remain retryable after refusal.
 
 Remaining reviewed findings, retained as open requirements rather than omitted
 from the semantic record:
@@ -36772,8 +36776,6 @@ from the semantic record:
   pending-compensation state before any external unload or terminal cancel;
 - serialize concurrent compensation claims across every direct and recovered
   compensation path;
-- make async, synchronous, and standalone release retryable after persistence
-  failure and close the synchronous heartbeat-versus-release shutdown race;
 - account inherited child subleases cumulatively, reject non-finite resource
   claims, and prevent descendants from exceeding the parent reservation;
 - replace fixed-name model-command recognition with a fail-closed capability
@@ -36781,8 +36783,8 @@ from the semantic record:
   bypass model-lane admission;
 - remove external-discovery registration-race duplicates before persistence.
 
-Evidence: the focused new regressions passed 8/8 and the complete model-lane,
+Evidence: the focused new regressions passed 10/10 and the complete model-lane,
 fenced-owner, MLX-heartbeat, embedding, voice, image, and local-code family
-passed 73/73. This advances the every-line semantic workstream but does not
+passed 75/75. This advances the every-line semantic workstream but does not
 close it, does not close the remaining model-lane findings, and does not change
 the honest 809/920 total.
