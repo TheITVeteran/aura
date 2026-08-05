@@ -196,6 +196,25 @@ class TestTheCorpusItselfStaysHonest:
         assert not (deliverable & undeliverable)
 
 
+#: A floor answers a question. Probing a diagnostic floor with a personal
+#: question tests a pairing the pipeline would never produce, and the leak
+#: detectors correctly refuse it.
+_DIAGNOSTIC_FLOOR_MARKERS = (
+    "headless test",
+    "parity harness",
+    "backend generator",
+    "live chat path",
+)
+
+
+def _question_that_emits(floor: str) -> str:
+    """The kind of question that would legitimately produce this floor."""
+    lowered = str(floor or "").lower()
+    if any(marker in lowered for marker in _DIAGNOSTIC_FLOOR_MARKERS):
+        return "Why does the headless test pass but the live chat path fail?"
+    return "Are you with me?"
+
+
 class TestFallbacksDoNotClaimWhatTheyLack:
     """A fallback may not claim the quality whose absence produced it.
 
@@ -216,9 +235,36 @@ class TestFallbacksDoNotClaimWhatTheyLack:
     @pytest.mark.parametrize("floor", _RELIABILITY_FLOOR_TEXTS)
     def test_floor_survives_the_gate_that_asked_for_it(self, floor: str):
         """A repair that produces text the pipeline would itself reject is not
-        a repair. Whatever the floor says, it has to be servable."""
-        reasons = assess_user_facing_reply("Are you with me?", floor).reasons
+        a repair. Whatever the floor says, it has to be servable — ASKED THE
+        QUESTION THAT WOULD EMIT IT.
+
+        This probed every floor with "Are you with me?". Three of the five are
+        engineering diagnostics ("the headless test is exercising the generator
+        in isolation", "fix the live parity harness first"), and answering
+        "Are you with me?" with those is not a floor doing its job — it is the
+        stale-diagnostic leak that stale_diagnostic_floor_leak exists to catch,
+        and that reason is now unspeakable.
+
+        So the pairing is the thing under test. A diagnostic floor is servable
+        for a diagnostic question and must NOT be servable for a personal one;
+        asserting the latter would have required the leak detector to be wrong.
+        """
+        question = _question_that_emits(floor)
+        reasons = assess_user_facing_reply(question, floor).reasons
         assert disposition_for(reasons) is not SurfaceDisposition.DISCARD, (
             f"a repair floor would be destroyed by the pipeline that emitted "
-            f"it: {reasons}"
+            f"it (question={question!r}): {reasons}"
         )
+
+    def test_a_diagnostic_floor_is_not_servable_for_a_personal_question(self):
+        """The other half of the pairing, so it cannot silently regress.
+
+        If this ever passes, engineering diagnostics have become an acceptable
+        answer to "Are you with me?" again.
+        """
+        diagnostic = next(
+            floor for floor in _RELIABILITY_FLOOR_TEXTS if "headless test" in floor
+        )
+        reasons = assess_user_facing_reply("Are you with me?", diagnostic).reasons
+        assert "stale_diagnostic_floor_leak" in reasons
+        assert disposition_for(reasons) is SurfaceDisposition.DISCARD

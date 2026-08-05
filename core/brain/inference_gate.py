@@ -722,6 +722,35 @@ def admission_permits(
 
 
 
+def _transition_age_s(client: Any, lane: Mapping[str, Any] | None = None) -> float:
+    """How long the lane has held its current state, measured monotonically.
+
+    Watchdogs act on this number by cancelling a load or forcing a lane cold,
+    so it must be a DURATION and not a difference of wall clocks. An NTP step,
+    a DST change, or the machine sleeping makes a wall-clock delta enormous
+    (killing a healthy multi-minute load) or negative (deferring intervention
+    for as long as the clock is behind).
+
+    Falls back to the wall-clock stamp only when no monotonic one is available,
+    and clamps at zero so a backwards jump reads as "just transitioned" rather
+    than as a negative age that compares below every threshold.
+    """
+    mono = 0.0
+    if lane is not None:
+        try:
+            mono = float(lane.get("last_transition_monotonic_at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            mono = 0.0
+    if mono <= 0.0:
+        mono = float(getattr(client, "_lane_transition_monotonic_at", 0.0) or 0.0)
+    if mono > 0.0:
+        return max(0.0, time.monotonic() - mono)
+    wall = float(getattr(client, "_lane_transition_at", 0.0) or 0.0)
+    if wall <= 0.0:
+        return 0.0
+    return max(0.0, time.time() - wall)
+
+
 def _generation_actually_stopped(client: Any) -> bool:
     """Whether this client really has no generation running.
 
@@ -2805,8 +2834,10 @@ class InferenceGate:
         if lane_state in ("warming", "recovering") and not lane["conversation_ready"]:
             # [STABILITY v54] Eagerly cancel and clear prewarm task if it has been active for >300s.
             if self._prewarm_task and not self._prewarm_task.done():
-                transition_at = getattr(self._mlx_client, "_lane_transition_at", 0.0) if self._mlx_client else 0.0
-                if transition_at > 0 and (time.time() - transition_at) > 300.0:
+                transition_age = (
+                    _transition_age_s(self._mlx_client, lane) if self._mlx_client else 0.0
+                )
+                if transition_age > 300.0:
                     logger.warning(
                         "🔍 [WATCHDOG] Prewarm task is active for >300s (stuck). Cancelling task."
                     )

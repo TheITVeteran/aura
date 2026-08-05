@@ -3135,6 +3135,7 @@ class MLXLocalClient:
         self._lane_state = "cold"
         self._lane_error = ""
         self._lane_transition_at = time.time()
+        self._lane_transition_monotonic_at = time.monotonic()
         self._active_generations = 0
         self._active_generation_started_at = 0.0
         #: True when an adapter swap timed out with its command still queued,
@@ -4088,6 +4089,14 @@ class MLXLocalClient:
     def _set_lane_state(self, state: str, error: str = "") -> None:
         if state != self._lane_state:
             self._lane_transition_at = time.time()
+            # A MONOTONIC companion. Watchdogs measure "how long has this lane
+            # been warming?" and act on the answer by killing a load or forcing
+            # a reset. Wall clock is the wrong ruler for a duration: an NTP
+            # correction, a DST change, or this laptop sleeping and waking
+            # makes the delta huge (killing a healthy load) or negative
+            # (deferring intervention indefinitely). The wall-clock stamp stays
+            # for display and for anything that needs a real date.
+            self._lane_transition_monotonic_at = time.monotonic()
         self._lane_state = state
         if error:
             self._lane_error = str(error)
@@ -4635,6 +4644,9 @@ class MLXLocalClient:
             "last_user_facing_completed_at": self._last_user_facing_completed_at,
             "last_visible_readiness_at": self._last_visible_readiness_at,
             "last_transition_at": self._lane_transition_at,
+            "last_transition_monotonic_at": getattr(
+                self, "_lane_transition_monotonic_at", 0.0
+            ),
             "warmup_attempted": self._warmup_attempted,
             "warmup_in_flight": self._warmup_in_flight,
             "model_load_admission": self._model_load_admission_status(),
