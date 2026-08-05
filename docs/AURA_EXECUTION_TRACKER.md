@@ -36425,3 +36425,48 @@ This closes the independent dual-signature software path for A1. No real
 speaker/microphone campaign, independently held production keys, public Rekor
 entry, or representative tenant replay exists yet, so no empirical promotion
 is claimed. CP810 and the total remain open at 809/920.
+
+#### CP810 addendum: append-only A1 transparency promotion
+
+The A1 path now reaches the same independently verifiable public-log boundary
+as general physical acceptance. The shared transparency implementation exposes
+one canonical statement-envelope validator and one artifact-generic bundle
+builder rather than maintaining a second acoustic cryptographic copy. Both
+general acceptance and A1 therefore use the same canonical JSON, statement
+digest, producer X.509 signature, pinned Rekor root, signed entry timestamp,
+RFC 6962 inclusion proof, signed checkpoint, derived UUID, publication-delay,
+and monotonic rollback checks.
+
+An accepted acoustic campaign now emits a domain-bound transparency statement
+that commits its campaign id, Keychain-held mandate, external-verification
+digest, both independent witness bundles, sequence, predecessor statement, and
+predecessor Rekor UUID. The A1 bundle builder rejects another acceptance
+domain. Verification reconstructs the expected statement from the accepted
+dual-root receipt, so a valid public-log artifact cannot be rebound to another
+campaign. Missing evidence, invalid encoding, log-key substitution, statement
+drift, and log-index/time rollback remain explicit blockers.
+
+The final transparency verdict has its own private create-once receipt with
+strict value invariants and collision refusal. This completes the software
+custody chain from governed physical execution through independent metrology
+and governance witnesses to an append-only public timestamp without giving
+Aura custody of external signing keys or network publication authority.
+
+A1 transparency evidence:
+
+- a complete signed fixture passed producer-certificate verification, Rekor
+  signed-entry and checkpoint verification, inclusion proof, UUID derivation,
+  exact campaign rebinding refusal, rollback refusal, missing-bundle refusal,
+  and create-once final-receipt persistence;
+- existing general acceptance transparency and witness regressions remained
+  green, with 23/23 focused cryptographic tests and 176/176 affected Reality
+  Reach, route, transaction, actuation, middleware, event-flow, and acoustic
+  tests passing;
+- smoke 103/103, full repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This closes the append-only A1 promotion implementation, not the empirical
+campaign. A real speaker/microphone run, independently held production signer
+roots, a public Rekor entry, and independent representative tenant replay still
+have not occurred. CP810 and the total therefore remain open at 809/920.

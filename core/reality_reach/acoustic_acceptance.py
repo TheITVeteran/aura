@@ -10,7 +10,7 @@ import re
 import stat
 import statistics
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -22,6 +22,13 @@ from core.reality_reach.acceptance import (
     acceptance_governance_document,
 )
 from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_transparency import (
+    ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA,
+    AcceptanceTransparencyError,
+    build_acceptance_transparency_artifact_bundle,
+    validate_acceptance_transparency_statement_envelope,
+    verify_acceptance_transparency_artifact,
+)
 from core.reality_reach.acceptance_witness import (
     AcceptanceWitnessBundle,
     AcceptanceWitnessError,
@@ -38,6 +45,10 @@ ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v2"
 EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
     "aura.reality_reach.external_acoustic_a1_verification.v1"
 )
+TRANSPARENT_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
+    "aura.reality_reach.transparent_acoustic_a1_verification.v1"
+)
+_REKOR_UUID = re.compile(r"^[0-9a-f]{80}$")
 ACOUSTIC_A1_CONNECTOR_ID = "macos.acoustic.a1"
 ACOUSTIC_A1_REQUIRED_CASES = (
     "calibration.monotone_transfer",
@@ -510,6 +521,7 @@ class AcousticA1CampaignRecord:
 
 @dataclass(frozen=True, slots=True)
 class ExternallyWitnessedAcousticA1Receipt:
+    campaign_id: str
     campaign_record_sha256: str
     mandate_sha256: str
     metrology_witness_bundle_sha256: str
@@ -519,6 +531,8 @@ class ExternallyWitnessedAcousticA1Receipt:
     blockers: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not self.campaign_id or len(self.campaign_id) > 128:
+            raise ValueError("campaign_id must be a bounded non-empty string")
         for name in (
             "campaign_record_sha256",
             "mandate_sha256",
@@ -555,6 +569,7 @@ class ExternallyWitnessedAcousticA1Receipt:
     def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
         document = {
             "schema": EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA,
+            "campaign_id": self.campaign_id,
             "campaign_record_sha256": self.campaign_record_sha256,
             "mandate_sha256": self.mandate_sha256,
             "metrology_witness_bundle_sha256": self.metrology_witness_bundle_sha256,
@@ -680,6 +695,7 @@ def verify_acoustic_a1_with_external_witnesses(
     ):
         blockers.append("external_witness_roots_not_distinct")
     return ExternallyWitnessedAcousticA1Receipt(
+        campaign_id=record.campaign_id,
         campaign_record_sha256=record.sha256,
         mandate_sha256=mandate.sha256,
         metrology_witness_bundle_sha256=verified_metrology_bundle,
@@ -692,6 +708,239 @@ def verify_acoustic_a1_with_external_witnesses(
         ),
         blockers=tuple(sorted(set(blockers))),
     )
+
+
+def build_acoustic_a1_transparency_statement(
+    receipt: ExternallyWitnessedAcousticA1Receipt,
+    *,
+    sequence: int,
+    previous_statement_sha256: str,
+    previous_rekor_uuid: str | None,
+    issued_at_unix: int,
+) -> dict[str, Any]:
+    """Commit one accepted A1 dual-witness verdict for public timestamping."""
+
+    if not isinstance(receipt, ExternallyWitnessedAcousticA1Receipt):
+        raise TypeError("receipt must be an ExternallyWitnessedAcousticA1Receipt")
+    if not receipt.accepted:
+        raise AcceptanceTransparencyError("acceptance_transparency_receipt_not_accepted")
+    if type(sequence) is not int or sequence <= 0:
+        raise AcceptanceTransparencyError("acceptance_transparency_sequence_invalid")
+    if not _SHA256.fullmatch(previous_statement_sha256):
+        raise AcceptanceTransparencyError(
+            "acceptance_transparency_previous_statement_sha256_invalid"
+        )
+    if type(issued_at_unix) is not int or issued_at_unix <= 0:
+        raise AcceptanceTransparencyError("acceptance_transparency_issued_at_invalid")
+    zero = "sha256:" + "0" * 64
+    if sequence == 1:
+        if previous_statement_sha256 != zero or previous_rekor_uuid is not None:
+            raise AcceptanceTransparencyError("acceptance_transparency_genesis_invalid")
+    elif previous_statement_sha256 == zero or not _REKOR_UUID.fullmatch(
+        str(previous_rekor_uuid or "")
+    ):
+        raise AcceptanceTransparencyError("acceptance_transparency_chain_invalid")
+    body = {
+        "schema": ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA,
+        "domain": "aura.reality-reach.acoustic-a1",
+        "campaign_id": receipt.campaign_id,
+        "mandate_sha256": receipt.mandate_sha256,
+        "external_verification_sha256": receipt.sha256,
+        "metrology_witness_bundle_sha256": receipt.metrology_witness_bundle_sha256,
+        "governance_witness_bundle_sha256": receipt.governance_witness_bundle_sha256,
+        "sequence": sequence,
+        "previous_statement_sha256": previous_statement_sha256,
+        "previous_rekor_uuid": previous_rekor_uuid,
+        "issued_at_unix": issued_at_unix,
+    }
+    return {**body, "statement_sha256": _digest(body)}
+
+
+def _validate_acoustic_a1_transparency_statement(
+    raw: object,
+    *,
+    receipt: ExternallyWitnessedAcousticA1Receipt,
+    expected_sequence: int,
+    expected_previous_statement_sha256: str,
+    expected_previous_rekor_uuid: str | None,
+) -> dict[str, Any]:
+    statement = validate_acceptance_transparency_statement_envelope(raw)
+    issued_at = statement.get("issued_at_unix")
+    if type(issued_at) is not int:
+        raise AcceptanceTransparencyError(
+            "acceptance_transparency_statement_binding_invalid"
+        )
+    expected = build_acoustic_a1_transparency_statement(
+        receipt,
+        sequence=expected_sequence,
+        previous_statement_sha256=expected_previous_statement_sha256,
+        previous_rekor_uuid=expected_previous_rekor_uuid,
+        issued_at_unix=issued_at,
+    )
+    if statement != expected:
+        raise AcceptanceTransparencyError(
+            "acceptance_transparency_statement_binding_invalid"
+        )
+    return statement
+
+
+def build_acoustic_a1_transparency_bundle(
+    *,
+    statement: Mapping[str, Any],
+    producer_signature: bytes,
+    producer_certificate_pem: bytes,
+    rekor_uuid: str,
+    rekor_entry: Mapping[str, Any],
+    trusted_log_public_key_pem: bytes,
+) -> dict[str, Any]:
+    """Build a portable Rekor bundle for one accepted A1 statement."""
+
+    statement_document = validate_acceptance_transparency_statement_envelope(statement)
+    if statement_document.get("domain") != "aura.reality-reach.acoustic-a1":
+        raise AcceptanceTransparencyError(
+            "acceptance_transparency_statement_binding_invalid"
+        )
+    return build_acceptance_transparency_artifact_bundle(
+        statement=statement_document,
+        producer_signature=producer_signature,
+        producer_certificate_pem=producer_certificate_pem,
+        rekor_uuid=rekor_uuid,
+        rekor_entry=rekor_entry,
+        trusted_log_public_key_pem=trusted_log_public_key_pem,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class TransparentlyLoggedAcousticA1Receipt:
+    external_verification: ExternallyWitnessedAcousticA1Receipt
+    transparency_bundle_sha256: str
+    trusted_log_key_sha256: str
+    rekor_uuid: str
+    rekor_log_index: int
+    rekor_integrated_time: int
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.external_verification,
+            ExternallyWitnessedAcousticA1Receipt,
+        ):
+            raise TypeError(
+                "external_verification must be an "
+                "ExternallyWitnessedAcousticA1Receipt"
+            )
+        for name in ("transparency_bundle_sha256", "trusted_log_key_sha256"):
+            value = str(getattr(self, name) or "")
+            if value and not _SHA256.fullmatch(value):
+                raise ValueError(f"{name} must be empty or a sha256 digest")
+        if self.rekor_uuid and not _REKOR_UUID.fullmatch(self.rekor_uuid):
+            raise ValueError("rekor_uuid must be empty or a Rekor UUID")
+        if type(self.rekor_log_index) is not int or self.rekor_log_index < -1:
+            raise ValueError("rekor_log_index must be an integer >= -1")
+        if type(self.rekor_integrated_time) is not int or self.rekor_integrated_time < 0:
+            raise ValueError("rekor_integrated_time must be a non-negative integer")
+        if len(self.blockers) != len(set(self.blockers)):
+            raise ValueError("blockers must be unique")
+
+    @property
+    def accepted(self) -> bool:
+        return bool(
+            self.external_verification.accepted
+            and self.transparency_bundle_sha256
+            and not self.blockers
+        )
+
+    @property
+    def sha256(self) -> str:
+        return _digest(self.to_dict(include_digest=False))
+
+    def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
+        document = {
+            "schema": TRANSPARENT_ACOUSTIC_A1_VERIFICATION_SCHEMA,
+            "external_verification": self.external_verification.to_dict(),
+            "transparency_bundle_sha256": self.transparency_bundle_sha256,
+            "trusted_log_key_sha256": self.trusted_log_key_sha256,
+            "rekor_uuid": self.rekor_uuid,
+            "rekor_log_index": self.rekor_log_index,
+            "rekor_integrated_time": self.rekor_integrated_time,
+            "blockers": list(self.blockers),
+            "accepted": self.accepted,
+        }
+        if include_digest:
+            document["transparent_verification_sha256"] = self.sha256
+        return document
+
+
+def verify_transparently_logged_acoustic_a1(
+    receipt: ExternallyWitnessedAcousticA1Receipt,
+    *,
+    transparency_bundle: Mapping[str, Any] | None,
+    trusted_log_public_key_pem: bytes | None,
+    expected_sequence: int,
+    expected_previous_statement_sha256: str,
+    expected_previous_rekor_uuid: str | None,
+    minimum_log_index: int | None = None,
+    minimum_integrated_time: int | None = None,
+) -> TransparentlyLoggedAcousticA1Receipt:
+    """Require append-only public-log inclusion for A1 promotion."""
+
+    if not isinstance(receipt, ExternallyWitnessedAcousticA1Receipt):
+        raise TypeError("receipt must be an ExternallyWitnessedAcousticA1Receipt")
+    artifact = verify_acceptance_transparency_artifact(
+        transparency_bundle=transparency_bundle,
+        trusted_log_public_key_pem=trusted_log_public_key_pem,
+        statement_validator=lambda raw: _validate_acoustic_a1_transparency_statement(
+            raw,
+            receipt=receipt,
+            expected_sequence=expected_sequence,
+            expected_previous_statement_sha256=expected_previous_statement_sha256,
+            expected_previous_rekor_uuid=expected_previous_rekor_uuid,
+        ),
+        minimum_log_index=minimum_log_index,
+        minimum_integrated_time=minimum_integrated_time,
+    )
+    return TransparentlyLoggedAcousticA1Receipt(
+        external_verification=receipt,
+        transparency_bundle_sha256=artifact.transparency_bundle_sha256,
+        trusted_log_key_sha256=artifact.trusted_log_key_sha256,
+        rekor_uuid=artifact.rekor_uuid,
+        rekor_log_index=artifact.rekor_log_index,
+        rekor_integrated_time=artifact.rekor_integrated_time,
+        blockers=artifact.blockers,
+    )
+
+
+def persist_transparently_logged_acoustic_a1_receipt(
+    receipt: TransparentlyLoggedAcousticA1Receipt,
+    path: str | Path,
+) -> bool:
+    """Create-once publish one transparency-bound A1 promotion verdict."""
+
+    if not isinstance(receipt, TransparentlyLoggedAcousticA1Receipt):
+        raise TypeError("receipt must be a TransparentlyLoggedAcousticA1Receipt")
+    target = Path(path).expanduser().absolute()
+    if not target.name or target.name in {".", ".."}:
+        raise AcousticAcceptanceError("transparent_acoustic_a1_receipt_path_invalid")
+    payload = canonical_json(receipt.to_dict())
+    try:
+        with DirectoryCustody.acquire(target.parent, create=True, private=True) as custody:
+            published = bool(custody.write_bytes_once(target.name, payload, mode=0o600))
+            fd = custody.open_file(target.name, os.O_RDONLY)
+            try:
+                if stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
+                    raise AcousticAcceptanceError(
+                        "transparent_acoustic_a1_receipt_mode_invalid"
+                    )
+            finally:
+                os.close(fd)
+            existing = custody.read_bytes(target.name, max_bytes=1024 * 1024)
+    except SecurePathCustodyError as exc:
+        raise AcousticAcceptanceError(
+            "transparent_acoustic_a1_receipt_custody_invalid"
+        ) from exc
+    if existing != payload:
+        raise AcousticAcceptanceError("transparent_acoustic_a1_receipt_collision")
+    return published
 
 
 def persist_externally_witnessed_acoustic_a1_receipt(
@@ -1026,6 +1275,7 @@ __all__ = [
     "ACOUSTIC_A1_RECEIPT_SCHEMA",
     "ACOUSTIC_A1_REQUIRED_CASES",
     "EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA",
+    "TRANSPARENT_ACOUSTIC_A1_VERIFICATION_SCHEMA",
     "AcousticA1AcceptanceReceipt",
     "AcousticA1CampaignRecord",
     "AcousticA1CampaignStore",
@@ -1035,7 +1285,12 @@ __all__ = [
     "AcousticTrialArm",
     "AcousticTrialDriver",
     "ExternallyWitnessedAcousticA1Receipt",
+    "TransparentlyLoggedAcousticA1Receipt",
+    "build_acoustic_a1_transparency_bundle",
+    "build_acoustic_a1_transparency_statement",
     "persist_externally_witnessed_acoustic_a1_receipt",
+    "persist_transparently_logged_acoustic_a1_receipt",
     "run_acoustic_a1_acceptance",
     "verify_acoustic_a1_with_external_witnesses",
+    "verify_transparently_logged_acoustic_a1",
 ]

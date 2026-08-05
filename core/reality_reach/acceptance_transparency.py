@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import os
 import re
 import stat
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -123,14 +124,11 @@ def build_acceptance_transparency_statement(
     return {**body, "statement_sha256": _digest(body)}
 
 
-def _validate_statement(
+def validate_acceptance_transparency_statement_envelope(
     raw: object,
-    *,
-    receipt: ExternallyWitnessedAcceptanceReceipt,
-    expected_sequence: int,
-    expected_previous_statement_sha256: str,
-    expected_previous_rekor_uuid: str | None,
 ) -> dict[str, Any]:
+    """Validate the shared append-only statement envelope without domain policy."""
+
     if not isinstance(raw, Mapping):
         raise AcceptanceTransparencyError("acceptance_transparency_statement_invalid")
     statement = dict(raw)
@@ -155,7 +153,50 @@ def _validate_statement(
         raise AcceptanceTransparencyError(
             "acceptance_transparency_statement_digest_invalid"
         )
+    if statement.get("schema") != ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA:
+        raise AcceptanceTransparencyError("acceptance_transparency_statement_invalid")
+    domain = statement.get("domain")
+    campaign_id = statement.get("campaign_id")
+    if not isinstance(domain, str) or not domain or len(domain) > 128:
+        raise AcceptanceTransparencyError("acceptance_transparency_domain_invalid")
+    if not isinstance(campaign_id, str) or not campaign_id or len(campaign_id) > 128:
+        raise AcceptanceTransparencyError("acceptance_transparency_campaign_invalid")
+    for name in (
+        "mandate_sha256",
+        "external_verification_sha256",
+        "metrology_witness_bundle_sha256",
+        "governance_witness_bundle_sha256",
+        "previous_statement_sha256",
+    ):
+        _require_digest(statement.get(name), name=name)
+    sequence = statement.get("sequence")
+    issued_at_unix = statement.get("issued_at_unix")
+    previous_statement = str(statement.get("previous_statement_sha256"))
+    previous_rekor_uuid = statement.get("previous_rekor_uuid")
+    if type(sequence) is not int or sequence <= 0:
+        raise AcceptanceTransparencyError("acceptance_transparency_sequence_invalid")
+    if type(issued_at_unix) is not int or issued_at_unix <= 0:
+        raise AcceptanceTransparencyError("acceptance_transparency_issued_at_invalid")
+    if sequence == 1:
+        if previous_statement != ZERO_SHA256 or previous_rekor_uuid is not None:
+            raise AcceptanceTransparencyError("acceptance_transparency_genesis_invalid")
+    elif previous_statement == ZERO_SHA256 or not _REKOR_UUID.fullmatch(
+        str(previous_rekor_uuid or "")
+    ):
+        raise AcceptanceTransparencyError("acceptance_transparency_chain_invalid")
     statement["statement_sha256"] = digest
+    return statement
+
+
+def _validate_statement(
+    raw: object,
+    *,
+    receipt: ExternallyWitnessedAcceptanceReceipt,
+    expected_sequence: int,
+    expected_previous_statement_sha256: str,
+    expected_previous_rekor_uuid: str | None,
+) -> dict[str, Any]:
+    statement = validate_acceptance_transparency_statement_envelope(raw)
     mandate = receipt.mandate_verification
     if (
         statement.get("schema") != ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA
@@ -186,7 +227,7 @@ def _validate_statement(
     return statement
 
 
-def build_acceptance_transparency_bundle(
+def build_acceptance_transparency_artifact_bundle(
     *,
     statement: Mapping[str, Any],
     producer_signature: bytes,
@@ -195,9 +236,9 @@ def build_acceptance_transparency_bundle(
     rekor_entry: Mapping[str, Any],
     trusted_log_public_key_pem: bytes,
 ) -> dict[str, Any]:
-    """Verify and package a portable, offline-checkable Rekor bundle."""
+    """Verify and package any accepted statement into a portable Rekor bundle."""
 
-    statement_document = dict(statement)
+    statement_document = validate_acceptance_transparency_statement_envelope(statement)
     statement_bytes = _canonical_bytes(statement_document)
     try:
         certificate = load_x509_certificate(
@@ -237,6 +278,32 @@ def build_acceptance_transparency_bundle(
         "trusted_log_key_sha256": "sha256:" + verified.trusted_log_key_sha256,
     }
     return {**body, "bundle_sha256": _digest(body)}
+
+
+def build_acceptance_transparency_bundle(
+    *,
+    statement: Mapping[str, Any],
+    producer_signature: bytes,
+    producer_certificate_pem: bytes,
+    rekor_uuid: str,
+    rekor_entry: Mapping[str, Any],
+    trusted_log_public_key_pem: bytes,
+) -> dict[str, Any]:
+    """Verify and package a physical-acceptance Rekor bundle."""
+
+    statement_document = validate_acceptance_transparency_statement_envelope(statement)
+    if statement_document.get("domain") != "aura.reality-reach.physical-acceptance":
+        raise AcceptanceTransparencyError(
+            "acceptance_transparency_statement_binding_invalid"
+        )
+    return build_acceptance_transparency_artifact_bundle(
+        statement=statement_document,
+        producer_signature=producer_signature,
+        producer_certificate_pem=producer_certificate_pem,
+        rekor_uuid=rekor_uuid,
+        rekor_entry=rekor_entry,
+        trusted_log_public_key_pem=trusted_log_public_key_pem,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,38 +349,44 @@ class TransparentlyLoggedAcceptanceReceipt:
         return document
 
 
-def verify_transparently_logged_acceptance(
-    receipt: ExternallyWitnessedAcceptanceReceipt,
+@dataclass(frozen=True, slots=True)
+class TransparencyArtifactVerification:
+    transparency_bundle_sha256: str
+    trusted_log_key_sha256: str
+    rekor_uuid: str
+    rekor_log_index: int
+    rekor_integrated_time: int
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in ("transparency_bundle_sha256", "trusted_log_key_sha256"):
+            value = str(getattr(self, name) or "")
+            if value and not _DIGEST.fullmatch(value):
+                raise ValueError(f"{name} must be empty or a sha256 digest")
+        if self.rekor_uuid and not _REKOR_UUID.fullmatch(self.rekor_uuid):
+            raise ValueError("rekor_uuid must be empty or a Rekor UUID")
+        if type(self.rekor_log_index) is not int or self.rekor_log_index < -1:
+            raise ValueError("rekor_log_index must be an integer >= -1")
+        if type(self.rekor_integrated_time) is not int or self.rekor_integrated_time < 0:
+            raise ValueError("rekor_integrated_time must be a non-negative integer")
+        if len(self.blockers) != len(set(self.blockers)):
+            raise ValueError("blockers must be unique")
+
+    @property
+    def accepted(self) -> bool:
+        return bool(self.transparency_bundle_sha256 and not self.blockers)
+
+
+def verify_acceptance_transparency_artifact(
     *,
     transparency_bundle: Mapping[str, Any] | None,
     trusted_log_public_key_pem: bytes | None,
-    expected_sequence: int,
-    expected_previous_statement_sha256: str,
-    expected_previous_rekor_uuid: str | None,
+    statement_validator: Callable[[object], Mapping[str, Any]],
     minimum_log_index: int | None = None,
     minimum_integrated_time: int | None = None,
-) -> TransparentlyLoggedAcceptanceReceipt:
-    """Require public-log inclusion for physical acceptance promotion."""
+) -> TransparencyArtifactVerification:
+    """Verify one acceptance statement against Rekor and rollback floors."""
 
-    physical = receipt.mandate_verification.verification.expected_evidence_class in {
-        AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
-        AcceptanceEvidenceClass.LIVE,
-    }
-    if not physical:
-        simulation_blockers = (
-            ("unexpected_acceptance_transparency_for_simulation",)
-            if transparency_bundle is not None
-            else ()
-        )
-        return TransparentlyLoggedAcceptanceReceipt(
-            external_verification=receipt,
-            transparency_bundle_sha256="",
-            trusted_log_key_sha256="",
-            rekor_uuid="",
-            rekor_log_index=-1,
-            rekor_integrated_time=0,
-            blockers=simulation_blockers,
-        )
     blockers: list[str] = []
     bundle_sha256 = ""
     trusted_key = ""
@@ -357,15 +430,7 @@ def verify_transparently_logged_acceptance(
                 raise AcceptanceTransparencyError(
                     "acceptance_transparency_rekor_server_invalid"
                 )
-            statement = _validate_statement(
-                bundle.get("statement"),
-                receipt=receipt,
-                expected_sequence=expected_sequence,
-                expected_previous_statement_sha256=(
-                    expected_previous_statement_sha256
-                ),
-                expected_previous_rekor_uuid=expected_previous_rekor_uuid,
-            )
+            statement = dict(statement_validator(bundle.get("statement")))
             signature = base64.b64decode(
                 str(bundle.get("producer_signature_b64") or ""),
                 validate=True,
@@ -420,20 +485,80 @@ def verify_transparently_logged_acceptance(
             rekor_uuid = verified.rekor_uuid
             log_index = verified.log_index
             integrated_time = verified.integrated_time
-        except (AcceptanceTransparencyError, RekorTransparencyError, ValueError) as exc:
+        except (
+            AcceptanceTransparencyError,
+            RekorTransparencyError,
+            ValueError,
+            binascii.Error,
+        ) as exc:
             blockers.append(
                 exc.code
                 if isinstance(exc, (AcceptanceTransparencyError, RekorTransparencyError))
                 else "acceptance_transparency_bundle_invalid"
             )
-    return TransparentlyLoggedAcceptanceReceipt(
-        external_verification=receipt,
+    return TransparencyArtifactVerification(
         transparency_bundle_sha256=bundle_sha256,
         trusted_log_key_sha256=trusted_key,
         rekor_uuid=rekor_uuid,
         rekor_log_index=log_index,
         rekor_integrated_time=integrated_time,
         blockers=tuple(sorted(set(blockers))),
+    )
+
+
+def verify_transparently_logged_acceptance(
+    receipt: ExternallyWitnessedAcceptanceReceipt,
+    *,
+    transparency_bundle: Mapping[str, Any] | None,
+    trusted_log_public_key_pem: bytes | None,
+    expected_sequence: int,
+    expected_previous_statement_sha256: str,
+    expected_previous_rekor_uuid: str | None,
+    minimum_log_index: int | None = None,
+    minimum_integrated_time: int | None = None,
+) -> TransparentlyLoggedAcceptanceReceipt:
+    """Require public-log inclusion for physical acceptance promotion."""
+
+    physical = receipt.mandate_verification.verification.expected_evidence_class in {
+        AcceptanceEvidenceClass.HARDWARE_IN_LOOP,
+        AcceptanceEvidenceClass.LIVE,
+    }
+    if not physical:
+        simulation_blockers = (
+            ("unexpected_acceptance_transparency_for_simulation",)
+            if transparency_bundle is not None
+            else ()
+        )
+        return TransparentlyLoggedAcceptanceReceipt(
+            external_verification=receipt,
+            transparency_bundle_sha256="",
+            trusted_log_key_sha256="",
+            rekor_uuid="",
+            rekor_log_index=-1,
+            rekor_integrated_time=0,
+            blockers=simulation_blockers,
+        )
+    artifact = verify_acceptance_transparency_artifact(
+        transparency_bundle=transparency_bundle,
+        trusted_log_public_key_pem=trusted_log_public_key_pem,
+        statement_validator=lambda raw: _validate_statement(
+            raw,
+            receipt=receipt,
+            expected_sequence=expected_sequence,
+            expected_previous_statement_sha256=expected_previous_statement_sha256,
+            expected_previous_rekor_uuid=expected_previous_rekor_uuid,
+        ),
+        minimum_log_index=minimum_log_index,
+        minimum_integrated_time=minimum_integrated_time,
+    )
+    return TransparentlyLoggedAcceptanceReceipt(
+        external_verification=receipt,
+        transparency_bundle_sha256=artifact.transparency_bundle_sha256,
+        trusted_log_key_sha256=artifact.trusted_log_key_sha256,
+        rekor_uuid=artifact.rekor_uuid,
+        rekor_log_index=artifact.rekor_log_index,
+        rekor_integrated_time=artifact.rekor_integrated_time,
+        blockers=artifact.blockers,
     )
 
 
@@ -481,8 +606,12 @@ __all__ = [
     "ZERO_SHA256",
     "AcceptanceTransparencyError",
     "TransparentlyLoggedAcceptanceReceipt",
+    "TransparencyArtifactVerification",
+    "build_acceptance_transparency_artifact_bundle",
     "build_acceptance_transparency_bundle",
     "build_acceptance_transparency_statement",
     "persist_transparently_logged_acceptance_receipt",
     "verify_transparently_logged_acceptance",
+    "verify_acceptance_transparency_artifact",
+    "validate_acceptance_transparency_statement_envelope",
 ]

@@ -6,13 +6,20 @@ import json
 import math
 import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.x509.oid import NameOID
 
 from core.reality_reach.acceptance import AcceptanceEvidenceClass
 from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_transparency import (
+    ZERO_SHA256 as TRANSPARENCY_ZERO_SHA256,
+)
 from core.reality_reach.acceptance_witness import (
     ZERO_SHA256,
     AcceptanceWitnessBundle,
@@ -27,9 +34,13 @@ from core.reality_reach.acoustic_acceptance import (
     AcousticAcceptanceConfig,
     AcousticAcceptanceError,
     AcousticTrialArm,
+    build_acoustic_a1_transparency_bundle,
+    build_acoustic_a1_transparency_statement,
     persist_externally_witnessed_acoustic_a1_receipt,
+    persist_transparently_logged_acoustic_a1_receipt,
     run_acoustic_a1_acceptance,
     verify_acoustic_a1_with_external_witnesses,
+    verify_transparently_logged_acoustic_a1,
 )
 from core.reality_reach.scalar_adapter import ScalarSample
 from core.runtime.audit_chain import canonical_json, sha256_hex
@@ -114,6 +125,132 @@ def _witness_bundle(
         public_key_raw_b64=base64.b64encode(public_key).decode("ascii"),
         signature_b64=base64.b64encode(private_key.sign(payload)).decode("ascii"),
     )
+
+
+def _transparency_bundle(
+    statement: dict[str, object],
+) -> tuple[dict[str, object], bytes]:
+    issued_at = int(statement["issued_at_unix"])
+    statement_bytes = json.dumps(
+        statement,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    producer_key = Ed25519PrivateKey.generate()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "A1 fixture")])
+    start = datetime.fromtimestamp(issued_at - 60, tz=UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(producer_key.public_key())
+        .serial_number(1)
+        .not_valid_before(start)
+        .not_valid_after(start + timedelta(days=1))
+        .sign(producer_key, algorithm=None)
+        .public_bytes(serialization.Encoding.PEM)
+    )
+    signature = producer_key.sign(statement_bytes)
+    body = {
+        "apiVersion": "0.0.1",
+        "kind": "rekord",
+        "spec": {
+            "data": {
+                "hash": {
+                    "algorithm": "sha256",
+                    "value": hashlib.sha256(statement_bytes).hexdigest(),
+                }
+            },
+            "signature": {
+                "content": base64.b64encode(signature).decode("ascii"),
+                "format": "x509",
+                "publicKey": {
+                    "content": base64.b64encode(certificate).decode("ascii")
+                },
+            },
+        },
+    }
+    body_bytes = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    body_b64 = base64.b64encode(body_bytes).decode("ascii")
+    root = hashlib.sha256(b"\x00" + body_bytes).digest()
+    log_key = ec.generate_private_key(ec.SECP256R1())
+    log_public_pem = log_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    log_der = log_key.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    log_id = hashlib.sha256(log_der).hexdigest()
+    checkpoint_text = (
+        "rekor.sigstore.dev - 123\n"
+        "1\n"
+        f"{base64.b64encode(root).decode('ascii')}\n"
+    )
+    checkpoint_signature = log_key.sign(
+        checkpoint_text.encode("utf-8"),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    checkpoint = (
+        checkpoint_text
+        + "\n— rekor.sigstore.dev "
+        + base64.b64encode(bytes.fromhex(log_id[:8]) + checkpoint_signature).decode(
+            "ascii"
+        )
+        + "\n"
+    )
+    entry: dict[str, object] = {
+        "body": body_b64,
+        "integratedTime": issued_at + 1,
+        "logID": log_id,
+        "logIndex": 0,
+        "verification": {
+            "inclusionProof": {
+                "checkpoint": checkpoint,
+                "hashes": [],
+                "logIndex": 0,
+                "rootHash": root.hex(),
+                "treeSize": 1,
+            },
+            "signedEntryTimestamp": "",
+        },
+    }
+    set_payload = json.dumps(
+        {
+            "body": body_b64,
+            "integratedTime": issued_at + 1,
+            "logID": log_id,
+            "logIndex": 0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    verification = entry["verification"]
+    assert isinstance(verification, dict)
+    verification["signedEntryTimestamp"] = base64.b64encode(
+        log_key.sign(set_payload, ec.ECDSA(hashes.SHA256()))
+    ).decode("ascii")
+    rekor_uuid = f"{123:016x}{root.hex()}"
+    bundle = build_acoustic_a1_transparency_bundle(
+        statement=statement,
+        producer_signature=signature,
+        producer_certificate_pem=certificate,
+        rekor_uuid=rekor_uuid,
+        rekor_entry=entry,
+        trusted_log_public_key_pem=log_public_pem,
+    )
+    return bundle, log_public_pem
 
 
 @pytest.mark.asyncio
@@ -280,6 +417,7 @@ async def test_a1_requires_distinct_valid_external_witness_roots(tmp_path) -> No
 
     assert verified.accepted is True
     assert verified.blockers == ()
+    assert verified.campaign_id == record.campaign_id
     assert shared_root.accepted is False
     assert "external_witness_roots_not_distinct" in shared_root.blockers
     receipt_path = tmp_path / "external-a1.json"
@@ -295,6 +433,76 @@ async def test_a1_requires_distinct_valid_external_witness_roots(tmp_path) -> No
         persist_externally_witnessed_acoustic_a1_receipt(
             replace(verified, blockers=("tampered",)),
             receipt_path,
+        )
+
+    issued_at = 1_785_082_400
+    statement = build_acoustic_a1_transparency_statement(
+        verified,
+        sequence=1,
+        previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        previous_rekor_uuid=None,
+        issued_at_unix=issued_at,
+    )
+    bundle, log_public_pem = _transparency_bundle(statement)
+    transparent = verify_transparently_logged_acoustic_a1(
+        verified,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+    assert transparent.accepted is True
+    assert transparent.rekor_log_index == 0
+    assert transparent.rekor_integrated_time == issued_at + 1
+
+    missing = verify_transparently_logged_acoustic_a1(
+        verified,
+        transparency_bundle=None,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+    rollback = verify_transparently_logged_acoustic_a1(
+        verified,
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+        minimum_log_index=0,
+    )
+    rebound = verify_transparently_logged_acoustic_a1(
+        replace(verified, campaign_id="fixture-rebound"),
+        transparency_bundle=bundle,
+        trusted_log_public_key_pem=log_public_pem,
+        expected_sequence=1,
+        expected_previous_statement_sha256=TRANSPARENCY_ZERO_SHA256,
+        expected_previous_rekor_uuid=None,
+    )
+    assert missing.accepted is False
+    assert missing.blockers == ("acceptance_transparency_bundle_missing",)
+    assert rollback.accepted is False
+    assert rollback.blockers == ("acceptance_transparency_log_index_rollback",)
+    assert rebound.accepted is False
+    assert rebound.blockers == (
+        "acceptance_transparency_statement_binding_invalid",
+    )
+
+    transparent_path = tmp_path / "transparent-a1.json"
+    assert persist_transparently_logged_acoustic_a1_receipt(
+        transparent,
+        transparent_path,
+    ) is True
+    assert persist_transparently_logged_acoustic_a1_receipt(
+        transparent,
+        transparent_path,
+    ) is False
+    with pytest.raises(AcousticAcceptanceError, match="receipt_collision"):
+        persist_transparently_logged_acoustic_a1_receipt(
+            replace(transparent, blockers=("tampered",)),
+            transparent_path,
         )
 
 
