@@ -483,6 +483,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 reality_reach,
                 router,
                 digital_twin=digital_twin,
+                middleware=getattr(orchestrator, "reality_middleware", None),
                 state_path=trust_state_path,
                 trust_store=trust_store,
                 trust_store_error=trust_store_error,

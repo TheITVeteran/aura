@@ -40,6 +40,7 @@ from core.reality_reach.body_projection import (
 )
 from core.reality_reach.digital_twin import RealityDigitalTwinGraph
 from core.reality_reach.live import LiveChannelAdapter, RealityReachService
+from core.reality_reach.middleware_contracts import ManagedRealityAdapter
 from core.reality_reach.observation_router import RealityObservationRouter
 from core.reality_reach.trust_custody import (
     AttachmentTrustStore,
@@ -338,6 +339,7 @@ class DeviceAttachmentBroker:
         observation_router: RealityObservationRouter,
         *,
         digital_twin: RealityDigitalTwinGraph | None = None,
+        middleware: Any | None = None,
         state_path: Path | None = None,
         trust_store: AttachmentTrustStore | None = None,
         trust_store_error: str = "",
@@ -360,6 +362,12 @@ class DeviceAttachmentBroker:
         if digital_twin is not None and not isinstance(digital_twin, RealityDigitalTwinGraph):
             raise TypeError("digital_twin must be a RealityDigitalTwinGraph")
         self._digital_twin = digital_twin
+        if middleware is not None and (
+            not callable(getattr(middleware, "register_adapter", None))
+            or not callable(getattr(middleware, "unregister_adapter", None))
+        ):
+            raise TypeError("middleware must expose managed adapter lifecycle methods")
+        self._middleware = middleware
         self._trust_store: AttachmentTrustStore | None = trust_store
         self._custody_error = str(trust_store_error or "")[:320]
         if self._trust_store is None and not self._custody_error:
@@ -404,6 +412,7 @@ class DeviceAttachmentBroker:
         self._attached: dict[str, tuple[str, LiveChannelAdapter]] = {}
         self._attached_candidates: dict[str, DeviceCandidate] = {}
         self._body_projections: dict[str, PhysicalBodyProjection] = {}
+        self._managed_nodes: dict[str, str] = {}
         # A pending entry retains broker ownership until local and remote
         # fencing both complete. The bool records whether remote detach already
         # succeeded, avoiding a duplicate physical command on retry.
@@ -1213,6 +1222,7 @@ class DeviceAttachmentBroker:
             return await self._fail_request(request, "candidate_or_connector_unavailable")
         adapter: LiveChannelAdapter | None = None
         service_registered = False
+        managed_registered = False
         sampler_registered = False
         body_projected = False
         twin_attached = False
@@ -1233,6 +1243,14 @@ class DeviceAttachmentBroker:
                 )
             self._service.register_adapter(adapter)
             service_registered = True
+            if isinstance(adapter, ManagedRealityAdapter):
+                if self._middleware is None:
+                    raise RuntimeError("managed_physical_runtime_unavailable")
+                declaration = adapter.lifecycle_declaration()
+                await self._middleware.register_adapter(adapter)
+                with self._lock:
+                    self._managed_nodes[adapter_id] = declaration.node_id
+                managed_registered = True
             try:
                 self._router.register_sampler(adapter)
                 sampler_registered = True
@@ -1287,6 +1305,7 @@ class DeviceAttachmentBroker:
                     connector=connector,
                     adapter=adapter,
                     service_registered=service_registered,
+                    managed_registered=managed_registered,
                     sampler_registered=sampler_registered,
                     body_projected=body_projected,
                     twin_attached=twin_attached,
@@ -1410,6 +1429,7 @@ class DeviceAttachmentBroker:
         connector: DeviceConnector,
         adapter: LiveChannelAdapter,
         service_registered: bool,
+        managed_registered: bool,
         sampler_registered: bool,
         body_projected: bool,
         twin_attached: bool,
@@ -1421,6 +1441,7 @@ class DeviceAttachmentBroker:
             adapter=adapter,
             adapter_id=adapter_id,
             service_registered=service_registered,
+            managed_registered=managed_registered,
             sampler_registered=sampler_registered,
             body_projected=body_projected,
             degradation_phase="reality_attachment.rollback",
@@ -1479,10 +1500,40 @@ class DeviceAttachmentBroker:
         adapter: LiveChannelAdapter,
         adapter_id: str,
         service_registered: bool,
+        managed_registered: bool | None = None,
         sampler_registered: bool,
         body_projected: bool,
         degradation_phase: str,
     ) -> tuple[bool, bool]:
+        with self._lock:
+            managed_node_id = self._managed_nodes.get(adapter_id)
+        should_fence_managed = bool(
+            managed_registered if managed_registered is not None else managed_node_id
+        )
+        managed_fenced = not should_fence_managed
+        if should_fence_managed and self._middleware is not None:
+            try:
+                if managed_node_id is None and isinstance(adapter, ManagedRealityAdapter):
+                    managed_node_id = adapter.lifecycle_declaration().node_id
+                if managed_node_id is None:
+                    raise RuntimeError("managed_node_identity_missing")
+                await self._middleware.unregister_adapter(
+                    managed_node_id,
+                    forget_desired=True,
+                )
+                managed_fenced = True
+                with self._lock:
+                    self._managed_nodes.pop(adapter_id, None)
+            except LookupError:
+                managed_fenced = True
+                with self._lock:
+                    self._managed_nodes.pop(adapter_id, None)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    degradation_phase,
+                    exc,
+                    action="continued local attachment fencing after managed node removal failed",
+                )
         sampler_fenced = not sampler_registered
         if sampler_registered:
             try:
@@ -1529,12 +1580,15 @@ class DeviceAttachmentBroker:
         service_fenced = service_fenced and (
             adapter_id not in self._service.adapter_channels()
         )
-        local_fenced = sampler_fenced and service_fenced and body_fenced
+        local_fenced = (
+            managed_fenced and sampler_fenced and service_fenced and body_fenced
+        )
         if not local_fenced:
             record_degradation(
                 degradation_phase,
                 RuntimeError(
                     "local_attachment_effects_remain_after_teardown:"
+                    f"managed={not managed_fenced}:"
                     f"sampler={not sampler_fenced}:"
                     f"service={not service_fenced}:"
                     f"body={not body_fenced}"

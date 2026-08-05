@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from core.bus.qos import QosProfile, Reliability
 from core.reality_reach import attachments as attachment_module
 from core.reality_reach.attachment_authority import AttachmentAuthorityError
 from core.reality_reach.attachments import (
@@ -32,6 +33,10 @@ from core.reality_reach.contracts import (
 )
 from core.reality_reach.digital_twin import RealityDigitalTwinGraph
 from core.reality_reach.live import ChannelReading, ReadingStatus, RealityReachService
+from core.reality_reach.middleware_contracts import (
+    ManagedAdapterDeclaration,
+    TelemetryEndpoint,
+)
 from core.reality_reach.observation_router import RealityObservationRouter
 from core.reality_reach.trust_custody import KeychainAttachmentTrustStore
 from core.somatic.body_schema import LimbType
@@ -84,6 +89,70 @@ class Adapter:
 
     async def refresh_readback(self) -> ChannelReading:
         return self.reading
+
+
+class ManagedAdapter(Adapter):
+    physical_identity_sha256 = "sha256:" + "f" * 64
+
+    def lifecycle_declaration(self) -> ManagedAdapterDeclaration:
+        return ManagedAdapterDeclaration(
+            node_id="test.managed.node",
+            adapter_id=self.adapter_id,
+            adapter_identity_sha256=self.physical_identity_sha256,
+            telemetry=(
+                TelemetryEndpoint(
+                    endpoint_id="test.managed.telemetry",
+                    channel_ids=(self.declaration.channel_id,),
+                    qos=QosProfile(reliability=Reliability.RELIABLE),
+                ),
+            ),
+        )
+
+    async def on_configure(self) -> bool:
+        return True
+
+    async def on_activate(self) -> bool:
+        return True
+
+    async def on_deactivate(self) -> bool:
+        return True
+
+    async def on_cleanup(self) -> bool:
+        return True
+
+    async def on_shutdown(self) -> bool:
+        return True
+
+    async def on_error(self) -> bool:
+        return True
+
+    async def read_telemetry(self, endpoint_id: str):
+        assert endpoint_id == "test.managed.telemetry"
+        return (self.reading,)
+
+    async def handle_service(self, endpoint_id, request):
+        raise LookupError((endpoint_id, request))
+
+    async def execute_action(self, endpoint_id, request, context):
+        raise LookupError((endpoint_id, request, context))
+
+    async def cancel_action(self, endpoint_id, goal_id, reason):
+        raise LookupError((endpoint_id, goal_id, reason))
+
+    async def reconcile_action(self, endpoint_id, record):
+        raise LookupError((endpoint_id, record))
+
+
+class ManagedRuntime:
+    def __init__(self) -> None:
+        self.registered: list[str] = []
+        self.unregistered: list[tuple[str, bool]] = []
+
+    async def register_adapter(self, adapter) -> None:
+        self.registered.append(adapter.lifecycle_declaration().node_id)
+
+    async def unregister_adapter(self, node_id, *, forget_desired=False) -> None:
+        self.unregistered.append((node_id, forget_desired))
 
 
 def _candidate(*, persistent: bool = True, manifest: str = "b") -> DeviceCandidate:
@@ -157,6 +226,18 @@ class Connector:
         self.detach_count += 1
         if self.fail_detach:
             raise RuntimeError("remote teardown unavailable")
+
+
+class ManagedConnector(Connector):
+    async def attach(
+        self,
+        candidate: DeviceCandidate,
+        access: tuple[AttachmentAccess, ...],
+    ) -> ManagedAdapter:
+        assert candidate.identity_fingerprint == self.candidate.identity_fingerprint
+        assert access == (AttachmentAccess.OBSERVE,)
+        self.attach_count += 1
+        return ManagedAdapter()
 
 
 class BlockingAttachConnector(Connector):
@@ -349,6 +430,7 @@ def _broker(
     digital_twin: RealityDigitalTwinGraph | None = None,
     max_candidates: int = 2048,
     disappearance_quorum: int = 3,
+    middleware=None,
 ) -> tuple[DeviceAttachmentBroker, RealityReachService]:
     service = RealityReachService(session_id="test.attachments")
     router = RealityObservationRouter(service, digital_twin=digital_twin)
@@ -358,6 +440,7 @@ def _broker(
             service,
             router,
             digital_twin=digital_twin,
+            middleware=middleware,
             state_path=state_path,
             trust_store=KeychainAttachmentTrustStore(keychain, state_path),
             authority_verifier=authority or FakeAuthorityVerifier(),
@@ -367,6 +450,65 @@ def _broker(
         ),
         service,
     )
+
+
+@pytest.mark.asyncio
+async def test_managed_attachment_is_atomically_registered_and_fenced(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    middleware = ManagedRuntime()
+    broker, service = _broker(
+        tmp_path / "managed-attachment.json",
+        middleware=middleware,
+    )
+    connector = ManagedConnector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+    request_id = broker.requests()[0].request_id
+
+    attached = await broker.authorize_and_attach(
+        request_id,
+        authority_capability=_authority("authority.test.managed"),
+        persistent=False,
+    )
+
+    assert attached.state is ConnectionState.ATTACHED
+    assert middleware.registered == ["test.managed.node"]
+    assert service.status()["adapter_count"] == 1
+
+    await broker.revoke(
+        _candidate(persistent=False).identity_fingerprint,
+        reason="test managed fencing",
+    )
+
+    assert middleware.unregistered == [("test.managed.node", True)]
+    assert service.status()["adapter_count"] == 0
+    assert connector.detach_count == 1
+
+
+@pytest.mark.asyncio
+async def test_managed_attachment_fails_closed_without_middleware_runtime(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    broker, service = _broker(tmp_path / "managed-runtime-missing.json")
+    connector = ManagedConnector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+
+    result = await broker.authorize_and_attach(
+        broker.requests()[0].request_id,
+        authority_capability=_authority("authority.test.managed.unavailable"),
+        persistent=False,
+    )
+
+    assert result.state is ConnectionState.ERROR
+    assert result.error == "RuntimeError:managed_physical_runtime_unavailable"
+    assert service.status()["adapter_count"] == 0
+    assert connector.detach_count == 1
 
 
 def _authority(receipt_id: str) -> dict[str, str]:
