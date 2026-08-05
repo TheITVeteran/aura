@@ -2092,3 +2092,78 @@ class TestBenchmarkTrustIsNotSelfDeclared:
         source = inspect.getsource(mod.MLXLocalClient._generate_inner)
         assert 'if not isinstance(raw_text, str):' in source
         assert "treated non-string worker text as empty response" in source
+
+
+class TestRetriesDoNotBuyThemselvesMoreRoom:
+    """CP126 3d2e68fe / b4fcd100."""
+
+    def test_the_inline_retry_re_checks_admission(self, client):
+        """A fresh request would be refused in these states; so must a retry."""
+        import core.brain.llm.mlx_client as mod
+
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        assert client._inline_retry_refusal() == ""
+
+        client._init_done = False
+        assert client._inline_retry_refusal() == "worker_not_initialised"
+
+        client._init_done = True
+        client._process = SimpleNamespace(is_alive=lambda: False)
+        assert client._inline_retry_refusal() == "worker_not_alive"
+
+        client._process = None
+        assert client._inline_retry_refusal() == "worker_not_alive"
+
+    def test_shutdown_stops_the_retry(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        monkeypatch.setattr(mod, "_runtime_shutdown_requested", lambda: True)
+        assert client._inline_retry_refusal() == "runtime_shutdown"
+
+    def test_memory_pressure_stops_the_retry(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        monkeypatch.setattr(
+            mod,
+            "get_memory_pressure_snapshot",
+            lambda: SimpleNamespace(refuse_heavy_local_generation=True, reason="critical"),
+        )
+        assert client._inline_retry_refusal().startswith("memory_pressure:")
+
+    def test_unobservable_pressure_is_not_permission(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+
+        def _boom():
+            raise RuntimeError("probe unavailable")
+
+        monkeypatch.setattr(mod, "get_memory_pressure_snapshot", _boom)
+        assert client._inline_retry_refusal() == "memory_pressure_unobservable"
+
+    def test_warmup_shares_one_campaign_budget(self):
+        """The retry used to get +10s and the probe its own timeout on top."""
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._run_warmup_precompile)
+        assert "campaign_deadline" in source
+        assert "10.0 * attempt" not in source, "retry must not widen the budget"
+        # The readiness probe draws from the same deadline.
+        probe_at = source.index("_READINESS_PROBE_PROMPT")
+        assert "campaign_deadline - time.monotonic()" in source[probe_at:]
+
+    def test_an_exhausted_warmup_budget_starts_no_attempt(self):
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._run_warmup_precompile)
+        assert "warmup_budget_exhausted" in source

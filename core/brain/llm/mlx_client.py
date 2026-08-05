@@ -10058,6 +10058,31 @@ class MLXLocalClient:
     #: up its weights is not immediately asked for them again.
     _SWAP_COOLDOWN_S = 12.0
 
+    def _inline_retry_refusal(self) -> str:
+        """Why the inline empty-generation retry must not run, or "".
+
+        Re-checks the conditions a FRESH request would be admitted against.
+        The retry holds the lock the first attempt took, so nothing else will
+        ask these questions on its behalf, and each of them can have flipped
+        while the first attempt was decoding.
+        """
+        if _runtime_shutdown_requested():
+            return "runtime_shutdown"
+        process = self._process
+        if process is None or not process.is_alive():
+            return "worker_not_alive"
+        if not self._init_done:
+            return "worker_not_initialised"
+        try:
+            snapshot = get_memory_pressure_snapshot()
+            if snapshot.refuse_heavy_local_generation:
+                return f"memory_pressure:{snapshot.reason or 'critical'}"
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            # Unobservable pressure is not permission. A fresh heavy request
+            # fails closed here, so a retry that costs the same must too.
+            return "memory_pressure_unobservable"
+        return ""
+
     async def _await_swap_cooldown(
         self, *, foreground_request: bool = False, skip_swap_cooldown: bool = False
     ) -> float:
@@ -12184,6 +12209,30 @@ class MLXLocalClient:
                             foreground_request=False,
                             classification="non_critical_fallback",
                         )
+                        # CP126 3d2e68fe. The retry re-enters generation while
+                        # still holding the request lock and foreground
+                        # ownership, so it never passes an admission gate
+                        # again — and the world moved between the two
+                        # attempts. Shutdown may have been requested; memory
+                        # pressure may now refuse a heavy decode; the worker
+                        # that produced the empty answer may have died. A
+                        # fresh request would be refused in any of those
+                        # states, and this one carries the same cost.
+                        refusal = self._inline_retry_refusal()
+                        if refusal:
+                            logger.info(
+                                "🔁 [MLX] Skipping inline retry for %s: %s.",
+                                os.path.basename(self.model_path),
+                                refusal,
+                            )
+                            self._record_degraded_event(
+                                "empty_generation_retry_refused",
+                                detail=f"{os.path.basename(self.model_path)}:{refusal}",
+                                severity="info",
+                                foreground_request=False,
+                                classification="non_critical_fallback",
+                            )
+                            return None
                         logger.info(
                             "🔁 [MLX] Empty foreground generation — "
                             "inline retry after worker cache reset (%d/2).",
@@ -12562,8 +12611,26 @@ class MLXLocalClient:
         owner_name: str,
         warmup_timeout: float,
     ) -> None:
+        # CP126 b4fcd100. The second attempt used to be given
+        # `warmup_timeout + 10`, and the readiness probe that follows took its
+        # own independent timeout on top. So the documented warmup budget was
+        # not a bound on warmup at all — it was a per-attempt allowance that
+        # grew when things went badly, which is exactly when a caller waiting
+        # on this needs the bound to hold.
+        #
+        # One campaign deadline, shared: whatever the retry and the probe
+        # spend comes out of the same budget, and an attempt with nothing left
+        # does not start.
+        campaign_deadline = time.monotonic() + max(1.0, float(warmup_timeout))
         last_exc: Exception | None = None
         for attempt in range(2):
+            remaining = campaign_deadline - time.monotonic()
+            if remaining <= 0.0:
+                if last_exc is not None:
+                    raise last_exc from None
+                raise TimeoutError(
+                    f"warmup_budget_exhausted:{warmup_timeout:.1f}s"
+                )
             try:
                 warmup_text = await asyncio.wait_for(
                     self._generate_inner(
@@ -12575,7 +12642,7 @@ class MLXLocalClient:
                         max_tokens=1,
                         warmup_precompile=True,
                     ),
-                    timeout=warmup_timeout + (10.0 * attempt),
+                    timeout=remaining,
                 )
                 if warmup_text is None and not self.is_alive():
                     raise RuntimeError("warmup_precompile_worker_dead")
@@ -12613,7 +12680,14 @@ class MLXLocalClient:
                         disable_prompt_cache=True,
                         clear_prompt_cache=True,
                     ),
-                    timeout=min(max(10.0, warmup_timeout), 60.0),
+                    # Out of the SAME campaign budget as the precompile above
+                    # (CP126 b4fcd100). A probe that took its own independent
+                    # timeout is how the documented warmup bound became a
+                    # suggestion. Floored so a probe that starts at all gets a
+                    # fair chance rather than being cancelled mid-token.
+                    timeout=min(
+                        max(10.0, campaign_deadline - time.monotonic()), 60.0
+                    ),
                 )
                 if not readiness_text or not str(readiness_text).strip():
                     self._set_lane_state("recovering", "warmup_readiness_no_text")
