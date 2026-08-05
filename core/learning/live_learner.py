@@ -1264,8 +1264,9 @@ class LiveLearner:
                 ok = bool(receipt.get("ok"))
                 if ok:
                     logger.info(
-                        "Hot-swap complete (%s): fused model serving live.",
-                        receipt.get("mode", "recycled"),
+                        "Hot-swap accepted (%s): the fused model is this lane's "
+                        "serving identity and loads on next use.",
+                        receipt.get("state") or receipt.get("mode") or "unknown",
                     )
                 else:
                     logger.warning("Fused-model hot-swap refused: %s", receipt.get("reason"))

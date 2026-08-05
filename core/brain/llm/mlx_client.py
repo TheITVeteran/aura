@@ -22,6 +22,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -250,6 +251,118 @@ def _bounded_progress_value(value: Any) -> Any:
     return f"<unsupported:{type(value).__name__}>"
 
 
+#: A servable MLX artifact carries a model config, a tokenizer, and weights.
+#: Anything missing means the worker will fail at load time — after the healthy
+#: one has already been torn down.
+_REQUIRED_ARTIFACT_CONFIG = "config.json"
+_TOKENIZER_CANDIDATES = (
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "vocab.json",
+)
+
+
+@dataclass(frozen=True)
+class ArtifactVerdict:
+    """Whether a directory can actually be served, and what it is."""
+
+    ok: bool
+    reason: str = ""
+    architectures: tuple[str, ...] = ()
+    size_class: str = "unknown"
+    fingerprint: str = ""
+    weight_files: int = 0
+
+    def as_receipt(self) -> dict[str, Any]:
+        return {
+            "architectures": list(self.architectures),
+            "size_class": self.size_class,
+            "fingerprint": self.fingerprint,
+            "weight_files": self.weight_files,
+        }
+
+
+def _validate_model_artifact(resolved: Path, incumbent: str = "") -> ArtifactVerdict:
+    """Prove a directory is a servable model BEFORE the live worker is recycled.
+
+    CP126 a996d77f: this was ``is_dir()``. An empty, partial, half-copied, or
+    wrong-architecture directory passed, the healthy worker was torn down, and
+    the failure surfaced at the next load — by which time the lane that was
+    serving fine had been destroyed to make room for something that could not
+    load at all.
+
+    ``incumbent`` is the currently-served path. When both sides declare their
+    architectures, a mismatch is refused: promoting a Llama checkpoint onto a
+    lane whose callers, adapters and admission classes were built for Qwen is
+    a different model wearing the lane's name.
+    """
+    if not resolved.is_dir():
+        return ArtifactVerdict(False, f"artifact_missing:{resolved}")
+
+    config_path = resolved / _REQUIRED_ARTIFACT_CONFIG
+    if not config_path.is_file():
+        return ArtifactVerdict(False, f"artifact_missing_config:{_REQUIRED_ARTIFACT_CONFIG}")
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return ArtifactVerdict(False, f"artifact_config_unreadable:{type(exc).__name__}")
+    if not isinstance(config, dict):
+        return ArtifactVerdict(False, "artifact_config_not_an_object")
+
+    if not any((resolved / name).is_file() for name in _TOKENIZER_CANDIDATES):
+        return ArtifactVerdict(False, "artifact_missing_tokenizer")
+
+    weights = list(_weight_files(resolved))
+    if not weights:
+        return ArtifactVerdict(False, "artifact_missing_weights")
+
+    architectures = tuple(
+        str(entry)
+        for entry in (config.get("architectures") or [])
+        if isinstance(entry, str)
+    )
+    profile = None
+    try:
+        from core.brain.llm.model_artifact_profile import get_model_artifact_profile
+
+        profile = get_model_artifact_profile(str(resolved))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        profile = None
+
+    verdict = ArtifactVerdict(
+        True,
+        architectures=architectures,
+        size_class=getattr(profile, "size_class", "unknown") or "unknown",
+        fingerprint=getattr(profile, "fingerprint", "") or "",
+        weight_files=len(weights),
+    )
+
+    incumbent_path = Path(str(incumbent or "")).expanduser()
+    incumbent_config = incumbent_path / _REQUIRED_ARTIFACT_CONFIG
+    if architectures and incumbent_config.is_file():
+        try:
+            current = json.loads(incumbent_config.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            current = {}
+        current_arch = tuple(
+            str(entry)
+            for entry in (current.get("architectures") or [])
+            if isinstance(entry, str)
+        )
+        if current_arch and not set(current_arch) & set(architectures):
+            return ArtifactVerdict(
+                False,
+                f"artifact_architecture_mismatch:{'/'.join(current_arch)}"
+                f"->{'/'.join(architectures)}",
+                architectures=architectures,
+                size_class=verdict.size_class,
+                fingerprint=verdict.fingerprint,
+                weight_files=verdict.weight_files,
+            )
+    return verdict
+
+
 def _record_mlx_degradation(
     error: BaseException,
     *,
@@ -331,6 +444,42 @@ def clients_snapshot() -> list[tuple[str, Any]]:
     """
 
     return _clients_snapshot()
+
+
+def _rebind_client_registry_key(previous: str, target: str, client: Any) -> bool:
+    """Re-key a client after its serving artifact changes.
+
+    CP126 df8e3045: a promotion mutated only ``model_path``. The registry
+    still filed the client under the OLD path, so ``get_mlx_client(new_path)``
+    built a SECOND client — and a second worker, and a second copy of the
+    weights — for a lane that was already serving that artifact, while
+    admission and eviction went on describing this one under a name it no
+    longer had.
+
+    Returns whether a rebind happened. Refuses to evict a different client
+    already registered at the target: two clients wanting one path is a
+    conflict to report, not to resolve by overwriting.
+    """
+    old_key = str(previous or "")
+    new_key = str(target or "")
+    if not new_key or old_key == new_key:
+        return False
+    with _CLIENTS_LOCK:
+        if _CLIENTS.get(old_key) is not client:
+            return False
+        occupant = _CLIENTS.get(new_key)
+        if occupant is not None and occupant is not client:
+            logger.warning(
+                "🧬 [MLX] Promotion target %s already has a distinct client; "
+                "left the registry alone.",
+                os.path.basename(new_key),
+            )
+            return False
+        _CLIENTS.pop(old_key, None)
+        _CLIENTS[new_key] = client
+    return True
+
+
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
@@ -3153,6 +3302,10 @@ class MLXLocalClient:
         self._lock = _threading.Lock()
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
+        #: A validated artifact waiting for the active request to end. Held
+        #: apart from _deferred_reboot_reason so a recovery verdict and a
+        #: staged promotion cannot overwrite one another.
+        self._pending_promotion: str | None = None
         # A generation this client cancelled ON PURPOSE — healthy worker, turn
         # budget spent — yields no text. That is a deferral, not a broken
         # endpoint, and the router must not open the Cortex circuit over it.
@@ -7254,24 +7407,100 @@ class MLXLocalClient:
         the swap also serves the promoted artifact.
         """
         resolved = await asyncio.to_thread(lambda: Path(str(model_path or "")).expanduser())
-        if not await asyncio.to_thread(resolved.is_dir):
-            return {"ok": False, "reason": f"artifact_missing:{resolved}"}
         previous = self.model_path
-        self.model_path = str(resolved)
-        self._expert_adapter_path = None  # adapters belong to the old weights
+        verdict = await asyncio.to_thread(_validate_model_artifact, resolved, previous)
+        if not verdict.ok:
+            logger.warning(
+                "🧬 [MLX] Refused artifact promotion for %s: %s", resolved.name, verdict.reason
+            )
+            return {
+                "ok": False,
+                "state": "rejected",
+                "reason": verdict.reason,
+                "previous": previous,
+                "artifact": str(resolved),
+                **verdict.as_receipt(),
+            }
+
         if (
             int(getattr(self, "_active_generations", 0) or 0) > 0
             or self._current_request_started_at > 0.0
         ):
-            self._deferred_reboot_reason = "promoted_artifact_swap"
+            # CP126 8ccdcd3b: model_path used to change HERE, so for the rest
+            # of the active request the old worker kept decoding old weights
+            # while status, logging and admission all described it as the new
+            # model. The desired artifact is now held separately and published
+            # only when a worker is actually serving it.
+            #
+            # CP126 7f4435f5: the promotion also used to be stored in
+            # _deferred_reboot_reason, the same scalar first-token, token-stall,
+            # heartbeat and fence-loss recovery write to. Whichever fired last
+            # won, so a generation failure could silently discard a staged
+            # promotion. It is a separate intent now.
+            self._pending_promotion = str(resolved)
             logger.info(
-                "🧬 [MLX] Promoted artifact staged for %s; recycling after the active request.",
+                "🧬 [MLX] Promoted artifact staged for %s; activating after the active request.",
                 resolved.name,
             )
-            return {"ok": True, "mode": "deferred", "previous": previous}
-        await self.reboot_worker(reason="promoted_artifact_swap", mark_failed=False)
-        logger.info("🧬 [MLX] Promoted artifact live: %s", resolved.name)
-        return {"ok": True, "mode": "recycled", "previous": previous}
+            return {
+                "ok": True,
+                "state": "staged",
+                "mode": "deferred",
+                "previous": previous,
+                "artifact": str(resolved),
+                **verdict.as_receipt(),
+            }
+        return await self._activate_promoted_artifact(str(resolved), verdict=verdict)
+
+    async def _activate_promoted_artifact(
+        self, target: str, *, verdict: ArtifactVerdict | None = None
+    ) -> dict[str, Any]:
+        """Publish a validated artifact as this lane's serving identity.
+
+        CP126 41fa9f3c: the old path awaited ``reboot_worker`` — a TEARDOWN —
+        then logged "Promoted artifact live" and returned ok=true. Nothing had
+        spawned, handshaked, or loaded a single weight. The lane was in fact
+        unloaded, and the first caller after the promotion paid the cold start
+        and discovered any load failure. The receipt now names the state it
+        can actually prove: ``unloaded`` after a clean recycle, ``failed`` if
+        the recycle did not complete. Only ``_promotion_is_serving`` reports
+        ``ready``, and only after a worker answers on the new path.
+        """
+        previous = self.model_path
+        proof = verdict.as_receipt() if verdict is not None else {}
+        self.model_path = target
+        self._expert_adapter_path = None  # adapters belong to the old weights
+        self._pending_promotion = None
+        try:
+            await self.reboot_worker(reason="promoted_artifact_swap", mark_failed=False)
+        except Exception as exc:  # noqa: BLE001 - a failed recycle must be reported, not raised
+            _record_mlx_degradation(
+                exc,
+                action="left the promoted artifact as the serving identity after recycle failed",
+                severity="error",
+            )
+            return {
+                "ok": False,
+                "state": "failed",
+                "reason": f"recycle_failed:{type(exc).__name__}",
+                "previous": previous,
+                "artifact": target,
+                **proof,
+            }
+        _rebind_client_registry_key(previous, target, self)
+        logger.info(
+            "🧬 [MLX] Promoted artifact is now this lane's serving identity: %s "
+            "(worker unloaded; it loads on next use).",
+            Path(target).name,
+        )
+        return {
+            "ok": True,
+            "state": "unloaded",
+            "mode": "recycled",
+            "previous": previous,
+            "artifact": target,
+            **proof,
+        }
 
     def consume_deliberate_no_text_reason(self) -> str:
         """Return (and clear) why this client last produced no text on purpose.
@@ -7425,11 +7654,7 @@ class MLXLocalClient:
                 "🛑 [MLX] No soft-cancel acknowledgement after %s — worker presumed wedged; rebooting.",
                 reason,
             )
-        # A staged artifact promotion is maintenance, not a failure verdict.
-        await self.reboot_worker(
-            reason=reason,
-            mark_failed=not recoverable and reason != "promoted_artifact_swap",
-        )
+        await self.reboot_worker(reason=reason, mark_failed=not recoverable)
 
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
         """Thread-safe emergency abort for a wedged generation.
@@ -9860,6 +10085,10 @@ class MLXLocalClient:
         finally:
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None
+            # Read-and-clear, like the deferred verdict above: two generations
+            # finishing together must not both activate the same promotion.
+            _pending_promotion = self._pending_promotion
+            self._pending_promotion = None
             self._release_request_lock()
             # Each cleanup step is independently protected: an owner-exit
             # failure previously REPLACED the generation's own exception with
@@ -9881,6 +10110,18 @@ class MLXLocalClient:
                     _record_mlx_degradation(
                         _reboot_exc,
                         action="failed to resolve deferred reboot during generation cleanup",
+                        severity="error",
+                    )
+            # A staged promotion survives whatever verdict the request reached.
+            # It recycles the worker itself, so it runs after (and independent
+            # of) the recovery decision rather than competing with it.
+            if _pending_promotion:
+                try:
+                    await self._activate_promoted_artifact(str(_pending_promotion))
+                except Exception as _promotion_exc:  # noqa: BLE001
+                    _record_mlx_degradation(
+                        _promotion_exc,
+                        action="left the staged artifact pending after activation failed",
                         severity="error",
                     )
 

@@ -142,3 +142,84 @@ class TestClockJumpIsNotHostSleep:
         )
         assert client._rebase_after_system_sleep() == pytest.approx(600.0)
         assert client._clock_shift_events == 0
+
+
+class TestArtifactPromotionIsATransaction:
+    """CP126 a996d77f/41fa9f3c/8ccdcd3b/df8e3045/7f4435f5."""
+
+    def _artifact(self, root, name, arch="Qwen2ForCausalLM"):
+        artifact = root / name
+        artifact.mkdir()
+        (artifact / "config.json").write_text('{"architectures": ["%s"]}' % arch)
+        (artifact / "tokenizer.json").write_text("{}")
+        (artifact / "model.safetensors").write_bytes(b"\x00" * 16)
+        return artifact
+
+    def test_a_servable_artifact_validates(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_model_artifact
+
+        verdict = _validate_model_artifact(self._artifact(tmp_path, "good"))
+        assert verdict.ok
+        assert verdict.architectures == ("Qwen2ForCausalLM",)
+        assert verdict.weight_files == 1
+
+    def test_an_unparseable_config_is_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_model_artifact
+
+        artifact = tmp_path / "broken"
+        artifact.mkdir()
+        (artifact / "config.json").write_text("{not json")
+        verdict = _validate_model_artifact(artifact)
+        assert not verdict.ok
+        assert verdict.reason.startswith("artifact_config_unreadable")
+
+    def test_a_missing_tokenizer_is_refused(self, tmp_path):
+        from core.brain.llm.mlx_client import _validate_model_artifact
+
+        artifact = tmp_path / "no-tok"
+        artifact.mkdir()
+        (artifact / "config.json").write_text("{}")
+        (artifact / "model.safetensors").write_bytes(b"\x00")
+        assert _validate_model_artifact(artifact).reason == "artifact_missing_tokenizer"
+
+    def test_registry_rebind_moves_the_client_to_its_new_key(self, client):
+        import core.brain.llm.mlx_client as mod
+
+        with mod._CLIENTS_LOCK:
+            mod._CLIENTS["/old/path"] = client
+        try:
+            assert mod._rebind_client_registry_key("/old/path", "/new/path", client)
+            snapshot = dict(mod.clients_snapshot())
+            assert snapshot.get("/new/path") is client
+            assert "/old/path" not in snapshot
+        finally:
+            with mod._CLIENTS_LOCK:
+                mod._CLIENTS.pop("/new/path", None)
+                mod._CLIENTS.pop("/old/path", None)
+
+    def test_registry_rebind_refuses_to_evict_a_different_client(self, client):
+        import core.brain.llm.mlx_client as mod
+
+        other = MLXLocalClient(model_path=TEST_MODEL)
+        with mod._CLIENTS_LOCK:
+            mod._CLIENTS["/old/path"] = client
+            mod._CLIENTS["/new/path"] = other
+        try:
+            assert not mod._rebind_client_registry_key("/old/path", "/new/path", client)
+            assert dict(mod.clients_snapshot())["/new/path"] is other
+        finally:
+            with mod._CLIENTS_LOCK:
+                mod._CLIENTS.pop("/new/path", None)
+                mod._CLIENTS.pop("/old/path", None)
+
+    @pytest.mark.asyncio
+    async def test_a_failed_recycle_reports_failed_not_ok(self, client, tmp_path, monkeypatch):
+        async def _boom(reason="", mark_failed=True):
+            raise RuntimeError("spawn refused")
+
+        monkeypatch.setattr(client, "reboot_worker", _boom)
+        target = self._artifact(tmp_path, "fused")
+        receipt = await client._activate_promoted_artifact(str(target))
+        assert receipt["ok"] is False
+        assert receipt["state"] == "failed"
+        assert receipt["reason"].startswith("recycle_failed")

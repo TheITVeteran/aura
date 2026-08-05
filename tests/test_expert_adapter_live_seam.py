@@ -152,21 +152,35 @@ async def test_reload_model_artifact_refuses_missing_dir(client):
     assert res["ok"] is False and res["reason"].startswith("artifact_missing")
 
 
-async def test_reload_model_artifact_defers_while_busy(client, tmp_path):
-    artifact = tmp_path / "fused-gen1"
+def _servable_artifact(root, name: str):
+    """A directory the worker could actually load: config, tokenizer, weights."""
+    artifact = root / name
     artifact.mkdir()
+    (artifact / "config.json").write_text('{"architectures": ["Qwen2ForCausalLM"]}')
+    (artifact / "tokenizer.json").write_text("{}")
+    (artifact / "model.safetensors").write_bytes(b"\x00" * 16)
+    return artifact
+
+
+async def test_reload_model_artifact_defers_while_busy(client, tmp_path):
+    artifact = _servable_artifact(tmp_path, "fused-gen1")
     client._active_generations = 1
     res = await client.reload_model_artifact(str(artifact))
-    assert res["ok"] is True and res["mode"] == "deferred"
-    assert client.model_path == str(artifact)
-    assert client._deferred_reboot_reason == "promoted_artifact_swap"
+    assert res["ok"] is True and res["state"] == "staged"
+    # The old worker is still decoding the OLD weights: the lane must not
+    # describe itself as the new model until something is serving it.
+    assert client.model_path != str(artifact)
+    assert client._pending_promotion == str(artifact)
+    # A recovery verdict must not be able to discard the staged promotion.
+    client._deferred_reboot_reason = "token_progress_stalled"
+    assert client._pending_promotion == str(artifact)
     client._deferred_reboot_reason = None
+    client._pending_promotion = None
     client._active_generations = 0
 
 
 async def test_reload_model_artifact_recycles_when_idle(client, tmp_path, monkeypatch):
-    artifact = tmp_path / "fused-gen2"
-    artifact.mkdir()
+    artifact = _servable_artifact(tmp_path, "fused-gen2")
     calls = {}
 
     async def fake_reboot(reason="", mark_failed=True):
@@ -175,21 +189,44 @@ async def test_reload_model_artifact_recycles_when_idle(client, tmp_path, monkey
 
     monkeypatch.setattr(client, "reboot_worker", fake_reboot)
     res = await client.reload_model_artifact(str(artifact))
-    assert res["ok"] is True and res["mode"] == "recycled"
+    # A recycle is a teardown. The lane is UNLOADED, not live.
+    assert res["ok"] is True and res["state"] == "unloaded"
     assert calls == {"reason": "promoted_artifact_swap", "mark_failed": False}
     assert client.model_path == str(artifact)
 
 
-async def test_promoted_swap_deferred_reboot_is_not_a_failure(client, monkeypatch):
-    calls = {}
+async def test_reload_model_artifact_refuses_an_empty_directory(client, tmp_path):
+    empty = tmp_path / "fused-empty"
+    empty.mkdir()
+    res = await client.reload_model_artifact(str(empty))
+    assert res["ok"] is False and res["reason"].startswith("artifact_missing_config")
+    # The healthy lane keeps serving what it was serving.
+    assert client.model_path != str(empty)
 
-    async def fake_reboot(reason="", mark_failed=True):
-        calls["reason"] = reason
-        calls["mark_failed"] = mark_failed
 
-    monkeypatch.setattr(client, "reboot_worker", fake_reboot)
-    await client._resolve_deferred_reboot("promoted_artifact_swap")
-    assert calls == {"reason": "promoted_artifact_swap", "mark_failed": False}
+async def test_reload_model_artifact_refuses_missing_weights(client, tmp_path):
+    partial = tmp_path / "fused-partial"
+    partial.mkdir()
+    (partial / "config.json").write_text('{"architectures": ["Qwen2ForCausalLM"]}')
+    (partial / "tokenizer.json").write_text("{}")
+    res = await client.reload_model_artifact(str(partial))
+    assert res["ok"] is False and res["reason"] == "artifact_missing_weights"
+
+
+async def test_reload_model_artifact_refuses_a_different_architecture(
+    client, tmp_path, monkeypatch
+):
+    incumbent = _servable_artifact(tmp_path, "incumbent")
+    monkeypatch.setattr(client, "model_path", str(incumbent))
+    foreign = tmp_path / "fused-llama"
+    foreign.mkdir()
+    (foreign / "config.json").write_text('{"architectures": ["LlamaForCausalLM"]}')
+    (foreign / "tokenizer.json").write_text("{}")
+    (foreign / "model.safetensors").write_bytes(b"\x00" * 16)
+    res = await client.reload_model_artifact(str(foreign))
+    assert res["ok"] is False
+    assert res["reason"].startswith("artifact_architecture_mismatch")
+    assert client.model_path == str(incumbent)
 
 
 def test_monkey_patch_is_gone():

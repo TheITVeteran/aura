@@ -351,8 +351,19 @@ class CompoundingScheduler:
             mlx_client = resolve_mlx_client(default=None)
             reload_artifact = getattr(mlx_client, "reload_model_artifact", None)
             if callable(reload_artifact):
-                await reload_artifact(model_path)
-                logger.info("🧬 Promoted weights live: %s", Path(model_path).name)
+                receipt = await reload_artifact(model_path) or {}
+                # The receipt names what the client can prove. "live" was a
+                # claim nobody had checked: a recycle is a teardown, and the
+                # weights load on the next request.
+                if not receipt.get("ok"):
+                    raise RuntimeError(
+                        f"artifact promotion refused: {receipt.get('reason') or 'unknown'}"
+                    )
+                logger.info(
+                    "🧬 Promoted weights are this lane's serving identity (%s): %s",
+                    receipt.get("state") or "unknown",
+                    Path(model_path).name,
+                )
                 return
             raise RuntimeError("mlx client lacks reload_model_artifact")
         except _RECOVERABLE as exc:
