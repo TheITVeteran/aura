@@ -179,14 +179,19 @@ def test_mlx_first_token_ceiling_is_bounded_by_request_deadline(monkeypatch):
         45.0,
         foreground_request=True,
     ) == 41.0
+    # CP126 dec24697: these used to be 10.0 and 10.0 — an 8-second budget
+    # produced a ceiling two seconds PAST the deadline, and an already-expired
+    # one was granted a fresh ten seconds. The 4-second reserve that lets the
+    # caller fail closed and recycle now always holds, and the ceiling never
+    # exceeds what the caller actually has left.
     assert client._deadline_bound_first_token_hard_ceiling(
         8.0,
         foreground_request=True,
-    ) == 10.0
+    ) == 4.0
     assert client._deadline_bound_first_token_hard_ceiling(
         0.0,
         foreground_request=True,
-    ) == 10.0
+    ) == 0.0
 
 
 def test_mlx_generation_tracking_carries_deadline_bound_first_token_ceiling():

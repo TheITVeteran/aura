@@ -1188,3 +1188,80 @@ class TestExpectationsAreGroundedInArtifacts:
         )
         mod._bounded_generation_max_tokens(2048, 2048, 4096, 512, {"semantic_token_cap": 100})
         assert recorded == []
+
+
+class TestAnExhaustedDeadlineGrantsNothing:
+    """CP126 dec24697 / 275480c8."""
+
+    def test_an_expired_budget_yields_no_first_token_ceiling(self, client, monkeypatch):
+        monkeypatch.setattr(
+            client, "_first_token_hard_ceiling",
+            lambda *, foreground_request=False: 120.0,
+        )
+        assert client._deadline_bound_first_token_hard_ceiling(
+            0.0, foreground_request=True
+        ) == 0.0
+        assert client._deadline_bound_first_token_hard_ceiling(
+            -5.0, foreground_request=True
+        ) == 0.0
+
+    def test_a_short_budget_keeps_its_recovery_reserve(self, client, monkeypatch):
+        monkeypatch.setattr(
+            client, "_first_token_hard_ceiling",
+            lambda *, foreground_request=False: 120.0,
+        )
+        # 8 seconds left, 4 reserved for the caller to fail closed and recycle.
+        assert client._deadline_bound_first_token_hard_ceiling(
+            8.0, foreground_request=True
+        ) == 4.0
+
+    def test_an_exhausted_deadline_starts_no_new_lock_wait(self, client):
+        from core.utils.deadlines import Deadline
+
+        expired = Deadline(0.0)
+        assert client._request_lock_timeout(expired, foreground_request=True) == 0.0
+        assert client._request_lock_timeout(expired, foreground_request=False) == 0.0
+
+    def test_a_heartbeating_idle_worker_is_still_idle(self, client):
+        """CP126 275480c8: the recycle it gates could never fire."""
+        now = time.time()
+        client._process_started_at = now - 7200.0
+        client._last_generation_completed_at = now - 3600.0
+        client._last_token_progress_at = 0.0
+        # Breathing the whole time it did nothing.
+        client._last_heartbeat = now
+        client._last_progress_at = now
+        client._last_ready_at = now
+        assert client._idle_for_s(now) >= 3600.0
+        assert client._liveness_quiet_for_s(now) == 0.0
+
+    def test_a_never_used_worker_becomes_idle_from_its_start(self, client):
+        now = time.time()
+        client._process_started_at = now - 5000.0
+        client._last_generation_completed_at = 0.0
+        client._last_token_progress_at = 0.0
+        client._last_heartbeat = now
+        assert client._idle_for_s(now) >= 5000.0
+
+    def test_fragmentation_recycle_can_actually_fire(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        now = time.time()
+        monkeypatch.setattr(mod, "_foreground_owner_active", lambda: False)
+        monkeypatch.setattr(client, "is_alive", lambda: True)
+        client._active_generations = 0
+        client._process_started_at = now - 7200.0
+        client._last_generation_completed_at = now - 3600.0
+        client._last_heartbeat = now
+        assert client.should_recycle_for_fragmentation() is True
+
+    def test_a_working_lane_is_never_recycled(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        now = time.time()
+        monkeypatch.setattr(mod, "_foreground_owner_active", lambda: False)
+        monkeypatch.setattr(client, "is_alive", lambda: True)
+        client._active_generations = 0
+        client._process_started_at = now - 7200.0
+        client._last_generation_completed_at = now - 10.0
+        assert client.should_recycle_for_fragmentation() is False

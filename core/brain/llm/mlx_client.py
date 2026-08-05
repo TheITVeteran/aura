@@ -1448,8 +1448,10 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
 
 #: How long an eviction waits to fence a lane before giving up. Short on
 #: purpose: a lane that will not go quiet quickly is a lane doing work, and
-#: the answer to that is to refuse the eviction, not to outwait it.
-_LANE_EVICTION_FENCE_WAIT_S = 2.0
+#: the answer to that is to refuse the eviction, not to outwait it. Must
+#: exceed the request-lock reserve (2s for background work) or the wait
+#: budget resolves to zero and the fence can never be taken.
+_LANE_EVICTION_FENCE_WAIT_S = 6.0
 
 
 def _lane_owner_is_working(target: Any) -> bool:
@@ -2860,8 +2862,13 @@ def _foreground_owner_wait_budget(
     if remaining is None:
         return default
 
+    # CP126 dec24697: the 0.25s floor applied even when `remaining` was zero
+    # or negative, so a caller with no time left still started a new wait —
+    # and every such floor along the path stacked past the deadline it was
+    # meant to respect. Clamped by what is left: it may shorten the wait,
+    # never extend it past the caller's budget.
     reserve = 3.0 if foreground_request else 1.5
-    return max(0.25, min(default, remaining - reserve))
+    return max(0.0, min(default, remaining - reserve, remaining))
 
 
 def _clear_matching_foreground_owner(*candidate_names: str) -> str | None:
@@ -5210,11 +5217,19 @@ class MLXLocalClient:
         except (TypeError, ValueError):
             return hard_ceiling
         if remaining <= 0.0:
-            return 10.0
-        # Leave enough wall-clock for the caller to fail closed and recycle the
-        # worker. This makes request-specific deadlines dominate the generic
-        # 32B/72B first-token ceiling.
-        return min(hard_ceiling, max(10.0, remaining - 4.0))
+            # CP126 dec24697: this returned 10.0 — a NEW ten-second budget
+            # granted to a request whose deadline had already expired. The
+            # caller was promised a bound and then quietly given more time
+            # past it. Zero means zero: the watchdog fires at once and the
+            # turn fails closed, which is what the exhausted deadline meant.
+            return 0.0
+        # Leave enough wall-clock for the caller to fail closed and recycle
+        # the worker — that reserve is the whole point of this bound, and the
+        # old 10-second floor overrode it: an 8-second budget produced a
+        # 10-second ceiling, two seconds PAST the deadline, with no reserve at
+        # all. Now the reserve always holds and the ceiling never exceeds what
+        # the caller has left.
+        return max(0.0, min(hard_ceiling, remaining - 4.0))
 
     def _start_foreground_first_token_watchdog(
         self,
@@ -5512,29 +5527,54 @@ class MLXLocalClient:
                 if self._current_request_started_at and self._current_first_token_at
                 else None
             ),
-            "idle_for_s": max(
-                0.0,
-                now
-                - max(
-                    self._last_generation_completed_at,
-                    self._last_ready_at,
-                    self._last_token_progress_at,
-                    self._last_progress_at,
-                    self._last_heartbeat,
-                ),
-            )
-            if any(
-                stamp > 0.0
-                for stamp in (
-                    self._last_generation_completed_at,
-                    self._last_ready_at,
-                    self._last_token_progress_at,
-                    self._last_progress_at,
-                    self._last_heartbeat,
-                )
-            )
-            else 0.0,
+            "idle_for_s": self._idle_for_s(now),
+            "liveness_quiet_for_s": self._liveness_quiet_for_s(now),
         }
+
+    def _work_anchor(self) -> float:
+        """The last time this worker did WORK, not the last time it breathed.
+
+        CP126 275480c8: idleness was anchored on the maximum of the work
+        stamps AND ``_last_heartbeat``/``_last_progress_at``. A healthy
+        resident worker heartbeats the whole time it is doing nothing, so that
+        anchor advanced continuously and ``now - anchor`` never reached
+        min_idle_s. The fragmentation recycle this gates could therefore never
+        fire — an advertised reclaim that was structurally unreachable.
+
+        A worker that has never done any work falls back to when it started:
+        ninety minutes of doing nothing is idle regardless of whether the
+        "nothing" began at boot.
+        """
+        anchor = max(
+            float(self._last_generation_completed_at or 0.0),
+            float(self._last_token_progress_at or 0.0),
+        )
+        if anchor > 0.0:
+            return anchor
+        return float(self._process_started_at or 0.0)
+
+    def _idle_for_s(self, now: float | None = None) -> float:
+        """Seconds since this worker last did any work."""
+        moment = time.time() if now is None else now
+        anchor = self._work_anchor()
+        return max(0.0, moment - anchor) if anchor > 0.0 else 0.0
+
+    def _liveness_quiet_for_s(self, now: float | None = None) -> float:
+        """Seconds since this worker last showed ANY sign of life.
+
+        Kept separate from idleness on purpose: "has done no work for an hour"
+        and "has not made a sound for an hour" are different facts, and the
+        second one is the one that means something is wrong.
+        """
+        moment = time.time() if now is None else now
+        anchor = max(
+            float(self._last_generation_completed_at or 0.0),
+            float(self._last_ready_at or 0.0),
+            float(self._last_token_progress_at or 0.0),
+            float(self._last_progress_at or 0.0),
+            float(self._last_heartbeat or 0.0),
+        )
+        return max(0.0, moment - anchor) if anchor > 0.0 else 0.0
 
     def should_recycle_for_fragmentation(
         self,
@@ -5546,19 +5586,10 @@ class MLXLocalClient:
             return False
         if self._process_started_at <= 0.0:
             return False
-        idle_anchor = max(
-            self._last_generation_completed_at,
-            self._last_ready_at,
-            self._last_token_progress_at,
-            self._last_progress_at,
-            self._last_heartbeat,
-        )
-        if idle_anchor <= 0.0:
-            return False
         now = time.time()
         return bool(
             (now - self._process_started_at) >= float(max_uptime_s)
-            and (now - idle_anchor) >= float(min_idle_s)
+            and self._idle_for_s(now) >= float(min_idle_s)
         )
 
     def note_lane_recovering(self, reason: str) -> None:
@@ -5641,8 +5672,9 @@ class MLXLocalClient:
         if remaining is None:
             return default
 
+        # Same clamp as the foreground-owner wait above, same reason.
         reserve = 3.0 if foreground_request else 2.0
-        return max(0.25, min(default, remaining - reserve))
+        return max(0.0, min(default, remaining - reserve, remaining))
 
     async def _acquire_request_lock(
         self,
@@ -6896,7 +6928,7 @@ class MLXLocalClient:
         # Recurrence: if this lane requires depth, the receipt must prove it.
         required_loops = _expected_recurrent_loops_from_model_path(self.model_path)
         _note_recurrent_depth_basis_disagreement(
-            self.model_path, self._expert_adapter_path, required_loops
+            self.model_path, getattr(self, "_expert_adapter_path", None), required_loops
         )
         recurrent_status = res.get("recurrent_depth")
         if required_loops > 1:
