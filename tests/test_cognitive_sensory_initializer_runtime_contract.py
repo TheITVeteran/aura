@@ -129,6 +129,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.metrology",
+        RealityMetrologyService=Service,
+    )
+    _install_module(
+        monkeypatch,
         "core.reality_reach.event_flow",
         RealityEventFlowRuntime=Service,
     )
@@ -230,6 +235,12 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
     assert registered["reality_middleware"] is orchestrator.reality_middleware
+    assert registered["reality_metrology"] is orchestrator.reality_metrology
+    assert registered["reality_metrology"].args[0] is orchestrator.reality_reach
+    assert registered["reality_metrology"].kwargs["state_path"].name == (
+        "reality_metrology.json"
+    )
+    assert registered["reality_metrology"].started is True
     assert registered["reality_middleware"].args[0] is orchestrator.reality_reach
     assert registered["reality_middleware"].kwargs["state_path"].name == (
         "reality_middleware.json"
@@ -421,6 +432,36 @@ async def test_middleware_failure_closes_managed_actions_without_erasing_raw_sen
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert orchestrator.reality_middleware is None
     assert "reality_middleware" not in registered
+
+
+@pytest.mark.asyncio
+async def test_metrology_failure_closes_measurement_claims_without_erasing_raw_senses(
+    monkeypatch,
+) -> None:
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    class BrokenMetrology:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic metrology state corruption")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.metrology",
+        RealityMetrologyService=BrokenMetrology,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert report["degraded"]["reality_metrology"]["severity"] == "critical"
+    assert "reality_reach" in report["completed"]
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert orchestrator.reality_metrology is None
+    assert "reality_metrology" not in registered
 
 
 @pytest.mark.asyncio

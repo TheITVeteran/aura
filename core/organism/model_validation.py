@@ -668,6 +668,28 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/runtime/turn_analysis.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="reality_metrology_contract_separates_sources",
+            description=(
+                "measurement contracts require explicit live/simulated roles for HIL "
+                "and reject simulated evidence presented as a live acquisition"
+            ),
+            required_capability="reality_metrology",
+            observation=Observation(
+                name="source_partition_enforced",
+                value=True,
+                source="core/reality_reach/metrology.py contract tests",
+            ),
+            predict=lambda _m: _metrology_source_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="Reality Reach metrology source separation",
+            ),
+            owner="core/reality_reach/metrology.py",
+        )
+    )
 
     for statement, test_name, asserted_in in (
         (
@@ -704,6 +726,11 @@ def install_runtime_validation() -> dict[str, Any]:
             "Action routing follows the turn's semantic speech act rather than requiring a trigger phrase.",
             "semantic_action_routing_preserves_speech_act",
             "core/runtime/turn_analysis.py",
+        ),
+        (
+            "Physical measurement keeps live, simulated, and hardware-in-loop evidence causally distinct.",
+            "reality_metrology_contract_separates_sources",
+            "core/reality_reach/metrology.py",
         ),
     ):
         suite.add_claim(
@@ -749,6 +776,38 @@ def _semantic_autonomy_contract_holds() -> bool:
         and selection.execution_mode == "planned_goal"
         and selection.provenance == "semantic_plan:live_capability_catalog"
     )
+
+
+def _metrology_source_contract_holds() -> bool:
+    from core.reality_reach.metrology import (
+        AcquisitionChannel,
+        AcquisitionMode,
+        AcquisitionTask,
+        EvidenceSource,
+    )
+
+    hil = AcquisitionTask(
+        task_id="validation.hil",
+        channels=(
+            AcquisitionChannel("validation.live", EvidenceSource.LIVE),
+            AcquisitionChannel("validation.simulated", EvidenceSource.SIMULATED),
+        ),
+        mode=AcquisitionMode.HARDWARE_IN_LOOP,
+        scenario_id="validation.scenario",
+    )
+    try:
+        AcquisitionTask(
+            task_id="validation.invalid-live",
+            channels=(
+                AcquisitionChannel("validation.simulated", EvidenceSource.SIMULATED),
+            ),
+            mode=AcquisitionMode.LIVE,
+        )
+    except ValueError:
+        refused = True
+    else:
+        refused = False
+    return bool(hil.mode is AcquisitionMode.HARDWARE_IN_LOOP and refused)
 
 
 def _health() -> dict[str, Any]:

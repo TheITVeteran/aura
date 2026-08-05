@@ -231,6 +231,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # payload; all mutation still traverses named FileWriteGateway
             # scopes before SQLite opens the owner-private database.
             "core/reality_reach/historian.py",
+            # Metrology owns one fixed, schema-bound calibration and acquisition
+            # evidence journal. It accepts no caller-selected persistence path in
+            # production and writes only digest-sealed records from its named
+            # internal state-mutation scope.
+            "core/reality_reach/metrology.py",
             # The learned world model owns one fixed, schema-bound VRNN
             # checkpoint under Aura's data root. It accepts no caller path,
             # and every publication executes in its named state-mutation

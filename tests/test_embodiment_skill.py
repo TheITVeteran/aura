@@ -603,3 +603,112 @@ async def test_historian_skill_rejects_invalid_limits_and_missing_alarm(
         "ok": False,
         "error": "no active physical alarm exists for that channel",
     }
+
+
+@pytest.mark.asyncio
+async def test_aura_can_run_explicit_hil_acquisition_and_receives_evidence(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    class Receipt:
+        sample_sets = 3
+        summaries = (object(), object())
+
+        @staticmethod
+        def to_dict():
+            return {
+                "mode": "hardware_in_loop",
+                "evidence_sha256": "sha256:" + "a" * 64,
+                "restored_mode": "live",
+            }
+
+    class Metrology:
+        def __init__(self) -> None:
+            self.task = None
+
+        async def acquire(self, task):
+            self.task = task
+            return Receipt()
+
+        @staticmethod
+        def status():
+            return {"ready": True, "mode": "live"}
+
+    metrology = Metrology()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: metrology if name == "reality_metrology" else None,
+    )
+
+    result = await EmbodimentSkill().execute(
+        {
+            "action": "run_acquisition",
+            "task_id": "rig.hil.acceptance",
+            "channels": [
+                {"channel_id": "rig.live.temperature", "expected_source": "live"},
+                {
+                    "channel_id": "rig.sim.temperature",
+                    "expected_source": "simulated",
+                },
+            ],
+            "mode": "hardware_in_loop",
+            "scenario_id": "thermal-rig-1",
+            "sample_count": 3,
+            "sample_interval_s": 0.2,
+            "max_capture_skew_ns": 20_000_000,
+            "require_calibration": True,
+        },
+        {},
+    )
+
+    assert result["ok"] is True
+    assert result["acquisition"]["restored_mode"] == "live"
+    assert metrology.task.mode.value == "hardware_in_loop"
+    assert [item.expected_source.value for item in metrology.task.channels] == [
+        "live",
+        "simulated",
+    ]
+    assert metrology.task.require_calibration is True
+    assert "live mode restored" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_metrology_skill_reports_invalid_source_partition_without_execution(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    class Metrology:
+        called = False
+
+        async def acquire(self, task):
+            del task
+            self.called = True
+            raise AssertionError("invalid contract must not reach acquisition")
+
+        @staticmethod
+        def status():
+            return {"ready": True, "mode": "live"}
+
+    metrology = Metrology()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: metrology if name == "reality_metrology" else None,
+    )
+
+    result = await EmbodimentSkill().execute(
+        {
+            "action": "run_acquisition",
+            "channels": ["rig.sim.temperature"],
+            "mode": "simulation",
+            "scenario_id": "thermal-rig-1",
+        },
+        {},
+    )
+
+    assert result["ok"] is False
+    assert "simulation acquisition accepts only simulated channels" in result["error"]
+    assert metrology.called is False

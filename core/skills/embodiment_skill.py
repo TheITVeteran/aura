@@ -16,6 +16,13 @@ from core.reality_reach.attachment_authority import (
     MANIFEST_MIGRATION_AUTHORITY_ACTION,
 )
 from core.reality_reach.attachments import AttachmentAccess
+from core.reality_reach.metrology import (
+    AcquisitionChannel,
+    AcquisitionMode,
+    AcquisitionTask,
+    EvidenceSource,
+    MetrologyError,
+)
 from core.runtime.audit_chain import canonical_json
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
@@ -116,6 +123,8 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         "connection, focus attention on a sensor, read observations, or execute "
         "a governed and verified physical command. I can also inspect durable "
         "sensor history, active alarms, and quarantined physical evidence."
+        " I can run calibrated synchronized measurements and explicitly separated "
+        "live, simulated, or hardware-in-loop experiments with uncertainty receipts."
     )
     effect_scope = "external_io"
     retry_safe = False
@@ -128,6 +137,8 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             "pause_sensor_attention | resume_sensor_attention | latest_observations | "
             "observation_history | active_alarms | acknowledge_alarm | "
             "observation_quarantine | middleware_status | call_service | "
+            "metrology_status | list_calibrations | run_acquisition | "
+            "restore_live_measurement | "
             "start_action | action_status | action_feedback | wait_action | "
             "cancel_action | activate_physical_node | deactivate_physical_node | "
             "query_device | command_device"
@@ -149,6 +160,16 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         "preempt": "Whether a new action may safely preempt the active goal.",
         "after_sequence": "Return action feedback after this sequence.",
         "parameters": "Bounded command/effect parameters.",
+        "channels": (
+            "Measurement channels as ids, or {channel_id, expected_source} records "
+            "for explicit hardware-in-loop partitioning."
+        ),
+        "mode": "live, simulation, or hardware_in_loop measurement mode.",
+        "scenario_id": "Required stable scenario identity for simulation or HIL evidence.",
+        "sample_count": "Bounded synchronized sample-set count.",
+        "sample_interval_s": "Bounded delay between sample sets.",
+        "max_capture_skew_ns": "Maximum accepted timestamp skew inside a sample set.",
+        "require_calibration": "Whether every requested channel must have valid calibration.",
     }
 
     async def execute(
@@ -340,6 +361,13 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 "historian": historian_status,
             }
         if action in {
+            "metrology_status",
+            "list_calibrations",
+            "run_acquisition",
+            "restore_live_measurement",
+        }:
+            return await self._metrology(action, params)
+        if action in {
             "middleware_status",
             "call_service",
             "start_action",
@@ -364,6 +392,7 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         router = _service("reality_observation_router")
         broker = _service("reality_attachment_broker")
         historian = _service("reality_historian")
+        metrology = _service("reality_metrology")
         middleware = _service("reality_middleware")
         body = _service("body_schema")
         devices = manager.list_devices() if manager is not None else []
@@ -395,10 +424,101 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             "managed_physical_runtime": (
                 middleware.status() if middleware is not None else None
             ),
+            "metrology": metrology.status() if metrology is not None else None,
             "attachments": broker.status() if broker is not None else None,
             "summary": (
                 f"My physical body currently exposes {len(declarations)} channels "
                 f"across {len(physical_limbs)} sensor or actuator limbs."
+            ),
+        }
+
+    @staticmethod
+    async def _metrology(action: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        service = _service("reality_metrology")
+        if service is None:
+            return {"ok": False, "error": "physical metrology service is offline"}
+        if action == "metrology_status":
+            return {"ok": True, "metrology": service.status()}
+        if action == "list_calibrations":
+            return {
+                "ok": True,
+                "calibrations": list(service.calibrations()),
+                "metrology": service.status(),
+            }
+        if action == "restore_live_measurement":
+            receipt = await service.restore_live(reason="aura_requested_restoration")
+            return {
+                "ok": True,
+                "restoration": receipt,
+                "metrology": service.status(),
+            }
+        try:
+            raw_channels = params.get("channels")
+            if isinstance(raw_channels, str):
+                raw_channels = [item.strip() for item in raw_channels.split(",") if item.strip()]
+            if not isinstance(raw_channels, (list, tuple)) or not raw_channels:
+                raise ValueError("channels must be a non-empty bounded list")
+            channels: list[AcquisitionChannel] = []
+            for item in raw_channels:
+                if isinstance(item, Mapping):
+                    channel_id = str(item.get("channel_id") or "")
+                    expected = EvidenceSource(
+                        str(item.get("expected_source") or "live").strip().lower()
+                    )
+                else:
+                    channel_id = str(item)
+                    expected = EvidenceSource.LIVE
+                channels.append(AcquisitionChannel(channel_id, expected))
+            mode = AcquisitionMode(str(params.get("mode") or "live").strip().lower())
+            task_id = str(params.get("task_id") or f"aura.acquisition.{uuid.uuid4().hex}")
+            task = AcquisitionTask(
+                task_id=task_id,
+                channels=tuple(channels),
+                mode=mode,
+                sample_count=_bounded_int_parameter(
+                    params.get("sample_count"),
+                    name="sample_count",
+                    default=1,
+                    minimum=1,
+                    maximum=1024,
+                ),
+                sample_interval_s=_bounded_float_parameter(
+                    params.get("sample_interval_s"),
+                    name="sample_interval_s",
+                    default=0.0,
+                    minimum=0.0,
+                    maximum=60.0,
+                ),
+                timeout_s=_bounded_float_parameter(
+                    params.get("timeout_s"),
+                    name="timeout_s",
+                    default=30.0,
+                    minimum=0.05,
+                    maximum=86_400.0,
+                ),
+                max_capture_skew_ns=_bounded_int_parameter(
+                    params.get("max_capture_skew_ns"),
+                    name="max_capture_skew_ns",
+                    default=100_000_000,
+                    minimum=0,
+                    maximum=10_000_000_000,
+                ),
+                require_calibration=_boolean_parameter(
+                    params.get("require_calibration"),
+                    default=False,
+                ),
+                scenario_id=str(params.get("scenario_id") or ""),
+            )
+            receipt = await service.acquire(task)
+        except (LookupError, MetrologyError, TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc), "metrology": service.status()}
+        return {
+            "ok": True,
+            "acquisition": receipt.to_dict(),
+            "metrology": service.status(),
+            "summary": (
+                f"Completed {receipt.sample_sets} synchronized sample set(s) "
+                f"across {len(receipt.summaries)} channel(s); live mode restored."
             ),
         }
 

@@ -725,6 +725,7 @@ def test_middleware_invariants_registered_and_clean():
     for expected in (
         "lifecycle.critical_organs_are_active",
         "reality_middleware.effects_are_reconciled",
+        "reality_metrology.live_mode_is_restored",
         "qos.state_topics_are_transient_local",
         "parameters.numeric_bounds_are_declared",
         "diagnostics.nothing_is_stale",
@@ -775,3 +776,29 @@ def test_physical_middleware_invariant_rejects_unreconciled_effects(monkeypatch)
 
     assert len(violations) == 1
     assert "unresolved_effects=1" in violations[0].message
+
+
+def test_metrology_invariant_rejects_stranded_simulation_mode(monkeypatch):
+    from core.container import ServiceContainer
+    from core.verify.runtime_invariants import _reality_metrology_live_mode_restored
+
+    class Metrology:
+        @staticmethod
+        def status():
+            return {
+                "mode": "simulation",
+                "active_run": None,
+                "live_restoration_required": True,
+            }
+
+    services = {"reality_reach": object(), "reality_metrology": Metrology()}
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+    )
+
+    violations = list(_reality_metrology_live_mode_restored())
+
+    assert len(violations) == 1
+    assert "simulation evidence could contaminate" in violations[0].message

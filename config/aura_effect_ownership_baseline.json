@@ -4658,6 +4658,22 @@
     },
     {
       "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/metrology.py",
+      "scope": "<module>.RealityMetrologyService._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/reality_reach/metrology.py",
+      "scope": "<module>.RealityMetrologyService._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -15994,6 +16010,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "fdea9a5b1c38c7174b150f7f0ff69d8796857cfced6f4a0afa8a1ba3c4dd4d15",
+  "inventory_sha256": "e3905da742386660ea67c51f29137d60d55d7b21824594232874e334a053457b",
   "schema_version": 1
 }

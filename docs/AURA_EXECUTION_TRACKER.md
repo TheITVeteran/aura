@@ -35281,3 +35281,64 @@ physical-effect, bootstrap-complete, reasoning-gain, frontier, release, or
 `WOW Signal` claim is made. This is total checkpoint 800 of the current
 920-checkpoint completion envelope, approximately 87.0% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
+
+### 2026-08-05 - Total checkpoint 805: calibrated acquisition and HIL evidence
+
+Reality Reach now distinguishes an available scalar from a measurement that
+can support a physical claim. `RealityMetrologyService` owns one bounded,
+integrity-protected acquisition journal over the canonical live inventory.
+Acquisition tasks bind exact channels, live/simulated source class, scenario,
+sample count, interval, deadline, and capture-skew limit. Live, simulation, and
+hardware-in-loop modes have disjoint admission contracts; HIL requires both
+source classes and a named scenario, and every run restores live mode in its
+durable finalization path, including failure and cancellation.
+
+Calibration certificates are bound to the declared sensor channel, calibration
+identity, validity interval, reference standard, traceability digest, issuer,
+affine transform, and systematic uncertainty. A calibrated claim additionally
+requires a stable physical-adapter identity. Runtime session, adapter identity,
+registration generation, simulation scenario, and a single comparable wall-
+clock source are fenced through every sample. Identity drift, stale or missing
+calibration, mixed clock domains, source contamination, missing readings, and
+excess capture skew fail the acquisition instead of being averaged away.
+
+Each successful receipt retains the bounded raw measurements used to compute
+its summaries, not only an aggregate. Random and resolution terms reduce with
+sample count; observed repeatability is added; calibration systematic
+uncertainty does not shrink. The result reports standard uncertainty and an
+explicit coverage-factor-two expanded uncertainty rather than calling it an
+exact 95% interval without a distributional justification. Raw evidence and
+summaries share a canonical SHA-256 evidence document that is checked before
+publication and again on restart. The product of channel count and sample count
+is capped at 1,024 per receipt and only the latest 64 receipts and failures are
+retained.
+
+Adapter refresh executes off the event loop under the task deadline. A timed-
+out thread remains explicitly reconciling and blocks another acquisition until
+it terminates; any terminal task exception is consumed before the lane is
+reopened. Persisted active-run state is recovered as interrupted evidence and
+live mode is restored rather than replaying a measurement. The service is
+required at boot, exposed through the governed embodiment skill, and covered by
+a standing runtime invariant that refuses a stranded non-live mode.
+
+The focused metrology, embodiment, boot, middleware, and cognition discipline
+set passes 121/121. The broader order-sensitive Reality Reach family passes
+331/331 across trust custody, attachments, observations, historian, twins,
+event flows, transactions, actuation, middleware, and existing Home Assistant
+and REST smart-plug adapters. Ruff and Python compilation pass. Governance
+effect ownership recognizes metrology as the canonical owner of its one fixed,
+schema-bound journal; the ratchet is green with no new migration debt.
+
+This checkpoint proves the acquisition, separation, uncertainty, recovery,
+and evidence-integrity contracts against deterministic live, simulated, and
+HIL fixtures. It does not prove a physical external-instrument result, SI
+traceability of a real certificate, whole-host clock synchronization, or a
+configured actuator effect. Those require live calibrated hardware and
+independent reference measurements after model training releases the host.
+Concrete protocol connectors and live configured-hardware acceptance remain
+mandatory. The resident 32B role-v6 campaign's exact step-36 adapter, optimizer,
+cursor, history, and scientific identity remain preserved for source-bound
+recovery after this checkpoint. No physical-effect, reasoning-gain, frontier,
+release, or `WOW Signal` claim is made. This is total checkpoint 805 of the
+current 920-checkpoint completion envelope, approximately 87.5% by count; long
+soaks remain deferred.

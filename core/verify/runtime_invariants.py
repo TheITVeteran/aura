@@ -648,6 +648,56 @@ def _managed_physical_effects_reconciled() -> Iterator[Violation]:
 
 
 @invariant(
+    "reality_metrology.live_mode_is_restored",
+    scope="middleware",
+    owner=_OWNER,
+    description=(
+        "physical measurement has a live metrology owner and never strands the runtime "
+        "in simulation or HIL mode outside an active acquisition"
+    ),
+)
+def _reality_metrology_live_mode_restored() -> Iterator[Violation]:
+    from core.container import ServiceContainer
+
+    reality_reach = ServiceContainer.get("reality_reach", default=None)
+    metrology = ServiceContainer.get("reality_metrology", default=None)
+    if reality_reach is None and metrology is None:
+        return
+    if metrology is None:
+        yield Violation(
+            subject="reality_metrology",
+            message="Reality Reach is live without its calibrated acquisition owner",
+            remedy="restore metrology before making calibrated, synchronized, simulation, or HIL claims",
+        )
+        return
+    status = metrology.status() if callable(getattr(metrology, "status", None)) else None
+    if not isinstance(status, dict):
+        yield Violation(
+            subject="reality_metrology",
+            message="metrology exposes no inspectable status contract",
+            remedy="provide status() with mode, active_run, and live_restoration_required",
+        )
+        return
+    if bool(status.get("refresh_reconciliation_required")):
+        yield Violation(
+            subject="reality_metrology",
+            message="a timed-out physical refresh is still reconciling",
+            remedy="keep measurement admission closed until the adapter read terminates",
+        )
+    if bool(status.get("live_restoration_required")) or (
+        status.get("mode") != "live" and not status.get("active_run")
+    ):
+        yield Violation(
+            subject="reality_metrology",
+            message=(
+                f"measurement mode={status.get('mode')!r} has no active acquisition; "
+                "simulation evidence could contaminate later live claims"
+            ),
+            remedy="restore live mode and advance the metrology mode-generation fence",
+        )
+
+
+@invariant(
     "qos.no_unresolved_mismatch",
     scope="middleware",
     severity=Severity.WARNING,

@@ -198,6 +198,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         from core.reality_reach.event_flow import RealityEventFlowRuntime
         from core.reality_reach.historian import RealityHistorian
         from core.reality_reach.live import get_reality_reach_service
+        from core.reality_reach.metrology import RealityMetrologyService
         from core.reality_reach.middleware import RealityMiddlewareRuntime
         from core.reality_reach.transactions import get_reality_actuation_coordinator
 
@@ -209,6 +210,31 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         )
         orchestrator.reality_reach = service
         orchestrator.reality_actuation = coordinator
+        metrology = None
+        try:
+            metrology_path = environment_runtime_file(
+                "shared",
+                "reality_metrology.json",
+                purpose="state",
+            )
+            metrology = RealityMetrologyService(
+                service,
+                state_path=metrology_path,
+            )
+            await metrology.start()
+        except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+            _record_cognitive_sensory_degradation(
+                orchestrator,
+                exc,
+                phase="reality_metrology",
+                action=(
+                    "Kept bounded raw physical sensing available but closed calibrated, "
+                    "synchronized, simulation, and hardware-in-loop evidence until "
+                    "metrology-state recovery"
+                ),
+                severity="critical",
+            )
+        orchestrator.reality_metrology = metrology
         middleware = None
         try:
             middleware_path = environment_runtime_file(
@@ -324,6 +350,19 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             required_for="governed physical actuation and effect reconciliation",
             failure_policy="degrade_with_receipt",
         )
+        if metrology is not None:
+            ServiceContainer.register_instance(
+                "reality_metrology",
+                metrology,
+                required=True,
+                owner="core/reality_reach/metrology.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=(
+                    "calibrated synchronized acquisition, uncertainty propagation, "
+                    "and live/simulation/HIL evidence separation"
+                ),
+                failure_policy="fail-closed",
+            )
         if middleware is not None:
             ServiceContainer.register_instance(
                 "reality_middleware",
@@ -374,6 +413,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             )
         report["registered"]["reality_reach"] = service.__class__.__name__
         report["registered"]["reality_actuation"] = coordinator.__class__.__name__
+        if metrology is not None:
+            report["registered"]["reality_metrology"] = metrology.__class__.__name__
         if middleware is not None:
             report["registered"]["reality_middleware"] = middleware.__class__.__name__
         if event_flow is not None:
