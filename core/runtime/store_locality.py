@@ -32,6 +32,7 @@ assumption and as an enforced, measured property.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import platform
@@ -114,7 +115,53 @@ class StoreLocality:
         }
 
 
-def _fstype_darwin(path: Path) -> str:
+class _DarwinFsid(ctypes.Structure):
+    _fields_ = [("val", ctypes.c_int32 * 2)]
+
+
+class _DarwinStatfs(ctypes.Structure):
+    """Darwin ``struct statfs`` as declared by ``sys/mount.h``."""
+
+    _fields_ = [
+        ("f_bsize", ctypes.c_uint32),
+        ("f_iosize", ctypes.c_int32),
+        ("f_blocks", ctypes.c_uint64),
+        ("f_bfree", ctypes.c_uint64),
+        ("f_bavail", ctypes.c_uint64),
+        ("f_files", ctypes.c_uint64),
+        ("f_ffree", ctypes.c_uint64),
+        ("f_fsid", _DarwinFsid),
+        ("f_owner", ctypes.c_uint32),
+        ("f_type", ctypes.c_uint32),
+        ("f_flags", ctypes.c_uint32),
+        ("f_fssubtype", ctypes.c_uint32),
+        ("f_fstypename", ctypes.c_char * 16),
+        ("f_mntonname", ctypes.c_char * 1024),
+        ("f_mntfromname", ctypes.c_char * 1024),
+        ("f_reserved", ctypes.c_uint32 * 8),
+    ]
+
+
+def _fstype_darwin_native(path: Path) -> str:
+    """Read the mount type without spawning a process in a memory-heavy runtime."""
+
+    try:
+        statfs = ctypes.CDLL(None, use_errno=True).statfs
+        statfs.argtypes = [ctypes.c_char_p, ctypes.POINTER(_DarwinStatfs)]
+        statfs.restype = ctypes.c_int
+        result = _DarwinStatfs()
+        if statfs(os.fsencode(path), ctypes.byref(result)) != 0:
+            return ""
+        return bytes(result.f_fstypename).split(b"\0", 1)[0].decode(
+            "ascii", errors="replace"
+        ).lower()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return ""
+
+
+def _fstype_darwin_mount(path: Path) -> str:
+    """Compatibility fallback for Darwin implementations without ``statfs``."""
+
     try:
         out = subprocess.run(  # noqa: S603 - fixed argv, no shell
             ["/sbin/mount"],
@@ -139,6 +186,10 @@ def _fstype_darwin(path: Path) -> str:
         except (TypeError, ValueError):
             continue
     return best_type.lower()
+
+
+def _fstype_darwin(path: Path) -> str:
+    return _fstype_darwin_native(path) or _fstype_darwin_mount(path)
 
 
 def _fstype_linux(path: Path) -> str:

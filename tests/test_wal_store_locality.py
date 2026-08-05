@@ -19,7 +19,9 @@ process, which was never true.
 from __future__ import annotations
 
 import multiprocessing as mp
+import queue
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,7 +49,6 @@ def _write_rows(db_path: str, tag: str, count: int, results) -> None:
         results.put((tag, -1, str(exc)))
 
 
-@pytest.mark.timeout(120)
 def test_four_processes_write_to_one_wal_database(tmp_path):
     """The measurement that contradicts the "single-process lock" claim."""
     db_path = str(tmp_path / "concurrent.db")
@@ -66,9 +67,17 @@ def test_four_processes_write_to_one_wal_database(tmp_path):
     for worker in workers:
         worker.start()
     for worker in workers:
-        worker.join(timeout=90)
+        worker.join(timeout=30)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=5)
+            pytest.fail(f"WAL writer {worker.pid} exceeded its 30s deadline")
+        assert worker.exitcode == 0, f"WAL writer {worker.pid} exited {worker.exitcode}"
 
-    reported = [results.get() for _ in range(4)]
+    try:
+        reported = [results.get(timeout=5) for _ in range(4)]
+    except queue.Empty:
+        pytest.fail("a WAL writer exited without publishing its result")
     for tag, written, error in reported:
         assert error == "", f"{tag} failed: {error}"
         assert written == 100, f"{tag} wrote {written}"
@@ -83,6 +92,39 @@ def test_four_processes_write_to_one_wal_database(tmp_path):
 
 
 class TestTheRealBoundaryIsTheFilesystem:
+    def test_darwin_probe_does_not_spawn_when_native_statfs_succeeds(
+        self, tmp_path, monkeypatch
+    ):
+        import core.runtime.store_locality as module
+
+        monkeypatch.setattr(module, "_fstype_darwin_native", lambda _path: "apfs")
+        monkeypatch.setattr(
+            module.subprocess,
+            "run",
+            lambda *args, **kwargs: pytest.fail("mount subprocess must not run"),
+        )
+
+        assert module._fstype_darwin(tmp_path) == "apfs"
+
+    def test_darwin_probe_falls_back_when_native_statfs_is_unavailable(
+        self, tmp_path, monkeypatch
+    ):
+        import core.runtime.store_locality as module
+
+        monkeypatch.setattr(module, "_fstype_darwin_native", lambda _path: "")
+        monkeypatch.setattr(
+            module.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="/dev/disk3s5 on / (apfs, local, journaled)\n",
+                stderr="",
+            ),
+        )
+
+        assert module._fstype_darwin(tmp_path) == "apfs"
+
     def test_a_local_store_is_recognised_and_allowed(self, tmp_path):
         locality = describe_store(tmp_path / "ledger.db")
         assert locality.is_network is False
