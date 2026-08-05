@@ -34728,6 +34728,98 @@ evidence-promotion, bootstrap-complete, reasoning-gain, frontier, release, or
 920-checkpoint completion envelope, approximately 86.7% by count. The immutable
 CP796 resident campaign continues separately; long soaks remain deferred.
 
+### 2026-08-04 - Total checkpoint 804: managed physical middleware
+
+The ROS-shaped Reality Reach obligation formerly labelled planned CP803 is now
+implemented as a protocol-neutral managed-physical runtime. One adapter
+declaration binds stable physical identity to three deliberately different
+interaction shapes: continuous push or pull telemetry, bounded read-only
+request/response services, and long-running actions with immediate goal
+handles, monotonic progress feedback, deadlines, cancellation, and safe
+preemption. State-changing services are refused into the action lane rather
+than creating a second physical-effect path.
+
+Each managed adapter is fenced to the exact identity already registered in the
+canonical Reality Reach inventory. Configure, inactive, active, deactivate,
+cleanup, error, and shutdown transitions use Aura's managed-organ state
+machine. Telemetry uses declared QoS, bounded payloads, deadline/liveliness
+evidence, retained state where requested, and canonical sensor ingestion.
+Pull samplers are independently isolated and tracked; one failing endpoint does
+not stop unrelated physical senses.
+
+Service requests enforce byte and time budgets, bounded concurrency, and
+singleflight idempotency. Integrity-protected receipts survive restart, so a
+repeated request id returns its recorded result instead of re-running an
+operation. Concurrent callers using the same id and payload share one
+execution; reuse with different content is rejected. Long-running action
+admission is serialized per endpoint, preventing simultaneous callers from
+starting two physical effects. A replacement cannot start until the previous
+goal proves preemption. An unacknowledged cancellation becomes an explicit
+indeterminate effect and makes the runtime unready rather than being reported
+as stopped.
+
+Action requests, bounded feedback, terminal results, adapter identity, and
+effect evidence are persisted in an integrity-protected atomic state envelope.
+Process restart converts every in-flight state into interrupted recovery and
+asks the exact adapter to reconcile without replaying the effect. Successful
+physical completion requires both `effect_verified=true` and a SHA-256 effect
+receipt. Unknown endpoints return typed lookup failures. Public status,
+feedback, wait, cancellation, lifecycle, and action operations are live through
+the governed embodiment skill; Aura's inventory exposes the managed runtime
+rather than requiring an operator-only API.
+
+Boot constructs and starts this runtime from private shared state, registers it
+as a required service, and keeps raw sensing, history, and topology available
+under an explicit critical degradation if managed lifecycle recovery fails.
+ServiceContainer shutdown owns final cancellation and adapter teardown. A
+standing runtime invariant rejects Reality Reach without its managed runtime
+and rejects physical readiness while any effect still requires reconciliation.
+Contracts, service singleflight, and orchestration were split into separate
+modules; the architecture scorer reports no new oversized module in this
+surface.
+
+Eighty-nine focused middleware, boot, skill, lifecycle, QoS, and invariant
+contracts pass, including adversarial identity mismatch, timeout, concurrent
+duplicate request, concurrent action admission, failed preemption, unverified
+effect, restart reconciliation, receipt replay, and state-tamper cases. The
+order-sensitive Reality Reach family passes 281/281. That broader run exposed
+and now pins two cross-subsystem defects that isolated tests missed: Keychain
+trust custody no longer wraps durable filesystem operations in a redundant
+checked lock, and observation-router health probes no longer call persistence-
+capable dependencies while holding router state. Advanced-cognition ontology
+updates now serialize concurrent observations, snapshot under their state lock,
+persist outside it, roll back on failed durability, and publish idempotency
+receipts only after commit. Persisted ontology models now restore after restart
+instead of silently restoring residuals alone. Router shutdown gives an active
+delivery a bounded graceful drain before cancellation, so a downstream effect
+cannot be observed while its historian row remains falsely queued. The direct
+advanced-cognition, router, and custody transaction family passes 56/56. The
+repository smoke suite passes 103/103; Ruff, Python compilation, layering, and
+diff integrity pass. The repository-wide architecture baseline remains red on
+inherited growth and a separately introduced oversized proof harness; this
+checkpoint does not hide or bless those unrelated regressions.
+
+No configured external hardware was available for hardware-in-loop acceptance,
+so no physical movement or effect is claimed. Declarative event flows,
+metrology/HIL, concrete protocol connectors, and live configured-hardware
+acceptance remain mandatory. No reasoning-gain, frontier, release, or
+`WOW Signal` claim is made. This is total checkpoint 804 of the current
+920-checkpoint completion envelope, approximately 87.4% by count; long soaks
+remain deferred.
+
+### 2026-08-04 - Live demo evidence intake (open)
+
+`AuraDemo01.mp4` and `Aura Demo - 02.mp4` are queued as live-user evidence,
+not as automatic acceptance credit. Closeout requires timestamped interaction,
+audio/transcript, visible-state, and latency timelines; source/app/model identity
+where recoverable; correlation with contemporaneous terminal, Neural stream,
+governance, tool, and effect receipts; and a finding for every warning, error,
+clipped surface, invented assertion, shallow action, missing capability, or
+unexpected delay. Each reproducible defect must receive a causal implementation
+fix and regression before the affected demo path can be called clean. Useful
+successful behavior will be retained as acceptance evidence, but neither video
+substitutes for three clean repeat runs or the remaining release gates.
+
 ### 2026-08-02 - Total checkpoint 803: canonical causal Reality Reach digital twins
 
 Reality Reach now has one durable digital-twin graph rather than separate

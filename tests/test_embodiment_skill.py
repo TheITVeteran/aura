@@ -26,6 +26,54 @@ class WorldBridge:
         )
 
 
+class ManagedPhysicalRuntime:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    @staticmethod
+    def status():
+        return {"alive": True, "ready": True, "node_count": 1}
+
+    async def call_service(self, endpoint_id, request, **kwargs):
+        self.calls.append(("service", (endpoint_id, dict(request), kwargs)))
+        return SimpleNamespace(
+            ok=True,
+            to_dict=lambda: {"request_id": kwargs["request_id"], "ok": True},
+        )
+
+    async def start_action(self, endpoint_id, request, **kwargs):
+        self.calls.append(("start", (endpoint_id, dict(request), kwargs)))
+        return {"goal_id": kwargs["goal_id"], "state": "accepted"}
+
+    @staticmethod
+    def action_status(goal_id):
+        return {"goal_id": goal_id, "state": "executing"}
+
+    @staticmethod
+    def action_feedback(goal_id, *, after_sequence):
+        return [{"goal_id": goal_id, "sequence": after_sequence + 1}]
+
+    async def wait_action(self, goal_id, *, timeout_s):
+        self.calls.append(("wait", (goal_id, timeout_s)))
+        return {"goal_id": goal_id, "state": "succeeded"}
+
+    async def cancel_action(self, goal_id, *, reason):
+        self.calls.append(("cancel", (goal_id, reason)))
+        return {"goal_id": goal_id, "state": "cancelled"}
+
+    async def activate_node(self, node_id):
+        self.calls.append(("activate", node_id))
+        return True
+
+    async def deactivate_node(self, node_id):
+        self.calls.append(("deactivate", node_id))
+        return True
+
+    @staticmethod
+    def node_status(node_id):
+        return {"node_id": node_id, "state": "active"}
+
+
 @pytest.mark.asyncio
 async def test_physical_command_uses_world_bridge_and_never_direct_device_execution(
     monkeypatch,
@@ -52,6 +100,69 @@ async def test_physical_command_uses_world_bridge_and_never_direct_device_execut
     assert payload["operation"] == "hardware_apply"
     assert payload["target"] == "relay-1"
     assert payload["idempotency_key"].startswith("embodiment.")
+
+
+@pytest.mark.asyncio
+async def test_managed_physical_services_and_actions_are_first_class_skill_operations(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    runtime = ManagedPhysicalRuntime()
+    monkeypatch.setattr(
+        skill_module,
+        "_service",
+        lambda name: runtime if name == "reality_middleware" else None,
+    )
+    skill = EmbodimentSkill()
+
+    status = await skill.execute({"action": "middleware_status"}, {})
+    service = await skill.execute(
+        {
+            "action": "call_service",
+            "endpoint_id": "ROBOT.INSPECT",
+            "request_id": "request.demo",
+            "parameters": {"camera": 1},
+            "timeout_s": 2,
+        },
+        {},
+    )
+    started = await skill.execute(
+        {
+            "action": "start_action",
+            "endpoint_id": "ROBOT.MOVE",
+            "goal_id": "goal.demo",
+            "parameters": {"x": 4},
+            "preempt": True,
+        },
+        {},
+    )
+    feedback = await skill.execute(
+        {"action": "action_feedback", "goal_id": "goal.demo", "after_sequence": 3},
+        {},
+    )
+    waited = await skill.execute(
+        {"action": "wait_action", "goal_id": "goal.demo", "timeout_s": 5},
+        {},
+    )
+    cancelled = await skill.execute(
+        {"action": "cancel_action", "goal_id": "goal.demo", "reason": "changed plan"},
+        {},
+    )
+    activated = await skill.execute(
+        {"action": "activate_physical_node", "node_id": "ROBOT.ARM"},
+        {},
+    )
+
+    assert status["managed_physical_runtime"]["ready"] is True
+    assert service["service_receipt"] == {"request_id": "request.demo", "ok": True}
+    assert started["action"]["state"] == "accepted"
+    assert feedback["feedback"][0]["sequence"] == 4
+    assert waited["action"]["state"] == "succeeded"
+    assert cancelled["action"]["state"] == "cancelled"
+    assert activated["node"] == {"node_id": "robot.arm", "state": "active"}
+    assert runtime.calls[0][1][0] == "robot.inspect"
+    assert runtime.calls[1][1][0] == "robot.move"
 
 
 @pytest.mark.asyncio

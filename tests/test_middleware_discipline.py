@@ -724,6 +724,7 @@ def test_middleware_invariants_registered_and_clean():
     names = {s.name for s in get_registry().specs()}
     for expected in (
         "lifecycle.critical_organs_are_active",
+        "reality_middleware.effects_are_reconciled",
         "qos.state_topics_are_transient_local",
         "parameters.numeric_bounds_are_declared",
         "diagnostics.nothing_is_stale",
@@ -748,3 +749,29 @@ def test_the_standard_topic_declarations_satisfy_their_own_invariant():
         v for v in report.violations if v.invariant == "qos.state_topics_are_transient_local"
     ]
     assert offenders == [], f"shipped topic profiles violate their own rule: {offenders}"
+
+
+def test_physical_middleware_invariant_rejects_unreconciled_effects(monkeypatch):
+    from core.container import ServiceContainer
+    from core.verify.runtime_invariants import _managed_physical_effects_reconciled
+
+    class Middleware:
+        @staticmethod
+        def status():
+            return {
+                "alive": True,
+                "ready": False,
+                "recovery_required_count": 1,
+            }
+
+    services = {"reality_reach": object(), "reality_middleware": Middleware()}
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+    )
+
+    violations = list(_managed_physical_effects_reconciled())
+
+    assert len(violations) == 1
+    assert "unresolved_effects=1" in violations[0].message

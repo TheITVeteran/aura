@@ -6,11 +6,14 @@ import json
 import re
 import time
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import atomic_write_text, interprocess_file_lock
+from core.runtime.lockdep import checked_lock
 
 from .schemas import Observation, clamp, jaccard, stable_hash
 
@@ -114,6 +117,20 @@ class OntologyInventionEngine:
 
     def __init__(self, *, state_path: str | Path | None = None):
         self.state_path = Path(state_path) if state_path else None
+        lock_identity = (
+            stable_hash(str(self.state_path.resolve(strict=False)))[:12]
+            if self.state_path is not None
+            else f"memory-{id(self):x}"
+        )
+        self._lock = checked_lock(
+            f"advanced_cognition.ontology:{lock_identity}",
+            reentrant=True,
+        )
+        self._transaction_path = (
+            self.state_path.with_name(self.state_path.name + ".transaction.lock")
+            if self.state_path is not None
+            else None
+        )
         self.models: dict[str, OntologyModel] = {}
         self.residuals: dict[str, list[dict[str, Any]]] = defaultdict(list)
         if self.state_path and self.state_path.exists():
@@ -123,6 +140,25 @@ class OntologyInventionEngine:
         obs = [o if isinstance(o, Observation) else Observation(**dict(o)) for o in observations]
         if not obs:
             raise ValueError("ingest requires observations")
+        with self._transaction():
+            with self._lock:
+                domain = Counter(item.domain for item in obs).most_common(1)[0][0]
+                prior_model = self.models.get(domain)
+                model = self._ingest_locked(obs)
+                encoded = self._encoded_state_locked() if self.state_path else None
+            try:
+                if encoded is not None:
+                    atomic_write_text(self.state_path, encoded)
+            except BaseException:
+                with self._lock:
+                    if prior_model is None:
+                        self.models.pop(domain, None)
+                    else:
+                        self.models[domain] = prior_model
+                raise
+        return model
+
+    def _ingest_locked(self, obs: list[Observation]) -> OntologyModel:
         domain = Counter(o.domain for o in obs).most_common(1)[0][0]
         entities = self._entities(obs)
         variables = self._variables(obs)
@@ -152,8 +188,6 @@ class OntologyInventionEngine:
             confidence,
         )
         self.models[domain] = model
-        if self.state_path:
-            self.save(self.state_path)
         return model
 
     def update_from_prediction_error(
@@ -178,10 +212,30 @@ class OntologyInventionEngine:
             "severity": min(1.0, len(diff) / 10),
             "created_at": time.time(),
         }
-        self.residuals[domain].append(residual)
-        revision = None
-        if obs and (len(self.residuals[domain]) >= 3 or residual["severity"] >= 0.4):
-            revision = self.ingest([obs]).to_dict()
+        with self._transaction():
+            with self._lock:
+                prior_model = self.models.get(domain)
+                prior_residual_count = len(self.residuals[domain])
+                self.residuals[domain].append(residual)
+                revision = None
+                if obs and (
+                    len(self.residuals[domain]) >= 3 or residual["severity"] >= 0.4
+                ):
+                    revision = self._ingest_locked([obs]).to_dict()
+                encoded = self._encoded_state_locked() if self.state_path else None
+            try:
+                if encoded is not None:
+                    atomic_write_text(self.state_path, encoded)
+            except BaseException:
+                with self._lock:
+                    del self.residuals[domain][prior_residual_count:]
+                    if not self.residuals[domain]:
+                        self.residuals.pop(domain, None)
+                    if prior_model is None:
+                        self.models.pop(domain, None)
+                    else:
+                        self.models[domain] = prior_model
+                raise
         return {"residual": residual, "revision": revision}
 
     def _entities(self, obs: list[Observation]) -> dict[str, OntologyEntityType]:
@@ -403,11 +457,87 @@ class OntologyInventionEngine:
         tokens = set(TOKEN_RE.findall(feature.lower()))
         return max(names, key=lambda e: jaccard(tokens, set(e.split("_")))) if names else "unknown_entity"
 
+    def _transaction(self) -> AbstractContextManager[None]:
+        if self._transaction_path is None:
+            return nullcontext()
+        return interprocess_file_lock(self._transaction_path)
+
+    def _encoded_state_locked(self) -> str:
+        payload = {
+            "models": {key: value.to_dict() for key, value in self.models.items()},
+            "residuals": {key: list(value) for key, value in self.residuals.items()},
+        }
+        return json.dumps(payload, indent=2, sort_keys=True)
+
+    def model_for(self, domain: str) -> OntologyModel | None:
+        with self._lock:
+            return self.models.get(domain)
+
+    def domains(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self.models))
+
     def save(self, path: str | Path | None = None) -> None:
         target = Path(path or self.state_path)
-        payload = {"models": {k: v.to_dict() for k, v in self.models.items()}, "residuals": dict(self.residuals)}
-        atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True))
+        transaction_path = target.with_name(target.name + ".transaction.lock")
+        with interprocess_file_lock(transaction_path):
+            with self._lock:
+                encoded = self._encoded_state_locked()
+            atomic_write_text(target, encoded)
 
     def load(self, path: str | Path) -> None:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        self.residuals = defaultdict(list, {k: list(v) for k, v in data.get("residuals", {}).items()})
+        target = Path(path)
+        transaction_path = target.with_name(target.name + ".transaction.lock")
+        with interprocess_file_lock(transaction_path):
+            data = json.loads(target.read_text(encoding="utf-8"))
+            models = {
+                str(domain): self._model_from_dict(payload)
+                for domain, payload in dict(data.get("models", {})).items()
+            }
+            residuals = defaultdict(
+                list,
+                {
+                    str(domain): list(items)
+                    for domain, items in dict(data.get("residuals", {})).items()
+                },
+            )
+            with self._lock:
+                self.models = models
+                self.residuals = residuals
+
+    @staticmethod
+    def _model_from_dict(payload: Mapping[str, Any]) -> OntologyModel:
+        data = dict(payload)
+        return OntologyModel(
+            model_id=str(data["model_id"]),
+            domain=str(data["domain"]),
+            entity_types={
+                str(name): OntologyEntityType(
+                    name=str(item["name"]),
+                    evidence_keys=set(item.get("evidence_keys", ())),
+                    examples=list(item.get("examples", ())),
+                    confidence=float(item.get("confidence", 0.0)),
+                )
+                for name, item in dict(data.get("entity_types", {})).items()
+            },
+            variables=dict(data.get("variables", {})),
+            relations=[OntologyRelation(**dict(item)) for item in data.get("relations", ())],
+            affordances=[
+                AffordanceHypothesis(
+                    name=str(item["name"]),
+                    preconditions=set(item.get("preconditions", ())),
+                    action_kind=str(item["action_kind"]),
+                    expected_effect=str(item["expected_effect"]),
+                    support=int(item.get("support", 0)),
+                    confidence=float(item.get("confidence", 0.0)),
+                    tests=list(item.get("tests", ())),
+                )
+                for item in data.get("affordances", ())
+            ],
+            hidden_state_hypotheses=list(data.get("hidden_state_hypotheses", ())),
+            experiments=[
+                ExperimentProposal(**dict(item)) for item in data.get("experiments", ())
+            ],
+            confidence=float(data.get("confidence", 0.0)),
+            invented_at=float(data.get("invented_at", time.time())),
+        )

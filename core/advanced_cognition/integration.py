@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from core.runtime.lockdep import checked_lock
+
 from .continual_learning_stability import ContinualLearningStabilityEngine
 from .ontology_invention import OntologyInventionEngine
 from .physical_grounding import PhysicalGroundingEngine
@@ -17,7 +19,6 @@ from .social_cognition import SocialCognitionLayer
 from .tiered_action import TieredActionController
 from .world_model import MultiDomainWorldModel
 from .zero_shot_transfer import ZeroShotTransferEngine
-from core.runtime.lockdep import checked_lock
 
 
 class AdvancedCognitionRuntime:
@@ -40,6 +41,7 @@ class AdvancedCognitionRuntime:
             tuple[str, dict[str, Any]],
         ] = OrderedDict()
         self._observation_receipt_limit = 4096
+        self._observation_inflight: dict[str, tuple[str, threading.Event]] = {}
 
     def observe_state(
         self,
@@ -68,29 +70,51 @@ class AdvancedCognitionRuntime:
             },
             prefix="adv_request_",
         )
-        with self._observation_lock:
-            if key:
-                prior = self._observation_receipts.get(key)
-                if prior is not None:
-                    if prior[0] != request_sha256:
+        owner_event: threading.Event | None = None
+        if key:
+            while owner_event is None:
+                waiter: threading.Event | None = None
+                with self._observation_lock:
+                    prior = self._observation_receipts.get(key)
+                    if prior is not None:
+                        if prior[0] != request_sha256:
+                            raise ValueError(
+                                "advanced cognition idempotency key conflicts with prior evidence"
+                            )
+                        self._observation_receipts.move_to_end(key)
+                        return prior[1]
+                    inflight = self._observation_inflight.get(key)
+                    if inflight is None:
+                        owner_event = threading.Event()
+                        self._observation_inflight[key] = (request_sha256, owner_event)
+                    elif inflight[0] != request_sha256:
                         raise ValueError(
-                            "advanced cognition idempotency key conflicts with prior evidence"
+                            "advanced cognition idempotency key conflicts with in-flight evidence"
                         )
-                    self._observation_receipts.move_to_end(key)
-                    return prior[1]
-            obs = Observation(
-                domain=domain,
-                state=request_state,
-                timestamp=timestamp,
-                source=source,
-                confidence=confidence,
-            )
-            grounded = self.grounding.ingest(obs)
-            self.stability.observe_feature_distribution(domain, sorted(obs.features()))
-            model = None
-            if domain not in self.ontology.models or grounded.confidence < 0.45:
-                model = self.ontology.ingest([obs])
-            current_model = model or self.ontology.models.get(domain)
+                    else:
+                        waiter = inflight[1]
+                if waiter is not None and not waiter.wait(timeout=30.0):
+                    raise TimeoutError(
+                        "advanced cognition duplicate observation exceeded singleflight budget"
+                    )
+
+        try:
+            with self._observation_lock:
+                obs = Observation(
+                    domain=domain,
+                    state=request_state,
+                    timestamp=timestamp,
+                    source=source,
+                    confidence=confidence,
+                )
+                grounded = self.grounding.ingest(obs)
+                self.stability.observe_feature_distribution(domain, sorted(obs.features()))
+                needs_model = (
+                    self.ontology.model_for(domain) is None or grounded.confidence < 0.45
+                )
+
+            model = self.ontology.ingest([obs]) if needs_model else None
+            current_model = model or self.ontology.model_for(domain)
             result = {
                 "observation": obs.to_dict(),
                 "grounded_state": grounded,
@@ -104,12 +128,24 @@ class AdvancedCognitionRuntime:
                     prefix="adv_obs_",
                 ),
             }
-            if key:
-                self._observation_receipts[key] = (request_sha256, result)
-                self._observation_receipts.move_to_end(key)
-                while len(self._observation_receipts) > self._observation_receipt_limit:
-                    self._observation_receipts.popitem(last=False)
-            return result
+            with self._observation_lock:
+                if key:
+                    self._observation_receipts[key] = (request_sha256, result)
+                    self._observation_receipts.move_to_end(key)
+                    while len(self._observation_receipts) > self._observation_receipt_limit:
+                        self._observation_receipts.popitem(last=False)
+                    inflight = self._observation_inflight.pop(key, None)
+                    if inflight is not None:
+                        inflight[1].set()
+                return result
+        except BaseException:
+            if key and owner_event is not None:
+                with self._observation_lock:
+                    inflight = self._observation_inflight.get(key)
+                    if inflight is not None and inflight[1] is owner_event:
+                        self._observation_inflight.pop(key, None)
+                        owner_event.set()
+            raise
 
     def pre_action_gate(
         self,
@@ -161,7 +197,7 @@ class AdvancedCognitionRuntime:
             actions,
             risk=max(zero.risk, float(world_prediction.get("risk", 0.0)) if world_prediction else 0.0),
             uncertainty=float(world_prediction.get("uncertainty", 0.5)) if world_prediction else 0.75,
-            novelty=1.0 if obs.domain not in self.ontology.models else 0.2,
+            novelty=1.0 if self.ontology.model_for(obs.domain) is None else 0.2,
             self_modification=any(
                 "self_modify" in set((a.tags if isinstance(a, ActionCandidate) else tuple(dict(a).get("tags", ()))) or ())
                 for a in actions
@@ -269,7 +305,12 @@ class AdvancedCognitionRuntime:
         world_prediction = self.world_model.observe_episode(episode)
         memory = self.stability.ingest_episode(episode)
         if pred:
-            self.ontology.update_from_prediction_error(obs.domain, predicted=pred, actual=out.to_dict(), observation=obs)
+            self.ontology.update_from_prediction_error(
+                obs.domain,
+                predicted=pred,
+                actual=out.to_dict(),
+                observation=obs,
+            )
         stability = self.stability.assess_stability()
         return {
             "episode_id": episode.episode_id,
@@ -304,7 +345,7 @@ class AdvancedCognitionRuntime:
             "ok": stability.status != "unstable",
             "stability": stability.to_dict(),
             "principles": len(self.transfer.principles),
-            "ontologies": list(self.ontology.models),
+            "ontologies": list(self.ontology.domains()),
             "objects": len(self.grounding.objects),
             "world_model_episodes": len(self.world_model.episodes),
             "receipt_id": stable_hash({"s": stability.report_id, "ts": round(time.time(), 3)}, prefix="adv_health_"),

@@ -1502,14 +1502,23 @@ class RealityObservationRouter:
     async def stop(self) -> None:
         self._running = False
         self._wake.set()
-        for task in (self._poll_task, self._worker_task):
-            if task is None:
-                continue
-            task.cancel()
+        poll_task = self._poll_task
+        if poll_task is not None:
+            poll_task.cancel()
             try:
-                await task
+                await poll_task
             except asyncio.CancelledError:
                 pass
+        worker_task = self._worker_task
+        if worker_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(worker_task), timeout=2.0)
+            except TimeoutError:
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
         self._poll_task = None
         self._worker_task = None
 
@@ -1934,18 +1943,32 @@ class RealityObservationRouter:
             self._digital_twin.health_snapshot() if self._digital_twin is not None else None
         )
         sink_registry = self._required_sink_status()
+        alive = self.is_alive()
+        subscriptions = self.subscriptions()
+        historian_ready = self._historian is None or bool(
+            isinstance(historian_status, dict) and historian_status.get("ready")
+        )
+        required_sinks_ready = all(
+            bool(item["ready"]) for item in sink_registry.values()
+        )
         with self._lock:
-            ready = self.is_ready()
+            ready = bool(
+                alive
+                and historian_ready
+                and required_sinks_ready
+                and self._twin_backfill_ready
+                and any(item.enabled for item in subscriptions)
+            )
             return {
                 "status": "active" if ready else "degraded",
-                "alive": self.is_alive(),
+                "alive": alive,
                 "ready": ready,
                 "queue_depth": (
                     self._durable_queue_depth if self._historian is not None else len(self._queue)
                 ),
                 "queue_limit": self._queue_limit,
                 "latest_channels": len(self._latest),
-                "subscriptions": len(self.subscriptions()),
+                "subscriptions": len(subscriptions),
                 "samplers": len(self._samplers),
                 "accepted": self._accepted,
                 "delivered": self._delivered,

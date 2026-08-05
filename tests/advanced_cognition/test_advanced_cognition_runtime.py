@@ -120,6 +120,107 @@ def test_observation_delivery_is_idempotent_and_content_bound(tmp_path):
         )
 
 
+def test_observation_persistence_is_outside_state_lock_and_restores_models(tmp_path):
+    from core.runtime.lockdep import lockdep_report
+
+    before = {
+        item["signature"]: item["occurrences"]
+        for item in lockdep_report()["splats"]
+        if item["kind"] == "blocking_op_under_lock"
+    }
+    runtime = AdvancedCognitionRuntime(state_dir=tmp_path)
+    first = runtime.observe_state(
+        "physical_environment",
+        {"observation_id": "reality.obs.persisted", "temperature": 19.5},
+        source="reality:test.sensor",
+        confidence=0.8,
+        observed_at=1_785_600_001.0,
+        idempotency_key="reality.obs.persisted",
+    )
+    after = {
+        item["signature"]: item["occurrences"]
+        for item in lockdep_report()["splats"]
+        if item["kind"] == "blocking_op_under_lock"
+    }
+
+    restored = AdvancedCognitionRuntime(state_dir=tmp_path)
+
+    assert after == before
+    assert restored.ontology.model_for("physical_environment") is not None
+    assert (
+        restored.ontology.model_for("physical_environment").model_id
+        == first["ontology"]["model_id"]
+    )
+
+
+def test_concurrent_observation_retries_share_one_committed_receipt(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    runtime = AdvancedCognitionRuntime(state_dir=tmp_path)
+
+    def _observe():
+        return runtime.observe_state(
+            "physical_environment",
+            {"observation_id": "reality.obs.concurrent", "temperature": 20.0},
+            source="reality:test.sensor",
+            confidence=0.8,
+            observed_at=1_785_600_002.0,
+            idempotency_key="reality.obs.concurrent",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _index: _observe(), range(24)))
+
+    assert len({item["receipt_id"] for item in results}) == 1
+    assert all(item is results[0] for item in results)
+    assert len(runtime._observation_receipts) == 1
+
+
+def test_failed_ontology_commit_publishes_no_receipt_and_retry_is_durable(
+    monkeypatch,
+    tmp_path,
+):
+    import pytest
+
+    from core.advanced_cognition import ontology_invention
+
+    runtime = AdvancedCognitionRuntime(state_dir=tmp_path)
+    original_write = ontology_invention.atomic_write_text
+    attempts = {"count": 0}
+
+    def _fail_once(path, payload):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("synthetic durability failure")
+        return original_write(path, payload)
+
+    monkeypatch.setattr(ontology_invention, "atomic_write_text", _fail_once)
+    kwargs = {
+        "source": "reality:test.sensor",
+        "confidence": 0.8,
+        "observed_at": 1_785_600_003.0,
+        "idempotency_key": "reality.obs.retry-after-fsync",
+    }
+
+    with pytest.raises(OSError, match="synthetic durability failure"):
+        runtime.observe_state(
+            "physical_environment",
+            {"observation_id": "reality.obs.retry-after-fsync"},
+            **kwargs,
+        )
+
+    assert runtime.ontology.model_for("physical_environment") is None
+    assert runtime._observation_receipts == {}
+    committed = runtime.observe_state(
+        "physical_environment",
+        {"observation_id": "reality.obs.retry-after-fsync"},
+        **kwargs,
+    )
+    restored = AdvancedCognitionRuntime(state_dir=tmp_path)
+    assert committed["receipt_id"]
+    assert restored.ontology.model_for("physical_environment") is not None
+
+
 def test_world_model_social_tier_validation_and_architecture_surfaces(tmp_path):
     runtime = AdvancedCognitionRuntime(state_dir=tmp_path / "advanced_runtime")
     obs = Observation(domain="repo", state={"file": "core/x.py", "unknown": True, "confidence": 0.2})

@@ -197,6 +197,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         from core.reality_reach.digital_twin import RealityDigitalTwinGraph
         from core.reality_reach.historian import RealityHistorian
         from core.reality_reach.live import get_reality_reach_service
+        from core.reality_reach.middleware import RealityMiddlewareRuntime
         from core.reality_reach.transactions import get_reality_actuation_coordinator
 
         service = get_reality_reach_service()
@@ -207,6 +208,31 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         )
         orchestrator.reality_reach = service
         orchestrator.reality_actuation = coordinator
+        middleware = None
+        try:
+            middleware_path = environment_runtime_file(
+                "shared",
+                "reality_middleware.json",
+                purpose="state",
+            )
+            middleware = RealityMiddlewareRuntime(
+                service,
+                state_path=middleware_path,
+            )
+            await middleware.start()
+        except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
+            _record_cognitive_sensory_degradation(
+                orchestrator,
+                exc,
+                phase="reality_middleware",
+                action=(
+                    "Kept raw sensing, history, and topology available but closed "
+                    "managed telemetry, request/response, and long-running physical "
+                    "actions until lifecycle-state recovery"
+                ),
+                severity="critical",
+            )
+        orchestrator.reality_middleware = middleware
         historian = None
         try:
             historian_path = environment_runtime_file(
@@ -271,6 +297,19 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             required_for="governed physical actuation and effect reconciliation",
             failure_policy="degrade_with_receipt",
         )
+        if middleware is not None:
+            ServiceContainer.register_instance(
+                "reality_middleware",
+                middleware,
+                required=True,
+                owner="core/reality_reach/middleware.py",
+                registered_by="init_cognitive_sensory_layer",
+                required_for=(
+                    "managed telemetry QoS, bounded services, and cancellable "
+                    "restart-safe physical actions"
+                ),
+                failure_policy="fail-closed",
+            )
         if historian is not None:
             ServiceContainer.register_instance(
                 "reality_historian",
@@ -296,6 +335,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             )
         report["registered"]["reality_reach"] = service.__class__.__name__
         report["registered"]["reality_actuation"] = coordinator.__class__.__name__
+        if middleware is not None:
+            report["registered"]["reality_middleware"] = middleware.__class__.__name__
         if historian is not None:
             report["registered"]["reality_historian"] = historian.__class__.__name__
         if digital_twin is not None:

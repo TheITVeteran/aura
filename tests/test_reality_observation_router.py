@@ -42,6 +42,7 @@ from core.reality_reach.observation_router import (
     RealityObservationRouter,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.lockdep import assert_no_locks_held
 
 
 class _MemoryKeychainBackend:
@@ -1384,6 +1385,46 @@ def test_required_sink_health_rejects_callable_but_unhealthy_dependencies(
     assert status["advanced_cognition"]["ready"] is False
     assert status["advanced_cognition"]["reason"] == "health_report_unready"
     assert router.is_ready() is False
+
+
+def test_status_probes_required_sinks_outside_router_state_lock(
+    monkeypatch,
+) -> None:
+    held_during_probes: list[list[str]] = []
+
+    def _probe(payload: dict[str, object]) -> dict[str, object]:
+        held_during_probes.append(assert_no_locks_held("fsync"))
+        return payload
+
+    multimodal = _accepting_synchronizer([])
+    multimodal.get_status = lambda: _probe(
+        {
+            "accepted_events": 0,
+            "rejected_events": 0,
+            "queue_overflow_drops": 0,
+            "late_events": 0,
+            "fusions": 0,
+            "queue_depths": {"device": 0},
+            "queue_limit": 64,
+        }
+    )
+    advanced = _accepting_cognition([])
+    advanced.health_report = lambda: _probe({"ok": True})
+    services = {
+        "multimodal_synchronizer": multimodal,
+        "advanced_cognition": advanced,
+    }
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+        raising=False,
+    )
+    router = RealityObservationRouter(RealityReachService())
+
+    router.status()
+
+    assert held_during_probes == [[], []]
 
 
 @pytest.mark.asyncio

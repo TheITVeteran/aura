@@ -124,6 +124,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     )
     _install_module(
         monkeypatch,
+        "core.reality_reach.middleware",
+        RealityMiddlewareRuntime=Service,
+    )
+    _install_module(
+        monkeypatch,
         "core.reality_reach.historian",
         RealityHistorian=Service,
     )
@@ -219,6 +224,12 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_reach"].refreshed is True
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
+    assert registered["reality_middleware"] is orchestrator.reality_middleware
+    assert registered["reality_middleware"].args[0] is orchestrator.reality_reach
+    assert registered["reality_middleware"].kwargs["state_path"].name == (
+        "reality_middleware.json"
+    )
+    assert registered["reality_middleware"].started is True
     assert registered["reality_historian"] is orchestrator.reality_historian
     assert registered["reality_historian"].args[0].name == "reality_historian.sqlite3"
     assert registered["reality_digital_twin"] is orchestrator.reality_digital_twin
@@ -365,6 +376,37 @@ async def test_historian_failure_keeps_live_sensing_and_actuation_registered(
     assert orchestrator.reality_historian is None
     assert registered["reality_observation_router"].kwargs["historian"] is None
     assert registered["reality_observation_router"].started is True
+
+
+@pytest.mark.asyncio
+async def test_middleware_failure_closes_managed_actions_without_erasing_raw_senses(
+    monkeypatch,
+) -> None:
+    from core.orchestrator.initializers.cognitive_sensory import (
+        init_cognitive_sensory_layer,
+    )
+
+    class BrokenMiddleware:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic middleware state corruption")
+
+    _install_success_modules(monkeypatch)
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.middleware",
+        RealityMiddlewareRuntime=BrokenMiddleware,
+    )
+    registered = _patch_container(monkeypatch)
+    orchestrator = SimpleNamespace(affect=SimpleNamespace(drive_controller=None))
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert report["degraded"]["reality_middleware"]["severity"] == "critical"
+    assert "reality_reach" in report["completed"]
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert registered["reality_actuation"] is orchestrator.reality_actuation
+    assert orchestrator.reality_middleware is None
+    assert "reality_middleware" not in registered
 
 
 @pytest.mark.asyncio

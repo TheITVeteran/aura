@@ -15,7 +15,6 @@ import json
 import os
 import secrets
 import stat
-import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -30,7 +29,6 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.security.zenith_secrets import KeychainBackend, require_keychain_backend
-from core.runtime.lockdep import checked_lock
 
 TRUST_ENVELOPE_SCHEMA = "aura.reality-attachment-trust.envelope.v2"
 TRUST_BODY_SCHEMA = "aura.reality-attachment-trust.body.v2"
@@ -161,7 +159,6 @@ class KeychainAttachmentTrustStore:
         self._service = service
         self._keyring_account = keyring_account
         self._anchor_account = anchor_account
-        self._thread_lock = checked_lock("trust_custody", reentrant=True)
         self._closed = False
         self._last_error = ""
         self._recovered_commits = 0
@@ -552,7 +549,7 @@ class KeychainAttachmentTrustStore:
 
     def load(self) -> Mapping[str, Any] | None:
         self._ensure_open()
-        with self._thread_lock, interprocess_file_lock(self._lock_path):
+        with interprocess_file_lock(self._lock_path):
             try:
                 anchor = self._read_anchor()
                 if not self._state_path.exists():
@@ -668,7 +665,7 @@ class KeychainAttachmentTrustStore:
         self._ensure_open()
         if not isinstance(body, Mapping):
             raise TypeError("trust body must be a mapping")
-        with self._thread_lock, interprocess_file_lock(self._lock_path):
+        with interprocess_file_lock(self._lock_path):
             try:
                 return self._save_locked(body)
             except AttachmentTrustStoreError as exc:
@@ -720,7 +717,7 @@ class KeychainAttachmentTrustStore:
         self._ensure_open()
         if not isinstance(body, Mapping):
             raise TypeError("trust body must be a mapping")
-        with self._thread_lock, interprocess_file_lock(self._lock_path):
+        with interprocess_file_lock(self._lock_path):
             try:
                 if self._state_path.exists():
                     self.load()
@@ -751,7 +748,7 @@ class KeychainAttachmentTrustStore:
         }
 
     def close(self) -> None:
-        with self._thread_lock:
+        with interprocess_file_lock(self._lock_path):
             for item in self._keyring.get("keys", []):
                 item["key_b64"] = ""
                 item["key_sha256"] = _ZERO_DIGEST

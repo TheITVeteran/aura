@@ -11,6 +11,7 @@ from core.reality_reach.trust_custody import (
     AttachmentTrustStoreError,
     KeychainAttachmentTrustStore,
 )
+from core.runtime.lockdep import lockdep_report
 
 
 def _canonical(value: object) -> bytes:
@@ -166,6 +167,28 @@ def test_rotation_reencrypts_head_and_preserves_content(tmp_path: Path) -> None:
     state_path.write_bytes(old_envelope)
     with pytest.raises(AttachmentTrustStoreError, match="rollback_or_replay_refused"):
         store.load()
+
+
+def test_custody_io_never_runs_under_a_checked_lock(tmp_path: Path) -> None:
+    before = {
+        item["signature"]: item["occurrences"]
+        for item in lockdep_report()["splats"]
+        if item["kind"] == "blocking_op_under_lock"
+    }
+    backend = FakeKeychain()
+    store = _store(tmp_path / "trust.json", backend)
+
+    store.save(_body("Sensor"))
+    assert store.load() == _body("Sensor")
+    store.rotate_and_save(_body("Rotated Sensor"))
+    store.close()
+
+    after = {
+        item["signature"]: item["occurrences"]
+        for item in lockdep_report()["splats"]
+        if item["kind"] == "blocking_op_under_lock"
+    }
+    assert after == before
 
 
 def test_unconfirmed_keychain_write_fails_without_state_commit(tmp_path: Path) -> None:

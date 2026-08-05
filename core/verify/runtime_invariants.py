@@ -608,6 +608,46 @@ def _no_stuck_transitions() -> Iterator[Violation]:
 
 
 @invariant(
+    "reality_middleware.effects_are_reconciled",
+    scope="middleware",
+    owner=_OWNER,
+    description="managed physical effects never report ready while recovery is unresolved",
+)
+def _managed_physical_effects_reconciled() -> Iterator[Violation]:
+    from core.container import ServiceContainer
+
+    reality_reach = ServiceContainer.get("reality_reach", default=None)
+    middleware = ServiceContainer.get("reality_middleware", default=None)
+    if reality_reach is None and middleware is None:
+        return
+    if middleware is None:
+        yield Violation(
+            subject="reality_middleware",
+            message="Reality Reach is live without its managed physical lifecycle runtime",
+            remedy="restore the middleware before admitting managed services or actions",
+        )
+        return
+    status = middleware.status() if callable(getattr(middleware, "status", None)) else None
+    if not isinstance(status, dict):
+        yield Violation(
+            subject="reality_middleware",
+            message="managed physical runtime exposes no inspectable status contract",
+            remedy="provide status() with alive, ready, and recovery_required_count",
+        )
+        return
+    recovery = int(status.get("recovery_required_count", 0) or 0)
+    if recovery > 0 or (status.get("ready") is True and status.get("alive") is not True):
+        yield Violation(
+            subject="reality_middleware",
+            message=(
+                f"managed physical runtime reports alive={status.get('alive')!r}, "
+                f"ready={status.get('ready')!r}, unresolved_effects={recovery}"
+            ),
+            remedy="reconcile every uncertain effect before restoring physical readiness",
+        )
+
+
+@invariant(
     "qos.no_unresolved_mismatch",
     scope="middleware",
     severity=Severity.WARNING,

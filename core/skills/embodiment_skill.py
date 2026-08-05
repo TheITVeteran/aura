@@ -57,6 +57,27 @@ def _bounded_int_parameter(
     return parsed
 
 
+def _bounded_float_parameter(
+    value: Any,
+    *,
+    name: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f"{name} must lie inside [{minimum}, {maximum}]")
+    return parsed
+
+
 def _service(name: str) -> Any | None:
     try:
         return ServiceContainer.get(name, default=None)
@@ -106,16 +127,27 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             "focus_sensor | pause_sensors | resume_sensors | "
             "pause_sensor_attention | resume_sensor_attention | latest_observations | "
             "observation_history | active_alarms | acknowledge_alarm | "
-            "observation_quarantine | query_device | command_device"
+            "observation_quarantine | middleware_status | call_service | "
+            "start_action | action_status | action_feedback | wait_action | "
+            "cancel_action | activate_physical_node | deactivate_physical_node | "
+            "query_device | command_device"
         ),
         "device_id": "Hardware device id for query or command.",
         "candidate_id": "Discovered candidate id for request_connection.",
-        "request_id": "Pending request id for authorize_connection.",
+        "request_id": (
+            "Pending attachment request id, or idempotency id for a managed service call."
+        ),
         "channel_id": "Reality Reach channel or prefix for query/focus.",
         "access": "observe, or observe+control when proposing a connection.",
         "persistent": "Whether bounded trust may survive a runtime migration.",
         "grant_ttl_s": "Requested trust lifetime within the enforced policy ceiling.",
         "command": "Declared hardware command or Home Assistant operation.",
+        "endpoint_id": "Managed telemetry, service, or action endpoint id.",
+        "node_id": "Managed physical node id for lifecycle transitions.",
+        "goal_id": "Durable identity for a long-running physical action.",
+        "timeout_s": "Bounded service or action wait deadline.",
+        "preempt": "Whether a new action may safely preempt the active goal.",
+        "after_sequence": "Return action feedback after this sequence.",
         "parameters": "Bounded command/effect parameters.",
     }
 
@@ -307,6 +339,18 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 "quarantine": list(quarantined),
                 "historian": historian_status,
             }
+        if action in {
+            "middleware_status",
+            "call_service",
+            "start_action",
+            "action_status",
+            "action_feedback",
+            "wait_action",
+            "cancel_action",
+            "activate_physical_node",
+            "deactivate_physical_node",
+        }:
+            return await self._middleware(action, params)
         if action == "query_device":
             return await self._query(params)
         if action == "command_device":
@@ -320,6 +364,7 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
         router = _service("reality_observation_router")
         broker = _service("reality_attachment_broker")
         historian = _service("reality_historian")
+        middleware = _service("reality_middleware")
         body = _service("body_schema")
         devices = manager.list_devices() if manager is not None else []
         declarations = (
@@ -347,12 +392,127 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
                 if historian is not None
                 else None
             ),
+            "managed_physical_runtime": (
+                middleware.status() if middleware is not None else None
+            ),
             "attachments": broker.status() if broker is not None else None,
             "summary": (
                 f"My physical body currently exposes {len(declarations)} channels "
                 f"across {len(physical_limbs)} sensor or actuator limbs."
             ),
         }
+
+    @staticmethod
+    async def _middleware(action: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        middleware = _service("reality_middleware")
+        if middleware is None:
+            return {"ok": False, "error": "managed physical runtime is offline"}
+        try:
+            if action == "middleware_status":
+                return {"ok": True, "managed_physical_runtime": middleware.status()}
+            if action in {"activate_physical_node", "deactivate_physical_node"}:
+                node_id = str(params.get("node_id") or "").strip().lower()
+                if not node_id:
+                    raise ValueError("node_id is required")
+                operation = (
+                    middleware.activate_node
+                    if action == "activate_physical_node"
+                    else middleware.deactivate_node
+                )
+                ok = await operation(node_id)
+                return {
+                    "ok": bool(ok),
+                    "node": middleware.node_status(node_id),
+                }
+            endpoint_id = str(params.get("endpoint_id") or "").strip().lower()
+            if action == "call_service":
+                request = params.get("parameters", params.get("request", {}))
+                if not endpoint_id or not isinstance(request, Mapping):
+                    raise ValueError("endpoint_id and a request mapping are required")
+                timeout_s = _bounded_float_parameter(
+                    params.get("timeout_s"),
+                    name="timeout_s",
+                    default=10.0,
+                    minimum=0.01,
+                    maximum=300.0,
+                )
+                receipt = await middleware.call_service(
+                    endpoint_id,
+                    request,
+                    request_id=str(params.get("request_id") or "").strip() or None,
+                    timeout_s=timeout_s,
+                )
+                return {"ok": receipt.ok, "service_receipt": receipt.to_dict()}
+            goal_id = str(params.get("goal_id") or "").strip().lower()
+            if action == "start_action":
+                request = params.get("parameters", params.get("request", {}))
+                if not endpoint_id or not isinstance(request, Mapping):
+                    raise ValueError("endpoint_id and an action request mapping are required")
+                timeout_s = _bounded_float_parameter(
+                    params.get("timeout_s"),
+                    name="timeout_s",
+                    default=300.0,
+                    minimum=0.1,
+                    maximum=86400.0,
+                )
+                action_record = await middleware.start_action(
+                    endpoint_id,
+                    request,
+                    goal_id=goal_id or None,
+                    timeout_s=timeout_s,
+                    preempt=_boolean_parameter(params.get("preempt"), default=False),
+                )
+                return {"ok": True, "action": action_record}
+            if not goal_id:
+                raise ValueError("goal_id is required")
+            if action == "action_status":
+                return {"ok": True, "action": middleware.action_status(goal_id)}
+            if action == "action_feedback":
+                after_sequence = _bounded_int_parameter(
+                    params.get("after_sequence"),
+                    name="after_sequence",
+                    default=0,
+                    minimum=0,
+                    maximum=2**31 - 1,
+                )
+                return {
+                    "ok": True,
+                    "goal_id": goal_id,
+                    "feedback": middleware.action_feedback(
+                        goal_id,
+                        after_sequence=after_sequence,
+                    ),
+                }
+            if action == "wait_action":
+                timeout_s = _bounded_float_parameter(
+                    params.get("timeout_s"),
+                    name="timeout_s",
+                    default=30.0,
+                    minimum=0.01,
+                    maximum=86400.0,
+                )
+                return {
+                    "ok": True,
+                    "action": await middleware.wait_action(goal_id, timeout_s=timeout_s),
+                }
+            if action == "cancel_action":
+                return {
+                    "ok": True,
+                    "action": await middleware.cancel_action(
+                        goal_id,
+                        reason=str(params.get("reason") or "Aura cancelled the action")[:320],
+                    ),
+                }
+            raise ValueError(f"unsupported managed physical action: {action}")
+        except (
+            LookupError,
+            OSError,
+            RuntimeError,
+            TimeoutError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}:{exc}"[:320]}
 
     @staticmethod
     async def _request_connection(params: Mapping[str, Any]) -> dict[str, Any]:
