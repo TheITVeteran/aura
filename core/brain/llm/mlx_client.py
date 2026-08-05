@@ -9968,6 +9968,16 @@ class MLXLocalClient:
                     severity="critical",
                 )
                 return False
+        # CP126 1effd581. The anti-thrash swap cooldown used to sleep up to
+        # twelve seconds INSIDE the model-load admission context and the
+        # global single-spawn gate. Everything else in the process that wanted
+        # to spawn waited behind a lane that was doing nothing but counting.
+        # The wait is the same length; it just happens out here, where it
+        # blocks only its own caller, and it now stops early for shutdown.
+        await self._await_swap_cooldown(
+            foreground_request=foreground_request,
+            skip_swap_cooldown=skip_swap_cooldown,
+        )
         try:
             async with _model_load_admission_context(
                 self,
@@ -10044,6 +10054,65 @@ class MLXLocalClient:
             )
             return False
 
+    #: How long to leave between heavy-model swaps, so a lane that just gave
+    #: up its weights is not immediately asked for them again.
+    _SWAP_COOLDOWN_S = 12.0
+
+    async def _await_swap_cooldown(
+        self, *, foreground_request: bool = False, skip_swap_cooldown: bool = False
+    ) -> float:
+        """Serve the anti-thrash cooldown OUTSIDE the shared spawn gates.
+
+        CP126 1effd581: this slept inside the model-load admission context and
+        the global single-spawn semaphore, so one lane counting down twelve
+        seconds blocked every other lane in the process from spawning at all.
+        The wait itself is legitimate — swapping heavy models back and forth
+        thrashes unified memory — but nothing about it requires owning the
+        gate, and holding a global resource while doing nothing is the
+        definition of a convoy.
+
+        Returns the seconds actually waited. Stops early on shutdown rather
+        than making a terminating runtime sit out the full cooldown.
+        """
+        from .model_registry import ACTIVE_MODEL, DEEP_MODEL, get_model_path
+
+        target_path = _real_model_path(self.model_path)
+        primary_path = _real_model_path(get_model_path(ACTIVE_MODEL))
+        deep_path = _real_model_path(get_model_path(DEEP_MODEL))
+        if target_path not in (primary_path, deep_path):
+            return 0.0
+        if not _GLOBAL_LAST_HEAVY_MODEL or _GLOBAL_LAST_HEAVY_MODEL == target_path:
+            return 0.0
+
+        elapsed = time.time() - _GLOBAL_LAST_SWAP_TIME
+        remaining = self._SWAP_COOLDOWN_S - elapsed
+        if remaining <= 0.0:
+            return 0.0
+        if skip_swap_cooldown:
+            logger.info(
+                "⚡ [MLX] Skipping %.1fs swap cooldown for %s.",
+                remaining,
+                os.path.basename(target_path),
+            )
+            return 0.0
+
+        logger.warning(
+            "⏳ [MLX] SWAP COOLDOWN: waiting %.1fs before spawning %s (%s lane).",
+            remaining,
+            os.path.basename(target_path),
+            "foreground" if foreground_request else "background",
+        )
+        waited = 0.0
+        # Slice it so a shutdown does not have to outlast the whole cooldown.
+        while waited < remaining:
+            if _shutdown_blocks_model_work(self.model_path, action="swap cooldown"):
+                logger.info("🛑 [MLX] Swap cooldown cut short by shutdown.")
+                break
+            slice_s = min(0.25, remaining - waited)
+            await asyncio.sleep(slice_s)
+            waited += slice_s
+        return waited
+
     async def _ensure_worker_alive_inner(
         self,
         *,
@@ -10109,24 +10178,9 @@ class MLXLocalClient:
                 )
                 return False
 
-        if target_path in (primary_path, deep_path):
-            # Required yields are owned by the durable lane transaction before
-            # this inner spawn path is entered.  This block now owns only the
-            # anti-thrash cooldown; it must never evict outside the reservation
-            # fence or claim admission before process death is verified.
-            if _GLOBAL_LAST_HEAVY_MODEL and _GLOBAL_LAST_HEAVY_MODEL != target_path:
-                now = time.time()
-                elapsed = now - _GLOBAL_LAST_SWAP_TIME
-                if elapsed < 12.0 and not skip_swap_cooldown:
-                    wait_time = 12.0 - elapsed
-                    logger.warning("⏳ [MLX] SWAP COOLDOWN: Waiting %.1fs...", wait_time)
-                    await asyncio.sleep(wait_time)
-                elif elapsed < 12.0 and skip_swap_cooldown:
-                    logger.info(
-                        "⚡ [MLX] Skipping %.1fs swap cooldown for %s.",
-                        12.0 - elapsed,
-                        os.path.basename(target_path),
-                    )
+        # The swap cooldown is served by _await_swap_cooldown BEFORE the
+        # admission context and the global spawn gate are taken (CP126
+        # 1effd581), so nothing sleeps while holding them.
 
         acquired = await asyncio.to_thread(self._lock.acquire, True, 15.0)
         if not acquired:

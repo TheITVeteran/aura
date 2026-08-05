@@ -1954,3 +1954,84 @@ class TestReadyMeansRespondingNotMerelyAlive:
         proc = _Proc()
         hygiene.register_process_handle(proc, kind="multiprocessing", name=proc.name)
         assert hygiene.process_handle_is_registered(proc) is True
+
+
+class TestTheSwapCooldownDoesNotConvoy:
+    """CP126 1effd581: a 12s sleep inside the process-wide spawn gate."""
+
+    @pytest.mark.asyncio
+    async def test_the_cooldown_runs_before_the_gates_are_taken(self):
+        """Source-level, because the defect is WHERE the await happens.
+
+        The wait itself is legitimate; holding a global single-spawn
+        semaphore while doing nothing but counting is not. If the call ever
+        migrates back inside the admission context, every other lane in the
+        process is blocked again and no functional test would notice.
+        """
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._ensure_worker_alive)
+        cooldown_at = source.index("_await_swap_cooldown")
+        admission_at = source.index("_model_load_admission_context")
+        assert cooldown_at < admission_at, "cooldown must precede the shared gates"
+
+        inner = inspect.getsource(mod.MLXLocalClient._ensure_worker_alive_inner)
+        assert "SWAP COOLDOWN" not in inner
+
+    @pytest.mark.asyncio
+    async def test_a_matching_lane_waits_for_nothing(self, client, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_HEAVY_MODEL", client.model_path)
+        assert await client._await_swap_cooldown() == 0.0
+
+    @pytest.mark.asyncio
+    async def test_an_expired_cooldown_waits_for_nothing(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        primary, deep = "/models/32B", "/models/72B"
+        solver = MLXLocalClient(model_path=deep)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_HEAVY_MODEL", primary)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_SWAP_TIME", time.time() - 3600.0)
+        monkeypatch.setattr(mod, "_real_model_path", lambda p: p)
+        monkeypatch.setattr(
+            "core.brain.llm.model_registry.get_model_path",
+            lambda name=None: primary if "32B" in str(name) else deep,
+        )
+        assert await solver._await_swap_cooldown() == 0.0
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cuts_the_cooldown_short(self, monkeypatch):
+        """A terminating runtime should not sit out a twelve-second cooldown."""
+        import core.brain.llm.mlx_client as mod
+
+        primary, deep = "/models/32B", "/models/72B"
+        solver = MLXLocalClient(model_path=deep)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_HEAVY_MODEL", primary)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_SWAP_TIME", time.time())
+        monkeypatch.setattr(mod, "_real_model_path", lambda p: p)
+        monkeypatch.setattr(
+            "core.brain.llm.model_registry.get_model_path",
+            lambda name=None: primary if "32B" in str(name) else deep,
+        )
+        monkeypatch.setattr(mod, "_shutdown_blocks_model_work", lambda *a, **k: True)
+
+        slept = await solver._await_swap_cooldown()
+        assert slept == 0.0, "shutdown must not wait out the cooldown"
+
+    @pytest.mark.asyncio
+    async def test_skip_is_honoured(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+
+        primary, deep = "/models/32B", "/models/72B"
+        solver = MLXLocalClient(model_path=deep)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_HEAVY_MODEL", primary)
+        monkeypatch.setattr(mod, "_GLOBAL_LAST_SWAP_TIME", time.time())
+        monkeypatch.setattr(mod, "_real_model_path", lambda p: p)
+        monkeypatch.setattr(
+            "core.brain.llm.model_registry.get_model_path",
+            lambda name=None: primary if "32B" in str(name) else deep,
+        )
+        assert await solver._await_swap_cooldown(skip_swap_cooldown=True) == 0.0

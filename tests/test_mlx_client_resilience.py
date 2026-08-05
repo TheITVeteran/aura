@@ -1942,7 +1942,15 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             mlx_module._GLOBAL_LAST_HEAVY_MODEL = old_last_heavy
             mlx_module._GLOBAL_LAST_SWAP_TIME = old_last_swap
 
-        sleep_probe.assert_any_await(7.0)
+        # CP126 1effd581: the cooldown moved OUT of the model-load admission
+        # context and the global spawn gate (holding a process-wide semaphore
+        # while counting to twelve blocked every other lane from spawning),
+        # and it is now sliced so a shutdown does not have to outlast it. The
+        # contract this test guards is the TOTAL wait, which is unchanged.
+        total_slept = sum(
+            float(call.args[0]) for call in sleep_probe.await_args_list if call.args
+        )
+        self.assertAlmostEqual(total_slept, 7.0, places=6)
         self.assertTrue(solver._init_done)
 
     async def test_heavy_model_swap_can_bypass_cooldown_for_fast_restore(self):
