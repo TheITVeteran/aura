@@ -11,7 +11,7 @@ from core.reality_reach.actuation import (
     RealityAdapter,
 )
 from core.reality_reach.contracts import NumericDomain
-from core.reality_reach.live import RealityReachService
+from core.reality_reach.live import ReadingStatus, RealityReachService
 from core.reality_reach.scalar_adapter import (
     ScalarAdapterError,
     ScalarRealityAdapter,
@@ -58,6 +58,22 @@ class _Transport:
             accepted=True,
             transport_completed=True,
             receipt={"resource_id": resource_id, "accepted": True, "recovery": recovery},
+        )
+
+
+class _FrozenTimestampTransport(_Transport):
+    def __init__(self, value: float = 0.0) -> None:
+        super().__init__(value)
+        self.captured_at_ns = time.time_ns()
+
+    async def read_scalar(self, resource_id: str) -> ScalarSample:
+        self.reads += 1
+        return ScalarSample(
+            value=self.value,
+            captured_at_ns=self.captured_at_ns,
+            source_event_id=_digest(
+                {"resource_id": resource_id, "value": self.value, "reads": self.reads}
+            ),
         )
 
 
@@ -165,6 +181,68 @@ async def test_scalar_adapter_does_not_promote_shared_command_readback() -> None
 
     assert effect.state is ActuationState.FAILED
     assert effect.independently_observed is False
+
+
+@pytest.mark.asyncio
+async def test_scalar_adapter_does_not_claim_a_preexisting_target_as_its_effect() -> None:
+    transport = _Transport(25.0)
+    adapter = ScalarRealityAdapter(
+        transport,
+        _profile(),
+        initial_sample=await transport.read_scalar("item.desk_light"),
+    )
+    service = RealityReachService((adapter,), session_id="test.scalar.preexisting")
+    command, lease = await _command_and_lease(adapter, service, target=25.0)
+    prepared = await adapter.prepare(command, lease)
+    actuation = await adapter.actuate(command, lease, prepared)
+    effect = await adapter.verify_effect(command, actuation)
+
+    assert actuation.state is ActuationState.EXECUTED
+    assert effect.state is ActuationState.FAILED
+    assert effect.independently_observed is False
+
+
+@pytest.mark.asyncio
+async def test_scalar_adapter_rejects_changed_value_with_frozen_device_timestamp() -> None:
+    transport = _FrozenTimestampTransport()
+    adapter = ScalarRealityAdapter(
+        transport,
+        _profile(),
+        initial_sample=await transport.read_scalar("item.desk_light"),
+    )
+    service = RealityReachService((adapter,), session_id="test.scalar.cached.timestamp")
+    command, lease = await _command_and_lease(adapter, service, target=25.0)
+    prepared = await adapter.prepare(command, lease)
+    actuation = await adapter.actuate(command, lease, prepared)
+    effect = await adapter.verify_effect(command, actuation)
+
+    assert transport.value == 25.0
+    assert effect.target_error == 0.0
+    assert effect.state is ActuationState.FAILED
+    assert effect.independently_observed is False
+
+
+def test_scalar_adapter_marks_old_samples_stale_and_rejects_future_clock() -> None:
+    transport = _Transport(7.0)
+    old = ScalarSample(
+        value=7.0,
+        captured_at_ns=time.time_ns() - 31_000_000_000,
+        source_event_id=_digest("old"),
+    )
+    adapter = ScalarRealityAdapter(
+        transport,
+        _profile(writable=False),
+        initial_sample=old,
+    )
+    assert adapter.read()[0].status is ReadingStatus.STALE
+
+    future = ScalarSample(
+        value=7.0,
+        captured_at_ns=time.time_ns() + 301_000_000_000,
+        source_event_id=_digest("future"),
+    )
+    with pytest.raises(ScalarAdapterError, match="too_far_in_future"):
+        ScalarRealityAdapter(transport, _profile(writable=False), initial_sample=future)
 
 
 def test_read_only_scalar_adapter_registers_without_executable_channel() -> None:

@@ -544,7 +544,7 @@ class AzureDigitalTwinsScalarTransport:
                     "twin_id": spec.twin_id,
                     "model_id": model_id,
                     "reported_path": spec.reported_path,
-                    "etag_sha256": _digest(etag),
+                    "captured_at_ns": captured_at_ns,
                     "value": value,
                 }
             ),

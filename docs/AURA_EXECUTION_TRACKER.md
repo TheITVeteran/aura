@@ -35574,3 +35574,56 @@ this remains deterministic protocol evidence rather than live cloud or physical
 acceptance. AWS IoT TwinMaker, the cross-protocol hardware-in-loop matrix,
 restart/fault-injection acceptance, and the remaining RR obligations keep CP809
 open and the total at 808/920 (approximately 87.8%).
+
+#### CP809 completion addendum: authenticated AWS twins and causal readback
+
+The final planned connector family is now represented by an AWS IoT TwinMaker
+adapter rather than a generic cloud placeholder. Configuration binds the full
+workspace ARN, partition, region, account, workspace, entity, component,
+optional composite-component path, reported property, distinct desired
+property, scalar type, domain, precision, uncertainty, safe state, rate limit,
+and freshness budget. Before accepting any data-plane sample, the transport
+SigV4-signs and verifies `GetWorkspace` against the exact configured ARN. The
+signer matches AWS's published S3 SigV4 test vector and supports externally
+rotated environment credentials and temporary session tokens without copying
+secrets into manifests, candidates, samples, status, or effect receipts.
+
+TwinMaker observation uses timestamped `GetPropertyValueHistory`, not the
+timestamp-less latest-value API. Desired-state writes use the bounded
+`BatchPutPropertyValues` contract, reject per-entry batch errors, preserve
+idempotency locally, and classify timeout/throttle/server failure as an
+indeterminate external effect. A successful AWS response still records only
+transport completion; the distinct reported property must later provide a new
+device timestamp and matching value.
+
+That implementation audit exposed and closed a shared causal-verification bug:
+the scalar adapter previously checked only whether an independently named
+readback had the target value. It now records the immediate pre-dispatch sample
+and requires an available, non-stale, different event with a strictly newer
+capture time (and monotonic source sequence when supplied), plus proof that the
+target was not already present before dispatch. Old observations are marked
+stale, clocks more than five minutes in the future are rejected, and rollback
+or safe-state claims use the same causal test. Azure sample identity now binds
+the reported property's timestamp rather than the whole-twin ETag; TwinMaker
+sample identity no longer changes merely because AWS issued a new HTTP request
+identifier.
+
+CP809 completion evidence while the resident 32B campaign owns the model lane:
+
+- AWS SigV4, credentials, manifest, workspace identity, timestamped read,
+  desired-state write, batch-error, attachment, partition, catalog, and
+  generic-credential isolation contracts: 11/11 passed;
+- shared scalar causal-readback and both cloud-provider contracts, including
+  pre-existing-target, stale/future-clock, and frozen-timestamp adversaries:
+  26/26 passed;
+- complete connector, scalar actuation, transaction, REST smart-plug, and Home
+  Assistant affected family: 132/132 passed before final aggregate gates.
+
+CP809 is complete as the concrete connector implementation checkpoint. This
+does not manufacture unavailable external evidence: no configured AWS/Azure
+tenant or representative physical installation was available. CP810 therefore
+owns the explicit live cloud/hardware-in-loop matrix, sleep/restart recovery,
+network partition and stale/reordered telemetry faults, actuator cancellation,
+safe-state restoration, credential rotation, and independent receipt review.
+The total advances to 809/920, approximately 87.9%; reasoning gain, frontier,
+release, and `WOW Signal` claims remain open, and long soaks remain deferred.

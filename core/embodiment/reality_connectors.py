@@ -440,6 +440,67 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
+    aws_twinmaker_required = {
+        "AURA_AWS_TWINMAKER_WORKSPACE_ARN": str(
+            os.getenv("AURA_AWS_TWINMAKER_WORKSPACE_ARN") or ""
+        ).strip(),
+        "AURA_AWS_TWINMAKER_RESOURCES_JSON": str(
+            os.getenv("AURA_AWS_TWINMAKER_RESOURCES_JSON") or ""
+        ).strip(),
+        "AWS_ACCESS_KEY_ID": str(os.getenv("AWS_ACCESS_KEY_ID") or "").strip(),
+        "AWS_SECRET_ACCESS_KEY": str(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),
+    }
+    aws_twinmaker_intent = bool(
+        aws_twinmaker_required["AURA_AWS_TWINMAKER_WORKSPACE_ARN"]
+        or aws_twinmaker_required["AURA_AWS_TWINMAKER_RESOURCES_JSON"]
+    )
+    if not aws_twinmaker_intent:
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="aws.iot_twinmaker",
+                configured=False,
+                registered=False,
+                state="not_configured",
+            )
+        )
+    elif not all(aws_twinmaker_required.values()):
+        missing = [name for name, value in aws_twinmaker_required.items() if not value]
+        statuses.append(
+            ConnectorBootStatus(
+                connector_id="aws.iot_twinmaker",
+                configured=True,
+                registered=False,
+                state="invalid",
+                error=f"missing configuration: {','.join(missing)}",
+            )
+        )
+    else:
+        try:
+            from core.embodiment.aws_twinmaker_connector import (
+                build_configured_aws_twinmaker_connector,
+            )
+
+            connector = build_configured_aws_twinmaker_connector()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id="aws.iot_twinmaker",
+                    configured=True,
+                    registered=False,
+                    state="invalid",
+                    error=f"{type(exc).__name__}:{exc}"[:240],
+                )
+            )
+        else:
+            connectors.append(connector)
+            statuses.append(
+                ConnectorBootStatus(
+                    connector_id=connector.connector_id,
+                    configured=True,
+                    registered=False,
+                    state="ready",
+                )
+            )
     return RealityConnectorCatalog(tuple(connectors), tuple(statuses))
 
 

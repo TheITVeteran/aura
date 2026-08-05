@@ -114,9 +114,7 @@ class ScalarWriteResult:
     receipt: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.accepted, bool) or not isinstance(
-            self.transport_completed, bool
-        ):
+        if not isinstance(self.accepted, bool) or not isinstance(self.transport_completed, bool):
             raise TypeError("write result booleans must be explicit")
         if self.accepted and not self.transport_completed:
             raise ValueError("accepted write requires completed transport")
@@ -210,9 +208,7 @@ class ScalarResourceProfile:
                 "max_commands_per_minute": self.max_commands_per_minute,
                 "cooldown_s": self.cooldown_s,
                 "stale_after_s": self.stale_after_s,
-                "readback_distinct_from_command": (
-                    self.readback_distinct_from_command
-                ),
+                "readback_distinct_from_command": (self.readback_distinct_from_command),
             }
         )
 
@@ -344,17 +340,24 @@ class ScalarRealityAdapter:
     def _reading(self, sample: ScalarSample) -> ChannelReading:
         if not self._profile.domain.contains(sample.value):
             raise ScalarAdapterError("scalar_readback_outside_manifest_domain")
+        now_ns = time.time_ns()
+        if sample.captured_at_ns > now_ns + 300_000_000_000:
+            raise ScalarAdapterError("scalar_readback_clock_is_too_far_in_future")
+        age_ns = max(0, now_ns - sample.captured_at_ns)
+        status = (
+            ReadingStatus.STALE
+            if age_ns > int(self._profile.stale_after_s * 1_000_000_000)
+            else ReadingStatus.AVAILABLE
+        )
         return ChannelReading(
             channel_id=self._observation.channel_id,
             value=sample.value,
             unit=self._observation.unit,
             captured_at_ns=sample.captured_at_ns,
-            status=ReadingStatus.AVAILABLE,
+            status=status,
             source=f"{self.adapter_id}.readback",
             uncertainty=(
-                sample.uncertainty
-                if sample.uncertainty is not None
-                else self._profile.resolution
+                sample.uncertainty if sample.uncertainty is not None else self._profile.resolution
             ),
             wall_clock_source=sample.wall_clock_source,
             source_epoch=sample.source_epoch,
@@ -388,6 +391,9 @@ class ScalarRealityAdapter:
         if not _IDENTIFIER.fullmatch(key):
             key = f"scalar.idem.{_digest(key).removeprefix('sha256:')[:32]}"
         bounded_deadline = max(0.1, min(float(deadline_s), 300.0))
+        tolerance = self._profile.tolerance
+        if tolerance is None:
+            raise ScalarAdapterError("scalar_profile_tolerance_missing")
         return ActuationCommand(
             command_id=f"scalar.command.{uuid.uuid4().hex}",
             request_id=f"scalar.request.{uuid.uuid4().hex}",
@@ -396,7 +402,7 @@ class ScalarRealityAdapter:
             observable=self._actuator.observable,
             unit=self._actuator.unit,
             target=target_value,
-            tolerance=float(self._profile.tolerance),
+            tolerance=float(tolerance),
             magnitude=target_value,
             idempotency_key=key,
             inventory_sha256=inventory_sha256,
@@ -471,6 +477,46 @@ class ScalarRealityAdapter:
     def _value_fence(reading: ChannelReading) -> str:
         return _digest({"channel_id": reading.channel_id, "value": reading.value})
 
+    @staticmethod
+    def _reading_is_newer(
+        reading: ChannelReading,
+        baseline: ChannelReading,
+    ) -> bool:
+        if (
+            not reading.source_event_id
+            or reading.source_event_id == baseline.source_event_id
+            or reading.captured_at_ns <= baseline.captured_at_ns
+        ):
+            return False
+        if (
+            reading.source_epoch
+            and reading.source_epoch == baseline.source_epoch
+            and reading.source_sequence
+            and baseline.source_sequence
+            and reading.source_sequence <= baseline.source_sequence
+        ):
+            return False
+        return True
+
+    def _target_was_independently_effected(
+        self,
+        *,
+        reading: ChannelReading,
+        baseline: ChannelReading | None,
+        target: float,
+        tolerance: float,
+    ) -> bool:
+        return bool(
+            baseline is not None
+            and self._profile.readback_distinct_from_command
+            and reading.status is ReadingStatus.AVAILABLE
+            and reading.value is not None
+            and baseline.value is not None
+            and abs(float(baseline.value) - target) > tolerance
+            and abs(float(reading.value) - target) <= tolerance
+            and self._reading_is_newer(reading, baseline)
+        )
+
     async def prepare(
         self,
         command: ActuationCommand,
@@ -486,9 +532,7 @@ class ScalarRealityAdapter:
                 raise ScalarAdapterError("scalar_prepare_readback_unavailable")
             precondition = self._value_fence(reading)
             rollback = float(reading.value)
-            rollback_digest = _digest(
-                {"resource_id": self._profile.resource_id, "value": rollback}
-            )
+            rollback_digest = _digest({"resource_id": self._profile.resource_id, "value": rollback})
             self._prepared[command.sha256] = {
                 "precondition_sha256": precondition,
                 "rollback_value": rollback,
@@ -528,6 +572,7 @@ class ScalarRealityAdapter:
             reading = await self.refresh_readback()
             if self._value_fence(reading) != prepared.precondition_sha256:
                 raise ScalarAdapterError("scalar_resource_changed_before_dispatch")
+            context["dispatch_readback"] = reading
             now = time.monotonic()
             self._check_rate_limit(now)
             result = await self._transport.write_scalar(
@@ -558,6 +603,10 @@ class ScalarRealityAdapter:
         actuation: ActuationReceipt,
     ) -> EffectReceipt:
         self._validate_command(command)
+        context = self._prepared.get(command.sha256)
+        baseline = context.get("dispatch_readback") if context is not None else None
+        if not isinstance(baseline, ChannelReading):
+            baseline = None
         reading = self._last_observation
         for attempt in range(3):
             try:
@@ -566,18 +615,23 @@ class ScalarRealityAdapter:
                 if attempt < 2:
                     await asyncio.sleep(0.2)
                 continue
-            if reading.value is not None and abs(reading.value - command.target) <= command.tolerance:
+            if self._target_was_independently_effected(
+                reading=reading,
+                baseline=baseline,
+                target=command.target,
+                tolerance=command.tolerance,
+            ):
                 break
             if attempt < 2:
                 await asyncio.sleep(0.2)
         target_error = (
-            abs(float(reading.value) - command.target)
-            if reading.value is not None
-            else None
+            abs(float(reading.value) - command.target) if reading.value is not None else None
         )
-        independently_observed = bool(
-            self._profile.readback_distinct_from_command
-            and reading.status is ReadingStatus.AVAILABLE
+        independently_observed = self._target_was_independently_effected(
+            reading=reading,
+            baseline=baseline,
+            target=command.target,
+            tolerance=command.tolerance,
         )
         verified = bool(
             actuation.executed
@@ -657,7 +711,9 @@ class ScalarRealityAdapter:
         return RollbackReceipt(
             receipt_id=f"scalar.indeterminate.{command.sha256.removeprefix('sha256:')[:32]}",
             command_sha256=command.sha256,
-            actuation_receipt_sha256=(actuation.sha256 if actuation is not None else command.sha256),
+            actuation_receipt_sha256=(
+                actuation.sha256 if actuation is not None else command.sha256
+            ),
             adapter_id=self.adapter_id,
             state=ActuationState.INDETERMINATE,
             safe_state_observation_sha256=self._last_observation.sha256,
@@ -674,6 +730,7 @@ class ScalarRealityAdapter:
         success_state: ActuationState,
     ) -> RollbackReceipt:
         async with self._lock:
+            baseline = self._last_observation
             result = await self._transport.write_scalar(
                 self._profile.resource_id,
                 value,
@@ -681,13 +738,19 @@ class ScalarRealityAdapter:
                 recovery=True,
             )
             try:
+                tolerance = self._profile.tolerance
+                if tolerance is None:
+                    raise ScalarAdapterError("scalar_profile_tolerance_missing")
                 reading = await self.refresh_readback()
                 observed = bool(
                     result.accepted
                     and result.transport_completed
-                    and self._profile.readback_distinct_from_command
-                    and reading.value is not None
-                    and abs(reading.value - value) <= float(self._profile.tolerance)
+                    and self._target_was_independently_effected(
+                        reading=reading,
+                        baseline=baseline,
+                        target=value,
+                        tolerance=float(tolerance),
+                    )
                 )
             except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
                 reading = self._last_observation
@@ -695,11 +758,12 @@ class ScalarRealityAdapter:
             self._prepared.pop(command.sha256, None)
         return RollbackReceipt(
             receipt_id=(
-                f"scalar.{success_state.value}."
-                f"{command.sha256.removeprefix('sha256:')[:32]}"
+                f"scalar.{success_state.value}.{command.sha256.removeprefix('sha256:')[:32]}"
             ),
             command_sha256=command.sha256,
-            actuation_receipt_sha256=(actuation.sha256 if actuation is not None else command.sha256),
+            actuation_receipt_sha256=(
+                actuation.sha256 if actuation is not None else command.sha256
+            ),
             adapter_id=self.adapter_id,
             state=success_state if observed else ActuationState.INDETERMINATE,
             safe_state_observation_sha256=reading.sha256,
