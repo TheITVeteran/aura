@@ -88,16 +88,30 @@ class DriveControllerService(Service):
 
 
 class RealityActuationService(Service):
+    def status(self):
+        return {"restart_recovery": {"generation": 7}}
+
     def is_alive(self):
         return True
 
-    async def recover_all_after_restart(self, *, max_transactions=128):
+    def notify_adapter_available(self, adapter_id):
+        self.notified_adapter_id = adapter_id
+
+    async def start_recovery_supervisor(self, *, max_transactions=64):
         self.recovery_max_transactions = max_transactions
+        self.supervisor_task = object()
+        return self.supervisor_task
+
+    async def wait_for_recovery_attempt(self, *, after_generation=0, timeout_s=30.0):
+        self.recovery_after_generation = after_generation
+        self.recovery_timeout_s = timeout_s
         return {
             "schema": "aura.reality-reach-restart-recovery-report.v1",
             "complete": True,
             "failures": [],
+            "unresolved": [],
             "legacy_unrecoverable_transaction_sha256": [],
+            "capsule_without_transaction_sha256": [],
             "deferred": 0,
         }
 
@@ -261,6 +275,12 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert registered["reality_actuation"] is orchestrator.reality_actuation
     assert registered["reality_actuation"].is_alive() is True
     assert registered["reality_actuation"].recovery_max_transactions == 64
+    assert registered["reality_actuation"].recovery_after_generation == 7
+    assert registered["reality_actuation"].recovery_timeout_s == 30.0
+    assert (
+        orchestrator.reality_actuation_recovery_supervisor_task
+        is registered["reality_actuation"].supervisor_task
+    )
     assert orchestrator.reality_actuation_recovery["complete"] is True
     assert registered["reality_middleware"] is orchestrator.reality_middleware
     assert registered["reality_metrology"] is orchestrator.reality_metrology
@@ -303,6 +323,10 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
         "reality_attachment_trust.json"
     )
     assert registered["reality_attachment_broker"].kwargs["trust_store_error"] == ""
+    assert (
+        registered["reality_attachment_broker"].kwargs["attachment_observer"]
+        == orchestrator.reality_actuation.notify_adapter_available
+    )
     assert registered["hardware_manager"] is orchestrator.hardware_manager
     assert registered["hardware_manager"].started is True
     assert registered["hardware_manager"].configured_devices_registered is True

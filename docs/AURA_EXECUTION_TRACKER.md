@@ -35761,3 +35761,45 @@ external acceptance requirement. Real AWS/Azure credential rotation, real
 network-loss restoration, representative long-running cancellation, physical
 safe-state convergence, live/HIL metrology, and independent receipt replay
 remain unmeasured. CP810 and the total therefore remain open at 809/920.
+
+#### CP810 addendum: lifecycle-supervised physical recovery
+
+Restart recovery no longer ends after one boot sweep. The canonical actuation
+coordinator now owns one tracked singleflight supervisor. It performs a bounded
+initial sweep, retains a secret-free generation and report in service status,
+retries transient failures with bounded exponential backoff, and sleeps without
+polling once every effect is terminal or only non-retryable legacy evidence
+remains. Starting the same supervisor again wakes the existing owner rather
+than creating a competing task. Shutdown cancels and awaits that exact task.
+
+The attachment broker now notifies recovery only after the adapter, observation
+route, body projection, digital twin, and attachment bookkeeping have all
+committed. This makes a portable device reattachment an immediate recovery
+signal. Notification failure cannot roll back an otherwise valid attachment;
+the persisted effect stays closed and the supervisor retains its bounded retry.
+The boot initializer starts this lifetime owner and separately observes one
+fresh generation under a 30-second budget, preserving nonblocking conversation
+readiness and explicit degradation evidence.
+
+Recovery verdicts also distinguish transport exceptions from an operation that
+returned but left the transaction `INDETERMINATE`. Such an effect is now listed
+as unresolved, keeps the campaign incomplete and retryable, and must later
+reach independently observed safe state. It can no longer be mislabeled as a
+successful aggregate sweep merely because the adapter contained its exception.
+
+Lifecycle-supervision evidence:
+
+- attachment commit/wake, observer-failure isolation, adapter disappearance and
+  reattachment, singleflight ownership, quiet completed state, restart wake,
+  unresolved safe-state retry, non-replay, and bounded shutdown contracts:
+  60/60 passed;
+- full affected Reality Reach, attachment, twin, initializer, WorldBridge, and
+  embodiment family: 196/196 passed;
+- scoped strict MyPy and Ruff passed for the changed runtime modules.
+
+This closes automatic retry and late-attachment wake behavior. It does not
+substitute deterministic fixtures for external evidence: real AWS/Azure
+credential rotation, real network-loss restoration, representative
+long-running cancellation, physical safe-state convergence, live/HIL
+metrology, and independent receipt replay remain unmeasured. CP810 and the
+total remain open at 809/920.

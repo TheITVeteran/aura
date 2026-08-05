@@ -484,6 +484,11 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 state_path=trust_state_path,
                 trust_store=trust_store,
                 trust_store_error=trust_store_error,
+                attachment_observer=getattr(
+                    getattr(orchestrator, "reality_actuation", None),
+                    "notify_adapter_available",
+                    None,
+                ),
             )
             await broker.start()
         except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS:
@@ -638,13 +643,23 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
 
     async def _reality_restart_recovery() -> None:
         coordinator = getattr(orchestrator, "reality_actuation", None)
-        recover = getattr(coordinator, "recover_all_after_restart", None)
-        if not callable(recover):
-            raise RuntimeError("Reality actuation restart recovery is unavailable")
+        start = getattr(coordinator, "start_recovery_supervisor", None)
+        wait_for_attempt = getattr(coordinator, "wait_for_recovery_attempt", None)
+        if coordinator is None or not callable(start) or not callable(wait_for_attempt):
+            raise RuntimeError("Reality actuation recovery supervision is unavailable")
 
-        async def _recover_in_background() -> None:
+        recovery_status = coordinator.status().get("restart_recovery") or {}
+        recovery_generation = int(recovery_status.get("generation") or 0)
+        orchestrator.reality_actuation_recovery_supervisor_task = await start(
+            max_transactions=64,
+        )
+
+        async def _observe_initial_recovery() -> None:
             try:
-                recovery_report = await recover(max_transactions=64)
+                recovery_report = await wait_for_attempt(
+                    after_generation=recovery_generation,
+                    timeout_s=30.0,
+                )
             except _COGNITIVE_SENSORY_RECOVERABLE_ERRORS as exc:
                 _record_cognitive_sensory_degradation(
                     orchestrator,
@@ -662,8 +677,11 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 error = RuntimeError(
                     "reality_actuation_restart_recovery_incomplete:"
                     f"failures={len(recovery_report.get('failures') or [])}:"
+                    f"unresolved={len(recovery_report.get('unresolved') or [])}:"
                     "legacy="
                     f"{len(recovery_report.get('legacy_unrecoverable_transaction_sha256') or [])}:"
+                    "capsule_only="
+                    f"{len(recovery_report.get('capsule_without_transaction_sha256') or [])}:"
                     f"deferred={int(recovery_report.get('deferred') or 0)}"
                 )
                 _record_cognitive_sensory_degradation(
@@ -679,8 +697,8 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
                 )
 
         orchestrator.reality_actuation_recovery_task = create_tracked_task(
-            _recover_in_background(),
-            name="reality_reach.restart_recovery",
+            _observe_initial_recovery(),
+            name="reality_reach.restart_recovery_observer",
             owner="core.orchestrator.initializers.cognitive_sensory",
             bounded=True,
         )

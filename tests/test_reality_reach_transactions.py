@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import stat
 from dataclasses import replace
@@ -703,6 +704,166 @@ async def test_boot_sweep_bounds_work_and_reports_deferred_transactions(
     assert report["processed"] == 2
     assert report["deferred"] == 1
     assert report["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_supervisor_retries_and_wakes_when_adapter_reattaches(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    coordinator._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.DISPATCHED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.supervisor",
+        },
+    )
+    service.unregister_adapter(adapter.adapter_id)
+
+    task = await coordinator.start_recovery_supervisor(
+        min_retry_s=0.01,
+        max_retry_s=0.05,
+    )
+    first = await coordinator.wait_for_recovery_attempt(timeout_s=1.0)
+    first_generation = coordinator.status()["restart_recovery"]["generation"]
+
+    assert first["complete"] is False
+    assert first["retryable"] is True
+    assert first["failures"]
+    assert task.done() is False
+
+    service.register_adapter(adapter)
+    service.refresh()
+    coordinator.notify_adapter_available(adapter.adapter_id)
+    recovered = first
+    generation = first_generation
+    for _attempt in range(3):
+        recovered = await coordinator.wait_for_recovery_attempt(
+            after_generation=generation,
+            timeout_s=1.0,
+        )
+        generation = coordinator.status()["restart_recovery"]["generation"]
+        if recovered["complete"]:
+            break
+
+    assert recovered["complete"] is True, recovered
+    assert recovered["recovered"][0]["after_state"] == "safe_state"
+    assert adapter.safe_state_calls == 1
+    assert adapter.actuation_calls == 0
+    await coordinator.stop()
+    assert task.done() is True
+
+
+@pytest.mark.asyncio
+async def test_recovery_supervisor_is_singleflight_and_quiet_when_complete(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter()
+    coordinator = RealityActuationCoordinator(
+        _service(adapter),
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+
+    task = await coordinator.start_recovery_supervisor(
+        min_retry_s=0.01,
+        max_retry_s=0.05,
+    )
+    same_task = await coordinator.start_recovery_supervisor(
+        min_retry_s=0.02,
+        max_retry_s=0.04,
+    )
+    report = await coordinator.wait_for_recovery_attempt(timeout_s=1.0)
+    generation = coordinator.status()["restart_recovery"]["generation"]
+
+    assert same_task is task
+    assert report["complete"] is True
+    await asyncio.sleep(0.04)
+    assert coordinator.status()["restart_recovery"]["generation"] == generation
+
+    restarted_task = await coordinator.start_recovery_supervisor()
+    woke = await coordinator.wait_for_recovery_attempt(
+        after_generation=generation,
+        timeout_s=1.0,
+    )
+    assert restarted_task is task
+    assert woke["complete"] is True
+    await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_unobserved_safe_state_remains_retryable_until_restored(
+    tmp_path: Path,
+) -> None:
+    adapter = TransactionAdapter(fail_safe_state=True)
+    service = _service(adapter)
+    command = _command(service)
+    coordinator = RealityActuationCoordinator(
+        service,
+        root=tmp_path,
+        executor=_executor,
+        wall_clock_ns=lambda: NOW_NS,
+        monotonic_clock_ns=lambda: MONOTONIC_NS,
+    )
+    coordinator._create(command)
+    coordinator._transition(
+        command,
+        expected={ActuationState.PLANNED},
+        state=ActuationState.DISPATCHED,
+        updates={
+            "lease_sha256": DIGEST,
+            "preparation_sha256": DIGEST,
+            "authority_receipt_id": "test.authority.unresolved",
+        },
+    )
+
+    task = await coordinator.start_recovery_supervisor(
+        min_retry_s=0.01,
+        max_retry_s=0.05,
+    )
+    unresolved = await coordinator.wait_for_recovery_attempt(timeout_s=1.0)
+    generation = coordinator.status()["restart_recovery"]["generation"]
+
+    assert unresolved["complete"] is False
+    assert unresolved["retryable"] is True
+    assert unresolved["failures"] == []
+    assert unresolved["unresolved"] == [
+        {"command_sha256": command.sha256, "state": "indeterminate"}
+    ]
+
+    adapter.fail_safe_state = False
+    coordinator.notify_adapter_available(adapter.adapter_id)
+    restored = unresolved
+    for _attempt in range(3):
+        restored = await coordinator.wait_for_recovery_attempt(
+            after_generation=generation,
+            timeout_s=1.0,
+        )
+        generation = coordinator.status()["restart_recovery"]["generation"]
+        if restored["complete"]:
+            break
+
+    assert restored["complete"] is True
+    assert restored["unresolved"] == []
+    assert restored["recovered"][0]["after_state"] == "safe_state"
+    assert adapter.actuation_calls == 0
+    await coordinator.stop()
+    assert task.done() is True
 
 
 def test_command_capsule_collision_and_tampering_fail_closed(tmp_path: Path) -> None:

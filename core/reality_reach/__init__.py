@@ -108,6 +108,7 @@ from core.reality_reach.middleware import (
 from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
 from core.reality_reach.transactions import (
     COMMAND_CAPSULE_SCHEMA,
+    RECOVERY_REPORT_SCHEMA,
     RealityActuationCoordinator,
     RealityActuationError,
     get_reality_actuation_coordinator,
@@ -120,6 +121,7 @@ __all__ = [
     "ActuationState",
     "ActuatorCapability",
     "COMMAND_CAPSULE_SCHEMA",
+    "RECOVERY_REPORT_SCHEMA",
     "ActionContext",
     "ActionEndpoint",
     "ActionRecord",

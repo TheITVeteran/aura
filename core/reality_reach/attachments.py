@@ -344,6 +344,7 @@ class DeviceAttachmentBroker:
         trust_store: AttachmentTrustStore | None = None,
         trust_store_error: str = "",
         authority_verifier: PhysicalAuthorityVerifier | None = None,
+        attachment_observer: Callable[[str], None] | None = None,
         clock_ns: Callable[[], int] = time.time_ns,
         discovery_interval_s: float = 60.0,
         connector_timeout_s: float = 12.0,
@@ -357,6 +358,8 @@ class DeviceAttachmentBroker:
             raise TypeError("observation_router must be a RealityObservationRouter")
         if not callable(clock_ns):
             raise TypeError("clock_ns must be callable")
+        if attachment_observer is not None and not callable(attachment_observer):
+            raise TypeError("attachment_observer must be callable")
         self._service = service
         self._router = observation_router
         if digital_twin is not None and not isinstance(digital_twin, RealityDigitalTwinGraph):
@@ -378,15 +381,14 @@ class DeviceAttachmentBroker:
         ):
             raise TypeError("trust_store must satisfy AttachmentTrustStore")
         self._authority_verifier = authority_verifier or AttachmentCapabilityAuthorityVerifier()
+        self._attachment_observer = attachment_observer
         if not isinstance(self._authority_verifier, PhysicalAuthorityVerifier):
             raise TypeError("authority_verifier must satisfy PhysicalAuthorityVerifier")
         if self._digital_twin is not None and isinstance(
             self._authority_verifier,
             ManifestMigrationAuthorityVerifier,
         ):
-            self._digital_twin.bind_migration_authority_verifier(
-                self._authority_verifier
-            )
+            self._digital_twin.bind_migration_authority_verifier(self._authority_verifier)
         self._clock_ns = clock_ns
         self._discovery_interval_s = max(5.0, min(float(discovery_interval_s), 3600.0))
         self._connector_timeout_s = max(1.0, min(float(connector_timeout_s), 60.0))
@@ -399,8 +401,7 @@ class DeviceAttachmentBroker:
             raise TypeError("disappearance_quorum must be an integer")
         if not 2 <= disappearance_quorum <= _MAX_DISAPPEARANCE_QUORUM:
             raise ValueError(
-                "disappearance_quorum must lie inside "
-                f"[2, {_MAX_DISAPPEARANCE_QUORUM}]"
+                f"disappearance_quorum must lie inside [2, {_MAX_DISAPPEARANCE_QUORUM}]"
             )
         self._disappearance_quorum = disappearance_quorum
         self._connectors: dict[str, DeviceConnector] = {}
@@ -423,9 +424,7 @@ class DeviceAttachmentBroker:
         self._lock = checked_lock("reality_attachment_broker.state", reentrant=True)
         self._state_load_lock = checked_async_lock("reality_attachment_broker.state_load")
         self._lifecycle_lock = checked_async_lock("reality_attachment_broker.lifecycle")
-        self._persistence_lock = checked_async_lock(
-            "reality_attachment_broker.persistence"
-        )
+        self._persistence_lock = checked_async_lock("reality_attachment_broker.persistence")
         self._state_loaded = False
         self._wake = asyncio.Event()
         self._task: asyncio.Task[Any] | None = None
@@ -453,9 +452,7 @@ class DeviceAttachmentBroker:
 
         canonical = _identifier(connector_id, name="connector_id")
         if self._lifecycle_lock.locked():
-            raise RuntimeError(
-                "connector lifecycle is busy; use and await retire_connector()"
-            )
+            raise RuntimeError("connector lifecycle is busy; use and await retire_connector()")
         with self._lock:
             if canonical not in self._connectors:
                 raise LookupError(f"connector is not registered: {canonical}")
@@ -569,10 +566,7 @@ class DeviceAttachmentBroker:
                     continue
                 streak = self._candidate_absence_streaks.get(candidate_id, 0) + 1
                 self._candidate_absence_streaks[candidate_id] = streak
-                if (
-                    candidate.expires_at_ns > now_ns
-                    and streak < self._disappearance_quorum
-                ):
+                if candidate.expires_at_ns > now_ns and streak < self._disappearance_quorum:
                     retained[candidate_id] = candidate
             retained.update(
                 {item.candidate_id: item for item in fresh if item.expires_at_ns > now_ns}
@@ -593,9 +587,7 @@ class DeviceAttachmentBroker:
                     )
                     continue
                 expired = attached_candidate.expires_at_ns <= now_ns
-                connector_succeeded = (
-                    attached_candidate.connector_id in successful_connectors
-                )
+                connector_succeeded = attached_candidate.connector_id in successful_connectors
                 missing_from_full_scan = (
                     attached_candidate.candidate_id
                     not in observed_ids_by_connector.get(
@@ -620,17 +612,13 @@ class DeviceAttachmentBroker:
                     0,
                 )
                 if expired:
-                    lost_requests.append(
-                        (request_id, "candidate_discovery_lease_expired")
-                    )
+                    lost_requests.append((request_id, "candidate_discovery_lease_expired"))
                 elif (
                     connector_succeeded
                     and missing_from_full_scan
                     and streak >= self._disappearance_quorum
                 ):
-                    lost_requests.append(
-                        (request_id, "candidate_disappearance_quorum_reached")
-                    )
+                    lost_requests.append((request_id, "candidate_disappearance_quorum_reached"))
             newly_discovered = [item for item in fresh if item.candidate_id not in previous_ids]
             self._discoveries += len(newly_discovered)
             for connector_id in successful_connectors:
@@ -777,9 +765,7 @@ class DeviceAttachmentBroker:
         if request is None or candidate is None:
             raise LookupError("connection request or candidate is unavailable")
         if request.state != ConnectionState.PENDING_TRUST:
-            raise RuntimeError(
-                f"connection request is not pending trust: {request.state.value}"
-            )
+            raise RuntimeError(f"connection request is not pending trust: {request.state.value}")
         if self._digital_twin is None:
             return None
         intent = self._digital_twin.manifest_migration_intent(
@@ -820,13 +806,9 @@ class DeviceAttachmentBroker:
                 self._authority_verifier,
                 ManifestMigrationAuthorityVerifier,
             ):
-                raise AttachmentAuthorityError(
-                    "manifest_migration_authority_verifier_unavailable"
-                )
+                raise AttachmentAuthorityError("manifest_migration_authority_verifier_unavailable")
             if manifest_migration_capability is None:
-                raise AttachmentAuthorityError(
-                    "manifest_migration_authority_capability_missing"
-                )
+                raise AttachmentAuthorityError("manifest_migration_authority_capability_missing")
         intent = self.authority_intent(
             request.request_id,
             persistent=persistent,
@@ -920,10 +902,7 @@ class DeviceAttachmentBroker:
                             grant=grant,
                             previous_grant=previous_grant,
                         ),
-                        name=(
-                            "RealityAttachmentAuthorityPersistRollback:"
-                            f"{request.request_id}"
-                        ),
+                        name=(f"RealityAttachmentAuthorityPersistRollback:{request.request_id}"),
                     )
                     await self._await_task_completion(rollback)
                     with self._lock:
@@ -943,9 +922,7 @@ class DeviceAttachmentBroker:
             result = await self._attach(attaching)
             if persistent and result.state == ConnectionState.ATTACHED:
                 with self._lock:
-                    self._pending_grant_activations.discard(
-                        grant.identity_fingerprint
-                    )
+                    self._pending_grant_activations.discard(grant.identity_fingerprint)
                 activation = asyncio.create_task(
                     self._persist_state(),
                     name=f"RealityAttachmentAuthorityActivate:{request.request_id}",
@@ -960,16 +937,12 @@ class DeviceAttachmentBroker:
                     return result
                 except (OSError, RuntimeError, TypeError, ValueError):
                     with self._lock:
-                        self._pending_grant_activations.add(
-                            grant.identity_fingerprint
-                        )
+                        self._pending_grant_activations.add(grant.identity_fingerprint)
                     await self._detach_request(
                         request.request_id,
                         state=ConnectionState.ERROR,
                         error="persistent_authority_activation_failed",
-                        degradation_phase=(
-                            "reality_attachment.authority_activation"
-                        ),
+                        degradation_phase=("reality_attachment.authority_activation"),
                     )
                     await self._rollback_cancelled_authorization(
                         request=previous_request,
@@ -1008,9 +981,7 @@ class DeviceAttachmentBroker:
         reason_text = _reconciliation_reason(reason, fallback="revoked")
         with self._lock:
             previous_grant = self._grants.pop(identity_fingerprint, None)
-            previous_reconciliation = self._pending_twin_revocations.get(
-                identity_fingerprint
-            )
+            previous_reconciliation = self._pending_twin_revocations.get(identity_fingerprint)
             if self._digital_twin is not None:
                 self._pending_twin_revocations[identity_fingerprint] = reason_text
             attached = [
@@ -1021,9 +992,8 @@ class DeviceAttachmentBroker:
             ]
         try:
             if (
-                (previous_grant is not None and previous_grant.persistent)
-                or self._digital_twin is not None
-            ):
+                previous_grant is not None and previous_grant.persistent
+            ) or self._digital_twin is not None:
                 await self._persist_state()
         except (OSError, RuntimeError, TypeError, ValueError):
             with self._lock:
@@ -1032,9 +1002,7 @@ class DeviceAttachmentBroker:
                 if previous_reconciliation is None:
                     self._pending_twin_revocations.pop(identity_fingerprint, None)
                 else:
-                    self._pending_twin_revocations[identity_fingerprint] = (
-                        previous_reconciliation
-                    )
+                    self._pending_twin_revocations[identity_fingerprint] = previous_reconciliation
             raise
         for request_id, _adapter_id, _adapter, _candidate in attached:
             await self._detach_request(
@@ -1132,8 +1100,7 @@ class DeviceAttachmentBroker:
                 continue
             with self._lock:
                 activation_pending = (
-                    candidate.identity_fingerprint
-                    in self._pending_grant_activations
+                    candidate.identity_fingerprint in self._pending_grant_activations
                 )
             if activation_pending:
                 continue
@@ -1200,8 +1167,7 @@ class DeviceAttachmentBroker:
                 )
                 await self._await_task_completion(rollback)
             elif (
-                isinstance(result, ConnectionRequest)
-                and result.state == ConnectionState.ATTACHING
+                isinstance(result, ConnectionRequest) and result.state == ConnectionState.ATTACHING
             ):
                 await self._fail_request(result, "attachment_cancelled")
             raise
@@ -1238,9 +1204,7 @@ class DeviceAttachmentBroker:
             with self._lock:
                 twin_detach_pending = adapter_id in self._pending_twin_detaches
             if twin_detach_pending:
-                raise RuntimeError(
-                    "digital_twin_detach_reconciliation_pending_for_adapter"
-                )
+                raise RuntimeError("digital_twin_detach_reconciliation_pending_for_adapter")
             self._service.register_adapter(adapter)
             service_registered = True
             if isinstance(adapter, ManagedRealityAdapter):
@@ -1296,6 +1260,18 @@ class DeviceAttachmentBroker:
                 self._requests[request.request_id] = attached
                 self._attached[request.request_id] = (adapter_id, adapter)
                 self._attached_candidates[request.request_id] = candidate
+            if self._attachment_observer is not None:
+                try:
+                    self._attachment_observer(adapter_id)
+                except Exception as exc:  # noqa: BLE001 - observer cannot own attachment fate
+                    record_degradation(
+                        "reality_attachment.recovery_notification",
+                        exc,
+                        action=(
+                            "retained the committed physical attachment and left pending "
+                            "effects closed for the recovery supervisor's bounded retry"
+                        ),
+                    )
             return attached
         except Exception as exc:  # noqa: BLE001 - transaction rollback precedes classification
             if adapter is not None:
@@ -1454,9 +1430,7 @@ class DeviceAttachmentBroker:
             record_degradation(
                 "reality_attachment.rollback",
                 RuntimeError("partial_attachment_fencing_incomplete"),
-                action=(
-                    "retained adapter ownership and queued bounded teardown retry"
-                ),
+                action=("retained adapter ownership and queued bounded teardown retry"),
             )
         if twin_attached and local_fenced:
             try:
@@ -1471,8 +1445,7 @@ class DeviceAttachmentBroker:
                     "reality_attachment.rollback.digital_twin_persistence",
                     exc,
                     action=(
-                        "retained the rollback obligation and completed request "
-                        "failure accounting"
+                        "retained the rollback obligation and completed request failure accounting"
                     ),
                 )
 
@@ -1577,12 +1550,8 @@ class DeviceAttachmentBroker:
                     exc,
                     action="retained local effect fencing after remote connector teardown failed",
                 )
-        service_fenced = service_fenced and (
-            adapter_id not in self._service.adapter_channels()
-        )
-        local_fenced = (
-            managed_fenced and sampler_fenced and service_fenced and body_fenced
-        )
+        service_fenced = service_fenced and (adapter_id not in self._service.adapter_channels())
+        local_fenced = managed_fenced and sampler_fenced and service_fenced and body_fenced
         if not local_fenced:
             record_degradation(
                 degradation_phase,
@@ -1681,9 +1650,7 @@ class DeviceAttachmentBroker:
                 if adapter_id is None or pending_adapter_id == adapter_id
             )
             pending_revocations = (
-                tuple(sorted(self._pending_twin_revocations.items()))
-                if adapter_id is None
-                else ()
+                tuple(sorted(self._pending_twin_revocations.items())) if adapter_id is None else ()
             )
         for pending_adapter_id, reason, lost in pending_detaches:
             intent = (reason, lost)
@@ -1962,9 +1929,7 @@ class DeviceAttachmentBroker:
                 custody["error"] = self._custody_error
             try:
                 twin_status = (
-                    self._digital_twin.health_snapshot()
-                    if self._digital_twin is not None
-                    else None
+                    self._digital_twin.health_snapshot() if self._digital_twin is not None else None
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 twin_status = {
@@ -1984,9 +1949,7 @@ class DeviceAttachmentBroker:
                     sorted(self._connector_discovery_failures.items())
                 ),
                 "disappearance_quorum": self._disappearance_quorum,
-                "candidate_absence_streaks": dict(
-                    sorted(self._candidate_absence_streaks.items())
-                ),
+                "candidate_absence_streaks": dict(sorted(self._candidate_absence_streaks.items())),
                 "candidates": len(self._candidates),
                 "trust_grants": len(self._grants),
                 "pending_authority_activations": pending_authority_activations,
@@ -2003,9 +1966,7 @@ class DeviceAttachmentBroker:
                 "trust_custody": custody,
                 "digital_twin": twin_status,
                 "twin_reconciliation": {
-                    "healthy": not (
-                        pending_twin_detaches or pending_twin_revocations
-                    ),
+                    "healthy": not (pending_twin_detaches or pending_twin_revocations),
                     "pending": pending_twin_detaches + pending_twin_revocations,
                     "pending_detaches": pending_twin_detaches,
                     "pending_revocations": pending_twin_revocations,
@@ -2054,10 +2015,7 @@ class DeviceAttachmentBroker:
         revocation_rows = raw.get("revocations")
         if not isinstance(detach_rows, list) or not isinstance(revocation_rows, list):
             raise ValueError("twin reconciliation intents must be lists")
-        if (
-            len(detach_rows) + len(revocation_rows)
-            > _MAX_TWIN_RECONCILIATION_INTENTS
-        ):
+        if len(detach_rows) + len(revocation_rows) > _MAX_TWIN_RECONCILIATION_INTENTS:
             raise ValueError("twin reconciliation intent limit exceeded")
 
         detaches: dict[str, tuple[str, bool]] = {}
@@ -2177,9 +2135,7 @@ class DeviceAttachmentBroker:
                     self._state_needs_compaction = True
             self._grants = loaded
             self._custody_error = (
-                "incomplete_authority_lifecycle_requires_compaction"
-                if incomplete_lifecycle
-                else ""
+                "incomplete_authority_lifecycle_requires_compaction" if incomplete_lifecycle else ""
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self._custody_error = f"{type(exc).__name__}:{exc}"[:320]
@@ -2247,8 +2203,7 @@ class DeviceAttachmentBroker:
                         **item.to_dict(),
                         "lifecycle": (
                             _GRANT_LIFECYCLE_PENDING
-                            if item.identity_fingerprint
-                            in self._pending_grant_activations
+                            if item.identity_fingerprint in self._pending_grant_activations
                             else _GRANT_LIFECYCLE_ACTIVE
                         ),
                     }
@@ -2286,9 +2241,7 @@ class DeviceAttachmentBroker:
         async with self._persistence_lock:
             body = self._persistent_body()
             reconciliation = body["twin_reconciliation"]
-            has_reconciliation = bool(
-                reconciliation["detaches"] or reconciliation["revocations"]
-            )
+            has_reconciliation = bool(reconciliation["detaches"] or reconciliation["revocations"])
             if self._trust_store is None:
                 if body["grants"] or has_reconciliation:
                     raise AttachmentTrustStoreError(

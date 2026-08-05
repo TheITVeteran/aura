@@ -207,7 +207,13 @@ class Connector:
         self.detach_count = 0
 
     async def discover(self) -> tuple[DeviceCandidate, ...]:
-        return (replace(self.candidate, discovered_at_ns=time.time_ns(), expires_at_ns=time.time_ns() + 60_000_000_000),)
+        return (
+            replace(
+                self.candidate,
+                discovered_at_ns=time.time_ns(),
+                expires_at_ns=time.time_ns() + 60_000_000_000,
+            ),
+        )
 
     async def attach(
         self,
@@ -378,13 +384,9 @@ class FakeMigrationAuthorityVerifier(FakeAuthorityVerifier):
     def verify_manifest_migration(self, capability, *, intent, persistent):
         receipt_id = str(capability.get("receipt_id") or "")
         if not receipt_id:
-            raise AttachmentAuthorityError(
-                "manifest_migration_authority_receipt_missing"
-            )
+            raise AttachmentAuthorityError("manifest_migration_authority_receipt_missing")
         if receipt_id in self.migration_seen:
-            raise AttachmentAuthorityError(
-                "manifest_migration_authority_capability_replayed"
-            )
+            raise AttachmentAuthorityError("manifest_migration_authority_capability_replayed")
         self.migration_seen.add(receipt_id)
         return {
             "capability": {"receipt_id": receipt_id},
@@ -402,12 +404,12 @@ class FakeMigrationAuthorityVerifier(FakeAuthorityVerifier):
         persistent,
     ):
         value = dict(evidence)
-        if value.get("intent") != dict(intent) or value.get("persistent") is not bool(
-            persistent
-        ) or value.get("evidence_sha256") != "sha256:" + "d" * 64:
-            raise AttachmentAuthorityError(
-                "manifest_migration_authority_evidence_invalid"
-            )
+        if (
+            value.get("intent") != dict(intent)
+            or value.get("persistent") is not bool(persistent)
+            or value.get("evidence_sha256") != "sha256:" + "d" * 64
+        ):
+            raise AttachmentAuthorityError("manifest_migration_authority_evidence_invalid")
         return value
 
 
@@ -431,6 +433,7 @@ def _broker(
     max_candidates: int = 2048,
     disappearance_quorum: int = 3,
     middleware=None,
+    attachment_observer=None,
 ) -> tuple[DeviceAttachmentBroker, RealityReachService]:
     service = RealityReachService(session_id="test.attachments")
     router = RealityObservationRouter(service, digital_twin=digital_twin)
@@ -441,6 +444,7 @@ def _broker(
             router,
             digital_twin=digital_twin,
             middleware=middleware,
+            attachment_observer=attachment_observer,
             state_path=state_path,
             trust_store=KeychainAttachmentTrustStore(keychain, state_path),
             authority_verifier=authority or FakeAuthorityVerifier(),
@@ -450,6 +454,61 @@ def _broker(
         ),
         service,
     )
+
+
+@pytest.mark.asyncio
+async def test_committed_attachment_wakes_effect_recovery_without_owning_it(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+    notifications: list[str] = []
+    broker, service = _broker(
+        tmp_path / "recovery-notification.json",
+        attachment_observer=notifications.append,
+    )
+    connector = Connector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+
+    attached = await broker.authorize_and_attach(
+        broker.requests()[0].request_id,
+        authority_capability=_authority("authority.test.recovery-notification"),
+        persistent=False,
+    )
+
+    assert attached.state is ConnectionState.ATTACHED
+    assert service.status()["adapter_count"] == 1
+    assert notifications == [attached.adapter_id]
+
+
+@pytest.mark.asyncio
+async def test_recovery_notification_failure_does_not_rollback_attachment(
+    tmp_path: Path,
+    no_body_projection: None,
+) -> None:
+    del no_body_projection
+
+    def unavailable(_adapter_id: str) -> None:
+        raise RuntimeError("recovery supervisor unavailable")
+
+    broker, service = _broker(
+        tmp_path / "recovery-notification-failure.json",
+        attachment_observer=unavailable,
+    )
+    connector = Connector(_candidate(persistent=False))
+    broker.register_connector(connector)
+    await broker.discover()
+
+    attached = await broker.authorize_and_attach(
+        broker.requests()[0].request_id,
+        authority_capability=_authority("authority.test.recovery-notification-failure"),
+        persistent=False,
+    )
+
+    assert attached.state is ConnectionState.ATTACHED
+    assert service.status()["adapter_count"] == 1
+    assert connector.detach_count == 0
 
 
 @pytest.mark.asyncio
@@ -770,9 +829,7 @@ async def test_failed_cancellation_rollback_cannot_resurrect_authority_after_res
     assert broker.status()["trust_grants"] == 0
 
     restarted_store = StaticTrustStore(store.saved_bodies[0])
-    restarted_service = RealityReachService(
-        session_id="test.cancelled-persistence.restart"
-    )
+    restarted_service = RealityReachService(session_id="test.cancelled-persistence.restart")
     restarted = DeviceAttachmentBroker(
         restarted_service,
         RealityObservationRouter(restarted_service),
@@ -932,6 +989,7 @@ async def test_partial_rollback_retains_sampler_body_and_twin_until_all_are_fenc
     assert graph.snapshot()["twins"][0]["lifecycle"] == "detached"
     assert connector.detach_count == 1
 
+
 @pytest.mark.asyncio
 async def test_manifest_migration_preflight_is_retryable_and_end_to_end_bound(
     tmp_path: Path,
@@ -1032,9 +1090,7 @@ async def test_disappearance_uses_uncapped_scan_and_bounded_quorum(
     await broker.discover()
     await broker.discover()
     assert connector.detach_count == 0
-    assert broker.status()["candidate_absence_streaks"] == {
-        candidate_a.candidate_id: 2
-    }
+    assert broker.status()["candidate_absence_streaks"] == {candidate_a.candidate_id: 2}
 
     await broker.discover()
 

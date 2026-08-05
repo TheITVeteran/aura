@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
+import math
 import os
 import re
 import stat
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +37,14 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
-from core.runtime.lockdep import checked_lock
+from core.runtime.lockdep import checked_async_lock, checked_lock
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 from core.runtime.skill_contract import ActionExpectation
+from core.runtime.task_ownership import create_tracked_task
 
 TRANSACTION_SCHEMA = "aura.reality-reach-actuation-transaction.v1"
 COMMAND_CAPSULE_SCHEMA = "aura.reality-reach-actuation-command.v1"
+RECOVERY_REPORT_SCHEMA = "aura.reality-reach-restart-recovery-report.v1"
 _TERMINAL = frozenset(
     {
         ActuationState.EFFECT_VERIFIED,
@@ -67,6 +72,7 @@ _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 _TRANSACTION_FILENAME = re.compile(r"^(?P<stem>[0-9a-f]{64})\.json$")
 _COMMAND_CAPSULE_FILENAME = re.compile(r"^(?P<stem>[0-9a-f]{64})\.command$")
+logger = logging.getLogger("Aura.RealityReach.Actuation")
 
 
 class RealityActuationError(RuntimeError):
@@ -325,6 +331,16 @@ class RealityActuationCoordinator:
         self._executor = executor
         self._wall_clock_ns = wall_clock_ns
         self._monotonic_clock_ns = monotonic_clock_ns
+        self._recovery_lock = checked_async_lock("reality_actuation.restart_recovery")
+        self._recovery_wake = asyncio.Event()
+        self._recovery_stop = asyncio.Event()
+        self._recovery_condition = asyncio.Condition()
+        self._recovery_task: asyncio.Task[Any] | None = None
+        self._recovery_report: dict[str, Any] | None = None
+        self._recovery_generation = 0
+        self._recovery_max_transactions = 64
+        self._recovery_min_retry_s = 5.0
+        self._recovery_max_retry_s = 300.0
 
     def _load(self, command: ActuationCommand) -> dict[str, Any] | None:
         path = _record_path(self._root, command.idempotency_key)
@@ -424,12 +440,18 @@ class RealityActuationCoordinator:
         return bool(self._service.executable_actuator_channels())
 
     def status(self) -> dict[str, Any]:
+        recovery_task = self._recovery_task
         return {
             "alive": self.is_alive(),
             "ready": self.is_ready(),
             "executable_actuator_channels": list(self._service.executable_actuator_channels()),
             "transaction_schema": TRANSACTION_SCHEMA,
             "command_capsule_schema": COMMAND_CAPSULE_SCHEMA,
+            "restart_recovery": {
+                "running": bool(recovery_task is not None and not recovery_task.done()),
+                "generation": self._recovery_generation,
+                "last_report": dict(self._recovery_report or {}),
+            },
         }
 
     def _create(self, command: ActuationCommand) -> dict[str, Any]:
@@ -809,32 +831,35 @@ class RealityActuationCoordinator:
             or not 1 <= max_transactions <= 1024
         ):
             raise ValueError("max_transactions must lie inside [1, 1024]")
-        commands, legacy, capsule_only, deferred = await asyncio.to_thread(
-            self._discover_recovery_commands,
-            max_transactions,
-        )
-        recovered: list[dict[str, Any]] = []
-        failures: list[dict[str, str]] = []
-        for command in commands:
-            before = await asyncio.to_thread(self._load, command)
-            before_state = str((before or {}).get("state") or "missing")
-            try:
-                result = await self.recover_after_restart(command)
-            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
-                failures.append(
-                    {
-                        "command_sha256": command.sha256,
-                        "error_type": type(exc).__name__,
-                        "error_sha256": _sha256(str(exc)),
-                    }
-                )
-                continue
-            record = result.get("reality_reach_transaction")
-            after_state = (
-                str(record.get("state") or "missing") if isinstance(record, Mapping) else "missing"
+        async with self._recovery_lock:
+            commands, legacy, capsule_only, deferred = await asyncio.to_thread(
+                self._discover_recovery_commands,
+                max_transactions,
             )
-            recovered.append(
-                {
+            recovered: list[dict[str, Any]] = []
+            failures: list[dict[str, str]] = []
+            unresolved: list[dict[str, str]] = []
+            for command in commands:
+                before = await asyncio.to_thread(self._load, command)
+                before_state = str((before or {}).get("state") or "missing")
+                try:
+                    result = await self.recover_after_restart(command)
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                    failures.append(
+                        {
+                            "command_sha256": command.sha256,
+                            "error_type": type(exc).__name__,
+                            "error_sha256": _sha256(str(exc)),
+                        }
+                    )
+                    continue
+                record = result.get("reality_reach_transaction")
+                after_state = (
+                    str(record.get("state") or "missing")
+                    if isinstance(record, Mapping)
+                    else "missing"
+                )
+                recovery_summary = {
                     "command_sha256": command.sha256,
                     "before_state": before_state,
                     "after_state": after_state,
@@ -842,18 +867,164 @@ class RealityActuationCoordinator:
                         result.get("manual_reconciliation_required")
                     ),
                 }
+                recovered.append(recovery_summary)
+                if recovery_summary["manual_reconciliation_required"] or after_state in {
+                    ActuationState.DISPATCHED.value,
+                    ActuationState.EXECUTED.value,
+                    ActuationState.INDETERMINATE.value,
+                }:
+                    unresolved.append(
+                        {
+                            "command_sha256": command.sha256,
+                            "state": after_state,
+                        }
+                    )
+            retryable = bool(failures or unresolved or capsule_only or deferred)
+            return {
+                "schema": RECOVERY_REPORT_SCHEMA,
+                "eligible": len(commands) + deferred,
+                "processed": len(commands),
+                "deferred": deferred,
+                "recovered": recovered,
+                "failures": failures,
+                "unresolved": unresolved,
+                "legacy_unrecoverable_transaction_sha256": [f"sha256:{item}" for item in legacy],
+                "capsule_without_transaction_sha256": [f"sha256:{item}" for item in capsule_only],
+                "retryable": retryable,
+                "complete": (
+                    not failures
+                    and not unresolved
+                    and not legacy
+                    and not capsule_only
+                    and deferred == 0
+                ),
+            }
+
+    def notify_adapter_available(self, adapter_id: str) -> None:
+        """Wake recovery after a physical adapter becomes fully attached."""
+
+        if not isinstance(adapter_id, str) or not _IDENTIFIER.fullmatch(adapter_id):
+            raise ValueError("adapter_id is invalid")
+        self._recovery_wake.set()
+
+    async def start_recovery_supervisor(
+        self,
+        *,
+        max_transactions: int = 64,
+        min_retry_s: float = 5.0,
+        max_retry_s: float = 300.0,
+    ) -> asyncio.Task[Any]:
+        if (
+            isinstance(max_transactions, bool)
+            or not isinstance(max_transactions, int)
+            or not 1 <= max_transactions <= 1024
+        ):
+            raise ValueError("max_transactions must lie inside [1, 1024]")
+        minimum = float(min_retry_s)
+        maximum = float(max_retry_s)
+        if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum <= 0:
+            raise ValueError("recovery retry intervals must be finite and positive")
+        if maximum < minimum or maximum > 3600.0:
+            raise ValueError("recovery maximum retry interval is invalid")
+        if self._recovery_task is not None and not self._recovery_task.done():
+            self._recovery_wake.set()
+            return self._recovery_task
+        self._recovery_max_transactions = max_transactions
+        self._recovery_min_retry_s = minimum
+        self._recovery_max_retry_s = maximum
+        self._recovery_stop.clear()
+        self._recovery_wake.set()
+        self._recovery_task = create_tracked_task(
+            self._recovery_supervisor_loop(),
+            name="reality_reach.restart_recovery_supervisor",
+            owner="core.reality_reach.transactions",
+        )
+        return self._recovery_task
+
+    async def wait_for_recovery_attempt(
+        self,
+        *,
+        after_generation: int = 0,
+        timeout_s: float = 30.0,
+    ) -> dict[str, Any]:
+        if isinstance(after_generation, bool) or int(after_generation) < 0:
+            raise ValueError("after_generation must be a non-negative integer")
+        timeout = float(timeout_s)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout_s must be finite and positive")
+        async with self._recovery_condition:
+            await asyncio.wait_for(
+                self._recovery_condition.wait_for(
+                    lambda: self._recovery_generation > int(after_generation)
+                ),
+                timeout=timeout,
             )
-        return {
-            "schema": "aura.reality-reach-restart-recovery-report.v1",
-            "eligible": len(commands) + deferred,
-            "processed": len(commands),
-            "deferred": deferred,
-            "recovered": recovered,
-            "failures": failures,
-            "legacy_unrecoverable_transaction_sha256": [f"sha256:{item}" for item in legacy],
-            "capsule_without_transaction_sha256": [f"sha256:{item}" for item in capsule_only],
-            "complete": not failures and not legacy and not capsule_only and deferred == 0,
-        }
+            return dict(self._recovery_report or {})
+
+    async def stop(self) -> None:
+        self._recovery_stop.set()
+        self._recovery_wake.set()
+        task = self._recovery_task
+        self._recovery_task = None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _recovery_supervisor_loop(self) -> None:
+        delay_s = self._recovery_min_retry_s
+        while not self._recovery_stop.is_set():
+            self._recovery_wake.clear()
+            try:
+                report = await self.recover_all_after_restart(
+                    max_transactions=self._recovery_max_transactions
+                )
+            except asyncio.CancelledError:
+                raise
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                report = {
+                    "schema": RECOVERY_REPORT_SCHEMA,
+                    "eligible": 0,
+                    "processed": 0,
+                    "deferred": 0,
+                    "recovered": [],
+                    "failures": [
+                        {
+                            "error_type": type(exc).__name__,
+                            "error_sha256": _sha256(str(exc)),
+                        }
+                    ],
+                    "unresolved": [],
+                    "legacy_unrecoverable_transaction_sha256": [],
+                    "capsule_without_transaction_sha256": [],
+                    "retryable": True,
+                    "complete": False,
+                }
+            self._recovery_report = report
+            async with self._recovery_condition:
+                self._recovery_generation += 1
+                self._recovery_condition.notify_all()
+            if self._recovery_stop.is_set():
+                break
+            retryable = bool(report.get("retryable"))
+            if bool(report.get("complete")) or not retryable:
+                delay_s = self._recovery_min_retry_s
+                await self._recovery_wake.wait()
+                continue
+            delay_s = min(
+                self._recovery_max_retry_s,
+                max(self._recovery_min_retry_s, delay_s),
+            )
+            if self._recovery_wake.is_set():
+                delay_s = self._recovery_min_retry_s
+                continue
+            try:
+                await asyncio.wait_for(self._recovery_wake.wait(), timeout=delay_s)
+                delay_s = self._recovery_min_retry_s
+            except TimeoutError:
+                delay_s = min(self._recovery_max_retry_s, delay_s * 2.0)
+        logger.debug("Reality Reach restart recovery supervisor stopped")
 
     async def _dispatch_adapter(
         self,
@@ -1200,6 +1371,7 @@ def get_reality_actuation_coordinator(
 
 __all__ = [
     "COMMAND_CAPSULE_SCHEMA",
+    "RECOVERY_REPORT_SCHEMA",
     "RealityActuationCoordinator",
     "RealityActuationError",
     "TRANSACTION_SCHEMA",
