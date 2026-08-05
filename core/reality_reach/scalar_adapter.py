@@ -326,6 +326,13 @@ class ScalarRealityAdapter:
         return self._transport_class
 
     @property
+    def effect_tolerance(self) -> float:
+        tolerance = self._profile.tolerance
+        if tolerance is None:
+            raise ScalarAdapterError("scalar profile tolerance is unavailable")
+        return float(tolerance)
+
+    @property
     def profile_sha256(self) -> str:
         return self._profile.sha256
 

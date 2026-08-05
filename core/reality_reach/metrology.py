@@ -15,11 +15,12 @@ import os
 import statistics
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from core.governance_context import local_internal_governed_scope
 from core.reality_reach.contracts import ChannelDeclaration, ChannelKind
@@ -38,6 +39,7 @@ _MAX_RECEIPTS = 64
 _MAX_CHANNELS = 32
 _MAX_SAMPLES = 1024
 _MAX_MEASUREMENTS_PER_RECEIPT = 1024
+_T = TypeVar("_T")
 
 
 class MetrologyError(RuntimeError):
@@ -728,6 +730,57 @@ class RealityMetrologyService:
                     self._mode_generation += 1
                     self._active_run = None
                 await self._persist_shielded()
+
+    async def acquire_around(
+        self,
+        task: AcquisitionTask,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> tuple[_T, AcquisitionReceipt]:
+        """Measure before and after one operation under the same acquisition."""
+
+        if not isinstance(task, AcquisitionTask):
+            raise TypeError("task must be an AcquisitionTask")
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        if task.sample_count < 2 or task.sample_interval_s <= 0.0:
+            raise MetrologyError(
+                "enclosing acquisition requires at least two temporally separated samples"
+            )
+        acquisition = asyncio.create_task(
+            self.acquire(task),
+            name=f"RealityMetrologyEnclosure:{task.task_id}",
+        )
+        startup_deadline = self._monotonic_clock() + min(5.0, task.timeout_s)
+        try:
+            while True:
+                if acquisition.done():
+                    await acquisition
+                    raise MetrologyError("enclosing acquisition ended before operation")
+                active = self.status().get("active_run")
+                if (
+                    isinstance(active, Mapping)
+                    and active.get("task_sha256") == task.sha256
+                ):
+                    break
+                if self._monotonic_clock() >= startup_deadline:
+                    raise MetrologyError("enclosing acquisition did not become active")
+                await asyncio.sleep(0.01)
+            operation_started_ns = int(self._wall_clock_ns())
+            result = await operation()
+            operation_completed_ns = int(self._wall_clock_ns())
+            receipt = await acquisition
+        except BaseException:
+            if not acquisition.done():
+                acquisition.cancel()
+                with suppress(asyncio.CancelledError):
+                    await acquisition
+            raise
+        if (
+            receipt.started_at_ns > operation_started_ns
+            or receipt.completed_at_ns < operation_completed_ns
+        ):
+            raise MetrologyError("acquisition did not enclose the complete operation")
+        return result, receipt
 
     def _validate_sample(
         self,

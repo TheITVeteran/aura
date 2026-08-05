@@ -35951,3 +35951,43 @@ Reality-class fence evidence:
 This closes campaign-label governance selection. The external campaigns and
 their independently held trust inputs remain unmeasured, so CP810 and the total
 remain open at 809/920.
+
+#### CP810 addendum: causally enclosing physical metrology
+
+Physical acceptance no longer accepts a valid but pre-recorded metrology
+receipt. Live and HIL plans must provide an acquisition owner that begins
+measurement before the governed operation and completes only after verified
+restoration. `RealityMetrologyService.acquire_around` supplies this bounded
+protocol: it rejects one-sample or zero-interval tasks, waits for the exact
+task to become active, executes the operation while acquisition owns the mode,
+awaits the final sample, verifies temporal enclosure, and durably restores live
+mode on success, failure, or cancellation.
+
+The acceptance certificate schema now binds the requested scalar target and
+the adapter's declared effect tolerance. After independent effect readback, the
+runner holds the effect for a bounded 50 ms to 5 s metrology window before
+rollback. Producer acceptance requires the enclosing receipt to measure the
+exact adapter readback channel from a live source and contain at least one
+value within the bound target tolerance. The independent verifier recomputes
+the same channel, time-window, source-class, target, and tolerance predicates;
+neither a baseline-only trace nor samples from an unrelated sensor can support
+the live verdict. Verification receipts use version four semantics.
+
+Causal-metrology evidence:
+
+- pre-recorded receipt, missing acquisition owner, non-enclosing task,
+  unrelated readback, missing target, exact target/tolerance, cancellation-safe
+  mode restoration, and fresh-process replay contracts: 50/50 focused tests
+  passed;
+- a real in-process `RealityMetrologyService` integration sampled baseline,
+  governed commanded effect, and restoration on the scalar adapter and issued
+  an enclosing live certificate;
+- full affected connector, middleware, metrology, actuation, transaction,
+  trust, sensory-initializer, and WorldBridge family: 546/546 passed;
+- smoke 103/103, repository compile, governance lint, layering, local security,
+  scoped MyPy, and Ruff all passed.
+
+This closes unrelated/pre-recorded measurement promotion and makes the
+remaining physical campaigns executable with causal evidence. No real tenant
+or device was attached during this checkpoint, and trusted digest custody is
+still external evidence. CP810 and the total remain open at 809/920.

@@ -21,7 +21,7 @@ from core.reality_reach.acceptance import (
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustodyError
 
-VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v3"
+VERIFICATION_RECEIPT_SCHEMA = "aura.reality_reach.acceptance_verification.v4"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -154,6 +154,17 @@ def _metrology_blockers(
     )
     if metrology.get("mode") != expected_mode:
         blockers.append("metrology_mode_mismatch")
+    started_at_ns = metrology.get("started_at_ns")
+    completed_at_ns = metrology.get("completed_at_ns")
+    if (
+        isinstance(started_at_ns, bool)
+        or not isinstance(started_at_ns, int)
+        or isinstance(completed_at_ns, bool)
+        or not isinstance(completed_at_ns, int)
+        or started_at_ns > certificate.started_at_ns
+        or completed_at_ns < certificate.completed_at_ns
+    ):
+        blockers.append("metrology_does_not_enclose_operation")
     measurements = metrology.get("measurements")
     if not isinstance(measurements, list) or not measurements:
         blockers.append("metrology_measurements_missing")
@@ -166,6 +177,36 @@ def _metrology_blockers(
         )
         if sources != expected_sources:
             blockers.append("metrology_source_class_mismatch")
+        case_evidence = evidence_document.get("case_evidence")
+        observation = (
+            case_evidence.get("observation.fresh")
+            if isinstance(case_evidence, Mapping)
+            else None
+        )
+        observation_channel = (
+            str(observation.get("channel_id") or "")
+            if isinstance(observation, Mapping)
+            else ""
+        )
+        live_channels = {
+            str(item.get("channel_id") or "")
+            for item in measurements
+            if isinstance(item, Mapping) and item.get("source") == "live"
+        }
+        if not observation_channel or observation_channel not in live_channels:
+            blockers.append("metrology_readback_channel_missing")
+        target_observed = any(
+            isinstance(item, Mapping)
+            and item.get("source") == "live"
+            and item.get("channel_id") == observation_channel
+            and isinstance(item.get("value"), (int, float))
+            and not isinstance(item.get("value"), bool)
+            and abs(float(item["value"]) - certificate.target)
+            <= certificate.target_tolerance
+            for item in measurements
+        )
+        if not target_observed:
+            blockers.append("metrology_target_not_observed")
     if expected_mode == "hardware_in_loop" and (
         metrology.get("scenario_id") != certificate.scenario_id
     ):

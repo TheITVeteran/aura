@@ -34,11 +34,14 @@ from core.reality_reach.acceptance_verifier import (
 from core.reality_reach.contracts import NumericDomain
 from core.reality_reach.live import RealityReachService
 from core.reality_reach.metrology import (
+    AcquisitionChannel,
     AcquisitionMode,
     AcquisitionReceipt,
+    AcquisitionTask,
     EvidenceSource,
     Measurement,
     MeasurementSummary,
+    RealityMetrologyService,
 )
 from core.reality_reach.scalar_adapter import (
     ScalarRealityAdapter,
@@ -240,6 +243,8 @@ def _certificate(
         adapter_id="mqtt.tank.level.adapter",
         physical_identity_sha256=_digest("physical.fixture"),
         source_commit_sha256=_digest("dae896754"),
+        target=7.0,
+        target_tolerance=0.2,
         started_at_ns=1_000,
         completed_at_ns=2_000,
         cases=cases,
@@ -332,13 +337,21 @@ def _metrology_receipt(
     sources: tuple[EvidenceSource, ...],
     *,
     scenario_id: str = "",
+    started_at_ns: int = 1_000,
+    completed_at_ns: int = 2_000,
+    live_channel_id: str = "fixture.live",
+    live_value: float = 7.0,
 ) -> AcquisitionReceipt:
     measurements = tuple(
         Measurement(
-            channel_id=f"fixture.{source.value}",
-            value=1.0,
+            channel_id=(
+                live_channel_id
+                if source is EvidenceSource.LIVE
+                else f"fixture.{source.value}"
+            ),
+            value=live_value if source is EvidenceSource.LIVE else 1.0,
             unit="percent",
-            captured_at_ns=1_100 + index,
+            captured_at_ns=started_at_ns + 1 + index,
             source=source,
             scenario_id=scenario_id if source is EvidenceSource.SIMULATED else "",
             wall_clock_source="fixture.clock",
@@ -372,8 +385,8 @@ def _metrology_receipt(
         "task_sha256": _digest("metrology-task"),
         "mode": mode.value,
         "mode_generation": 1,
-        "started_at_ns": 1_000,
-        "completed_at_ns": 2_000,
+        "started_at_ns": started_at_ns,
+        "completed_at_ns": completed_at_ns,
         "sample_sets": 1,
         "maximum_observed_skew_ns": 1,
         "scenario_id": scenario_id,
@@ -385,8 +398,8 @@ def _metrology_receipt(
         task_sha256=str(evidence["task_sha256"]),
         mode=mode,
         mode_generation=1,
-        started_at_ns=1_000,
-        completed_at_ns=2_000,
+        started_at_ns=started_at_ns,
+        completed_at_ns=completed_at_ns,
         sample_sets=1,
         maximum_observed_skew_ns=1,
         scenario_id=scenario_id,
@@ -396,17 +409,7 @@ def _metrology_receipt(
     )
 
 
-def test_live_acceptance_plan_requires_matching_verified_metrology() -> None:
-    with pytest.raises(ValueError, match="verified metrology"):
-        ScalarAcceptancePlan(
-            campaign_id="cp810.live",
-            connector_id="fixture.connector",
-            target=7.0,
-            source_commit_sha256=_digest("dae896754"),
-            authority_receipt_id="authority.cp810.live",
-            evidence_class=AcceptanceEvidenceClass.LIVE,
-        )
-
+def test_live_acceptance_plan_refuses_prerecorded_metrology() -> None:
     live = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
     plan = ScalarAcceptancePlan(
         campaign_id="cp810.live",
@@ -415,16 +418,26 @@ def test_live_acceptance_plan_requires_matching_verified_metrology() -> None:
         source_commit_sha256=_digest("dae896754"),
         authority_receipt_id="authority.cp810.live",
         evidence_class=AcceptanceEvidenceClass.LIVE,
-        metrology_receipt=live,
     )
-    assert plan.metrology_receipt is live
+    assert plan.metrology_receipt is None
+
+    with pytest.raises(ValueError, match="acquired around the operation"):
+        ScalarAcceptancePlan(
+            campaign_id="cp810.prerecorded",
+            connector_id="fixture.connector",
+            target=7.0,
+            source_commit_sha256=_digest("dae896754"),
+            authority_receipt_id="authority.cp810.prerecorded",
+            evidence_class=AcceptanceEvidenceClass.LIVE,
+            metrology_receipt=live,
+        )
 
     simulated = _metrology_receipt(
         AcquisitionMode.SIMULATION,
         (EvidenceSource.SIMULATED,),
         scenario_id="sim-rig-1",
     )
-    with pytest.raises(ValueError, match="matching verified metrology"):
+    with pytest.raises(ValueError, match="acquired around the operation"):
         ScalarAcceptancePlan(
             campaign_id="cp810.false-live",
             connector_id="fixture.connector",
@@ -444,6 +457,7 @@ def _runner(
     evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION,
     metrology_receipt: AcquisitionReceipt | None = None,
     governed_executor: Any = None,
+    metrology_acquirer: Any = None,
     transport_class: ScalarTransportClass | None = None,
 ) -> ScalarAcceptanceRunner:
     adapter = ScalarRealityAdapter(
@@ -487,7 +501,34 @@ def _runner(
             metrology_receipt=metrology_receipt,
         ),
         governed_executor=governed_executor,
+        metrology_acquirer=metrology_acquirer,
     )
+
+
+def _acceptance_metrology_acquirer(
+    *,
+    mode: AcquisitionMode = AcquisitionMode.LIVE,
+    scenario_id: str = "",
+) -> Any:
+    async def acquire(operation: Any) -> tuple[ConnectorAcceptanceCertificate, AcquisitionReceipt]:
+        started_at_ns = time.time_ns() - 1
+        certificate = await operation()
+        sources = (
+            (EvidenceSource.LIVE, EvidenceSource.SIMULATED)
+            if mode is AcquisitionMode.HARDWARE_IN_LOOP
+            else (EvidenceSource.LIVE,)
+        )
+        receipt = _metrology_receipt(
+            mode,
+            sources,
+            scenario_id=scenario_id,
+            started_at_ns=min(started_at_ns, certificate.started_at_ns),
+            completed_at_ns=max(time.time_ns() + 1, certificate.completed_at_ns),
+            live_channel_id="acceptance_fixture.fixture.level.readback",
+        )
+        return certificate, receipt
+
+    return acquire
 
 
 async def _governed_executor(**kwargs: Any) -> dict[str, Any]:
@@ -531,17 +572,18 @@ async def test_scalar_acceptance_runner_proves_complete_reversible_lifecycle() -
 @pytest.mark.asyncio
 async def test_live_acceptance_is_governed_and_independently_replayed(tmp_path) -> None:
     transport = _Transport()
-    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
     runner = _runner(
         transport,
         initial=await transport.read_scalar("fixture.level"),
         evidence_class=AcceptanceEvidenceClass.LIVE,
-        metrology_receipt=metrology,
         governed_executor=_governed_executor,
+        metrology_acquirer=_acceptance_metrology_acquirer(),
     )
     store = AcceptanceCertificateStore(tmp_path / "acceptance")
 
     certificate = await runner.run_and_persist(store)
+    metrology = runner.metrology_receipt
+    assert metrology is not None
     evidence = store.load_evidence(certificate)
     receipt = verify_acceptance_evidence(
         certificate,
@@ -605,6 +647,71 @@ async def test_live_acceptance_is_governed_and_independently_replayed(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_live_acceptance_uses_real_enclosing_metrology_service(tmp_path) -> None:
+    transport = _Transport()
+    initial = await transport.read_scalar("fixture.level")
+    adapter = ScalarRealityAdapter(
+        transport,
+        ScalarResourceProfile(
+            resource_id="fixture.level",
+            observable="fixture_level",
+            unit="percent",
+            domain=NumericDomain(0.0, 100.0),
+            resolution=0.1,
+            tolerance=0.2,
+            writable=True,
+            physical_identity_sha256=_digest("physical.fixture"),
+            owner="tests.reality_reach_acceptance",
+            protocol="acceptance_fixture",
+            safe_value=1.0,
+            readback_distinct_from_command=True,
+        ),
+        initial_sample=initial,
+        transport_class=ScalarTransportClass.PHYSICAL,
+    )
+    reality = RealityReachService((adapter,), session_id="acceptance.metrology.session")
+    metrology = RealityMetrologyService(
+        reality,
+        state_path=tmp_path / "metrology.json",
+    )
+    await metrology.start()
+    task = AcquisitionTask(
+        task_id="cp810.live.enclosure",
+        channels=(
+            AcquisitionChannel("acceptance_fixture.fixture.level.readback"),
+        ),
+        sample_count=8,
+        sample_interval_s=0.05,
+        timeout_s=2.0,
+    )
+    runner = ScalarAcceptanceRunner(
+        adapter,
+        reality,
+        ScalarAcceptancePlan(
+            campaign_id="cp810.live.real-metrology",
+            connector_id="fixture.connector",
+            target=7.0,
+            source_commit_sha256=_digest("dae896754"),
+            authority_receipt_id="authority.ignored.for-live",
+            evidence_class=AcceptanceEvidenceClass.LIVE,
+            metrology_effect_hold_s=0.25,
+        ),
+        governed_executor=_governed_executor,
+        metrology_acquirer=lambda operation: metrology.acquire_around(task, operation),
+    )
+
+    certificate = await runner.run()
+    receipt = runner.metrology_receipt
+
+    assert receipt is not None
+    assert certificate.live_acceptance_passed is True
+    assert receipt.started_at_ns <= certificate.started_at_ns
+    assert receipt.completed_at_ns >= certificate.completed_at_ns
+    assert any(item.value == pytest.approx(7.0) for item in receipt.measurements)
+    assert transport.value == 1.0
+
+
+@pytest.mark.asyncio
 async def test_live_acceptance_refused_before_dispatch_performs_no_writes() -> None:
     async def refused_executor(**_kwargs: Any) -> dict[str, Any]:
         return {
@@ -618,11 +725,8 @@ async def test_live_acceptance_refused_before_dispatch_performs_no_writes() -> N
         transport,
         initial=await transport.read_scalar("fixture.level"),
         evidence_class=AcceptanceEvidenceClass.LIVE,
-        metrology_receipt=_metrology_receipt(
-            AcquisitionMode.LIVE,
-            (EvidenceSource.LIVE,),
-        ),
         governed_executor=refused_executor,
+        metrology_acquirer=_acceptance_metrology_acquirer(),
     )
 
     with pytest.raises(AcceptanceError, match="refused_before_dispatch"):
@@ -653,11 +757,8 @@ async def test_live_acceptance_refuses_a_simulated_adapter_before_writes() -> No
         transport,
         initial=await transport.read_scalar("fixture.level"),
         evidence_class=AcceptanceEvidenceClass.LIVE,
-        metrology_receipt=_metrology_receipt(
-            AcquisitionMode.LIVE,
-            (EvidenceSource.LIVE,),
-        ),
         governed_executor=_governed_executor,
+        metrology_acquirer=_acceptance_metrology_acquirer(),
         transport_class=ScalarTransportClass.SIMULATED,
     )
 
@@ -665,6 +766,81 @@ async def test_live_acceptance_refuses_a_simulated_adapter_before_writes() -> No
         await runner.run()
 
     assert transport.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_requires_enclosing_metrology_before_writes() -> None:
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        governed_executor=_governed_executor,
+    )
+
+    with pytest.raises(AcceptanceError, match="requires_metrology_acquirer"):
+        await runner.run()
+
+    assert transport.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_rejects_prerecorded_metrology_after_restoration() -> None:
+    async def prerecorded(
+        operation: Any,
+    ) -> tuple[ConnectorAcceptanceCertificate, AcquisitionReceipt]:
+        certificate = await operation()
+        return certificate, _metrology_receipt(
+            AcquisitionMode.LIVE,
+            (EvidenceSource.LIVE,),
+            live_channel_id="acceptance_fixture.fixture.level.readback",
+        )
+
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        governed_executor=_governed_executor,
+        metrology_acquirer=prerecorded,
+    )
+
+    with pytest.raises(AcceptanceError, match="does_not_enclose_operation"):
+        await runner.run()
+
+    assert transport.value == 1.0
+    assert transport.writes == 2
+
+
+@pytest.mark.asyncio
+async def test_live_acceptance_requires_metrology_to_observe_target() -> None:
+    async def wrong_target(
+        operation: Any,
+    ) -> tuple[ConnectorAcceptanceCertificate, AcquisitionReceipt]:
+        certificate = await operation()
+        return certificate, _metrology_receipt(
+            AcquisitionMode.LIVE,
+            (EvidenceSource.LIVE,),
+            started_at_ns=certificate.started_at_ns,
+            completed_at_ns=certificate.completed_at_ns,
+            live_channel_id="acceptance_fixture.fixture.level.readback",
+            live_value=1.0,
+        )
+
+    transport = _Transport()
+    runner = _runner(
+        transport,
+        initial=await transport.read_scalar("fixture.level"),
+        evidence_class=AcceptanceEvidenceClass.LIVE,
+        governed_executor=_governed_executor,
+        metrology_acquirer=wrong_target,
+    )
+
+    with pytest.raises(AcceptanceError, match="target_not_observed"):
+        await runner.run()
+
+    assert transport.value == 1.0
+    assert transport.writes == 2
 
 
 @pytest.mark.asyncio
@@ -812,7 +988,12 @@ async def test_acceptance_cli_replays_in_fresh_process(tmp_path) -> None:
 
 
 def test_live_replay_requires_recomputed_trusted_metrology() -> None:
-    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    metrology = _metrology_receipt(
+        AcquisitionMode.LIVE,
+        (EvidenceSource.LIVE,),
+        started_at_ns=1_500,
+        completed_at_ns=1_900,
+    )
     governance = _governance_evidence()
     cases = tuple(
         _case(case_id, AcceptanceEvidenceClass.LIVE) for case_id in REQUIRED_SCALAR_ACCEPTANCE_CASES
@@ -841,9 +1022,9 @@ def test_live_replay_requires_recomputed_trusted_metrology() -> None:
         trusted_metrology_evidence_sha256=_digest("wrong-metrology"),
         trusted_governance_evidence_sha256=_digest(governance),
     )
-
     assert receipt.live_accepted is False
     assert "trusted_metrology_mismatch" in receipt.blockers
+    assert "metrology_does_not_enclose_operation" in receipt.blockers
 
 
 @pytest.mark.asyncio
@@ -851,7 +1032,13 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
     transport = _Transport()
     runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
     simulated = await runner.run()
-    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    metrology = _metrology_receipt(
+        AcquisitionMode.LIVE,
+        (EvidenceSource.LIVE,),
+        started_at_ns=simulated.started_at_ns,
+        completed_at_ns=simulated.completed_at_ns,
+        live_channel_id="acceptance_fixture.fixture.level.readback",
+    )
     governance = _governance_evidence()
     live_certificate = replace(
         simulated,
@@ -886,6 +1073,32 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
         trusted_metrology_evidence_sha256=metrology.evidence_sha256,
         trusted_governance_evidence_sha256=_digest(governance),
     )
+    wrong_target_metrology = _metrology_receipt(
+        AcquisitionMode.LIVE,
+        (EvidenceSource.LIVE,),
+        started_at_ns=simulated.started_at_ns,
+        completed_at_ns=simulated.completed_at_ns,
+        live_channel_id="acceptance_fixture.fixture.level.readback",
+        live_value=1.0,
+    )
+    wrong_target_certificate = replace(
+        live_certificate,
+        metrology_evidence_sha256=wrong_target_metrology.evidence_sha256,
+    )
+    wrong_target = verify_acceptance_evidence(
+        wrong_target_certificate,
+        {
+            **evidence,
+            "metrology_receipt": wrong_target_metrology.to_dict(),
+        },
+        expected_source_commit_sha256=wrong_target_certificate.source_commit_sha256,
+        expected_physical_identity_sha256=(
+            wrong_target_certificate.physical_identity_sha256
+        ),
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+        trusted_metrology_evidence_sha256=wrong_target_metrology.evidence_sha256,
+        trusted_governance_evidence_sha256=_digest(governance),
+    )
 
     assert accepted.accepted is True
     assert accepted.live_accepted is True
@@ -893,6 +1106,8 @@ async def test_independent_replay_binds_exact_external_evidence_class() -> None:
     assert substituted.accepted is False
     assert "evidence_class_mismatch" in substituted.blockers
     assert "metrology_mode_mismatch" in substituted.blockers
+    assert wrong_target.accepted is False
+    assert "metrology_target_not_observed" in wrong_target.blockers
 
 
 @pytest.mark.asyncio

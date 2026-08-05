@@ -187,6 +187,71 @@ async def test_calibrated_acquisition_propagates_uncertainty_and_restores_live(
 
 
 @pytest.mark.asyncio
+async def test_acquire_around_encloses_operation_and_restores_live(tmp_path: Path) -> None:
+    declaration = _declaration("lab.temperature")
+    service = _service(
+        tmp_path,
+        (declaration,),
+        [
+            (_reading("lab.temperature", 10.0),),
+            (_reading("lab.temperature", 11.0),),
+        ],
+    )
+    await service.start()
+
+    async def operation() -> str:
+        active = service.status()["active_run"]
+        assert active is not None
+        assert active["task_sha256"] == task.sha256
+        await asyncio.sleep(0.01)
+        return "completed"
+
+    task = AcquisitionTask(
+        task_id="lab.enclosing-acquisition",
+        channels=(AcquisitionChannel("lab.temperature"),),
+        sample_count=2,
+        sample_interval_s=0.05,
+        timeout_s=1.0,
+    )
+    result, receipt = await service.acquire_around(task, operation)
+
+    assert result == "completed"
+    assert receipt.started_at_ns <= receipt.completed_at_ns
+    assert receipt.sample_sets == 2
+    assert service.status()["mode"] == "live"
+    assert service.status()["active_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_acquire_around_rejects_non_enclosing_task_before_operation(
+    tmp_path: Path,
+) -> None:
+    declaration = _declaration("lab.temperature")
+    service = _service(
+        tmp_path,
+        (declaration,),
+        [(_reading("lab.temperature", 10.0),)],
+    )
+    await service.start()
+    called = False
+
+    async def operation() -> None:
+        nonlocal called
+        called = True
+
+    with pytest.raises(MetrologyError, match="temporally separated"):
+        await service.acquire_around(
+            AcquisitionTask(
+                task_id="lab.not-enclosing",
+                channels=(AcquisitionChannel("lab.temperature"),),
+            ),
+            operation,
+        )
+
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_live_simulation_and_hil_sources_cannot_cross_contaminate(
     tmp_path: Path,
 ) -> None:

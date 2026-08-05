@@ -7,6 +7,7 @@ because the wrapped transport may already have changed external state.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -45,12 +46,17 @@ _MAX_CASES = 128
 _MAX_FAULT_RECEIPTS = 4096
 _MAX_CERTIFICATE_BYTES = 1024 * 1024
 _MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
-_CERTIFICATE_SCHEMA = "aura.reality_reach.acceptance_certificate.v2"
-_CERTIFICATE_VERSION = 2
-_EVIDENCE_SCHEMA = "aura.reality_reach.acceptance_evidence.v2"
+_CERTIFICATE_SCHEMA = "aura.reality_reach.acceptance_certificate.v3"
+_CERTIFICATE_VERSION = 3
+_EVIDENCE_SCHEMA = "aura.reality_reach.acceptance_evidence.v3"
 ACCEPTANCE_GOVERNANCE_SCHEMA = "aura.reality_reach.acceptance_governance.v1"
 
 AcceptanceExecutor = Callable[..., Awaitable[Mapping[str, Any]]]
+AcceptanceOperation = Callable[[], Awaitable["ConnectorAcceptanceCertificate"]]
+AcceptanceMetrologyAcquirer = Callable[
+    [AcceptanceOperation],
+    Awaitable[tuple["ConnectorAcceptanceCertificate", AcquisitionReceipt]],
+]
 
 REQUIRED_SCALAR_ACCEPTANCE_CASES = (
     "observation.fresh",
@@ -229,6 +235,8 @@ class ConnectorAcceptanceCertificate:
     adapter_id: str
     physical_identity_sha256: str
     source_commit_sha256: str
+    target: float
+    target_tolerance: float
     started_at_ns: int
     completed_at_ns: int
     cases: tuple[AcceptanceCaseResult, ...]
@@ -250,6 +258,12 @@ class ConnectorAcceptanceCertificate:
                 name,
                 _sha256(getattr(self, name), name=name),
             )
+        target = float(self.target)
+        tolerance = float(self.target_tolerance)
+        if not math.isfinite(target) or not math.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("acceptance target and tolerance must be finite and non-negative")
+        object.__setattr__(self, "target", target)
+        object.__setattr__(self, "target_tolerance", tolerance)
         for name in ("started_at_ns", "completed_at_ns"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -341,6 +355,8 @@ class ConnectorAcceptanceCertificate:
             "adapter_id": self.adapter_id,
             "physical_identity_sha256": self.physical_identity_sha256,
             "source_commit_sha256": self.source_commit_sha256,
+            "target": self.target,
+            "target_tolerance": self.target_tolerance,
             "started_at_ns": self.started_at_ns,
             "completed_at_ns": self.completed_at_ns,
             "scenario_id": self.scenario_id,
@@ -360,6 +376,8 @@ class ConnectorAcceptanceCertificate:
             "adapter_id",
             "physical_identity_sha256",
             "source_commit_sha256",
+            "target",
+            "target_tolerance",
             "started_at_ns",
             "completed_at_ns",
             "scenario_id",
@@ -382,6 +400,8 @@ class ConnectorAcceptanceCertificate:
                 adapter_id=document["adapter_id"],
                 physical_identity_sha256=document["physical_identity_sha256"],
                 source_commit_sha256=document["source_commit_sha256"],
+                target=document["target"],
+                target_tolerance=document["target_tolerance"],
                 started_at_ns=document["started_at_ns"],
                 completed_at_ns=document["completed_at_ns"],
                 cases=tuple(AcceptanceCaseResult.from_dict(item) for item in raw_cases),
@@ -629,6 +649,7 @@ class ScalarAcceptancePlan:
     evidence_class: AcceptanceEvidenceClass = AcceptanceEvidenceClass.SIMULATION
     scenario_id: str = ""
     deadline_s: float = 30.0
+    metrology_effect_hold_s: float = 0.25
     metrology_receipt: AcquisitionReceipt | None = None
 
     def __post_init__(self) -> None:
@@ -659,38 +680,20 @@ class ScalarAcceptancePlan:
         if self.evidence_class is AcceptanceEvidenceClass.SIMULATION:
             if receipt is not None and receipt.mode is not AcquisitionMode.SIMULATION:
                 raise ValueError("simulation acceptance cannot bind live or HIL metrology")
-        else:
-            expected_mode = (
-                AcquisitionMode.HARDWARE_IN_LOOP
-                if self.evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP
-                else AcquisitionMode.LIVE
+        elif receipt is not None:
+            raise ValueError(
+                "physical acceptance metrology must be acquired around the operation"
             )
-            if (
-                not isinstance(receipt, AcquisitionReceipt)
-                or receipt.mode is not expected_mode
-                or receipt.restored_mode is not AcquisitionMode.LIVE
-                or not receipt.verify_evidence()
-                or not receipt.measurements
-            ):
-                raise ValueError(
-                    "live and HIL acceptance require matching verified metrology evidence"
-                )
-            sources = {item.source for item in receipt.measurements}
-            expected_sources = (
-                {EvidenceSource.LIVE, EvidenceSource.SIMULATED}
-                if expected_mode is AcquisitionMode.HARDWARE_IN_LOOP
-                else {EvidenceSource.LIVE}
-            )
-            if sources != expected_sources:
-                raise ValueError("metrology evidence sources do not match acceptance mode")
-            if expected_mode is AcquisitionMode.HARDWARE_IN_LOOP and (
-                receipt.scenario_id != scenario
-            ):
-                raise ValueError("HIL metrology scenario differs from acceptance plan")
         deadline = float(self.deadline_s)
         if not math.isfinite(deadline) or not 0.1 <= deadline <= 300.0:
             raise ValueError("deadline_s must lie inside [0.1, 300]")
         object.__setattr__(self, "deadline_s", deadline)
+        hold = float(self.metrology_effect_hold_s)
+        if not math.isfinite(hold) or not 0.05 <= hold <= min(5.0, deadline):
+            raise ValueError(
+                "metrology_effect_hold_s must lie inside [0.05, min(5, deadline)]"
+            )
+        object.__setattr__(self, "metrology_effect_hold_s", hold)
 
 
 class ScalarAcceptanceRunner:
@@ -705,6 +708,7 @@ class ScalarAcceptanceRunner:
         plan: ScalarAcceptancePlan,
         *,
         governed_executor: AcceptanceExecutor | None = None,
+        metrology_acquirer: AcceptanceMetrologyAcquirer | None = None,
     ) -> None:
         if not isinstance(adapter, ScalarRealityAdapter):
             raise TypeError("adapter must be a ScalarRealityAdapter")
@@ -724,6 +728,15 @@ class ScalarAcceptanceRunner:
         self._service = service
         self._plan = plan
         self._governed_executor = governed_executor
+        self._metrology_acquirer = metrology_acquirer
+        self._metrology_receipt = plan.metrology_receipt
+        self._observation_channels = tuple(
+            dict.fromkeys(
+                channel_id
+                for capability in capabilities
+                for channel_id in capability.observation_channels
+            )
+        )
         self._case_evidence: dict[str, Any] = {}
         self._governance_evidence: dict[str, Any] = {}
 
@@ -736,7 +749,7 @@ class ScalarAcceptanceRunner:
 
     @property
     def metrology_receipt(self) -> AcquisitionReceipt | None:
-        return self._plan.metrology_receipt
+        return self._metrology_receipt
 
     @property
     def governance_evidence(self) -> dict[str, Any]:
@@ -954,6 +967,12 @@ class ScalarAcceptanceRunner:
                     if passed
                     else "effect not independently verified",
                 )
+                if (
+                    passed
+                    and self._plan.evidence_class
+                    is not AcceptanceEvidenceClass.SIMULATION
+                ):
+                    await asyncio.sleep(self._plan.metrology_effect_hold_s)
             except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
                 results["effect.independent_readback"] = self._failure(
                     "effect.independent_readback",
@@ -1007,15 +1026,66 @@ class ScalarAcceptanceRunner:
             adapter_id=self._adapter.adapter_id,
             physical_identity_sha256=self._adapter.physical_identity_sha256,
             source_commit_sha256=self._plan.source_commit_sha256,
+            target=self._plan.target,
+            target_tolerance=self._adapter.effect_tolerance,
             started_at_ns=started_at_ns,
             completed_at_ns=completed_at_ns,
             cases=tuple(results[case_id] for case_id in self._CASE_IDS),
             scenario_id=self._plan.scenario_id,
-            metrology_evidence_sha256=(
-                self._plan.metrology_receipt.evidence_sha256
-                if self._plan.metrology_receipt is not None
-                else ""
-            ),
+        )
+
+    def _bind_metrology(
+        self,
+        certificate: ConnectorAcceptanceCertificate,
+        receipt: AcquisitionReceipt,
+    ) -> ConnectorAcceptanceCertificate:
+        if not isinstance(receipt, AcquisitionReceipt) or not receipt.verify_evidence():
+            raise AcceptanceError("acceptance_metrology_evidence_invalid")
+        expected_mode = (
+            AcquisitionMode.HARDWARE_IN_LOOP
+            if self._plan.evidence_class is AcceptanceEvidenceClass.HARDWARE_IN_LOOP
+            else AcquisitionMode.LIVE
+        )
+        if receipt.mode is not expected_mode or receipt.restored_mode is not AcquisitionMode.LIVE:
+            raise AcceptanceError("acceptance_metrology_mode_mismatch")
+        if not (
+            receipt.started_at_ns <= certificate.started_at_ns
+            and receipt.completed_at_ns >= certificate.completed_at_ns
+        ):
+            raise AcceptanceError("acceptance_metrology_does_not_enclose_operation")
+        sources = {item.source for item in receipt.measurements}
+        expected_sources = (
+            {EvidenceSource.LIVE, EvidenceSource.SIMULATED}
+            if expected_mode is AcquisitionMode.HARDWARE_IN_LOOP
+            else {EvidenceSource.LIVE}
+        )
+        if sources != expected_sources:
+            raise AcceptanceError("acceptance_metrology_source_class_mismatch")
+        if (
+            expected_mode is AcquisitionMode.HARDWARE_IN_LOOP
+            and receipt.scenario_id != self._plan.scenario_id
+        ):
+            raise AcceptanceError("acceptance_metrology_scenario_mismatch")
+        measured_live = {
+            item.channel_id
+            for item in receipt.measurements
+            if item.source is EvidenceSource.LIVE
+        }
+        if not set(self._observation_channels).issubset(measured_live):
+            raise AcceptanceError("acceptance_metrology_readback_channel_missing")
+        target_observed = any(
+            item.source is EvidenceSource.LIVE
+            and item.channel_id in self._observation_channels
+            and abs(float(item.value) - certificate.target)
+            <= certificate.target_tolerance
+            for item in receipt.measurements
+        )
+        if not target_observed:
+            raise AcceptanceError("acceptance_metrology_target_not_observed")
+        self._metrology_receipt = receipt
+        return replace(
+            certificate,
+            metrology_evidence_sha256=receipt.evidence_sha256,
         )
 
     @staticmethod
@@ -1065,9 +1135,13 @@ class ScalarAcceptanceRunner:
             authority_receipt_id = str(context.get("will_receipt_id") or "")
             if not _IDENTIFIER.fullmatch(authority_receipt_id):
                 raise AcceptanceError("acceptance_governance_receipt_invalid")
-            certificate = await self._run_cases(
-                authority_receipt_id=authority_receipt_id,
+            acquirer = self._metrology_acquirer
+            if acquirer is None:
+                raise AcceptanceError("acceptance_metrology_acquirer_missing")
+            certificate, receipt = await acquirer(
+                lambda: self._run_cases(authority_receipt_id=authority_receipt_id)
             )
+            certificate = self._bind_metrology(certificate, receipt)
             completed["certificate"] = certificate
             dispatch = next(
                 item for item in certificate.cases if item.case_id == "actuation.dispatch"
@@ -1133,6 +1207,7 @@ class ScalarAcceptanceRunner:
 
     async def run(self) -> ConnectorAcceptanceCertificate:
         self._governance_evidence = {}
+        self._metrology_receipt = self._plan.metrology_receipt
         if self._plan.evidence_class is AcceptanceEvidenceClass.SIMULATION:
             if self._adapter.transport_class is not ScalarTransportClass.SIMULATED:
                 raise AcceptanceError(
@@ -1143,6 +1218,8 @@ class ScalarAcceptanceRunner:
             )
         if self._adapter.transport_class is not ScalarTransportClass.PHYSICAL:
             raise AcceptanceError("physical_acceptance_requires_physical_adapter")
+        if self._metrology_acquirer is None:
+            raise AcceptanceError("physical_acceptance_requires_metrology_acquirer")
         return await self._run_governed()
 
     async def run_and_persist(
