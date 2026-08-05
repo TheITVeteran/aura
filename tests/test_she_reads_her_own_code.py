@@ -732,3 +732,53 @@ class TestSheReadsThePhrasingNotTheQuestion:
         )
         assert last_shown_excerpt() == {}
         forget_shown_excerpt()
+
+
+class TestAskingToBeShownIsACueNotAPhraseList:
+    """"Can you read your own source?" must not read as "no".
+
+    SOURCE_SHOW_MARKERS was a literal phrase list — "show me", "let me see",
+    "display", "paste". Asking her to READ her source, to OPEN it, or which
+    PART of it she finds interesting matched none of them, so a request she can
+    satisfy classified as not-a-request and she denied a capability she has.
+
+    That is the same failure shape that hit the screen-observation router twice
+    in a fortnight. A phrase list is always one phrasing behind.
+    """
+
+    @staticmethod
+    def _asks(message):
+        from core.utils.own_source_intent import asks_for_own_source
+
+        return asks_for_own_source(message)
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "show me your source code",
+            "can you read your own source?",
+            "what part of your code do you find interesting?",
+            "open your implementation",
+            "pull up your codebase",
+            "walk me through your architecture",
+        ],
+    )
+    def test_ways_of_asking_to_be_shown(self, message):
+        assert self._asks(message), message
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # A question ABOUT her source, not a request to see it.
+            "what language are you written in?",
+            # Names another subject; answering with a piece of Aura would be
+            # its own kind of made-up answer.
+            "show me the actual code for numpy",
+            # Nothing to do with source at all — this one reached the
+            # source-excerpt floor live and got a code pitch as its answer.
+            "Can you still reason through the desktop path?",
+            "how are you feeling today?",
+        ],
+    )
+    def test_still_not_a_request_for_her_source(self, message):
+        assert not self._asks(message), message

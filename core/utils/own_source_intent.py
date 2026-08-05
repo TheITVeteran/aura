@@ -24,6 +24,13 @@ import re
 from typing import Any
 
 #: Ways of asking to be shown something.
+#:
+#: Retained as the literal list it always was, for the callers that import it.
+#: The MATCH now goes through _SHOW_CUE_RE below, because a phrase list is
+#: always one phrasing behind — "can you read your own source?" and "what part
+#: of your code do you find interesting?" both missed every entry here, and a
+#: miss means she denies a capability she has. That exact failure shape hit the
+#: screen-observation router twice, weeks apart.
 SOURCE_SHOW_MARKERS: tuple[str, ...] = (
     "show me",
     "show a",
@@ -33,6 +40,16 @@ SOURCE_SHOW_MARKERS: tuple[str, ...] = (
     "display",
     "print out",
     "paste",
+)
+
+#: A request to be shown something, as a CUE CLASS rather than a phrase list.
+#: Verbs of displaying and of reading both count: asking her to READ her source
+#: to you is asking to be shown it.
+_SHOW_CUE_RE = re.compile(
+    r"\b(?:show|see|display|print|paste|read|open|pull\s+up|look\s+at|"
+    r"walk\s+me\s+through|which\s+part|what\s+part|which\s+file|what\s+file|"
+    r"which\s+piece|what\s+piece)\b",
+    re.IGNORECASE,
 )
 
 #: "your ... code" with any adjectives between — "your actual codebase",
@@ -58,6 +75,8 @@ ACTUAL_SOURCE_RE = re.compile(
 
 
 def _contains_show_marker(text: str) -> bool:
+    if _SHOW_CUE_RE.search(text):
+        return True
     lowered = text.lower()
     return any(marker in lowered for marker in SOURCE_SHOW_MARKERS)
 
