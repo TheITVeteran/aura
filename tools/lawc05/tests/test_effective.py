@@ -22,7 +22,6 @@ from lawc05.effective import (  # noqa: E402
     estimate_effective_shift,
     mode_volume_for_target_eta,
     vacuum_field_amplitude,
-    vacuum_rabi_coupling,
 )
 
 THZ = 2.0 * math.pi * 1e12

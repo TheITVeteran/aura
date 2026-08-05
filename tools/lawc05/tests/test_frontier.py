@@ -36,7 +36,7 @@ class TestUnits:
     def test_range_and_mass_are_inverses(self) -> None:
         assert mass_gev_to_range(range_to_mass_gev(1e-6)) == pytest.approx(1e-6)
 
-    def test_a_micron_range_is_a_sub_eV_mass(self) -> None:
+    def test_a_micron_range_is_a_sub_ev_mass(self) -> None:
         """1 um <-> about 0.2 eV. If this drifts, every number below is wrong."""
         assert range_to_mass_gev(1e-6) == pytest.approx(1.973e-10, rel=1e-3)
 
