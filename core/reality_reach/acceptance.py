@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from core.reality_reach.actuation import ActuationLease, ActuationState
 from core.reality_reach.live import ReadingStatus, RealityReachService
@@ -43,8 +43,10 @@ _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_CASES = 128
 _MAX_FAULT_RECEIPTS = 4096
 _MAX_CERTIFICATE_BYTES = 1024 * 1024
+_MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 _CERTIFICATE_SCHEMA = "aura.reality_reach.acceptance_certificate.v1"
 _CERTIFICATE_VERSION = 1
+_EVIDENCE_SCHEMA = "aura.reality_reach.acceptance_evidence.v1"
 
 REQUIRED_SCALAR_ACCEPTANCE_CASES = (
     "observation.fresh",
@@ -99,8 +101,8 @@ def _sha256(value: object, *, name: str) -> str:
     return normalized
 
 
-def _strict_json_loads(payload: bytes) -> Any:
-    if not payload or len(payload) > _MAX_CERTIFICATE_BYTES:
+def _strict_json_loads(payload: bytes, *, max_bytes: int = _MAX_CERTIFICATE_BYTES) -> Any:
+    if not payload or len(payload) > max_bytes:
         raise AcceptanceError("acceptance_certificate_size_invalid")
     try:
         text = payload.decode("utf-8")
@@ -130,7 +132,7 @@ def _strict_json_loads(payload: bytes) -> Any:
         raise AcceptanceError("acceptance_certificate_json_invalid") from exc
 
 
-def _canonical_json_bytes(value: Any) -> bytes:
+def _canonical_json_bytes(value: Any, *, max_bytes: int = _MAX_CERTIFICATE_BYTES) -> bytes:
     try:
         payload = json.dumps(
             value,
@@ -141,7 +143,7 @@ def _canonical_json_bytes(value: Any) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, RecursionError, OverflowError) as exc:
         raise AcceptanceError("acceptance_certificate_not_canonical_json") from exc
-    if not payload or len(payload) > _MAX_CERTIFICATE_BYTES:
+    if not payload or len(payload) > max_bytes:
         raise AcceptanceError("acceptance_certificate_size_invalid")
     return payload
 
@@ -388,6 +390,10 @@ class AcceptanceCertificateStore:
         digest = _digest({"campaign_id": canonical_id}).removeprefix("sha256:")
         return f"{digest}.json"
 
+    @classmethod
+    def _evidence_filename(cls, campaign_id: object) -> str:
+        return cls._filename(campaign_id).removesuffix(".json") + ".evidence"
+
     @staticmethod
     def _envelope(certificate: ConnectorAcceptanceCertificate) -> dict[str, Any]:
         return {
@@ -462,6 +468,102 @@ class AcceptanceCertificateStore:
         if payload != _canonical_json_bytes(document):
             raise AcceptanceError("acceptance_certificate_noncanonical")
         return certificate
+
+    def persist_evidence(
+        self,
+        certificate: ConnectorAcceptanceCertificate,
+        case_evidence: Mapping[str, Any],
+        *,
+        metrology_receipt: AcquisitionReceipt | None = None,
+    ) -> bool:
+        """Create-once publish the evidence needed for independent replay."""
+
+        if not isinstance(certificate, ConnectorAcceptanceCertificate):
+            raise TypeError("certificate must be a ConnectorAcceptanceCertificate")
+        expected_cases = {item.case_id: item for item in certificate.cases}
+        if not isinstance(case_evidence, Mapping) or set(case_evidence) != set(expected_cases):
+            raise AcceptanceError("acceptance_evidence_case_set_invalid")
+        canonical_evidence: dict[str, Any] = {}
+        for case_id in sorted(expected_cases):
+            evidence = _strict_json_loads(_canonical_json_bytes(case_evidence[case_id]))
+            if _digest(evidence) != expected_cases[case_id].evidence_sha256:
+                raise AcceptanceError("acceptance_evidence_case_digest_mismatch")
+            canonical_evidence[case_id] = evidence
+        metrology = metrology_receipt.to_dict() if metrology_receipt is not None else {}
+        if certificate.metrology_evidence_sha256:
+            if (
+                metrology_receipt is None
+                or not metrology_receipt.verify_evidence()
+                or metrology_receipt.evidence_sha256 != certificate.metrology_evidence_sha256
+            ):
+                raise AcceptanceError("acceptance_evidence_metrology_mismatch")
+        elif metrology_receipt is not None:
+            raise AcceptanceError("acceptance_evidence_unbound_metrology")
+        document = {
+            "schema": _EVIDENCE_SCHEMA,
+            "campaign_id": certificate.campaign_id,
+            "certificate_sha256": certificate.sha256,
+            "case_evidence": canonical_evidence,
+            "metrology_receipt": metrology,
+        }
+        payload = _canonical_json_bytes(document, max_bytes=_MAX_EVIDENCE_BYTES)
+        filename = self._evidence_filename(certificate.campaign_id)
+        try:
+            with DirectoryCustody.acquire(self._root, create=True, private=True) as custody:
+                published = bool(custody.write_bytes_once(filename, payload, mode=0o600))
+                self._verify_private_file(custody, filename)
+                existing = custody.read_bytes(filename, max_bytes=_MAX_EVIDENCE_BYTES)
+        except SecurePathCustodyError as exc:
+            raise AcceptanceError("acceptance_evidence_custody_invalid") from exc
+        if existing != payload:
+            raise AcceptanceError("acceptance_evidence_campaign_collision")
+        return published
+
+    def load_evidence(
+        self,
+        certificate: ConnectorAcceptanceCertificate,
+    ) -> dict[str, Any]:
+        if not isinstance(certificate, ConnectorAcceptanceCertificate):
+            raise TypeError("certificate must be a ConnectorAcceptanceCertificate")
+        filename = self._evidence_filename(certificate.campaign_id)
+        try:
+            with DirectoryCustody.acquire(self._root, create=False, private=True) as custody:
+                if not custody.file_exists(filename):
+                    raise AcceptanceError("acceptance_evidence_missing")
+                self._verify_private_file(custody, filename)
+                payload = custody.read_bytes(filename, max_bytes=_MAX_EVIDENCE_BYTES)
+        except AcceptanceError:
+            raise
+        except SecurePathCustodyError as exc:
+            raise AcceptanceError("acceptance_evidence_custody_invalid") from exc
+        document = _strict_json_loads(payload, max_bytes=_MAX_EVIDENCE_BYTES)
+        if (
+            not isinstance(document, dict)
+            or set(document)
+            != {
+                "schema",
+                "campaign_id",
+                "certificate_sha256",
+                "case_evidence",
+                "metrology_receipt",
+            }
+            or document.get("schema") != _EVIDENCE_SCHEMA
+            or document.get("campaign_id") != certificate.campaign_id
+            or document.get("certificate_sha256") != certificate.sha256
+            or not isinstance(document.get("case_evidence"), dict)
+            or not isinstance(document.get("metrology_receipt"), dict)
+        ):
+            raise AcceptanceError("acceptance_evidence_envelope_invalid")
+        expected_cases = {item.case_id: item for item in certificate.cases}
+        evidence = document["case_evidence"]
+        if set(evidence) != set(expected_cases):
+            raise AcceptanceError("acceptance_evidence_case_set_invalid")
+        for case_id, result in expected_cases.items():
+            if _digest(evidence[case_id]) != result.evidence_sha256:
+                raise AcceptanceError("acceptance_evidence_case_digest_mismatch")
+        if payload != _canonical_json_bytes(document, max_bytes=_MAX_EVIDENCE_BYTES):
+            raise AcceptanceError("acceptance_evidence_noncanonical")
+        return document
 
 
 @dataclass(frozen=True, slots=True)
@@ -566,6 +668,18 @@ class ScalarAcceptanceRunner:
         self._adapter = adapter
         self._service = service
         self._plan = plan
+        self._case_evidence: dict[str, Any] = {}
+
+    @property
+    def case_evidence(self) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            _strict_json_loads(_canonical_json_bytes(self._case_evidence)),
+        )
+
+    @property
+    def metrology_receipt(self) -> AcquisitionReceipt | None:
+        return self._plan.metrology_receipt
 
     def _lease(self, command_sha256: str, *, suffix: str) -> ActuationLease:
         now_wall = time.time_ns()
@@ -592,12 +706,14 @@ class ScalarAcceptanceRunner:
         evidence: Any,
         detail: str = "",
     ) -> AcceptanceCaseResult:
+        canonical_evidence = _strict_json_loads(_canonical_json_bytes(evidence))
+        self._case_evidence[case_id] = canonical_evidence
         return AcceptanceCaseResult(
             case_id=case_id,
             verdict=verdict,
             evidence_class=self._plan.evidence_class,
             required=True,
-            evidence_sha256=_digest(evidence),
+            evidence_sha256=_digest(canonical_evidence),
             duration_ms=max(0.0, (time.monotonic_ns() - started_ns) / 1_000_000),
             detail=detail,
         )
@@ -622,6 +738,7 @@ class ScalarAcceptanceRunner:
         )
 
     async def run(self) -> ConnectorAcceptanceCertificate:
+        self._case_evidence = {}
         started_at_ns = max(1, time.time_ns())
         results: dict[str, AcceptanceCaseResult] = {}
         command = None
@@ -822,6 +939,24 @@ class ScalarAcceptanceRunner:
                 else ""
             ),
         )
+
+    async def run_and_persist(
+        self,
+        store: AcceptanceCertificateStore | None = None,
+    ) -> ConnectorAcceptanceCertificate:
+        """Run once and create-once publish both verdict and replay evidence."""
+
+        target_store = store or AcceptanceCertificateStore()
+        if not isinstance(target_store, AcceptanceCertificateStore):
+            raise TypeError("store must be an AcceptanceCertificateStore")
+        certificate = await self.run()
+        target_store.persist(certificate)
+        target_store.persist_evidence(
+            certificate,
+            self.case_evidence,
+            metrology_receipt=self.metrology_receipt,
+        )
+        return certificate
 
 
 @dataclass(frozen=True, slots=True)

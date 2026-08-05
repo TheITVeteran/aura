@@ -35803,3 +35803,46 @@ credential rotation, real network-loss restoration, representative
 long-running cancellation, physical safe-state convergence, live/HIL
 metrology, and independent receipt replay remain unmeasured. CP810 and the
 total remain open at 809/920.
+
+#### CP810 addendum: independent acceptance replay
+
+Acceptance cases no longer discard the structured evidence behind their
+digests. The runner now retains a canonical per-case package, and its default
+publication method create-once writes both the certificate and a separately
+bound private evidence artifact. Evidence publication validates the exact case
+set, every case digest, optional metrology receipt integrity, certificate
+identity, campaign identity, canonical encoding, bounded size, directory
+custody, file mode, and collision behavior. A 16 MiB evidence ceiling permits
+the metrology service's bounded live sample set without relaxing the 1 MiB
+certificate limit.
+
+A separate verifier reconstructs all six scalar predicates from those artifacts
+without accepting the producer's derived pass booleans: fresh identified
+observation, cancellation before transport, fenced preparation, completed
+dispatch, independently observed effect, and independently observed rollback or
+safe state. It also replays command/preparation/actuation lineage, exact required
+case order, source commit, physical identity, metrology digest, acquisition
+mode, live/simulated source classes, restored live mode, and HIL scenario. A
+forged producer PASS therefore remains rejected even if its certificate digest
+is internally self-consistent.
+
+`tools/reality_reach/verify_acceptance.py` performs this replay in a fresh
+process using explicit external trust inputs and emits a content-digested
+receipt. The receipt can itself be published create-once under private
+descriptor custody; different evidence cannot replace it, and unsafe mode or
+symlink substitution fails closed.
+
+Independent-replay evidence:
+
+- complete predicate replay, producer-forged PASS rejection, source and device
+  trust mismatch, metrology mismatch, evidence tamper, restart reload,
+  create-once collision, private mode, and fresh-process CLI contracts: 25/25
+  passed;
+- scoped strict MyPy and Ruff passed for producer, verifier, CLI, and tests.
+
+This closes the software implementation of independent receipt replay. It does
+not manufacture the external observations themselves. Real AWS/Azure tenants,
+real network loss and credential expiry, representative long-running actuator
+cancellation, physical safe-state convergence, and live/HIL metrology remain
+unmeasured; CP810 and the total remain open at 809/920 until those external
+campaigns are actually run and independently accepted.

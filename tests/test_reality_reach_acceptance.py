@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
+import sys
 import time
 from dataclasses import replace
 from typing import Any
@@ -24,6 +26,10 @@ from core.reality_reach.acceptance import (
     ScalarAcceptancePlan,
     ScalarAcceptanceRunner,
     ScalarFault,
+)
+from core.reality_reach.acceptance_verifier import (
+    persist_verification_receipt,
+    verify_acceptance_evidence,
 )
 from core.reality_reach.contracts import NumericDomain
 from core.reality_reach.live import RealityReachService
@@ -461,6 +467,175 @@ async def test_scalar_acceptance_runner_proves_complete_reversible_lifecycle() -
     assert certificate.live_acceptance_passed is False
     assert transport.value == 1.0
     assert transport.writes == 2
+
+
+@pytest.mark.asyncio
+async def test_independent_replay_recomputes_every_scalar_acceptance_predicate(
+    tmp_path,
+) -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    certificate = await runner.run_and_persist(store)
+
+    restarted_store = AcceptanceCertificateStore(store.root)
+    restored = restarted_store.load(certificate.campaign_id)
+    evidence = restarted_store.load_evidence(restored)
+    receipt = verify_acceptance_evidence(
+        restored,
+        evidence,
+        expected_source_commit_sha256=restored.source_commit_sha256,
+        expected_physical_identity_sha256=restored.physical_identity_sha256,
+    )
+
+    assert receipt.deterministic_accepted is True
+    assert receipt.live_accepted is False
+    assert receipt.blockers == ()
+    assert receipt.replayed_cases == REQUIRED_SCALAR_ACCEPTANCE_CASES
+    assert receipt.sha256.startswith("sha256:")
+
+    wrong_source = verify_acceptance_evidence(
+        restored,
+        evidence,
+        expected_source_commit_sha256=_digest("different-source"),
+        expected_physical_identity_sha256=restored.physical_identity_sha256,
+    )
+    wrong_identity = verify_acceptance_evidence(
+        restored,
+        evidence,
+        expected_source_commit_sha256=restored.source_commit_sha256,
+        expected_physical_identity_sha256=_digest("different-device"),
+    )
+    assert wrong_source.deterministic_accepted is False
+    assert "source_commit_mismatch" in wrong_source.blockers
+    assert wrong_identity.deterministic_accepted is False
+    assert "physical_identity_mismatch" in wrong_identity.blockers
+
+
+@pytest.mark.asyncio
+async def test_independent_replay_rejects_producer_pass_not_supported_by_evidence() -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    certificate = await runner.run()
+    evidence = runner.case_evidence
+    forged_observation = dict(evidence["observation.fresh"])
+    forged_observation["status"] = "stale"
+    evidence["observation.fresh"] = forged_observation
+    forged_case = replace(
+        certificate.cases[0],
+        evidence_sha256=_digest(forged_observation),
+    )
+    forged = replace(certificate, cases=(forged_case, *certificate.cases[1:]))
+
+    receipt = verify_acceptance_evidence(
+        forged,
+        {"case_evidence": evidence},
+        expected_source_commit_sha256=forged.source_commit_sha256,
+        expected_physical_identity_sha256=forged.physical_identity_sha256,
+    )
+
+    assert receipt.deterministic_accepted is False
+    assert "observation.fresh:pass_not_reproduced" in receipt.blockers
+
+
+@pytest.mark.asyncio
+async def test_evidence_store_rejects_case_tampering_after_restart(tmp_path) -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    certificate = await runner.run()
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    store.persist(certificate)
+    store.persist_evidence(certificate, runner.case_evidence)
+    evidence_path = next(store.root.glob("*.evidence"))
+    document = json.loads(evidence_path.read_bytes())
+    document["case_evidence"]["actuation.dispatch"]["executed"] = False
+    evidence_path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")))
+    evidence_path.chmod(0o600)
+
+    with pytest.raises(AcceptanceError, match="case_digest_mismatch"):
+        store.load_evidence(certificate)
+
+
+@pytest.mark.asyncio
+async def test_acceptance_cli_replays_in_fresh_process(tmp_path) -> None:
+    transport = _Transport()
+    runner = _runner(transport, initial=await transport.read_scalar("fixture.level"))
+    certificate = await runner.run()
+    store = AcceptanceCertificateStore(tmp_path / "acceptance")
+    store.persist(certificate)
+    store.persist_evidence(certificate, runner.case_evidence)
+    receipt_path = tmp_path / "verifier" / "receipt.json"
+
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "tools/reality_reach/verify_acceptance.py",
+        "--root",
+        str(store.root),
+        "--campaign-id",
+        certificate.campaign_id,
+        "--source-commit-sha256",
+        certificate.source_commit_sha256,
+        "--physical-identity-sha256",
+        certificate.physical_identity_sha256,
+        "--receipt-output",
+        str(receipt_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
+
+    assert process.returncode == 0, stderr.decode()
+    receipt = json.loads(stdout)
+    assert receipt["deterministic_accepted"] is True
+    assert receipt["live_accepted"] is False
+    assert json.loads(receipt_path.read_bytes()) == receipt
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
+
+    verification = verify_acceptance_evidence(
+        certificate,
+        store.load_evidence(certificate),
+        expected_source_commit_sha256=certificate.source_commit_sha256,
+        expected_physical_identity_sha256=certificate.physical_identity_sha256,
+    )
+    assert persist_verification_receipt(verification, receipt_path) is False
+    attacked = replace(
+        verification,
+        expected_source_commit_sha256=_digest("attacker-source"),
+    )
+    with pytest.raises(AcceptanceError, match="receipt_collision"):
+        persist_verification_receipt(attacked, receipt_path)
+    receipt_path.chmod(0o644)
+    with pytest.raises(AcceptanceError, match="mode_invalid"):
+        persist_verification_receipt(verification, receipt_path)
+
+
+def test_live_replay_requires_recomputed_trusted_metrology() -> None:
+    metrology = _metrology_receipt(AcquisitionMode.LIVE, (EvidenceSource.LIVE,))
+    cases = tuple(
+        _case(case_id, AcceptanceEvidenceClass.LIVE) for case_id in REQUIRED_SCALAR_ACCEPTANCE_CASES
+    )
+    certificate = _certificate(
+        cases,
+        metrology_evidence_sha256=metrology.evidence_sha256,
+    )
+    evidence = {
+        "case_evidence": {
+            case.case_id: {"error_type": "fixture", "error_sha256": case.evidence_sha256}
+            for case in cases
+        },
+        "metrology_receipt": metrology.to_dict(),
+    }
+
+    receipt = verify_acceptance_evidence(
+        certificate,
+        evidence,
+        expected_source_commit_sha256=certificate.source_commit_sha256,
+        expected_physical_identity_sha256=certificate.physical_identity_sha256,
+        trusted_metrology_evidence_sha256=_digest("wrong-metrology"),
+    )
+
+    assert receipt.live_accepted is False
+    assert "trusted_metrology_mismatch" in receipt.blockers
 
 
 @pytest.mark.asyncio
