@@ -10,6 +10,6 @@ Three modules, in order of how much they constrain each other:
                   honestly enough that its dispersion can be recovered blind
 """
 
-from . import frontier, nogo
+from . import effective, frontier, lawfield, nogo
 
-__all__ = ["frontier", "nogo"]
+__all__ = ["effective", "frontier", "lawfield", "nogo"]
