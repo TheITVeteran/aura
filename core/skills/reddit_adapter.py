@@ -27,13 +27,13 @@ HARDENING (2026-05):
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
 try:
     from playwright.async_api import Error as PlaywrightError
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -47,8 +47,8 @@ from core.being.welfare_transaction import WelfareTransaction
 from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
-from core.skills.base_skill import BaseSkill
 from core.runtime.state_ownership import state_root
+from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.Reddit")
 
@@ -857,7 +857,7 @@ class RedditAdapterSkill(BaseSkill):
                             mode=getattr(params, "mode", "unknown"),
                         )
                         return result
-                except (AttributeError, RuntimeError) as captcha_probe_error:
+                except _REDDIT_RECOVERABLE_ERRORS as captcha_probe_error:
                     logger.debug("Reddit CAPTCHA probe unavailable: %s", captcha_probe_error)
             _record_reddit_degradation(
                 e,

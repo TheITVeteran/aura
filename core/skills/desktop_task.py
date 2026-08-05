@@ -7,8 +7,9 @@ import logging
 import re
 import time
 import urllib.parse
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,11 +23,9 @@ from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_RETRY_SAFE_ACTIONS,
 )
 from core.runtime.errors import record_degradation
-from core.runtime.os_automation_effects import extract_target_paths
+from core.runtime.os_automation_effects import canonical_app_target, extract_target_paths
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from core.perception.observation_evidence import (
@@ -490,11 +489,35 @@ class DesktopTaskSkill(BaseSkill):
     @staticmethod
     def _requested_visible_source_count(objective: str) -> int:
         lowered = str(objective or "").lower()
-        if not any(token in lowered for token in ("open", "show", "bring up", "pull up", "tab")):
+        counted_sources = (
+            r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
+            r"a couple(?: of)?|a few|several)\s+"
+            + DesktopTaskSkill._COUNT_MODIFIERS
+            + DesktopTaskSkill._COUNTED_NOUN
+        )
+        direct = re.search(
+            r"\b(?:open|show|bring up|pull up)\b[^,.;]{0,24}\b"
+            + counted_sources
+            + r"\b",
+            lowered,
+        )
+        deferred = re.search(
+            r"\b"
+            + counted_sources
+            + r"\b[^,.;]{0,48}\b(?:open|show|bring up|pull up)\s+(?:each|them|those)\b",
+            lowered,
+        )
+        keep_open = re.search(
+            r"\b(?:keep|leave)\s+(?:all\s+)?(?:the|those)?\s*"
+            r"(?:articles?|sources?|stories?|pieces?|links?|results?|them)\s+open\b",
+            lowered,
+        )
+        if keep_open is not None:
+            return DesktopTaskSkill._counted_in_request(lowered)
+        matched = direct or deferred
+        if matched is None:
             return 0
-        # "open some articles" with no number opens what the search returned
-        # rather than a hardcoded three.
-        return DesktopTaskSkill._counted_in_request(lowered)
+        return DesktopTaskSkill._counted_in_request(matched.group(0))
 
     @staticmethod
     def _requested_research_source_count(objective: str) -> int:
@@ -506,6 +529,16 @@ class DesktopTaskSkill(BaseSkill):
         "unspecified" rather than substituting a favourite.
         """
         return DesktopTaskSkill._counted_in_request(str(objective or "").lower())
+
+    @staticmethod
+    def _objective_requests_recent_sources(objective: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:recent|latest|current|newly published|new reporting)\b",
+                str(objective or ""),
+                flags=re.IGNORECASE,
+            )
+        )
 
     #: Adjectives a person puts between the number and the noun. "3 RECENT
     #: articles" matched nothing before this and fell through to 1, so a
@@ -1984,37 +2017,76 @@ class DesktopTaskSkill(BaseSkill):
         return " ".join(kept).strip()
 
     @staticmethod
-    def _research_sources_from_result(result: dict[str, Any]) -> list[dict[str, str]]:
-        raw_sources = (
-            result.get("citations")
-            or result.get("sources")
-            or result.get("results")
-            or result.get("chunks")
-            or []
-        )
-        sources: list[dict[str, str]] = []
-        if not isinstance(raw_sources, list):
-            return sources
-        for item in raw_sources[:8]:
-            if not isinstance(item, dict):
+    def _research_sources_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Join provider citations to their fetched evidence by source identity.
+
+        Deep search returns URLs in ``citations`` and article bodies in
+        ``chunks``. Choosing the first non-empty list discarded the bodies and
+        made a successfully read article look inaccessible. Merge all provider
+        surfaces instead, keeping the richest text for each URL.
+        """
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for field in ("citations", "sources", "results", "chunks"):
+            raw_sources = result.get(field) or []
+            if not isinstance(raw_sources, list):
                 continue
-            title = str(item.get("title") or item.get("name") or item.get("url") or item.get("link") or "").strip()
-            url = str(item.get("url") or item.get("link") or item.get("uri") or "").strip()
-            snippet = str(item.get("snippet") or item.get("text") or item.get("content") or item.get("summary") or "").strip()
-            if not title and not url and not snippet:
-                continue
-            if url and not DesktopTaskSkill._is_article_url(url):
-                # An ad redirect or a search page is not a source she read.
-                continue
-            snippet = DesktopTaskSkill._strip_page_chrome(snippet)
-            accessible = not DesktopTaskSkill._looks_inaccessible(snippet)
-            sources.append({
-                "title": title[:240],
-                "url": url[:500],
-                "snippet": snippet[:900],
-                "reputability": DesktopTaskSkill._source_reputability(url, title),
-                "accessible": accessible,
-            })
+            for item in raw_sources[:8]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(
+                    item.get("title")
+                    or item.get("name")
+                    or item.get("url")
+                    or item.get("link")
+                    or ""
+                ).strip()
+                url = str(
+                    item.get("url") or item.get("link") or item.get("uri") or ""
+                ).strip()
+                snippet = str(
+                    item.get("snippet")
+                    or item.get("text")
+                    or item.get("content")
+                    or item.get("summary")
+                    or ""
+                ).strip()
+                if not title and not url and not snippet:
+                    continue
+                if url and not DesktopTaskSkill._is_article_url(url):
+                    continue
+                key = url.casefold() or title.casefold()
+                if not key:
+                    continue
+                if key not in merged:
+                    merged[key] = {"title": "", "url": "", "snippet": ""}
+                    order.append(key)
+                target = merged[key]
+                if len(title) > len(str(target.get("title") or "")):
+                    target["title"] = title[:240]
+                if url:
+                    target["url"] = url[:500]
+                cleaned = DesktopTaskSkill._strip_page_chrome(snippet)
+                if len(cleaned) > len(str(target.get("snippet") or "")):
+                    target["snippet"] = cleaned[:900]
+                published = str(
+                    item.get("published_at")
+                    or item.get("publication_date")
+                    or item.get("date_published")
+                    or item.get("date")
+                    or ""
+                ).strip()
+                if published and not target.get("published_at"):
+                    target["published_at"] = published[:80]
+        sources = []
+        for key in order:
+            source = merged[key]
+            title = str(source.get("title") or "")
+            url = str(source.get("url") or "")
+            snippet = str(source.get("snippet") or "")
+            source["reputability"] = DesktopTaskSkill._source_reputability(url, title)
+            source["accessible"] = not DesktopTaskSkill._looks_inaccessible(snippet)
+            sources.append(source)
         # Rank reputable, accessible sources first so synthesis leans on them;
         # clearly inaccessible (paywall/ad-wall/empty) sources sink to the bottom
         # rather than being relied on, but are retained for transparency.
@@ -2023,6 +2095,40 @@ class DesktopTaskSkill(BaseSkill):
             reverse=True,
         )
         return sources[:5]
+
+    @staticmethod
+    def _merge_research_sources(
+        *groups: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for group in groups:
+            for source in group:
+                url = str(source.get("url") or "").strip()
+                title = str(source.get("title") or "").strip()
+                key = url.casefold() or title.casefold()
+                if not key:
+                    continue
+                if key not in merged:
+                    merged[key] = dict(source)
+                    order.append(key)
+                    continue
+                current = merged[key]
+                if len(str(source.get("snippet") or "")) > len(
+                    str(current.get("snippet") or "")
+                ):
+                    current["snippet"] = source.get("snippet")
+                for field in ("title", "url", "published_at"):
+                    if source.get(field) and not current.get(field):
+                        current[field] = source[field]
+                current["accessible"] = bool(
+                    current.get("accessible") or source.get("accessible")
+                )
+                current["reputability"] = max(
+                    int(current.get("reputability") or 0),
+                    int(source.get("reputability") or 0),
+                )
+        return [merged[key] for key in order]
 
     # Reputable-domain signals (peer review, gov/edu, established institutions).
     _REPUTABLE_TLDS = (".gov", ".edu", ".mil", ".int", ".ac.uk", ".edu.au")
@@ -2279,25 +2385,14 @@ class DesktopTaskSkill(BaseSkill):
 
         When the objective explicitly asks her to synthesize, summarize, or form
         an opinion in her own words, the model call IS the task and refusing it
-        cannot satisfy the request. Memory pressure still suppresses it, and
-        objectives that merely collect sources still take the cheap path.
+        cannot satisfy the request. The router's admission controller remains
+        responsible for load safety; this layer must not silently replace the
+        requested authorship with a generic template.
         """
 
         if DesktopTaskSkill._allow_desktop_task_model_synthesis(context):
             return True
-        if not DesktopTaskSkill._objective_requests_authored_synthesis(objective):
-            return False
-        # The pressure guard is not waived — only the opt-in default is.
-        try:
-            from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-            snapshot = get_memory_pressure_snapshot()
-            return not (
-                bool(getattr(snapshot, "warning", False))
-                or bool(getattr(snapshot, "refuse_heavy_local_generation", False))
-            )
-        except (ImportError, AttributeError, RuntimeError, OSError, ValueError):
-            return True
+        return DesktopTaskSkill._objective_requests_authored_synthesis(objective)
 
     #: Verbs that mean "write it yourself", as opposed to "collect sources".
     _AUTHORED_SYNTHESIS_RE = re.compile(
@@ -2314,6 +2409,34 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _objective_requests_authored_synthesis(cls, objective: str) -> bool:
         return bool(cls._AUTHORED_SYNTHESIS_RE.search(str(objective or "")))
+
+    @classmethod
+    def _research_synthesis_satisfies_objective(
+        cls,
+        objective: str,
+        synthesis: str,
+    ) -> bool:
+        body = " ".join(str(synthesis or "").split())
+        if len(body) < 60 or cls._looks_like_dispatch_narration(body):
+            return False
+        if cls._looks_like_incomplete_document_body(body):
+            return False
+        if not cls._objective_requests_opinion(objective):
+            return True
+        lowered = body.casefold()
+        if re.search(
+            r"\b(?:i (?:have not|haven't|did not|didn't) form(?:ed)?|"
+            r"no opinion|cannot offer (?:an|my) opinion|ask me again)\b",
+            lowered,
+        ):
+            return False
+        return bool(
+            re.search(
+                r"\b(?:in my view|in my opinion|my (?:view|opinion|take|assessment)|"
+                r"i (?:think|believe|find|conclude|would argue|would favor|would favour))\b",
+                lowered,
+            )
+        )
 
     @staticmethod
     def _clip_to_sentence(text: str, limit: int) -> str:
@@ -2365,6 +2488,8 @@ class DesktopTaskSkill(BaseSkill):
     ) -> dict[str, Any]:
         if not self._objective_requests_research_document(objective):
             return {}
+        research_started = time.perf_counter()
+        research_timing_ms: dict[str, float] = {}
         query = self._extract_search_query(objective)
         if not query:
             return {}
@@ -2388,6 +2513,11 @@ class DesktopTaskSkill(BaseSkill):
         # scattered guesses.
         requested = self._requested_research_source_count(objective)
         num_results = requested
+        search_query = query
+        if self._objective_requests_recent_sources(objective) and not re.search(
+            r"\b(?:recent|latest|current)\b", query, flags=re.IGNORECASE
+        ):
+            search_query = f"{query} recent articles"
         pressure_limited = False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -2431,11 +2561,19 @@ class DesktopTaskSkill(BaseSkill):
                 "desktop_task_expect": "Web search returns sources or an explicit failure.",
             }
         )
+        self._emit_progress(
+            index=1,
+            total=3,
+            action="research",
+            state="searching",
+            detail=f"Gathering and reading source evidence for {query[:120]}.",
+        )
+        search_started = time.perf_counter()
         try:
             result = await capability_engine.execute(
                 "web_search",
                 {
-                    "query": query,
+                    "query": search_query,
                     # Present only when the request asked for a number.
                     **({"num_results": num_results} if num_results else {}),
                     # Deep article fetches are useful, but they are no longer
@@ -2449,6 +2587,14 @@ class DesktopTaskSkill(BaseSkill):
                 context=step_context,
             )
         except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+            research_timing_ms["search"] = round(
+                (time.perf_counter() - search_started) * 1000.0,
+                1,
+            )
+            research_timing_ms["total"] = round(
+                (time.perf_counter() - research_started) * 1000.0,
+                1,
+            )
             record_degradation(
                 "desktop_task",
                 exc,
@@ -2458,7 +2604,12 @@ class DesktopTaskSkill(BaseSkill):
             return {
                 "desktop_task_research_query": query,
                 "desktop_task_research_error": str(exc),
+                "desktop_task_research_timing_ms": research_timing_ms,
             }
+        research_timing_ms["search"] = round(
+            (time.perf_counter() - search_started) * 1000.0,
+            1,
+        )
         if not isinstance(result, dict):
             result = {"ok": bool(result), "result": result}
         if not bool(result.get("ok", True)):
@@ -2470,21 +2621,61 @@ class DesktopTaskSkill(BaseSkill):
             }
         sources = self._research_sources_from_result(result)
         required_sources = self._requested_research_source_count(objective)
-        # Fewer sources than asked for is a shortfall to disclose, not a
-        # reason to produce nothing. "Find 3 articles and write a synthesis"
-        # with 2 good sources is a synthesis of 2 good sources; with 0 it is
-        # nothing, and only that case is a failure. Live 2026-07-28 a search
-        # timeout took the count to 0 and the whole task — folder, PDF and
-        # all — was abandoned.
-        if required_sources and sources and len(sources) < required_sources:
-            logger.info(
-                "Research found %d of the %d requested source(s); continuing "
-                "with what was gathered rather than discarding the task.",
-                len(sources),
-                required_sources,
-            )
-            required_sources = len(sources)
         if required_sources and len(sources) < required_sources:
+            missing = required_sources - len(sources)
+            replacement_query = (
+                f"{query} latest independent reporting"
+                if self._objective_requests_recent_sources(objective)
+                else f"{query} additional independent sources"
+            )
+            replacement_started = time.perf_counter()
+            try:
+                replacement = await capability_engine.execute(
+                    "web_search",
+                    {
+                        "query": replacement_query,
+                        "num_results": min(8, max(3, missing * 2)),
+                        "deep": deep_search,
+                        "retain": False,
+                        "force_refresh": True,
+                    },
+                    context={
+                        **step_context,
+                        "route": "desktop_task.web_search.replacement",
+                        "desktop_task_reason": (
+                            "Replace filtered, duplicate, or inaccessible sources so the "
+                            "requested evidence count is actually satisfied."
+                        ),
+                    },
+                )
+                if isinstance(replacement, dict) and bool(replacement.get("ok", True)):
+                    sources = self._merge_research_sources(
+                        sources,
+                        self._research_sources_from_result(replacement),
+                    )
+            except (
+                AttributeError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                OSError,
+                TimeoutError,
+            ) as exc:
+                record_degradation(
+                    "desktop_task",
+                    exc,
+                    action="reported exact research-source shortfall after replacement search failed",
+                    severity="warning",
+                )
+            research_timing_ms["replacement_search"] = round(
+                (time.perf_counter() - replacement_started) * 1000.0,
+                1,
+            )
+        if required_sources and len(sources) < required_sources:
+            research_timing_ms["total"] = round(
+                (time.perf_counter() - research_started) * 1000.0,
+                1,
+            )
             return {
                 "desktop_task_research_query": query,
                 "desktop_task_research_error": (
@@ -2494,7 +2685,10 @@ class DesktopTaskSkill(BaseSkill):
                 "desktop_task_research_deep": deep_search,
                 "desktop_task_research_pressure_limited": pressure_limited,
                 "desktop_task_research_sources": sources,
+                "desktop_task_research_timing_ms": research_timing_ms,
             }
+        if required_sources:
+            sources = sources[:required_sources]
         summary = str(
             result.get("summary")
             or result.get("answer")
@@ -2514,6 +2708,7 @@ class DesktopTaskSkill(BaseSkill):
             "desktop_task_research_sources": sources,
             "desktop_task_research_deep": deep_search,
             "desktop_task_research_pressure_limited": pressure_limited,
+            "desktop_task_research_timing_ms": research_timing_ms,
         }
         synthesis = self._compose_research_synthesis_from_sources(
             objective=objective,
@@ -2524,20 +2719,64 @@ class DesktopTaskSkill(BaseSkill):
         # Optional model synthesis is an explicitly enabled enhancement, not a
         # hidden second foreground allocation during visible desktop work.
         if self._allow_research_model_synthesis(context, objective):
+            self._emit_progress(
+                index=2,
+                total=3,
+                action="research",
+                state="synthesizing",
+                detail=(
+                    f"Composing the requested document from {len(sources)} verified "
+                    "source records."
+                ),
+            )
+            synthesis_started = time.perf_counter()
             model_synthesis = await self._synthesize_research_document(
                 objective=objective,
                 query=query,
                 summary=summary,
                 sources=sources,
             )
-            if model_synthesis:
+            research_timing_ms["synthesis"] = round(
+                (time.perf_counter() - synthesis_started) * 1000.0,
+                1,
+            )
+            if self._research_synthesis_satisfies_objective(
+                objective,
+                model_synthesis,
+            ):
                 synthesis = model_synthesis
+                research_ctx["desktop_task_research_authored"] = True
+            elif self._objective_requests_authored_synthesis(objective):
+                research_timing_ms["total"] = round(
+                    (time.perf_counter() - research_started) * 1000.0,
+                    1,
+                )
+                return {
+                    **research_ctx,
+                    "desktop_task_research_error": (
+                        "the requested authored synthesis did not satisfy its content contract"
+                    ),
+                }
         if synthesis:
             research_ctx["desktop_task_research_synthesis"] = synthesis
         # Learn from what she just read and wrote: persist the finding as an
         # episode so it consolidates into memory (and the engram/reconsolidation
         # dynamics) rather than being forgotten the moment the document is saved.
         await self._remember_research(query, synthesis or summary, sources)
+        research_timing_ms["total"] = round(
+            (time.perf_counter() - research_started) * 1000.0,
+            1,
+        )
+        self._emit_progress(
+            index=3,
+            total=3,
+            action="research",
+            state="ready",
+            detail=(
+                f"Research and document content are ready from {len(sources)} sources "
+                f"in {research_timing_ms['total'] / 1000.0:.1f}s."
+            ),
+        )
         return research_ctx
 
     async def _remember_research(
@@ -3303,14 +3542,10 @@ class DesktopTaskSkill(BaseSkill):
         stopwords = {"a", "an", "the", "my", "new"}
         for pattern in patterns:
             for match in re.finditer(pattern, text, flags=re.IGNORECASE):
-                candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ._-")
+                candidate = canonical_app_target(match.group(1))
                 if not candidate or candidate.lower() in stopwords:
                     continue
-                if candidate.lower() == "notes":
-                    candidate = "Notes"
-                elif candidate.lower() == "chrome":
-                    candidate = "Google Chrome"
-                elif candidate.lower() == "browser":
+                if candidate.lower() == "browser":
                     candidate = "Safari"
                 if candidate not in apps:
                     apps.append(candidate)
@@ -3983,7 +4218,7 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _observation_evidence(
         cls, receipts: list[dict[str, Any]], objective: str, *, retain: bool = True
-    ) -> "ObservationEvidence | None":
+    ) -> ObservationEvidence | None:
         """The perception, typed as evidence gathered for THIS request.
 
         This is what her reasoning should receive. A raw capture in working
@@ -4650,7 +4885,7 @@ class DesktopTaskSkill(BaseSkill):
         elif task_context.get("desktop_task_research_synthesis"):
             document_provenance = (
                 "local_cortex_research_synthesis"
-                if self._allow_research_model_synthesis(task_context)
+                if task_context.get("desktop_task_research_authored") is True
                 else "source_grounded_deterministic_synthesis"
             )
         elif self._objective_requests_freeform_written_content(
@@ -5136,6 +5371,7 @@ class DesktopTaskSkill(BaseSkill):
                 "pressure_limited": task_context.get(
                     "desktop_task_research_pressure_limited"
                 ),
+                "timing_ms": task_context.get("desktop_task_research_timing_ms") or {},
             } if research_context else None,
             # The perception, typed as evidence for THIS request. The
             # response lane renders it into the reasoning context so she can

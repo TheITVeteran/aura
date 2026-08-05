@@ -2724,6 +2724,7 @@ function renderNeuralFeedMode() {
     if (toggle) {
         toggle.classList.toggle('active', state.neuralFeedReadable);
         toggle.setAttribute('aria-pressed', state.neuralFeedReadable ? 'true' : 'false');
+        toggle.textContent = state.neuralFeedReadable ? 'LIVE' : 'SLOW';
         toggle.title = state.neuralFeedReadable
             ? 'Return to live speed with a smooth catch-up'
             : 'Slow the visible neural feed to a readable pace';
@@ -9081,4 +9082,3 @@ function markLegacyShellReady() {
 }
 
 markLegacyShellReady();
-

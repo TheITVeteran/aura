@@ -217,7 +217,11 @@ async def test_desktop_task_rejects_child_ok_without_required_effect_evidence(mo
     monkeypatch.setattr(
         ServiceContainer,
         "get",
-        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+        lambda name, default=None: (
+            FakeCapabilityEngine()
+            if name in {"capability_engine", "llm_router"}
+            else default
+        ),
     )
 
     skill = DesktopTaskSkill()
@@ -1420,10 +1424,21 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
                 }
             return _fake_computer_use_result(params)
 
+        async def generate(self, **_kwargs):
+            return (
+                "The three articles converge on rising temperatures, growing "
+                "extreme-weather risk, and practical adaptation needs. The evidence "
+                "is strongest where independent reports describe the same trend."
+            )
+
     monkeypatch.setattr(
         ServiceContainer,
         "get",
-        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+        lambda name, default=None: (
+            FakeCapabilityEngine()
+            if name in {"capability_engine", "llm_router"}
+            else default
+        ),
     )
 
     skill = DesktopTaskSkill()
@@ -1447,11 +1462,8 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert calls[0][2]["route"] == "desktop_task.web_search"
     desktop_calls = [call for call in calls if call[0] == "computer_use"]
     desktop_actions = [call[1]["action"] for call in desktop_calls]
-    assert desktop_actions[:6] == [
+    assert desktop_actions[:3] == [
         "open_app",
-        "open_url",
-        "open_url",
-        "open_url",
         "open_url",
         "open_url",
     ]
@@ -1460,12 +1472,12 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
         for call in desktop_calls
         if call[1]["action"] == "open_url"
     ]
-    assert "https://example.test/climate-assessment" in opened_urls
-    assert "https://example.test/adaptation" in opened_urls
-    assert "https://example.test/extreme-weather" in opened_urls
-    assert desktop_actions[6] == "set_clipboard"
+    assert "https://example.test/climate-assessment" not in opened_urls
+    assert "https://example.test/adaptation" not in opened_urls
+    assert "https://example.test/extreme-weather" not in opened_urls
+    assert desktop_actions[3] == "set_clipboard"
     clipboard_body = next(call[1]["target"] for call in desktop_calls if call[1]["action"] == "set_clipboard")
-    assert "I reviewed 3 sources on climate change" in clipboard_body
+    assert "The three articles converge" in clipboard_body
     assert "Climate assessment" in clipboard_body
     assert "Adaptation briefing" in clipboard_body
     assert "Extreme weather report" in clipboard_body
@@ -1473,7 +1485,11 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "I will open the browser" not in clipboard_body
     assert result["research"]["query"] == "climate change"
     assert len(result["research"]["sources"]) == 3
-    assert "Climate assessment" in result["research"]["synthesis"]
+    assert result["document_provenance"] == "local_cortex_research_synthesis"
+    assert "The three articles converge" in result["research"]["synthesis"]
+    assert result["research"]["timing_ms"]["search"] >= 0
+    assert result["research"]["timing_ms"]["synthesis"] >= 0
+    assert result["research"]["timing_ms"]["total"] >= 0
     assert "rising global temperatures" in result["research"]["summary"]
 
 
@@ -2857,3 +2873,160 @@ async def test_collect_research_context_uses_shallow_search_under_memory_pressur
     assert ctx["desktop_task_research_pressure_limited"] is True
     assert "desktop_task_research_result" not in ctx
     assert "large_raw_body" not in json.dumps(ctx)
+
+
+def test_open_app_mentions_canonicalize_singular_user_wording() -> None:
+    assert DesktopTaskSkill._generic_open_app_mentions(
+        "Open my Note app and write Hello."
+    ) == ["Notes"]
+
+
+def test_source_tabs_require_an_explicit_source_opening_clause() -> None:
+    count = DesktopTaskSkill._requested_visible_source_count
+
+    assert count("Open Google Docs, find 3 recent articles, and summarize them.") == 0
+    assert count("Find 3 recent articles and open them for me.") == 3
+    assert count("Open three recent articles and compare them.") == 3
+    assert count("Find three articles. Keep the articles open in Chrome.") == 3
+
+
+def test_research_sources_join_citations_to_fetched_article_text() -> None:
+    sources = DesktopTaskSkill._research_sources_from_result(
+        {
+            "citations": [
+                {"title": "Orca study", "url": "https://example.test/orca-study"}
+            ],
+            "chunks": [
+                {
+                    "title": "Orca study",
+                    "url": "https://example.test/orca-study",
+                    "text": (
+                        "Researchers followed resident orcas for six seasons and found "
+                        "stable, socially transmitted hunting specializations across pods."
+                    ),
+                    "published_at": "2026-07-18",
+                }
+            ],
+        }
+    )
+
+    assert len(sources) == 1
+    assert "socially transmitted" in sources[0]["snippet"]
+    assert sources[0]["published_at"] == "2026-07-18"
+    assert sources[0]["accessible"] is True
+
+
+@pytest.mark.asyncio
+async def test_research_source_shortfall_runs_bounded_replacement_search(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if len(calls) == 1:
+                urls = ("one", "two")
+            else:
+                urls = ("two", "three")
+            return {
+                "ok": True,
+                "summary": "Orca groups transmit specialized hunting strategies.",
+                "citations": [
+                    {
+                        "title": f"Orca article {name}",
+                        "url": f"https://example.test/orcas/{name}",
+                        "snippet": (
+                            "This recent article reports evidence about orca cognition, "
+                            "culture, and stable cooperative behavior in the wild."
+                        ),
+                    }
+                    for name in urls
+                ],
+            }
+
+    class FakeRouter:
+        async def generate(self, **_kwargs):
+            return (
+                "The three reports converge on socially learned, cooperative behavior "
+                "while differing in the populations they observed. In my view, this is "
+                "strong evidence that orca culture is a causal part of group survival."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: FakeRouter() if name == "llm_router" else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(warning=False, refuse_heavy_local_generation=False),
+    )
+
+    ctx = await DesktopTaskSkill()._collect_research_context(
+        capability_engine=FakeCapabilityEngine(),
+        objective=(
+            "Find 3 recent articles about orcas and write a synthesis with your own opinion."
+        ),
+        context={},
+    )
+
+    assert len(calls) == 2
+    assert calls[1][2]["route"] == "desktop_task.web_search.replacement"
+    assert len(ctx["desktop_task_research_sources"]) == 3
+    assert ctx["desktop_task_research_authored"] is True
+    assert "In my view" in ctx["desktop_task_research_synthesis"]
+    assert ctx["desktop_task_research_timing_ms"]["replacement_search"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_requested_opinion_rejects_non_opinion_placeholder(monkeypatch):
+    from core.container import ServiceContainer
+
+    class FakeCapabilityEngine:
+        async def execute(self, *_args, **_kwargs):
+            return {
+                "ok": True,
+                "summary": "Three sources describe distinct orca cultures.",
+                "citations": [
+                    {
+                        "title": f"Source {index}",
+                        "url": f"https://example.test/orcas/{index}",
+                        "snippet": (
+                            "This article contains enough source-grounded prose to be "
+                            "treated as accessible evidence for the requested synthesis."
+                        ),
+                    }
+                    for index in range(3)
+                ],
+            }
+
+    class PlaceholderRouter:
+        async def generate(self, **_kwargs):
+            return (
+                "I have not formed an opinion here. This document only repeats the "
+                "source material, so ask me again if you want an actual assessment."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                PlaceholderRouter() if name == "llm_router" else default
+            )
+        ),
+    )
+
+    ctx = await DesktopTaskSkill()._collect_research_context(
+        capability_engine=FakeCapabilityEngine(),
+        objective="Find 3 articles about orcas and write your own opinion.",
+        context={},
+    )
+
+    assert "did not satisfy" in ctx["desktop_task_research_error"]
+    assert "desktop_task_research_synthesis" not in ctx

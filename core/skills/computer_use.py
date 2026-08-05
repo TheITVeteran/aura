@@ -22,6 +22,7 @@ from core.being.welfare_transaction import WelfareTransaction
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.os_automation_effects import canonical_app_target
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills._pyautogui_runtime import get_pyautogui
 from core.skills.base_skill import BaseSkill
@@ -649,7 +650,9 @@ class ComputerUseSkill(BaseSkill):
                 payload = json.loads(target)
             except (TypeError, ValueError):
                 payload = {"body": target}
-        app_name = str(payload.get("app") or payload.get("application") or "").strip()
+        app_name = canonical_app_target(
+            str(payload.get("app") or payload.get("application") or "").strip()
+        )
         if not app_name:
             return await self._create_note(target)
 
@@ -3795,23 +3798,26 @@ end tell
                 )
                 if blocked:
                     return blocked
+                app_target = canonical_app_target(params.target)
+                if not app_target:
+                    return {"ok": False, "error": "A concrete application name is required."}
                 result = await asyncio.to_thread(
                     get_subprocess_gateway().run,
-                    ["open", "-a", params.target],
+                    ["open", "-a", app_target],
                     capture_output=True,
                     timeout=10,
                     source="computer_use",
                 )
                 if result.returncode != 0:
                     error = (result.stderr or result.stdout or "open command failed").strip()
-                    return {"ok": False, "error": error, "opened": params.target}
+                    return {"ok": False, "error": error, "opened": app_target}
                 activation_error = ""
                 try:
-                    await self._activate_app(params.target)
+                    await self._activate_app(app_target)
                 except (TimeoutError, RuntimeError) as exc:
                     activation_error = str(exc)
                 is_frontmost, frontmost_app = await self._wait_for_frontmost_app(
-                    params.target
+                    app_target
                 )
                 # LAUNCHING IS THE ACTION. BEING FRONTMOST IS A WISH.
                 #
@@ -3838,7 +3844,7 @@ end tell
                     f"Frontmost app confirmed as {frontmost_app}."
                     if is_frontmost
                     else (
-                        f"{params.target} launched; another app holds the front "
+                        f"{app_target} launched; another app holds the front "
                         f"(observed={frontmost_app or 'unavailable'})"
                         + (f", activation_error={activation_error}" if activation_error else "")
                         + ". Steps that need focus re-assert it themselves."
@@ -3846,7 +3852,7 @@ end tell
                 )
                 return {
                     "ok": launched,
-                    "opened": params.target,
+                    "opened": app_target,
                     "returncode": result.returncode,
                     "frontmost_app": frontmost_app,
                     "is_frontmost": is_frontmost,

@@ -4,6 +4,7 @@ from core.runtime.os_automation_effects import (
     DesktopSnapshot,
     EffectKind,
     build_effect_contract,
+    canonical_app_target,
     evaluate_effect_contract,
 )
 
@@ -83,6 +84,16 @@ def test_text_contract_requires_visible_readback_not_clipboard_content() -> None
 
     assert clipboard_verdict.verified is False
     assert visible_verdict.verified is True
+
+
+def test_user_app_wording_resolves_to_launchservices_identity() -> None:
+    assert canonical_app_target("my Note app") == "Notes"
+    contract = build_effect_contract("Open my Note app and write Hello.")
+    assert {
+        item.expected
+        for item in contract.requirements
+        if item.kind == EffectKind.APP_FRONTMOST
+    } == {"Notes"}
 
 
 def test_search_contract_verifies_active_browser_destination() -> None:

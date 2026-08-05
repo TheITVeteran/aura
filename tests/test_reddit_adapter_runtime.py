@@ -163,6 +163,59 @@ def test_reddit_adapter_failure_finalizes_authority_false(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_reddit_failure_survives_navigation_during_captcha_probe(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        skill = RedditAdapterSkill()
+
+        class Gateway:
+            async def authorize_tool_execution(self, *_args, **_kwargs):
+                return Auth()
+
+            def verify_tool_access(self, *_args, **_kwargs):
+                return True
+
+            def finalize_tool_execution(self, *_args, **_kwargs):
+                return None
+
+        class Page:
+            async def content(self):
+                raise reddit_adapter.PlaywrightError(
+                    "Unable to retrieve content because the page is navigating"
+                )
+
+        class Browser:
+            page = Page()
+
+        async def read_post(_browser, _params):
+            raise reddit_adapter.PlaywrightError("provider navigation changed")
+
+        async def create_browser():
+            return Browser()
+
+        async def close_browser(_browser):
+            return None
+
+        monkeypatch.setattr(
+            "core.executive.authority_gateway.get_authority_gateway",
+            lambda: Gateway(),
+        )
+        monkeypatch.setattr(skill, "_create_browser", create_browser)
+        monkeypatch.setattr(skill, "_safe_close", close_browser)
+        monkeypatch.setattr(skill, "_handle_read_post", read_post)
+
+        result = await skill.execute(
+            RedditInput(mode="read_post", url="https://reddit.com/r/a"), {}
+        )
+
+        assert result["ok"] is False
+        assert "provider navigation changed" in result["error"]
+        assert result["authority_finalized"] is True
+
+    asyncio.run(scenario())
+
+
 def test_reddit_adapter_safe_close_records_browser_teardown_failure():
     async def scenario():
         tracker = get_degradation_tracker()

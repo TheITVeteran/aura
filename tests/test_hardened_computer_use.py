@@ -2007,6 +2007,43 @@ async def test_open_url_repairs_frontmost_browser_with_wrong_active_tab(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_open_app_canonicalizes_user_wording_at_execution_boundary(monkeypatch):
+    skill = ComputerUseSkill()
+    argv_seen = []
+    activated = []
+
+    async def permission_pass(*_args, **_kwargs):
+        return None
+
+    async def activate(app):
+        activated.append(app)
+
+    class Gateway:
+        def run(self, argv, **_kwargs):
+            argv_seen.append(argv)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(skill, "_require_permissions", permission_pass)
+    monkeypatch.setattr(skill, "_activate_app", activate)
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
+    )
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: Gateway(),
+    )
+
+    result = await skill.execute({"action": "open_app", "target": "Note app"}, {})
+
+    assert result["ok"] is True
+    assert result["opened"] == "Notes"
+    assert argv_seen == [["open", "-a", "Notes"]]
+    assert activated == ["Notes"]
+
+
+@pytest.mark.asyncio
 async def test_open_url_repairs_default_browser_when_readback_is_empty(monkeypatch):
     """Default-browser opens still need a proven active tab.
 

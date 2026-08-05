@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -18,6 +17,7 @@ def test_shell_exposes_neural_pause_and_text_size_accessibility_controls():
     assert "neuralFeedPaused: false" in js
     assert "toggleNeuralVisualPause" in js
     assert "state.neuralFeedMode === 'paused'" in js
+    assert "toggle.textContent = state.neuralFeedReadable ? 'LIVE' : 'SLOW'" in js
     assert "neuralPaused: false" in js
     assert "chatTextSize: 'standard'" in js
     assert "neuralTextSize: 'standard'" in js

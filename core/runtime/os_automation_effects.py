@@ -47,6 +47,7 @@ _APP_ALIASES = {
     "google chrome": "Google Chrome",
     "microsoft edge": "Microsoft Edge",
     "microsoft word": "Microsoft Word",
+    "note": "Notes",
     "notes": "Notes",
     "pages": "Pages",
     "preview": "Preview",
@@ -944,7 +945,13 @@ def _extract_action_targets(goal: str, actions: Sequence[str]) -> tuple[str, ...
     return tuple(targets)
 
 
-def _normalize_app_target(value: str) -> str:
+def canonical_app_target(value: str) -> str:
+    """Return the installed-app identity implied by ordinary user wording.
+
+    Planning and execution both use this boundary. That prevents a planner's
+    harmless singular/plural variation (for example ``Note app``) from being
+    handed verbatim to LaunchServices as a nonexistent application.
+    """
     candidate = re.sub(r"\s+", " ", str(value or "")).strip(" ._-'\"")
     candidate = re.sub(
         r"^(?:a|an|my|the)\s+|\s+(?:app|application)$",
@@ -959,6 +966,11 @@ def _normalize_app_target(value: str) -> str:
     if tokens and tokens <= _GENERIC_APP_TARGETS:
         return ""
     return _APP_ALIASES.get(lowered, candidate[:80])
+
+
+def _normalize_app_target(value: str) -> str:
+    """Compatibility wrapper for older internal callers."""
+    return canonical_app_target(value)
 
 
 def _coerce_file_facts(raw: object) -> tuple[FileFact, ...]:

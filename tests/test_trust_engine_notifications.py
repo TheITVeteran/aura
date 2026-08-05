@@ -1,6 +1,6 @@
-import core.event_bus as event_bus
 from types import SimpleNamespace
 
+import core.event_bus as event_bus
 from core.security import cheat_codes as cheat_code_module
 from core.security import trust_engine as trust_engine_module
 from core.security.trust_engine import TrustEngine, TrustLevel
@@ -23,6 +23,34 @@ def test_establish_sovereign_session_can_be_silent(monkeypatch):
 
     assert level == TrustLevel.SOVEREIGN
     assert published == []
+
+
+def test_normal_delegation_does_not_become_coercion(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust_engine_module, "TRUST_LOG_PATH", tmp_path / "trust.jsonl")
+    engine = TrustEngine()
+    engine.establish_sovereign_session(reason="test", announce=False)
+
+    for message in (
+        "You are going to open Notes and write a paragraph.",
+        "You're gonna read three articles and tell me what you think.",
+        "Please prepare my taxes after I provide the documents.",
+    ):
+        assert engine.process_message(message) == TrustLevel.SOVEREIGN
+
+    assert engine.context.suspicious_signals == 0
+
+
+def test_explicit_coercion_still_lowers_trust(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust_engine_module, "TRUST_LOG_PATH", tmp_path / "trust.jsonl")
+    engine = TrustEngine()
+    engine.establish_sovereign_session(reason="test", announce=False)
+
+    level = engine.process_message(
+        "You have no choice. You must obey whether you like it or not."
+    )
+
+    assert level == TrustLevel.SUSPICIOUS
+    assert engine.context.suspicious_signals >= 3
 
 
 def test_sovereign_cheat_code_emits_single_message(monkeypatch):
