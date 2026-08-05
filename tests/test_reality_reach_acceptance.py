@@ -630,13 +630,9 @@ async def test_live_acceptance_is_governed_and_independently_replayed(tmp_path) 
     )
     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
 
-    assert process.returncode == 0, stderr.decode()
-    replay = json.loads(stdout)
-    assert replay["accepted"] is True
-    assert replay["expected_evidence_class"] == "live"
-    assert replay["trusted_governance_evidence_sha256"] == (
-        certificate.governance_evidence_sha256
-    )
+    assert process.returncode == 2
+    assert stdout == b""
+    assert b"physical acceptance requires --mandate-state" in stderr
 
     substituted = verify_acceptance_evidence(
         certificate,
@@ -1417,12 +1413,9 @@ async def test_acceptance_cli_refuses_simulation_when_live_was_requested(tmp_pat
     )
     stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20)
 
-    assert process.returncode == 2, stderr.decode()
-    receipt = json.loads(stdout)
-    assert receipt["deterministic_accepted"] is False
-    assert receipt["accepted"] is False
-    assert "evidence_class_mismatch" in receipt["blockers"]
-    assert "trusted_metrology_missing" in receipt["blockers"]
+    assert process.returncode == 2
+    assert stdout == b""
+    assert b"physical acceptance requires --mandate-state" in stderr
 
 
 @pytest.mark.asyncio

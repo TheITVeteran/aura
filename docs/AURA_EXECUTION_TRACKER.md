@@ -36123,3 +36123,45 @@ This closes after-the-fact verifier-question selection under machine-local,
 rollback-resistant custody. It is not independent witness custody: a separate
 metrology/governance trust root and real tenant/device campaigns are still
 required. CP810 and the total therefore remain open at 809/920.
+
+#### CP810 addendum: dual-root external acceptance witnesses
+
+Physical promotion no longer accepts a producer-supplied metrology or
+governance digest as independent merely because the hash matches. Reality
+Reach now has an offline-verifiable Ed25519 witness envelope with separate
+roles for metrology and governance. Each signed statement binds its witness
+identity, campaign, precommitted mandate, acceptance certificate, exact role
+evidence digest, monotonic sequence, predecessor statement, and post-campaign
+witness time. The verifier pins each public-key digest independently, verifies
+the detached signature, enforces sequence/predecessor continuity, rejects
+pre-completion or future-dated statements, and requires the two roles to use
+distinct roots.
+
+Aura never loads a witness private key. The operator tool
+`tools/reality_reach/manage_acceptance_witness.py` emits the exact canonical
+payload an external custodian signs, then verifies and assembles the returned
+raw Ed25519 public key and detached signature. The mandate-aware path in
+`tools/reality_reach/verify_acceptance.py` consumes both bundles and their
+independently pinned key digests. Its create-once private receipt binds the
+complete mandate replay plus both witness bundles and trust roots. Legacy
+unmandated verification is now simulation-only; requesting live or HIL
+promotion without a mandate and the external witness path fails at the CLI
+boundary.
+
+External-witness evidence:
+
+- valid distinct-root promotion, missing-witness refusal, signature and trust
+  root substitution, role/sequence/predecessor/time drift, shared-root
+  rejection, exact detached-signature assembly, raw-digest CLI bypass refusal,
+  and private receipt collision checks: 75/75 focused acceptance, mandate,
+  witness, route, and custody tests passed;
+- full affected Reality Reach import family: 454/454 passed;
+- smoke 103/103, repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This implements the external-signature trust boundary, but no claim is made
+that a real third-party custodian has signed a real device campaign yet. The
+signature's time is signer-attested rather than transparency-log timestamped,
+and representative tenant/device runs remain unmeasured. CP810 and the total
+therefore remain open at 809/920.
