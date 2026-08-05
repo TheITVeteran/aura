@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -315,13 +316,22 @@ async def test_required_eviction_completes_before_reservation_becomes_ready(tmp_
         owner_id="mlx:solver",
         model_path="/m/Deep-72B-solver",
         request_gb=20.0,
+        priority=87,
+        preemptible=False,
+        foreground=True,
+        allow_disruptive_eviction=True,
+        allow_last_warm_eviction=True,
+        reservation_ttl_s=40.0,
+        owner_lease_ttl_s=90.0,
         request_id="evict-first",
+        metadata={"origin": "complete-reclamation-claim"},
     )
     decision = await controller.reserve(claim, observations=observations)
     assert decision.state is LaneTransactionState.EVICTING
     assert decision.evict_owner_ids == ("trainer:nightly",)
 
     events: list[str] = []
+    reclaimed_claims: list[LaneClaim] = []
 
     async def evict(owner: LaneOwnerObservation, reason: str) -> bool:
         events.append(f"evict:{owner.owner_id}:{reason}")
@@ -329,17 +339,22 @@ async def test_required_eviction_completes_before_reservation_becomes_ready(tmp_
         observations[:] = [item for item in observations if item.owner_id != owner.owner_id]
         return True
 
+    def reclaim(candidate: LaneClaim) -> bool:
+        reclaimed_claims.append(candidate)
+        return True
+
     ready = await controller.prepare(
         decision,
         evict=evict,
         observe=lambda: list(observations),
-        reclaim=lambda _claim: True,
+        reclaim=reclaim,
     )
 
     assert events and events[0].startswith("evict:trainer:nightly")
     assert ready.state is LaneTransactionState.READY
     assert ready.ready_to_spawn is True
     assert ready.evicted_owner_ids == ("trainer:nightly",)
+    assert reclaimed_claims == [claim]
     snapshot = controller.snapshot()
     assert {owner["owner_id"] for owner in snapshot["owners"]} == {
         "mlx:cortex",
@@ -416,6 +431,56 @@ async def test_wedged_eviction_callback_is_bounded_and_cancels_candidate(
     assert "eviction_callback_timeout" in cancelled.reason
     assert cancelled.receipt_id
     assert controller.snapshot()["reserved_gb"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_blocking_sync_eviction_runs_off_loop_and_drains_before_timeout_returns(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable(461, 462)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 461),
+        _owner("trainer:blocking", "/m/trainer", 25.0, 462, purpose="train"),
+    ]
+    decision = await controller.reserve(
+        LaneClaim(
+            owner_id="mlx:reflex",
+            model_path="/m/qwen-1.5b-reflex",
+            request_gb=4.0,
+            request_id="eviction-blocking-sync",
+        ),
+        observations=observations,
+    )
+    callback_finished = threading.Event()
+    loop_progressed = asyncio.Event()
+
+    def blocking_evict(_owner: LaneOwnerObservation, _reason: str) -> bool:
+        time.sleep(0.15)
+        callback_finished.set()
+        return False
+
+    async def prove_loop_progress() -> None:
+        await asyncio.sleep(0.005)
+        loop_progressed.set()
+
+    progress_task = asyncio.create_task(prove_loop_progress())
+    started = time.monotonic()
+    cancelled = await controller.prepare(
+        decision,
+        evict=blocking_evict,
+        observe=lambda: observations,
+        timeout_s=0.1,
+    )
+    elapsed = time.monotonic() - started
+    await progress_task
+
+    assert loop_progressed.is_set()
+    assert callback_finished.is_set()
+    assert elapsed >= 0.14
+    assert elapsed < 0.5
+    assert cancelled.state is LaneTransactionState.CANCELLED
+    assert "eviction_callback_timeout" in cancelled.reason
 
 
 def test_non_preemptible_required_owner_refuses_without_side_effect(tmp_path: Path) -> None:
@@ -581,7 +646,11 @@ async def test_in_process_lease_counts_memory_until_explicit_release(tmp_path: P
     assert snapshot["committed_gb"] == pytest.approx(0.1)
     assert snapshot["owners"][0]["metadata"]["lease_mode"] == "heartbeat"
     assert await lease.set_preemptible(False) is True
-    assert controller.snapshot()["owners"][0]["preemptible"] is False
+    non_preemptible_owner = controller.snapshot()["owners"][0]
+    assert non_preemptible_owner["preemptible"] is False
+    assert non_preemptible_owner["lease_expires_at"] - non_preemptible_owner[
+        "heartbeat_at"
+    ] == pytest.approx(15.0)
     assert await lease.set_preemptible(True) is True
     assert controller.snapshot()["owners"][0]["preemptible"] is True
     assert await lease.release(reason="validator_unloaded") is True
@@ -746,7 +815,7 @@ async def test_compensator_survives_owner_unregistration_for_failed_candidate() 
 
     async def compensate(_owner: LaneOwnerObservation, reason: str) -> bool:
         calls.append(reason)
-        return True
+        return len(calls) > 1
 
     register_model_lane_owner_adapter(
         owner.owner_id,
@@ -755,9 +824,10 @@ async def test_compensator_survives_owner_unregistration_for_failed_candidate() 
     )
     unregister_model_lane_owner_adapter(owner.owner_id)
 
-    assert await compensate_registered_model_owner(owner, "candidate_spawn_failed") is True
-    assert calls == ["candidate_spawn_failed"]
-    assert await compensate_registered_model_owner(owner, "replay") is False
+    assert await compensate_registered_model_owner(owner, "candidate_spawn_failed") is False
+    assert await compensate_registered_model_owner(owner, "candidate_spawn_retry") is True
+    assert calls == ["candidate_spawn_failed", "candidate_spawn_retry"]
+    assert await compensate_registered_model_owner(owner, "post_success_replay") is False
 
 
 def test_process_table_discovery_accounts_for_external_model_identity(

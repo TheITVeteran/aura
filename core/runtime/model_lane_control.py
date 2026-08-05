@@ -306,15 +306,32 @@ def unregister_model_lane_owner_adapter(owner_id: str) -> None:
             )
 
 
+async def _invoke_owned_callback(callback: Callable[..., Any], *args: Any) -> Any:
+    """Invoke callbacks without allowing synchronous work to block the loop."""
+
+    if inspect.iscoroutinefunction(callback):
+        result = callback(*args)
+    else:
+        callback_name = str(
+            getattr(callback, "__qualname__", "")
+            or getattr(callback, "__name__", "")
+            or type(callback).__qualname__
+        )
+        result = await run_owned_model_thread_call(
+            lambda: callback(*args),
+            operation_name=f"model_lane_callback:{callback_name}",
+        )
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
 async def evict_registered_model_owner(owner: LaneOwnerObservation, reason: str) -> bool:
     with _LOCAL_OWNER_ADAPTERS_LOCK:
         adapter = _LOCAL_OWNER_ADAPTERS.get(owner.owner_id)
     if adapter is not None:
         callback, _compensate = adapter
-        result = callback(owner, reason)
-        if inspect.isawaitable(result):
-            result = await result
-        return bool(result)
+        return bool(await _invoke_owned_callback(callback, owner, reason))
     return await evict_managed_process_owner(owner, reason)
 
 
@@ -322,19 +339,26 @@ async def compensate_registered_model_owner(
     owner: LaneOwnerObservation,
     reason: str,
 ) -> bool:
+    retained_entry: tuple[CompensateCallback, float] | None = None
     with _LOCAL_OWNER_ADAPTERS_LOCK:
         adapter = _LOCAL_OWNER_ADAPTERS.get(owner.owner_id)
         callback = adapter[1] if adapter is not None else None
         if callback is None:
-            retained = _LOCAL_OWNER_COMPENSATORS.pop(owner.owner_id, None)
-            if retained is not None and retained[1] > time.monotonic():
-                callback = retained[0]
+            retained = _LOCAL_OWNER_COMPENSATORS.get(owner.owner_id)
+            if retained is not None:
+                if retained[1] > time.monotonic():
+                    retained_entry = retained
+                    callback = retained[0]
+                else:
+                    _LOCAL_OWNER_COMPENSATORS.pop(owner.owner_id, None)
     if callback is None:
         return False
-    result = callback(owner, reason)
-    if inspect.isawaitable(result):
-        result = await result
-    return bool(result)
+    restored = bool(await _invoke_owned_callback(callback, owner, reason))
+    if restored and retained_entry is not None:
+        with _LOCAL_OWNER_ADAPTERS_LOCK:
+            if _LOCAL_OWNER_COMPENSATORS.get(owner.owner_id) == retained_entry:
+                _LOCAL_OWNER_COMPENSATORS.pop(owner.owner_id, None)
+    return restored
 
 
 class ModelLaneControlError(RuntimeError):
@@ -1971,17 +1995,12 @@ class ModelLaneController:
         return decision
 
     async def _call_observer(self, callback: ObserveCallback) -> list[LaneOwnerObservation]:
-        result = callback()
-        if inspect.isawaitable(result):
-            result = await result
+        result = await _invoke_owned_callback(callback)
         return list(result)
 
     @staticmethod
     async def _call_bool(callback: Callable[..., Any], *args: Any) -> bool:
-        result = callback(*args)
-        if inspect.isawaitable(result):
-            result = await result
-        return bool(result)
+        return bool(await _invoke_owned_callback(callback, *args))
 
     async def prepare(
         self,
@@ -2105,7 +2124,7 @@ class ModelLaneController:
                 )
                 self._save_locked(state)
 
-        claim = self._claim_from_decision(decision)
+        claim = await asyncio.to_thread(self._claim_for_reclamation_sync, decision)
         if reclaim is not None:
             try:
                 reclaimed = await self._call_bool(reclaim, claim)
@@ -2208,14 +2227,31 @@ class ModelLaneController:
             raise ModelLaneControlError("lane_committed_replay_process_mismatch")
 
     @staticmethod
-    def _claim_from_decision(decision: LaneTransactionDecision) -> LaneClaim:
+    def _claim_from_record(record: Mapping[str, Any]) -> LaneClaim:
         return LaneClaim(
-            owner_id=decision.owner_id,
-            model_path=decision.model_path,
-            request_gb=decision.request_gb,
-            priority=0,
-            request_id=decision.request_id,
+            owner_id=str(record.get("owner_id") or ""),
+            model_path=str(record.get("model_path") or ""),
+            request_gb=float(record.get("request_gb") or 0.0),
+            purpose=str(record.get("purpose") or "serve"),
+            priority=int(record.get("priority") or 0),
+            preemptible=bool(record.get("preemptible", True)),
+            foreground=bool(record.get("foreground", False)),
+            allow_disruptive_eviction=bool(record.get("allow_disruptive_eviction", False)),
+            allow_last_warm_eviction=bool(record.get("allow_last_warm_eviction", False)),
+            reservation_ttl_s=float(record.get("reservation_ttl_s") or 0.0),
+            owner_lease_ttl_s=float(record.get("requested_owner_lease_ttl_s") or 0.0),
+            request_id=str(record.get("request_id") or ""),
+            metadata=dict(record.get("metadata") or {}),
         )
+
+    def _claim_for_reclamation_sync(self, decision: LaneTransactionDecision) -> LaneClaim:
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            record = state["reservations"].get(decision.request_id)
+            if not isinstance(record, dict):
+                raise ModelLaneControlError("lane_reservation_missing_before_reclamation")
+            self._assert_fence(record, decision)
+            return self._claim_from_record(record)
 
     async def commit(
         self,
@@ -2639,7 +2675,9 @@ class ModelLaneController:
                 return False
             owner["preemptible"] = bool(preemptible)
             owner["heartbeat_at"] = now
-            owner["lease_expires_at"] = now + float(_OWNER_LEASE_TTL_FLAG.value())
+            owner["lease_expires_at"] = now + float(
+                owner.get("lease_ttl_s") or _OWNER_LEASE_TTL_FLAG.value()
+            )
             self._append_event(
                 state,
                 "owner_preemptibility_updated",

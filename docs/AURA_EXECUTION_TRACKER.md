@@ -36731,7 +36731,7 @@ It does not change the empirical CP810 requirements or the 809/920 total.
 #### Every-line semantic review addendum: model-lane transaction integrity
 
 `core/runtime/model_lane_control.py` received a complete semantic review of its
-original 3,463 lines plus the 40-line hardened delta, for 3,503 current lines
+original 3,463 lines plus the 78-line hardened delta, for 3,541 current lines
 across process identity, external discovery, capacity accounting,
 reserve/evict/commit/cancel transitions, compensation, delegation, and all
 three lease wrappers. The review found that mechanical gate success had hidden
@@ -36750,7 +36750,17 @@ Closed in this bounded checkpoint:
 - asynchronous in-process heartbeat exceptions now become explicit lost-fence
   shutdown requests instead of silently killing the heartbeat task; and
 - the MLX heartbeat contract now closes its client deterministically, removing
-  an order-dependent delayed-finalizer release from the following test.
+  an order-dependent delayed-finalizer release from the following test;
+- synchronous eviction, observation, compensation, and reclamation callbacks
+  execute in owned worker threads, keep the event loop responsive, and drain
+  before timeout cancellation returns, so external effects cannot continue as
+  invisible orphan work;
+- reclamation callbacks receive the exact persisted claim, including purpose,
+  priority, preemptibility, foreground/disruption policy, TTLs, and metadata;
+- retained compensators survive a failed restoration attempt and are removed
+  only after a successful retry; and
+- preemptibility updates preserve each owner's negotiated lease TTL rather
+  than silently extending it to the global default.
 
 Remaining reviewed findings, retained as open requirements rather than omitted
 from the semantic record:
@@ -36760,10 +36770,8 @@ from the semantic record:
   PGID reuse cannot target an unrelated group;
 - add write-ahead eviction intent, ambiguous-outcome recovery, and durable
   pending-compensation state before any external unload or terminal cancel;
-- retain recovery callbacks until successful or definitively terminal
-  compensation, and serialize concurrent compensation claims;
-- move synchronous eviction/observation/reclamation callbacks off the event
-  loop while preserving bounded timeout and owned-thread drain semantics;
+- serialize concurrent compensation claims across every direct and recovered
+  compensation path;
 - make async, synchronous, and standalone release retryable after persistence
   failure and close the synchronous heartbeat-versus-release shutdown race;
 - account inherited child subleases cumulatively, reject non-finite resource
@@ -36771,12 +36779,10 @@ from the semantic record:
 - replace fixed-name model-command recognition with a fail-closed capability
   declaration at the subprocess gateway so renamed or novel loaders cannot
   bypass model-lane admission;
-- remove external-discovery registration-race duplicates before persistence;
-- reconstruct the full original claim for reclamation callbacks; and
-- preserve each owner's stored lease TTL when preemptibility changes.
+- remove external-discovery registration-race duplicates before persistence.
 
-Evidence: the focused new regressions passed 4/4 and the complete model-lane,
+Evidence: the focused new regressions passed 8/8 and the complete model-lane,
 fenced-owner, MLX-heartbeat, embedding, voice, image, and local-code family
-passed 72/72. This advances the every-line semantic workstream but does not
+passed 73/73. This advances the every-line semantic workstream but does not
 close it, does not close the remaining model-lane findings, and does not change
 the honest 809/920 total.
