@@ -291,6 +291,81 @@ def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
     return material
 
 
+def validate_checkpoint_descendant(
+    ancestor: Mapping[str, Any],
+    descendant: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prove that ``descendant`` extends one validated checkpoint history."""
+
+    earlier = validate_checkpoint_state(ancestor)
+    later = validate_checkpoint_state(descendant)
+    if any(earlier[role] != later[role] for role in BINDING_ROLES):
+        _fail("resident_sft_state_descendant_binding_mismatch")
+    if (
+        later["checkpoint_sequence"] < earlier["checkpoint_sequence"]
+        or later["step"] < earlier["step"]
+        or later["invocation_count"] < earlier["invocation_count"]
+        or later["elapsed_training_s"] < earlier["elapsed_training_s"]
+        or (earlier["terminal"] and later != earlier)
+    ):
+        _fail("resident_sft_state_descendant_nonmonotonic")
+    immutable_roles = (
+        "sampler",
+        "seed",
+        "train_example_count",
+        "validation_example_count",
+        "initial_adapter_sha256",
+        "adapter_topology_sha256",
+        "baseline_validation",
+    )
+    if any(earlier[role] != later[role] for role in immutable_roles):
+        _fail("resident_sft_state_descendant_identity_mismatch")
+    earlier_losses = earlier["loss_trail"]
+    later_losses = later["loss_trail"]
+    earlier_validation = earlier["validation_trail"]
+    later_validation = later["validation_trail"]
+    if (
+        later_losses[: len(earlier_losses)] != earlier_losses
+        or later_validation[: len(earlier_validation)] != earlier_validation
+    ):
+        _fail("resident_sft_state_descendant_history_rewritten")
+    additional_losses = later_losses[len(earlier_losses) :]
+    if len(additional_losses) != later["step"] - earlier["step"]:
+        _fail("resident_sft_state_descendant_history_incomplete")
+    history_sha256 = earlier["sample_history_sha256"]
+    expected_step = earlier["step"]
+    for record in additional_losses:
+        expected_step += 1
+        if (
+            record.get("step") != expected_step
+            or type(record.get("epoch")) is not int
+            or type(record.get("cursor")) is not int
+            or not _is_sha256(record.get("example_id"))
+        ):
+            _fail("resident_sft_state_descendant_history_invalid")
+        history_sha256 = sha256_json(
+            {
+                "previous_sha256": history_sha256,
+                "example_id": record["example_id"],
+                "step": record["step"],
+                "epoch": record["epoch"],
+                "cursor": record["cursor"],
+            }
+        )
+    if (
+        history_sha256 != later["sample_history_sha256"]
+        or (
+            additional_losses
+            and (
+                additional_losses[-1]["epoch"] != later["epoch"]
+                or additional_losses[-1]["cursor"] != later["cursor"]
+            )
+        )
+    ):
+        _fail("resident_sft_state_descendant_history_mismatch")
+    return earlier, later
+
+
 @dataclass(frozen=True, slots=True)
 class InspectedResidentSFTCheckpoint:
     checkpoint_dir: Path
@@ -515,6 +590,76 @@ def _checkpoint_lock(
         yield
 
 
+def _inspect_generation(
+    generation: Path,
+    *,
+    expected: Mapping[str, str],
+    custody: DirectoryCustody | None,
+    expected_complete_sha256: str | None = None,
+    expected_sequence: int | None = None,
+) -> InspectedResidentSFTCheckpoint:
+    complete_payload = _read_bytes(
+        generation / "complete.json",
+        role="complete",
+        max_bytes=MAX_METADATA_BYTES,
+        custody=custody,
+    )
+    complete_sha256 = sha256_bytes(complete_payload)
+    if expected_complete_sha256 is not None and complete_sha256 != expected_complete_sha256:
+        _fail("resident_sft_state_complete_commitment_mismatch")
+    complete = _read_json(
+        generation / "complete.json",
+        role="complete",
+        custody=custody,
+    )
+    if set(complete) != {
+        "schema",
+        "checkpoint_id",
+        "created_at_unix",
+        "state",
+        "adapter",
+        "optimizer",
+    }:
+        _fail("resident_sft_state_complete_schema_invalid")
+    created = complete.get("created_at_unix")
+    if (
+        complete.get("schema") != CHECKPOINT_SCHEMA
+        or complete.get("checkpoint_id") != generation.name
+        or isinstance(created, bool)
+        or not isinstance(created, (int, float))
+        or not math.isfinite(float(created))
+        or float(created) <= 0.0
+    ):
+        _fail("resident_sft_state_complete_invalid")
+    raw_state = complete.get("state")
+    if not isinstance(raw_state, Mapping):
+        _fail("resident_sft_state_complete_state_invalid")
+    state = validate_checkpoint_state(raw_state)
+    if expected_sequence is not None and state["checkpoint_sequence"] != expected_sequence:
+        _fail("resident_sft_state_sequence_mismatch")
+    if any(state[role] != value for role, value in expected.items()):
+        _fail("resident_sft_state_protocol_binding_mismatch")
+    adapter_binding, _adapter = _validate_binding(
+        generation,
+        complete,
+        role="adapter",
+        custody=custody,
+    )
+    optimizer_binding, _optimizer = _validate_binding(
+        generation,
+        complete,
+        role="optimizer",
+        custody=custody,
+    )
+    return InspectedResidentSFTCheckpoint(
+        checkpoint_dir=generation,
+        complete_sha256=complete_sha256,
+        state=state,
+        adapter_binding=adapter_binding,
+        optimizer_binding=optimizer_binding,
+    )
+
+
 def inspect_checkpoint(
     out_dir: Path,
     *,
@@ -536,64 +681,34 @@ def inspect_checkpoint(
         ):
             _fail("resident_sft_state_pointer_invalid")
         generation = _contained_generation(root, pointer["checkpoint"], custody=custody)
-        complete_payload = _read_bytes(
-            generation / "complete.json",
-            role="complete",
-            max_bytes=MAX_METADATA_BYTES,
-            custody=custody,
-        )
-        if sha256_bytes(complete_payload) != pointer["complete_sha256"]:
-            _fail("resident_sft_state_complete_commitment_mismatch")
-        complete = _read_json(
-            generation / "complete.json",
-            role="complete",
-            custody=custody,
-        )
-        if set(complete) != {
-            "schema",
-            "checkpoint_id",
-            "created_at_unix",
-            "state",
-            "adapter",
-            "optimizer",
-        }:
-            _fail("resident_sft_state_complete_schema_invalid")
-        created = complete.get("created_at_unix")
-        if (
-            complete.get("schema") != CHECKPOINT_SCHEMA
-            or complete.get("checkpoint_id") != generation.name
-            or isinstance(created, bool)
-            or not isinstance(created, (int, float))
-            or not math.isfinite(float(created))
-            or float(created) <= 0.0
-        ):
-            _fail("resident_sft_state_complete_invalid")
-        raw_state = complete.get("state")
-        if not isinstance(raw_state, Mapping):
-            _fail("resident_sft_state_complete_state_invalid")
-        state = validate_checkpoint_state(raw_state)
-        if state["checkpoint_sequence"] != pointer["checkpoint_sequence"]:
-            _fail("resident_sft_state_sequence_mismatch")
-        if any(state[role] != value for role, value in expected.items()):
-            _fail("resident_sft_state_protocol_binding_mismatch")
-        adapter_binding, _adapter = _validate_binding(
+        return _inspect_generation(
             generation,
-            complete,
-            role="adapter",
+            expected=expected,
             custody=custody,
+            expected_complete_sha256=pointer["complete_sha256"],
+            expected_sequence=pointer["checkpoint_sequence"],
         )
-        optimizer_binding, _optimizer = _validate_binding(
+
+
+def inspect_checkpoint_generation(
+    out_dir: Path,
+    *,
+    checkpoint: str,
+    expected_bindings: Mapping[str, Any],
+    custody: DirectoryCustody | None = None,
+    _lock: bool = True,
+) -> InspectedResidentSFTCheckpoint:
+    """Verify one immutable generation without consulting ``latest.json``."""
+
+    expected = validate_expected_bindings(expected_bindings)
+    root = _root(out_dir, create=False, custody=custody)
+    lock = _checkpoint_lock(root, custody) if _lock else nullcontext()
+    with lock:
+        generation = _contained_generation(root, checkpoint, custody=custody)
+        return _inspect_generation(
             generation,
-            complete,
-            role="optimizer",
+            expected=expected,
             custody=custody,
-        )
-        return InspectedResidentSFTCheckpoint(
-            checkpoint_dir=generation,
-            complete_sha256=pointer["complete_sha256"],
-            state=state,
-            adapter_binding=adapter_binding,
-            optimizer_binding=optimizer_binding,
         )
 
 
@@ -778,10 +893,12 @@ __all__ = [
     "ZERO_SHA256",
     "authority_state_bindings",
     "inspect_checkpoint",
+    "inspect_checkpoint_generation",
     "load_checkpoint",
     "order_sha256",
     "save_checkpoint",
     "sha256_bytes",
+    "validate_checkpoint_descendant",
     "validate_checkpoint_state",
     "validate_expected_bindings",
 ]

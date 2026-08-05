@@ -44,8 +44,11 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     validate_authority,
 )
 from core.learning.resident_recurrent_sft_bootstrap_state import (  # noqa: E402
+    ResidentSFTBootstrapStateError,
     authority_state_bindings,
     inspect_checkpoint,
+    inspect_checkpoint_generation,
+    validate_checkpoint_descendant,
 )
 from core.learning.resident_recurrent_sft_checkpoint_migration import (  # noqa: E402
     ResidentSFTCheckpointMigrationError,
@@ -772,17 +775,37 @@ def _verified_migration_start_step(authority: Mapping[str, Any]) -> int | None:
     if not receipt_path.is_file():
         return None
     try:
-        verify_migration(
+        receipt = verify_migration(
             receipt_path,
             destination_repo_root=REPO_ROOT,
             destination_authority=authority,
         )
-    except (ResidentSFTCheckpointMigrationError, OSError, ValueError) as exc:
+        destination = receipt.get("destination")
+        if not isinstance(destination, Mapping):
+            _fail("resident_sft_controller_checkpoint_migration_invalid")
+        checkpoint_path = Path(str(destination.get("checkpoint", ""))).resolve(strict=True)
+        checkpoint_ref = checkpoint_path.relative_to(root).as_posix()
+        migrated = inspect_checkpoint_generation(
+            root,
+            checkpoint=checkpoint_ref,
+            expected_bindings=authority_state_bindings(authority),
+        )
+        current = inspect_checkpoint(
+            root,
+            expected_bindings=authority_state_bindings(authority),
+        )
+        validate_checkpoint_descendant(migrated.state, current.state)
+    except (
+        FileNotFoundError,
+        OSError,
+        ResidentSFTBootstrapStateError,
+        ResidentSFTCheckpointMigrationError,
+        ValueError,
+    ) as exc:
         raise ResidentSFTCampaignControllerError(
             "resident_sft_controller_checkpoint_migration_invalid"
         ) from exc
-    snapshot = _checkpoint_snapshot(authority)
-    return int(snapshot["step"])
+    return int(migrated.state["step"])
 
 
 def _initial_checkpoint_matches_plan(

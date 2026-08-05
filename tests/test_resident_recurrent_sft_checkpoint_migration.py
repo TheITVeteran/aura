@@ -127,6 +127,27 @@ def _write_authority(path: Path, authority: dict[str, Any]) -> None:
     path.write_bytes(json.dumps(authority, sort_keys=True, separators=(",", ":")).encode("ascii"))
 
 
+def test_pause_resume_state_transition_is_explicitly_attested() -> None:
+    source_sha = "c704219c3613fa2e7e2eba1a5df2d94c838f7129461d075e0d99f65e6ea41c14"
+    destination_sha = "5ce23700cfbf4e24dfd2839946e0440a75748f0288d7b09c8697a40a4129ece7"
+    source = {"state": {"sha256": source_sha, "size_bytes": 1}}
+    destination = {"state": {"sha256": destination_sha, "size_bytes": 2}}
+
+    assert migration._source_transition_attestations(
+        source,
+        destination,
+        ("state",),
+    ) == {
+        "state": {
+            "source_sha256": source_sha,
+            "destination_sha256": destination_sha,
+            "attestation": (
+                "historical_generation_verifier_and_monotonic_descendant_proof_v1"
+            ),
+        }
+    }
+
+
 def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch, tmp_path):
     source_root = tmp_path / "source-run"
     destination_root = tmp_path / "destination-run"
@@ -197,6 +218,23 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         inspect_checkpoint(destination_root, expected_bindings=destination_bindings).state["step"]
         == 2
     )
+
+    save_checkpoint(
+        destination_root,
+        adapter_tensors={"adapter.weight": mx.array([[2.0, 3.0]])},
+        optimizer_tensors={"state.m": mx.array([0.5, 0.75])},
+        state=_state(destination_bindings, sequence=4, step=3),
+    )
+    verified_after_progress = migration.verify_migration(
+        destination_root / "checkpoint-migration.json",
+        destination_repo_root=tmp_path,
+        destination_authority=destination_authority,
+    )
+    assert verified_after_progress["migration_sha256"] == receipt["migration_sha256"]
+    assert inspect_checkpoint(
+        destination_root,
+        expected_bindings=destination_bindings,
+    ).state["step"] == 3
 
     source_optimizer = source_loaded.checkpoint_dir / "optimizer.safetensors"
     source_optimizer.write_bytes(source_optimizer.read_bytes() + b"drift")
@@ -297,7 +335,9 @@ def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):
 
 def test_source_transition_attestation_is_exact_hash_bound() -> None:
     role, source_sha, destination_sha = next(
-        iter(migration.APPROVED_SEMANTICS_PRESERVING_TRANSITIONS)
+        transition
+        for transition, attestation in migration.APPROVED_SEMANTICS_PRESERVING_TRANSITIONS.items()
+        if attestation == "exact_composite_gradient_host_spill_v1"
     )
     source = {role: {"sha256": source_sha}}
     destination = {role: {"sha256": destination_sha}}

@@ -9,14 +9,16 @@ from typing import Any
 import mlx.core as mx
 import pytest
 
-from core.learning.resident_recurrent_sft_bootstrap_authority import SAMPLER_NAME
+from core.learning.resident_recurrent_sft_bootstrap_authority import SAMPLER_NAME, sha256_json
 from core.learning.resident_recurrent_sft_bootstrap_state import (
     BINDING_ROLES,
     ResidentSFTBootstrapStateError,
     inspect_checkpoint,
+    inspect_checkpoint_generation,
     load_checkpoint,
     order_sha256,
     save_checkpoint,
+    validate_checkpoint_descendant,
     validate_checkpoint_state,
 )
 from core.runtime.secure_path_custody import DirectoryCustody
@@ -156,6 +158,56 @@ def test_save_inspect_and_load_exact_complete_generation(tmp_path: Path) -> None
         loaded.optimizer_tensors["state.m"],
         _optimizer()["state.m"],
     ).item()
+
+
+def test_generation_inspection_and_descendant_proof_survive_pointer_advance(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    ancestor = _state()
+    ancestor["sample_history_sha256"] = "0" * 64
+    first = save_checkpoint(
+        run,
+        adapter_tensors=_adapter(),
+        optimizer_tensors=_optimizer(),
+        state=ancestor,
+    )
+    record = {
+        "step": 1,
+        "epoch": 0,
+        "cursor": 1,
+        "example_id": _sha("example-1"),
+    }
+    descendant = _state(sequence=2, step=1)
+    descendant["loss_trail"] = [record]
+    descendant["sample_history_sha256"] = sha256_json(
+        {
+            "previous_sha256": ancestor["sample_history_sha256"],
+            **record,
+        }
+    )
+    save_checkpoint(
+        run,
+        adapter_tensors=_adapter(2.0),
+        optimizer_tensors=_optimizer(0.2),
+        state=descendant,
+    )
+
+    historical = inspect_checkpoint_generation(
+        run,
+        checkpoint=f"checkpoints/{first.name}",
+        expected_bindings=_bindings(),
+    )
+    latest = inspect_checkpoint(run, expected_bindings=_bindings())
+
+    assert historical.state["step"] == 0
+    assert latest.state["step"] == 1
+    validate_checkpoint_descendant(historical.state, latest.state)
+
+    rewritten = copy.deepcopy(latest.state)
+    rewritten["loss_trail"][0]["example_id"] = _sha("rewritten")
+    with pytest.raises(ResidentSFTBootstrapStateError, match="history_mismatch"):
+        validate_checkpoint_descendant(historical.state, rewritten)
 
 
 def test_inspection_rejects_protocol_binding_drift(tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (
     ResidentSFTBootstrapStateError,
     authority_state_bindings,
     inspect_checkpoint,
+    inspect_checkpoint_generation,
     validate_checkpoint_state,
 )
 from core.runtime.atomic_writer import (
@@ -36,12 +37,18 @@ ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset(
     {
         "trainer",
         "controller",
+        "state",
         "objective",
         "objective_policy",
         "specialization_objective",
     }
 )
 APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
+    (
+        "state",
+        "c704219c3613fa2e7e2eba1a5df2d94c838f7129461d075e0d99f65e6ea41c14",
+        "5ce23700cfbf4e24dfd2839946e0440a75748f0288d7b09c8697a40a4129ece7",
+    ): "historical_generation_verifier_and_monotonic_descendant_proof_v1",
     (
         "specialization_objective",
         "9d9e12f64bf6edb6ac6c9695b2c0e63cf57a377c2e598dfca9be4cdf9fae8f6e",
@@ -160,6 +167,20 @@ def _resolve_artifact_root(repo_root: Path, authority: Mapping[str, Any]) -> Pat
     }:
         _fail("resident_sft_migration_artifact_root_identity_drift")
     return resolved
+
+
+def _checkpoint_ref(root: Path, value: Any, *, role: str) -> str:
+    if not isinstance(value, str) or not value:
+        _fail(f"resident_sft_migration_{role}_checkpoint_drift")
+    try:
+        relative = Path(value).expanduser().resolve(strict=True).relative_to(root)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise ResidentSFTCheckpointMigrationError(
+            f"resident_sft_migration_{role}_checkpoint_drift"
+        ) from exc
+    if relative.parts != ("checkpoints", relative.name):
+        _fail(f"resident_sft_migration_{role}_checkpoint_drift")
+    return relative.as_posix()
 
 
 def _identity(authority: Mapping[str, Any]) -> dict[str, Any]:
@@ -508,8 +529,14 @@ def verify_migration(
     ):
         _fail("resident_sft_migration_source_identity_drift")
     try:
-        source_inspected = inspect_checkpoint(
-            source_root, expected_bindings=authority_state_bindings(source_authority)
+        source_inspected = inspect_checkpoint_generation(
+            source_root,
+            checkpoint=_checkpoint_ref(
+                source_root,
+                source.get("checkpoint"),
+                role="source",
+            ),
+            expected_bindings=authority_state_bindings(source_authority),
         )
     except ResidentSFTBootstrapStateError as exc:
         raise ResidentSFTCheckpointMigrationError(
@@ -531,7 +558,15 @@ def verify_migration(
         if not _binding_matches(observed, source_binding):
             _fail("resident_sft_migration_source_binding_drift")
     try:
-        inspected = inspect_checkpoint(destination_root, expected_bindings=expected_bindings)
+        inspected = inspect_checkpoint_generation(
+            destination_root,
+            checkpoint=_checkpoint_ref(
+                destination_root,
+                destination.get("checkpoint"),
+                role="destination",
+            ),
+            expected_bindings=expected_bindings,
+        )
     except ResidentSFTBootstrapStateError as exc:
         raise ResidentSFTCheckpointMigrationError(
             "resident_sft_migration_destination_binding_drift"

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -227,6 +228,46 @@ def test_verified_migration_start_rejects_invalid_receipt(monkeypatch, tmp_path)
         match="checkpoint_migration_invalid",
     ):
         controller._verified_migration_start_step({"artifact_root": "ignored"})
+
+
+def test_verified_migration_start_uses_historical_generation_after_progress(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    checkpoint = tmp_path / "checkpoints" / "migration-step-5"
+    checkpoint.mkdir(parents=True)
+    (tmp_path / "checkpoint-migration.json").write_text("{}", encoding="ascii")
+    migrated_state = {"step": 5}
+    current_state = {"step": 21}
+    descendant_calls: list[tuple[dict[str, int], dict[str, int]]] = []
+
+    monkeypatch.setattr(controller, "_repo_path", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr(
+        controller,
+        "verify_migration",
+        lambda *_args, **_kwargs: {
+            "destination": {"checkpoint": str(checkpoint)},
+        },
+    )
+    monkeypatch.setattr(controller, "authority_state_bindings", lambda _authority: {})
+    monkeypatch.setattr(
+        controller,
+        "inspect_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(state=migrated_state),
+    )
+    monkeypatch.setattr(
+        controller,
+        "inspect_checkpoint",
+        lambda *_args, **_kwargs: SimpleNamespace(state=current_state),
+    )
+    monkeypatch.setattr(
+        controller,
+        "validate_checkpoint_descendant",
+        lambda earlier, later: descendant_calls.append((earlier, later)),
+    )
+
+    assert controller._verified_migration_start_step({"artifact_root": "ignored"}) == 5
+    assert descendant_calls == [(migrated_state, current_state)]
 
 
 def test_protected_source_changes_include_dynamic_and_declared_closure() -> None:
