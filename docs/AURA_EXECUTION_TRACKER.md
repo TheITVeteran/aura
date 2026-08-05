@@ -35627,3 +35627,57 @@ network partition and stale/reordered telemetry faults, actuator cancellation,
 safe-state restoration, credential rotation, and independent receipt review.
 The total advances to 809/920, approximately 87.9%; reasoning gain, frontier,
 release, and `WOW Signal` claims remain open, and long soaks remain deferred.
+
+### 2026-08-05 - CP810 implementation slice: adversarial connector acceptance
+
+Reality Reach now has one cross-protocol scalar acceptance contract instead of
+provider-specific success checks. A campaign exercises six ordered predicates:
+fresh identified observation, cancellation before dispatch, governed prepare,
+transport dispatch, fresh independent effect readback, and verified restoration
+to the initial or declared safe state. Every skipped predicate is emitted as
+`UNMEASURED`, so an early failure cannot disappear from an aggregate score.
+Simulation may pass the deterministic matrix but can never claim live
+acceptance. Hardware-in-loop and live campaigns require a matching,
+self-verifying metrology receipt with the correct source classes and, for HIL,
+the exact declared scenario.
+
+The acceptance transport can inject bounded one-shot read partitions, write
+partitions, acknowledgement loss after an externally completed write, stale
+samples, duplicate samples, and reordered samples. Injection is restricted to
+simulation or HIL evidence and emits secret-free receipts stating whether the
+delegate was called and whether the physical outcome is indeterminate. The
+shared scalar recovery path now obtains a fresh external baseline before a
+rollback or safe-state write; this prevents acknowledgement loss from treating
+the adapter's stale pre-command cache as the current physical state. Provider
+exception messages are represented only by type and digest in acceptance
+evidence rather than copied into durable artifacts.
+
+Completed certificates enter a private, create-once restart journal beneath the
+profile-scoped Aura state root. The journal binds canonical certificate bytes,
+campaign id, source commit, physical identity, metrology evidence, derived
+verdicts, and a content digest. A new process can reload the same certificate,
+while campaign-id collisions, truncation, digest changes, duplicate JSON keys,
+non-canonical bytes, unsafe modes, symlink replacement, oversized files, and
+directory-identity drift fail closed. Publishing the same certificate twice is
+idempotent; publishing different evidence under the same campaign is rejected.
+
+CP810 validation while the resident 32B campaign owns the model lane:
+
+- focused lifecycle, fault, metrology, custody, tamper, restart, and
+  secret-redaction contracts: 39/39 passed;
+- full affected Reality Reach connector, scalar, transaction, event-flow, and
+  middleware family: 187/187 passed;
+- smoke: 103/103 passed;
+- full Python compilation, layering, and governance effect ownership passed;
+- scoped strict MyPy passed for both changed runtime modules;
+- local security scan passed across 3,090 files with zero findings;
+- Ruff lint, formatting, and diff integrity passed.
+
+This slice does not close CP810. It proves deterministic fault behavior and
+restart survival of completed evidence, not process recovery in the middle of a
+real physical effect. Live AWS/Azure/device evidence, representative HIL,
+mid-effect process restart, credential rotation and expiry, network restoration,
+external receipt replay, cancellation during a long-running actuator action,
+and measured safe-state convergence remain open. The total therefore remains
+809/920, approximately 87.9%; reasoning gain, frontier, release, `WOW Signal`,
+and the deferred long soaks remain open.

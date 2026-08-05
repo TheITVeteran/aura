@@ -730,7 +730,10 @@ class ScalarRealityAdapter:
         success_state: ActuationState,
     ) -> RollbackReceipt:
         async with self._lock:
-            baseline = self._last_observation
+            try:
+                baseline = await self.refresh_readback()
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+                baseline = self._last_observation
             result = await self._transport.write_scalar(
                 self._profile.resource_id,
                 value,
