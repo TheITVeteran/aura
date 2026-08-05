@@ -1536,6 +1536,11 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
 #: budget resolves to zero and the fence can never be taken.
 _LANE_EVICTION_FENCE_WAIT_S = 6.0
 
+#: How long the response listener will wait for a durable lease renewal before
+#: treating it as a fence loss. The listener is the ONLY consumer of the
+#: worker's response queue, so time spent here is time no request is delivered.
+_LEASE_RENEWAL_TIMEOUT_S = 5.0
+
 
 def _lane_owner_is_working(target: Any) -> bool:
     """Whether this client has work in flight, by every signal it publishes."""
@@ -9451,9 +9456,22 @@ class MLXLocalClient:
                                 get_model_lane_controller,
                             )
 
-                            lease_alive = await get_model_lane_controller().heartbeat_owner(
-                                owner_id,
-                                fencing_token=fencing_token,
+                            # CP126 1210919c: this ran INLINE on the sole
+                            # response listener. A blocked file lock or a slow
+                            # controller stalled init, token and completion
+                            # delivery for every request on the lane, and the
+                            # worker's response queue filled behind it. The
+                            # renewal is still awaited here — a lease this
+                            # lane holds must not be renewed by a task that
+                            # outlives the check — but it is BOUNDED, and a
+                            # renewal that cannot finish in time is a fence
+                            # loss like any other rather than a stall.
+                            lease_alive = await asyncio.wait_for(
+                                get_model_lane_controller().heartbeat_owner(
+                                    owner_id,
+                                    fencing_token=fencing_token,
+                                ),
+                                timeout=_LEASE_RENEWAL_TIMEOUT_S,
                             )
                             if not lease_alive:
                                 raise RuntimeError("model_lane_fence_lost")
@@ -9463,6 +9481,7 @@ class MLXLocalClient:
                             AttributeError,
                             TypeError,
                             ValueError,
+                            TimeoutError,
                         ) as exc:
                             _record_mlx_degradation(
                                 exc,
@@ -9713,7 +9732,41 @@ class MLXLocalClient:
                     severity="error",
                 )
                 logger.error("⚠️ [MLX] Response listener message processing error: %s", e)
+                # CP126 2ba6ea2e, second half: surviving is not enough. The
+                # message that failed belonged to a REQUEST, and leaving that
+                # waiter pending means the listener lives while one caller
+                # hangs to its deadline for a response that was already
+                # delivered and dropped on the floor. Terminalize it.
+                self._terminalize_failed_message(res if isinstance(res, dict) else None, e)
                 await asyncio.sleep(1.0)
+
+    def _terminalize_failed_message(self, res: dict[str, Any] | None, exc: BaseException) -> None:
+        """Fail the request whose response could not be processed.
+
+        A message the listener could not handle is a response that arrived and
+        was lost. Its waiter has no way to learn that, so without this it sits
+        until its own deadline — the listener stayed healthy and one caller
+        paid the full timeout for a reply that had already come back.
+        """
+        req_id = ""
+        if isinstance(res, dict):
+            req_id = str(res.get("id") or "")
+        if not req_id:
+            return
+        future = self._pending_generations.pop(req_id, None)
+        if future is None and req_id == str(getattr(self, "_current_request_id", "") or ""):
+            future = self._current_gen_future
+        if future is None or future.done():
+            return
+        _set_shared_future_result(
+            future,
+            {
+                "status": "error",
+                "action": str(res.get("action") or "generate") if res else "generate",
+                "id": req_id,
+                "message": f"listener_message_processing_failed:{type(exc).__name__}",
+            },
+        )
 
     async def _ensure_worker_alive(
         self,

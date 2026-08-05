@@ -14,6 +14,13 @@ from core.brain.llm.mlx_client import (
     _sleep_inclusive_monotonic,
 )
 
+def _new_future():
+    """A shared future of the same kind the client hands to waiters."""
+    from core.brain.llm.mlx_client import _new_shared_future
+
+    return _new_shared_future()
+
+
 TEST_MODEL = "/models/Qwen2.5-7B-Instruct-4bit"
 
 
@@ -1716,3 +1723,48 @@ class TestAgentLoopEstablishesItsOwnAuthority:
         out = self._ctx(["definitely", "not", "a", "mapping"])
         assert out["source"] == "think_and_act"
         assert out["agent_loop"]["refused_authority_keys"] == ["<non_mapping:list>"]
+
+
+class TestTheListenerIsTheOnlyConsumer:
+    """CP126 2ba6ea2e / 1210919c."""
+
+    def test_a_failed_message_terminalizes_its_request(self, client):
+        future = _new_future()
+        client._pending_generations["req-7"] = future
+        client._terminalize_failed_message(
+            {"id": "req-7", "action": "generate"}, TypeError("bad frame")
+        )
+        assert future.done()
+        payload = future.result()
+        assert payload["status"] == "error"
+        assert payload["id"] == "req-7"
+        assert "listener_message_processing_failed" in payload["message"]
+
+    def test_the_current_request_is_terminalized_too(self, client):
+        future = _new_future()
+        client._current_request_id = "req-live"
+        client._current_gen_future = future
+        client._terminalize_failed_message({"id": "req-live"}, ValueError("bad"))
+        assert future.done()
+
+    def test_an_id_less_frame_terminalizes_nothing(self, client):
+        future = _new_future()
+        client._pending_generations["req-7"] = future
+        client._terminalize_failed_message({"action": "generate"}, ValueError("bad"))
+        assert not future.done()
+        client._terminalize_failed_message(None, ValueError("bad"))
+        assert not future.done()
+
+    def test_an_already_finished_future_is_left_alone(self, client):
+        future = _new_future()
+        future.set_result({"status": "ok", "id": "req-7"})
+        client._pending_generations["req-7"] = future
+        client._terminalize_failed_message({"id": "req-7"}, ValueError("bad"))
+        assert future.result()["status"] == "ok"
+
+    def test_the_lease_renewal_is_bounded(self):
+        from core.brain.llm.mlx_client import _LEASE_RENEWAL_TIMEOUT_S
+
+        # The listener is the sole consumer of the worker's response queue, so
+        # any unbounded await here stalls every request on the lane.
+        assert 0.0 < _LEASE_RENEWAL_TIMEOUT_S <= 15.0
