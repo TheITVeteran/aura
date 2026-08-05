@@ -619,6 +619,97 @@ async def test_computer_use_click_without_effect_evidence_is_not_success(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_named_click_resolves_a_fresh_anchor_and_ignores_stale_coordinates(monkeypatch):
+    from core.perception.element_inventory import ScreenElement, inventory_from_elements
+
+    skill = ComputerUseSkill()
+    send = ScreenElement(
+        element_id="e-send",
+        role="button",
+        name="Send",
+        x=100,
+        y=200,
+        width=80,
+        height=24,
+        source="accessibility",
+        app="Mail",
+    )
+    inventories = iter(
+        (
+            inventory_from_elements([send], app="Mail", window="Draft"),
+            inventory_from_elements([], app="Mail", window="Inbox"),
+        )
+    )
+    monkeypatch.setattr(
+        "core.perception.element_inventory.build_inventory",
+        lambda _app: next(inventories),
+    )
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Mail")
+    monkeypatch.setattr(skill, "_read_screen_text_macos", lambda: "unchanged")
+
+    clicked: list[tuple[int, int]] = []
+
+    class TestPyAutoGUI:
+        def click(self, x, y):
+            clicked.append((x, y))
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_pyautogui", lambda: (TestPyAutoGUI(), None)
+    )
+
+    async def allow_permissions(*_args, **_kwargs):
+        return None
+
+    async def no_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", allow_permissions)
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    result = await skill.execute(
+        {"action": "click", "target": "Send button", "x": 1, "y": 1},
+        {},
+    )
+
+    assert result["ok"] is True
+    assert clicked == [(140, 212)]
+    assert result["target_anchor"]["element_id"] == "e-send"
+    assert result["planned_coordinates"] == [1, 1]
+    assert result["actual_coordinates"] == [140, 212]
+    assert result["target_anchor_disappeared"] is True
+
+
+@pytest.mark.asyncio
+async def test_named_click_refuses_when_the_target_is_not_observed(monkeypatch):
+    from core.perception.element_inventory import inventory_from_elements
+
+    skill = ComputerUseSkill()
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Mail")
+    monkeypatch.setattr(
+        "core.perception.element_inventory.build_inventory",
+        lambda _app: inventory_from_elements([], app="Mail"),
+    )
+    clicked: list[tuple[int, int]] = []
+
+    class TestPyAutoGUI:
+        def click(self, x, y):
+            clicked.append((x, y))
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_pyautogui", lambda: (TestPyAutoGUI(), None)
+    )
+
+    result = await skill.execute(
+        {"action": "click", "target": "Publish", "x": 900, "y": 600},
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "click_target_unresolved"
+    assert clicked == []
+
+
+@pytest.mark.asyncio
 async def test_computer_use_type_without_effect_evidence_is_not_success(monkeypatch):
     skill = ComputerUseSkill()
 
@@ -2008,6 +2099,8 @@ async def test_open_url_repairs_frontmost_browser_with_wrong_active_tab(monkeypa
 
 @pytest.mark.asyncio
 async def test_open_app_canonicalizes_user_wording_at_execution_boundary(monkeypatch):
+    from core.runtime.app_target_resolution import InstalledApp
+
     skill = ComputerUseSkill()
     argv_seen = []
     activated = []
@@ -2034,13 +2127,97 @@ async def test_open_app_canonicalizes_user_wording_at_execution_boundary(monkeyp
         "core.skills.computer_use.get_subprocess_gateway",
         lambda: Gateway(),
     )
+    monkeypatch.setattr(
+        "core.runtime.app_target_resolution.installed_app_inventory",
+        lambda **_kwargs: (
+            InstalledApp("Notes", "/System/Applications/Notes.app"),
+        ),
+    )
 
     result = await skill.execute({"action": "open_app", "target": "Note app"}, {})
 
     assert result["ok"] is True
     assert result["opened"] == "Notes"
-    assert argv_seen == [["open", "-a", "Notes"]]
+    assert argv_seen == [["open", "/System/Applications/Notes.app"]]
     assert activated == ["Notes"]
+    assert result["app_resolution"]["method"] == "installed_exact"
+    assert result["app_resolution"]["corrected"] is True
+
+
+@pytest.mark.asyncio
+async def test_open_app_refreshes_a_stale_bundle_path_before_failing(monkeypatch):
+    from core.runtime.app_target_resolution import AppTargetResolution
+
+    skill = ComputerUseSkill()
+    resolutions = iter(
+        (
+            AppTargetResolution(
+                requested="Notes",
+                canonical="Notes",
+                resolved="Notes",
+                app_path="/Applications/Old Notes.app",
+                method="installed_exact",
+                inventory_available=True,
+            ),
+            AppTargetResolution(
+                requested="Notes",
+                canonical="Notes",
+                resolved="Notes",
+                app_path="/System/Applications/Notes.app",
+                method="installed_exact",
+                inventory_available=True,
+            ),
+        )
+    )
+    resolve_calls: list[bool] = []
+
+    def resolve(_target, *, refresh=False):
+        resolve_calls.append(refresh)
+        return next(resolutions)
+
+    class Gateway:
+        def __init__(self):
+            self.argv: list[list[str]] = []
+
+        def run(self, argv, **_kwargs):
+            self.argv.append(argv)
+            if "Old Notes.app" in argv[-1]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="stale path")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    gateway = Gateway()
+
+    async def permission_pass(*_args, **_kwargs):
+        return None
+
+    async def activate(_app):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", permission_pass)
+    monkeypatch.setattr(skill, "_activate_app", activate)
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
+    )
+    monkeypatch.setattr(
+        "core.skills.computer_use.resolve_installed_app_target",
+        resolve,
+    )
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: gateway,
+    )
+
+    result = await skill.execute({"action": "open_app", "target": "Notes"}, {})
+
+    assert result["ok"] is True
+    assert resolve_calls == [False, True]
+    assert gateway.argv == [
+        ["open", "/Applications/Old Notes.app"],
+        ["open", "/System/Applications/Notes.app"],
+    ]
+    assert result["app_resolution"]["app_path"] == "/System/Applications/Notes.app"
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
+from core.runtime.app_target_resolution import resolve_installed_app_target
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
@@ -3073,6 +3074,41 @@ end tell
                 return await asyncio.to_thread(self._inspect_browser_page, params.target)
 
             elif action == "click":
+                anchor = None
+                anchor_inventory = None
+                click_x = int(params.x)
+                click_y = int(params.y)
+                target_reference = str(params.target or "").strip()
+                if target_reference:
+                    from core.perception.element_inventory import (
+                        build_inventory,
+                        resolve_action_target,
+                    )
+
+                    anchor_app = await asyncio.to_thread(self._frontmost_app_name)
+                    if not anchor_app:
+                        return {
+                            "ok": False,
+                            "status": "click_anchor_unavailable",
+                            "error": "Cannot identify the frontmost app before resolving the click target.",
+                            "effect_verified": False,
+                        }
+                    anchor_inventory = await asyncio.to_thread(build_inventory, anchor_app)
+                    resolution = resolve_action_target(anchor_inventory, target_reference)
+                    if not resolution.resolved or resolution.element is None:
+                        return {
+                            "ok": False,
+                            "status": "click_target_unresolved",
+                            "error": resolution.reason,
+                            "target": target_reference,
+                            "frontmost_app": anchor_app,
+                            "effect_verified": False,
+                            "inventory": anchor_inventory.to_dict(),
+                        }
+                    anchor = resolution.element
+                    centre_x, centre_y = anchor.centre
+                    click_x, click_y = int(centre_x), int(centre_y)
+
                 pre_state_text = ""
                 try:
                     pre_state_text = await asyncio.to_thread(self._read_screen_text_macos)
@@ -3096,12 +3132,12 @@ end tell
 
                     logger.info(
                         "Clicking coordinate (%d, %d) - attempt %d/%d",
-                        params.x,
-                        params.y,
+                        click_x,
+                        click_y,
                         attempt,
                         max_attempts,
                     )
-                    await asyncio.to_thread(pyautogui.click, x=params.x, y=params.y)
+                    await asyncio.to_thread(pyautogui.click, x=click_x, y=click_y)
 
                     # Focus lag compensation delay
                     await asyncio.sleep(0.5)
@@ -3122,7 +3158,31 @@ end tell
                             "Post-state screen read failed on attempt %d: %s", attempt, exc
                         )
 
-                    if post_state_text != pre_state_text:
+                    inventory_changed = False
+                    anchor_disappeared = False
+                    post_inventory = None
+                    if anchor is not None and anchor_inventory is not None:
+                        from core.perception.element_inventory import build_inventory
+
+                        post_inventory = await asyncio.to_thread(
+                            build_inventory,
+                            anchor_inventory.app,
+                        )
+                        if post_inventory.available:
+                            before_ids = {
+                                element.element_id for element in anchor_inventory.interactable
+                            }
+                            after_ids = {
+                                element.element_id for element in post_inventory.interactable
+                            }
+                            inventory_changed = (
+                                before_ids != after_ids
+                                or anchor_inventory.window != post_inventory.window
+                                or anchor_inventory.app != post_inventory.app
+                            )
+                            anchor_disappeared = post_inventory.by_id(anchor.element_id) is None
+
+                    if post_state_text != pre_state_text or inventory_changed:
                         clicked_successfully = True
                         break
 
@@ -3133,10 +3193,15 @@ end tell
                 )
                 return {
                     "ok": clicked_successfully,
-                    "action": f"clicked ({params.x},{params.y})",
+                    "action": f"clicked ({click_x},{click_y})",
                     "attempts": attempt,
                     "effect_verified": clicked_successfully,
                     "verification": verification,
+                    "target": target_reference,
+                    "planned_coordinates": [int(params.x), int(params.y)],
+                    "actual_coordinates": [click_x, click_y],
+                    "target_anchor": anchor.to_dict() if anchor is not None else None,
+                    "target_anchor_disappeared": anchor_disappeared if anchor is not None else None,
                 }
 
             elif action == "type":
@@ -3798,19 +3863,58 @@ end tell
                 )
                 if blocked:
                     return blocked
-                app_target = canonical_app_target(params.target)
-                if not app_target:
-                    return {"ok": False, "error": "A concrete application name is required."}
-                result = await asyncio.to_thread(
-                    get_subprocess_gateway().run,
-                    ["open", "-a", app_target],
-                    capture_output=True,
-                    timeout=10,
-                    source="computer_use",
+                resolution = await asyncio.to_thread(
+                    resolve_installed_app_target,
+                    params.target,
                 )
-                if result.returncode != 0:
-                    error = (result.stderr or result.stdout or "open command failed").strip()
-                    return {"ok": False, "error": error, "opened": app_target}
+                app_target = resolution.resolved
+                if not resolution.launchable:
+                    return {"ok": False, "error": "A concrete application name is required."}
+                candidate = resolution
+                attempted_args: list[list[str]] = []
+                result = None
+                for launch_attempt in range(2):
+                    launch_args = (
+                        ["open", candidate.app_path]
+                        if candidate.app_path
+                        else ["open", "-a", candidate.resolved]
+                    )
+                    if not candidate.launchable or launch_args in attempted_args:
+                        break
+                    attempted_args.append(launch_args)
+                    result = await asyncio.to_thread(
+                        get_subprocess_gateway().run,
+                        launch_args,
+                        capture_output=True,
+                        timeout=10,
+                        source="computer_use",
+                    )
+                    if result.returncode == 0:
+                        resolution = candidate
+                        app_target = candidate.resolved
+                        break
+                    if launch_attempt == 0:
+                        # A cache can outlive an app move. Refresh the real
+                        # inventory once and retry only if it gives a distinct,
+                        # grounded launch identity.
+                        candidate = await asyncio.to_thread(
+                            resolve_installed_app_target,
+                            params.target,
+                            refresh=True,
+                        )
+                if result is None or result.returncode != 0:
+                    error = (
+                        "open command failed"
+                        if result is None
+                        else (result.stderr or result.stdout or "open command failed").strip()
+                    )
+                    return {
+                        "ok": False,
+                        "error": error,
+                        "opened": app_target,
+                        "app_resolution": resolution.to_dict(),
+                        "launch_attempts": attempted_args,
+                    }
                 activation_error = ""
                 try:
                     await self._activate_app(app_target)
@@ -3858,6 +3962,8 @@ end tell
                     "is_frontmost": is_frontmost,
                     "effect_verified": launched,
                     "verification": verification,
+                    "app_resolution": resolution.to_dict(),
+                    "launch_attempts": attempted_args,
                 }
 
             elif action == "open_url":

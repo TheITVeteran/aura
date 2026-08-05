@@ -35395,3 +35395,54 @@ CP806 to concrete protocol connectors; that scope is not closed or removed and
 is carried forward as CP808 after the already-landed CP807 messaging
 implementation. This is total checkpoint 806 of the current 920-checkpoint
 completion envelope, approximately 87.6% by count; long soaks remain deferred.
+
+### 2026-08-05 - CP807 observed-target desktop actuation
+
+Ordinary application wording is now resolved against the applications that are
+actually installed on the host before LaunchServices is invoked. The resolver
+canonicalizes language aliases, inventories bounded system and user application
+roots without descending into helper bundles, accepts exact or singular/plural
+matches, and permits fuzzy correction only when one candidate has a strong,
+well-separated score. A verified bundle launches by its exact path. Apps outside
+the bounded roots retain an explicitly unverified LaunchServices route rather
+than being falsely declared absent. Every result records the requested,
+canonical, resolved, and installed identities, the resolution method, bundle
+path, alternatives, correction status, and launch attempts.
+
+A cached bundle path that moved no longer terminates the task immediately. One
+bounded inventory refresh may produce one distinct second launch candidate. The
+two attempts share a single auditable subprocess effect site, preserving the
+governance ownership ratchet; there is no open-ended retry or unconstrained app
+guessing. This closes the live failure where ordinary singular wording such as
+"Note app" reached macOS as a nonexistent application instead of the installed
+Apple Notes bundle.
+
+The canonical `computer_use` click lane now consumes Aura's structured element
+inventory instead of treating a model-supplied coordinate as proof of a named
+control. A named click requires a fresh frontmost-app inventory and a unique
+interactable target by stable element id, exact name, or unambiguous word match.
+The actual click is recentered on that observed element, ignoring stale planned
+coordinates. The receipt retains accessibility provenance, role, label, box,
+app/window identity, planned and actual coordinates, and post-action evidence.
+An unavailable, stale, absent, static-text-only, or ambiguous target is refused
+before the mouse fires. Success still requires a visible text or structured
+element/window state transition after actuation. Explicit coordinate-only
+actions remain supported, but they do not acquire a semantic target claim.
+
+Validation while the resident 32B campaign owns the model lane:
+
+- focused app-resolution, effect-contract, element-inventory, computer-use,
+  desktop-planner, desktop-task, and OS-control family: 267/267 passed;
+- smoke: 103/103 passed;
+- repository Ruff lint, Python compilation, layering, governance effect
+  ownership, diff integrity, and isolated strict MyPy for the new resolver
+  passed.
+
+No Aura.app boot or live click was run beside training, so this checkpoint does
+not claim live screen acceptance. The frozen trainer is actively executing MLX
+backpropagation from the exact migrated step-37 state; a new durable step is not
+claimed until its signed checkpoint appears. Planned concrete Reality Reach
+connectors remain CP808 scope, and live Messages, hardware, desktop, reasoning,
+frontier, release, and `WOW Signal` acceptance remain open. This is total
+checkpoint 807 of the current 920-checkpoint completion envelope, approximately
+87.7% by count; long soaks remain deferred.
