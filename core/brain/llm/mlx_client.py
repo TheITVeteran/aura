@@ -5255,6 +5255,20 @@ class MLXLocalClient:
         }
         fut = _new_shared_future()
         self._pending_generations[req_id] = fut
+        # Register the batch decode as an ACTIVE generation for its duration.
+        #
+        # It used to queue the command and register only a pending future, so
+        # every "is this lane busy?" check read it as idle — and those checks
+        # guard consequential actions. maybe_unload_idle, the adapter swap and
+        # the idle scavenger all gate on _active_generations > 0, so a batch
+        # decode of n candidates on the resident 32B could have its weights
+        # unloaded or its adapter swapped out from under it, mid-decode,
+        # because nothing said it was running.
+        #
+        # Marking it busy is also what makes the durable lane non-preemptible
+        # while the decode holds it, which is the property the ownership
+        # bookkeeping exists to provide.
+        self._active_generations += 1
         timed_out = False
         try:
             await run_io_bound(
@@ -5279,6 +5293,11 @@ class MLXLocalClient:
             # ALWAYS unregister — caller cancellation previously left the
             # worker command live and the future registered indefinitely.
             self._pending_generations.pop(req_id, None)
+            # Release the busy marker on every path, including cancellation.
+            # A leaked increment is worse than never having taken one: the
+            # lane would look permanently busy and the idle unload, adapter
+            # swap and scavenger would all be blocked forever.
+            self._active_generations = max(0, self._active_generations - 1)
             if timed_out:
                 # The queued decode continues invisibly after a timeout;
                 # ask the worker to yield instead of burning the lane.
