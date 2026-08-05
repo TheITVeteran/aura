@@ -34,7 +34,11 @@ def _reclaim_block() -> str:
 def test_the_reclaim_runs_before_refusing_for_headroom() -> None:
     src = SOURCE.read_text(encoding="utf-8")
     reclaim_at = src.index("Reclaiming our own never-initialized worker")
-    refuse_at = src.index('RuntimeError(f"memory_pressure_refused_worker_spawn:')
+    # CP126 5ce89b9e made the refusal a TYPED exception rather than a
+    # RuntimeError carrying a magic substring, because the substring could be
+    # matched by accident. The ordering contract this test guards is
+    # unchanged; only the constructor's name is.
+    refuse_at = src.index("error = ModelLoadAdmissionRefused(memory_block)")
     assert reclaim_at < refuse_at, (
         "reclaiming must be attempted before the spawn is refused"
     )

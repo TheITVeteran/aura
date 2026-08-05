@@ -333,6 +333,24 @@ def _latent_request_schema_error(
     return ""
 
 
+def _capped_reserve(reserve_s: float, remaining_s: float) -> float:
+    """Hold back time for the caller to fail closed — but never all of it.
+
+    A fixed reserve subtracted from a shorter deadline yields zero or less,
+    and a zero wait means the caller never even tries. That is how the
+    dec24697 fix (stop granting time past an exhausted deadline, which was
+    right) broke foreground preemption of maintenance: a 1-second foreground
+    deadline minus a 3-second reserve gave a 0-second wait, the acquire loop
+    did not execute once, and the soft-cancel that evicts a maintenance
+    holder never fired.
+
+    Capped at half the remaining budget: a short deadline still gets time to
+    wait AND time to recover, and a long one is unaffected.
+    """
+    remaining = max(0.0, float(remaining_s))
+    return min(float(reserve_s), remaining * 0.5)
+
+
 def _sleep_inclusive_monotonic() -> float | None:
     """A monotonic clock that keeps counting while the host is asleep.
 
@@ -3098,7 +3116,7 @@ def _foreground_owner_wait_budget(
     # meant to respect. Clamped by what is left: it may shorten the wait,
     # never extend it past the caller's budget.
     reserve = 3.0 if foreground_request else 1.5
-    return max(0.0, min(default, remaining - reserve, remaining))
+    return max(0.0, min(default, remaining - _capped_reserve(reserve, remaining)))
 
 
 def _clear_matching_foreground_owner(*candidate_names: str) -> str | None:
@@ -3983,6 +4001,10 @@ class MLXLocalClient:
         #: about an OOM, a corrupt checkpoint or a refused memory admission,
         #: so it may only clear the backoffs a runtime failure caused.
         self._spawn_backoff_cause: str = ""
+        #: True when a durable-lane preemptibility release failed. The lane
+        #: cannot be evicted while this is set, so it is state a reader needs
+        #: rather than a log line that scrolled away.
+        self._durable_lane_release_owed: bool = False
         #: Set when a forced abort killed the worker but could not take the
         #: lifecycle lock; the next lock owner reconciles the state.
         self._force_abort_reconcile_pending: str | None = None
@@ -5476,7 +5498,7 @@ class MLXLocalClient:
         # 10-second ceiling, two seconds PAST the deadline, with no reserve at
         # all. Now the reserve always holds and the ceiling never exceeds what
         # the caller has left.
-        return max(0.0, min(hard_ceiling, remaining - 4.0))
+        return max(0.0, min(hard_ceiling, remaining - _capped_reserve(4.0, remaining)))
 
     def _start_foreground_first_token_watchdog(
         self,
@@ -5947,7 +5969,7 @@ class MLXLocalClient:
 
         # Same clamp as the foreground-owner wait above, same reason.
         reserve = 3.0 if foreground_request else 2.0
-        return max(0.0, min(default, remaining - reserve, remaining))
+        return max(0.0, min(default, remaining - _capped_reserve(reserve, remaining)))
 
     async def _acquire_request_lock(
         self,
@@ -13173,14 +13195,51 @@ class MLXLocalClient:
             foreground_watchdog.cancel()
         if self._foreground_generation_watchdog is foreground_watchdog:
             self._foreground_generation_watchdog = None
-        self._pending_generations.pop(request_id, None)
-        if self._current_gen_future is future:
+
+        # CP126 b614dafc. This decremented the active count unconditionally,
+        # so a second cleanup for the same request — a cancellation path and a
+        # finally block both firing, say — undercounted concurrent work and
+        # could publish the lane as preemptible while another generation was
+        # still decoding. Cleanup has to be idempotent, because the paths that
+        # call it are not mutually exclusive.
+        was_pending = self._pending_generations.pop(request_id, None) is not None
+        was_current_future = self._current_gen_future is future
+        if was_current_future:
             self._current_gen_future = None
+        was_current_request = self._current_request_id == request_id
+        already_cleaned = not (was_pending or was_current_future or was_current_request)
+        if already_cleaned:
+            logger.debug(
+                "Generation ownership for %s was already released; skipping decrement.",
+                str(request_id)[:12],
+            )
+            return
+
         self._active_generations = max(0, self._active_generations - 1)
-        if self._current_request_id == request_id:
+        if was_current_request:
             self._clear_active_generation_tracking()
         if release_lane and self._active_generations <= 0:
-            await self._set_durable_lane_preemptible(True)
+            # CP126 860036f2. The result used to be discarded. A failed
+            # release leaves the durable lane permanently NON-PREEMPTIBLE —
+            # nothing can evict it, and nothing anywhere says why — so the
+            # lane is stuck until a process restart. Record it and mark the
+            # lane so a later reader can see the release is owed.
+            released = await self._set_durable_lane_preemptible(True)
+            if not released:
+                self._durable_lane_release_owed = True
+                _record_mlx_degradation(
+                    RuntimeError(
+                        f"durable lane for {os.path.basename(self.model_path)} could "
+                        f"not be made preemptible after request {str(request_id)[:12]}"
+                    ),
+                    action=(
+                        "flagged the lane as owing a preemptibility release; it "
+                        "cannot be evicted until that succeeds"
+                    ),
+                    severity="error",
+                )
+            else:
+                self._durable_lane_release_owed = False
 
     def _unload_safety_blocker(self) -> str | None:
         """Return why an idle VRAM unload is unsafe right now, or None if safe.

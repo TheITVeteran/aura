@@ -430,6 +430,16 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "mlx_memory_envelope",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_generated_rollin_objective_canary.py"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
       "modules": [
