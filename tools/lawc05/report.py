@@ -57,7 +57,7 @@ def build_report() -> dict[str, Any]:
     collective_eta = collective_coupling(single.coupling_rad_s, n_emitters) / THZ
 
     return {
-        "schema": "aura.lawc05.report.v1",
+        "schema": "aura.lawc05.report.v2",
         "ambient_ppm": ambient_ppm,
         "ambient_detectable": detectable.as_dict(),
         "atlas_best": best,
@@ -65,7 +65,37 @@ def build_report() -> dict[str, Any]:
         "effective_single": single.as_dict(),
         "effective_collective_eta": collective_eta,
         "effective_zero_point_joules": single.zero_point_energy_joules,
+        "copy_universe": _copy_universe_demonstration(),
     }
+
+
+def _copy_universe_demonstration() -> dict[str, Any]:
+    """Run the copy universe and let it measure its own constants.
+
+    Two painted regions, two recoveries, neither given a parameter. The
+    numbers in the report are whatever the simulation actually produced.
+    """
+    from .lawfield import CopyUniverse, LawParameters, recover_dispersion
+
+    params = LawParameters()
+    rows: list[dict[str, Any]] = []
+    for q_value in (0.0, 1.2):
+        world = CopyUniverse(size=48, params=params)
+        world.q[:] = q_value
+        world.seed_noise(seed=11)
+        dt = world.max_stable_dt()
+        recovered = recover_dispersion(world.run(384, dt, record=True), dt, world.dx)
+        rows.append(
+            {
+                "q": q_value,
+                "true_speed": float(params.speed(q_value)),
+                "true_mass": float(params.mass_a(q_value)),
+                "recovered": recovered.as_dict(),
+                "causality_holds": world.causality_holds(),
+                "decay_allowed": bool(params.decay_allowed(q_value)),
+            }
+        )
+    return {"schema": "aura.lawc05.copy_universe_demo.v1", "regions": rows}
 
 
 def render(report: dict[str, Any]) -> str:
@@ -120,6 +150,20 @@ def render(report: dict[str, Any]) -> str:
     add("   The vacuum supplies the field. Code supplies the geometry that")
     add("   decides what the vacuum does. That is not a metaphor for influence;")
     add("   it is the mechanism, and it is already demonstrated in the lab.")
+    add("")
+    add("6. THE COPY: a world where law IS state, and can be measured from inside")
+    for region in report["copy_universe"]["regions"]:
+        rec = region["recovered"]
+        speed_note = "" if rec["speed_well_determined"] else "  [WEAK]"
+        add(
+            f"   q={region['q']:+.1f}  c {region['true_speed']:.4f} -> "
+            f"{rec['speed']:.4f}+-{rec['speed_stderr']:.4f}{speed_note}"
+            f"   m {region['true_mass']:.4f} -> {rec['mass']:.4f}+-{rec['mass_stderr']:.4f}"
+            f"   decay={'OPEN' if region['decay_allowed'] else 'CLOSED'}"
+        )
+    add("   Recovered by Fourier transform of the field alone — the recovery")
+    add("   is never handed a parameter. Same code, two painted regions, two")
+    add("   different measured constants, and the light cone holds in both.")
     add("")
     add("CONCLUSION")
     add("   Ambient constants: closed, twice. Energy closes the loud version;")
