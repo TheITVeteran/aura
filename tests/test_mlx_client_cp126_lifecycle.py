@@ -2035,3 +2035,60 @@ class TestTheSwapCooldownDoesNotConvoy:
             lambda name=None: primary if "32B" in str(name) else deep,
         )
         assert await solver._await_swap_cooldown(skip_swap_cooldown=True) == 0.0
+
+
+class TestBenchmarkTrustIsNotSelfDeclared:
+    """CP126 9edfb10c / 0e318b3a."""
+
+    def test_an_ordinary_process_is_not_a_benchmark_run(self):
+        import core.brain.llm.mlx_client as mod
+
+        assert mod._benchmark_run_context_active() is False
+
+    def test_a_benchmark_launched_process_is_recognised(self, monkeypatch):
+        import core.brain.llm.mlx_client as mod
+        from core.runtime.state_ownership import RuntimeProfile
+
+        monkeypatch.setattr(
+            "core.runtime.state_ownership.runtime_profile",
+            lambda: RuntimeProfile.BENCH,
+        )
+        assert mod._benchmark_run_context_active() is True
+
+    def test_it_fails_closed_when_the_profile_cannot_be_read(self, monkeypatch):
+        """An unreadable environment records the degradation, not excuses it."""
+        import core.brain.llm.mlx_client as mod
+
+        def _boom():
+            raise RuntimeError("profile unavailable")
+
+        monkeypatch.setattr("core.runtime.state_ownership.runtime_profile", _boom)
+        assert mod._benchmark_run_context_active() is False
+
+    def test_a_request_cannot_label_itself_into_a_benchmark(self):
+        """The defect: origin='baseline' suppressed the cancellation record.
+
+        The classification is an AND now — the process must actually be a
+        benchmark run — so a self-declared label alone cannot silence the one
+        signal that says the lane is misbehaving.
+        """
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._generate_inner)
+        marker = source.index("benchmark_baseline_cancel = ")
+        window = source[marker : marker + 400]
+        assert "_benchmark_run_context_active()" in window
+        assert "and (" in window
+
+    def test_non_string_worker_text_does_not_raise(self, client):
+        """CP126 0e318b3a: strip() on a mapping is an AttributeError, not a
+        typed failure, and worker corruption became a client exception."""
+        import inspect
+
+        import core.brain.llm.mlx_client as mod
+
+        source = inspect.getsource(mod.MLXLocalClient._generate_inner)
+        assert 'if not isinstance(raw_text, str):' in source
+        assert "treated non-string worker text as empty response" in source

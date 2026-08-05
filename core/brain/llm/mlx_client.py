@@ -12255,7 +12255,14 @@ class MLXLocalClient:
             origin_label = str(kwargs.get("origin", "") or "")
             purpose_label = str(kwargs.get("purpose", "") or "")
             expected_cancel_reason = self._consume_expected_generation_cancellation(req_id)
-            benchmark_baseline_cancel = (
+            # CP126 9edfb10c. This used to be the labels alone, so ANY request
+            # could suppress a cancellation degradation by calling itself
+            # "baseline" — a self-signed excuse for the exact signal that says
+            # the lane is misbehaving. A benchmark cancellation is only
+            # expected when the PROCESS is actually a benchmark run, which is
+            # a property of how the runtime was launched and not of a string
+            # the request supplied about itself.
+            benchmark_baseline_cancel = _benchmark_run_context_active() and (
                 origin_label.strip().lower() == "baseline"
                 or purpose_label.strip().lower().endswith("_baseline")
             )
@@ -13737,6 +13744,25 @@ def _serialize_tool_result_for_model(
     else:
         serialized = str(model_result)
     return _truncate_tool_result(serialized, limit=limit)
+
+
+def _benchmark_run_context_active() -> bool:
+    """Whether THIS PROCESS was launched as a benchmark run.
+
+    Distinct from a request that says it is a baseline. The runtime profile
+    is set by how the process started — the same signal state_ownership uses
+    to give a bench run its own state root — and a request cannot change it.
+
+    Fails CLOSED: when the profile cannot be read, this returns False, so an
+    unreadable environment produces a recorded degradation rather than a
+    silently excused one.
+    """
+    try:
+        from core.runtime.state_ownership import RuntimeProfile, runtime_profile
+
+        return runtime_profile() is RuntimeProfile.BENCH
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def _proof_run_requested(origin: Any) -> bool:
