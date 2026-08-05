@@ -1582,3 +1582,78 @@ class TestProofLaneIdentityIsMeasured:
         assert model_identities_compatible(
             "Qwen2.5-32B-Instruct-4bit", "Qwen2.5-32B-Instruct-4bit"
         )
+
+
+class TestSamplingParametersHaveAContract:
+    """CP126 cac5c1a3: arbitrary kwargs went straight into IPC."""
+
+    def _normalize(self, **overrides):
+        from core.brain.llm.mlx_client import _normalize_generation_params
+
+        req = dict(overrides)
+        faults = _normalize_generation_params(req)
+        return req, faults
+
+    def test_ordinary_values_pass_through(self):
+        req, faults = self._normalize(temp=0.8, top_p=0.95, top_k=40)
+        assert faults == []
+        assert req["temp"] == 0.8
+        assert req["top_p"] == 0.95
+        assert req["top_k"] == 40
+
+    def test_a_non_numeric_temperature_becomes_the_default(self):
+        req, faults = self._normalize(temp="hot")
+        assert "temp:not_a_number" in faults
+        assert req["temp"] == 0.7
+
+    def test_infinity_is_refused(self):
+        req, faults = self._normalize(top_p=float("inf"))
+        assert "top_p:not_finite" in faults
+        assert req["top_p"] == 0.9
+
+    def test_nan_is_refused(self):
+        req, faults = self._normalize(min_p=float("nan"))
+        assert "min_p:not_finite" in faults
+
+    def test_an_out_of_range_value_becomes_the_default_not_the_edge(self):
+        """A temperature of 40 is a mistake, not a request for 2.0."""
+        req, faults = self._normalize(temp=40.0)
+        assert "temp:out_of_range" in faults
+        assert req["temp"] == 0.7
+
+    def test_a_boolean_is_not_a_number(self):
+        req, faults = self._normalize(top_k=True)
+        assert "top_k:not_a_number" in faults
+        assert req["top_k"] == 60
+
+    def test_integers_stay_integers(self):
+        req, _ = self._normalize(top_k=12.9, repetition_context_size=64.7)
+        assert req["top_k"] == 12
+        assert isinstance(req["top_k"], int)
+        assert req["repetition_context_size"] == 64
+
+    def test_missing_parameters_get_their_defaults(self):
+        req, faults = self._normalize()
+        assert faults == []
+        assert req["temp"] == 0.7
+        assert req["stop_sequences"] == []
+
+    def test_too_many_stop_sequences_are_bounded(self):
+        req, faults = self._normalize(stop_sequences=["a"] * 100)
+        assert "stop_sequences:too_many" in faults
+        assert len(req["stop_sequences"]) == 16
+
+    def test_an_oversized_stop_sequence_is_clipped(self):
+        req, faults = self._normalize(stop_sequences=["x" * 5000])
+        assert "stop_sequences:too_long" in faults
+        assert len(req["stop_sequences"][0]) == 200
+
+    def test_a_non_string_stop_sequence_is_dropped_and_named(self):
+        req, faults = self._normalize(stop_sequences=["ok", 42, None])
+        assert faults.count("stop_sequences:not_a_string") == 2
+        assert req["stop_sequences"] == ["ok"]
+
+    def test_a_non_sequence_stop_value_is_refused(self):
+        req, faults = self._normalize(stop_sequences="STOP")
+        assert "stop_sequences:not_a_sequence" in faults
+        assert req["stop_sequences"] == []

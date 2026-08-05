@@ -2450,6 +2450,90 @@ def _prompt_within_prefill_ceiling(prompt: Any, *, model_path: str = "") -> str:
 _MAX_OUTPUT_CONTRACT_FLOOR_TOKENS = 8192
 
 
+#: The legal range of every sampling parameter that crosses the IPC boundary.
+#: (minimum, maximum, kind) — kind "f" is a float, "i" an int.
+_SAMPLING_CONTRACT: dict[str, tuple[float, float, str]] = {
+    "temp": (0.0, 2.0, "f"),
+    "top_p": (0.0, 1.0, "f"),
+    "top_k": (0.0, 1000.0, "i"),
+    "min_p": (0.0, 1.0, "f"),
+    "repetition_penalty": (0.5, 2.5, "f"),
+    "repetition_context_size": (0.0, 4096.0, "i"),
+    "presence_penalty": (-2.0, 2.0, "f"),
+}
+_SAMPLING_DEFAULTS: dict[str, float] = {
+    "temp": 0.7,
+    "top_p": 0.9,
+    "top_k": 60,
+    "min_p": 0.05,
+    "repetition_penalty": 1.05,
+    "repetition_context_size": 30,
+    "presence_penalty": 0.0,
+}
+_STOP_SEQUENCES_MAX = 16
+_STOP_SEQUENCE_MAX_CHARS = 200
+
+
+def _normalize_generation_params(req: dict[str, Any]) -> list[str]:
+    """Bring the sampling parameters inside their contract before they ship.
+
+    CP126 cac5c1a3: temperature, top-p, top-k, min-p, the penalties and the
+    stop sequences were copied from arbitrary kwargs straight into IPC. No
+    type check, no finite check, no range, no size bound. A caller could send
+    ``temp="hot"`` or ``top_p=inf`` and the first thing to find out was the
+    worker's sampler, on the far side of a process boundary, mid-decode.
+
+    Out-of-contract values become the default rather than being clamped to the
+    edge: a caller asking for a temperature of 40 has not asked for 2.0, it
+    has made a mistake, and silently serving the extreme is how a mistake
+    becomes a plausible-looking answer nobody can explain. Faults are
+    returned so the receipt can carry them.
+    """
+    faults: list[str] = []
+    for name, (low, high, kind) in _SAMPLING_CONTRACT.items():
+        raw = req.get(name)
+        default = _SAMPLING_DEFAULTS[name]
+        if raw is None:
+            req[name] = int(default) if kind == "i" else float(default)
+            continue
+        if isinstance(raw, bool):
+            faults.append(f"{name}:not_a_number")
+            req[name] = int(default) if kind == "i" else float(default)
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            faults.append(f"{name}:not_a_number")
+            req[name] = int(default) if kind == "i" else float(default)
+            continue
+        if not math.isfinite(value):
+            faults.append(f"{name}:not_finite")
+            req[name] = int(default) if kind == "i" else float(default)
+            continue
+        if value < low or value > high:
+            faults.append(f"{name}:out_of_range")
+            req[name] = int(default) if kind == "i" else float(default)
+            continue
+        req[name] = int(value) if kind == "i" else value
+
+    raw_stops = req.get("stop_sequences")
+    stops: list[str] = []
+    if isinstance(raw_stops, (list, tuple)):
+        if len(raw_stops) > _STOP_SEQUENCES_MAX:
+            faults.append("stop_sequences:too_many")
+        for entry in list(raw_stops)[:_STOP_SEQUENCES_MAX]:
+            if not isinstance(entry, str):
+                faults.append("stop_sequences:not_a_string")
+                continue
+            if len(entry) > _STOP_SEQUENCE_MAX_CHARS:
+                faults.append("stop_sequences:too_long")
+            stops.append(entry[:_STOP_SEQUENCE_MAX_CHARS])
+    elif raw_stops:
+        faults.append("stop_sequences:not_a_sequence")
+    req["stop_sequences"] = stops
+    return faults
+
+
 def _bounded_generation_max_tokens(
     requested: Any,
     bridged: Any,
@@ -11535,6 +11619,18 @@ class MLXLocalClient:
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
         }
+
+        # CP126 cac5c1a3: normalise the sampling parameters BEFORE the
+        # mandatory stop sequences are appended, so the caller's list is
+        # bounded and typed and the defaults below are never displaced by it.
+        sampling_faults = _normalize_generation_params(req)
+        if sampling_faults:
+            req["sampling_contract_faults"] = sampling_faults
+            _record_mlx_degradation(
+                ValueError(f"generation parameters out of contract: {sampling_faults}"),
+                action="substituted defaults for out-of-contract sampling parameters",
+                severity="warning",
+            )
 
         # [STABILITY v57/v61] Add default stop sequences to prevent prompt bleed.
         # Keep human-readable role labels line-boundary anchored. Bare labels
