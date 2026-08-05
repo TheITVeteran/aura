@@ -11,6 +11,7 @@ from core.container import ServiceContainer
 from core.embodiment.world_bridge import Channel, get_world_bridge
 from core.governance.capability_chain import CapabilityViolation, get_capability_issuer
 from core.governance.will import ActionDomain, get_will
+from core.reality_reach.actuation import TargetCommandCompiler
 from core.reality_reach.attachment_authority import (
     ATTACHMENT_AUTHORITY_ACTION,
     MANIFEST_MIGRATION_AUTHORITY_ACTION,
@@ -149,6 +150,7 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
             "Pending attachment request id, or idempotency id for a managed service call."
         ),
         "channel_id": "Reality Reach channel or prefix for query/focus.",
+        "target_value": "Numeric target for an attached Reality Reach actuator channel.",
         "access": "observe, or observe+control when proposing a connection.",
         "persistent": "Whether bounded trust may survive a runtime migration.",
         "grant_ttl_s": "Requested trust lifetime within the enforced policy ceiling.",
@@ -815,6 +817,75 @@ class EmbodimentSkill(BaseSkill):  # type: ignore[misc]  # skipped import is unt
 
     @staticmethod
     async def _command(params: Mapping[str, Any]) -> dict[str, Any]:
+        channel_id = str(params.get("channel_id") or "").strip().lower()
+        if channel_id:
+            reality = _service("reality_reach")
+            coordinator = _service("reality_actuation")
+            if reality is None or coordinator is None:
+                return {
+                    "ok": False,
+                    "error": "Reality Reach actuation is offline",
+                }
+            adapter = reality.actuator_adapter(channel_id)
+            if adapter is None:
+                return {
+                    "ok": False,
+                    "error": f"physical channel is not executable: {channel_id}",
+                }
+            if not isinstance(adapter, TargetCommandCompiler):
+                return {
+                    "ok": False,
+                    "error": (
+                        "the attached actuator does not expose transport-neutral "
+                        f"target compilation: {channel_id}"
+                    ),
+                }
+            target = params.get("target_value", params.get("value"))
+            if target is None or isinstance(target, bool):
+                return {
+                    "ok": False,
+                    "error": "target_value must be numeric for a Reality Reach channel",
+                }
+            try:
+                target_value = float(target)
+                deadline_s = _bounded_float_parameter(
+                    params.get("timeout_s"),
+                    name="timeout_s",
+                    default=30.0,
+                    minimum=0.1,
+                    maximum=300.0,
+                )
+                compiled = await adapter.compile_target(
+                    target_value,
+                    inventory_sha256=str(reality.status()["registry_sha256"]),
+                    deadline_s=deadline_s,
+                    idempotency_key=str(
+                        params.get("idempotency_key")
+                        or f"embodiment.target.{uuid.uuid4().hex}"
+                    ),
+                    source="embodiment_skill",
+                )
+                result = await coordinator.execute(compiled)
+            except (
+                LookupError,
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                return {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}:{exc}"[:320],
+                    "channel_id": channel_id,
+                }
+            output = dict(result) if isinstance(result, Mapping) else {"result": result}
+            return {
+                **output,
+                "ok": bool(output.get("ok", output.get("effect_verified", False))),
+                "channel_id": channel_id,
+                "target_value": target_value,
+            }
         device_id = str(params.get("device_id") or params.get("target") or "").strip().lower()
         command = str(params.get("command") or params.get("op") or "").strip().lower()
         raw_parameters = params.get("parameters", params.get("effect", {}))

@@ -103,6 +103,69 @@ async def test_physical_command_uses_world_bridge_and_never_direct_device_execut
 
 
 @pytest.mark.asyncio
+async def test_attached_target_compiler_uses_canonical_reality_transaction(
+    monkeypatch,
+) -> None:
+    import core.skills.embodiment_skill as skill_module
+
+    compiled = SimpleNamespace(command_id="command.scalar.test")
+
+    class Adapter:
+        async def compile_target(self, target, **kwargs):
+            assert target == 63.0
+            assert kwargs["inventory_sha256"] == "sha256:" + "a" * 64
+            assert kwargs["deadline_s"] == 12.0
+            assert kwargs["source"] == "embodiment_skill"
+            assert kwargs["idempotency_key"] == "demo.scalar.63"
+            return compiled
+
+    class Reality:
+        @staticmethod
+        def actuator_adapter(channel_id):
+            assert channel_id == "openhab.item.desklight.command"
+            return Adapter()
+
+        @staticmethod
+        def status():
+            return {"registry_sha256": "sha256:" + "a" * 64}
+
+    class Coordinator:
+        @staticmethod
+        async def execute(command):
+            assert command is compiled
+            return {
+                "ok": True,
+                "effect_verified": True,
+                "transport_succeeded": True,
+            }
+
+    services = {
+        "reality_reach": Reality(),
+        "reality_actuation": Coordinator(),
+    }
+    monkeypatch.setattr(skill_module, "_service", lambda name: services.get(name))
+
+    result = await EmbodimentSkill().execute(
+        {
+            "action": "command_device",
+            "channel_id": "OPENHAB.ITEM.DESKLIGHT.COMMAND",
+            "target_value": 63,
+            "timeout_s": 12,
+            "idempotency_key": "demo.scalar.63",
+        },
+        {},
+    )
+
+    assert result == {
+        "ok": True,
+        "effect_verified": True,
+        "transport_succeeded": True,
+        "channel_id": "openhab.item.desklight.command",
+        "target_value": 63.0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_managed_physical_services_and_actions_are_first_class_skill_operations(
     monkeypatch,
 ) -> None:

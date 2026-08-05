@@ -279,6 +279,21 @@ class ActuationCommand:
         return str(sha256_hex(canonical_json(self.to_dict())))
 
 
+@runtime_checkable
+class TargetCommandCompiler(Protocol):
+    """Compile a transport-neutral scalar target into a fenced command."""
+
+    async def compile_target(
+        self,
+        target: float,
+        *,
+        inventory_sha256: str,
+        deadline_s: float,
+        idempotency_key: str,
+        source: str,
+    ) -> ActuationCommand: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ActuationLease:
     lease_id: str
@@ -576,4 +591,5 @@ __all__ = [
     "RealityAdapter",
     "Reversibility",
     "RollbackReceipt",
+    "TargetCommandCompiler",
 ]

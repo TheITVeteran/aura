@@ -522,6 +522,57 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         severity="critical",
     )
 
+    async def _reality_connectors() -> None:
+        from core.embodiment.reality_connectors import (
+            build_configured_reality_connector_catalog,
+        )
+
+        broker = getattr(orchestrator, "reality_attachment_broker", None)
+        if broker is None:
+            raise RuntimeError(
+                "Reality attachment broker must exist before connector registration"
+            )
+        catalog = build_configured_reality_connector_catalog()
+        if catalog.connectors:
+            catalog.register_with(broker)
+        orchestrator.reality_connector_catalog = catalog
+        ServiceContainer.register_instance(
+            "reality_connector_catalog",
+            catalog,
+            required=False,
+            owner="core/embodiment/reality_connectors.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="portable protocol connector boot and configuration truth",
+            failure_policy="degrade_with_receipt",
+        )
+        report["registered"]["reality_connector_catalog"] = (
+            catalog.__class__.__name__
+        )
+        for status in catalog.status()["connectors"]:
+            if status["state"] != "invalid":
+                continue
+            error = RuntimeError(
+                f"{status['connector_id']}:{status['error'] or 'invalid_configuration'}"
+            )
+            _record_cognitive_sensory_degradation(
+                orchestrator,
+                error,
+                phase=f"reality_connector.{status['connector_id']}",
+                action=(
+                    "Kept every other physical connector active; this connector "
+                    "remains unavailable until its explicit configuration is valid"
+                ),
+                severity="warning",
+            )
+
+    await _run_phase(
+        orchestrator,
+        "reality_connectors",
+        "Concrete physical connectors were not registered; the core Reality Reach fabric remains active",
+        _reality_connectors,
+        severity="warning",
+    )
+
     async def _hardware_manager() -> None:
         from core.embodiment.hardware_manager import get_hardware_manager
 
