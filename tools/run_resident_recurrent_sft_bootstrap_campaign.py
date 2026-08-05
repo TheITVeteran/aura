@@ -88,6 +88,11 @@ RESTARTABLE_CONTROLLER_ERRORS: Final = frozenset(
     }
 )
 _ACTIVE_CUSTODIES: tuple[DirectoryCustody, ...] = ()
+_RESIDENT_TRAINING_LABEL_PREFIXES: Final = (
+    "com.aura.resident-sft.",
+    "com.aura.resident-32b-recurrent-grpo",
+)
+_RESIDENT_TRAINING_STATE_DIR: Final = Path.home() / ".aura/state/resident-training"
 
 
 class ResidentSFTCampaignControllerError(RuntimeError):
@@ -100,6 +105,186 @@ class ResidentSFTCampaignControllerError(RuntimeError):
 
 def _fail(code: str) -> Never:
     raise ResidentSFTCampaignControllerError(code)
+
+
+def _resident_training_label(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or not any(value.startswith(prefix) for prefix in _RESIDENT_TRAINING_LABEL_PREFIXES)
+        or len(value) > 255
+        or any(ord(character) < 33 or ord(character) > 126 for character in value)
+    ):
+        _fail("resident_training_label_invalid")
+    return value
+
+
+@contextmanager
+def _resident_training_lock(path: Path, *, busy_code: str) -> Iterator[int]:
+    ensure_private_directory(path.parent)
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ResidentSFTCampaignControllerError(
+            "resident_training_lock_open_failed"
+        ) from exc
+    acquired = False
+    try:
+        observed = os.fstat(fd)
+        if not stat.S_ISREG(observed.st_mode) or observed.st_uid != os.getuid():
+            _fail("resident_training_lock_identity_invalid")
+        os.fchmod(fd, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except BlockingIOError as exc:
+            raise ResidentSFTCampaignControllerError(busy_code) from exc
+        yield fd
+    finally:
+        if acquired:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+@contextmanager
+def _resident_training_host_lease(
+    *,
+    label: str,
+    config_sha256: str,
+    lease_path: Path | None = None,
+) -> Iterator[dict[str, Any]]:
+    label = _resident_training_label(label)
+    if (
+        not isinstance(config_sha256, str)
+        or len(config_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in config_sha256)
+    ):
+        _fail("resident_training_config_identity_invalid")
+    path = lease_path or (_RESIDENT_TRAINING_STATE_DIR / "host.lock")
+    with _resident_training_lock(path, busy_code="resident_training_host_busy") as fd:
+        body = {
+            "schema": "aura.resident_training_host_lease.v1",
+            "active": True,
+            "label": label,
+            "config_sha256": config_sha256,
+            "pid": os.getpid(),
+            "acquired_at_unix_ns": time.time_ns(),
+        }
+        lease = {**body, "lease_sha256": sha256_json(body)}
+        payload = _canonical(lease)
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, payload)
+        os.fsync(fd)
+        try:
+            yield lease
+        finally:
+            released_body = {
+                **body,
+                "active": False,
+                "released_at_unix_ns": time.time_ns(),
+            }
+            released = {
+                **released_body,
+                "lease_sha256": sha256_json(released_body),
+            }
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, _canonical(released))
+            os.fsync(fd)
+
+
+def _loaded_resident_training_labels(*, timeout_s: float = 30.0) -> set[str]:
+    result = subprocess.run(
+        ["/bin/launchctl", "list"],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if result.returncode != 0:
+        _fail("resident_training_launchd_inventory_failed")
+    labels: set[str] = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        label = fields[-1]
+        if any(label.startswith(prefix) for prefix in _RESIDENT_TRAINING_LABEL_PREFIXES):
+            labels.add(_resident_training_label(label))
+    return labels
+
+
+def _retire_resident_training_jobs(
+    *,
+    active_label: str,
+    launch_agents: Path | None = None,
+    quarantine_root: Path | None = None,
+) -> dict[str, Any]:
+    active_label = _resident_training_label(active_label)
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    launch_agents = launch_agents or (Path.home() / "Library/LaunchAgents")
+    quarantine_root = quarantine_root or (
+        Path.home() / ".aura/quarantine/resident-training-launchagents"
+    )
+    ensure_private_directory(launch_agents)
+    ensure_private_directory(quarantine_root)
+    loaded = _loaded_resident_training_labels()
+    discovered: dict[str, Path] = {}
+    for path in sorted(launch_agents.glob("*.plist")):
+        if not any(path.name.startswith(prefix) for prefix in _RESIDENT_TRAINING_LABEL_PREFIXES):
+            continue
+        if path.is_symlink() or not path.is_file():
+            _fail("resident_training_launchd_plist_identity_invalid")
+        observed = path.stat()
+        if observed.st_uid != uid or observed.st_size > 1024 * 1024:
+            _fail("resident_training_launchd_plist_identity_invalid")
+        try:
+            document = plistlib.loads(read_stable_bytes(path, max_bytes=1024 * 1024))
+        except (OSError, ValueError, plistlib.InvalidFileException) as exc:
+            raise ResidentSFTCampaignControllerError(
+                "resident_training_launchd_plist_invalid"
+            ) from exc
+        label = _resident_training_label(document.get("Label"))
+        if path.name != f"{label}.plist":
+            _fail("resident_training_launchd_plist_label_mismatch")
+        discovered[label] = path
+
+    retired_labels: list[str] = []
+    quarantined: list[str] = []
+    for label in sorted((loaded | set(discovered)) - {active_label}):
+        if label in loaded:
+            stopped = subprocess.run(
+                ["/bin/launchctl", "bootout", f"{domain}/{label}"],
+                capture_output=True,
+                text=True,
+                timeout=30.0,
+                check=False,
+            )
+            if stopped.returncode != 0:
+                _fail(f"resident_training_launchd_retirement_failed:{label}")
+        path = discovered.get(label)
+        if path is not None:
+            destination = quarantine_root / f"{time.time_ns()}-{path.name}"
+            os.replace(path, destination)
+            os.chmod(destination, 0o600)
+            quarantined.append(str(destination))
+        retired_labels.append(label)
+
+    remaining = _loaded_resident_training_labels() - {active_label}
+    if remaining:
+        _fail("resident_training_launchd_retirement_incomplete")
+    return {
+        "schema": "aura.resident_training_launchd_retirement.v1",
+        "active_label": active_label,
+        "retired_labels": retired_labels,
+        "quarantined_plists": quarantined,
+    }
 
 
 def _canonical(value: Any) -> bytes:
@@ -1360,48 +1545,53 @@ def _reconcile_staged_results(
 def run_controller(config_path: Path, *, launchd_supervised: bool = False) -> dict[str, Any]:
     global _ACTIVE_CUSTODIES
     config_path = config_path.expanduser().resolve(strict=True)
-    config, authority, plan = _load_contracts(config_path)
-    custodies = _acquire_campaign_custodies(config)
-    _ACTIVE_CUSTODIES = custodies
-    try:
-        return _run_controller_custodied(
-            config_path=config_path,
-            config=config,
-            authority=authority,
-            plan=plan,
-            custodies=custodies,
-            launchd_supervised=launchd_supervised,
-        )
-    except ResidentSFTCampaignControllerError as exc:
+    config_probe = _load_config(config_path)
+    with _resident_training_host_lease(
+        label=config_probe["launch"]["label"],
+        config_sha256=config_probe["config_sha256"],
+    ):
+        config, authority, plan = _load_contracts(config_path)
+        custodies = _acquire_campaign_custodies(config)
+        _ACTIVE_CUSTODIES = custodies
         try:
-            _publish_status(
-                custodies[-1].path,
-                config,
-                (
-                    "restartable_failure"
-                    if exc.code in RESTARTABLE_CONTROLLER_ERRORS
-                    else "failed"
-                ),
-                {"error": exc.code},
+            return _run_controller_custodied(
+                config_path=config_path,
+                config=config,
+                authority=authority,
+                plan=plan,
+                custodies=custodies,
+                launchd_supervised=launchd_supervised,
             )
-        except Exception:
-            pass
-        raise
-    except BaseException as exc:
-        try:
-            _publish_status(
-                custodies[-1].path,
-                config,
-                "failed",
-                {"error": str(exc) or "no_message", "error_type": type(exc).__name__},
-            )
-        except Exception:
-            pass
-        raise
-    finally:
-        for custody in reversed(custodies):
-            custody.close()
-        _ACTIVE_CUSTODIES = ()
+        except ResidentSFTCampaignControllerError as exc:
+            try:
+                _publish_status(
+                    custodies[-1].path,
+                    config,
+                    (
+                        "restartable_failure"
+                        if exc.code in RESTARTABLE_CONTROLLER_ERRORS
+                        else "failed"
+                    ),
+                    {"error": exc.code},
+                )
+            except Exception:
+                pass
+            raise
+        except BaseException as exc:
+            try:
+                _publish_status(
+                    custodies[-1].path,
+                    config,
+                    "failed",
+                    {"error": str(exc) or "no_message", "error_type": type(exc).__name__},
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            for custody in reversed(custodies):
+                custody.close()
+            _ACTIVE_CUSTODIES = ()
 
 
 def _run_controller_custodied(
@@ -1843,6 +2033,35 @@ def _install_launchd_custodied(
     python = interpreter.get("executable")
     if not isinstance(python, str) or not python:
         _fail("resident_sft_controller_interpreter_identity_invalid")
+    install_lock = _RESIDENT_TRAINING_STATE_DIR / "install.lock"
+    with _resident_training_lock(
+        install_lock,
+        busy_code="resident_training_install_busy",
+    ):
+        retirement = _retire_resident_training_jobs(active_label=label)
+        return _install_exclusive_launchd_custodied(
+            config_path=config_path,
+            config=config,
+            authority=authority,
+            label=label,
+            root=root,
+            retirement=retirement,
+        )
+
+
+def _install_exclusive_launchd_custodied(
+    *,
+    config_path: Path,
+    config: Mapping[str, Any],
+    authority: Mapping[str, Any],
+    label: str,
+    root: Path,
+    retirement: Mapping[str, Any],
+) -> dict[str, Any]:
+    interpreter = authority.get("runtime", {}).get("interpreter", {})
+    python = interpreter.get("executable")
+    if not isinstance(python, str) or not python:
+        _fail("resident_sft_controller_interpreter_identity_invalid")
     payload = {
         "Label": label,
         "ProgramArguments": [
@@ -1910,6 +2129,7 @@ def _install_launchd_custodied(
         "launchd_keepalive": True,
         "launchd_target": job["target"],
         "launchd_pid": job["job_pid"],
+        "retirement": dict(retirement),
         "installed_at_unix_ns": time.time_ns(),
     }
     receipt = {**body, "launch_sha256": sha256_json(body)}

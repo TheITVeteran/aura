@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,11 +17,128 @@ from core.runtime.secure_path_custody import DirectoryCustody, path_custody_thre
 from tools import run_resident_recurrent_sft_bootstrap_campaign as controller
 
 _REAL_ACQUIRE_CAMPAIGN_CUSTODIES = controller._acquire_campaign_custodies
+_REAL_RESIDENT_TRAINING_HOST_LEASE = controller._resident_training_host_lease
 
 
 @pytest.fixture(autouse=True)
 def _stub_campaign_custody(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(controller, "_acquire_campaign_custodies", lambda _config: ())
+
+    @contextmanager
+    def _host_lease(**_kwargs):
+        yield {"lease_sha256": "f" * 64}
+
+    monkeypatch.setattr(controller, "_resident_training_host_lease", _host_lease)
+
+
+def test_resident_training_host_lease_is_cross_campaign_and_crash_recoverable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "host.lock"
+    first = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-first"
+    second = "com.aura.resident-32b-recurrent-grpo-cp-second.post-training"
+
+    with _REAL_RESIDENT_TRAINING_HOST_LEASE(
+        label=first,
+        config_sha256="a" * 64,
+        lease_path=path,
+    ) as lease:
+        assert lease["active"] is True
+        with pytest.raises(
+            controller.ResidentSFTCampaignControllerError,
+            match="resident_training_host_busy",
+        ):
+            with _REAL_RESIDENT_TRAINING_HOST_LEASE(
+                label=second,
+                config_sha256="b" * 64,
+                lease_path=path,
+            ):
+                pass
+
+    with _REAL_RESIDENT_TRAINING_HOST_LEASE(
+        label=second,
+        config_sha256="b" * 64,
+        lease_path=path,
+    ) as recovered:
+        assert recovered["label"] == second
+
+    persisted = json.loads(path.read_text())
+    assert persisted["active"] is False
+    assert persisted["label"] == second
+
+
+def test_install_retirement_unloads_and_quarantines_every_superseded_family(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    launch_agents = tmp_path / "LaunchAgents"
+    quarantine = tmp_path / "quarantine"
+    launch_agents.mkdir()
+    active = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-active"
+    stale_sft = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-stale"
+    stale_grpo = "com.aura.resident-32b-recurrent-grpo-cp-stale.post-training"
+    for label in (active, stale_sft, stale_grpo):
+        (launch_agents / f"{label}.plist").write_bytes(
+            controller.plistlib.dumps({"Label": label})
+        )
+    inventories = iter(
+        [
+            {active, stale_sft, stale_grpo},
+            {active},
+        ]
+    )
+    monkeypatch.setattr(
+        controller,
+        "_loaded_resident_training_labels",
+        lambda: next(inventories),
+    )
+    calls: list[list[str]] = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(controller.subprocess, "run", _run)
+
+    receipt = controller._retire_resident_training_jobs(
+        active_label=active,
+        launch_agents=launch_agents,
+        quarantine_root=quarantine,
+    )
+
+    assert receipt["retired_labels"] == [stale_grpo, stale_sft]
+    assert (launch_agents / f"{active}.plist").is_file()
+    assert not (launch_agents / f"{stale_sft}.plist").exists()
+    assert not (launch_agents / f"{stale_grpo}.plist").exists()
+    assert len(list(quarantine.glob("*.plist"))) == 2
+    assert calls == [
+        ["/bin/launchctl", "bootout", f"gui/{controller.os.getuid()}/{stale_grpo}"],
+        ["/bin/launchctl", "bootout", f"gui/{controller.os.getuid()}/{stale_sft}"],
+    ]
+
+
+def test_install_retirement_rejects_plist_filename_label_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    launch_agents = tmp_path / "LaunchAgents"
+    launch_agents.mkdir()
+    active = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-active"
+    substituted = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-other"
+    (launch_agents / f"{active}.plist").write_bytes(
+        controller.plistlib.dumps({"Label": substituted})
+    )
+    monkeypatch.setattr(controller, "_loaded_resident_training_labels", lambda: set())
+
+    with pytest.raises(
+        controller.ResidentSFTCampaignControllerError,
+        match="resident_training_launchd_plist_label_mismatch",
+    ):
+        controller._retire_resident_training_jobs(
+            active_label=active,
+            launch_agents=launch_agents,
+            quarantine_root=tmp_path / "quarantine",
+        )
 
 
 def _config() -> dict[str, Any]:
@@ -500,6 +618,7 @@ def test_controller_completes_two_cells_and_never_promotes(
         "trainer": {"max_steps": 2},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
     monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
     monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
     monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)
@@ -581,6 +700,7 @@ def test_controller_stops_after_two_consecutive_no_progress_failures(
         "trainer": {"max_steps": 1},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
     monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
     monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
     monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)
@@ -728,6 +848,7 @@ def test_restart_after_journal_start_without_reservation_fails_attempt_then_retr
         "trainer": {"max_steps": 1},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
     monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
     monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
     monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)
@@ -808,6 +929,7 @@ def test_target_checkpoint_with_failed_receipt_is_certified_without_overshoot(
         "trainer": {"max_steps": 1},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
     monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
     monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
     monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)
@@ -1054,6 +1176,7 @@ def test_recovered_active_attempt_reattaches_from_partial_checkpoint(
         "trainer": {"max_steps": 2},
     }
     monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
     monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
     monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
     monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)

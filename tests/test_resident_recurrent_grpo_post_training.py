@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import plistlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -340,6 +341,63 @@ def test_launchd_contract_restarts_only_unexpected_nonzero_exit(
     assert payload["ThrottleInterval"] == 30
     assert payload["ProgramArguments"][0:2] == ["/usr/bin/caffeinate", "-i"]
     assert payload["ProgramArguments"][2] == str(venv_python)
+
+
+def test_grpo_uses_same_cross_family_host_lease_as_resident_sft(tmp_path):
+    path = tmp_path / "host.lock"
+    grpo = "com.aura.resident-32b-recurrent-grpo-cp-test.post-training"
+    sft = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-test"
+
+    with post._resident_training_host_lease(
+        label=grpo,
+        config_sha256="a" * 64,
+        lease_path=path,
+    ):
+        with pytest.raises(post.PostTrainingError, match="resident_training_host_busy"):
+            with post._resident_training_host_lease(
+                label=sft,
+                config_sha256="b" * 64,
+                lease_path=path,
+            ):
+                pass
+
+    with post._resident_training_host_lease(
+        label=sft,
+        config_sha256="b" * 64,
+        lease_path=path,
+    ):
+        assert json.loads(path.read_text())["active"] is True
+
+
+def test_grpo_install_retires_stale_sft_and_grpo_jobs(monkeypatch, tmp_path):
+    launch_agents = tmp_path / "LaunchAgents"
+    quarantine = tmp_path / "quarantine"
+    launch_agents.mkdir()
+    active = "com.aura.resident-32b-recurrent-grpo-cp-active.post-training"
+    stale_sft = "com.aura.resident-sft.resident-32b-recurrent-sft-bootstrap-cp-stale"
+    stale_grpo = "com.aura.resident-32b-recurrent-grpo-cp-stale.post-training"
+    for label in (active, stale_sft, stale_grpo):
+        (launch_agents / f"{label}.plist").write_bytes(plistlib.dumps({"Label": label}))
+    inventories = iter([{active, stale_sft, stale_grpo}, {active}])
+    monkeypatch.setattr(post, "_loaded_resident_training_labels", lambda: next(inventories))
+    calls = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(post.subprocess, "run", _run)
+
+    receipt = post._retire_resident_training_jobs(
+        active_label=active,
+        launch_agents=launch_agents,
+        quarantine_root=quarantine,
+    )
+
+    assert receipt["retired_labels"] == [stale_grpo, stale_sft]
+    assert len(list(quarantine.glob("*.plist"))) == 2
+    assert (launch_agents / f"{active}.plist").is_file()
+    assert len(calls) == 2
 
 
 def _detached_status(returncode: int) -> dict:
