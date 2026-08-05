@@ -317,6 +317,37 @@ def verify_acceptance_witness_bundle(
 ) -> AcceptanceWitnessBundle:
     """Verify one externally signed role statement against pinned trust input."""
 
+    return verify_acceptance_witness_artifact_bundle(
+        bundle,
+        expected_role=expected_role,
+        expected_public_key_sha256=expected_public_key_sha256,
+        expected_campaign_id=mandate.campaign_id,
+        expected_mandate_sha256=mandate.sha256,
+        expected_artifact_sha256=certificate.sha256,
+        expected_evidence_sha256=expected_evidence_sha256,
+        expected_sequence=expected_sequence,
+        expected_previous_statement_sha256=expected_previous_statement_sha256,
+        campaign_completed_at_ns=certificate.completed_at_ns,
+        now_ns=now_ns,
+    )
+
+
+def verify_acceptance_witness_artifact_bundle(
+    bundle: AcceptanceWitnessBundle | Mapping[str, Any],
+    *,
+    expected_role: AcceptanceWitnessRole,
+    expected_public_key_sha256: str,
+    expected_campaign_id: str,
+    expected_mandate_sha256: str,
+    expected_artifact_sha256: str,
+    expected_evidence_sha256: str,
+    expected_sequence: int,
+    expected_previous_statement_sha256: str,
+    campaign_completed_at_ns: int,
+    now_ns: int | None = None,
+) -> AcceptanceWitnessBundle:
+    """Verify a role witness for any mandate-bound acceptance artifact."""
+
     resolved = (
         bundle
         if isinstance(bundle, AcceptanceWitnessBundle)
@@ -334,16 +365,31 @@ def verify_acceptance_witness_bundle(
         expected_previous_statement_sha256,
         name="expected_previous_statement_sha256",
     )
+    campaign_id = _identifier(expected_campaign_id, name="expected_campaign_id")
+    mandate_sha256 = _sha256(
+        expected_mandate_sha256,
+        name="expected_mandate_sha256",
+    )
+    artifact_sha256 = _sha256(
+        expected_artifact_sha256,
+        name="expected_artifact_sha256",
+    )
+    if (
+        isinstance(campaign_completed_at_ns, bool)
+        or not isinstance(campaign_completed_at_ns, int)
+        or campaign_completed_at_ns <= 0
+    ):
+        raise ValueError("campaign_completed_at_ns must be a positive integer")
     statement = resolved.statement
     if statement.role is not expected_role:
         raise AcceptanceWitnessError("acceptance_witness_role_mismatch")
     if not hmac.compare_digest(resolved.public_key_sha256, trusted_key):
         raise AcceptanceWitnessError("acceptance_witness_trust_root_mismatch")
-    if statement.campaign_id != mandate.campaign_id:
+    if statement.campaign_id != campaign_id:
         raise AcceptanceWitnessError("acceptance_witness_campaign_mismatch")
-    if not hmac.compare_digest(statement.mandate_sha256, mandate.sha256):
+    if not hmac.compare_digest(statement.mandate_sha256, mandate_sha256):
         raise AcceptanceWitnessError("acceptance_witness_mandate_mismatch")
-    if not hmac.compare_digest(statement.certificate_sha256, certificate.sha256):
+    if not hmac.compare_digest(statement.certificate_sha256, artifact_sha256):
         raise AcceptanceWitnessError("acceptance_witness_certificate_mismatch")
     if not hmac.compare_digest(statement.evidence_sha256, expected_evidence):
         raise AcceptanceWitnessError("acceptance_witness_evidence_mismatch")
@@ -355,7 +401,7 @@ def verify_acceptance_witness_bundle(
     ):
         raise AcceptanceWitnessError("acceptance_witness_predecessor_mismatch")
     current_ns = now_ns if now_ns is not None else time.time_ns()
-    if statement.witnessed_at_ns < certificate.completed_at_ns:
+    if statement.witnessed_at_ns < campaign_completed_at_ns:
         raise AcceptanceWitnessError("acceptance_witness_predates_campaign_completion")
     if statement.witnessed_at_ns > current_ns + _MAX_FUTURE_SKEW_NS:
         raise AcceptanceWitnessError("acceptance_witness_time_in_future")
@@ -621,5 +667,6 @@ __all__ = [
     "ExternallyWitnessedAcceptanceReceipt",
     "persist_externally_witnessed_acceptance_receipt",
     "verify_acceptance_with_external_witnesses",
+    "verify_acceptance_witness_artifact_bundle",
     "verify_acceptance_witness_bundle",
 ]

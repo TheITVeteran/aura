@@ -17,8 +17,16 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from core.reality_reach.acceptance import (
+    AcceptanceEvidenceClass,
     acceptance_governance_accepted,
     acceptance_governance_document,
+)
+from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_witness import (
+    AcceptanceWitnessBundle,
+    AcceptanceWitnessError,
+    AcceptanceWitnessRole,
+    verify_acceptance_witness_artifact_bundle,
 )
 from core.reality_reach.scalar_adapter import ScalarSample
 from core.runtime.audit_chain import canonical_json, sha256_hex
@@ -26,7 +34,10 @@ from core.runtime.secure_path_custody import DirectoryCustody, SecurePathCustody
 from core.runtime.state_ownership import state_root
 
 ACOUSTIC_A1_RECEIPT_SCHEMA = "aura.reality_reach.acoustic_a1_acceptance.v1"
-ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v1"
+ACOUSTIC_A1_CAMPAIGN_SCHEMA = "aura.reality_reach.acoustic_a1_campaign.v2"
+EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA = (
+    "aura.reality_reach.external_acoustic_a1_verification.v1"
+)
 ACOUSTIC_A1_CONNECTOR_ID = "macos.acoustic.a1"
 ACOUSTIC_A1_REQUIRED_CASES = (
     "calibration.monotone_transfer",
@@ -381,6 +392,7 @@ class AcousticA1AcceptanceReceipt:
 @dataclass(frozen=True, slots=True)
 class AcousticA1CampaignRecord:
     campaign_id: str
+    adapter_id: str
     source_commit_sha256: str
     workspace_state_sha256: str
     physical_identity_sha256: str
@@ -393,6 +405,8 @@ class AcousticA1CampaignRecord:
     def __post_init__(self) -> None:
         if self.campaign_id != self.receipt.campaign_id:
             raise ValueError("campaign record and receipt identity must match")
+        if not self.adapter_id or len(self.adapter_id) > 256:
+            raise ValueError("adapter_id must be a bounded non-empty string")
         for name in (
             "source_commit_sha256",
             "workspace_state_sha256",
@@ -436,6 +450,7 @@ class AcousticA1CampaignRecord:
         document = {
             "schema": ACOUSTIC_A1_CAMPAIGN_SCHEMA,
             "campaign_id": self.campaign_id,
+            "adapter_id": self.adapter_id,
             "source_commit_sha256": self.source_commit_sha256,
             "workspace_state_sha256": self.workspace_state_sha256,
             "physical_identity_sha256": self.physical_identity_sha256,
@@ -455,6 +470,7 @@ class AcousticA1CampaignRecord:
         expected = {
             "schema",
             "campaign_id",
+            "adapter_id",
             "source_commit_sha256",
             "workspace_state_sha256",
             "physical_identity_sha256",
@@ -475,6 +491,7 @@ class AcousticA1CampaignRecord:
         try:
             record = cls(
                 campaign_id=document["campaign_id"],
+                adapter_id=document["adapter_id"],
                 source_commit_sha256=document["source_commit_sha256"],
                 workspace_state_sha256=document["workspace_state_sha256"],
                 physical_identity_sha256=document["physical_identity_sha256"],
@@ -489,6 +506,225 @@ class AcousticA1CampaignRecord:
         if document["accepted"] is not record.accepted or document["campaign_record_sha256"] != record.sha256:
             raise AcousticAcceptanceError("acoustic_a1_campaign_derived_field_invalid")
         return record
+
+
+@dataclass(frozen=True, slots=True)
+class ExternallyWitnessedAcousticA1Receipt:
+    campaign_record_sha256: str
+    mandate_sha256: str
+    metrology_witness_bundle_sha256: str
+    governance_witness_bundle_sha256: str
+    metrology_witness_key_sha256: str
+    governance_witness_key_sha256: str
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "campaign_record_sha256",
+            "mandate_sha256",
+            "metrology_witness_bundle_sha256",
+            "governance_witness_bundle_sha256",
+            "metrology_witness_key_sha256",
+            "governance_witness_key_sha256",
+        ):
+            value = str(getattr(self, name) or "")
+            if name in {"campaign_record_sha256", "mandate_sha256"}:
+                if not _SHA256.fullmatch(value):
+                    raise ValueError(f"{name} must be a sha256 digest")
+            elif value and not _SHA256.fullmatch(value):
+                raise ValueError(f"{name} must be empty or a sha256 digest")
+        if len(self.blockers) != len(set(self.blockers)):
+            raise ValueError("blockers must be unique")
+
+    @property
+    def accepted(self) -> bool:
+        return bool(
+            not self.blockers
+            and self.metrology_witness_bundle_sha256
+            and self.governance_witness_bundle_sha256
+            and self.metrology_witness_key_sha256
+            and self.governance_witness_key_sha256
+            and self.metrology_witness_key_sha256
+            != self.governance_witness_key_sha256
+        )
+
+    @property
+    def sha256(self) -> str:
+        return _digest(self.to_dict(include_digest=False))
+
+    def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
+        document = {
+            "schema": EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA,
+            "campaign_record_sha256": self.campaign_record_sha256,
+            "mandate_sha256": self.mandate_sha256,
+            "metrology_witness_bundle_sha256": self.metrology_witness_bundle_sha256,
+            "governance_witness_bundle_sha256": self.governance_witness_bundle_sha256,
+            "metrology_witness_key_sha256": self.metrology_witness_key_sha256,
+            "governance_witness_key_sha256": self.governance_witness_key_sha256,
+            "blockers": list(self.blockers),
+            "accepted": self.accepted,
+        }
+        if include_digest:
+            document["verification_sha256"] = self.sha256
+        return document
+
+
+def verify_acoustic_a1_with_external_witnesses(
+    record: AcousticA1CampaignRecord,
+    mandate: AcceptanceVerificationMandate,
+    *,
+    metrology_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
+    governance_witness_bundle: AcceptanceWitnessBundle | dict[str, Any] | None,
+    metrology_witness_key_sha256: str,
+    governance_witness_key_sha256: str,
+    metrology_sequence: int = 1,
+    governance_sequence: int = 1,
+    metrology_previous_statement_sha256: str = "sha256:" + "0" * 64,
+    governance_previous_statement_sha256: str = "sha256:" + "0" * 64,
+    now_ns: int | None = None,
+) -> ExternallyWitnessedAcousticA1Receipt:
+    """Independently bind A1 physical and governance evidence to two roots."""
+
+    if not isinstance(record, AcousticA1CampaignRecord):
+        raise TypeError("record must be an AcousticA1CampaignRecord")
+    if not isinstance(mandate, AcceptanceVerificationMandate):
+        raise TypeError("mandate must be an AcceptanceVerificationMandate")
+    config = AcousticAcceptanceConfig(campaign_id=record.campaign_id)
+    blockers: list[str] = []
+    expected_mandate = {
+        "campaign_id": record.campaign_id,
+        "connector_id": ACOUSTIC_A1_CONNECTOR_ID,
+        "adapter_id": record.adapter_id,
+        "expected_source_commit_sha256": record.source_commit_sha256,
+        "expected_physical_identity_sha256": record.physical_identity_sha256,
+        "expected_evidence_class": AcceptanceEvidenceClass.LIVE,
+        "target": config.required_error_reduction,
+        "target_tolerance": 0.0,
+        "scenario_id": "",
+        "expected_simulated_channel_ids": (),
+        "required_cases": ACOUSTIC_A1_REQUIRED_CASES,
+    }
+    if mandate.sha256 != record.mandate_sha256:
+        blockers.append("acoustic_a1_mandate_digest_mismatch")
+    for field, value in expected_mandate.items():
+        if getattr(mandate, field) != value:
+            blockers.append(f"acoustic_a1_mandate_{field}_mismatch")
+    if record.receipt.config_sha256 != config.sha256:
+        blockers.append("acoustic_a1_config_digest_mismatch")
+    if not record.accepted:
+        blockers.append("acoustic_a1_producer_record_not_accepted")
+
+    verified_metrology_bundle = ""
+    verified_governance_bundle = ""
+    if metrology_witness_bundle is None:
+        blockers.append("external_metrology_witness_missing")
+    elif not metrology_witness_key_sha256:
+        blockers.append("external_metrology_trust_root_missing")
+    else:
+        try:
+            verified = verify_acceptance_witness_artifact_bundle(
+                metrology_witness_bundle,
+                expected_role=AcceptanceWitnessRole.METROLOGY,
+                expected_public_key_sha256=metrology_witness_key_sha256,
+                expected_campaign_id=record.campaign_id,
+                expected_mandate_sha256=mandate.sha256,
+                expected_artifact_sha256=record.sha256,
+                expected_evidence_sha256=record.receipt.sha256,
+                expected_sequence=metrology_sequence,
+                expected_previous_statement_sha256=(
+                    metrology_previous_statement_sha256
+                ),
+                campaign_completed_at_ns=record.completed_at_ns,
+                now_ns=now_ns,
+            )
+            verified_metrology_bundle = verified.sha256
+        except (AcceptanceWitnessError, TypeError, ValueError) as exc:
+            blockers.append(
+                exc.code
+                if isinstance(exc, AcceptanceWitnessError)
+                else "external_metrology_witness_invalid"
+            )
+
+    if governance_witness_bundle is None:
+        blockers.append("external_governance_witness_missing")
+    elif not governance_witness_key_sha256:
+        blockers.append("external_governance_trust_root_missing")
+    else:
+        try:
+            verified = verify_acceptance_witness_artifact_bundle(
+                governance_witness_bundle,
+                expected_role=AcceptanceWitnessRole.GOVERNANCE,
+                expected_public_key_sha256=governance_witness_key_sha256,
+                expected_campaign_id=record.campaign_id,
+                expected_mandate_sha256=mandate.sha256,
+                expected_artifact_sha256=record.sha256,
+                expected_evidence_sha256=_digest(record.governance_evidence),
+                expected_sequence=governance_sequence,
+                expected_previous_statement_sha256=(
+                    governance_previous_statement_sha256
+                ),
+                campaign_completed_at_ns=record.completed_at_ns,
+                now_ns=now_ns,
+            )
+            verified_governance_bundle = verified.sha256
+        except (AcceptanceWitnessError, TypeError, ValueError) as exc:
+            blockers.append(
+                exc.code
+                if isinstance(exc, AcceptanceWitnessError)
+                else "external_governance_witness_invalid"
+            )
+    if (
+        verified_metrology_bundle
+        and verified_governance_bundle
+        and metrology_witness_key_sha256 == governance_witness_key_sha256
+    ):
+        blockers.append("external_witness_roots_not_distinct")
+    return ExternallyWitnessedAcousticA1Receipt(
+        campaign_record_sha256=record.sha256,
+        mandate_sha256=mandate.sha256,
+        metrology_witness_bundle_sha256=verified_metrology_bundle,
+        governance_witness_bundle_sha256=verified_governance_bundle,
+        metrology_witness_key_sha256=(
+            metrology_witness_key_sha256 if verified_metrology_bundle else ""
+        ),
+        governance_witness_key_sha256=(
+            governance_witness_key_sha256 if verified_governance_bundle else ""
+        ),
+        blockers=tuple(sorted(set(blockers))),
+    )
+
+
+def persist_externally_witnessed_acoustic_a1_receipt(
+    receipt: ExternallyWitnessedAcousticA1Receipt,
+    path: str | Path,
+) -> bool:
+    """Create-once publish one dual-root A1 promotion verdict."""
+
+    if not isinstance(receipt, ExternallyWitnessedAcousticA1Receipt):
+        raise TypeError("receipt must be an ExternallyWitnessedAcousticA1Receipt")
+    target = Path(path).expanduser().absolute()
+    if not target.name or target.name in {".", ".."}:
+        raise AcousticAcceptanceError("external_acoustic_a1_receipt_path_invalid")
+    payload = canonical_json(receipt.to_dict())
+    try:
+        with DirectoryCustody.acquire(target.parent, create=True, private=True) as custody:
+            published = bool(custody.write_bytes_once(target.name, payload, mode=0o600))
+            fd = custody.open_file(target.name, os.O_RDONLY)
+            try:
+                if stat.S_IMODE(os.fstat(fd).st_mode) != 0o600:
+                    raise AcousticAcceptanceError(
+                        "external_acoustic_a1_receipt_mode_invalid"
+                    )
+            finally:
+                os.close(fd)
+            existing = custody.read_bytes(target.name, max_bytes=1024 * 1024)
+    except SecurePathCustodyError as exc:
+        raise AcousticAcceptanceError(
+            "external_acoustic_a1_receipt_custody_invalid"
+        ) from exc
+    if existing != payload:
+        raise AcousticAcceptanceError("external_acoustic_a1_receipt_collision")
+    return published
 
 
 class AcousticA1CampaignStore:
@@ -789,6 +1025,7 @@ __all__ = [
     "ACOUSTIC_A1_CAMPAIGN_SCHEMA",
     "ACOUSTIC_A1_RECEIPT_SCHEMA",
     "ACOUSTIC_A1_REQUIRED_CASES",
+    "EXTERNAL_ACOUSTIC_A1_VERIFICATION_SCHEMA",
     "AcousticA1AcceptanceReceipt",
     "AcousticA1CampaignRecord",
     "AcousticA1CampaignStore",
@@ -797,5 +1034,8 @@ __all__ = [
     "AcousticTrial",
     "AcousticTrialArm",
     "AcousticTrialDriver",
+    "ExternallyWitnessedAcousticA1Receipt",
+    "persist_externally_witnessed_acoustic_a1_receipt",
     "run_acoustic_a1_acceptance",
+    "verify_acoustic_a1_with_external_witnesses",
 ]

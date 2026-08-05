@@ -1,21 +1,38 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import math
 import time
 from dataclasses import replace
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from core.reality_reach.acceptance import AcceptanceEvidenceClass
+from core.reality_reach.acceptance_mandate import AcceptanceVerificationMandate
+from core.reality_reach.acceptance_witness import (
+    ZERO_SHA256,
+    AcceptanceWitnessBundle,
+    AcceptanceWitnessRole,
+    AcceptanceWitnessStatement,
+)
 from core.reality_reach.acoustic_acceptance import (
+    ACOUSTIC_A1_CONNECTOR_ID,
+    ACOUSTIC_A1_REQUIRED_CASES,
     AcousticA1AcceptanceReceipt,
     AcousticA1CampaignRecord,
     AcousticAcceptanceConfig,
     AcousticAcceptanceError,
     AcousticTrialArm,
+    persist_externally_witnessed_acoustic_a1_receipt,
     run_acoustic_a1_acceptance,
+    verify_acoustic_a1_with_external_witnesses,
 )
 from core.reality_reach.scalar_adapter import ScalarSample
+from core.runtime.audit_chain import canonical_json, sha256_hex
 
 
 class _TransferDriver:
@@ -60,6 +77,43 @@ class _TransferDriver:
             source_epoch="fixture",
             source_sequence=len(self.calls),
         )
+
+
+def _witness_bundle(
+    role: AcceptanceWitnessRole,
+    private_key: Ed25519PrivateKey,
+    *,
+    record: AcousticA1CampaignRecord,
+    mandate: AcceptanceVerificationMandate,
+    evidence_sha256: str,
+) -> AcceptanceWitnessBundle:
+    statement = AcceptanceWitnessStatement(
+        role=role,
+        witness_id=f"fixture.{role.value}",
+        campaign_id=record.campaign_id,
+        mandate_sha256=mandate.sha256,
+        certificate_sha256=record.sha256,
+        evidence_sha256=evidence_sha256,
+        sequence=1,
+        previous_statement_sha256=ZERO_SHA256,
+        witnessed_at_ns=record.completed_at_ns + 1,
+    )
+    payload = json.dumps(
+        statement.to_dict(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return AcceptanceWitnessBundle(
+        statement=statement,
+        public_key_raw_b64=base64.b64encode(public_key).decode("ascii"),
+        signature_b64=base64.b64encode(private_key.sign(payload)).decode("ascii"),
+    )
 
 
 @pytest.mark.asyncio
@@ -108,6 +162,7 @@ async def test_a1_receipt_and_campaign_record_round_trip_derived_verdicts() -> N
     }
     record = AcousticA1CampaignRecord(
         campaign_id=receipt.campaign_id,
+        adapter_id="macos_acoustic.macos.acoustic.reference_tone_dbfs.adapter",
         source_commit_sha256="sha256:" + "3" * 64,
         workspace_state_sha256="sha256:" + "4" * 64,
         physical_identity_sha256="sha256:" + "5" * 64,
@@ -127,6 +182,120 @@ async def test_a1_receipt_and_campaign_record_round_trip_derived_verdicts() -> N
     tampered["accepted"] = False
     with pytest.raises(AcousticAcceptanceError, match="derived_field_invalid"):
         AcousticA1AcceptanceReceipt.from_dict(tampered)
+
+
+@pytest.mark.asyncio
+async def test_a1_requires_distinct_valid_external_witness_roots(tmp_path) -> None:
+    receipt = await run_acoustic_a1_acceptance(
+        _TransferDriver(),
+        AcousticAcceptanceConfig(campaign_id="fixture-external-witness"),
+    )
+    governance = {
+        "schema": "aura.reality_reach.acceptance_governance.v1",
+        "action_id": "acceptance.fixture-external-witness",
+        "request_digest": "sha256:" + "1" * 64,
+        "will_receipt_id": "will.fixture",
+        "post_action_receipt_id": "post.fixture",
+        "post_action_output_hash": "sha256:" + "2" * 64,
+        "status": "success_verified",
+        "transport_succeeded": True,
+        "effect_verified": True,
+        "receipt_persisted": True,
+        "welfare_transaction_completed": True,
+    }
+    adapter_id = "macos_acoustic.macos.acoustic.reference_tone_dbfs.adapter"
+    source_sha256 = "sha256:" + "3" * 64
+    physical_sha256 = "sha256:" + "5" * 64
+    mandate = AcceptanceVerificationMandate(
+        campaign_id=receipt.campaign_id,
+        connector_id=ACOUSTIC_A1_CONNECTOR_ID,
+        adapter_id=adapter_id,
+        expected_source_commit_sha256=source_sha256,
+        expected_physical_identity_sha256=physical_sha256,
+        expected_evidence_class=AcceptanceEvidenceClass.LIVE,
+        target=0.5,
+        target_tolerance=0.0,
+        scenario_id="",
+        expected_live_channel_ids=(
+            "macos_acoustic.macos.acoustic.reference_tone_dbfs.readback",
+        ),
+        expected_simulated_channel_ids=(),
+        required_cases=ACOUSTIC_A1_REQUIRED_CASES,
+        provisioned_at_ns=receipt.trials[0].captured_at_ns - 1,
+        custody_sequence=1,
+    )
+    record = AcousticA1CampaignRecord(
+        campaign_id=receipt.campaign_id,
+        adapter_id=adapter_id,
+        source_commit_sha256=source_sha256,
+        workspace_state_sha256="sha256:" + "4" * 64,
+        physical_identity_sha256=physical_sha256,
+        mandate_sha256=mandate.sha256,
+        receipt=receipt,
+        governance_evidence=governance,
+        started_at_ns=receipt.trials[0].captured_at_ns,
+        completed_at_ns=receipt.completed_at_ns,
+    )
+    metrology_key = Ed25519PrivateKey.generate()
+    governance_key = Ed25519PrivateKey.generate()
+    metrology = _witness_bundle(
+        AcceptanceWitnessRole.METROLOGY,
+        metrology_key,
+        record=record,
+        mandate=mandate,
+        evidence_sha256=receipt.sha256,
+    )
+    governed = _witness_bundle(
+        AcceptanceWitnessRole.GOVERNANCE,
+        governance_key,
+        record=record,
+        mandate=mandate,
+        evidence_sha256=str(sha256_hex(canonical_json(governance))),
+    )
+
+    verified = verify_acoustic_a1_with_external_witnesses(
+        record,
+        mandate,
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=governed,
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=governed.public_key_sha256,
+        now_ns=record.completed_at_ns + 2,
+    )
+    shared_root = verify_acoustic_a1_with_external_witnesses(
+        record,
+        mandate,
+        metrology_witness_bundle=metrology,
+        governance_witness_bundle=_witness_bundle(
+            AcceptanceWitnessRole.GOVERNANCE,
+            metrology_key,
+            record=record,
+            mandate=mandate,
+            evidence_sha256=str(sha256_hex(canonical_json(governance))),
+        ),
+        metrology_witness_key_sha256=metrology.public_key_sha256,
+        governance_witness_key_sha256=metrology.public_key_sha256,
+        now_ns=record.completed_at_ns + 2,
+    )
+
+    assert verified.accepted is True
+    assert verified.blockers == ()
+    assert shared_root.accepted is False
+    assert "external_witness_roots_not_distinct" in shared_root.blockers
+    receipt_path = tmp_path / "external-a1.json"
+    assert persist_externally_witnessed_acoustic_a1_receipt(
+        verified,
+        receipt_path,
+    ) is True
+    assert persist_externally_witnessed_acoustic_a1_receipt(
+        verified,
+        receipt_path,
+    ) is False
+    with pytest.raises(AcousticAcceptanceError, match="receipt_collision"):
+        persist_externally_witnessed_acoustic_a1_receipt(
+            replace(verified, blockers=("tampered",)),
+            receipt_path,
+        )
 
 
 @pytest.mark.asyncio

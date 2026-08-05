@@ -36382,3 +36382,46 @@ hardware campaign remains intentionally unexecuted while resident 32B training
 owns the host. Independent witness custody, public Rekor inclusion, independent
 replay, and representative tenant/device evidence remain empirical blockers.
 CP810 and the total therefore remain open at 809/920.
+
+#### CP810 addendum: independent dual-root A1 witness replay
+
+The acoustic A1 campaign record can now be promoted through the same external
+Ed25519 witness protocol as the established scalar acceptance certificate. The
+shared verifier was factored at the artifact-binding boundary without changing
+the signed statement schema or weakening existing checks. It still pins role,
+public-key digest, campaign, mandate, artifact, role-specific evidence,
+monotonic sequence, predecessor, post-campaign time, and detached signature.
+The original scalar acceptance path delegates to this common verifier and its
+existing falsification suite remains green.
+
+For A1, the metrology witness signs the complete physical trial-receipt digest;
+the governance witness signs the reduced ActionExecutor evidence digest. Both
+statements also bind the create-once campaign-record digest and Keychain-held
+mandate. Independent replay reconstructs the source-bound A1 defaults and
+checks campaign, connector, adapter, source, physical identity, live evidence
+class, 50% target, zero target tolerance, required case set, receipt-config
+digest, and the producer's accepted verdict before considering external
+promotion. Two valid signatures under the same root remain a refusal.
+
+The resulting external verdict has its own create-once private receipt. Exact
+replay is idempotent; a changed verdict at the same path is a collision rather
+than an overwrite. The term `certificate_sha256` remains in the version-1
+signed envelope for compatibility, but the shared verifier treats it as the
+mandate-bound acceptance artifact digest and documents that boundary.
+
+External A1 witness evidence:
+
+- valid distinct-root promotion, shared-root refusal, mandate/source/device/
+  config replay, role-evidence binding, signature verification, legacy scalar
+  witness regression, and create-once external verdict collision: 67/67
+  focused tests passed;
+- full affected Reality Reach, acceptance, transaction, route, scalar-adapter,
+  witness, and acoustic family: 188/188 passed;
+- smoke 103/103, full repository compile, governance ownership lint,
+  architectural layering, local security, Ruff, diff hygiene, and scoped
+  production MyPy passed.
+
+This closes the independent dual-signature software path for A1. No real
+speaker/microphone campaign, independently held production keys, public Rekor
+entry, or representative tenant replay exists yet, so no empirical promotion
+is claimed. CP810 and the total remain open at 809/920.

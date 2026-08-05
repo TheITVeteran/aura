@@ -553,6 +553,7 @@ class RealityAcceptanceService:
                 )
                 record = AcousticA1CampaignRecord(
                     campaign_id=request.campaign_id,
+                    adapter_id=adapter.adapter_id,
                     source_commit_sha256=source_before["source_commit_sha256"],
                     workspace_state_sha256=source_before["workspace_state_sha256"],
                     physical_identity_sha256=adapter.physical_identity_sha256,
@@ -687,6 +688,7 @@ class RealityAcceptanceService:
                 completed_at_ns = max(time.time_ns(), receipt.completed_at_ns)
                 record = AcousticA1CampaignRecord(
                     campaign_id=request.campaign_id,
+                    adapter_id=adapter.adapter_id,
                     source_commit_sha256=source_after["source_commit_sha256"],
                     workspace_state_sha256=source_after["workspace_state_sha256"],
                     physical_identity_sha256=adapter.physical_identity_sha256,
