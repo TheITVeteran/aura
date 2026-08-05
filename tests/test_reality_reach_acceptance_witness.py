@@ -574,6 +574,7 @@ def test_two_distinct_external_roots_promote_live_acceptance() -> None:
 
 def test_physical_acceptance_requires_verified_transparency_log_inclusion() -> None:
     receipt, bundle, log_public_pem = _transparency_fixture()
+    assert bundle["statement"]["schema"].endswith(".v2")
 
     missing = verify_transparently_logged_acceptance(
         receipt,

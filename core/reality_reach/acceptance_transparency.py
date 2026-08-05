@@ -27,7 +27,7 @@ from core.security.rekor_transparency import (
 )
 
 ACCEPTANCE_TRANSPARENCY_STATEMENT_SCHEMA = (
-    "aura.reality_reach.acceptance_transparency_statement.v1"
+    "aura.reality_reach.acceptance_transparency_statement.v2"
 )
 ACCEPTANCE_TRANSPARENCY_BUNDLE_SCHEMA = (
     "aura.reality_reach.acceptance_transparency_bundle.v1"

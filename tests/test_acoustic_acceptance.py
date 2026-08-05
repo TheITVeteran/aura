@@ -562,6 +562,7 @@ async def test_a1_requires_distinct_valid_external_witness_roots(
         previous_rekor_uuid=None,
         issued_at_unix=issued_at,
     )
+    assert statement["schema"].endswith(".v2")
     bundle, log_public_pem = _transparency_bundle(
         statement,
         log_key=acceptance_log_key,
