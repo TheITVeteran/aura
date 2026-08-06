@@ -914,6 +914,16 @@ _AGENT_MAX_TURNS_CEILING = 32
 _READINESS_PROBE_PROMPT = "Reply exactly: ready"
 _READINESS_EXPECTED_TOKEN = "ready"
 _READINESS_ANSWER_MAX_CHARS = 200
+#: The readiness probe is a real 16-token generation on a resident model, so a
+#: probe given less than this is being started only to be cancelled mid-token
+#: and recorded as a readiness failure it never had a chance to pass.
+#:
+#: It is a rule about whether to OPEN a probe, deliberately not a floor on its
+#: timeout: a floor on the timeout lets the probe outlive the one hard warmup
+#: deadline, which is the bound a caller waiting on warmup actually relies on.
+_MIN_READINESS_PROBE_BUDGET_S = 10.0
+#: And no single probe may consume an arbitrarily large campaign either.
+_MAX_READINESS_PROBE_S = 60.0
 # A warmup still running after this long is stuck: cancel it (and prove it
 # ended) before a replacement starts.
 _WARMUP_STALE_AFTER_S = 300.0
@@ -12687,6 +12697,28 @@ class MLXLocalClient:
                 # "Reply exactly: ready" but any nonblank text used to pass, so
                 # hallucinated, garbled, stale, or prompt-echo output proved
                 # readiness).
+                # The probe is bounded by what is LEFT of the campaign, never by
+                # a floor applied on top of it. A floor there (`max(10.0, ...)`)
+                # meant a campaign with 2s left still handed the probe 10s, so
+                # the one hard deadline this function exists to enforce was
+                # exceeded by up to 10s on exactly the slow boots that made a
+                # caller depend on it.
+                #
+                # "A probe that starts at all deserves a fair chance" is still
+                # right — it is a rule about whether to START one, not about how
+                # long an already-doomed one may run. So a campaign without
+                # _MIN_READINESS_PROBE_BUDGET_S left does not open a probe; it
+                # ends, inside the budget it promised.
+                probe_budget = campaign_deadline - time.monotonic()
+                if probe_budget < _MIN_READINESS_PROBE_BUDGET_S:
+                    self._set_lane_state(
+                        "recovering", "warmup_budget_exhausted_before_readiness_probe"
+                    )
+                    raise TimeoutError(
+                        f"warmup_budget_exhausted:{warmup_timeout:.1f}s:"
+                        f"probe_needs:{_MIN_READINESS_PROBE_BUDGET_S:.1f}s:"
+                        f"left:{max(0.0, probe_budget):.1f}s"
+                    )
                 logger.info(
                     "🔥 [MLX] Verifying conversation readiness for %s with a visible probe.",
                     os.path.basename(self.model_path),
@@ -12715,11 +12747,8 @@ class MLXLocalClient:
                     # Out of the SAME campaign budget as the precompile above
                     # (CP126 b4fcd100). A probe that took its own independent
                     # timeout is how the documented warmup bound became a
-                    # suggestion. Floored so a probe that starts at all gets a
-                    # fair chance rather than being cancelled mid-token.
-                    timeout=min(
-                        max(10.0, campaign_deadline - time.monotonic()), 60.0
-                    ),
+                    # suggestion.
+                    timeout=min(probe_budget, _MAX_READINESS_PROBE_S),
                 )
                 if not readiness_text or not str(readiness_text).strip():
                     self._set_lane_state("recovering", "warmup_readiness_no_text")
@@ -12752,16 +12781,48 @@ class MLXLocalClient:
             except (RuntimeError, TimeoutError, AttributeError) as exc:
                 last_exc = exc
                 if attempt == 0:
+                    # The recovery between attempts used to sit OUTSIDE the
+                    # campaign: an unawaited-cost gc, a `reboot_worker` with no
+                    # bound of its own, and a flat 1s settle. So "one campaign
+                    # deadline, shared" described the two generations only, and
+                    # a warmup that promised 1s routinely took several — the
+                    # composed contract differing from what the local code says,
+                    # which is the failure mode this whole function was rewritten
+                    # to remove.
+                    #
+                    # A retry now has to FIT: it is worth starting only if what
+                    # remains could still carry a probe, and every second it
+                    # spends recovering comes out of the same budget.
+                    recovery_budget = campaign_deadline - time.monotonic()
+                    if recovery_budget <= _MIN_READINESS_PROBE_BUDGET_S:
+                        raise last_exc from None
                     logger.warning(
-                        "⚠️ [MLX] Warmup pre-compile failed once for %s: %s. Retrying cleanly...",
+                        "⚠️ [MLX] Warmup pre-compile failed once for %s: %s. "
+                        "Retrying cleanly within the remaining %.1fs...",
                         os.path.basename(self.model_path),
                         exc,
+                        recovery_budget,
                     )
-                    await asyncio.to_thread(gc.collect)
-                    await self.reboot_worker(reason="warmup_precompile_retry", mark_failed=False)
-                    await asyncio.sleep(1.0)
+                    try:
+                        await asyncio.wait_for(
+                            self._recover_worker_for_warmup_retry(),
+                            timeout=recovery_budget,
+                        )
+                    except (TimeoutError, asyncio.TimeoutError):
+                        raise last_exc from None
                     continue
                 raise last_exc from None
+
+    async def _recover_worker_for_warmup_retry(self) -> None:
+        """Reclaim and reboot the worker between two warmup attempts.
+
+        Split out so the caller can put ONE bound around the whole recovery.
+        """
+        await asyncio.to_thread(gc.collect)
+        await self.reboot_worker(reason="warmup_precompile_retry", mark_failed=False)
+        # A freshly rebooted worker needs a moment before it can answer; the
+        # caller's bound decides whether there is a moment to give it.
+        await asyncio.sleep(1.0)
 
     async def warmup(
         self,

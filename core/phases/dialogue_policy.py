@@ -5,7 +5,6 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 
@@ -122,55 +121,8 @@ _LIVE_GROUNDING_MARKERS = (
     "live state",
 )
 _WORD_TOKEN = re.compile(r"[A-Za-z][A-Za-z']+")
-_WORD_LIST_CACHE: set[str] | None = None
-_ALLOWED_DIALOGUE_WORDS = {
-    "aura",
-    "bryan",
-    "chatgpt",
-    "codex",
-    "mlx",
-    "qwen",
-    "lora",
-    "python",
-    "javascript",
-    "rust",
-    "shakespeare",
-    "hamlet",
-    "paris",
-    "buenos",
-    "dias",
-    "días",
-    "cortex",
-    "mycelial",
-    "runtime",
-    "substrate",
-    "moonlight",
-}
-_CONTRACTION_WORDS = {
-    "im",
-    "ive",
-    "id",
-    "ill",
-    "dont",
-    "doesnt",
-    "didnt",
-    "cant",
-    "cannot",
-    "couldnt",
-    "wouldnt",
-    "shouldnt",
-    "wasnt",
-    "werent",
-    "isnt",
-    "arent",
-    "thats",
-    "theres",
-    "youre",
-    "youve",
-    "youll",
-    "we're",
-    "weve",
-}
+#: Tokens observed corrupt in live output. Named individually because each one
+#: is EVIDENCE, not an estimate — the opposite of "absent from a word list".
 _KNOWN_CORRUPT_TOKENS = {
     "xublcate",
     "ingediate",
@@ -183,33 +135,26 @@ _KNOWN_CORRUPT_TOKENS = {
 }
 
 
-def _word_list() -> set[str]:
-    global _WORD_LIST_CACHE
-    if _WORD_LIST_CACHE is not None:
-        return _WORD_LIST_CACHE
-
-    words = set(_ALLOWED_DIALOGUE_WORDS) | set(_CONTRACTION_WORDS)
-    for path in (Path("/usr/share/dict/words"),):
-        try:
-            if not path.exists():
-                continue
-            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                word = line.strip().lower()
-                if word.isalpha() and 2 <= len(word) <= 24:
-                    words.add(word)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            continue
-    _WORD_LIST_CACHE = words
-    return words
-
-
 #: Letter shapes that no English-like word has. Corruption is a property of
 #: how a token is BUILT, not of whether some word list happens to contain it.
-_NO_VOWEL_RE = re.compile(r"^[^aeiouy]+$")
+#:
+#: One alphabet, used by every rule here. The terminal-wall rule used to carry
+#: its own keyboard-order class `[qwrtypsdfghjklzxcvbnm]` which included `y` —
+#: while `_NO_VOWEL_RE` and the five-run class both treat `y` as a vowel. At the
+#: end of a word `y` is a vowel essentially always, so that one disagreement
+#: convicted the entire `-ly` adverb family: mostly, exactly, directly,
+#: currently, slightly, perfectly, correctly, instantly. Measured against
+#: /usr/share/dict/words, it called 4,597 of 234,334 real English words
+#: malformed (1.96%); with `y` spelled the same way in all three rules that
+#: falls to 328 (0.14%), and every keyboard-mash sample this rule exists for is
+#: still caught.
+_VOWELS = "aeiouy"
+_CONSONANTS = "bcdfghjklmnpqrstvwxz"
+_NO_VOWEL_RE = re.compile(rf"^[^{_VOWELS}]+$")
 _IMPOSSIBLE_RUN_RE = re.compile(
-    r"[bcdfghjklmnpqrstvwxz]{5,}"          # five consonants with no break
-    r"|(.)\1{2,}"                          # the same letter three times running
-    r"|[qwrtypsdfghjklzxcvbnm]{4,}$"       # a consonant wall at the end
+    rf"[{_CONSONANTS}]{{5,}}"          # five consonants with no break
+    r"|(.)\1{2,}"                      # the same letter three times running
+    rf"|[{_CONSONANTS}]{{4,}}$"        # a consonant wall at the end
 )
 
 
@@ -237,30 +182,15 @@ def contains_corrupted_language(text: str) -> bool:
     if not tokens:
         return False
 
-    dictionary = _word_list()
-    unknown: list[str] = []
-    checked = 0
+    checked: list[str] = []
     for raw in tokens:
         token = raw.lower().replace("’", "'").strip("'")
         token = token.replace("'", "")
         if len(token) <= 3:
             continue
-        if token in dictionary:
-            checked += 1
-            continue
-        if token.endswith("s") and token[:-1] in dictionary:
-            checked += 1
-            continue
-        if token.endswith("ed") and token[:-2] in dictionary:
-            checked += 1
-            continue
-        if token.endswith("ing") and token[:-3] in dictionary:
-            checked += 1
-            continue
-        checked += 1
-        unknown.append(token)
+        checked.append(token)
 
-    if any(token in _KNOWN_CORRUPT_TOKENS for token in unknown):
+    if any(token in _KNOWN_CORRUPT_TOKENS for token in checked):
         return True
 
     # Unknown is not corrupt.
@@ -274,16 +204,23 @@ def contains_corrupted_language(text: str) -> bool:
     # exponent term simplify reflexion") passed, because every word in it is
     # in the dictionary.
     #
-    # A missing word means the list is old. Corruption is a property of the
-    # token's shape, so only unknown tokens that are not shaped like language
-    # count as evidence — which makes this both far less destructive and
-    # strictly better at catching the garbage it exists for.
-    malformed = [token for token in unknown if not _looks_like_a_word(token)]
+    # That fix made SHAPE the evidence, but left the dictionary in the
+    # arithmetic: the last two branches counted `unknown`, which is exactly
+    # "not in this host's word list". So the same reply was corrupt on a host
+    # without /usr/share/dict/words and clean on one with it — a fatal verdict
+    # that moved with the operating system rather than with the text. A gate
+    # this destructive has to answer the same way everywhere, so the conviction
+    # now reads only the tokens themselves.
+    #
+    # `checked` is every token long enough to judge, which is a property of the
+    # reply. `malformed` is the subset built like nothing in any language. No
+    # host resource appears in either.
+    malformed = [token for token in checked if not _looks_like_a_word(token)]
     if len(malformed) >= 2:
         return True
-    if checked < 8:
-        return len(malformed) >= 1 and len(unknown) >= 3
-    return len(malformed) >= 1 and (len(unknown) / checked) >= 0.20
+    # One odd token is a typo, a serial number, or a name — never grounds for
+    # destroying an answer. It takes a reply that is mostly malformed.
+    return len(malformed) >= 1 and (len(malformed) / max(1, len(checked))) >= 0.20
 
 
 @dataclass(frozen=True)

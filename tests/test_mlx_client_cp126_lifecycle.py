@@ -2158,7 +2158,7 @@ class TestRetriesDoNotBuyThemselvesMoreRoom:
         assert "10.0 * attempt" not in source, "retry must not widen the budget"
         # The readiness probe draws from the same deadline.
         probe_at = source.index("_READINESS_PROBE_PROMPT")
-        assert "campaign_deadline - time.monotonic()" in source[probe_at:]
+        assert "probe_budget" in source[:probe_at]
 
     def test_an_exhausted_warmup_budget_starts_no_attempt(self):
         import inspect
@@ -2167,3 +2167,120 @@ class TestRetriesDoNotBuyThemselvesMoreRoom:
 
         source = inspect.getsource(mod.MLXLocalClient._run_warmup_precompile)
         assert "warmup_budget_exhausted" in source
+
+
+class TestWarmupHonoursItsDeadline:
+    """The campaign deadline is a BOUND, measured — not a documented intent.
+
+    The probe used to be given ``max(10.0, remaining)``. A floor above the
+    remaining budget is not a bound: a warmup with 0.4s left still opened a
+    10s probe, so the deadline this function exists to enforce was exceeded
+    by ~9.6s on precisely the slow boots that make a caller depend on it.
+    """
+
+    @staticmethod
+    def _client(monkeypatch, *, precompile_s: float, probe_s: float):
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        calls: list[str] = []
+
+        async def _fake_generate_inner(prompt, **kwargs):
+            if kwargs.get("warmup_precompile"):
+                calls.append("precompile")
+                await asyncio.sleep(precompile_s)
+                return "H"
+            calls.append("probe")
+            await asyncio.sleep(probe_s)
+            return "ready"
+
+        monkeypatch.setattr(client, "_generate_inner", _fake_generate_inner)
+        monkeypatch.setattr(client, "is_alive", lambda: True)
+        monkeypatch.setattr(client, "_set_lane_state", lambda *a, **k: None)
+        monkeypatch.setattr(mod, "_clear_matching_foreground_owner", lambda *a: None)
+        monkeypatch.setattr(mod, "_record_mlx_degradation", lambda *a, **k: None)
+        return client, calls
+
+    def _run(self, client, budget: float):
+        started = time.monotonic()
+        outcome: Exception | None = None
+        try:
+            asyncio.run(
+                client._run_warmup_precompile(
+                    request_is_background=False,
+                    foreground_request=False,
+                    owner_name="test",
+                    warmup_timeout=budget,
+                )
+            )
+        except (TimeoutError, RuntimeError, asyncio.TimeoutError) as exc:
+            outcome = exc
+        return time.monotonic() - started, outcome
+
+    def test_a_probe_cannot_outlive_the_campaign(self, monkeypatch):
+        # Precompile eats almost the whole budget; the old floor then handed
+        # the probe a further 10s regardless.
+        client, calls = self._client(monkeypatch, precompile_s=0.9, probe_s=10.0)
+        elapsed, outcome = self._run(client, budget=1.0)
+
+        assert elapsed <= 1.0 + 0.5, f"warmup overran its 1.0s budget: {elapsed:.2f}s"
+        assert outcome is not None, "an overrunning warmup must not report success"
+        assert "probe" not in calls, "no probe may open without budget to finish in"
+
+    def test_a_probe_with_room_still_runs_and_passes(self, monkeypatch):
+        client, calls = self._client(monkeypatch, precompile_s=0.01, probe_s=0.01)
+        elapsed, outcome = self._run(client, budget=30.0)
+
+        assert outcome is None
+        assert calls == ["precompile", "probe"]
+        assert elapsed < 5.0
+
+    def test_probe_budget_never_exceeds_what_the_campaign_has_left(self, monkeypatch):
+        """Whatever is left, the probe's own timeout is at most that much."""
+        import core.brain.llm.mlx_client as mod
+
+        client, _calls = self._client(monkeypatch, precompile_s=0.05, probe_s=5.0)
+        seen: list[float] = []
+        real_wait_for = asyncio.wait_for
+
+        async def _spy(aw, timeout=None):
+            seen.append(float(timeout))
+            return await real_wait_for(aw, timeout)
+
+        monkeypatch.setattr(mod.asyncio, "wait_for", _spy)
+        self._run(client, budget=12.0)
+
+        assert len(seen) == 2, seen
+        precompile_timeout, probe_timeout = seen
+        assert probe_timeout <= precompile_timeout, (
+            "the probe drew a larger timeout than the campaign had left"
+        )
+        assert probe_timeout <= mod._MAX_READINESS_PROBE_S
+
+    def test_the_retry_recovery_comes_out_of_the_same_budget(self, monkeypatch):
+        """gc + reboot + settle used to run entirely outside the campaign."""
+        import core.brain.llm.mlx_client as mod
+
+        client = MLXLocalClient(model_path=TEST_MODEL)
+
+        async def _always_fails(prompt, **kwargs):
+            raise RuntimeError("worker refused")
+
+        rebooted = asyncio.Event()
+
+        async def _slow_reboot(**kwargs):
+            rebooted.set()
+            await asyncio.sleep(30.0)  # a reboot that never comes back
+
+        monkeypatch.setattr(client, "_generate_inner", _always_fails)
+        monkeypatch.setattr(client, "is_alive", lambda: True)
+        monkeypatch.setattr(client, "_set_lane_state", lambda *a, **k: None)
+        monkeypatch.setattr(client, "reboot_worker", _slow_reboot)
+        monkeypatch.setattr(mod, "_clear_matching_foreground_owner", lambda *a: None)
+        monkeypatch.setattr(mod, "_record_mlx_degradation", lambda *a, **k: None)
+
+        elapsed, outcome = self._run(client, budget=12.0)
+
+        assert rebooted.is_set(), "a 12s budget should still afford one retry"
+        assert elapsed <= 12.0 + 1.0, f"warmup overran its 12s budget: {elapsed:.2f}s"
+        assert outcome is not None
