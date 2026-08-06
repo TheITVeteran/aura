@@ -1,5 +1,5 @@
 {
-  "content_sha256": "4b09f8ea67333cfdd9ab3fbaefc28647a3f73216abdcf30f0e33990b540a5df1",
+  "content_sha256": "f42175c331e8bf8c1e235f338cb84b3c58cf7937ead63109fabb4cb633f46085",
   "schema_version": 1,
   "specs": [
     {
@@ -13,6 +13,17 @@
       ],
       "cwd": ".",
       "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-23"
+        },
         {
           "acceptance_ids": [
             "A1"
@@ -73,6 +84,55 @@
       "source_paths": [
         "core/brain/llm/context_gate.py",
         "tools/closeout/audit_cognitive_candidate_gates.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_gate_skill_closure.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "ADDENDUM-23"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "SKILLS-001"
+        }
+      ],
+      "id": "gate-skill-closure-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/skills/**/*.py",
+        "rust_extensions/aura_m1_ext/src/**/*.rs",
+        "skills/**/*.py"
+      ],
+      "source_paths": [
+        "core/capability_engine.py",
+        "core/cognitive/router.py",
+        "core/consciousness/attention_schema.py",
+        "core/consciousness/candidate_gate_inventory.py",
+        "core/consciousness/global_workspace.py",
+        "interface/routes/subsystems.py",
+        "rust_extensions/aura_m1_ext/Cargo.lock",
+        "rust_extensions/aura_m1_ext/Cargo.toml",
+        "tools/closeout/audit_cognitive_candidate_gates.py",
+        "tools/closeout/audit_gate_skill_closure.py",
+        "tools/closeout/audit_skill_catalog.py",
+        "tools/closeout/audit_skill_runtime_route.py"
       ],
       "timeout_seconds": 300
     },
@@ -563,6 +623,9 @@
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
         "tests/test_skill_portability.py",
+        "tests/test_cognitive_gate_inventory.py",
+        "tests/test_global_workspace_runtime_contract.py",
+        "tests/test_gate_skill_closure_audit.py",
         "tests/test_subsystem_routes_runtime_contract.py",
         "tests/test_ui_bootstrap_contract.py"
       ],
@@ -599,16 +662,24 @@
       "source_paths": [
         "core/capability_engine.py",
         "core/cognitive/router.py",
+        "core/consciousness/attention_schema.py",
+        "core/consciousness/candidate_gate_inventory.py",
+        "core/consciousness/global_workspace.py",
         "interface/routes/subsystems.py",
         "interface/routes/system.py",
         "interface/static/aura.css",
         "interface/static/aura.js",
         "interface/static/index.html",
+        "tests/test_cognitive_gate_inventory.py",
+        "tests/test_gate_skill_closure_audit.py",
+        "tests/test_global_workspace_runtime_contract.py",
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
         "tests/test_skill_portability.py",
         "tests/test_subsystem_routes_runtime_contract.py",
         "tests/test_ui_bootstrap_contract.py",
+        "tools/closeout/audit_cognitive_candidate_gates.py",
+        "tools/closeout/audit_gate_skill_closure.py",
         "tools/closeout/audit_skill_portability.py",
         "tools/closeout/audit_skill_readiness_surface.py",
         "tools/closeout/audit_skill_readiness_ui.py",
@@ -655,6 +726,13 @@
       "evidence_targets": [
         {
           "acceptance_ids": [
+            "A4"
+          ],
+          "evidence_class": "portability",
+          "requirement_id": "ADDENDUM-23"
+        },
+        {
+          "acceptance_ids": [
             "A1"
           ],
           "evidence_class": "portability",
@@ -684,6 +762,13 @@
       "evidence_targets": [
         {
           "acceptance_ids": [
+            "A4"
+          ],
+          "evidence_class": "gui",
+          "requirement_id": "ADDENDUM-23"
+        },
+        {
+          "acceptance_ids": [
             "A1"
           ],
           "evidence_class": "gui",
@@ -708,6 +793,14 @@
       ],
       "cwd": ".",
       "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A4",
+            "A5"
+          ],
+          "evidence_class": "live",
+          "requirement_id": "ADDENDUM-23"
+        },
         {
           "acceptance_ids": [
             "A1"
