@@ -76,7 +76,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
         "sounddevice": "Microphone input via sounddevice",
         "mss": "Screen capture via mss",
         "pyttsx3": "Text-to-speech via pyttsx3",
-        "speech_recognition": "Speech recognition library",
+        "faster_whisper": "Canonical local speech recognition",
     }
 
     def __init__(self, interval: float = 60.0) -> None:
@@ -310,7 +310,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
             "sounddevice": "microphone",
             "mss": "screen_capture",
             "pyttsx3": "speech_output",
-            "speech_recognition": "speech_recognition",
+            "faster_whisper": "speech_recognition",
         }
 
         for lib_name, description in self.TRACKED_SENSORS.items():
@@ -412,6 +412,8 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
 
     def _snapshot_current_state(self) -> None:
         """Capture the initial environment state so the first delta is clean."""
+        import importlib.util
+
         for exe_name in self.TRACKED_EXECUTABLES:
             if shutil.which(exe_name):
                 self._known_executables.add(exe_name)
@@ -423,11 +425,8 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
             pass  # no-op: intentional
 
         for lib_name in self.TRACKED_SENSORS:
-            try:
-                __import__(lib_name)
+            if importlib.util.find_spec(lib_name) is not None:
                 self._known_sensors.add(lib_name)
-            except ImportError:
-                pass  # no-op: intentional
 
     @staticmethod
     def _get_body_schema():

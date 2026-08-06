@@ -572,21 +572,47 @@ class HearingSystem:
         def _do_transcribe() -> dict[str, Any]:
             try:
                 from core.senses.voice_socket_logic import get_whisper_model
+
                 model = get_whisper_model("tiny")
-                if model:
-                    segments, _info = model.transcribe(audio_data["path"], beam_size=5)
-                    text = " ".join([seg.text for seg in segments]).strip()
-                    return {"text": text, "confidence": 0.95, "language": "en"}
+                if model is None:
+                    return {
+                        "text": "",
+                        "error": "canonical_stt_unavailable",
+                        "disposition": "unavailable",
+                        "backend": "canonical_whisper",
+                    }
+                segments, info = model.transcribe(audio_data["path"], beam_size=5)
+                text = " ".join(str(segment.text).strip() for segment in segments).strip()
+                if not text:
+                    return {
+                        "text": "",
+                        "error": "no_speech_detected",
+                        "disposition": "no_speech",
+                        "backend": "canonical_whisper",
+                    }
+                language = str(getattr(info, "language", "") or "unknown")
+                language_probability = getattr(info, "language_probability", None)
+                if isinstance(language_probability, (int, float)):
+                    language_probability = max(0.0, min(1.0, float(language_probability)))
                 else:
-                    import speech_recognition as sr
-                    recognizer = sr.Recognizer()
-                    with sr.AudioFile(audio_data["path"]) as src:
-                        audio = recognizer.record(src)
-                    text = recognizer.recognize_google(audio)
-                    return {"text": text, "confidence": 0.8, "language": "en"}
-            except (ImportError, AttributeError, RuntimeError) as e:
+                    language_probability = None
+                return {
+                    "text": text,
+                    "confidence": None,
+                    "language": language,
+                    "language_confidence": language_probability,
+                    "disposition": "transcribed",
+                    "backend": "canonical_whisper",
+                }
+            except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                 record_degradation('sensory_integration', e)
-                return {"text": "[Transcription failed]", "error": str(e)}
+                return {
+                    "text": "",
+                    "error": "canonical_stt_failed",
+                    "detail": str(e),
+                    "disposition": "failed",
+                    "backend": "canonical_whisper",
+                }
 
         result = await asyncio.to_thread(_do_transcribe)
         result["timestamp"] = time.time()

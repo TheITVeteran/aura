@@ -727,6 +727,12 @@ def test_sensory_capabilities_require_capture_and_stt() -> None:
     assert SensoryCapabilityFlags.from_boot_status(
         {"sounddevice": False, "faster_whisper": True}
     ).hearing_enabled is False
+    assert SensoryCapabilityFlags.from_boot_status(
+        {"sounddevice": True, "mlx_whisper": True}
+    ).hearing_enabled is True
+    assert SensoryCapabilityFlags.from_boot_status(
+        {"sounddevice": True, "speech_recognition": True}
+    ).hearing_enabled is False
 
 
 @pytest.mark.asyncio

@@ -223,20 +223,25 @@ def test_body_schema_camera_discovery_does_not_import_cv2(monkeypatch):
     assert body.get_limb("camera") is not None
 
 
-def test_capability_discovery_sensor_scan_does_not_import_cv2(monkeypatch):
+def test_capability_discovery_sensor_scan_does_not_import_optional_libraries(monkeypatch):
     from core.somatic.body_schema import BodySchema
     from core.somatic.capability_discovery import CapabilityDiscoveryDaemon
 
     real_import = builtins.__import__
 
+    tracked = set(CapabilityDiscoveryDaemon.TRACKED_SENSORS)
+    body = BodySchema()
+
     def guarded_import(name, *args, **kwargs):
-        if name == "cv2":
-            raise AssertionError("CapabilityDiscovery must not import cv2 during sensor scan")
+        if name in tracked:
+            raise AssertionError(
+                f"CapabilityDiscovery must not import {name} during sensor scan"
+            )
         return real_import(name, *args, **kwargs)
 
-    body = BodySchema()
-    daemon = CapabilityDiscoveryDaemon(interval=999.0)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    daemon = CapabilityDiscoveryDaemon(interval=999.0)
 
     discoveries, losses = daemon._scan_sensors(body)
 

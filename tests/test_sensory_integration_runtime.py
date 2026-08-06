@@ -8,6 +8,7 @@ import pytest
 from core.container import ServiceContainer
 from core.perception.multimodal_sync import Modality, MultimodalSynchronizer
 from core.perception.sensory_integration import (
+    HearingSystem,
     SensoryModality,
     SensorySystem,
     VisionSystem,
@@ -146,3 +147,50 @@ async def test_audio_and_text_publish_without_raw_content_in_fusion() -> None:
         assert "private typed instruction" not in status_text
     finally:
         ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_hearing_transcription_uses_canonical_local_stt(monkeypatch) -> None:
+    class Segment:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class Info:
+        language = "en"
+        language_probability = 0.93
+
+    class Model:
+        def transcribe(self, path, *, beam_size):
+            assert path == "/tmp/aura-audio.wav"
+            assert beam_size == 5
+            return [Segment(" Aura hears"), Segment(" locally. ")], Info()
+
+    monkeypatch.setattr(
+        "core.senses.voice_socket_logic.get_whisper_model",
+        lambda _name: Model(),
+    )
+
+    result = await HearingSystem().transcribe({"path": "/tmp/aura-audio.wav"})
+
+    assert result["text"] == "Aura hears locally."
+    assert result["language"] == "en"
+    assert result["confidence"] is None
+    assert result["language_confidence"] == 0.93
+    assert result["backend"] == "canonical_whisper"
+    assert result["disposition"] == "transcribed"
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_hearing_transcription_fails_truthfully_without_local_stt(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.senses.voice_socket_logic.get_whisper_model",
+        lambda _name: None,
+    )
+
+    result = await HearingSystem().transcribe({"path": "/tmp/aura-audio.wav"})
+
+    assert result["text"] == ""
+    assert result["error"] == "canonical_stt_unavailable"
+    assert result["disposition"] == "unavailable"
+    assert result["backend"] == "canonical_whisper"
