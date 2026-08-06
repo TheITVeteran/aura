@@ -122,6 +122,32 @@ class Flag:
             return self.spec.default, False
 
 
+class _BootstrapFlag(Flag):
+    """Observable flag whose value must be known before settings exist."""
+
+    def value_with_source(self) -> tuple[Any, str]:
+        from core.runtime.state_ownership import bootstrap_flag_value
+
+        return bootstrap_flag_value(self.name)
+
+
+def _bootstrap_flags() -> dict[str, Flag]:
+    from core.runtime.state_ownership import bootstrap_flag_specs
+
+    return {
+        name: _BootstrapFlag(
+            FlagSpec(
+                name=spec.name,
+                kind=FlagKind.STRING,
+                default=spec.default,
+                description=spec.description,
+                owner=spec.owner,
+            )
+        )
+        for name, spec in bootstrap_flag_specs().items()
+    }
+
+
 _REGISTRY: dict[str, Flag] = {}
 _REGISTRY_LOCK = threading.Lock()
 
@@ -139,6 +165,14 @@ def declare(
     if not str(name).startswith("AURA_"):
         raise ValueError(f"flag names are namespaced: {name!r} must start with AURA_")
     spec = FlagSpec(name=name, kind=kind, default=default, description=description, owner=owner)
+    bootstrap = _bootstrap_flags().get(name)
+    if bootstrap is not None:
+        if bootstrap.spec != spec:
+            raise ValueError(
+                f"flag {name} is a process-bootstrap flag owned by "
+                f"{bootstrap.spec.owner}; refusing the conflicting declaration from {owner}"
+            )
+        return bootstrap
     with _REGISTRY_LOCK:
         existing = _REGISTRY.get(name)
         if existing is not None:
@@ -155,12 +189,15 @@ def declare(
 
 def get_flag(name: str) -> Flag | None:
     with _REGISTRY_LOCK:
-        return _REGISTRY.get(name)
+        registered = _REGISTRY.get(name)
+    return registered or _bootstrap_flags().get(name)
 
 
 def declared_flags() -> dict[str, FlagSpec]:
     with _REGISTRY_LOCK:
-        return {name: flag.spec for name, flag in _REGISTRY.items()}
+        declared = {name: flag.spec for name, flag in _REGISTRY.items()}
+    declared.update({name: flag.spec for name, flag in _bootstrap_flags().items()})
+    return declared
 
 
 def flag_report() -> list[dict[str, Any]]:
@@ -168,6 +205,12 @@ def flag_report() -> list[dict[str, Any]]:
     the 'what is active right now' surface."""
     with _REGISTRY_LOCK:
         flags = list(_REGISTRY.values())
+    registered_names = {flag.name for flag in flags}
+    flags.extend(
+        flag
+        for name, flag in _bootstrap_flags().items()
+        if name not in registered_names
+    )
     report = []
     for flag in sorted(flags, key=lambda f: f.name):
         value, source = flag.value_with_source()

@@ -35,21 +35,23 @@ tests that did this damage did not know they were doing it.
 from __future__ import annotations
 
 import enum
+import functools
 import os
 import platform
 import sys
 import time
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from core.runtime.flags import env_str
-from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "RuntimeProfile",
     "StateOwnershipViolation",
+    "BootstrapFlagSpec",
+    "bootstrap_flag_specs",
+    "bootstrap_flag_value",
     "runtime_instance_id",
     "runtime_profile",
     "state_root",
@@ -61,6 +63,74 @@ __all__ = [
     "runtime_identity",
     "shared_asset_root",
 ]
+
+
+@dataclass(frozen=True)
+class BootstrapFlagSpec:
+    """A process-bootstrap flag that cannot depend on persisted settings.
+
+    Resolving the state root through the normal flag stack creates a dependency
+    cycle: persisted settings need the state root before they can be read.  The
+    flag registry imports these declarations for observability, while this
+    module remains a standard-library-only root of the runtime graph.
+    """
+
+    name: str
+    default: str
+    description: str
+    owner: str = "core.runtime.state_ownership"
+    kind: str = "string"
+
+
+_BOOTSTRAP_FLAGS = {
+    spec.name: spec
+    for spec in (
+        BootstrapFlagSpec("AURA_HOME", "", "Override the process home root"),
+        BootstrapFlagSpec(
+            "AURA_LIVE_STATE_ROOT",
+            "",
+            "Inherited identity of the live runtime state root",
+        ),
+        BootstrapFlagSpec("AURA_BENCH_RUN", "", "Mark a benchmark runtime"),
+        BootstrapFlagSpec("AURA_BENCHMARK", "", "Mark a benchmark runtime"),
+        BootstrapFlagSpec("AURA_TESTING", "", "Mark a hermetic test runtime"),
+        BootstrapFlagSpec("AURA_PROOF_RUN", "", "Mark a hermetic proof runtime"),
+        BootstrapFlagSpec("AURA_DEV_RUNTIME", "", "Mark a development runtime"),
+        BootstrapFlagSpec(
+            "AURA_STATE_ROOT", "", "Override root for durable state stores"
+        ),
+        BootstrapFlagSpec(
+            "AURA_ASSET_ROOT", "", "Override root for shared immutable assets"
+        ),
+        BootstrapFlagSpec(
+            "AURA_ALLOW_LIVE_STATE_WRITE",
+            "",
+            "Allow an explicitly launched maintenance process to write live state",
+        ),
+    )
+}
+
+
+def bootstrap_flag_specs() -> dict[str, BootstrapFlagSpec]:
+    """Return the immutable bootstrap declarations for flag introspection."""
+
+    return dict(_BOOTSTRAP_FLAGS)
+
+
+def bootstrap_flag_value(name: str) -> tuple[str, str]:
+    """Resolve one bootstrap flag without consulting state-backed settings."""
+
+    spec = _BOOTSTRAP_FLAGS.get(name)
+    if spec is None:
+        raise KeyError(f"unknown state-ownership bootstrap flag: {name}")
+    value = os.environ.get(name)
+    if value is None:
+        return spec.default, "default"
+    return str(value), "env"
+
+
+def _bootstrap_env(name: str) -> str:
+    return bootstrap_flag_value(name)[0]
 
 
 class StateOwnershipViolation(RuntimeError):  # noqa: N818
@@ -89,16 +159,12 @@ class RuntimeProfile(enum.StrEnum):
 #: everything goes through ``state_root()`` so the profile can intercept.
 _LIVE_ROOT_NAME = ".aura"
 
-_LOCK = checked_lock("state_ownership", reentrant=True)
-_INSTANCE_ID: str | None = None
-_PROFILE: RuntimeProfile | None = None
-_ROOT: Path | None = None
-_ROOT_KEY: tuple[str, str] | None = None
+_INSTANCE_NONCE = uuid.uuid4().hex[:16]
 _STARTED_AT = time.time()
 
 
 def _home() -> Path:
-    override = env_str("AURA_HOME", description="home", owner="core.runtime.state_ownership")
+    override = _bootstrap_env("AURA_HOME")
     if override:
         return Path(override).expanduser().resolve()
     return Path.home().expanduser().resolve()
@@ -120,7 +186,7 @@ _ORIGINAL_HOME: Path = _home()
 #:
 #: setdefault, never overwrite: if this process was itself told the answer by a
 #: parent, that parent was closer to the truth than this process is.
-if not env_str("AURA_LIVE_STATE_ROOT", description="live state root", owner="core.runtime.state_ownership"):
+if not _bootstrap_env("AURA_LIVE_STATE_ROOT"):
     os.environ["AURA_LIVE_STATE_ROOT"] = str(_ORIGINAL_HOME / _LIVE_ROOT_NAME)
 
 
@@ -146,7 +212,7 @@ def live_state_root() -> Path:
     parent, not a self-declaration — the protection this module provides is
     against accident, and an accident cannot forge a parent.
     """
-    inherited = env_str("AURA_LIVE_STATE_ROOT", description="live state root", owner="core.runtime.state_ownership") or ""
+    inherited = _bootstrap_env("AURA_LIVE_STATE_ROOT")
     if inherited:
         try:
             return Path(inherited).expanduser().resolve()
@@ -164,7 +230,7 @@ def _derive_profile() -> RuntimeProfile:
     own root and its own numbers, and folding it into the test root would
     let one overwrite the other.
     """
-    if env_str("AURA_BENCH_RUN", description="bench run", owner="core.runtime.state_ownership") or env_str("AURA_BENCHMARK", description="benchmark", owner="core.runtime.state_ownership"):
+    if _bootstrap_env("AURA_BENCH_RUN") or _bootstrap_env("AURA_BENCHMARK"):
         return RuntimeProfile.BENCH
     # Is THIS process running pytest? `pytest` in sys.modules answers that
     # and the environment does not: a subprocess a test spawns inherits
@@ -180,15 +246,16 @@ def _derive_profile() -> RuntimeProfile:
     # them means it, including for a child.
     if (
         "pytest" in sys.modules
-        or env_str("AURA_TESTING", description="testing", owner="core.runtime.state_ownership")
-        or env_str("AURA_PROOF_RUN", description="proof run", owner="core.runtime.state_ownership")
+        or _bootstrap_env("AURA_TESTING")
+        or _bootstrap_env("AURA_PROOF_RUN")
     ):
         return RuntimeProfile.TEST
-    if env_str("AURA_DEV_RUNTIME", description="dev runtime", owner="core.runtime.state_ownership"):
+    if _bootstrap_env("AURA_DEV_RUNTIME"):
         return RuntimeProfile.DEV
     return RuntimeProfile.LIVE
 
 
+@functools.lru_cache(maxsize=1)
 def runtime_profile() -> RuntimeProfile:
     """This process's profile, resolved once.
 
@@ -196,11 +263,7 @@ def runtime_profile() -> RuntimeProfile:
     a runtime write half its state to one root and half to another, which
     is worse than either root being wrong.
     """
-    global _PROFILE
-    with _LOCK:
-        if _PROFILE is None:
-            _PROFILE = _derive_profile()
-        return _PROFILE
+    return _derive_profile()
 
 
 def runtime_instance_id() -> str:
@@ -209,21 +272,28 @@ def runtime_instance_id() -> str:
     Carries the profile in the id itself, so a record found in the wrong
     place names its own origin without a lookup.
     """
-    global _INSTANCE_ID
-    with _LOCK:
-        if _INSTANCE_ID is None:
-            _INSTANCE_ID = f"{runtime_profile().value}-{uuid.uuid4().hex[:16]}"
-        return _INSTANCE_ID
+    return f"{runtime_profile().value}-{_INSTANCE_NONCE}"
 
 
 def state_root_override() -> str:
     """Return the one canonical declaration of the explicit state root."""
 
-    return env_str(
-        "AURA_STATE_ROOT",
-        description="state root",
-        owner="core.runtime.state_ownership",
-    )
+    return _bootstrap_env("AURA_STATE_ROOT")
+
+
+@functools.lru_cache(maxsize=32)
+def _resolved_state_root(
+    injected: str,
+    current_home: str,
+    profile: RuntimeProfile,
+    live_root: str,
+) -> Path:
+    if injected:
+        return Path(injected).expanduser().resolve()
+    current = Path(current_home) / _LIVE_ROOT_NAME
+    if profile is RuntimeProfile.LIVE or current != Path(live_root):
+        return current
+    return current.with_name(f"{current.name}-{profile.value}")
 
 
 def state_root() -> Path:
@@ -248,25 +318,12 @@ def state_root() -> Path:
     repoints ``HOME`` per-test gets the root it just arranged. A live
     runtime never changes either input, so it resolves once and stays.
     """
-    global _ROOT, _ROOT_KEY
-    with _LOCK:
-        injected = state_root_override()
-        key = (injected, str(_home()))
-        if _ROOT is not None and _ROOT_KEY == key:
-            return _ROOT
-        if injected:
-            root = Path(injected).expanduser().resolve()
-        else:
-            profile = runtime_profile()
-            current = _home() / _LIVE_ROOT_NAME
-            if profile is RuntimeProfile.LIVE or current != live_state_root():
-                # Either this IS the live runtime, or HOME has been moved
-                # and `current` is already somewhere private.
-                root = current
-            else:
-                root = current.with_name(f"{current.name}-{profile.value}")
-        _ROOT, _ROOT_KEY = root, key
-        return _ROOT
+    return _resolved_state_root(
+        state_root_override(),
+        str(_home()),
+        runtime_profile(),
+        str(live_state_root()),
+    )
 
 
 def shared_asset_root() -> Path:
@@ -284,7 +341,7 @@ def shared_asset_root() -> Path:
     immutable — if a runtime mutates it, it is state and belongs under
     ``state_root()``.
     """
-    override = env_str("AURA_ASSET_ROOT", description="asset root", owner="core.runtime.state_ownership")
+    override = _bootstrap_env("AURA_ASSET_ROOT")
     if override:
         return Path(override).expanduser().resolve()
     return live_state_root()
@@ -351,7 +408,7 @@ def assert_state_path_allowed(path: Path | str, *, source: str = "unknown") -> N
         return
     if not is_live_state_path(path):
         return
-    if env_str("AURA_ALLOW_LIVE_STATE_WRITE", description="allow live state write", owner="core.runtime.state_ownership") == "1":
+    if _bootstrap_env("AURA_ALLOW_LIVE_STATE_WRITE") == "1":
         # A deliberate, named escape for the rare tool that really does
         # maintain the live instance. Env-only: nothing in the codebase can
         # set it for itself mid-run without an operator having done so.
@@ -404,8 +461,7 @@ def reset_for_testing() -> None:
     Named loudly on purpose: anything else calling this is defeating the
     caching that keeps a runtime's state in one place.
     """
-    global _INSTANCE_ID, _PROFILE, _ROOT
-    with _LOCK:
-        _INSTANCE_ID = None
-        _PROFILE = None
-        _ROOT = None
+    global _INSTANCE_NONCE
+    _INSTANCE_NONCE = uuid.uuid4().hex[:16]
+    runtime_profile.cache_clear()
+    _resolved_state_root.cache_clear()

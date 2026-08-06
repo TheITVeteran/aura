@@ -114,6 +114,32 @@ def test_identity_is_immutable_for_the_process():
     assert runtime_instance_id().startswith("test-")
 
 
+def test_state_ownership_is_a_standard_library_bootstrap_boundary():
+    """State identity cannot depend on services whose paths it owns."""
+
+    source = ROOT / "core" / "runtime" / "state_ownership.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    project_imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("core"):
+            project_imports.append(node.module)
+        elif isinstance(node, ast.Import):
+            project_imports.extend(
+                alias.name for alias in node.names if alias.name.startswith("core")
+            )
+    assert project_imports == []
+
+
+def test_bootstrap_flags_remain_typed_and_enumerable():
+    from core.runtime.flags import declared_flags, flag_report
+
+    declared = declared_flags()
+    assert declared["AURA_STATE_ROOT"].owner == "core.runtime.state_ownership"
+    report = {entry["name"]: entry for entry in flag_report()}
+    assert report["AURA_STATE_ROOT"]["kind"] == "string"
+    assert report["AURA_STATE_ROOT"]["owner"] == "core.runtime.state_ownership"
+
+
 def test_persistent_records_name_the_runtime_that_wrote_them():
     stamped = stamp_record({"episode": 1}, model_identity="qwen-32b@abc123")
     assert stamped["episode"] == 1

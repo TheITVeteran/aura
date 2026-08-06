@@ -24,15 +24,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # response_generation to declared flags via core.runtime.flags.env_str.
 RAW_ENV_READ_BUDGET = 576
 
-# The flag layer itself and the settings store are the sanctioned readers.
+# The flag layer, settings store, and state-root bootstrap are sanctioned readers.
 # model_lane_control's AURA_MODEL_LANE_* vars are parent->child process
 # INHERITANCE transport (incl. a delegation token) — spawn-scoped IPC, not
 # operator knobs; the flag registry is the wrong surface for them.
 # runtime_preflight is stdlib-only BY CONTRACT (its own test pins that a
 # broken venv can still run it) — it cannot import the flag layer.
+# state_ownership is also stdlib-only by contract: persisted settings cannot
+# be located until it has resolved the state root. Its declarations are still
+# exposed through flags.declared_flags()/flag_report().
 SANCTIONED = {
     "core/runtime/flags.py",
     "core/runtime/runtime_settings.py",
+    "core/runtime/state_ownership.py",
     "core/runtime/model_lane_control.py",
     "tools/runtime_preflight.py",
 }
