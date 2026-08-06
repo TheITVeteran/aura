@@ -1,0 +1,69 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "tools/closeout/audit_checkpoint_hygiene.py",
+    "--json"
+  ],
+  "cwd": ".",
+  "duration_seconds": 0.300958,
+  "environment_policy": {
+    "inherited_names_sha256": "53e9f28c81964a0f7bab7503bac0191802cf126997b5191db9fe4245b52e7c29",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "CHECKPOINT-001"
+    }
+  ],
+  "finished_at": "2026-08-06T15:36:41.273887+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "1b4319047ac8b932fb60880c39950650face7ca2",
+  "output_bytes": 439,
+  "proof_id": "checkpoint-hygiene-audit",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "1b4319047ac8b932fb60880c39950650face7ca2",
+  "source_manifest": [
+    {
+      "path": "tools/closeout/audit_checkpoint_hygiene.py",
+      "sha256": "c8082aa68cd2d2a27928a0712c3c5dab72560dbf08022dc703233909ab8c98e5",
+      "size_bytes": 5566
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "tools/closeout/audit_checkpoint_hygiene.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "238aa115c80f8174c0800929f1a8992650ab956a1dd78d3f75b1befb8952a52a",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T15:36:40.972683+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "{\n  \"active_git_markers\": [],\n  \"branch\": \"codex/tracker-continuation\",\n  \"clean\": true,\n  \"head\": \"1b4319047ac8b932fb60880c39950650face7ca2\",\n  \"head_is_pushed_main\": true,\n  \"issues\": [],\n  \"origin_main\": \"1b4319047ac8b932fb60880c39950650face7ca2\",\n  \"passed\": true,\n  \"root\": \"/Users/bryan/.aura/live-source/.claude/worktrees/codex-tracker-continuation\",\n  \"schema\": \"aura.closeout.checkpoint_hygiene.v1\",\n  \"upstream\": \"origin/main\"\n}\n",
+  "stdout_sha256": "8cc6f32809b86435e93999d8bef801003d53b030475ce39903fc87fbb28a16ac",
+  "timeout_seconds": 60,
+  "verdict": "pass"
+}
