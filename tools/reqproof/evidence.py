@@ -552,6 +552,10 @@ def add_entry(
         },
         "evidence entry",
     )
+    _require(
+        entry.sort_key not in {item.sort_key for item in ledger.entries},
+        "evidence entry already exists",
+    )
     verify_ledger_binding(
         EvidenceLedger(
             schema_version=LEDGER_SCHEMA_VERSION,
@@ -560,11 +564,29 @@ def add_entry(
         ),
         registry,
     )
-    entries = tuple(sorted((*ledger.entries, entry), key=lambda item: item.sort_key))
-    _require(
-        len({item.sort_key for item in entries}) == len(entries),
-        "evidence entry already exists",
-    )
+    retained: list[EvidenceLedgerEntry] = []
+    replacement_cells = set(entry.acceptance_ids)
+    for current in ledger.entries:
+        if (
+            current.requirement_id != entry.requirement_id
+            or current.evidence.evidence_class != entry.evidence.evidence_class
+        ):
+            retained.append(current)
+            continue
+        remaining = tuple(
+            acceptance_id
+            for acceptance_id in current.acceptance_ids
+            if acceptance_id not in replacement_cells
+        )
+        if remaining:
+            retained.append(
+                EvidenceLedgerEntry(
+                    requirement_id=current.requirement_id,
+                    acceptance_ids=remaining,
+                    evidence=current.evidence,
+                )
+            )
+    entries = tuple(sorted((*retained, entry), key=lambda item: item.sort_key))
     return EvidenceLedger(
         schema_version=LEDGER_SCHEMA_VERSION,
         registry_content_sha256=registry.compute_content_sha256(),

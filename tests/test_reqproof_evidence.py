@@ -115,6 +115,54 @@ class TestEvidenceLocation:
 
 
 class TestLedgerOperations:
+    def test_new_evidence_supersedes_only_the_cells_it_reproves(self, tmp_path: Path):
+        write_evidence_receipt(
+            tmp_path,
+            "old.json",
+            targets=[("TEST-001", "implementation", ["A1", "A2"])],
+            commit=COMMIT,
+            source_ref="old-source.py",
+        )
+        write_evidence_receipt(
+            tmp_path,
+            "new.json",
+            targets=[("TEST-001", "implementation", ["A1"])],
+            commit="b" * 40,
+            source_ref="new-source.py",
+        )
+        current_registry = registry(
+            make_requirement(
+                acceptance=["first", "second"],
+                evidence_required=["implementation"],
+            )
+        )
+        ledger = add_entry(
+            EvidenceLedger.empty_for(current_registry),
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="implementation",
+            acceptance_ids=("A1", "A2"),
+            ref="old.json",
+            commit=COMMIT,
+            recorded_at="2026-08-05",
+            root=tmp_path,
+        )
+        ledger = add_entry(
+            ledger,
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="implementation",
+            acceptance_ids=("A1",),
+            ref="new.json",
+            commit="b" * 40,
+            recorded_at="2026-08-06",
+            root=tmp_path,
+        )
+
+        assert [
+            (entry.acceptance_ids, entry.evidence.ref) for entry in ledger.entries
+        ] == [(('A1',), 'new.json'), (('A2',), 'old.json')]
+
     def test_globally_required_class_cannot_cover_wrong_acceptance(self, tmp_path: Path):
         write_evidence_receipt(
             tmp_path,
