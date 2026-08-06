@@ -54,6 +54,11 @@ def _make_synthetic_outputs(n: int = 10, seed: int = 42) -> dict[str, list[str]]
         "text_terse": _gen(terse_vocab, (5, 10)),
         "text_rich_adversarial": _gen(rich_vocab),
         "baseline": _gen(baseline_vocab),
+        # The null. Same vocabulary, a second independent draw: this is how
+        # much the system moves without anyone steering it. Every effect in
+        # the report is measured against this, so an analysis without it
+        # cannot distinguish "we moved it" from "it moves".
+        "baseline_replicate": _gen(baseline_vocab),
     }
 
 
@@ -79,8 +84,13 @@ class TestSteeringABPipeline:
         report = analyze_steering_ab(outputs)
         assert isinstance(report, SteeringABReport)
         assert report.n_trials == 10
-        assert isinstance(report.steered_vs_terse.p_value, float)
-        assert isinstance(report.steered_vs_rich.p_value, float)
+        # Each condition's effect is now measured NET OF THE NULL — the
+        # baseline's divergence from its own replicate — so the report
+        # carries one effect per condition rather than a pair of raw
+        # condition-vs-condition comparisons.
+        assert isinstance(report.steered_effect.p_value, float)
+        assert isinstance(report.terse_effect.p_value, float)
+        assert isinstance(report.rich_effect.p_value, float)
         assert 0.0 <= report.steered_vs_baseline_mean_distance <= 1.0
     
     def test_synthetic_divergence_detectable(self):
@@ -98,8 +108,12 @@ class TestSteeringABPipeline:
         d = report.to_dict()
         assert "n_trials" in d
         assert "passes_adversarial_control" in d
-        assert "steered_vs_terse" in d
-        assert "steered_vs_rich" in d
+        assert "steered_effect" in d
+        assert "terse_effect" in d
+        assert "rich_effect" in d
+        # The null belongs in the serialised report: every divergence above
+        # has to be read against it.
+        assert "baseline_self_distance" in d
         assert "samples" in d
         # Samples should be truncated to 3
         for cond_samples in d["samples"].values():
@@ -170,5 +184,5 @@ class TestSteeringABLive:
         # The key assertion: steering must beat the rich adversarial control
         assert report.passes_adversarial_control, (
             f"Steering did NOT beat rich adversarial text control. "
-            f"p={report.steered_vs_rich.p_value:.4f}"
+            f"p={report.rich_effect.p_value:.4f}"
         )

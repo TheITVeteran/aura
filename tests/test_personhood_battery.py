@@ -19,6 +19,12 @@ Each test targets a SPECIFIC personhood claim with a SPECIFIC falsifiable
 prediction. If a test fails, the claim is unmet and the architecture has a gap.
 
 Run:  pytest tests/test_personhood_battery.py -v --tb=long
+
+Operationally: this measures a set of behavioural continuity and
+self-consistency properties — that identity claims, memory references and
+commitments stay coherent across sessions and under adversarial probing. Those
+are testable software properties. Personhood is not one of them, and the
+filename asserts a conclusion this battery does not reach.
 """
 
 import asyncio

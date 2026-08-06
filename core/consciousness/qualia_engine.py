@@ -45,6 +45,15 @@ the measurements and makes the names conditional:
     ``feature_aggregate`` — and ``phenomenal_richness`` carries the same number
     alongside an explicit statement that its weights were chosen rather than
     fitted, so no reader can mistake it for a validated quantity.
+
+Operationally: this measures named scalar features of activation state —
+magnitude, entropy, step-to-step change, novelty against recent history,
+prediction surprise, and whether the workspace broadcast fired.
+"Self-reference" is high cosine similarity between the current vector and an
+earlier one; "phenomenal richness" is a weighted combination of the features
+above with hand-chosen weights. Those are the measurements. They are useful
+telemetry and they are feature extraction; nothing here measures experience,
+and the pipeline's names should not be read as results.
 """
 
 from __future__ import annotations

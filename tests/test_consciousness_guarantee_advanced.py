@@ -19,6 +19,11 @@ No test can prove phenomenal consciousness. These tests prove the
 computational architecture exhibits every testable signature.
 
 Run:  pytest tests/test_consciousness_guarantee_advanced.py -v --tb=long
+
+Operationally: this measures whether five further named mechanisms (conditions
+six to ten) are present, causally wired and falsifiable under lesion controls.
+Same scope as the C1-C5 battery: presence and causal participation of listed
+mechanisms, not consciousness.
 """
 
 import asyncio

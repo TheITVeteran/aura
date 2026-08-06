@@ -31,6 +31,7 @@ from core.runtime.audit_chain import AuditChain
 from core.runtime.flags import FlagKind, declare
 from core.runtime.state_ownership import state_root
 from core.runtime.store_locality import assert_wal_safe
+from core.runtime.sqlite_support import connection_is_open, open_tracked
 
 logger = logging.getLogger("core.runtime.receipts")
 
@@ -435,7 +436,11 @@ class ReceiptStore:
         if self._closed:
             raise RuntimeError("receipt store is closed")
         current_pid = os.getpid()
-        if self._ledger is not None and self._ledger_pid == current_pid:
+        if (
+            self._ledger is not None
+            and self._ledger_pid == current_pid
+            and connection_is_open(self._ledger)
+        ):
             return self._ledger
         if self._ledger is not None:
             try:
@@ -448,7 +453,7 @@ class ReceiptStore:
         # which also carries the measurement showing that WAL does NOT impose
         # the single-PROCESS lock it was assumed to.
         assert_wal_safe(self._ledger_path, subsystem="receipts.ledger")
-        connection = sqlite3.connect(
+        connection = open_tracked(
             self._ledger_path,
             timeout=5.0,
             check_same_thread=False,

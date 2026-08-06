@@ -130,6 +130,11 @@ class TestCAA32BBehavioralAB:
             "text_terse": make(base_words, neutral_words, 0.1),
             "text_rich_adversarial": make(base_words, affect_words[:2] + neutral_words, 0.4),
             "baseline": make(neutral_words, base_words[:3], 0.0),
+            # The null: the baseline condition drawn again, unsteered. See
+            # core/evaluation/steering_ab.py — it is REQUIRED input, because
+            # an effect that is not compared against the system's own
+            # run-to-run variation is not an effect that has been measured.
+            "baseline_replicate": make(neutral_words, base_words[:3], 0.0),
         }
 
     def test_analyze_steering_ab_runs(self):
@@ -143,8 +148,9 @@ class TestCAA32BBehavioralAB:
         """Report includes both steered-vs-terse and steered-vs-rich."""
         outputs = self._make_synthetic_outputs()
         report = analyze_steering_ab(outputs, n_resamples=500, seed=7)
-        assert report.steered_vs_terse is not None
-        assert report.steered_vs_rich is not None
+        assert report.steered_effect is not None
+        assert report.terse_effect is not None
+        assert report.rich_effect is not None
 
     def test_report_to_dict_serializable(self):
         """Report serializes to JSON without error."""
@@ -194,22 +200,37 @@ class TestCAA32BBehavioralAB:
             # validator refuses to credit them (see test_steering_injection).
             "sampling": {"temperature": 0.7, "top_p": 0.95, "paired_seeds": True},
             "injection_count": 800,
+            # Null-calibrated schema. Each condition carries its OWN effect,
+            # measured net of the baseline's divergence from its own
+            # replicate, so the null sits at zero. The previous fixture used
+            # the pre-2026-08-05 `steered_vs_terse` / `steered_vs_rich` keys,
+            # whose statistic scored a decisive PASS on its own null — and
+            # this test asserted that artifact passed. The validator voids
+            # those now; the test was pinning the contradiction in place.
             "analysis": {
                 "n_trials": 50,
-                "steered_vs_terse": {
-                    "observed_delta": 0.007,
-                    "p_value": 0.34,
-                    "ci_low": -0.03,
-                    "ci_high": 0.04,
-                    "effect_size_d": 0.07,
-                },
-                "steered_vs_rich": {
+                "steered_effect": {
                     "observed_delta": 0.168,
                     "p_value": 0.0002,
                     "ci_low": 0.14,
                     "ci_high": 0.18,
                     "effect_size_d": 3.43,
                 },
+                "terse_effect": {
+                    "observed_delta": 0.007,
+                    "p_value": 0.34,
+                    "ci_low": -0.03,
+                    "ci_high": 0.04,
+                    "effect_size_d": 0.07,
+                },
+                "rich_effect": {
+                    "observed_delta": 0.041,
+                    "p_value": 0.12,
+                    "ci_low": -0.01,
+                    "ci_high": 0.09,
+                    "effect_size_d": 0.42,
+                },
+                "baseline_self_distance": 0.09,
                 "steered_vs_baseline_mean_distance": 0.63,
                 "rich_vs_baseline_mean_distance": 0.80,
                 "passes_adversarial_control": True,
@@ -228,4 +249,55 @@ class TestCAA32BBehavioralAB:
         assert ab.get("passed") is True
         assert ab["raw"]["source_schema"] == "live_32b_ab"
         assert report["passed"] is True
+        Path(f.name).unlink(missing_ok=True)
+
+    def test_a_pre_null_calibration_artifact_is_voided_not_credited(self):
+        """The old schema must FAIL, and the test suite must say so.
+
+        Artifacts written before 2026-08-05 scored
+        d(steered, control) − d(steered, baseline). Steered and baseline shared
+        a prompt and a seed, so with no effect at all the second term is
+        exactly zero and the first is the whole control distance — the
+        statistic's own null hypothesis scored a decisive pass. Measured on
+        this pipeline's null: d=17.3, p=0.0005.
+
+        The validator voids those. This test exists because the suite
+        previously asserted the opposite — a fixture in the old schema, checked
+        for `passed is True` — which is the documented contradiction (the
+        current validator calls old CAA schemas invalid while a committed
+        old-schema report stays marked passing) pinned in place by a test.
+        """
+        import tempfile
+
+        behavioral = {
+            "model": MODEL_PATH,
+            "n_trials": 50,
+            "held_out_tasks": HELD_OUT_TASKS,
+            "passes_adversarial_control": True,
+            "sampling": {"temperature": 0.7, "top_p": 0.95, "paired_seeds": True},
+            "injection_count": 800,
+            "analysis": {
+                "n_trials": 50,
+                # The retired keys. Absence of `steered_effect` is what marks
+                # the artifact, so an old file cannot normalize into a pass.
+                "steered_vs_terse": {"effect_size_d": 0.07, "p_value": 0.34},
+                "steered_vs_rich": {"effect_size_d": 3.43, "p_value": 0.0002},
+                "passes_adversarial_control": True,
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(behavioral, f)
+            f.flush()
+            validator = CAA32BValidator(vectors_dir=VECTORS_DIR, model_path=MODEL_PATH)
+            report = validator.run(behavioral_results=f.name)
+
+        ab = report.get("behavioral_ab", {})
+        assert ab["raw"]["source_schema"] == "live_32b_ab_voided"
+        assert ab.get("passed") is not True, (
+            "an artifact whose statistic passes its own null was credited as "
+            "behavioral evidence"
+        )
+        assert report["passed"] is not True
+        assert "paired_distance_comparison" in ab["raw"]["voided_reason"]
         Path(f.name).unlink(missing_ok=True)

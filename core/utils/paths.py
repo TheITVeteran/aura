@@ -131,6 +131,14 @@ def forensics_search_roots() -> list[Path]:
     reader on this machine still finds the artifacts already on disk.
     """
     roots: list[Path] = [forensics_root()]
+    # An explicit override is EXCLUSIVE. AURA_LOG_DIR means "this is the
+    # record" — for a hermetic run, for a replay, for a sandboxed audit — and
+    # continuing to search the machine's real trees would let a test read 502
+    # live stall dumps it never wrote. The legacy roots exist to stop history
+    # being orphaned by the canonicalisation, which is a concern only when
+    # nobody has said where the record is.
+    if aura_log_dir_override():
+        return roots
     try:
         legacy = _LEGACY_FORENSICS_RELATIVE.resolve()
     except OSError:
@@ -153,7 +161,12 @@ def forensics_search_dirs(kind: str) -> list[Path]:
     down. Callers skip directories that are not there; that is cheap, and it is
     the caller's business rather than the resolver's.
     """
-    canonical = forensics_root() / kind
+    # forensics_dir, not forensics_root()/kind: it creates the directory.
+    # With an exclusive override the canonical directory may not exist yet, and
+    # a reader pointed at a path that is not there reports "no evidence" for
+    # the same reason the original defect did. Creating an empty directory is
+    # harmless and makes the reader and the writer agree by construction.
+    canonical = forensics_dir(kind)
     dirs = [canonical]
     dirs.extend(
         root / kind

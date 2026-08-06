@@ -45,6 +45,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 from core.runtime.sqlite_support import connecting
+from core.runtime.sqlite_support import open_tracked
 
 
 class GoalState(str, Enum):
@@ -461,7 +462,7 @@ class TaskLifecycleManager:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        conn = open_tracked(str(self.db_path), timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
@@ -673,7 +674,7 @@ def migrate_legacy_status_db(db_path: Path) -> Dict[str, int]:
     valid = {state.value for state in GoalState}
     stats = {"scanned": 0, "rewritten": 0, "skipped": 0, "unrecognized": 0}
 
-    conn = sqlite3.connect(str(db_path), timeout=5.0)
+    conn = open_tracked(str(db_path), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000;")
     try:

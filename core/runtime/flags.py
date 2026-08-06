@@ -224,3 +224,64 @@ def aura_root_override() -> str:
 def reset_registry_for_test() -> None:
     with _REGISTRY_LOCK:
         _REGISTRY.clear()
+
+
+# ── One-line declared reads ───────────────────────────────────────────────
+#
+# The ratchet in tests/test_flag_ratchet.py caps raw os.environ AURA_* reads,
+# and the count grew instead of shrinking because declaring a flag cost five
+# lines and a module-level name for something that was one expression. At that
+# price the next person writes os.getenv and moves on — which is what happened.
+#
+# These declare on first use and read through, so complying costs one line and
+# the knob still arrives in the registry typed, defaulted, owned and described.
+# Nothing is cached: declare() is idempotent for an identical spec, and Flag
+# values are read-through by design so a test that sets the variable is seen.
+
+
+def env_str(name: str, *, default: str = "", description: str, owner: str) -> str:
+    """A declared string knob, read through. Empty string when unset."""
+    value = declare(
+        name, kind=FlagKind.STRING, default=default, description=description, owner=owner
+    ).value()
+    return str(default if value is None else value)
+
+
+def env_int(name: str, *, default: int, description: str, owner: str) -> int:
+    """A declared integer knob. A malformed value yields the default.
+
+    Malformed is not fatal on purpose: an operator typo in one knob should not
+    take down a boot, and the flag layer already records the resolution source
+    for anyone asking why a value looks wrong.
+    """
+    value = declare(
+        name, kind=FlagKind.INT, default=default, description=description, owner=owner
+    ).value()
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name: str, *, default: float, description: str, owner: str) -> float:
+    """A declared float knob. A malformed value yields the default."""
+    value = declare(
+        name, kind=FlagKind.FLOAT, default=default, description=description, owner=owner
+    ).value()
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def env_bool(name: str, *, default: bool = False, description: str, owner: str) -> bool:
+    """A declared boolean knob.
+
+    Truthiness is the flag layer's, not this function's — so "1", "true" and
+    "on" mean the same thing everywhere, which was one of the things 647
+    independently-parsed raw reads could not promise.
+    """
+    value = declare(
+        name, kind=FlagKind.BOOL, default=default, description=description, owner=owner
+    ).value()
+    return bool(default if value is None else value)

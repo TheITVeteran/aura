@@ -72,6 +72,14 @@ class ServiceRequirement:
     tier: ServiceTier
     description: str
     liveness_check: str | None = None  # Method name to call for deep health check
+    # Method name returning EVIDENCE OF WORK — a monotonically increasing count
+    # of real invocations, or a unix timestamp of the last one. Distinct from
+    # liveness_check on purpose: `is_ready()` answers "could this work?", and a
+    # component that is constructed, registered, healthy and wired to nothing
+    # answers yes. Steering did exactly that while its callbacks never reached
+    # the token sentinel, and the health report said it was fine because the
+    # report was asking the only question that could not detect the fault.
+    participation_check: str | None = None
     # Optional method returning a human reason for a FAILED liveness check.
     # Without it the contract can only report "<check>() returned False", which
     # names the probe and not the fault — measured live as
@@ -464,6 +472,32 @@ class ServiceStatus:
     liveness_ok: bool | None = None  # None = no liveness check defined
     error: str | None = None
     duration_ms: float = 0.0
+    #: Evidence of real work, or None when the service declares no probe.
+    #: A count or a last-used timestamp — whatever the service can honestly
+    #: produce.
+    participation: float | None = None
+
+    @property
+    def has_participated(self) -> bool | None:
+        """Has this service actually done anything? None when unmeasured.
+
+        `None` is a real answer and must not be read as `False`. A service with
+        no participation probe is UNMEASURED, and reporting unmeasured as
+        "never used" would replace one false certainty with another.
+        """
+        if self.participation is None:
+            return None
+        return self.participation > 0
+
+    @property
+    def state(self) -> str:
+        """absent | idle | participating | unmeasured — never just "ok"."""
+        if not self.present:
+            return "absent"
+        participated = self.has_participated
+        if participated is None:
+            return "unmeasured"
+        return "participating" if participated else "idle"
 
 
 @dataclass
@@ -996,6 +1030,37 @@ def _runtime_pressure_status() -> ServiceStatus:
     )
 
 
+def _read_participation(service: Any, requirement: "ServiceRequirement") -> float | None:
+    """Evidence that this service has actually done work, or None if unmeasured.
+
+    Never raises and never guesses. A probe that errors, is missing, or returns
+    something that is not a number yields None — UNMEASURED — because the one
+    thing this must not do is report "never used" for a service that simply
+    has no probe. That would trade a false "everything is fine" for a false
+    "everything is broken", and the second gets the check switched off faster
+    than the first.
+    """
+    probe_name = getattr(requirement, "participation_check", None)
+    if not probe_name or service is None:
+        return None
+    try:
+        # The getattr is inside the guard too. `getattr(x, name, None)` only
+        # swallows AttributeError, and a property that raises anything else
+        # would propagate out of the health probe — taking down the report
+        # whose job is to tell you what is wrong.
+        probe = getattr(service, probe_name, None)
+        if not callable(probe):
+            return None
+        value = probe()
+    except (AttributeError, RuntimeError, TypeError, ValueError, OSError):
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str, int]:
     tier_services = [status for status in services if status.requirement.tier == tier]
     failed = [
@@ -1055,6 +1120,7 @@ def evaluate_health() -> HealthVerdict:
                     present=present,
                     liveness_ok=liveness_ok,
                     error=error,
+                    participation=_read_participation(svc, req),
                     duration_ms=round(
                         (time.perf_counter() - probe_started) * 1000.0,
                         3,

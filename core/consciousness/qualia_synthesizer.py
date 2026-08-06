@@ -20,6 +20,13 @@ Integrates:
   3. DIT (L5 Burst Count)
   4. IWMT/FEP (Free Energy & Precision)
   5. UAL (Unlimited Associative Learning Profile)
+
+Operationally: this measures a weighted combination of named state inputs (the
+q_vector), the Shannon entropy over that vector's distribution (reported as
+Phenomenal Richness Index), and whether the recent history of that vector is
+clustered or dispersed (reported as attractor versus novelty). Every one of
+those is a statistic over selected internal variables. The weights are chosen,
+not derived.
 """
 
 import logging

@@ -1,0 +1,8 @@
+{
+  "description": "Files whose NAME carries a loaded term but whose module docstring does not say what they operationally measure. Reduce this; never raise it.",
+  "markers": [
+    "Operationally:",
+    "What this measures:"
+  ],
+  "max_missing_definition": 53
+}

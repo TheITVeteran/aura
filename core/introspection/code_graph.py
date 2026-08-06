@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.sqlite_support import connection_is_open, open_tracked
 
 logger = logging.getLogger("Aura.CodeGraph")
 
@@ -84,9 +85,14 @@ class CodeGraph:
     # ── Database ─────────────────────────────────────────────────────────
 
     def _get_conn(self) -> sqlite3.Connection:
+        # A cached handle can be closed underneath this store — by a
+        # shutdown, by a test teardown, by the tracked-connection sweeper.
+        # `is None` alone returns the dead connection to every later caller.
+        if self._conn is not None and not connection_is_open(self._conn):
+            self._conn = None
         if self._conn is None:
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn = open_tracked(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")

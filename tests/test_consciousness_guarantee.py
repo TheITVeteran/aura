@@ -57,6 +57,12 @@ THE FIVE CONDITIONS TESTED HERE:
 USAGE:
     pytest tests/test_consciousness_guarantee.py -v
     pytest tests/test_consciousness_guarantee.py -v -k "TestContinuousEndogenousActivity"
+
+Operationally: this measures whether five named mechanisms are present in the
+architecture, causally wired into processing rather than decorative, and
+falsifiable under lesion controls and adversarial baselines. Passing means
+those five mechanisms are there and load-bearing. It is not evidence of
+consciousness, and the word in the filename is historical.
 """
 from __future__ import annotations
 

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from core.config import config
 from core.runtime.errors import record_degradation
 from core.security.structural_redaction import redact_structure
+from core.runtime.sqlite_support import connection_is_open, open_tracked
 
 logger = logging.getLogger("Aura.Audit")
 
@@ -118,8 +119,15 @@ class AuditLog:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
+        # `is None` was not enough. A cached handle can be closed underneath
+        # this store — by shutdown, by a test teardown, by corruption recovery
+        # — and the old check returned the dead connection to every later
+        # caller, which then raised "Cannot operate on a closed database"
+        # forever after with no path back.
+        if self._con is not None and not connection_is_open(self._con):
+            self._con = None
         if self._con is None:
-            con = sqlite3.connect(self._db_path, timeout=10, check_same_thread=False)
+            con = open_tracked(self._db_path, timeout=10, check_same_thread=False)
             con.row_factory = sqlite3.Row
             try:
                 con.execute("PRAGMA journal_mode=WAL")
@@ -137,6 +145,19 @@ class AuditLog:
         if self._con:
             self._con.close()
             self._con = None
+
+    def __enter__(self) -> "AuditLog":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        """Release the connection. Never suppresses the exception.
+
+        A durable store with no obvious way to be released gets released by
+        the garbage collector instead — at an unpredictable moment, inside
+        unrelated work. `with AuditLog(...)` makes the correct lifetime the
+        easy one to write.
+        """
+        self.close()
 
     def _heal_database(self):
         """Quarantine a corrupt audit database. NEVER delete one.

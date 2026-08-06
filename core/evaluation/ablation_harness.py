@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.evaluation.statistics import bootstrap_ci as _bootstrap_ci
+from core.evaluation.matched_budget import ConditionBudget, check_budget_parity
 
 # Condition names. RAW = bare model call, current turn only. PROMPTED = bare
 # model + a fixed system/identity prompt, still no history. FULL = the
@@ -146,9 +147,23 @@ class AblationHarness:
         *,
         conditions: Sequence[str] = (RAW, PROMPTED, FULL),
         bootstrap_iterations: int = 2000,
+        budgets: "Sequence[ConditionBudget] | None" = None,
     ):
+        """``budgets`` declares what each arm was allowed to spend.
+
+        Optional, because the unit tests here drive an injected responder where
+        the question does not arise. Required in practice for anything that
+        becomes evidence: this harness previously had no concept of what an arm
+        had been allowed to do, which is how a 160-token baseline was compared
+        against an effectively unbounded, solver-assisted treatment and the
+        result was published as 100% versus 16.67%.
+
+        When budgets are declared and do not match, `verdict()` returns void
+        rather than a number.
+        """
         self.conditions = tuple(conditions)
         self.bootstrap_iterations = bootstrap_iterations
+        self.budgets = tuple(budgets) if budgets else ()
 
     def run(
         self,
@@ -170,6 +185,19 @@ class AblationHarness:
     def verdict(self, results: dict[str, ConditionResult]) -> dict[str, Any]:
         """Honest verdict: architecture beats a stateless baseline only when its
         lower CI clears that baseline's upper CI on the real per-task scores."""
+        # Parity first. A verdict computed from arms that were not allowed
+        # the same resources is not a weak result, it is not a result.
+        if self.budgets:
+            parity = check_budget_parity(self.budgets)
+            if not parity.matched:
+                return {
+                    "architecture_beats_stateless": False,
+                    "verdict": "void",
+                    "reason": parity.refusal_reason(),
+                    "budget_parity": parity.to_dict(),
+                    "comparisons": {},
+                }
+
         full = results.get(FULL)
         comparisons: dict[str, Any] = {}
         beats_all_stateless = full is not None and bool(

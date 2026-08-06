@@ -32,6 +32,13 @@ After boot, a continuous integration loop runs at 10 Hz that:
   - Enforces SubstrateAuthority before GWT competition
   - Applies unified field back-pressure to input subsystems
   - Pushes neurochemical mood into the substrate's VAD indices
+
+Operationally: this measures whether the consciousness-named subsystems are
+connected to the live processing path — whether their outputs reach prompt
+assembly, state updates and action selection rather than only a dashboard.
+Connectivity is the measurement. It is worth measuring because it was once
+false: components reported themselves online while their callbacks were never
+passed to the token sentinel.
 """
 from __future__ import annotations
 

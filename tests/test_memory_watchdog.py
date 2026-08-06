@@ -182,22 +182,35 @@ class TestLethalPath(unittest.TestCase):
         self.assertEqual(h.exits, [])
 
     def test_tombstone_written_before_exit(self):
-        import tempfile
+        """The tombstone lands in the CONFIGURED forensic root, not beside the cwd.
 
-        import core.resilience.memory_watchdog as mw
+        This used to rebind the module-level `_TOMBSTONE_DIR`, which meant it
+        could pass while the real path was `Path("data/error_logs/memory")` —
+        relative to whatever directory the launcher started in. That is the
+        same split that had crash correlation reading an empty directory for
+        weeks. Driving it through AURA_LOG_DIR proves the redirection works
+        end to end, which is the property that actually matters.
+        """
+        import os
+        import tempfile
 
         h = _Harness()
         s = _sample(core_mb=35_000.0)
+        previous = os.environ.get("AURA_LOG_DIR")
         with tempfile.TemporaryDirectory() as tmp:
-            original = mw._TOMBSTONE_DIR
-            mw._TOMBSTONE_DIR = Path(tmp) / "memory"
+            os.environ["AURA_LOG_DIR"] = tmp
             try:
                 h.dog._evaluate(s, now=100.0)
                 h.dog._evaluate(s, now=103.0)
                 h.dog._evaluate(s, now=106.0)
-                tombstones = list((Path(tmp) / "memory").glob("oom_tombstone_*.json"))
+                tombstones = list(
+                    (Path(tmp) / "error_logs" / "memory").glob("oom_tombstone_*.json")
+                )
             finally:
-                mw._TOMBSTONE_DIR = original
+                if previous is None:
+                    os.environ.pop("AURA_LOG_DIR", None)
+                else:
+                    os.environ["AURA_LOG_DIR"] = previous
         self.assertEqual(len(tombstones), 1)
         self.assertEqual(h.exits, [MEMORY_ABORT_EXIT_CODE])
 

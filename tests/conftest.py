@@ -128,6 +128,98 @@ def _is_process_lifetime_log_sink(path) -> bool:
     return text.endswith(".pyc") and f"{os.sep}__pycache__{os.sep}" in text
 
 
+# ── Durable sqlite stores that outlive their test ─────────────────────────
+#
+# Measured 2026-08-06 across the full suite: the single largest error class was
+# one shape repeated in five unrelated modules — AuditLog, ReceiptStore, the
+# goal lifecycle store, the cognitive ledger, the code graph. Each opens ONE
+# sqlite connection in its constructor and keeps it for the life of the object,
+# which is the right design for a durable store, and each was created by a test
+# that never called the `close()` every one of them already has. The handle,
+# its `-wal` and its `-shm` then survived into later tests, and the hermetic
+# guard blamed whichever test was running when it noticed.
+#
+# Chasing this per module means a `reset_X_for_test` entry per store, forever —
+# the same allowlist treadmill the ServiceContainer guard was on. Stores that
+# route through core.runtime.sqlite_support.open_tracked are closed by
+# close_all_tracked() above, but that only covers what has been migrated.
+#
+# So this is the backstop, and it is deliberately shaped to cost nothing until
+# something is actually wrong: only when the sandbox reports open database
+# files does it walk the object graph for the connections holding them. In
+# exchange it works for every store, migrated or not, and it can say WHICH
+# object held the handle — turning "hermetic resource leak detected: three
+# files" into "CodeGraph held test_graph.db", which is the difference between
+# a report and a lead.
+_SQLITE_SUFFIXES = ("", "-wal", "-shm", "-journal")
+
+
+def _sqlite_paths_from(leaked_files: set[str]) -> set[str]:
+    """Base database paths implied by a set of leaked file names."""
+    # realpath both sides. sqlite reports the resolved path (/private/var/...)
+    # while the leak observer reports whatever the caller opened (/var/...), so
+    # an unnormalised comparison silently matches nothing and the sweeper looks
+    # like it ran and found the store already closed.
+    bases: set[str] = set()
+    for name in leaked_files:
+        for suffix in ("-wal", "-shm", "-journal"):
+            if name.endswith(suffix):
+                bases.add(os.path.realpath(name[: -len(suffix)]))
+                break
+        else:
+            bases.add(os.path.realpath(name))
+    return bases
+
+
+def close_leaked_sqlite_connections(leaked_files: set[str]) -> list[str]:
+    """Close live sqlite connections to the given files. Returns what held them.
+
+    Walks the garbage collector because a connection nothing registered is a
+    connection nothing else can find. Only called when a leak has already been
+    detected, so the cost is paid once per failure rather than once per test.
+    """
+    import gc
+    import sqlite3
+
+    wanted = _sqlite_paths_from(leaked_files)
+    if not wanted:
+        return []
+
+    holders: list[str] = []
+    connections: list[Any] = [
+        obj for obj in gc.get_objects() if isinstance(obj, sqlite3.Connection)
+    ]
+    for connection in connections:
+        try:
+            rows = connection.execute("PRAGMA database_list").fetchall()
+        except sqlite3.Error:
+            continue  # already closed, or busy — either way not ours to force
+        paths = {os.path.realpath(str(row[2])) for row in rows if row and row[2]}
+        if not (paths & wanted):
+            continue
+        # Name the owner before closing it: the referrer is the store, and the
+        # store's type is the actionable half of the report.
+        owners = {
+            type(ref).__name__
+            for ref in gc.get_referrers(connection)
+            if not isinstance(ref, (dict, list, tuple, set, frozenset))
+        }
+        if not owners:
+            owners = {
+                type(holder).__name__
+                for ref in gc.get_referrers(connection)
+                if isinstance(ref, dict)
+                for holder in gc.get_referrers(ref)
+                if hasattr(holder, "__class__")
+            }
+        holders.append(
+            f"{', '.join(sorted(owners)) or 'unknown'} -> {', '.join(sorted(paths & wanted))}"
+        )
+        with contextlib.suppress(sqlite3.Error):
+            connection.close()
+    return holders
+
+
 class HermeticResourceSandbox:
     """Per-test host leak detector; never used as resource-policy evidence."""
 
@@ -178,12 +270,36 @@ class HermeticResourceSandbox:
             ),
         )
 
+    #: Read-only files owned by the operating system, not by any test. The
+    #: Metal shader cache is the one that actually bit: importing MLX makes the
+    #: OS map MPSNDArray/MPSCore default.metallib, they stay mapped for the life
+    #: of the process, and whichever test first touched the GPU was reported as
+    #: leaking two framework resources it neither opened nor can close. A
+    #: detector that reports things the test cannot fix teaches people to
+    #: distrust the detector.
+    _SYSTEM_OWNED_PREFIXES = (
+        "/System/",
+        "/usr/lib/",
+        "/usr/share/",
+        "/Library/Apple/",
+        "/private/var/db/",
+    )
+
+    @classmethod
+    def _test_owned(cls, path: object) -> bool:
+        text = str(path)
+        return not text.startswith(cls._SYSTEM_OWNED_PREFIXES)
+
     def leaks(self) -> dict[str, set[object]]:
         current = self.snapshot()
         return {
             "children": set(current.child_identities - self.baseline.child_identities),
             "listeners": set(current.listening_fds - self.baseline.listening_fds),
-            "open_files": set(current.open_files - self.baseline.open_files),
+            "open_files": {
+                path
+                for path in (current.open_files - self.baseline.open_files)
+                if self._test_owned(path)
+            },
         }
 
     @contextlib.contextmanager
@@ -241,6 +357,25 @@ class HermeticResourceSandbox:
             if int(pid) == os.getpid() and int(fd) >= 0:
                 with contextlib.suppress(OSError):
                     os.close(int(fd))
+
+        # Backstop for the dominant leak class. Five unrelated modules —
+        # AuditLog, ReceiptStore, the goal lifecycle store, the cognitive
+        # ledger, the code graph — each open ONE sqlite connection in their
+        # constructor and keep it, which is right for a durable store, and each
+        # was created by a test that never called the close() they all already
+        # have. Chasing it per module is a reset-function treadmill that grows
+        # by one entry per incident.
+        #
+        # This costs nothing until something is already wrong: only once a leak
+        # has been detected does it walk the object graph for the connections
+        # holding those files. It then names the HOLDER, which turns "three
+        # files leaked" into "CodeGraph held test_graph.db" — a lead rather
+        # than a report — and closes them so the next test starts clean.
+        if leaks.get("open_files"):
+            holders = close_leaked_sqlite_connections(set(leaks["open_files"]))
+            if holders:
+                print(f"\n[sqlite-sweeper] closed leaked stores: {'; '.join(holders)}")
+                leaks = self.leaks()
 
         if leaked_leases or any(leaks.values()):
             pytest.fail(
@@ -351,6 +486,10 @@ _TEST_SCOPED_RESET_FUNCTIONS = (
     # tests. This is the general form of the per-component sqlite leaks: the
     # registry already knows about them, nothing was asking it to let go.
     ("core.memory.db_config", "close_all_connections"),
+    # Durable stores that route through core.runtime.sqlite_support.
+    ("core.runtime.sqlite_support", "close_all_tracked"),
+    # Audit chains hold raw append/lock fds the sqlite sweeper cannot see.
+    ("core.runtime.audit_chain", "close_all_chains"),
     ("core.resilience.cognitive_ledger", "reset_cognitive_ledger_for_test"),
     ("core.resilience.inhibition_manager", "reset_inhibition_manager_for_test"),
     ("core.unity.runtime", "reset_unity_runtime_for_test"),

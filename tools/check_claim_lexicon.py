@@ -77,8 +77,17 @@ _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 def loaded_terms_in(name: str) -> list[str]:
     stem = name.lower().removesuffix(".py")
     tokens = [token for token in _TOKEN_SPLIT.split(stem) if token]
+    # Normalised stem with one separator, delimited at both ends, so a term
+    # that spans tokens ("strange_loop") can be found the same way a single
+    # token is. Splitting alone made multi-word terms unmatchable — they were
+    # in the list and could never fire.
+    delimited = "_" + "_".join(tokens) + "_"
     found: list[str] = []
     for term in LOADED_TERMS:
+        if "_" in term:
+            if f"_{term}_" in delimited:
+                found.append(term)
+            continue
         # A term matches a whole token, or a token that is that term plus an
         # ordinary suffix ("sentien" -> "sentience", "conscious" -> ...).
         if any(token == term or token.startswith(term) for token in tokens):

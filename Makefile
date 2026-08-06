@@ -222,6 +222,10 @@ security:
 	@echo "🔐 Running local security scan..."
 	@$(PYTHON) tools/security_scan.py
 
+claim-lexicon:
+	@echo "🏷  Checking that loaded names say what they measure..."
+	@$(PYTHON) tools/check_claim_lexicon.py --json /tmp/aura_claim_lexicon.json
+
 evidence-integrity:
 	@echo "🧾 Checking that no claim outranks its evidence..."
 	@$(PYTHON) tools/check_evidence_integrity.py --json /tmp/aura_evidence_integrity.json

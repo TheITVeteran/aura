@@ -37,6 +37,7 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from core.runtime.sqlite_support import open_tracked
 
 logger = logging.getLogger("Aura.CognitiveLedger")
 
@@ -187,7 +188,7 @@ class CognitiveLedger:
 
     def _initialize(self):
         try:
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn = open_tracked(str(self._db_path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.executescript(_SCHEMA)

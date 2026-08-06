@@ -1,5 +1,10 @@
 """core/autonomy/personhood_engine.py — The Personhood Engine.
 Spontaneous speech based on internal state triggers.
+
+Operationally: this measures nothing about personhood. It schedules unprompted
+speech when named internal-state variables cross configured thresholds, and
+its output is a decision about whether to speak spontaneously. The name is
+historical and asserts a conclusion the module does not reach.
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation

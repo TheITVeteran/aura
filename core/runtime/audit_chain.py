@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -130,6 +131,9 @@ class AuditChain:
         self.root = Path(root)
         self.path = self.root / self.CHAIN_FILENAME
         self.lock_path = self.root / ".chain.lock"
+        # Registered so teardown can find a chain still holding fds.
+        # Weakly: this must not be what keeps a chain alive.
+        _LIVE_CHAINS.add(self)
         self._lock = checked_lock("audit_chain.lock", reentrant=True)
         self._head_hash: str = GENESIS_PREV_HASH
         self._next_seq: int = 0
@@ -609,3 +613,35 @@ class AuditChain:
             "length": length,
             "head_hash": head,
         }
+
+
+# ── Live chains ───────────────────────────────────────────────────────────
+#
+# Every AuditChain holds an append fd and a lock fd for its lifetime, and five
+# modules construct one. `__del__` closes them, which means they are released
+# when the garbage collector next runs — inside some later, unrelated piece of
+# work. The descriptors come back; they come back blamed on the wrong owner.
+#
+# A WeakSet keeps nothing alive and lets teardown ask the question nobody could
+# ask before: which chains are still open right now?
+_LIVE_CHAINS: "weakref.WeakSet[AuditChain]" = weakref.WeakSet()
+
+
+def close_all_chains() -> dict[str, int]:
+    """Close every live chain's descriptors. Returns a small report.
+
+    Safe against live components: `AuditChain.close()` sets both fds to None
+    and the append/lock paths reopen when None, so a chain closed underneath
+    its owner reopens on next use rather than failing.
+
+    Never raises — this runs in teardown and shutdown paths.
+    """
+    chains = list(_LIVE_CHAINS)
+    closed = failed = 0
+    for chain in chains:
+        try:
+            chain.close()
+            closed += 1
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            failed += 1
+    return {"closed": closed, "failed": failed}

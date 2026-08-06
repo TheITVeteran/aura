@@ -27,7 +27,11 @@ from core.audit import AuditLog
 
 @pytest.fixture
 def audit(tmp_path):
-    return AuditLog(db_path=str(tmp_path / "audit.db"))
+    # Closed, not left to the collector: an AuditLog caches one sqlite
+    # connection, and a connection released whenever the collector next runs
+    # is a leak attributed to whatever test happens to be running then.
+    with AuditLog(db_path=str(tmp_path / "audit.db")) as log:
+        yield log
 
 
 # ------------------------------------------------------- evidence survives
@@ -42,7 +46,7 @@ def test_a_corrupt_database_is_quarantined_never_deleted(tmp_path):
     db.write_bytes(b"this is not a sqlite database at all, not even close")
     Path(str(db) + "-wal").write_bytes(b"newest entries live here")
 
-    AuditLog(db_path=str(db))
+    AuditLog(db_path=str(db)).close()
 
     quarantined = list(tmp_path.glob("audit.db.corrupt.*"))
     assert quarantined, "the corrupt database was destroyed instead of quarantined"
@@ -58,7 +62,7 @@ def test_quarantine_preserves_the_original_bytes(tmp_path):
     marker = b"corrupt-but-evidential-0123456789"
     db.write_bytes(marker)
 
-    AuditLog(db_path=str(db))
+    AuditLog(db_path=str(db)).close()
 
     quarantined = [p for p in tmp_path.glob("audit.db.corrupt.*") if not p.name.endswith(("-wal", "-shm"))]
     assert quarantined

@@ -1010,7 +1010,21 @@ class RealityActuationCoordinator:
             retryable = bool(report.get("retryable"))
             if bool(report.get("complete")) or not retryable:
                 delay_s = self._recovery_min_retry_s
-                await self._recovery_wake.wait()
+                # Bounded, not unbounded. Recovery is done, so this is an idle
+                # park until new work or shutdown wakes us — and an unbounded
+                # park means one lost `_recovery_wake.set()` stops restart
+                # recovery forever with no symptom at all: nothing raises,
+                # nothing degrades, the work simply never happens again.
+                # Re-checking the stop flag on timeout costs one wakeup per
+                # idle period. The ceiling is the retry ceiling this loop
+                # already carries, so no new constant is introduced.
+                try:
+                    await asyncio.wait_for(
+                        self._recovery_wake.wait(),
+                        timeout=self._recovery_max_retry_s,
+                    )
+                except TimeoutError:
+                    pass
                 continue
             delay_s = min(
                 self._recovery_max_retry_s,

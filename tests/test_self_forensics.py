@@ -60,7 +60,14 @@ class TestEvidenceBlock:
 
     def test_no_evidence_yields_honest_unavailability(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.chdir(tmp_path)  # no data/error_logs here
+        # AURA_LOG_DIR, not chdir. This used to rely on the forensics readers
+        # being cwd-relative, which is precisely the defect that had crash
+        # correlation watching an empty directory on the real machine. The
+        # override is the supported way to say "the record lives here", and it
+        # is exclusive — so pointing it at an empty directory is what actually
+        # produces a no-evidence run.
+        monkeypatch.setenv("AURA_LOG_DIR", str(tmp_path / "forensics"))
+        monkeypatch.chdir(tmp_path)
         # The block also reads process-global incident/fault registries that
         # OTHER tests in the same process legitimately populate — neutralize
         # them so this test asserts the true no-evidence branch.

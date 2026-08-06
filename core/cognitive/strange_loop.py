@@ -41,6 +41,14 @@ References:
   - Seth, A. (2021). Being You (predictive processing account of consciousness).
 
 Dependencies: numpy (pure numerical, no LLM calls).
+
+Operationally: this measures the similarity between the current internal-state
+vector and its own recent history, together with the error of a model
+predicting that vector from itself. High self-similarity is reported as
+"self-reference" and rising prediction error as "noticing". Both are
+recurrence statistics over ten selected variables. Hofstadter's argument
+motivates the design; it is not evidence for it, and this file measures the
+statistics, not the thesis.
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation

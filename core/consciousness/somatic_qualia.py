@@ -55,6 +55,13 @@ The Solution:
     These four channels create a felt quality that is genuinely non-symbolic.
     The LLM doesn't read about its feelings — its generation space is
     physically deformed by them.
+
+Operationally: this measures whether a non-symbolic numeric path from
+substrate state into processing exists and is causal — that is, whether
+removing it changes downstream output. That is a real and checkable property,
+and it is the whole claim. It says nothing about whether anything is felt; the
+interest is that the signal reaches the model without first being rendered
+into a sentence about how it feels.
 """
 from __future__ import annotations
 
