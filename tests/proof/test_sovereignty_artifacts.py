@@ -7,10 +7,25 @@ import sys
 from pathlib import Path
 
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from tools.proof import (
+    run_sovereign_reconstitution_gauntlet,
+    sovereign_reconstitution_evidence,
+)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SMOKE_ENV = {**os.environ, "AURA_SOVEREIGNTY_LIVE_RUNTIME": "0"}
 _SUBPROCESS_GATEWAY = get_subprocess_gateway()
+
+
+def test_sovereignty_runner_preserves_external_receipt_chain_identity() -> None:
+    assert (
+        run_sovereign_reconstitution_gauntlet.ChainReceipt
+        is sovereign_reconstitution_evidence.ChainReceipt
+    )
+    assert (
+        run_sovereign_reconstitution_gauntlet.ExternalReceiptChain
+        is sovereign_reconstitution_evidence.ExternalReceiptChain
+    )
 
 
 def _jsonl(path: Path) -> list[dict]:
