@@ -3,7 +3,6 @@ import importlib
 import json
 import sys
 import types
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,19 +12,19 @@ from core import constitution as constitution_module
 from core.adaptation.auditor import AlignmentAuditor
 from core.adaptation.distillation_pipe import DistillationPipe
 from core.agency.intention_loop import IntentionLoop
+from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.brain.llm.context_assembler import ContextAssembler
 from core.constitution import BeliefAuthority, get_constitutional_core
 from core.container import ServiceContainer
 from core.continuity import ContinuityEngine
 from core.executive import executive_core as executive_core_module
-from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.managers.memory_manager import MemoryManager
 from core.memory.episodic_memory import EpisodicMemory
 from core.memory.sqlite_storage import SQLiteMemory
 from core.memory.vector_memory_engine import VectorMemoryEngine
+from core.self_model import SelfModel
 from core.sovereignty.integrity_guard import IntegrityGuard
 from core.state.aura_state import AuraState
-from core.self_model import SelfModel
 
 
 class AsyncCallRecorder:
@@ -282,14 +281,20 @@ async def test_vector_memory_store_respects_constitutional_gate(monkeypatch, tmp
     )
 
     engine = VectorMemoryEngine(db_path=str(tmp_path / "vector_store"))
-    engine.embedder = SimpleNamespace(embed=lambda _text: np.zeros(384))
-    vault_store = CallRecorder()
-    engine.vault.store = vault_store
+    try:
+        engine.embedder.close()
+        engine.embedder = SimpleNamespace(
+            embed=lambda _text: np.zeros(384), close=lambda: None
+        )
+        vault_store = CallRecorder()
+        engine.vault.store = vault_store
 
-    result = await engine.store("blocked vector memory", importance=0.8, tags=["test"])
+        result = await engine.store("blocked vector memory", importance=0.8, tags=["test"])
 
-    assert result == ""
-    assert vault_store.calls == []
+        assert result == ""
+        assert vault_store.calls == []
+    finally:
+        await engine.on_stop_async()
 
 
 def test_proving_suite_constitutional_snapshot_synthesizes_health_and_epistemics(service_container):
@@ -410,7 +415,7 @@ def test_integrity_guard_uses_project_root_not_cwd_substring(monkeypatch, tmp_pa
     (real_root / "core" / "container.py").write_text("# container\n", encoding="utf-8")
 
     fake_cwd = tmp_path / "workspace-core-shadow"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(fake_cwd, cause='test_integrity_guard_uses_project_root_not_cwd_substring'))
+    fake_cwd.mkdir()
     monkeypatch.chdir(fake_cwd)
     monkeypatch.setenv("AURA_ROOT", str(real_root))
 

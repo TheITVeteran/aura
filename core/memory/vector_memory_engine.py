@@ -802,6 +802,7 @@ class VectorMemoryEngine:
         self.scorer = ImportanceScorer()
         self.consolidator = ConsolidationEngine(self.vault, self.embedder)
         self._recent_memory_ids: list[str] = []  # For recency weighting
+        self._closed = False
         
         # --- SPATIAL MEMORY LAYER ---
         # Map: (level, x, y) -> list of feature descriptions
@@ -809,11 +810,30 @@ class VectorMemoryEngine:
         
         logger.info("✅ VectorMemoryEngine initialized. Memories: %d", self.vault.count())
 
+    def __enter__(self) -> "VectorMemoryEngine":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "VectorMemoryEngine":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        await self.on_stop_async()
+
+    def close(self) -> None:
+        """Release every storage and embedding resource owned by this engine."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.embedder.close()
+        finally:
+            self.vault.close()
+
     async def on_stop_async(self) -> None:
-        await asyncio.gather(
-            asyncio.to_thread(self.embedder.close),
-            asyncio.to_thread(self.vault.close),
-        )
+        await asyncio.to_thread(self.close)
 
     def _constitutional_runtime_live(self) -> bool:
         return (

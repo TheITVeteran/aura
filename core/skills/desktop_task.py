@@ -3982,6 +3982,8 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
             visible_source_count = self._requested_visible_source_count(text)
+            if visible_source_count == 0 and self._objective_requests_source_reading(text):
+                visible_source_count = self._requested_research_source_count(text)
             if visible_source_count > 0:
                 opened_source_urls: set[str] = set()
                 for source in (context or {}).get("desktop_task_research_sources") or []:
@@ -4958,6 +4960,8 @@ class DesktopTaskSkill(BaseSkill):
 
                 def _matches_requested(path: str) -> bool:
                     candidate = Path(path).expanduser()
+                    if not root:
+                        return candidate.name.casefold() == requested.name.casefold()
                     try:
                         return candidate == requested or candidate.resolve() == requested.resolve()
                     except OSError:

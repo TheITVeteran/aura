@@ -83,10 +83,6 @@ from core.executive.execution_policy import (  # noqa: E402
 from core.executive.standing_authority import (  # noqa: E402
     AUTONOMOUS_AUTHORITY_ORIGINS,
 )
-from core.runtime.idempotency import (  # noqa: E402
-    get_idempotency_ledger,
-    requires_idempotency_key,
-)
 from core.governance.capability_chain import (  # noqa: E402
     CapabilityDenial,
     CapabilityViolation,
@@ -96,6 +92,10 @@ from core.governance.capability_chain import (  # noqa: E402
     get_capability_verifier,
 )
 from core.runtime.base_module import AuraBaseModule  # noqa: E402
+from core.runtime.idempotency import (  # noqa: E402
+    get_idempotency_ledger,
+    requires_idempotency_key,
+)
 from core.runtime.service_access import (  # noqa: E402
     optional_service,
     resolve_edi,
@@ -3314,7 +3314,12 @@ class CapabilityEngine(AuraBaseModule):
         return policy.effect_scope if policy is not None else "unknown"
 
     def _effect_scope_for(self, skill_name: str, meta: SkillMetadata) -> str:
-        return self._declared_effect_scope(skill_name, meta.instance or meta.skill_class) or meta.effect_scope
+        declared = self._declared_effect_scope(
+            skill_name, meta.instance or meta.skill_class
+        )
+        if declared and declared != "unknown":
+            return declared
+        return str(meta.effect_scope or "unknown").strip().lower()
 
     @staticmethod
     def _is_path_within_workspace(path: Any) -> bool:

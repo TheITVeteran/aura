@@ -16,8 +16,8 @@ from typing import Any
 
 from core.config import config
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
-from core.utils.task_tracker import get_task_tracker
 from core.runtime.sqlite_support import connecting
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ConvPersistence")
 SECONDS_PER_DAY = 86400
@@ -143,7 +143,7 @@ class ConversationPersistence:
         return con
 
     def _init(self):
-        with self._write_lock, self._connect() as con:
+        with self._write_lock, connecting(self._connect()) as con:
             con.execute("PRAGMA journal_mode=WAL")
             con.executescript(_SCHEMA)
             con.commit()
@@ -160,7 +160,7 @@ class ConversationPersistence:
                 severity="warning",
             )
             metadata_json = "{}"
-        with self._write_lock, self._connect() as con:
+        with self._write_lock, connecting(self._connect()) as con:
             con.execute(
                 "INSERT INTO sessions VALUES (?,?,?,?)",
                 (session_id, now, now, metadata_json),
@@ -204,7 +204,7 @@ class ConversationPersistence:
         origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
         cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
         inserted = False
-        with self._write_lock, self._connect() as con:
+        with self._write_lock, connecting(self._connect()) as con:
             con.execute("BEGIN IMMEDIATE")
             self._ensure_session_row(con, sid, now)
             if cid:
@@ -267,7 +267,7 @@ class ConversationPersistence:
         publish_user = False
         publish_aura = False
 
-        with self._write_lock, self._connect() as con:
+        with self._write_lock, connecting(self._connect()) as con:
             con.execute("BEGIN IMMEDIATE")
             self._ensure_session_row(con, sid, now)
             existing_user = (
@@ -441,7 +441,7 @@ class ConversationPersistence:
             keep_days = DEFAULT_CONVERSATION_RETENTION_DAYS
         keep_days = max(1, min(3650, keep_days))
         cutoff = time.time() - (keep_days * SECONDS_PER_DAY)
-        with self._write_lock, self._connect() as con:
+        with self._write_lock, connecting(self._connect()) as con:
             # Manually cascade to be absolutely sure (Audit-33 fix)
             con.execute(
                 "DELETE FROM turns WHERE session_id IN (SELECT id FROM sessions WHERE last_active < ?)",
