@@ -54,7 +54,6 @@
     "unproven-closure::LIFECYCLE-001",
     "unproven-closure::RESOURCE-001",
     "unproven-closure::SHUTDOWN-001",
-    "unproven-closure::SKILLS-001",
     "unproven-closure::STORAGE-GATEWAY-001"
   ],
   "schema_version": 1
