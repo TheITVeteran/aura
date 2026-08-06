@@ -99,6 +99,7 @@ except (OSError, IOError) as e:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
                 source="tool_execution:probe_manager.ghost_probe",
+                accelerator_capability="none",
             )
             
             self.probes[probe_id] = process

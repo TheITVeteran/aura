@@ -234,6 +234,7 @@ async def _functional_test(html_path: str) -> dict[str, Any]:
             stderr=asyncio.subprocess.PIPE,
             read_only=True,
             source="self_taught_builder.functional_test",
+            accelerator_capability="none",
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=45)
     except (FileNotFoundError, TimeoutError, OSError, RuntimeError) as exc:

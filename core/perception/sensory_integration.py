@@ -771,6 +771,7 @@ class AVProductionSystem:
                         capture_output=True,
                         timeout=60,
                         source="core.perception.sensory_integration.edit_video",
+                        accelerator_capability="auto",
                     )
                     if proc.returncode == 0:
                         return {"path": output, "edits_applied": len(edits)}

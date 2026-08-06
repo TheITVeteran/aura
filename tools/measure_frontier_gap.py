@@ -419,6 +419,7 @@ def _git(*args: str) -> str:
         source="proof_tooling:frontier_gap_git",
         timeout=30,
         cwd=REPO_ROOT,
+        accelerator_capability="none",
     )
     if completed.returncode != 0:
         raise RuntimeError(str(completed.stderr or completed.stdout or "git failed").strip())
@@ -687,6 +688,7 @@ def collect_source_identity(
             source="proof_tooling:frontier_gap_release_ancestry",
             timeout=30,
             cwd=REPO_ROOT,
+            accelerator_capability="none",
         )
         if ancestry.returncode != 0:
             return None

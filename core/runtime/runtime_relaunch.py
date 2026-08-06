@@ -157,6 +157,7 @@ def schedule_relaunch(
             stdin=subprocess.DEVNULL,
             allow_during_shutdown=True,
             source="runtime_relaunch:schedule_relaunch",
+            accelerator_capability="auto",
         )
     except (OSError, ValueError) as exc:
         record_degradation(

@@ -317,6 +317,7 @@ class MessagesJXADriver:
             input=payload,
             check=False,
             source="messages_transport.send",
+            accelerator_capability="none",
         )
         if int(completed.returncode) != 0:
             raise MessagesSendAmbiguousError("messages_automation_returned_failure")

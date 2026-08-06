@@ -84,6 +84,7 @@ class ScreenObserver:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 source="core.senses.screen_observer.start_vision",
+                accelerator_capability="none",
             )
             self._vision_active = True
             logger.info("👁️ Vision service started (PID: %s)", self._vision_proc.pid)
@@ -109,6 +110,7 @@ class ScreenObserver:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 source="core.senses.screen_observer.start_audio",
+                accelerator_capability="none",
             )
             self._audio_active = True
             logger.info("👂 Audio service started (PID: %s)", self._audio_proc.pid)

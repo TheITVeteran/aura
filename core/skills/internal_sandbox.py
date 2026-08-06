@@ -212,6 +212,7 @@ class SandboxSkill(BaseSkill):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=resolved_cwd,
                     source="tool_execution:internal_sandbox.execute",
+                    accelerator_capability="none",
                 )
 
                 try:

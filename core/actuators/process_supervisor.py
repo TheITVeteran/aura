@@ -305,6 +305,7 @@ class ProcessSupervisorActuator(BaseActuator):
                 start_new_session=True,
                 preexec_fn=_rlimit_preexec if _resource is not None else None,
                 source="process_supervisor",
+                accelerator_capability="auto",
             )
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             return ActuatorResult(False, f"Process spawn failed: {e}", {})

@@ -286,6 +286,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
                 stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                 source="core.self_modification.shadow_runtime.shadow_boot",
+                accelerator_capability="none",
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_seconds

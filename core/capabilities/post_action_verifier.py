@@ -402,6 +402,7 @@ class PostActionVerifier:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="post_action_verifier.wallpaper_is",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             actual = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
@@ -428,6 +429,7 @@ class PostActionVerifier:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="post_action_verifier.wallpaper_changed",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             actual = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
@@ -455,6 +457,7 @@ class PostActionVerifier:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="post_action_verifier.browser_tabs",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             count = int(stdout.decode().strip()) if stdout else 0
@@ -480,6 +483,7 @@ class PostActionVerifier:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="post_action_verifier.clipboard_contains",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
             content = stdout.decode("utf-8", errors="replace") if stdout else ""
@@ -509,6 +513,7 @@ class PostActionVerifier:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="post_action_verifier.command_succeeded",
+                accelerator_capability="auto",
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
             success = proc.returncode == 0

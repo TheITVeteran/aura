@@ -6,6 +6,7 @@ other low-memory settings that were added to stay under the Metal cap.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -202,16 +203,19 @@ def main() -> int:
             f"target_total={remaining_iters + int(resume_file.stem.split('_', 1)[0])}, seq=4096 ---\n"
         )
         log.flush()
-        process = get_subprocess_gateway().spawn(
-            cmd,
-            cwd=PROJECT_ROOT,
-            stdout=log,
-            stderr=STDOUT,
-            offline_tooling=True,
-            source="training_tooling:resume_training",
-        )
-        process.wait()
-        return process.returncode
+        async def _run_resume() -> int:
+            process = await get_subprocess_gateway().spawn_async(
+                cmd,
+                cwd=PROJECT_ROOT,
+                stdout=log,
+                stderr=STDOUT,
+                offline_tooling=True,
+                source="training_tooling:resume_training",
+                accelerator_capability="model",
+            )
+            return int(await process.wait())
+
+        return asyncio.run(_run_resume())
 
 
 if __name__ == "__main__":

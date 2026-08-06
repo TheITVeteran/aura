@@ -175,6 +175,7 @@ async def _communicate_process(
         stdout=_PIPE,
         stderr=_PIPE,
         source="sandbox.runner.untrusted_child",
+        accelerator_capability="auto",
     )
     communicate_task = create_tracked_task(
         process.communicate(input=payload),

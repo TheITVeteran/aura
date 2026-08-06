@@ -37,6 +37,7 @@ def test_sovereign_reconstitution_smoke_artifacts(tmp_path):
         timeout=180,
         read_only=True,
         source="test_sovereign_reconstitution_smoke_artifacts",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -148,6 +149,7 @@ def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
         timeout=180,
         read_only=True,
         source="test_sovereignty_scorer_rejects_tampered_receipt_chain",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -165,6 +167,7 @@ def test_sovereignty_scorer_rejects_tampered_receipt_chain(tmp_path):
         timeout=60,
         read_only=True,
         source="test_sovereignty_scorer_rejects_tampered_receipt_chain_score",
+        accelerator_capability="none",
     )
     assert score.returncode == 1
     scorecard = json.loads((out / "SCORECARD.json").read_text(encoding="utf-8"))
@@ -214,6 +217,7 @@ def test_sovereignty_external_comparison_evidence_is_distinguished(tmp_path):
         timeout=180,
         read_only=True,
         source="test_sovereignty_external_comparison_evidence_is_distinguished",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 

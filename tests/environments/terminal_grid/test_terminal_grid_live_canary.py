@@ -22,6 +22,7 @@ def test_live_10_step_no_crash_trace_replay(tmp_path):
         timeout=120,
         offline_tooling=True,
         source="certification_tooling:terminal_grid_live_canary",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stderr
     replay = EnvironmentTraceReplay().load(trace_path)

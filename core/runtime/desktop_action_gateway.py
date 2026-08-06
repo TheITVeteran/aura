@@ -71,6 +71,7 @@ class DesktopActionGateway:
                 capture_output=True,
                 timeout=timeout_s,
                 source=f"desktop_action_gateway:{source}",
+                accelerator_capability="none",
             )
             return {
                 "ok": proc.returncode == 0,

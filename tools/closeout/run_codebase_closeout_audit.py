@@ -138,6 +138,7 @@ def _run_git(args: list[str]):
         timeout=60,
         read_only=True,
         source="closeout_audit_git",
+        accelerator_capability="none",
     )
 
 
@@ -261,6 +262,7 @@ def run_command_gate(name: str, command: list[str], *, timeout_s: int = 240) -> 
             timeout=timeout_s,
             read_only=True,
             source=f"closeout_audit_gate:{name}",
+            accelerator_capability="auto",
         )
         detail = (proc.stdout + "\n" + proc.stderr).strip()
         return GateResult(

@@ -77,6 +77,7 @@ def _git_commit() -> str:
             read_only=True,
             offline_tooling=True,
             source="proof_tooling:live_resource_pressure_proof.git_commit",
+            accelerator_capability="none",
         )
     except (OSError, RuntimeError, ValueError):
         return ""

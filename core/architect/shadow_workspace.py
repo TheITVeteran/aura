@@ -119,6 +119,7 @@ class ShadowWorkspaceManager:
                 capture_output=True,
                 timeout=timeout or self.config.shadow_timeout,
                 source="architect.shadow_workspace.run_command",
+                accelerator_capability="auto",
             )
             result = CommandResult(
                 command=cmd,
@@ -206,6 +207,7 @@ class ShadowWorkspaceManager:
                 timeout=15.0,
                 read_only=True,
                 source="architect.shadow_workspace.git_ls_files",
+                accelerator_capability="none",
             )
         except (OSError, RuntimeError, SubprocessError, TimeoutExpired):
             return []

@@ -587,6 +587,7 @@ def test_host_leak_guard_observes_spawned_child(hermetic_resource_sandbox):
         read_only=True,
         offline_tooling=True,
         source="proof_tooling:resource_observation_hermeticity.spawned_child",
+        accelerator_capability="none",
     )
     try:
         deadline = time.monotonic() + 2.0

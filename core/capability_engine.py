@@ -930,6 +930,7 @@ class Shell:
                 timeout=self.timeout,
                 capture_output=True,
                 source="capability_engine.shell",
+                accelerator_capability="auto",
             )
             # CP126 (critical): "The subprocess effect can occur,
             # finalization can fail, and the helper still returns the process

@@ -51,6 +51,7 @@ def run_harness(label: str, script: str) -> HarnessResult:
         timeout=600,
         offline_tooling=True,
         source="certification_tooling:live_harness_all",
+        accelerator_capability="none",
     )
     elapsed = time.monotonic() - t0
     # Relay the last portion of stdout so the run is self-describing.

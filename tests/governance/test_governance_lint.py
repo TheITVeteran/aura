@@ -14,6 +14,7 @@ from tools.lint_governance import (
     EffectBucket,
     _canonical_owner,
     _scan_tree_scoped,
+    _SubprocessDeclarationVisitor,
     compare_inventory,
 )
 
@@ -31,6 +32,7 @@ def _run_lint() -> int:
         timeout=60,
         offline_tooling=True,
         source="certification_tooling:test_governance_lint",
+        accelerator_capability="auto",
     )
     return proc.returncode
 
@@ -82,6 +84,31 @@ def test_scanner_resolves_aliases_factories_and_path_mutations() -> None:
     categories = {key[0] for key in buckets}
     assert categories == {"network_gateway", "raw_file_mutation", "raw_subprocess"}
     assert all(key[2] == "<module>.perform" for key in buckets)
+
+
+def test_subprocess_gateway_requires_accelerator_declaration() -> None:
+    tree = ast.parse(
+        textwrap.dedent(
+            """
+            from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+            def perform() -> None:
+                gateway = get_subprocess_gateway()
+                gateway.run(["git", "status"], read_only=True, source="test")
+                gateway.run(
+                    ["git", "status"],
+                    read_only=True,
+                    source="test",
+                    accelerator_capability="none",
+                )
+            """
+        )
+    )
+    visitor = _SubprocessDeclarationVisitor(relative_path="core/synthetic.py")
+    visitor.visit(tree)
+
+    assert len(visitor.violations) == 1
+    assert "accelerator_capability_undeclared" in visitor.violations[0].problem
 
 
 def test_scanner_recognizes_async_streams_and_their_gateway_owner() -> None:

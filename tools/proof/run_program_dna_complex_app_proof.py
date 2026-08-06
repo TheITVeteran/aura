@@ -230,6 +230,7 @@ def _run_pytest(workspace: Path) -> dict[str, Any]:
         check=False,
         offline_tooling=True,
         source="proof_tooling:program_dna_complex_app.pytest",
+        accelerator_capability="none",
     )
     return {
         "returncode": proc.returncode,

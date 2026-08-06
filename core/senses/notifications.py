@@ -128,6 +128,7 @@ class DesktopNotifier:
                 capture_output=True,
                 timeout=5,
                 source="senses.notifications.desktop_notification",
+                accelerator_capability="none",
             )
             if result.returncode != 0:
                 raise subprocess.CalledProcessError(

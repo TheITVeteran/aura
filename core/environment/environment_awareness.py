@@ -169,6 +169,7 @@ async def _run_command(cmd: list[str], timeout_s: float = 5.0) -> str:
             read_only=True,
             capture_output=True,
             source="core.environment.environment_awareness.run_command",
+            accelerator_capability="auto",
         )
         if result.returncode == 0:
             return result.stdout.strip()

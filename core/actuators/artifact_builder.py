@@ -348,6 +348,7 @@ async def open_artifact(path: str) -> bool:
             offline_tooling=True,
             check=False,
             source="maintenance_tooling:artifact_builder_open",
+            accelerator_capability="none",
         )
         return getattr(result, "returncode", 1)
 

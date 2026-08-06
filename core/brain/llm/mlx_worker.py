@@ -3380,6 +3380,7 @@ def _setup_worker_env():
                 timeout=2.0,
                 source="mlx_worker_env.sdkroot_probe",
                 read_only=True,
+                accelerator_capability="none",
             )
             sdk_path = (proc.stdout or "").strip()
             if proc.returncode != 0 or not sdk_path:

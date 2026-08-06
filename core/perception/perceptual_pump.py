@@ -291,6 +291,7 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
                 ["osascript", "-e",
                  'tell application "System Events" to get name of first application process whose frontmost is true'],
                 capture_output=True, timeout=_SCREEN_PROBE_TIMEOUT_S, read_only=True, source="perceptual_pump.screen.app",
+                accelerator_capability="none",
             )
             if result.returncode == 0 and result.stdout:
                 state.active_app = result.stdout.strip()
@@ -305,6 +306,7 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
                     ["osascript", "-e",
                      f'tell application "System Events" to get name of front window of process "{state.active_app}"'],
                     capture_output=True, timeout=_SCREEN_PROBE_TIMEOUT_S, read_only=True, source="perceptual_pump.screen.title",
+                    accelerator_capability="none",
                 )
                 if result.returncode == 0 and result.stdout:
                     state.window_title = result.stdout.strip()[:200]

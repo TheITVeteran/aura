@@ -32,6 +32,7 @@ def _run_cmd(cmd, cwd=None, timeout=60):
             timeout=timeout,
             capture_output=True,
             source="sandbox_selfmod.run_cmd",
+            accelerator_capability="auto",
         )
         return proc.returncode, proc.stdout, proc.stderr
     except TimeoutExpired:

@@ -183,6 +183,7 @@ class ShellSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="tool_execution:shell.skill",
+                accelerator_capability="auto",
             )
             
             if background:

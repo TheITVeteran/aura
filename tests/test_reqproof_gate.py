@@ -452,6 +452,7 @@ class TestRealRepositoryGate:
             timeout=60,
             read_only=True,
             source="reqproof_gate_test_tracker_at_head",
+            accelerator_capability="none",
         )
         if result.returncode != 0:
             # Not a git checkout (e.g. exported tree): fall back to disk.

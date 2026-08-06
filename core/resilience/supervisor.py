@@ -124,6 +124,7 @@ class SovereignSupervisor:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.cwd()),
             source="environment_action:resilience_supervisor.launch",
+            accelerator_capability="auto",
         )
 
         if self.process.stdout is not None:

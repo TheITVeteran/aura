@@ -128,6 +128,7 @@ class ToggleSensesSkill(BaseSkill):
                     stderr=subprocess.DEVNULL,
                     source=f"skills.toggle_senses.{sense}",
                     start_new_session=True,
+                    accelerator_capability="none",
                 )
                 pid = int(process.pid)
                 self._script_pids[sense] = pid

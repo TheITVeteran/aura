@@ -46,6 +46,7 @@ def _run_static_gate(tmp_path: Path) -> dict:
         timeout=60,
         offline_tooling=True,
         source="certification_tooling:test_enterprise_static_contracts",
+        accelerator_capability="none",
     )
     assert proc.returncode == 0, proc.stdout[-4000:]
     return json.loads(report_path.read_text(encoding="utf-8"))

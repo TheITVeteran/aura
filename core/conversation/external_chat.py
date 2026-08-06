@@ -59,6 +59,7 @@ def _spawn_detached(
         env=os.environ.copy(),
         start_new_session=True,
         source=source,
+        accelerator_capability="auto",
     )
     return int(process.pid)
 

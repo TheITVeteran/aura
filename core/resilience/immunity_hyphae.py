@@ -165,6 +165,7 @@ class SignatureRepairRegistry:
                 read_only=True,
                 source="maintenance_tooling:immunity_hyphae",
                 offline_tooling=True,
+                accelerator_capability="none",
             )
             if res.stdout.strip():
                 zombie_pid = res.stdout.strip().split('\n')[0]
@@ -174,6 +175,7 @@ class SignatureRepairRegistry:
                     timeout=5.0,
                     source="maintenance_tooling:immunity_hyphae",
                     offline_tooling=True,
+                    accelerator_capability="none",
                 )
         except (ImportError, AttributeError, RuntimeError, OSError, TimeoutError, TypeError, ValueError) as e:
             record_degradation('immunity_hyphae', e)

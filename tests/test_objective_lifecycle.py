@@ -106,6 +106,7 @@ def test_state_kernel_and_goal_api_import_in_fresh_interpreter():
         timeout=20.0,
         read_only=True,
         source="proof_tooling:objective_lifecycle_fresh_import",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0, result.stderr

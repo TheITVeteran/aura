@@ -339,6 +339,7 @@ class SafeModificationHarness:
                     timeout=20,
                     read_only=True,
                     source="self_modification.safe_modification_harness.git_ls_files",
+                    accelerator_capability="none",
                 )
                 if result.returncode == 0:
                     return [
@@ -457,6 +458,7 @@ class SafeModificationHarness:
                 cwd=candidate_root,
                 env=env,
                 source="core.self_modification.safe_modification_harness.pytest",
+                accelerator_capability="auto",
             )
             if result.returncode != 0:
                 errors.append(
@@ -518,6 +520,7 @@ class SafeModificationHarness:
             cwd=candidate_root,
             env=env,
             source="core.self_modification.safe_modification_harness.distributed_attempt",
+            accelerator_capability="none",
         )
         detail = (result.stdout or "") + "\n" + (result.stderr or "")
         return result.returncode == 0, detail

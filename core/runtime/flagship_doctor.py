@@ -95,6 +95,7 @@ def _run(cmd: list[str], root: Path, timeout: float = 45.0) -> dict[str, Any]:
             timeout=timeout,
             source="maintenance_tooling:flagship_doctor",
             offline_tooling=True,
+            accelerator_capability="auto",
         )
         return {
             "cmd": cmd,

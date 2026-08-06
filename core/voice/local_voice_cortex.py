@@ -572,6 +572,7 @@ class LocalVoiceCortex:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="tool_execution:local_voice.system_say",
+            accelerator_capability="auto",
         )
         try:
             _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._say_timeout)

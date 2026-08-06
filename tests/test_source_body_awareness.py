@@ -60,6 +60,7 @@ def _git(repo: Path, *args: str, author: str | None = None) -> str:
         timeout=30,
         offline_tooling=True,
         source="proof_tooling:test_source_body_git_fixture",
+        accelerator_capability="none",
     )
     assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
     return proc.stdout.strip()

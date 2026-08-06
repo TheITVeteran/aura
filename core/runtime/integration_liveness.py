@@ -200,6 +200,7 @@ def probe(
             env=env,
             read_only=True,
             source="integration_liveness.import_probe",
+            accelerator_capability="auto",
         )
     except subprocess.TimeoutExpired:
         return ProbeResult(

@@ -407,6 +407,7 @@ class PerceptionDaemon:
                             read_only=True,
                             timeout=1.0,
                             source="perception_daemon.terminal_process",
+                            accelerator_capability="none",
                         )
                     if proc.returncode == 0:
                         lines = proc.stdout.splitlines()
@@ -596,6 +597,7 @@ class PerceptionDaemon:
                     read_only=True,
                     timeout=1.0,
                     source="perception_daemon.clipboard",
+                    accelerator_capability="none",
                 )
             if proc.returncode == 0:
                 return proc.stdout.strip()
@@ -618,6 +620,7 @@ class PerceptionDaemon:
                     read_only=True,
                     timeout=1.5,
                     source="perception_daemon.active_window",
+                    accelerator_capability="auto",
                 )
             if proc.returncode == 0:
                 return proc.stdout.strip()

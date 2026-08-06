@@ -110,6 +110,7 @@ def main():
             timeout=30,
             read_only=True,
             source="maintenance_tooling:fix_future_imports_compile",
+            accelerator_capability="none",
         )
         if result.returncode != 0:
             print(f"  ❌ STILL BROKEN: {rel}")

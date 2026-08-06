@@ -182,6 +182,7 @@ class MemorySyncSkill(BaseSkill):
             cwd=cwd,
             timeout=120,
             source="skills.memory_sync.git",
+            accelerator_capability="auto",
         )
 
     def _allowed_memory_artifacts(self) -> list[str]:

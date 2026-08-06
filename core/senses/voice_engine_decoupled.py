@@ -128,6 +128,7 @@ class DecoupledVoiceEngine:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 source="senses.voice_engine_decoupled.macos_say",
+                accelerator_capability="none",
             )
             
             # Poll so we can interrupt it instantly

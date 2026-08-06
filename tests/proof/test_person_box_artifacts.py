@@ -116,6 +116,7 @@ def test_person_box_gauntlet_smoke_artifacts(tmp_path):
         timeout=420,
         read_only=True,
         source="test_person_box_gauntlet_smoke_artifacts",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 
@@ -188,6 +189,7 @@ def test_model_bottleneck_report_withholds_missing_raw_model_claim(tmp_path):
         timeout=60,
         read_only=True,
         source="test_model_bottleneck_report_contract",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads((out / "MODEL_BOTTLENECK_REPORT.json").read_text(encoding="utf-8"))

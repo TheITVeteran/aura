@@ -978,6 +978,7 @@ class ActionExecutor:
                     env=params.get("env"),
                     timeout=params.get("timeout", 30.0),
                     source=source,
+                    accelerator_capability="auto",
                 )
                 return {
                     "ok": proc.returncode == 0,

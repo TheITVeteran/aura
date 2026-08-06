@@ -453,6 +453,7 @@ async def _shell_sandbox_handler(payload: dict[str, Any], *, capability_token: s
         stderr=_asyncio.subprocess.PIPE,
         read_only=True,
         source="tool_execution:world_bridge.shell_sandbox",
+        accelerator_capability="auto",
     )
     try:
         stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=5.0)

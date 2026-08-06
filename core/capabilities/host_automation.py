@@ -238,6 +238,7 @@ class AppleScriptRunner:
                     read_only=read_only,
                     capture_output=True,
                     source=source,
+                    accelerator_capability="none",
                 )
             success = completed.returncode == 0
             result = str(completed.stdout or "").strip()
@@ -713,6 +714,7 @@ class HostAutomationProvider:
                     stderr=asyncio.subprocess.PIPE,
                     read_only=True,
                     source="host_automation.clipboard_read",
+                    accelerator_capability="none",
                 )
                 old_clipboard, _ = await asyncio.wait_for(save_proc.communicate(), timeout=2.0)
 
@@ -723,6 +725,7 @@ class HostAutomationProvider:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     source="host_automation.clipboard_write",
+                    accelerator_capability="none",
                 )
                 await asyncio.wait_for(
                     set_proc.communicate(input=text.encode("utf-8")),
@@ -756,6 +759,7 @@ class HostAutomationProvider:
                                 ["pbcopy"],
                                 stdin=asyncio.subprocess.PIPE,
                                 source="host_automation.clipboard_restore",
+                                accelerator_capability="none",
                             )
                             await asyncio.wait_for(
                                 restore_proc.communicate(input=old_clipboard or b""),
@@ -943,6 +947,7 @@ class HostAutomationProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="host_automation.click",
+                accelerator_capability="none",
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             success = proc.returncode == 0
@@ -1184,6 +1189,7 @@ class HostAutomationProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="host_automation.screenshot",
+                accelerator_capability="auto",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
 
@@ -1424,6 +1430,7 @@ class HostAutomationProvider:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
                 source="host_automation.shell_command",
+                accelerator_capability="auto",
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             success = proc.returncode == 0

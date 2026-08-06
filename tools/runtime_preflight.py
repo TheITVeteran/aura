@@ -78,6 +78,7 @@ def _run_read_only_command(
             timeout=10,
             read_only=True,
             source=source,
+            accelerator_capability="auto",
         )
         return completed, ""
     except (

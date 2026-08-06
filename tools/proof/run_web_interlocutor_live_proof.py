@@ -384,6 +384,7 @@ async def _launch_temp_cdp_chrome(*, profile_dir: Path, port: int) -> asyncio.su
         read_only=True,
         offline_tooling=True,
         source="proof_tooling:web_interlocutor.chrome_cdp",
+        accelerator_capability="auto",
     )
 
 

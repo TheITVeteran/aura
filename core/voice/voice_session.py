@@ -113,6 +113,7 @@ class VoiceSessionManager:
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                     source="voice_session.say_fallback",
+                    accelerator_capability="none",
                 )
                 await asyncio.wait_for(proc.wait(), timeout=10.0)
         except (ImportError, OSError, RuntimeError, asyncio.TimeoutError) as e:

@@ -215,6 +215,7 @@ class SymbolicSandbox:
                     # effect, not the intent.
                     read_only=False,
                     source="symbolic_sandbox:exec",
+                    accelerator_capability="none",
                 )
             stdout, stdout_bytes = _bound_capture(res.stdout or "")
             stderr, stderr_bytes = _bound_capture(res.stderr or "")

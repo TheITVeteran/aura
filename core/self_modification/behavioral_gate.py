@@ -117,6 +117,7 @@ async def _clone_repo(repo_root: Path, clone_dir: Path) -> bool:
             capture_output=True,
             timeout=120,
             source="core.self_modification.behavioral_gate.clone",
+            accelerator_capability="none",
         )
         if result.returncode == 0:
             return True
@@ -183,6 +184,7 @@ async def run_behavioral_gate(
             timeout=timeout_s,
             cwd=clone_dir,
             source="core.self_modification.behavioral_gate.pytest",
+            accelerator_capability="none",
         )
         tail = str(result.stdout or "")[-1500:] + str(result.stderr or "")[-500:]
         passed = result.returncode == 0

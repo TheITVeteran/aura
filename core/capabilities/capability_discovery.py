@@ -421,6 +421,7 @@ class CapabilityDiscovery:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="capability_discovery.network_probe",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             report.has_network = proc.returncode == 0

@@ -200,7 +200,7 @@ class VoiceProvider:
             if rate:
                 argv += ["-r", str(int(rate))]
             argv.append(text[:2000])
-            proc = get_subprocess_gateway().run(argv, timeout=30.0, source="perception.sensory.voice")
+            proc = get_subprocess_gateway().run(argv, timeout=30.0, source="perception.sensory.voice", accelerator_capability="auto")
             return getattr(proc, "returncode", 1) == 0
         except _SENSORY_IMPORT_ERRORS + _SENSORY_RUNTIME_ERRORS as exc:
             logger.debug("say unavailable: %s", exc)

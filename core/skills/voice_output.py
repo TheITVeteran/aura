@@ -162,6 +162,7 @@ class VoiceOutputSkill(BaseSkill):
                 timeout=5,
                 read_only=True,
                 source="voice_output_piper_probe",
+                accelerator_capability="none",
             )
             self._piper_available = result.returncode == 0
             self._piper_command = command if self._piper_available else None
@@ -333,6 +334,7 @@ class VoiceOutputSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="tool_execution:voice_output.piper",
+                accelerator_capability="none",
             )
 
             stdout, stderr = await asyncio.wait_for(
@@ -392,6 +394,7 @@ class VoiceOutputSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="tool_execution:voice_output.macos_say",
+                accelerator_capability="auto",
             )
 
             stdout, stderr = await asyncio.wait_for(
@@ -499,6 +502,7 @@ class VoiceOutputSkill(BaseSkill):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     source="tool_execution:voice_output.afplay",
+                    accelerator_capability="none",
                 )
                 await asyncio.wait_for(process.communicate(), timeout=60.0)
             else:
@@ -510,6 +514,7 @@ class VoiceOutputSkill(BaseSkill):
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
                             source="tool_execution:voice_output.linux_player",
+                            accelerator_capability="none",
                         )
                         await asyncio.wait_for(
                             process.communicate(), timeout=60.0

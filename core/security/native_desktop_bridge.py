@@ -69,6 +69,7 @@ def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
             read_only=True,
             capture_output=True,
             source="native_desktop_bridge.codesign_identity",
+            accelerator_capability="none",
         )
     except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
         return {
@@ -423,6 +424,7 @@ def _invoke_one_shot_bridge(
         read_only=bool(read_only),
         capture_output=True,
         source=f"native_desktop_bridge.{command}",
+        accelerator_capability="none",
     )
     text = str(completed.stdout or "").strip()
     try:

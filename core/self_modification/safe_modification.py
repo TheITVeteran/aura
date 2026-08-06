@@ -106,6 +106,7 @@ class GitIntegration:
                 read_only=True,
                 timeout=5,
                 source="self_modification.safe_modification.git_status",
+                accelerator_capability="none",
             )
             return result.returncode == 0
         except (OSError, RuntimeError, TimeoutError, ValueError):
@@ -177,6 +178,7 @@ class GitIntegration:
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.git_status",
+                accelerator_capability="none",
             )
             return bool(result.stdout.strip())
         except (subprocess.SubprocessError, OSError) as e:
@@ -204,6 +206,7 @@ class GitIntegration:
                 capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.create_branch",
+                accelerator_capability="none",
             )
 
             if result.returncode == 0:
@@ -232,6 +235,7 @@ class GitIntegration:
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.git_add",
+                accelerator_capability="none",
             )
 
             # Commit
@@ -241,6 +245,7 @@ class GitIntegration:
                 capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.git_commit",
+                accelerator_capability="none",
             )
 
             if result.returncode != 0:
@@ -255,6 +260,7 @@ class GitIntegration:
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.rev_parse_head",
+                accelerator_capability="none",
             )
 
             commit_hash = hash_result.stdout.strip()
@@ -279,6 +285,7 @@ class GitIntegration:
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.checkout_main_for_merge",
+                accelerator_capability="none",
             )
 
             branch_name = self._validate_branch_name(branch_name)
@@ -289,6 +296,7 @@ class GitIntegration:
                 capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.merge_to_main",
+                accelerator_capability="none",
             )
 
             if result.returncode == 0:
@@ -316,6 +324,7 @@ class GitIntegration:
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.delete_branch",
+                accelerator_capability="none",
             )
             logger.info("Deleted branch: %s", branch_name)
             return True
@@ -336,6 +345,7 @@ class GitIntegration:
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.checkout_main",
+                accelerator_capability="none",
             )
             return True
         except (subprocess.SubprocessError, OSError):
@@ -354,6 +364,7 @@ class GitIntegration:
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.current_branch",
+                accelerator_capability="none",
             )
             return result.stdout.strip()
         except (subprocess.SubprocessError, OSError):

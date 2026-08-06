@@ -52,4 +52,5 @@ def test_ungoverned_effect_still_fails_closed(hard_governance):
             capture_output=True,
             timeout=1.0,
             source="test_rsi_sandbox_governance.ungoverned",
+            accelerator_capability="none",
         )

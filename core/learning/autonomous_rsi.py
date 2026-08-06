@@ -458,6 +458,7 @@ if __name__ == '__main__':
                 capture_output=True,
                 timeout=1.0,
                 source="autonomous_rsi.evaluate_candidate",
+                accelerator_capability="none",
             )
 
         if proc.returncode == 0 and proc.stdout:

@@ -143,6 +143,7 @@ async def run_terminal_command(
                 env=env,
                 offline_tooling=not governance_runtime_active(),
                 source="proof_tooling:live_debugging_loop",
+                accelerator_capability="auto",
             )
         try:
             stdout, stderr = await asyncio.wait_for(

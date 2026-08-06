@@ -220,6 +220,7 @@ class CodeTruthEngine:
                     timeout=15.0,
                     read_only=True,
                     source="reasoning_verifier:code_ruff",
+                    accelerator_capability="none",
                 )
             out = (res.stdout or "") + (res.stderr or "")
             return [ln.strip() for ln in out.splitlines() if ln.strip() and ":" in ln][:5]

@@ -54,6 +54,7 @@ class NativeCompilerPlanner:
             capture_output=True,
             timeout=timeout,
             source="morphogenesis.native_compiler.compile",
+            accelerator_capability="auto",
         )
 
 

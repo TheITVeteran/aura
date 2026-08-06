@@ -396,6 +396,7 @@ class SourceBodyAwareness:
                 timeout=_GIT_TIMEOUT_S,
                 read_only=True,
                 source="source_body.git_probe",
+                accelerator_capability="none",
             )
         except FileNotFoundError:
             self._git_available = False

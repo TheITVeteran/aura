@@ -109,6 +109,7 @@ if __name__ == "__main__":
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="skills.branching_futures.runner",
+                accelerator_capability="auto",
             )
             
             try:

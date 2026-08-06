@@ -370,6 +370,7 @@ class StructuralImprover:
                 cwd=str(self.root),
                 read_only=True,
                 source="self_modification.structural_improver.py_compile",
+                accelerator_capability="none",
             )
             return {
                 "ok": result.returncode == 0,

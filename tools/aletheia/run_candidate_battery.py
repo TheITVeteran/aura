@@ -118,6 +118,7 @@ def run_candidate_process(
         timeout=timeout,
         read_only=False,
         source=f"aletheia_candidate:{source}",
+        accelerator_capability="auto",
     )
     if check and proc.returncode != 0:
         raise subprocess.CalledProcessError(

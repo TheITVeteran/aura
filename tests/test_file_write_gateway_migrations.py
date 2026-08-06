@@ -549,6 +549,7 @@ gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
         capture_output=True,
         offline_tooling=True,
         source="certification_tooling:directory_batch_process_death",
+        accelerator_capability="none",
     )
     assert crashed.returncode == 91
     assert (tmp_path / ".aura_file_write_batch.journal").exists()
@@ -648,6 +649,7 @@ gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
         capture_output=True,
         offline_tooling=True,
         source="certification_tooling:directory_batch_commit_cleanup_death",
+        accelerator_capability="none",
     )
     assert crashed.returncode == 92
     assert (tmp_path / "data.bin").read_bytes() == b"new-data"
@@ -727,6 +729,7 @@ gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
         capture_output=True,
         offline_tooling=True,
         source="certification_tooling:directory_batch_recovery_cleanup_setup",
+        accelerator_capability="none",
     )
     assert first.returncode == 93
     assert (tmp_path / ".aura_file_write_batch.journal").exists()
@@ -762,6 +765,7 @@ gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
         capture_output=True,
         offline_tooling=True,
         source="certification_tooling:directory_batch_recovery_cleanup_death",
+        accelerator_capability="none",
     )
     assert second.returncode == 94
     assert (tmp_path / "data.bin").read_bytes() == b"old-data"

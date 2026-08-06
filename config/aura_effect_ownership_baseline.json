@@ -14681,14 +14681,6 @@
       "scope": "<module>.SubprocessGateway.spawn_async"
     },
     {
-      "callee": "asyncio.create_subprocess_shell",
-      "canonical_owner": true,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/runtime/subprocess_gateway.py",
-      "scope": "<module>.SubprocessGateway.spawn_shell_async"
-    },
-    {
       "callee": "<state_gateway>.mutate",
       "canonical_owner": true,
       "category": "state_gateway",
@@ -16082,6 +16074,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "0bed4496fa09c8f6e9083b9de8cb02d149119a31fbd7c057222e9693048e9b50",
+  "inventory_sha256": "1a8a2ba2b594034849ab0ab705cb07006e1fcce6092696836c5a0a02ec41f719",
   "schema_version": 1
 }

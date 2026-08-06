@@ -58,6 +58,7 @@ class SystemOpsSkill(BaseSkill):
                     await get_subprocess_gateway().spawn_async(
                         ["open", "-a", target],
                         source="tool_execution:system_ops.open_app",
+                        accelerator_capability="none",
                     )
                     return {"ok": True, "summary": f"Launched {target}"}
                 
@@ -65,6 +66,7 @@ class SystemOpsSkill(BaseSkill):
                     await get_subprocess_gateway().spawn_async(
                         ["open", target],
                         source="tool_execution:system_ops.open_file",
+                        accelerator_capability="none",
                     )
                     return {"ok": True, "summary": f"Opened {target}"}
             
@@ -73,6 +75,7 @@ class SystemOpsSkill(BaseSkill):
                     await get_subprocess_gateway().spawn_async(
                         ["xdg-open", target],
                         source="tool_execution:system_ops.xdg_open",
+                        accelerator_capability="none",
                     )
                     return {"ok": True, "summary": f"Opened {target} (Linux)"}
 

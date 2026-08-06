@@ -294,6 +294,7 @@ class SelfOptimizer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             source=source,
+            accelerator_capability="auto",
         )
         chunks: List[str] = []
         total = 0

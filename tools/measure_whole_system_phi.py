@@ -61,6 +61,7 @@ def _git_commit() -> str:
             source="proof_tooling:whole_system_phi_git_commit",
             timeout=10,
             cwd=Path(__file__).resolve().parent.parent,
+            accelerator_capability="none",
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()

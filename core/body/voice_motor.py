@@ -34,6 +34,7 @@ class VoiceMotor(BaseMotor):
                     check=True,
                     timeout=5.0,
                     source="body.voice_motor",
+                    accelerator_capability="none",
                 )
                 return {
                     "status": "success",

@@ -37,6 +37,7 @@ class AppFocusSensor(BaseSensor):
                     check=True,
                     timeout=2.0,
                     source="body.app_focus_sensor",
+                    accelerator_capability="auto",
                 )
                 app_name = res.stdout.strip()
             if app_name:

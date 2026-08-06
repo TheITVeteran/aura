@@ -49,6 +49,7 @@ def _make_spawn(victim_path, beacon_path, beat_s, mode, spawned):
             start_new_session=True,
             offline_tooling=True,
             source="proof_tooling:wedge_recovery_supervisor_test",
+            accelerator_capability="none",
         )
         spawned.append(proc)
         return proc

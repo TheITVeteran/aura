@@ -1712,6 +1712,7 @@ end tell
             capture_output=True,
             timeout=5,
             source="computer_use",
+            accelerator_capability="none",
         )
         if result.returncode != 0:
             return {"ok": False, "error": (result.stderr or result.stdout or "pbcopy failed").strip()}
@@ -1742,6 +1743,7 @@ end tell
             timeout=5,
             read_only=True,
             source="computer_use",
+            accelerator_capability="none",
         )
         if result.returncode != 0:
             return {"ok": False, "error": (result.stderr or result.stdout or "pbpaste failed").strip()}
@@ -4276,6 +4278,7 @@ end tell
                 capture_output=True,
                 timeout=5,
                 source="computer_use",
+                accelerator_capability="none",
             )
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
             logger.debug("Active browser URL readback failed: %s", exc)

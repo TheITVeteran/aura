@@ -177,6 +177,7 @@ def _current_wallpaper() -> str:
         read_only=True,
         offline_tooling=True,
         source="proof_tooling:full_visible_multiapp.current_wallpaper",
+        accelerator_capability="none",
     )
     return (result.stdout or result.stderr or "").strip()
 
@@ -196,6 +197,7 @@ def _restore_wallpaper(path: str) -> bool:
         timeout=15,
         offline_tooling=True,
         source="proof_tooling:full_visible_multiapp.restore_wallpaper",
+        accelerator_capability="none",
     )
     return result.returncode == 0
 

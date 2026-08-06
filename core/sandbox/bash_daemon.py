@@ -46,6 +46,7 @@ class PersistentBashSession:
             cwd=self.cwd,
             env=env,
             source="core.sandbox.bash_daemon.persistent_bash",
+            accelerator_capability="none",
         )
         
         # Setup bash to echo the delimiter and the exit code

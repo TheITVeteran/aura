@@ -1666,6 +1666,7 @@ def test_shared_memory_transport_cross_process_attach_exits_without_leak_warning
         timeout=20,
         offline_tooling=True,
         source="certification_tooling:shared_memory_transport_cross_process",
+        accelerator_capability="none",
     )
 
     assert proc.returncode == 0, proc.stderr

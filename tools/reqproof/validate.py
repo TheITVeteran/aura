@@ -125,6 +125,7 @@ def default_commit_exists(root: Path) -> Callable[[str], bool]:
             timeout=30,
             read_only=True,
             source="reqproof_evidence_commit_probe",
+            accelerator_capability="none",
         )
         if result.returncode != 0:
             cache[commit] = False
@@ -139,6 +140,7 @@ def default_commit_exists(root: Path) -> Callable[[str], bool]:
                 timeout=30,
                 read_only=True,
                 source=source,
+                accelerator_capability="none",
             )
             if ancestry.returncode != 0:
                 cache[commit] = False

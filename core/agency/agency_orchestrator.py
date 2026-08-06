@@ -450,6 +450,7 @@ class AgencyOrchestrator:
                 capture_output=True,
                 check=False,
                 source="core.agency.agency_orchestrator.default_shell_execution",
+                accelerator_capability="auto",
             )
             return {
                 "executed": True,

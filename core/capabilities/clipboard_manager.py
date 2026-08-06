@@ -39,6 +39,7 @@ class ClipboardManager:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="clipboard_manager.get",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
             return stdout.decode("utf-8", errors="replace") if stdout else ""
@@ -60,6 +61,7 @@ class ClipboardManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="clipboard_manager.set",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(
                 proc.communicate(input=text.encode("utf-8")),

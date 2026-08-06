@@ -84,6 +84,7 @@ class AppLayerFirewall:
                 get_subprocess_gateway().run(
                     ["pfctl", "-t", "aura_block", "-T", "add", origin],
                     read_only=False, timeout=3.0, source="security.enforcement",
+                    accelerator_capability="none",
                 )
         except _ENFORCEMENT_ERRORS as exc:
             logger.debug("pf block unavailable for %s: %s", origin, exc)
@@ -262,6 +263,7 @@ def arp_scan() -> list[Any]:
         from core.security.network_sentinel import Device
         proc = get_subprocess_gateway().run(
             ["/usr/sbin/arp", "-a"], read_only=True, timeout=4.0, source="security.enforcement.arp",
+            accelerator_capability="none",
         )
         local_macs = _local_interface_macs()
         for line in (proc.stdout or "").splitlines():

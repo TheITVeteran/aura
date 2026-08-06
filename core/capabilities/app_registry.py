@@ -319,6 +319,7 @@ class AppRegistry:
                         stderr=asyncio.subprocess.PIPE,
                         read_only=True,
                         source="app_registry.bundle_discovery",
+                        accelerator_capability="none",
                     )
                     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
                     paths = stdout.decode().strip().split("\n") if stdout else []

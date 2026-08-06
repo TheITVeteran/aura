@@ -280,6 +280,7 @@ class TestMain:
             cwd=str(Path(__file__).resolve().parents[1]),
             offline_tooling=True,
             source="certification_tooling:runtime_preflight.stdlib_import",
+            accelerator_capability="none",
         )
         assert proc.returncode == 0, proc.stderr
 
@@ -298,6 +299,7 @@ class TestMain:
             timeout=30,
             offline_tooling=True,
             source="certification_tooling:runtime_preflight.direct_script",
+            accelerator_capability="none",
         )
         report = json.loads(proc.stdout)
         resource_checks = {

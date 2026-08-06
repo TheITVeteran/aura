@@ -89,6 +89,7 @@ def host_pressure() -> dict[str, Any]:
             check=True,
             read_only=True,
             source="mlx_memory_guard.host_pressure.vm_stat",
+            accelerator_capability="none",
         ).stdout
     except (OSError, RuntimeError, ValueError):
         return {"available": False}
@@ -125,6 +126,7 @@ def host_pressure() -> dict[str, Any]:
             check=True,
             read_only=True,
             source="mlx_memory_guard.host_pressure.swapusage",
+            accelerator_capability="none",
         ).stdout
         for token in swap.replace("=", " ").split():
             if token.endswith("M") and token[:-1].replace(".", "").isdigit():

@@ -556,6 +556,7 @@ class _MacOSSayWrapper:
         self._proc = get_subprocess_gateway().spawn(
             ["say", "-v", self.voice, "-r", str(self.rate), clean],
             source="voice.stable_voice_pipeline.macos_say",
+            accelerator_capability="none",
         )
         self._proc.wait()
 

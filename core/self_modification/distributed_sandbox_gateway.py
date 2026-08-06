@@ -218,6 +218,7 @@ class DistributedSandboxGateway:
             capture_output=True,
             timeout=timeout_s,
             source="self_modification.distributed_sandbox.container",
+            accelerator_capability="auto",
         )
         detail = (result.stdout or "") + "\n" + (result.stderr or "")
         return result.returncode == 0, detail

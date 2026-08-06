@@ -33,6 +33,7 @@ class UiAccessibilitySensor(BaseSensor):
                     read_only=True,
                     timeout=2.0,
                     source="body.ui_accessibility_sensor",
+                    accelerator_capability="auto",
                 )
                 if res.returncode == 0:
                     return {

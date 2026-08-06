@@ -56,6 +56,7 @@ class ScreenSensor(BaseSensor):
                     check=True,
                     timeout=3.0,
                     source="body.screen_sensor",
+                    accelerator_capability="none",
                 )
                 file_size = os.path.getsize(screenshot_path)
                 return {

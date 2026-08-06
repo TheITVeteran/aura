@@ -84,6 +84,7 @@ class ManimRendererSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="skills.manim_renderer.render",
+                accelerator_capability="auto",
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(

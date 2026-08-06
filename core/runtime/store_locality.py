@@ -171,6 +171,7 @@ def _fstype_darwin_mount(path: Path) -> str:
             check=False,
             read_only=True,
             source="runtime.store_locality.mount_probe",
+            accelerator_capability="none",
         ).stdout
     except (OSError, RuntimeError, TypeError, ValueError):
         return ""

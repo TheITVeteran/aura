@@ -95,6 +95,7 @@ def bundle_is_running(bundle: Path) -> bool:
             read_only=True,
             capture_output=True,
             source="runtime_app_bundle_sync.pgrep",
+            accelerator_capability="none",
         )
     except _RECOVERABLE_ERRORS:
         # Unable to tell means unable to prove it is safe.
@@ -181,6 +182,7 @@ def sync_app_bundle(
             capture_output=True,
             env=environment,
             source="runtime_app_bundle_sync.build",
+            accelerator_capability="none",
         )
         receipt["build_returncode"] = completed.returncode
         if completed.returncode != 0:

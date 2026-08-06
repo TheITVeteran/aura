@@ -121,6 +121,7 @@ class SafeSelfOptimizer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="core.adaptation.safe_optimizer.training_command",
+            accelerator_capability="auto",
         )
         try:
             stdout, stderr = await asyncio.wait_for(

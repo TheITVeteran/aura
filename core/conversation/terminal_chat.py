@@ -440,6 +440,7 @@ class TerminalFallbackChat:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 source="tool_execution:terminal_chat.shell",
+                accelerator_capability="auto",
             )
             try:
                 stdout, _ = await asyncio.wait_for(

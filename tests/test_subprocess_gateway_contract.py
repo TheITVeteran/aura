@@ -82,6 +82,66 @@ def test_sync_gateway_refuses_untrackable_model_process() -> None:
                 "--train",
             ],
             source="training_tooling:sync-denied",
+            accelerator_capability="model",
+        )
+
+
+def test_gateway_refuses_undeclared_accelerator_capability() -> None:
+    with pytest.raises(
+        subprocess_gateway.GovernanceViolation,
+        match="accelerator_capability_undeclared",
+    ):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('ordinary child')"],
+            read_only=True,
+            source="runtime_probe:undeclared-capability",
+        )
+
+
+def test_none_declaration_cannot_launder_renamed_model_loader(tmp_path: Path) -> None:
+    loader = tmp_path / "innocent_name.py"
+    loader.write_text("import mlx_lm\n", encoding="utf-8")
+
+    with pytest.raises(
+        subprocess_gateway.GovernanceViolation,
+        match="accelerator_capability_contradiction",
+    ):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, str(loader), "--model", "/models/qwen-7b"],
+            read_only=True,
+            source="runtime_probe:renamed-model-loader",
+            accelerator_capability="none",
+        )
+
+
+def test_auto_declaration_attributes_renamed_model_loader(
+    tmp_path: Path,
+) -> None:
+    loader = tmp_path / "innocent_name.py"
+    loader.write_text("import mlx_lm\n", encoding="utf-8")
+
+    claim = subprocess_gateway._resolve_accelerator_claim(
+        [sys.executable, str(loader), "--model", "/models/qwen-7b"],
+        source="runtime_probe:auto-renamed-model-loader",
+        timeout_s=60.0,
+        accelerator_capability="auto",
+    )
+
+    assert claim is not None
+    assert claim.model_path == "/models/qwen-7b"
+    assert claim.metadata["declared_model_process"] is True
+
+
+def test_auto_declaration_refuses_uninspectable_dynamic_python() -> None:
+    with pytest.raises(
+        subprocess_gateway.GovernanceViolation,
+        match="accelerator_capability_unresolved",
+    ):
+        subprocess_gateway._resolve_accelerator_claim(
+            [sys.executable, "missing_dynamic_program.py"],
+            source="runtime_probe:missing-dynamic-program",
+            timeout_s=60.0,
+            accelerator_capability="auto",
         )
 
 
@@ -277,6 +337,7 @@ async def test_cancelled_effectful_run_terminates_process_group_before_propagati
         gateway.run_async(
             [sys.executable, "-c", "pass"],
             source="system_maintenance:cancellation-test",
+            accelerator_capability="none",
         )
     )
     await communicate_started.wait()
@@ -346,6 +407,7 @@ async def test_spawn_async_commits_and_releases_model_process_owner(
         [sys.executable, "-c", "import time; time.sleep(30)"],
         source="training_tooling:model-owner-test",
         model_lane_claim=claim,
+        accelerator_capability="model",
     )
     snapshot = controller.snapshot()
     assert snapshot["reserved_gb"] == 0.0
@@ -402,6 +464,7 @@ async def test_model_owner_survives_root_exit_until_process_group_drains(
         [sys.executable, "-c", root_code],
         source="training_tooling:descendant-accounting",
         model_lane_claim=claim,
+        accelerator_capability="model",
     )
     await proc.wait()
 
@@ -435,6 +498,7 @@ async def test_model_subprocess_requires_isolated_process_group(
             source="training_tooling:nonisolated-model-job",
             model_lane_claim=claim,
             start_new_session=False,
+            accelerator_capability="model",
         )
 
 
@@ -465,6 +529,7 @@ async def test_cancelled_monitor_retains_owner_until_child_process_dies(
         [sys.executable, "-c", "import time; time.sleep(30)"],
         source="training_tooling:cancelled-monitor",
         model_lane_claim=claim,
+        accelerator_capability="model",
     )
     proc._aura_model_lane_monitor.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -533,6 +598,7 @@ async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
         stderr=asyncio.subprocess.PIPE,
         source="training_tooling:delegated-child-test",
         model_lane_claim=claim,
+        accelerator_capability="model",
     )
     stdout, stderr = await proc.communicate()
     await proc._aura_model_lane_monitor
@@ -575,6 +641,7 @@ async def test_run_async_tracks_model_owner_through_completion(
         [sys.executable, "-c", "print('model-job-complete')"],
         source="training_tooling:model-run-test",
         model_lane_claim=claim,
+        accelerator_capability="model",
     )
     for _ in range(50):
         if not controller.snapshot()["owners"]:
@@ -633,6 +700,7 @@ async def test_monitor_registration_failure_reaps_committed_model_child(
             [sys.executable, "-c", "import time; time.sleep(30)"],
             source="training_tooling:model-monitor-failure",
             model_lane_claim=claim,
+            accelerator_capability="model",
         )
 
     assert len(created) == 1
@@ -649,6 +717,7 @@ def test_offline_tooling_run_requires_named_source(monkeypatch: pytest.MonkeyPat
             timeout=5,
             offline_tooling=True,
             source="adhoc:test",
+            accelerator_capability="none",
         )
 
 
@@ -660,6 +729,7 @@ def test_read_only_run_requires_attributable_source(monkeypatch: pytest.MonkeyPa
             [sys.executable, "-c", "print('anonymous')"],
             timeout=5,
             read_only=True,
+            accelerator_capability="none",
         )
 
 
@@ -672,6 +742,7 @@ def test_read_only_run_rejects_multiline_source(monkeypatch: pytest.MonkeyPatch)
             timeout=5,
             read_only=True,
             source="test\nspoof",
+            accelerator_capability="none",
         )
 
 
@@ -683,6 +754,7 @@ def test_read_only_run_allows_named_source(monkeypatch: pytest.MonkeyPatch) -> N
         timeout=5,
         read_only=True,
         source="test.subprocess_gateway.read_only",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -701,6 +773,7 @@ def test_shutdown_latch_blocks_effectful_subprocess_run(
                 [sys.executable, "-c", "print('must-not-run')"],
                 timeout=5,
                 source="test.subprocess_gateway.shutdown_effectful_run",
+                accelerator_capability="none",
             )
     finally:
         clear_shutdown_request()
@@ -717,6 +790,7 @@ def test_shutdown_latch_blocks_implicit_read_only_probe(
             timeout=5,
             read_only=True,
             source="test.subprocess_gateway.shutdown_implicit_read_only_probe",
+            accelerator_capability="none",
         )
 
 
@@ -731,6 +805,7 @@ def test_shutdown_latch_allows_explicit_read_only_probe(
         read_only=True,
         allow_during_shutdown=True,
         source="test.subprocess_gateway.shutdown_read_only_probe",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -749,6 +824,7 @@ def test_shutdown_latch_never_allows_live_process_handle(
             read_only=True,
             allow_during_shutdown=True,
             source="test.subprocess_gateway.shutdown_live_handle",
+            accelerator_capability="none",
         )
 
 
@@ -769,6 +845,7 @@ async def test_global_resource_fence_allows_only_bounded_read_only_probe(
         read_only=True,
         allow_during_shutdown=True,
         source="test.subprocess_gateway.shutdown_bounded_probe",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -792,6 +869,7 @@ def test_shutdown_latch_never_allows_effectful_offline_tooling_override(
             offline_tooling=True,
             allow_during_shutdown=True,
             source="maintenance_tooling:test_shutdown_effectful_override",
+            accelerator_capability="none",
         )
 
 
@@ -810,6 +888,7 @@ def test_shutdown_latch_blocks_shell_spawn_before_creation(
         await subprocess_gateway.SubprocessGateway().spawn_shell_async(
             "printf must-not-run",
             source="test.subprocess_gateway.shutdown_shell_spawn",
+            accelerator_capability="none",
         )
 
     with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
@@ -847,6 +926,7 @@ def test_async_spawn_terminates_child_when_shutdown_crosses_creation(
         await subprocess_gateway.SubprocessGateway().spawn_async(
             [sys.executable, "-c", "print('must-not-survive')"],
             source="test.subprocess_gateway.crossed_async_spawn",
+            accelerator_capability="none",
         )
 
     with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
@@ -864,6 +944,7 @@ def test_read_only_spawn_async_requires_attributable_source(
         await subprocess_gateway.SubprocessGateway().spawn_async(
             [sys.executable, "-c", "print('anonymous')"],
             read_only=True,
+            accelerator_capability="none",
         )
 
     with pytest.raises(ValueError, match="read-only subprocess probes require"):
@@ -881,6 +962,7 @@ def test_read_only_spawn_async_allows_named_source(
             stdout=asyncio.subprocess.PIPE,
             read_only=True,
             source="test.subprocess_gateway.read_only_async",
+            accelerator_capability="none",
         )
         stdout, _stderr = await proc.communicate()
         return stdout.decode("utf-8").strip()
@@ -912,6 +994,7 @@ def test_spawn_async_registers_gateway_process_with_runtime_hygiene(
             stdout=asyncio.subprocess.PIPE,
             read_only=True,
             source="test.subprocess_gateway.register_async",
+            accelerator_capability="none",
         )
         stdout, _stderr = await proc.communicate()
         return stdout.decode("utf-8").strip()
@@ -946,6 +1029,7 @@ def test_spawn_shell_async_registers_gateway_process_with_runtime_hygiene(
             f"{sys.executable} -c \"print('registered-shell-async')\"",
             stdout=asyncio.subprocess.PIPE,
             source="test.subprocess_gateway.register_shell_async",
+            accelerator_capability="auto",
         )
         stdout, _stderr = await proc.communicate()
         return stdout.decode("utf-8").strip()
@@ -966,6 +1050,7 @@ def test_read_only_run_async_requires_attributable_source(
         await subprocess_gateway.SubprocessGateway().run_async(
             [sys.executable, "-c", "print('anonymous')"],
             read_only=True,
+            accelerator_capability="none",
         )
 
     with pytest.raises(ValueError, match="read-only subprocess probes require"):
@@ -982,6 +1067,7 @@ def test_read_only_run_async_allows_named_source(
             [sys.executable, "-c", "print('named-run-async')"],
             read_only=True,
             source="test.subprocess_gateway.read_only_run_async",
+            accelerator_capability="none",
         )
         return result.stdout.strip()
 
@@ -998,6 +1084,7 @@ def test_spawn_shell_async_denied_when_live_governance_active(
         await subprocess_gateway.SubprocessGateway().spawn_shell_async(
             f"{sys.executable} -c \"print('strict-shell')\"",
             source="test.subprocess_gateway.shell",
+            accelerator_capability="auto",
         )
 
     with pytest.raises(subprocess_gateway.GovernanceViolation):
@@ -1014,6 +1101,7 @@ def test_offline_tooling_run_denied_when_live_governance_active(monkeypatch: pyt
             timeout=5,
             offline_tooling=True,
             source="proof_tooling:test",
+            accelerator_capability="none",
         )
 
 
@@ -1025,6 +1113,7 @@ def test_offline_tooling_run_allowed_for_approved_source(monkeypatch: pytest.Mon
         timeout=5,
         offline_tooling=True,
         source="proof_tooling:test",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -1044,6 +1133,7 @@ def test_desktop_safe_run_blocks_proof_scale_environment_jobs(
             timeout=5,
             read_only=True,
             source="test.subprocess_gateway.desktop_guard",
+            accelerator_capability="none",
         )
 
 
@@ -1059,6 +1149,7 @@ def test_desktop_safe_run_allows_explicit_operator_longrun_override(
         timeout=5,
         read_only=True,
         source="test.subprocess_gateway.desktop_guard_override",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -1076,6 +1167,7 @@ def test_desktop_safe_shell_spawn_blocks_proof_batteries(
         await subprocess_gateway.SubprocessGateway().spawn_shell_async(
             f"{sys.executable} -c \"print('run_dnu_agi_proof_battery.py should-not-run')\"",
             source="test.subprocess_gateway.desktop_shell_guard",
+            accelerator_capability="auto",
         )
 
     with pytest.raises(subprocess_gateway.GovernanceViolation, match="desktop-safe long-run"):
@@ -1106,6 +1198,7 @@ def test_nethack_runner_rejects_env_only_longrun_bypass(
         timeout=5,
         capture_output=True,
         source="test.subprocess_gateway.nethack_runner_guard",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 64
@@ -1122,6 +1215,7 @@ def test_offline_tooling_spawn_denied_when_live_governance_active(monkeypatch: p
             [sys.executable, "-c", "print('strict-spawn')"],
             offline_tooling=True,
             source="training_tooling:test",
+            accelerator_capability="none",
         )
 
 
@@ -1144,6 +1238,7 @@ def test_semantic_weight_receipt_can_launch_exact_live_effect(
             [sys.executable, "-c", "print('semantic-governed')"],
             timeout=5,
             source="system_maintenance:crsm_closure:test",
+            accelerator_capability="none",
         )
 
     assert result.returncode == 0
@@ -1161,6 +1256,7 @@ def test_offline_tooling_spawn_async_denied_when_live_governance_active(
             [sys.executable, "-c", "print('strict-async-spawn')"],
             offline_tooling=True,
             source="maintenance_tooling:test",
+            accelerator_capability="none",
         )
 
     with pytest.raises(subprocess_gateway.GovernanceViolation):
@@ -1178,6 +1274,7 @@ def test_proof_tooling_run_allowed_in_test_mode_with_live_governance(
         timeout=5,
         offline_tooling=True,
         source="proof_tooling:test",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -1198,6 +1295,7 @@ def test_proof_tooling_run_allowed_with_explicit_child_test_env(
         env=child_env,
         offline_tooling=True,
         source="certification_tooling:test",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0
@@ -1216,6 +1314,7 @@ def test_non_proof_tooling_still_denied_in_test_mode_with_live_governance(
             timeout=5,
             offline_tooling=True,
             source="training_tooling:test",
+            accelerator_capability="none",
         )
 
 
@@ -1236,6 +1335,7 @@ def test_spawn_routes_stdout_and_stderr_to_gateway_owned_paths(
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         source="test.subprocess_gateway.path_streams",
+        accelerator_capability="none",
     )
     assert proc.wait(timeout=5) == 0
     for stream in getattr(proc, "_aura_gateway_streams", ()):
@@ -1251,5 +1351,6 @@ def test_spawn_accepts_preexec_fn_for_resource_fenced_children(monkeypatch: pyte
         [sys.executable, "-c", "print('preexec-supported')"],
         preexec_fn=None,
         source="test.subprocess_gateway.preexec_none",
+        accelerator_capability="none",
     )
     assert proc.wait(timeout=5) == 0

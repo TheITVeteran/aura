@@ -47,6 +47,7 @@ def run_repo_command(args: list[str], *, timeout: float = 30.0):
         timeout=timeout,
         offline_tooling=True,
         source="certification_tooling:test_autonomous_architect",
+        accelerator_capability="auto",
     )
 
 

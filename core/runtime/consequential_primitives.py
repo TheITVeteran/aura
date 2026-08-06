@@ -30,6 +30,7 @@ def guarded_shell_exec(argv: list[str], *, cwd: str | Path | None = None, timeou
         timeout=timeout,
         capture_output=True,
         source="consequential_primitives.shell_exec",
+        accelerator_capability="auto",
     )
 
 

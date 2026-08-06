@@ -168,7 +168,8 @@ class EvidenceProvider:
                 )
                 try:
                     res = await gateway.run_async(
-                        argv, timeout=10.0, read_only=True, source="evidence_provider:ripgrep"
+                        argv, timeout=10.0, read_only=True, source="evidence_provider:ripgrep",
+                        accelerator_capability="auto",
                     )
                 except (OSError, RuntimeError, ValueError):
                     continue

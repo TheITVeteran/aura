@@ -16,6 +16,7 @@ def _run_git(root, *args):
         check=True,
         offline_tooling=True,
         source="proof_tooling:test_live_harness_source_identity",
+        accelerator_capability="none",
     )
 
 @pytest.mark.live

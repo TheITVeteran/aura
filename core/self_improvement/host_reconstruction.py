@@ -103,6 +103,7 @@ def observe_binary(target: HostBinaryTarget, payload: str) -> str:
         timeout=10,
         check=False,
         source="tool_execution:host_reconstruction.observe_binary",
+        accelerator_capability="none",
     )
     return completed.stdout
 
@@ -121,6 +122,7 @@ def read_man(topic: str, limit: int = 60) -> str:
             check=False,
             env={"MANPAGER": "cat", "PAGER": "cat", "MANWIDTH": "80", "PATH": "/usr/bin:/bin"},
             source="tool_execution:host_reconstruction.read_man",
+            accelerator_capability="none",
         )
         text = out.stdout.replace("\x08", "")
         lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]

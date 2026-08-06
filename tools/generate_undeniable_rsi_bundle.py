@@ -223,6 +223,7 @@ def main():
         timeout=30,
         read_only=True,
         source="proof_tooling:rsi_commit_sha",
+        accelerator_capability="none",
     )
     if commit_result.returncode != 0:
         raise RuntimeError(f"failed to resolve git commit SHA: {commit_result.stderr.strip()}")

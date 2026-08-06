@@ -144,6 +144,7 @@ class LocalSandbox(Sandbox):
                 # receipt (capability_engine wraps tool runs in governed_scope).
                 offline_tooling=not governance_runtime_active(),
                 source="maintenance_tooling:local_sandbox.run_code",
+                accelerator_capability="none",
             )
             duration = time.monotonic() - start
             return ExecutionResult(
@@ -198,6 +199,7 @@ class LocalSandbox(Sandbox):
                 # Same contract as run_code: offline only when not live.
                 offline_tooling=not governance_runtime_active(),
                 source="maintenance_tooling:local_sandbox.run_command",
+                accelerator_capability="auto",
             )
             duration = time.monotonic() - start
             return ExecutionResult(

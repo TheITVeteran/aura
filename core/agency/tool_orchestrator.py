@@ -322,6 +322,7 @@ class ToolOrchestrator:
             cwd=self.sandbox_dir,
             env=env,
             source="tool_execution:tool_orchestrator.python_worker",
+            accelerator_capability="auto",
         )
         if proc.stdin is None or proc.stdout is None or proc.stderr is None:
             await self._terminate_worker(proc)

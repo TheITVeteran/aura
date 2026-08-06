@@ -561,6 +561,7 @@ def test_standalone_cli_returns_truthful_exit_codes(tmp_path: Path):
         timeout=30.0,
         read_only=True,
         source="proof_tooling:latent_cortex_frontier_cli",
+        accelerator_capability="auto",
     )
     accepted_payload = json.loads(accepted.stdout)
     assert accepted.returncode == 0, accepted.stderr
@@ -574,6 +575,7 @@ def test_standalone_cli_returns_truthful_exit_codes(tmp_path: Path):
         timeout=30.0,
         read_only=True,
         source="proof_tooling:latent_cortex_frontier_cli",
+        accelerator_capability="auto",
     )
     rejected_payload = json.loads(rejected.stdout)
     assert rejected.returncode == 1
@@ -588,6 +590,7 @@ def test_standalone_cli_emits_exact_verification_kernel_fingerprint():
         timeout=30.0,
         read_only=True,
         source="proof_tooling:latent_cortex_frontier_fingerprint",
+        accelerator_capability="none",
     )
 
     payload = json.loads(result.stdout)

@@ -36,6 +36,7 @@ DEFAULT_BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 BASELINE_SCHEMA_VERSION = 1
 
 SCAN_ROOTS = ("core", "interface", "skills", "tools/longevity", "tools/chaos")
+SUBPROCESS_DECLARATION_SCAN_ROOTS = ("core", "interface", "skills", "tools", "training")
 SKIP_DIR_PARTS = {
     ".git",
     ".mypy_cache",
@@ -870,6 +871,76 @@ def _iter_source_files(root: Path) -> Iterable[Path]:
             yield path
 
 
+def _iter_subprocess_declaration_source_files(root: Path) -> Iterable[Path]:
+    yielded: set[Path] = set()
+    for top in SUBPROCESS_DECLARATION_SCAN_ROOTS:
+        base = root / top
+        if not base.exists():
+            continue
+        for path in sorted(base.rglob("*.py")):
+            relative_parts = path.relative_to(root).parts
+            if any(part in SKIP_DIR_PARTS for part in relative_parts):
+                continue
+            yielded.add(path)
+            yield path
+    entrypoint = root / "aura_main.py"
+    if entrypoint.is_file() and entrypoint not in yielded:
+        yield entrypoint
+
+
+class _SubprocessDeclarationVisitor(EffectVisitor):
+    def __init__(self, *, relative_path: str) -> None:
+        super().__init__(relative_path=relative_path)
+        self.violations: list[ScanProblem] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        callee = self._resolve_expr(node.func)
+        method = callee.rsplit(".", 1)[-1] if callee else ""
+        subprocess_gateway_call = (
+            "<subprocess_gateway>." in callee
+            or _callee_uses_factory(callee, "subprocess_gateway")
+        )
+        if subprocess_gateway_call and method in {
+            "run",
+            "run_async",
+            "spawn",
+            "spawn_async",
+            "spawn_shell_async",
+        }:
+            if not any(
+                keyword.arg == "accelerator_capability"
+                for keyword in node.keywords
+            ):
+                self.violations.append(
+                    ScanProblem(
+                        self.relative_path,
+                        f"subprocess_accelerator_capability_undeclared:{node.lineno}:{callee}",
+                    )
+                )
+        self.generic_visit(node)
+
+
+def audit_subprocess_accelerator_declarations(
+    root: Path = ROOT,
+) -> list[ScanProblem]:
+    """Return every production gateway call missing accelerator intent."""
+
+    violations: list[ScanProblem] = []
+    for path in _iter_subprocess_declaration_source_files(root):
+        relative = path.relative_to(root).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            violations.append(
+                ScanProblem(relative, f"declaration_scan_failed:{type(exc).__qualname__}:{exc}")
+            )
+            continue
+        visitor = _SubprocessDeclarationVisitor(relative_path=relative)
+        visitor.visit(tree)
+        violations.extend(visitor.violations)
+    return sorted(violations, key=lambda problem: (problem.path, problem.problem))
+
+
 def scan_repository(root: Path = ROOT) -> tuple[list[EffectBucket], list[ScanProblem]]:
     counts: dict[tuple[str, str, str, str], int] = {}
     problems: list[ScanProblem] = []
@@ -1045,6 +1116,8 @@ def main(argv: Iterable[str] = ()) -> int:
         baseline_path = root / baseline_path
 
     buckets, problems = scan_repository(root)
+    declaration_violations = audit_subprocess_accelerator_declarations(root)
+    problems.extend(declaration_violations)
     report: dict[str, Any] = {
         "ok": False,
         "root": str(root),

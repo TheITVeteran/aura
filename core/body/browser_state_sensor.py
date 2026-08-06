@@ -34,6 +34,7 @@ class BrowserStateSensor(BaseSensor):
                     read_only=True,
                     timeout=1.5,
                     source="body.browser_state_sensor",
+                    accelerator_capability="auto",
                 )
                 if res.returncode == 0:
                     return {

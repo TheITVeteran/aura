@@ -534,6 +534,7 @@ def _undeniable_rsi() -> dict[str, Any]:
             timeout=10,
             read_only=True,
             source="proof_bundle:rev_parse_head",
+            accelerator_capability="none",
         )
         commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
         selected.update(

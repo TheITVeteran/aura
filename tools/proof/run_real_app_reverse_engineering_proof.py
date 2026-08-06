@@ -156,6 +156,7 @@ def _observe(target: RealTarget, payload: str) -> str:
         check=False,
         offline_tooling=True,
         source="proof_tooling:real_app_reverse_engineering.observe",
+        accelerator_capability="none",
     )
     return completed.stdout
 
@@ -176,6 +177,7 @@ def _read_man(topic: str, limit: int = 60) -> str:
             env={"MANPAGER": "cat", "PAGER": "cat", "MANWIDTH": "80", "PATH": "/usr/bin:/bin"},
             offline_tooling=True,
             source="proof_tooling:real_app_reverse_engineering.read_man",
+            accelerator_capability="none",
         )
         text = out.stdout
         # strip backspace-overstrike bolding man emits

@@ -350,6 +350,7 @@ def _submit(args: argparse.Namespace) -> dict[str, Any]:
             input="",
             env={"PATH": "/usr/bin:/bin", "HOME": os.fspath(Path.home())},
             source="spark.external_witness.rekor_upload",
+            accelerator_capability="auto",
         )
     stdout = completed_process.stdout.encode("utf-8")
     if completed_process.returncode != 0 or len(stdout) > _MAX_NETWORK_BYTES:

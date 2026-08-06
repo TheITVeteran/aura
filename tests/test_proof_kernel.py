@@ -92,6 +92,7 @@ print(json.dumps(
             env={**os.environ, "PYTHONHASHSEED": hash_seed},
             offline_tooling=True,
             source="certification_tooling:proof_kernel_hash_seed_replay",
+            accelerator_capability="none",
         )
         outputs.append(result.stdout)
 

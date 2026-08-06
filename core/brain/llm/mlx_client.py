@@ -3871,6 +3871,7 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 timeout=_MLX_RUNTIME_PROBE_TIMEOUT_S,
                 read_only=True,
                 source="runtime_probe:mlx_runtime_probe",
+                accelerator_capability="auto",
             )
             ok = completed.returncode == 0 and "mlx_runtime_ok" in (completed.stdout or "")
             detail = _normalize_probe_detail(

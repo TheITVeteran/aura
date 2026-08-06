@@ -355,6 +355,7 @@ def test_training_cli_consumes_round_trip_capture_bundle(tmp_path: Path):
         capture_output=True,
         offline_tooling=True,
         source="training_tooling:test_adversarial_verifier_cli",
+        accelerator_capability="none",
     )
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)

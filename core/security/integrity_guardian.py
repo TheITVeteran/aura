@@ -111,6 +111,7 @@ def _get_hmac_secret() -> bytes:
                 read_only=True,
                 timeout=3,
                 source="security.integrity_guardian.machine_id",
+                accelerator_capability="none",
             )
         for line in result.stdout.splitlines():
             if "IOPlatformUUID" in line:
@@ -371,6 +372,7 @@ class IntegrityGuardian:
                     timeout=8.0,
                     read_only=True,
                     source="security.integrity_guardian.git_status",
+                accelerator_capability="none",
             )
             if status.returncode not in (0, 1):
                 return None
@@ -490,6 +492,7 @@ class IntegrityGuardian:
                     timeout=5.0,
                     read_only=True,
                     source="security.integrity_guardian.read_head_blob",
+                    accelerator_capability="none",
                 )
             if result.returncode == 0:
                 # A file that ALREADY equals the HEAD blob was never
@@ -817,6 +820,7 @@ class IntegrityGuardian:
                 timeout=8.0,
                 read_only=True,
                 source="security.integrity_guardian.git_status",
+                accelerator_capability="none",
             )
         if status.returncode not in (0, 1):
             raise RuntimeError(f"git status returned {status.returncode}")

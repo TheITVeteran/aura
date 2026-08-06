@@ -348,6 +348,7 @@ def load_checkpoint_records(root: Path, tracker_path: Path) -> tuple[CheckpointR
         timeout=90,
         read_only=True,
         source="reqproof_progress_checkpoint_blame",
+        accelerator_capability="none",
     )
     _require(blame.returncode == 0, f"checkpoint blame failed: {blame.stderr.strip()}")
     remote = gateway.run(
@@ -356,6 +357,7 @@ def load_checkpoint_records(root: Path, tracker_path: Path) -> tuple[CheckpointR
         timeout=90,
         read_only=True,
         source="reqproof_progress_remote_commits",
+        accelerator_capability="none",
     )
     _require(remote.returncode == 0, f"origin/main inventory failed: {remote.stderr.strip()}")
     return parse_checkpoint_blame(blame.stdout, set(remote.stdout.splitlines()))

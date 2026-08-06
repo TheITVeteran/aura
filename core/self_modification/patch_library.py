@@ -95,6 +95,7 @@ class GitInitPatch(PatchStrategy):
                 capture_output=True,
                 offline_tooling=True,
                 source="maintenance_tooling:patch_library.git_init",
+                accelerator_capability="auto",
             )
             logger.info("✅ Autonomic Core initialized local Git metadata; commit/add remain operator-governed.")
             return True
@@ -150,6 +151,7 @@ class PipInstallPatch(PatchStrategy):
                     capture_output=True,
                     offline_tooling=True,
                     source="maintenance_tooling:patch_library.pip_install",
+                    accelerator_capability="auto",
                 )
                 logger.info("✅ Autonomic Core successfully installed missing package '%s'", pip_package)
                 return True

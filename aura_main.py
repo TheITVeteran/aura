@@ -3055,6 +3055,7 @@ async def run_desktop(
                                 stderr=asyncio.subprocess.PIPE,
                                 start_new_session=True,
                                 source="environment_action:gui_actor_reaper",
+                                accelerator_capability="none",
                             )
                         logger.info("🎨 GUI Process Started (PID: %s)", proc.pid)
 
@@ -3224,6 +3225,7 @@ async def run_watchdog(args: argparse.Namespace | None = None):
                 proc = await get_subprocess_gateway().spawn_async(
                     [_launcher_python_executable(), __file__, *child_args],
                     source="environment_action:watchdog_supervisor",
+                    accelerator_capability="none",
                 )
             await proc.wait()
             
@@ -3349,6 +3351,7 @@ def _disable_legacy_launchagent(*, quarantine_obsolete: bool, reason: str = "") 
                     timeout=5,
                     source="maintenance_tooling:stop_aura",
                     offline_tooling=True,
+                    accelerator_capability="auto",
                 )
             except subprocess.TimeoutExpired:
                 logger.warning("launchctl command timed out: %s", command)

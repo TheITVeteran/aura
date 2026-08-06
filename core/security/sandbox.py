@@ -29,6 +29,7 @@ class LocalCommandSandbox:
                 capture_output=True,
                 timeout=10.0,
                 source="security.sandbox",
+                accelerator_capability="auto",
             )
             return {
                 "exit_code": res.returncode,

@@ -121,6 +121,7 @@ class SovereignNetworkSkill(BaseSkill):
                 timeout=10.0,
                 read_only=True,
                 source="skills.sovereign_network.status.interfaces",
+                accelerator_capability="none",
             )
             interfaces = res.stdout[:500]
         elif system == "Linux":
@@ -129,6 +130,7 @@ class SovereignNetworkSkill(BaseSkill):
                 timeout=10.0,
                 read_only=True,
                 source="skills.sovereign_network.status.interfaces",
+                accelerator_capability="none",
             )
             interfaces = res.stdout[:500]
             
@@ -156,6 +158,7 @@ class SovereignNetworkSkill(BaseSkill):
                 read_only=True,
                 check=True,
                 source="skills.sovereign_network.recon.arp_cache",
+                accelerator_capability="auto",
             )
             output = result.stdout or ""
             for line in output.split('\n'):
@@ -187,6 +190,7 @@ class SovereignNetworkSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="skills.sovereign_network.scan.nmap",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
             return {"ok": True, "output": stdout.decode(), "target": target}
@@ -208,6 +212,7 @@ class SovereignNetworkSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="skills.sovereign_network.audit.nmap",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=90)
             return {"ok": True, "output": stdout.decode()}
@@ -230,6 +235,7 @@ class SovereignNetworkSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="skills.sovereign_network.discovery.nmap",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=120)
             output = stdout.decode()

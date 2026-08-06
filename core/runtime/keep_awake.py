@@ -117,6 +117,7 @@ def _spawn_assertion_process(command: tuple[str, ...]):
             stderr_path=os.devnull,
             start_new_session=True,
             source="core.runtime.keep_awake.caffeinate_assertion",
+            accelerator_capability="auto",
         )
 
 

@@ -79,6 +79,7 @@ async def _default_command_runner(
         stdout=-1,
         stderr=-1,
         source="self_modification:sandboxed_modifier",
+        accelerator_capability="auto",
     )
     timed_out = False
     try:

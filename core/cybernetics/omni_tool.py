@@ -239,6 +239,7 @@ class OmniTool:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="tool_execution:omni_tool.daemon",
+                accelerator_capability="auto",
             )
         except _OMNI_ERRORS as exc:
             metadata["status"] = "failed_to_start"

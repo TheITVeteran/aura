@@ -958,6 +958,7 @@ def test_shell_launcher_help_is_non_destructive():
         capture_output=True,
         timeout=5,
         source="test_launcher_polish_contract.help",
+        accelerator_capability="none",
     )
 
     assert result.returncode == 0

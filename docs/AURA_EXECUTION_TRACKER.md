@@ -36956,3 +36956,35 @@ passes 129/129; Ruff, compile, scoped production MyPy, and smoke pass, with
 smoke at 103/103. This closes cumulative inherited child-sublease accounting.
 Fail-closed subprocess capability declaration remains the final retained
 model-lane semantic finding. CP810 and the honest total remain open at 809/920.
+
+#### Model-lane subprocess capability-declaration continuation
+
+Every production subprocess gateway call now declares accelerator intent as
+`none`, `model`, or `auto`; omission is a runtime governance refusal. A
+`model` declaration must resolve a concrete model identity and durable lane
+claim. A `none` declaration is cross-checked against known model syntax and
+inspectable Python imports, so renaming an MLX loader no longer turns it into
+an unaccounted ordinary child. `auto` performs source or executable inspection,
+attributes model-capable children to the lane when identity is available, and
+fails closed when a dynamic Python target cannot be inspected. The narrowly
+registered MLX import-only health probes remain non-model work rather than
+consuming a false model reservation.
+
+The governance lint now ratchets this declaration across `core/`, `interface/`,
+`skills/`, `tools/`, `training/`, and the main entrypoint. New call sites that
+omit it fail the build. Shell execution now enters the same async argv/model
+lane lifecycle instead of owning a separate raw `create_subprocess_shell`
+primitive. The two older synchronous MLX launchers exposed by the migration
+were repaired to use async process-group-owned model execution while retaining
+their checkpoint, heartbeat, memory-pressure, and termination behavior.
+
+Evidence: the subprocess capability contract passes 55/55, the affected
+model-lane, governance-lint, and training-preflight families pass, curated
+Ruff and full Python compile pass, governance lint matches its reduced-debt
+baseline, and smoke passes 103/103. The live source-bound resident recovery has
+independently crossed the preserved step-63 boundary and committed new durable
+steps 64 and 65 with zero supervisor restarts. This closes the final retained
+model-lane semantic finding; it does not establish reasoning gain, promotion,
+frontier performance, or the `WOW Signal`. CP810 and the honest total remain
+open at 809/920 pending the complete frozen campaign and independent four-arm
+certificate.

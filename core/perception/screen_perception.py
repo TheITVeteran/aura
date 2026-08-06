@@ -195,6 +195,7 @@ class ScreenPerception:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source=source,
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
             if proc.returncode == 0 and stdout:
@@ -452,6 +453,7 @@ end tell''',
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="screen_perception.take_screenshot",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             if proc.returncode == 0 and await asyncio.to_thread(self._path_exists, save_path):

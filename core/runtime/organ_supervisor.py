@@ -238,6 +238,7 @@ class OrganSupervisor:
                 stderr=asyncio.subprocess.DEVNULL,
                 stdin=asyncio.subprocess.DEVNULL,
                 source="environment_action:organ_supervisor.launch",
+                accelerator_capability="auto",
             )
             record.started_at = time.time()
             logger.info(

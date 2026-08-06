@@ -124,6 +124,7 @@ class NightlyLoRATrainer:
                     adapter_path,
                 ],
                 source="tool_execution:nightly_lora.training",
+                accelerator_capability="model",
             )
             await proc.communicate()
             logger.info("✅ Nightly LoRA: Fine-tuning pass complete.")

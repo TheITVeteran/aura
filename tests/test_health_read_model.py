@@ -1880,5 +1880,6 @@ def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
         timeout=10,
         offline_tooling=True,
         source="certification_tooling:test_runtime_shell_revision",
+        accelerator_capability="none",
     )
     assert completed.returncode == 0, completed.stderr

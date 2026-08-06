@@ -109,6 +109,7 @@ def _run_git(root: Path, arguments: Sequence[str], *, timeout: float = 3.0) -> s
         read_only=True,
         capture_output=True,
         source="runtime_launch_provenance.git",
+        accelerator_capability="none",
     )
     if completed.returncode != 0:
         detail = str(completed.stderr or completed.stdout or "git command failed").strip()
@@ -127,6 +128,7 @@ def _git_identity(root: Path) -> dict[str, str]:
         read_only=True,
         capture_output=True,
         source="runtime_launch_provenance.git_branch",
+        accelerator_capability="none",
     )
     branch = (
         str(branch_result.stdout or "").strip() if branch_result.returncode == 0 else "DETACHED"
@@ -613,6 +615,7 @@ def _strict_bundle_verification(executable: Path) -> dict[str, Any]:
             read_only=True,
             capture_output=True,
             source="runtime_launch_provenance.codesign_verify",
+            accelerator_capability="none",
         )
         result = {
             "ok": completed.returncode == 0,

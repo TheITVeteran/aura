@@ -45,6 +45,7 @@ async def verify_persistence():
                 timeout=10,
                 read_only=True,
                 source="certification_tooling:verify_metal_persistence_ps",
+                accelerator_capability="none",
             )
             return "MTLCompilerService" in result.stdout
         except (OSError, RuntimeError, TimeoutError, ValueError):

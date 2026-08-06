@@ -79,6 +79,7 @@ class NetworkOpsSkill(BaseSkill):
                  check=True,
                  read_only=True,
                  source="skills.network_ops:list_interfaces",
+                 accelerator_capability="none",
              )
              return {
                  "ok": True,

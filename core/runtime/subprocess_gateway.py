@@ -7,11 +7,17 @@ out while still receiving consistent validation and logging behavior.
 from __future__ import annotations
 
 import asyncio
+import ast
+import importlib.util
 import logging
 import os
+import shlex
+import shutil
 import signal
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any
 
@@ -73,6 +79,28 @@ _INHERITED_MODEL_LANE_ENV_KEYS = (
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
+class AcceleratorCapability(StrEnum):
+    """Caller-owned declaration of a child process's accelerator behavior."""
+
+    NONE = "none"
+    MODEL = "model"
+    AUTO = "auto"
+
+
+_ACCELERATOR_IMPORT_ROOTS = frozenset(
+    {
+        "jax",
+        "llama_cpp",
+        "mlx",
+        "mlx_lm",
+        "tensorflow",
+        "torch",
+        "transformers",
+        "vllm",
+    }
+)
+
+
 def _inferred_model_lane_claim(
     command: Sequence[str],
     *,
@@ -86,6 +114,207 @@ def _inferred_model_lane_claim(
         source=source,
         timeout_s=timeout_s,
     )
+
+
+def _declared_model_lane_claim(
+    command: Sequence[str],
+    *,
+    source: str,
+    timeout_s: float,
+) -> Any:
+    from core.runtime.model_lane_control import declared_model_process_claim
+
+    return declared_model_process_claim(
+        command,
+        source=source,
+        timeout_s=timeout_s,
+    )
+
+
+def _coerce_accelerator_capability(
+    value: AcceleratorCapability | str | None,
+    *,
+    source: str,
+) -> AcceleratorCapability:
+    if value is None:
+        raise GovernanceViolation(
+            f"subprocess_accelerator_capability_undeclared:{source}"
+        )
+    try:
+        return AcceleratorCapability(str(value).strip().lower())
+    except ValueError as exc:
+        raise GovernanceViolation(
+            f"subprocess_accelerator_capability_invalid:{source}"
+        ) from exc
+
+
+def _python_source_for_command(command: Sequence[str]) -> str | None:
+    """Return inspectable Python source without importing the target module."""
+
+    if not command:
+        return None
+    executable = Path(str(command[0])).name.lower()
+    if not executable.startswith("python") and executable != Path(sys.executable).name.lower():
+        return None
+    argv = [str(part) for part in command[1:]]
+    if "-c" in argv:
+        index = argv.index("-c")
+        return argv[index + 1] if index + 1 < len(argv) else None
+    if "-m" in argv:
+        index = argv.index("-m")
+        if index + 1 >= len(argv):
+            return None
+        module_name = argv[index + 1]
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, AttributeError, ModuleNotFoundError, ValueError):
+            return None
+        origin = str(getattr(spec, "origin", "") or "")
+        if not origin or origin in {"built-in", "frozen"}:
+            return None
+        path = Path(origin)
+    else:
+        script = next((part for part in argv if part.endswith((".py", ".pyw"))), "")
+        if not script:
+            return None
+        path = Path(script)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+    try:
+        if path.stat().st_size > 4 * 1024 * 1024:
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _source_declares_accelerator_import(source_text: str) -> bool:
+    try:
+        module = ast.parse(source_text)
+    except (SyntaxError, ValueError):
+        return True
+    for node in ast.walk(module):
+        imported: tuple[str, ...] = ()
+        if isinstance(node, ast.Import):
+            imported = tuple(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported = (str(node.module or ""),)
+        if any(name.split(".", 1)[0] in _ACCELERATOR_IMPORT_ROOTS for name in imported):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "__import__" and node.args:
+                first = node.args[0]
+                if (
+                    isinstance(first, ast.Constant)
+                    and isinstance(first.value, str)
+                    and first.value.split(".", 1)[0] in _ACCELERATOR_IMPORT_ROOTS
+                ):
+                    return True
+    return False
+
+
+def _dynamic_command_accelerator_use(command: Sequence[str]) -> bool | None:
+    """Inspect a dynamic executable without running or importing it.
+
+    ``None`` means the gateway could not establish what the executable is. The
+    caller must then provide a concrete model claim or use a reviewed fixed
+    command declaration; uncertainty never silently becomes ``none``.
+    """
+
+    source_text = _python_source_for_command(command)
+    if source_text is not None:
+        return _source_declares_accelerator_import(source_text)
+    if not command:
+        return None
+    executable_name = Path(str(command[0])).name.lower()
+    if executable_name.startswith("python") or executable_name == Path(sys.executable).name.lower():
+        return None
+    executable = shutil.which(str(command[0]))
+    if executable is None:
+        candidate = Path(str(command[0])).expanduser()
+        executable = str(candidate) if candidate.is_file() else None
+    if executable is None:
+        return None
+    path = Path(executable)
+    try:
+        size = path.stat().st_size
+        if size <= 0 or size > 64 * 1024 * 1024:
+            return None
+        payload = path.read_bytes()
+    except OSError:
+        return None
+    if payload.startswith(b"#!"):
+        try:
+            script_text = payload.decode("utf-8")
+        except UnicodeError:
+            return None
+        return _source_declares_accelerator_import(script_text)
+    accelerator_markers = (
+        b"Metal.framework",
+        b"libmlx",
+        b"libtorch",
+        b"libtensorflow",
+        b"libjax",
+        b"MTLCreateSystemDefaultDevice",
+    )
+    return any(marker in payload for marker in accelerator_markers)
+
+
+def _resolve_accelerator_claim(
+    command: Sequence[str],
+    *,
+    source: str,
+    timeout_s: float,
+    accelerator_capability: AcceleratorCapability | str | None,
+    model_lane_claim: Any | None = None,
+) -> Any | None:
+    declaration = _coerce_accelerator_capability(
+        accelerator_capability,
+        source=source,
+    )
+    inferred = _inferred_model_lane_claim(
+        command,
+        source=source,
+        timeout_s=timeout_s,
+    )
+    from core.runtime.model_lane_control import is_registered_non_model_process_command
+
+    registered_probe = is_registered_non_model_process_command(command)
+    if declaration is AcceleratorCapability.NONE:
+        source_text = _python_source_for_command(command)
+        source_uses_accelerator = bool(
+            source_text is not None and _source_declares_accelerator_import(source_text)
+        )
+        if model_lane_claim is not None or inferred is not None or (
+            source_uses_accelerator and not registered_probe
+        ):
+            raise GovernanceViolation(
+                f"subprocess_accelerator_capability_contradiction:{source}"
+            )
+        return None
+    if declaration is AcceleratorCapability.MODEL:
+        return model_lane_claim or inferred or _declared_model_lane_claim(
+            command,
+            source=source,
+            timeout_s=timeout_s,
+        )
+
+    if model_lane_claim is not None or inferred is not None:
+        return model_lane_claim or inferred
+    if registered_probe:
+        return None
+    dynamic_accelerator_use = _dynamic_command_accelerator_use(command)
+    if dynamic_accelerator_use is None:
+        raise GovernanceViolation(
+            f"subprocess_accelerator_capability_unresolved:{source}"
+        )
+    if dynamic_accelerator_use:
+        return _declared_model_lane_claim(
+            command,
+            source=source,
+            timeout_s=timeout_s,
+        )
+    return None
 
 
 async def _reserve_model_lane_process(
@@ -113,8 +342,18 @@ async def _cancel_model_lane_process(
         )
 
 
-def _model_command_requires_async(command: Sequence[str], *, source: str) -> None:
-    claim = _inferred_model_lane_claim(command, source=source, timeout_s=30.0)
+def _model_command_requires_async(
+    command: Sequence[str],
+    *,
+    source: str,
+    accelerator_capability: AcceleratorCapability | str | None,
+) -> None:
+    claim = _resolve_accelerator_claim(
+        command,
+        source=source,
+        timeout_s=30.0,
+        accelerator_capability=accelerator_capability,
+    )
     if claim is not None:
         raise RuntimeError(
             "accelerator-owning subprocesses require run_async/spawn_async so "
@@ -510,9 +749,14 @@ class SubprocessGateway:
         # A containment probe must not inherit the parent's stdin. Without
         # this the only way to close it was to bypass the gateway.
         stdin_devnull: bool = False,
+        accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> subprocess.CompletedProcess[Any]:
         command = _coerce_argv(argv)
-        _model_command_requires_async(command, source=source)
+        _model_command_requires_async(
+            command,
+            source=source,
+            accelerator_capability=accelerator_capability,
+        )
         if read_only and not offline_tooling:
             _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
@@ -578,15 +822,13 @@ class SubprocessGateway:
         runtime loop; async code must await ``run_async`` directly.
         """
         command = _coerce_argv(argv)
-        claim = model_lane_claim or _inferred_model_lane_claim(
+        claim = _resolve_accelerator_claim(
             command,
             source=source,
             timeout_s=float(timeout),
+            accelerator_capability=AcceleratorCapability.MODEL,
+            model_lane_claim=model_lane_claim,
         )
-        if claim is None:
-            raise RuntimeError(
-                f"run_model_blocking requires an attributable model claim: {source}"
-            )
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -707,6 +949,7 @@ class SubprocessGateway:
                 check=check,
                 source=source,
                 model_lane_claim=claim,
+                accelerator_capability=AcceleratorCapability.MODEL,
             )
         )
 
@@ -725,12 +968,15 @@ class SubprocessGateway:
         check: bool = False,
         source: str = "unknown",
         model_lane_claim: Any | None = None,
+        accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
-        inferred_claim = model_lane_claim or _inferred_model_lane_claim(
+        inferred_claim = _resolve_accelerator_claim(
             command,
             source=source,
             timeout_s=float(timeout),
+            accelerator_capability=accelerator_capability,
+            model_lane_claim=model_lane_claim,
         )
         # Live effectful work stays in an async-owned process group even when it
         # does not load a model. That gives cancellation and timeout a real
@@ -749,6 +995,11 @@ class SubprocessGateway:
                 allow_during_shutdown=allow_during_shutdown,
                 source=source,
                 model_lane_claim=inferred_claim,
+                accelerator_capability=(
+                    AcceleratorCapability.MODEL
+                    if inferred_claim is not None
+                    else AcceleratorCapability.NONE
+                ),
             )
             input_bytes = input.encode() if input is not None else None
             try:
@@ -804,6 +1055,7 @@ class SubprocessGateway:
                 input=input,
                 check=check,
                 source=source,
+                accelerator_capability=AcceleratorCapability.NONE,
             )
 
         if is_shutdown_requested() and allow_during_shutdown and read_only:
@@ -835,9 +1087,14 @@ class SubprocessGateway:
         offline_tooling: bool = False,
         allow_during_shutdown: bool = False,
         source: str = "unknown",
+        accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> subprocess.Popen[Any]:
         command = _coerce_argv(argv)
-        _model_command_requires_async(command, source=source)
+        _model_command_requires_async(
+            command,
+            source=source,
+            accelerator_capability=accelerator_capability,
+        )
         if read_only and not offline_tooling:
             _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
@@ -951,6 +1208,7 @@ class SubprocessGateway:
         allow_during_shutdown: bool = False,
         source: str = "unknown",
         model_lane_claim: Any | None = None,
+        accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> asyncio.subprocess.Process:
         command = _coerce_argv(argv)
         if read_only and not offline_tooling:
@@ -972,10 +1230,12 @@ class SubprocessGateway:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_async")
         _enforce_process_privilege(env=env, source=source, operation="spawn_async")
-        claim = model_lane_claim or _inferred_model_lane_claim(
+        claim = _resolve_accelerator_claim(
             command,
             source=source,
             timeout_s=300.0,
+            accelerator_capability=accelerator_capability,
+            model_lane_claim=model_lane_claim,
         )
         if claim is not None and not start_new_session:
             raise RuntimeError("model_subprocess_requires_isolated_process_group")
@@ -1279,89 +1539,43 @@ class SubprocessGateway:
         offline_tooling: bool = False,
         allow_during_shutdown: bool = False,
         source: str = "unknown",
+        accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> asyncio.subprocess.Process:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("shell command must be a non-empty string")
         if "\x00" in command:
             raise ValueError("shell command must not contain NUL bytes")
-        offline_bypass = _validate_offline_tooling_bypass(
-            offline_tooling=offline_tooling,
-            source=source,
-            command=("/bin/sh", "-lc"),
-        )
-        _require_not_shutting_down(
-            f"subprocess_gateway.spawn_shell_async:{source}",
-            read_only=False,
-            offline_tooling=offline_tooling,
-            allow_during_shutdown=allow_during_shutdown,
-        )
-        if not offline_bypass:
-            _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
-        _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_shell_async")
-        if any(
-            marker in command.lower()
-            for marker in ("mlx_lm", "mlx-lm", "mlx_lm_lora", "heldout_eval.py")
-        ):
+        try:
+            inspected_argv = shlex.split(command)
+        except ValueError as exc:
             raise GovernanceViolation(
-                "accelerator-owning shell commands are denied; use spawn_async argv "
-                "so model identity and lane ownership remain parseable"
-            )
-        proc = await asyncio.create_subprocess_shell(
-            command,
+                f"subprocess_shell_capability_unparseable:{source}"
+            ) from exc
+        claim = _resolve_accelerator_claim(
+            inspected_argv,
+            source=source,
+            timeout_s=300.0,
+            accelerator_capability=accelerator_capability,
+        )
+        return await self.spawn_async(
+            ["/bin/sh", "-lc", command],
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
             cwd=_coerce_cwd(cwd),
-            env=dict(env) if env is not None else None,
+            env=env,
             start_new_session=start_new_session,
-        )
-        try:
-            _require_not_shutting_down(
-                f"subprocess_gateway.spawn_shell_async:{source}",
-                read_only=False,
-                offline_tooling=offline_tooling,
-                allow_during_shutdown=allow_during_shutdown,
-                resource_created=True,
-            )
-        except GovernanceViolation:
-            try:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except TimeoutError:
-                    proc.kill()
-                    try:
-                        # Bounded: a SIGKILLed child that cannot be reaped
-                        # in 5s is an OS-level anomaly; leaking one zombie
-                        # beats wedging the caller (A1 discipline).
-                        await asyncio.wait_for(proc.wait(), timeout=5.0)
-                    except TimeoutError:
-                        logger.warning(
-                            "SIGKILLed subprocess pid=%s not reaped in 5s",
-                            getattr(proc, "pid", None),
-                        )
-            except (OSError, RuntimeError, ProcessLookupError, ValueError) as exc:
-                record_shutdown_admission_event(
-                    f"subprocess_gateway.spawn_shell_async:{source}",
-                    resource_kind="subprocess",
-                    outcome="survived",
-                    detail=repr(exc),
-                )
-                raise
-            record_shutdown_admission_event(
-                f"subprocess_gateway.spawn_shell_async:{source}",
-                resource_kind="subprocess",
-                outcome="reaped",
-                detail=f"pid={getattr(proc, 'pid', None)}",
-            )
-            raise
-        _register_runtime_hygiene_process(
-            proc,
-            kind="subprocess",
+            read_only=False,
+            offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
             source=source,
-            command=command,
+            model_lane_claim=claim,
+            accelerator_capability=(
+                AcceleratorCapability.MODEL
+                if claim is not None
+                else AcceleratorCapability.NONE
+            ),
         )
-        return proc
 
 
 _gateway: SubprocessGateway | None = None
@@ -1374,4 +1588,4 @@ def get_subprocess_gateway() -> SubprocessGateway:
     return _gateway
 
 
-__all__ = ["SubprocessGateway", "get_subprocess_gateway"]
+__all__ = ["AcceleratorCapability", "SubprocessGateway", "get_subprocess_gateway"]

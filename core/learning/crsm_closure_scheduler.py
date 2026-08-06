@@ -787,6 +787,7 @@ class CRSMClosureScheduler:
             offline_tooling=False,
             source=f"{AUTHORITY_SOURCE}:{phase}",
             model_lane_claim=lane_claim,
+            accelerator_capability="model",
         )
         return {
             "returncode": result.returncode,

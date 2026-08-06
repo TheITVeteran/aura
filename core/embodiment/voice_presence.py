@@ -55,6 +55,7 @@ class MacOSTTS(TTSEngine):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 source="tool_execution:voice_presence.macos_say",
+                accelerator_capability="none",
             )
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('voice_presence', e)
@@ -92,6 +93,7 @@ class LinuxTTS(TTSEngine):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         source="tool_execution:voice_presence.linux_tts",
+                        accelerator_capability="auto",
                     )
                     await proc.wait()
                     return
@@ -114,6 +116,7 @@ class WindowsTTS(TTSEngine):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 source="tool_execution:voice_presence.windows_tts",
+                accelerator_capability="none",
             )
             await proc.wait()
         except (subprocess.SubprocessError, OSError) as e:

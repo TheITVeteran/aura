@@ -696,7 +696,6 @@ def infer_model_process_claim(
         estimate_model_job_footprint_gb(path, purpose=purpose)
         for path in descriptor.model_paths
     )
-
     request_id = f"model-process-{uuid.uuid4()}"
     return LaneClaim(
         owner_id=f"subprocess:{os.getpid()}:{request_id}",
@@ -713,6 +712,82 @@ def infer_model_process_claim(
             "source": source,
             "command": list(argv),
             "inferred_model_process": True,
+            "purpose": purpose,
+        },
+    )
+
+
+def is_registered_non_model_process_command(command: Iterable[str]) -> bool:
+    """Return whether argv is a narrowly reviewed accelerator import probe."""
+
+    argv = tuple(str(part) for part in command)
+    return _is_import_only_python_probe(argv) or _is_registered_non_model_python_probe(argv)
+
+
+def declared_model_process_claim(
+    command: Iterable[str],
+    *,
+    source: str,
+    timeout_s: float,
+) -> LaneClaim:
+    """Build a lane claim from an explicit model-capability declaration.
+
+    Unlike :func:`infer_model_process_claim`, this path does not depend on a
+    loader filename. The gateway has already received a trusted declaration
+    that the child owns accelerator-backed model memory, so only the model
+    identity and resource purpose must be derived from argv. A caller whose
+    model identity is not present in argv must provide a concrete ``LaneClaim``
+    instead of letting the process escape accounting under an opaque name.
+    """
+
+    argv = tuple(str(part) for part in command)
+    lowered = tuple(part.lower() for part in argv)
+    model_paths: list[str] = []
+    for index, part in enumerate(lowered[:-1]):
+        if part in {
+            "--model",
+            "--model-path",
+            "--base-model",
+            "--target",
+            "--draft",
+        }:
+            candidate = argv[index + 1]
+            if candidate and candidate not in model_paths:
+                model_paths.append(candidate)
+    if not model_paths:
+        raise ModelLaneControlError(
+            f"declared_model_process_claim_missing_model_path:{source}"
+        )
+
+    joined = " ".join(lowered)
+    if "fuse" in lowered:
+        purpose = "fuse"
+    elif "--train" in lowered or " lora " in f" {joined} ":
+        purpose = "train"
+    elif any(marker in joined for marker in ("eval", "benchmark", "proof")):
+        purpose = "benchmark"
+    else:
+        purpose = "serve"
+    request_gb = sum(
+        estimate_model_job_footprint_gb(path, purpose=purpose)
+        for path in model_paths
+    )
+    request_id = f"declared-model-process-{uuid.uuid4()}"
+    return LaneClaim(
+        owner_id=f"subprocess:{os.getpid()}:{request_id}",
+        model_path=model_paths[0],
+        request_gb=request_gb,
+        purpose=purpose,
+        priority=80 if purpose in {"train", "fuse", "compound"} else 50,
+        preemptible=True,
+        foreground=False,
+        reservation_ttl_s=max(60.0, float(timeout_s) + 30.0),
+        owner_lease_ttl_s=max(60.0, float(timeout_s) + 30.0),
+        request_id=request_id,
+        metadata={
+            "source": source,
+            "command": list(argv),
+            "declared_model_process": True,
             "purpose": purpose,
         },
     )
@@ -4131,6 +4206,8 @@ __all__ = [
     "evict_registered_model_owner",
     "get_model_lane_controller",
     "infer_model_process_claim",
+    "is_registered_non_model_process_command",
+    "declared_model_process_claim",
     "in_process_model_lane",
     "managed_process_group_alive",
     "prepare_model_lane_claim",

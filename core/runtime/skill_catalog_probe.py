@@ -64,6 +64,7 @@ def run_skill_catalog_probe(
             capture_output=True,
             input=json.dumps(payload, sort_keys=True, separators=(",", ":")),
             source="capability_engine.skill_catalog_probe",
+            accelerator_capability="none",
         )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "probe exited without diagnostics").strip()

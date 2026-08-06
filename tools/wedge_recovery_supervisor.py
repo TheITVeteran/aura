@@ -194,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             start_new_session=True,
             offline_tooling=True,
             source="maintenance_tooling:wedge_recovery_supervisor",
+            accelerator_capability="auto",
         )
 
     supervisor = WedgeRecoverySupervisor(

@@ -159,6 +159,7 @@ async def _run_project_command_async(command: tuple[str, ...], *, timeout_s: flo
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="self_modification:managed_project_command",
+            accelerator_capability="auto",
         )
 
     timed_out = False

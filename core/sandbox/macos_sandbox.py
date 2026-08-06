@@ -114,6 +114,7 @@ class MacOSSandbox:
                 cwd=cwd,
                 capture_output=True,
                 source="sandbox.macos_sandbox.execute_command",
+                accelerator_capability="auto",
             )
             return result
             

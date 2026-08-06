@@ -378,6 +378,7 @@ class SafePipeline:
                         if index == 0
                         else "self_modification:safe_pipeline.shadow_runtime"
                     ),
+                    accelerator_capability="auto",
                 )
                 try:
                     out, err = await asyncio.wait_for(

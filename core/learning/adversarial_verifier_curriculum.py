@@ -790,6 +790,7 @@ def sandboxed_evaluate(
         input=raw.decode("ascii"),
         offline_tooling=True,
         source="training_tooling:adversarial_verifier_evaluation",
+        accelerator_capability="none",
     )
     if result.returncode != 0 or len(result.stdout.encode("utf-8")) > 2 * 1024 * 1024:
         raise RuntimeError(f"sandbox evaluation failed: {result.stderr[-500:]}")

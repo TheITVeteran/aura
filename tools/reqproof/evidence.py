@@ -385,6 +385,7 @@ def _resolve_commit(root: Path, revision: str) -> str:
         timeout=30,
         read_only=True,
         source="reqproof_evidence_resolve_commit",
+        accelerator_capability="none",
     )
     _require(result.returncode == 0, f"unknown git commit {revision!r}")
     commit = result.stdout.strip()

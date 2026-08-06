@@ -17,6 +17,7 @@ async def test_swarm_shard_tool_execution_creates_governed_subprocess_scope(monk
                 capture_output=True,
                 timeout=1.0,
                 source="test.agency_core_governance.shard_tool",
+                accelerator_capability="none",
             )
             return f"ok:{result.returncode}"
 
@@ -53,6 +54,7 @@ def test_ungoverned_subprocess_still_fails_closed(monkeypatch):
             capture_output=True,
             timeout=1.0,
             source="test.agency_core_governance.ungoverned",
+            accelerator_capability="none",
         )
 
 

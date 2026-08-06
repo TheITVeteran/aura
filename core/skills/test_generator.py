@@ -289,6 +289,7 @@ class TestGeneratorSkill(BaseSkill):
                         stderr=asyncio.subprocess.PIPE,
                         cwd=str(target_path.parent),
                         source="tool_execution:test_generator.pytest",
+                        accelerator_capability="none",
                     )
                     try:
                         stdout, stderr = await asyncio.wait_for(

@@ -588,6 +588,7 @@ def _spawn(
             cwd=str(scratch),
             env=env,
             source=f"sandbox.untrusted_python.{source}",
+            accelerator_capability="auto",
         )
     except subprocess.TimeoutExpired:
         return SandboxOutcome(

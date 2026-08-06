@@ -35,6 +35,7 @@ class DesktopMotor(BaseMotor):
                         check=True,
                         timeout=2.0,
                         source="body.desktop_motor",
+                        accelerator_capability="none",
                     )
                     return {
                         "status": "success",

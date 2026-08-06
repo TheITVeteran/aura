@@ -151,6 +151,7 @@ class SandboxOperator:
                 start_new_session=True,
                 preexec_fn=_child_preexec,
                 source="sandbox_operator",
+                accelerator_capability="none",
             )
             # With start_new_session=True the child IS its own session and
             # group leader, so its pgid is its pid by definition. Calling

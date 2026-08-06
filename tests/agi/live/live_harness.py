@@ -120,6 +120,7 @@ class LiveAuraHarness:
                 env=run_env,
                 offline_tooling=True,
                 source="certification_tooling:agi_live_harness",
+                accelerator_capability="auto",
             )
             try:
                 returncode = proc.wait(timeout=timeout_s)

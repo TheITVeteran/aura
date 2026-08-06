@@ -121,6 +121,7 @@ class SovereignTerminalSkill(BaseSkill):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="tool_execution:sovereign_terminal.shell",
+                accelerator_capability="auto",
             )
             
             stdout_chunks = []
@@ -261,6 +262,7 @@ class SovereignTerminalSkill(BaseSkill):
                 process = await get_subprocess_gateway().spawn_async(
                     cmd,
                     source="tool_execution:sovereign_terminal.open",
+                    accelerator_capability="auto",
                 )
                 await process.wait()
                 if process.returncode != 0:

@@ -37,6 +37,7 @@ class TestRunner:
                 cwd=repo_path,
                 timeout=timeout,
                 source="test_runner",
+                accelerator_capability="auto",
             )
             duration = time.time() - started
             stdout = proc.stdout if proc.stdout else ""

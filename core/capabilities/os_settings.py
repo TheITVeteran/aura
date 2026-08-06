@@ -69,6 +69,7 @@ class OSSettingsAdapter:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="os_settings.get_wallpaper",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
             return stdout.decode("utf-8", errors="replace").strip() if stdout else ""
@@ -177,6 +178,7 @@ class OSSettingsAdapter:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="os_settings.get_appearance_mode",
+                accelerator_capability="none",
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             if proc.returncode == 0 and stdout:
@@ -234,6 +236,7 @@ class OSSettingsAdapter:
                 stderr=asyncio.subprocess.PIPE,
                 read_only=True,
                 source="os_settings.get_volume",
+                accelerator_capability="none",
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             return int(stdout.decode().strip()) if stdout else 50

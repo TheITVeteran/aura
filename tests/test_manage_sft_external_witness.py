@@ -36,6 +36,7 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
             check=False,
             timeout=30,
             source="tests.spark.external_witness.operator_cli",
+            accelerator_capability="none",
         )
 
 

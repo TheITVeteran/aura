@@ -237,6 +237,7 @@ def main() -> int:
         stderr=DEVNULL,
         offline_tooling=True,
         source="proof_tooling:aletheia_headless_server",
+        accelerator_capability="none",
     )
 
     try:
@@ -266,6 +267,7 @@ def main() -> int:
             capture_output=False,
             offline_tooling=True,
             source="proof_tooling:aletheia_live_runner",
+            accelerator_capability="auto",
         )
         if completed.returncode != 0:
             print(f"❌ ERROR: live Aletheia runner failed with exit code {completed.returncode}.")

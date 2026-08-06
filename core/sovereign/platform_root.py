@@ -187,6 +187,7 @@ class PlatformRoot:
                 timeout=5.0,
                 read_only=True,
                 source="sovereign.platform_root.ps_aux",
+                accelerator_capability="none",
             )
             out = result.stdout
             if "MTLCompilerService" not in out:

@@ -308,6 +308,7 @@ class ASASafetyGate:
                 timeout=10,
                 read_only=True,
                 source="architect.safety_gate.git_status",
+                accelerator_capability="none",
             )
             dirty = result.stdout.strip()
             if dirty:
@@ -365,6 +366,7 @@ class ASASafetyGate:
                     capture_output=True,
                     timeout=10,
                     source="architect.safety_gate.git_add",
+                    accelerator_capability="none",
                 )
             msg = f"asa(auto): {objective[:80]} [{run_id[:12]}]"
             result = get_subprocess_gateway().run(
@@ -373,6 +375,7 @@ class ASASafetyGate:
                 capture_output=True,
                 timeout=30,
                 source="architect.safety_gate.git_commit",
+                accelerator_capability="none",
             )
             return result.returncode == 0
         except (subprocess.TimeoutExpired, OSError):
@@ -390,6 +393,7 @@ class ASASafetyGate:
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_rev_parse",
+                accelerator_capability="none",
             ).stdout.strip()
             snap["status"] = get_subprocess_gateway().run(
                 ["git", "status", "--porcelain"],
@@ -398,6 +402,7 @@ class ASASafetyGate:
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_snapshot_status",
+                accelerator_capability="none",
             ).stdout.strip()[:500]
             snap["diff_stat"] = get_subprocess_gateway().run(
                 ["git", "diff", "--stat", "HEAD"],
@@ -406,6 +411,7 @@ class ASASafetyGate:
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_diff_stat",
+                accelerator_capability="none",
             ).stdout.strip()[:500]
         except (subprocess.TimeoutExpired, OSError, subprocess.CalledProcessError) as exc:
             snap["error"] = repr(exc)

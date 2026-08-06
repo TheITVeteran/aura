@@ -382,6 +382,7 @@ class SafeMutationEvaluator:
                     text=False,
                     preexec_fn=self._set_rlimits if hasattr(os, "fork") else None,
                     source="core.self_modification.mutation_safety.evaluator_subprocess",
+                    accelerator_capability="auto",
                 )
             except (subprocess.SubprocessError, OSError) as e:  # pragma: no cover - subprocess setup is platform-bound
                 diag = MutationDiagnostics(

@@ -39,6 +39,7 @@ async def _run_tests_async() -> tuple[bool, str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="self_modification:mutate.pytest",
+            accelerator_capability="none",
         )
         stdout, stderr = await process.communicate()
         
@@ -95,6 +96,7 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="self_modification:mutate.git_add",
+            accelerator_capability="none",
         )
         await proc_add.communicate()
         
@@ -103,6 +105,7 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="self_modification:mutate.git_commit",
+            accelerator_capability="none",
         )
         await proc_commit.communicate()
         return True

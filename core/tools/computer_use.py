@@ -137,6 +137,7 @@ class ComputerUseSkill:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 source="tool_execution:computer_use.screenshot",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(proc.wait(), timeout=10.0)
             if proc.returncode != 0:

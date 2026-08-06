@@ -11,6 +11,7 @@ Drives training/train_and_fuse.py without modifying it. Adds:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import signal
@@ -18,7 +19,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from subprocess import TimeoutExpired
 
 try:
     import psutil
@@ -139,7 +139,7 @@ def _memory_guard_reason(pid: int) -> str | None:
     return None
 
 
-def _terminate_process_tree(proc) -> None:  # noqa: ANN001 - subprocess.Popen-compatible.
+async def _terminate_process_tree(proc) -> None:  # noqa: ANN001 - asyncio subprocess.
     if psutil is not None:
         try:
             table = get_resource_observer().process_table()
@@ -159,64 +159,79 @@ def _terminate_process_tree(proc) -> None:  # noqa: ANN001 - subprocess.Popen-co
                     handle.terminate()
                 except (psutil.Error, RuntimeError, TypeError, ValueError):
                     pass
-            _gone, alive = psutil.wait_procs(handles, timeout=15)
+            _gone, alive = await asyncio.to_thread(psutil.wait_procs, handles, timeout=15)
             for handle in alive:
                 try:
                     handle.kill()
                 except (psutil.Error, RuntimeError, TypeError, ValueError):
                     pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=15.0)
+            except TimeoutError:
+                proc.kill()
+                await asyncio.wait_for(proc.wait(), timeout=15.0)
             return
         except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
             pass
     proc.terminate()
     try:
-        proc.wait(timeout=15)
-    except TimeoutExpired:
+        await asyncio.wait_for(proc.wait(), timeout=15.0)
+    except TimeoutError:
         proc.kill()
+        await asyncio.wait_for(proc.wait(), timeout=15.0)
 
 
 def _spawn(cmd: list[str], *, started_at: str) -> int:
     """Run subprocess, heartbeat state, honour _shutdown."""
-    print(f"[orch] $ {' '.join(cmd)}", flush=True)
-    proc = get_subprocess_gateway().spawn(
-        cmd,
-        cwd=str(REPO_DIR),
-        offline_tooling=True,
-        source="training_tooling:run_unattended",
-    )
-    resource_provenance = get_resource_observer().provenance.to_dict()
-    watchdog_interval = max(2.0, _env_float("AURA_TRAINING_WATCHDOG_INTERVAL_S", 10.0))
-    try:
-        while not _shutdown.is_set():
-            reason = _memory_guard_reason(proc.pid)
-            if reason:
-                print(f"[orch] memory guard tripped — {reason}; terminating training tree")
-                update_state(
-                    started_at=started_at,
-                    phase="memory_guard_kill",
-                    memory_guard_reason=reason,
-                    resource_observation=resource_provenance,
-                )
-                _terminate_process_tree(proc)
-                return 137
-            try:
-                return proc.wait(timeout=watchdog_interval)
-            except TimeoutExpired:
-                update_state(
-                    started_at=started_at,
-                    phase="running",
-                    resource_observation=resource_provenance,
-                )
-        print("[orch] shutdown — terminating subprocess")
-        _terminate_process_tree(proc)
+    async def _run() -> int:
+        print(f"[orch] $ {' '.join(cmd)}", flush=True)
+        proc = await get_subprocess_gateway().spawn_async(
+            cmd,
+            cwd=str(REPO_DIR),
+            offline_tooling=True,
+            source="training_tooling:run_unattended",
+            accelerator_capability="auto",
+        )
+        resource_provenance = get_resource_observer().provenance.to_dict()
+        watchdog_interval = max(
+            2.0,
+            _env_float("AURA_TRAINING_WATCHDOG_INTERVAL_S", 10.0),
+        )
+        wait_task = asyncio.create_task(proc.wait())
         try:
-            return proc.wait(timeout=30)
-        except TimeoutExpired:
-            proc.kill()
-            return proc.wait(timeout=30)
-    finally:
-        if proc.poll() is None:
-            proc.terminate()
+            while not _shutdown.is_set():
+                reason = _memory_guard_reason(proc.pid)
+                if reason:
+                    print(f"[orch] memory guard tripped — {reason}; terminating training tree")
+                    update_state(
+                        started_at=started_at,
+                        phase="memory_guard_kill",
+                        memory_guard_reason=reason,
+                        resource_observation=resource_provenance,
+                    )
+                    await _terminate_process_tree(proc)
+                    return 137
+                try:
+                    return int(
+                        await asyncio.wait_for(
+                            asyncio.shield(wait_task),
+                            timeout=watchdog_interval,
+                        )
+                    )
+                except TimeoutError:
+                    update_state(
+                        started_at=started_at,
+                        phase="running",
+                        resource_observation=resource_provenance,
+                    )
+            print("[orch] shutdown — terminating subprocess")
+            await _terminate_process_tree(proc)
+            return int(proc.returncode or 0)
+        finally:
+            if proc.returncode is None:
+                await _terminate_process_tree(proc)
+
+    return asyncio.run(_run())
 
 
 def run_train_and_fuse(args: argparse.Namespace, *, started_at: str) -> int:

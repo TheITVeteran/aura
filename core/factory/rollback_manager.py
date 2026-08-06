@@ -26,8 +26,8 @@ class RollbackManager:
         logger.info("🌳 RollbackManager: creating branch '%s' in '%s'", branch_name, repo_path)
         try:
             # Check current status and checkout new branch via approved gateway
-            get_subprocess_gateway().run(["git", "status"], cwd=repo_path, source="rollback_manager")
-            get_subprocess_gateway().run(["git", "checkout", "-b", branch_name], cwd=repo_path, source="rollback_manager")
+            get_subprocess_gateway().run(["git", "status"], cwd=repo_path, source="rollback_manager", accelerator_capability="none")
+            get_subprocess_gateway().run(["git", "checkout", "-b", branch_name], cwd=repo_path, source="rollback_manager", accelerator_capability="none")
             return True
         except (OSError, RuntimeError) as e:
             record_degradation(
@@ -46,6 +46,7 @@ class RollbackManager:
                 ["git", "rev-parse", "HEAD"],
                 cwd=repo_path,
                 source="rollback_manager",
+                accelerator_capability="none",
             )
             sha = res.stdout.strip() if res.stdout else "HEAD"
             self._checkpoints[checkpoint_id] = {
@@ -78,8 +79,8 @@ class RollbackManager:
 
         try:
             # Hard reset changes in git via approved gateway
-            get_subprocess_gateway().run(["git", "reset", "--hard", sha], cwd=repo_path, source="rollback_manager")
-            get_subprocess_gateway().run(["git", "clean", "-fd"], cwd=repo_path, source="rollback_manager")
+            get_subprocess_gateway().run(["git", "reset", "--hard", sha], cwd=repo_path, source="rollback_manager", accelerator_capability="none")
+            get_subprocess_gateway().run(["git", "clean", "-fd"], cwd=repo_path, source="rollback_manager", accelerator_capability="none")
             logger.info("✅ Rollback successful. Repository restored.")
             return True
         except (OSError, RuntimeError) as e:

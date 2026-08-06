@@ -167,6 +167,7 @@ def _git_commit() -> str:
         timeout=60,
         read_only=True,
         source="sovereignty_git_commit",
+        accelerator_capability="none",
     )
     return proc.stdout.strip() if proc.returncode == 0 else "unknown"
 
@@ -178,6 +179,7 @@ def _git_diff() -> str:
         timeout=60,
         read_only=True,
         source="sovereignty_git_diff",
+        accelerator_capability="none",
     )
     return proc.stdout if proc.returncode == 0 else proc.stderr
 
@@ -212,6 +214,7 @@ def _run_cmd(args: list[str], *, cwd: Path, timeout_s: int = 60):
         timeout=timeout_s,
         read_only=True,
         source="sovereignty_controlled_command",
+        accelerator_capability="auto",
     )
 
 

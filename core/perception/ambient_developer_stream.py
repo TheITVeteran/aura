@@ -427,6 +427,7 @@ class AmbientDeveloperStream:
                 timeout=2.0,
                 read_only=True,
                 source="ambient_developer_stream.git_status",
+                accelerator_capability="none",
             )
             if result.returncode != 0:
                 return []

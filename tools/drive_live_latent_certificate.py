@@ -53,6 +53,7 @@ def _git_head() -> str:
             timeout=10,
             read_only=True,
             source="proof_tooling:live_latent_certificate_git_head",
+            accelerator_capability="none",
         )
         return completed.stdout.strip() if completed.returncode == 0 else ""
     except (OSError, RuntimeError, TypeError, ValueError):

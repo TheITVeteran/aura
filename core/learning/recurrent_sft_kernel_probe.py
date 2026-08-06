@@ -375,6 +375,7 @@ def execute_kernel_probe(
             stdin_devnull=True,
             read_only=True,
             source="core.learning.recurrent_sft_kernel_probe",
+            accelerator_capability="auto",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RecurrentSFTKernelProbeError(

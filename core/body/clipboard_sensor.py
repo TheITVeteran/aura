@@ -31,6 +31,7 @@ class ClipboardSensor(BaseSensor):
                     check=True,
                     timeout=1.0,
                     source="body.clipboard_sensor",
+                    accelerator_capability="none",
                 )
                 content = res.stdout.strip()
                 # Truncate large contents.

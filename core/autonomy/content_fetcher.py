@@ -976,6 +976,7 @@ async def _run_subprocess(cmd: list[str], timeout_seconds: int) -> tuple[bool, s
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             source="external_action:content_fetcher.subprocess",
+            accelerator_capability="auto",
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)

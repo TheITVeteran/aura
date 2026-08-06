@@ -735,6 +735,7 @@ def snippet_verdict(code: str) -> tuple[str, str]:
             timeout=10,
             read_only=True,
             source="self.source_excerpt.snippet_verdict",
+            accelerator_capability="none",
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return ("unchecked", "")

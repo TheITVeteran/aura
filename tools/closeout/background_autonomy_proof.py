@@ -318,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=90,
             offline_tooling=True,
             source="certification_tooling:background_autonomy_proof.stop_runtime",
+            accelerator_capability="none",
         )
     except (OSError, subprocess.SubprocessError):
         pass

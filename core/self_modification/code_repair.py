@@ -738,6 +738,7 @@ class SandboxTester:
                     timeout=15,
                     cwd=temp_path,
                     source="core.self_modification.code_repair.weakness_probe",
+                    accelerator_capability="none",
                 )
                 
                 is_pass = (result.returncode == 0)
@@ -865,6 +866,7 @@ class AutonomousCodeRepair:
                 cwd=self.generator.code_base,
                 timeout=30,
                 source="core.self_modification.code_repair.ruff_fix",
+                accelerator_capability="auto",
             )
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('code_repair', e)

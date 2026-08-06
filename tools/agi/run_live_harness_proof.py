@@ -96,6 +96,7 @@ def get_source_identity(root: Path = PROJECT_ROOT) -> dict[str, Any]:
             check=False,
             read_only=True,
             source="proof_tooling:live_harness_source_identity",
+            accelerator_capability="none",
         )
     except (OSError, SubprocessError, RuntimeError, ValueError):
         inside = None
@@ -108,6 +109,7 @@ def get_source_identity(root: Path = PROJECT_ROOT) -> dict[str, Any]:
                 check=True,
                 read_only=True,
                 source="proof_tooling:live_harness_source_identity",
+                accelerator_capability="none",
             ).stdout.strip()
             status_text = _SUBPROCESS_GATEWAY.run(
                 ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -116,6 +118,7 @@ def get_source_identity(root: Path = PROJECT_ROOT) -> dict[str, Any]:
                 check=True,
                 read_only=True,
                 source="proof_tooling:live_harness_source_identity",
+                accelerator_capability="none",
             ).stdout
             diff_text = _SUBPROCESS_GATEWAY.run(
                 ["git", "diff", "--binary", "HEAD"],
@@ -124,6 +127,7 @@ def get_source_identity(root: Path = PROJECT_ROOT) -> dict[str, Any]:
                 check=True,
                 read_only=True,
                 source="proof_tooling:live_harness_source_identity",
+                accelerator_capability="none",
             ).stdout
             dirty = bool(status_text)
             dirty_fingerprint = (

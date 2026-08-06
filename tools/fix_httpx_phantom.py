@@ -119,6 +119,7 @@ def main():
                 timeout=30,
                 read_only=True,
                 source="fix_httpx_phantom:py_compile",
+                accelerator_capability="none",
             )
             if result.returncode != 0:
                 print(f"  ❌ COMPILE FAIL: {filepath.relative_to(root)}")

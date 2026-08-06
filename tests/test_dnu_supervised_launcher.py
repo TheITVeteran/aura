@@ -65,4 +65,5 @@ def test_wedged_battery_is_detected_and_restarted(tmp_path, battery_helper, caps
         check=False,
         offline_tooling=True,
         source="maintenance_tooling:dnu_supervised_test_cleanup",
+        accelerator_capability="none",
     )

@@ -308,6 +308,7 @@ class DocumentService:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 source="document_service.open_preview",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(proc.wait(), timeout=5.0)
             return proc.returncode == 0

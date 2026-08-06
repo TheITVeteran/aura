@@ -113,6 +113,7 @@ class Soma:
                         timeout=3.0,
                         read_only=True,
                         source="soma_git_generation",
+                        accelerator_capability="none",
                     )
                     if res.returncode == 0:
                         self.state.genetic_evolution_generation = int(res.stdout.strip())

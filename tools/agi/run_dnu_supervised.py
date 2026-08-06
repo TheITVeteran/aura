@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             cwd=str(ROOT),
             offline_tooling=True,
             source="certification_tooling:dnu_supervised",
+            accelerator_capability="none",
         )
 
     supervisor = WedgeRecoverySupervisor(

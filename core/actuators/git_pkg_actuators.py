@@ -181,7 +181,7 @@ class GitActuator(BaseActuator):
                 )
 
         try:
-            res = get_subprocess_gateway().run(cmd, cwd=cwd, timeout=30.0, source="git_actuator")
+            res = get_subprocess_gateway().run(cmd, cwd=cwd, timeout=30.0, source="git_actuator", accelerator_capability="auto")
             success = res.returncode == 0
             updates = {
                 "exit_code": res.returncode,
@@ -247,7 +247,8 @@ class GitActuator(BaseActuator):
     def _current_head(cwd: str) -> str:
         try:
             res = get_subprocess_gateway().run(
-                ["git", "rev-parse", "HEAD"], cwd=cwd, timeout=10.0, source="git_actuator_precondition"
+                ["git", "rev-parse", "HEAD"], cwd=cwd, timeout=10.0, source="git_actuator_precondition",
+                accelerator_capability="none",
             )
             if res.returncode == 0:
                 return str(res.stdout or "").strip()
@@ -351,7 +352,8 @@ class PackageInstallActuator(BaseActuator):
             timeout_s = float(params.get("timeout_s") or 120.0)
             timeout_s = max(10.0, min(900.0, timeout_s))
             res = get_subprocess_gateway().run(
-                cmd, timeout=timeout_s, source="package_install_actuator"
+                cmd, timeout=timeout_s, source="package_install_actuator",
+                accelerator_capability="auto",
             )
             success = res.returncode == 0
             after = self._installed_version(target_python, pkg)
@@ -415,6 +417,7 @@ class PackageInstallActuator(BaseActuator):
                 [python_executable, "-I", "-S", "-c", probe],
                 timeout=20.0,
                 source="package_install_actuator_probe",
+                accelerator_capability="none",
             )
             return (res.stdout or "").strip()
         except (subprocess.SubprocessError, OSError, ValueError):

@@ -147,6 +147,7 @@ class GhostBootValidator:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 source="self_modification:ghost_boot_validator",
+                accelerator_capability="none",
             )
 
             try:

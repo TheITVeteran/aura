@@ -372,6 +372,7 @@ class SandboxedFileBroker:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 source="file_broker.reveal_in_finder",
+                accelerator_capability="none",
             )
             await asyncio.wait_for(proc.wait(), timeout=5.0)
             return proc.returncode == 0

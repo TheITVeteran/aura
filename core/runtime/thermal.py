@@ -66,6 +66,7 @@ def _read_pmset() -> ThermalReading | None:
             timeout=_PMSET_TIMEOUT_S,
             read_only=True,
             source="runtime.thermal.pmset_probe",
+            accelerator_capability="none",
         )
         out = proc.stdout or ""
     except (ImportError, OSError, RuntimeError, ValueError):

@@ -74,6 +74,7 @@ class Antibody:
                     read_only=True,
                     source="maintenance_tooling:antibody",
                     offline_tooling=True,
+                    accelerator_capability="none",
                 )
                 current_ports: set = set()
                 for line in result.stdout.splitlines()[1:]:

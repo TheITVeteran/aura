@@ -34,6 +34,7 @@ def run_command(args, desc):
             timeout=120,
             read_only=True,
             source=f"certify:{desc}",
+            accelerator_capability="auto",
         )
         if res.returncode == 0:
             print(f"✅ {desc} passed.")

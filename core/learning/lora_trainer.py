@@ -68,6 +68,7 @@ class LoraTrainer:
                 timeout=timeout,
                 offline_tooling=True,
                 source="training_tooling:lora_trainer",
+                accelerator_capability="auto",
             )
             if res.returncode == 0:
                 # Adapter creation is not loop closure. Only the atomic

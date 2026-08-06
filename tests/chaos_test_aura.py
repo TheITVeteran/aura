@@ -93,6 +93,7 @@ return {{"ok": True}}
         timeout=10,
         read_only=True,
         source="certification_tooling:chaos_test_process_scan",
+        accelerator_capability="none",
     )
     sleeper_survived = sentinel in ps.stdout
     if sleeper_survived:
@@ -102,6 +103,7 @@ return {{"ok": True}}
             timeout=10,
             offline_tooling=True,
             source="certification_tooling:chaos_test_cleanup",
+            accelerator_capability="none",
         )
     else:
         logger.info("✅ SUCCESS: No orphaned background processes detected.")

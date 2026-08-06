@@ -2046,6 +2046,7 @@ class SovereignVoiceEngine:
                     self._current_afplay = get_subprocess_gateway().spawn(
                         ["afplay", str(temp_wav)],
                         source="core.senses.voice_engine.play_locally",
+                        accelerator_capability="none",
                     )
                 while self._current_afplay.poll() is None:
                     if hasattr(self, 'interrupt_flag') and self.interrupt_flag.is_set():

@@ -384,6 +384,7 @@ class PersonBoxGauntlet:
             timeout=timeout_s,
             read_only=True,
             source=f"person_box_terminal:{task_id}",
+            accelerator_capability="auto",
         )
         payload = {
             "args": args,

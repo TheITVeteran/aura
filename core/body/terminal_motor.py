@@ -42,6 +42,7 @@ class TerminalMotor(BaseMotor):
                 cwd=cwd,
                 timeout=timeout,
                 source="body.terminal_motor",
+                accelerator_capability="auto",
             )
             return {
                 "status": "success",

@@ -218,6 +218,7 @@ def run_validator_commands(
                 offline_tooling=True,
                 check=False,
                 source="proof_tooling:run_operational_label_battery",
+                accelerator_capability="auto",
             )
             duration = time.monotonic() - started
             result = {

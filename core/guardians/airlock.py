@@ -199,6 +199,7 @@ class AirlockProtocol:
             stdout=_PIPE,
             stderr=_PIPE,
             source="self_modification:airlock_command_runner",
+            accelerator_capability="auto",
         )
         timed_out = False
         try:

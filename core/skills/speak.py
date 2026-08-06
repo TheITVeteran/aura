@@ -108,6 +108,7 @@ class SpeakSkill(BaseSkill):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             source="tool_execution:speak.macos_say",
+            accelerator_capability="none",
         )
         try:
             _stdout, stderr = await asyncio.wait_for(

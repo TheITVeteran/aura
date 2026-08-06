@@ -183,6 +183,7 @@ class DeterministicComparator:
                         "PYTHONDONTWRITEBYTECODE": "1",
                     },
                     source="core.self_improvement.deterministic_comparator.run_tests",
+                    accelerator_capability="none",
                 )
 
                 # Parse pytest output for individual test results

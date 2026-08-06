@@ -95,6 +95,7 @@ def _run(command: list[str], *, timeout: float = 300.0) -> dict[str, Any]:
         timeout=timeout,
         offline_tooling=True,
         source="certification_tooling:final_closeout_assembler.run_step",
+        accelerator_capability="auto",
     )
     finished = time.time()
     return {
@@ -115,6 +116,7 @@ def _git_state() -> dict[str, Any]:
             timeout=30,
             read_only=True,
             source="certification_tooling:final_closeout_assembler.git_state",
+            accelerator_capability="none",
         )
         return (completed.stdout or completed.stderr or "").strip()
 

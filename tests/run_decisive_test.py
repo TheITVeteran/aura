@@ -326,6 +326,7 @@ def _git_commit() -> str:
             timeout=30,
             read_only=True,
             source="certification_tooling:decisive_test_git_commit",
+            accelerator_capability="none",
         )
         if result.returncode == 0:
             return result.stdout.strip()

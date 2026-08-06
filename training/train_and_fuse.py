@@ -183,7 +183,7 @@ def _run(
             model_lane_claim=model_lane_claim,
         )
     else:
-        result = gateway.run(cmd, **run_kwargs)
+        result = gateway.run(cmd, **run_kwargs, accelerator_capability="auto")
     return result.returncode
 
 
