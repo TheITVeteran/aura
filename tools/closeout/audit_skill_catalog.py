@@ -42,6 +42,15 @@ def audit_skill_catalog(*, require_rust: bool = False) -> dict[str, Any]:
         failures.append("capability_engine_not_ready")
     if not dry_run.get("ok"):
         failures.append("capability_engine_dry_run_failed")
+    preflight_failures = [
+        {
+            "error": entry.get("error"),
+            "name": entry.get("name"),
+            "stage": entry.get("stage"),
+        }
+        for entry in dry_run.get("entries") or ()
+        if not entry.get("ok")
+    ]
     return {
         "accepted_count": len(accepted_names),
         "backend": catalog.backend,
@@ -52,6 +61,12 @@ def audit_skill_catalog(*, require_rust: bool = False) -> dict[str, Any]:
         "missing_live": sorted(accepted_names - live_names),
         "ok": not failures,
         "parity_status": catalog.parity_status,
+        "preflight_complete": bool(dry_run.get("complete")),
+        "preflight_failures": preflight_failures,
+        "preflight_proves_skill_body_not_invoked": all(
+            entry.get("skill_body_invoked") is False
+            for entry in dry_run.get("entries") or ()
+        ),
         "quarantined": quarantined,
         "unexpected_live": sorted(live_names - accepted_names),
         "validated_count": sum(

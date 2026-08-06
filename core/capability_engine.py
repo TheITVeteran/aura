@@ -323,6 +323,17 @@ _INSTANCE_RETIREMENT_ERRORS = (
     TimeoutError,
 )
 
+_SKILL_PREFLIGHT_ERRORS = (
+    ImportError,
+    OSError,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+    ConnectionError,
+    TimeoutError,
+)
+
 _PRE_RUNTIME_UNGATED_EFFECT_SCOPES: frozenset[str] = frozenset({
     "pure_compute",
     "read_only",
@@ -1315,6 +1326,16 @@ class CapabilityEngine(AuraBaseModule):
             "reason": "catalog_not_loaded",
         }
         self._catalog_digest = ""
+        self._skill_preflight_results: dict[str, dict[str, Any]] = {}
+        self._catalog_preflight_summary: dict[str, Any] = {
+            "catalog_digest": "",
+            "complete": False,
+            "entries": [],
+            "failed": [],
+            "live_count": 0,
+            "ok": False,
+            "reason": "not_run",
+        }
         self._explicitly_deactivated_skills: set[str] = set()
         # skill → monotonic deadline while a user-advocate block holds.
         self._advocate_block_cooldowns: dict[str, float] = {}
@@ -2357,7 +2378,7 @@ class CapabilityEngine(AuraBaseModule):
                     # than dropping the coroutine and reporting a clean
                     # retirement.
                     try:
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                     except RuntimeError:
                         outcome.close()
                         _record_capability_degradation(
@@ -2382,6 +2403,57 @@ class CapabilityEngine(AuraBaseModule):
                 self.logger.warning(
                     "Superseded skill %r did not shut down cleanly: %s", name, exc
                 )
+
+    async def on_stop_async(self) -> None:
+        """Release every prepared skill instance owned by this engine."""
+
+        with self._catalog_mutation_guard():
+            with self._catalog_guard():
+                owned = list(self._instances.items())
+                self._instances = {}
+                self.active_skills = set()
+                self._catalog_preflight_summary = {
+                    "catalog_digest": self._catalog_digest,
+                    "complete": False,
+                    "entries": [],
+                    "failed": [],
+                    "live_count": len(self._skills),
+                    "ok": False,
+                    "reason": "engine_stopped",
+                }
+
+        failures: list[str] = []
+        retired_ids: set[int] = set()
+        for name, instance in owned:
+            if id(instance) in retired_ids:
+                continue
+            retired_ids.add(id(instance))
+            hook = next(
+                (
+                    candidate
+                    for attribute in self._INSTANCE_SHUTDOWN_HOOKS
+                    if callable(candidate := getattr(instance, attribute, None))
+                ),
+                None,
+            )
+            if hook is None:
+                continue
+            try:
+                outcome = hook()
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except _INSTANCE_RETIREMENT_ERRORS as exc:
+                failures.append(f"{name}:{type(exc).__name__}:{exc}")
+                _record_capability_degradation(
+                    exc,
+                    action=f"continued capability shutdown after {name!r} cleanup failed",
+                    severity="degraded",
+                )
+
+        if failures:
+            raise RuntimeError(
+                "skill instance shutdown failures: " + "; ".join(failures[:12])
+            )
 
     def reload_skills(self) -> None:
         """Serialize catalog mutations while allowing readers to use the live generation."""
@@ -2556,6 +2628,16 @@ class CapabilityEngine(AuraBaseModule):
             self.skill_last_errors = next_skill_errors
             self._catalog_digest = catalog.digest
             self.catalog_health = next_catalog_health
+            self._skill_preflight_results = {}
+            self._catalog_preflight_summary = {
+                "catalog_digest": catalog.digest,
+                "complete": False,
+                "entries": [],
+                "failed": [],
+                "live_count": len(next_skills),
+                "ok": False,
+                "reason": "not_run",
+            }
             self._refresh_active_skills()
             live_count = len(self._skills)
             quarantined_count = len(self.quarantined_skills)
@@ -2810,8 +2892,13 @@ class CapabilityEngine(AuraBaseModule):
         with self._catalog_guard():
             catalog_health = dict(self.catalog_health)
             quarantined = [dict(item) for item in self.quarantined_skills.values()]
+            preflight = dict(self._catalog_preflight_summary)
+            preflight["entries"] = [
+                dict(item) for item in preflight.get("entries") or ()
+            ]
         return {
             **catalog_health,
+            "execution_preflight": preflight,
             "quarantined": [
                 {
                     "catalog_id": item.get("catalog_id"),
@@ -2825,8 +2912,22 @@ class CapabilityEngine(AuraBaseModule):
             ],
         }
 
-    def dry_run_catalog(self) -> dict[str, Any]:
-        """Prove every live declaration can be routed without executing effects."""
+    def get_catalog_preflight_status(self) -> dict[str, Any]:
+        """Return the latest execution-path preflight without initiating work."""
+
+        with self._catalog_guard():
+            payload = dict(self._catalog_preflight_summary)
+            payload["entries"] = [dict(item) for item in payload.get("entries") or ()]
+            return payload
+
+    def dry_run_catalog(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Prepare every implementation through the real execution load path.
+
+        This deliberately stops before ``safe_execute``/``execute``. Imports,
+        source identity, schema, runtime service resolution, requirements, and
+        constructors are the same operations first execution uses. Successful
+        instances remain cached, so the proof is not discarded before use.
+        """
 
         self._ensure_catalog_loaded()
         with self._catalog_guard():
@@ -2834,38 +2935,32 @@ class CapabilityEngine(AuraBaseModule):
             catalog_ready = bool(self.catalog_health.get("ready"))
             catalog_digest = self._catalog_digest
             quarantined_count = len(self.quarantined_skills)
-        entries: list[dict[str, Any]] = []
-        for name, metadata in sorted(skills.items()):
-            schema = metadata.schema_def
-            valid = bool(
-                isinstance(schema, dict)
-                and schema.get("type") == "object"
-                and metadata.validation_state == "valid"
-                and metadata.authority_class != "unclassified"
-                and metadata.effect_scope != "unknown"
-                and self._route_class_for(metadata) in {"async", "sync"}
-            )
-            entries.append(
-                {
-                    "authority_class": metadata.authority_class,
-                    "catalog_id": metadata.catalog_id,
-                    "effect_scope": metadata.effect_scope,
-                    "name": name,
-                    "ok": valid,
-                    "route_class": self._route_class_for(metadata),
-                    "schema_property_count": len(schema.get("properties") or {}),
-                }
-            )
-        failed = [entry["name"] for entry in entries if not entry["ok"]]
-        ok = bool(catalog_ready and entries and not failed)
-        return {
+            cached = dict(self._catalog_preflight_summary)
+            cached["entries"] = [dict(item) for item in cached.get("entries") or ()]
+        if (
+            not refresh
+            and cached.get("complete") is True
+            and cached.get("catalog_digest") == catalog_digest
+        ):
+            return cached
+
+        entries = [self.preflight_skill(name, refresh=refresh) for name in sorted(skills)]
+        failed = [str(entry.get("name") or "") for entry in entries if not entry.get("ok")]
+        ok = bool(catalog_ready and entries and not failed and not quarantined_count)
+        summary = {
             "catalog_digest": catalog_digest,
+            "complete": True,
             "entries": entries,
             "failed": failed,
             "live_count": len(entries),
             "ok": ok,
             "quarantined_count": quarantined_count,
+            "reason": "ready" if ok else "execution_preflight_failed",
         }
+        with self._catalog_guard():
+            if self._catalog_digest == catalog_digest:
+                self._catalog_preflight_summary = summary
+        return {**summary, "entries": [dict(item) for item in entries]}
 
     def resolve_skill_name(self, skill_name: Any) -> str:
         """Resolve a requested skill without collapsing real registered skills."""
@@ -2939,18 +3034,218 @@ class CapabilityEngine(AuraBaseModule):
         return ""
 
     @staticmethod
-    def _construct_skill_instance(metadata: SkillMetadata, skill_class: type[Any]) -> Any:
+    def _resolve_constructor_dependencies(metadata: SkillMetadata) -> dict[str, Any]:
         dependencies: dict[str, Any] = {}
         for dependency_name in metadata.constructor_dependencies:
-            from core.runtime.service_access import optional_service
-
             dependency = optional_service(dependency_name, default=None)
             if dependency is None:
                 raise RuntimeError(
                     f"declared constructor dependency {dependency_name!r} is unavailable"
                 )
             dependencies[dependency_name] = dependency
+        return dependencies
+
+    @classmethod
+    def _construct_skill_instance(
+        cls,
+        metadata: SkillMetadata,
+        skill_class: type[Any],
+        *,
+        dependencies: dict[str, Any] | None = None,
+    ) -> Any:
+        if dependencies is None:
+            dependencies = cls._resolve_constructor_dependencies(metadata)
         return skill_class(**dependencies)
+
+    def _record_skill_preflight(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        stored = dict(receipt)
+        name = str(stored.get("name") or "")
+        with self._catalog_guard():
+            if name:
+                if not hasattr(self, "_skill_preflight_results"):
+                    self._skill_preflight_results = {}
+                self._skill_preflight_results[name] = stored
+                if stored.get("ok"):
+                    self.skill_last_errors.pop(name, None)
+                else:
+                    self.skill_last_errors[name] = str(
+                        stored.get("error") or "execution preflight failed"
+                    )
+        return dict(stored)
+
+    def _prepare_skill_instance(
+        self,
+        skill_name: str,
+        metadata: SkillMetadata,
+        *,
+        refresh: bool = False,
+    ) -> tuple[dict[str, Any], Any | None]:
+        """Load and construct a skill exactly as execution will, but do not run it."""
+
+        started = time.monotonic()
+        stage = "catalog_identity"
+        constructor_invoked = False
+        instance_reused = False
+        source_revalidated = False
+        try:
+            with self._catalog_mutation_guard():
+                with self._catalog_guard():
+                    current = self._skills.get(skill_name)
+                    catalog_digest = str(
+                        getattr(self, "_catalog_digest", "")
+                        or f"runtime:{id(self._skills)}"
+                    )
+                    existing = self._instances.get(skill_name)
+                if current is not metadata:
+                    raise RuntimeError("skill catalog generation changed during preflight")
+                if metadata.validation_state != "valid":
+                    raise RuntimeError(
+                        f"catalog validation state is {metadata.validation_state!r}"
+                    )
+
+                stage = "source_identity"
+                revalidated_digest = self._verify_catalog_source(metadata)
+                source_revalidated = bool(revalidated_digest)
+
+                stage = "implementation_import"
+                skill_class = metadata.skill_class
+                if skill_class is None:
+                    module_path = metadata.module_path
+                    class_name = metadata.class_name
+                    if not module_path or not class_name:
+                        raise RuntimeError("catalog entry is missing its import identity")
+                    module = importlib.import_module(module_path)
+                    skill_class = getattr(module, class_name)
+
+                stage = "implementation_contract"
+                from core.skills.base_skill import BaseSkill
+
+                if not inspect.isclass(skill_class) or not issubclass(skill_class, BaseSkill):
+                    raise TypeError("implementation does not satisfy canonical BaseSkill")
+                if str(getattr(skill_class, "name", "")) != skill_name:
+                    raise ValueError("implementation name differs from the live catalog")
+                if not callable(getattr(skill_class, "execute", None)):
+                    raise TypeError("implementation has no execute() contract")
+                if not callable(getattr(skill_class, "safe_execute", None)):
+                    raise TypeError("implementation has no governed safe_execute() contract")
+                observed_scope = self._declared_effect_scope(skill_name, skill_class)
+                if metadata.effect_scope in {"", "unknown"}:
+                    metadata.effect_scope = observed_scope
+                    policy = resolve_skill_policy(skill_name, observed_scope)
+                    if policy is not None and metadata.authority_class == "unclassified":
+                        metadata.authority_class = policy.authority_class
+                elif observed_scope != metadata.effect_scope:
+                    raise ValueError("implementation effect classification changed")
+
+                stage = "schema"
+                input_model = getattr(skill_class, "input_model", None)
+                schema = metadata.schema_def
+                if not isinstance(schema, dict) or schema.get("type") != "object":
+                    raise TypeError("skill input schema must describe an object")
+                json.dumps(schema, sort_keys=True)
+
+                stage = "requirements"
+                requirements_ready, requirement_errors = metadata.requirements.check()
+                if not requirements_ready:
+                    raise RuntimeError(
+                        "declared runtime requirements unavailable: "
+                        + "; ".join(str(item) for item in requirement_errors)
+                    )
+
+                stage = "dependency_resolution"
+                dependencies = self._resolve_constructor_dependencies(metadata)
+
+                stage = "construction"
+                instance = existing or metadata.instance
+                if instance is None:
+                    instance = self._construct_skill_instance(
+                        metadata,
+                        skill_class,
+                        dependencies=dependencies,
+                    )
+                    constructor_invoked = True
+                else:
+                    instance_reused = True
+                if str(getattr(instance, "name", "")) != skill_name:
+                    raise ValueError("constructed implementation changed its declared name")
+
+                stage = "publication"
+                with self._catalog_guard():
+                    if (
+                        self._skills.get(skill_name) is not metadata
+                        or str(
+                            getattr(self, "_catalog_digest", "")
+                            or f"runtime:{id(self._skills)}"
+                        )
+                        != catalog_digest
+                    ):
+                        raise RuntimeError("skill catalog generation changed before publication")
+                    metadata.skill_class = skill_class
+                    metadata.input_model = input_model
+                    metadata.source_sha256 = revalidated_digest or metadata.source_sha256
+                    metadata.dependency_ready = True
+                    metadata.dependency_errors = []
+                    self._instances[skill_name] = instance
+
+            receipt = {
+                "authority_class": metadata.authority_class,
+                "catalog_digest": catalog_digest,
+                "catalog_id": metadata.catalog_id,
+                "constructor_dependencies": sorted(dependencies),
+                "constructor_invoked": constructor_invoked,
+                "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "effect_scope": metadata.effect_scope,
+                "instance_reused": instance_reused,
+                "name": skill_name,
+                "ok": True,
+                "route_class": self._route_class_for(metadata),
+                "schema_property_count": len(schema.get("properties") or {}),
+                "source_revalidated": source_revalidated,
+                "stage": "ready",
+                "skill_body_invoked": False,
+            }
+            return self._record_skill_preflight(receipt), instance
+        except _SKILL_PREFLIGHT_ERRORS as exc:
+            receipt = {
+                "authority_class": metadata.authority_class,
+                "catalog_id": metadata.catalog_id,
+                "duration_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "effect_scope": metadata.effect_scope,
+                "error": f"{type(exc).__name__}: {exc}"[:1200],
+                "error_type": type(exc).__name__,
+                "name": skill_name,
+                "ok": False,
+                "stage": stage,
+                "skill_body_invoked": False,
+            }
+            return self._record_skill_preflight(receipt), None
+
+    def preflight_skill(self, skill_name: str, *, refresh: bool = False) -> dict[str, Any]:
+        """Prove one skill can reach the execution boundary without effects."""
+
+        skill_name = self.resolve_skill_name(skill_name)
+        self._ensure_catalog_loaded()
+        with self._catalog_guard():
+            metadata = self._skills.get(skill_name)
+            cached = dict(self._skill_preflight_results.get(skill_name) or {})
+            catalog_digest = self._catalog_digest
+        if metadata is None:
+            return {
+                "catalog_digest": catalog_digest,
+                "error": "skill is not registered in the live catalog",
+                "name": skill_name,
+                "ok": False,
+                "stage": "catalog_identity",
+                "skill_body_invoked": False,
+            }
+        if not refresh and cached.get("ok") and cached.get("catalog_digest") == catalog_digest:
+            return cached
+        receipt, _instance = self._prepare_skill_instance(
+            skill_name,
+            metadata,
+            refresh=refresh,
+        )
+        return receipt
 
     def _route_class_for(self, meta: SkillMetadata) -> str:
         route_class_hint = getattr(meta, "route_class_hint", None)
@@ -3621,12 +3916,15 @@ class CapabilityEngine(AuraBaseModule):
     def _catalog_item_for_skill(self, skill_name: str, meta: SkillMetadata) -> dict[str, Any]:
         state = self.skill_states.get(skill_name, "READY")
         active = skill_name in self.active_skills
+        preflight = dict(self._skill_preflight_results.get(skill_name) or {})
+        preflight_failed = bool(preflight) and not bool(preflight.get("ok"))
         available = bool(
             meta.enabled
             and active
             and state != "ERROR"
             and getattr(meta, "validation_state", "valid") == "valid"
             and bool(getattr(meta, "dependency_ready", True))
+            and not preflight_failed
         )
         policy_state = (
             "disabled"
@@ -3651,6 +3949,8 @@ class CapabilityEngine(AuraBaseModule):
                     if state == "ERROR"
                     else "dependency_unavailable"
                     if not bool(getattr(meta, "dependency_ready", True))
+                    else str(preflight.get("error") or "execution_preflight_failed")
+                    if preflight_failed
                     else "inactive"
                 )
             )
@@ -3665,6 +3965,14 @@ class CapabilityEngine(AuraBaseModule):
             "enabled": bool(meta.enabled),
             "active": active,
             "policy_state": policy_state,
+            "preflight_state": (
+                "ready"
+                if preflight.get("ok") is True
+                else "failed"
+                if preflight
+                else "not_run"
+            ),
+            "preflight_stage": str(preflight.get("stage") or "not_run"),
             "risk_class": self._risk_class_for(skill_name, meta),
             "route_class": self._route_class_for(meta),
             "input_summary": self._input_summary_for(meta),
@@ -3709,6 +4017,8 @@ class CapabilityEngine(AuraBaseModule):
             "metabolic_cost": 0,
             "name": name,
             "policy_state": "quarantined",
+            "preflight_state": "failed",
+            "preflight_stage": str(item.get("stage") or "catalog_validation"),
             "risk_class": "critical",
             "route_class": "blocked",
             "source_kind": str(item.get("source_kind") or "unknown"),
@@ -4748,50 +5058,34 @@ class CapabilityEngine(AuraBaseModule):
                 }
             is_forged = meta.module_path and "skills/" in meta.module_path
 
-            # Lazy loading of skill class
-            if meta.skill_class is None and not is_forged:
-                try:
-                    self.logger.info("🧩 Lazy loading skill: %s", skill_name)
-                    revalidated_digest = self._verify_catalog_source(meta)
-                    module_path = meta.module_path
-                    class_name = meta.class_name
-                    if not module_path or not class_name:
-                        raise RuntimeError("catalog entry is missing its import identity")
-                    module = importlib.import_module(module_path)
-                    skill_class = getattr(module, class_name)
-                    from core.skills.base_skill import BaseSkill
-
-                    if not inspect.isclass(skill_class) or not issubclass(skill_class, BaseSkill):
-                        raise TypeError("implementation no longer satisfies canonical BaseSkill")
-                    if str(getattr(skill_class, "name", "")) != skill_name:
-                        raise ValueError("implementation name changed after catalog validation")
-                    observed_scope = self._declared_effect_scope(skill_name, skill_class)
-                    if observed_scope != meta.effect_scope:
-                        raise ValueError("implementation effect classification changed after validation")
-                    if revalidated_digest:
-                        # The three checks above just re-proved, against this
-                        # exact content, everything the old digest stood for.
-                        # Adopting it here and not a line earlier is the whole
-                        # point: a source that fails them keeps its stale
-                        # digest and stays refused on the next attempt too.
-                        self.logger.info(
-                            "🧩 %s changed on disk; re-proved identity, authority "
-                            "and effect scope against the new source",
-                            skill_name,
-                        )
-                        meta.source_sha256 = revalidated_digest
-                    meta.skill_class = skill_class
-                    meta.input_model = getattr(skill_class, "input_model", None)
-                    # Initialize instance
-                    instances[skill_name] = self._construct_skill_instance(meta, skill_class)
-                except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+            # Prepare through the same source/import/dependency/constructor
+            # boundary exposed by the catalog audit. This prevents a metadata
+            # "dry run" from passing while first real execution fails later.
+            if not is_forged:
+                preflight, prepared_instance = self._prepare_skill_instance(
+                    skill_name,
+                    meta,
+                )
+                if not preflight.get("ok") or prepared_instance is None:
+                    detail = str(preflight.get("error") or "unknown preflight failure")
+                    failure = RuntimeError(detail)
                     _record_capability_degradation(
-                        e,
+                        failure,
                         action="returned skill load failure before execution",
                         severity="degraded",
                     )
-                    self.logger.error("Failed to lazy load %s: %s", skill_name, e)
-                    return {"ok": False, "error": f"Failed to load implementation: {e}"}
+                    self.logger.error(
+                        "Failed to prepare %s at %s: %s",
+                        skill_name,
+                        preflight.get("stage"),
+                        detail,
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"Failed to load implementation: {detail}",
+                        "preflight": preflight,
+                        "status": "skill_preflight_failed",
+                    }
 
             # Harmonize and self-heal parameters before gates and execution
             if meta.input_model and isinstance(params, dict):

@@ -40,11 +40,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 __all__ = [
     "EvidenceStatus",
@@ -122,7 +125,7 @@ class Preregistration:
         object.__setattr__(self, "arms", tuple(str(a) for a in self.arms))
         if not self.registered_at:
             object.__setattr__(
-                self, "registered_at", datetime.now(timezone.utc).isoformat()
+                self, "registered_at", datetime.now(UTC).isoformat()
             )
 
     @property
@@ -154,10 +157,31 @@ class Preregistration:
             "plan_hash": self.plan_hash,
         }
 
-    def write(self, path: str | Path) -> Path:
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
+    def write(self, storage_root: str | Path | None = None) -> Path:
+        """Publish this immutable plan under its content hash.
+
+        Production uses Aura's fixed evaluation store. Tests and offline tools
+        may inject a root, but never a filename: the plan hash owns identity and
+        create-once publication prevents after-the-data replacement.
+        """
+
+        if storage_root is None:
+            from core.config import config
+
+            root = Path(config.paths.data_dir) / "evaluation" / "preregistrations"
+        else:
+            root = Path(storage_root)
+        target = root / f"{self.plan_hash}.json"
+        payload = (json.dumps(self.to_dict(), indent=2) + "\n").encode("utf-8")
+        created = get_file_write_gateway().write_bytes_if_absent(
+            target,
+            payload,
+            source="evaluation.preregistration",
+        )
+        if not created and target.read_bytes() != payload:
+            raise FileExistsError(
+                f"preregistration hash collision or replacement attempt at {target}"
+            )
         return target
 
     # ── reading a run against the plan ────────────────────────────────────

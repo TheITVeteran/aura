@@ -209,6 +209,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
+            # Scientific preregistrations publish once beneath a fixed private
+            # evidence root using the plan hash as the only filename. Runtime
+            # callers cannot choose an artifact name or replace an existing
+            # plan after observing results; tests may inject only the root.
+            "core/evaluation/preregistration.py",
             # Independently checked verifier outcomes are append-only,
             # schema-bound calibration evidence under Aura's data directory.
             # The ledger accepts no arbitrary runtime action or user path and

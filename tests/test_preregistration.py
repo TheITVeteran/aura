@@ -48,7 +48,7 @@ class TestThePlanIsIdentifiable:
         assert loosened.plan_hash != _plan().plan_hash
 
     def test_a_plan_edited_after_registration_is_refused(self, tmp_path):
-        path = _plan().write(tmp_path / "plan.json")
+        path = _plan().write(tmp_path)
         data = json.loads(path.read_text())
         data["metrics"]["integration_fraction"] = 0.001  # loosened after the fact
         path.write_text(json.dumps(data))
@@ -57,8 +57,18 @@ class TestThePlanIsIdentifiable:
             load_preregistration(path)
 
     def test_an_unedited_plan_round_trips(self, tmp_path):
-        path = _plan().write(tmp_path / "plan.json")
+        path = _plan().write(tmp_path)
         assert load_preregistration(path).plan_hash == _plan().plan_hash
+
+    def test_the_same_plan_is_idempotent_but_changed_bytes_are_never_replaced(self, tmp_path):
+        plan = _plan()
+        path = plan.write(tmp_path)
+        assert plan.write(tmp_path) == path
+
+        path.write_text("tampered", encoding="utf-8")
+        with pytest.raises(FileExistsError, match="replacement attempt"):
+            plan.write(tmp_path)
+        assert path.read_text(encoding="utf-8") == "tampered"
 
 
 class TestWhatARunIsAllowedToClaim:

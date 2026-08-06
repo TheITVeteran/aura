@@ -37102,3 +37102,48 @@ ownership audit then runs from that exact clean source and its receipt lands in
 a subsequent checkpoint. Live pressure/release evidence remains a distinct
 future proof and will not be inferred from either static audit or contract
 tests.
+
+#### Skill execution-preflight and catalog-truth continuation
+
+The current requirement docket correctly reopened the historical
+`CTX2-SKILL-001/002` and `SKILLS-001` closure claim. Source discovery and the
+isolated import probe were real, but `CapabilityEngine.dry_run_catalog()` only
+inspected metadata. First execution still owned a separate lazy-import,
+source-revalidation, service-resolution, and constructor path that could fail
+after the catalog had reported ready. The tools panel discarded catalog health,
+so missing, quarantined, or execution-unready skills could also look ordinary.
+
+`CapabilityEngine` now has one preparation boundary shared by catalog preflight
+and execution. It verifies the current catalog generation and source identity,
+loads the declared class, proves the governed `BaseSkill` contract and object
+schema, checks runtime requirements, resolves the actual declared services,
+constructs the implementation, and publishes the exact prepared instance that
+execution will reuse. It never calls the skill body. Per-skill receipts identify
+the exact failed stage, constructor dependencies, route class, source
+revalidation, and the invariant `skill_body_invoked=false`. Catalog-wide
+results are digest-bound and cached; reload invalidates them.
+
+Prepared instances are now explicit `CapabilityEngine` resources. Container
+shutdown drains every unique sync or async skill owner, continues through
+individual cleanup failures, and reports the aggregate failure instead of
+abandoning connectors. The tools endpoint preserves catalog and preflight
+health, and the live skills panel renders source-catalog readiness, execution
+verification, missing/quarantined names, and each skill's preflight state.
+
+Evidence: the standalone Rust-required catalog audit passed with `76/76`
+accepted and validated skills, no missing/quarantined/preflight failures, exact
+Rust/Python parity, and zero skill-body invocations. Focused catalog, endpoint,
+UI, shutdown, and resource-ownership families pass `34/34`; smoke passes
+`103/103`; compile and Ruff pass. A concurrent preregistration writer exposed by
+the gate was moved behind `file_write_gateway`; governance now matches its
+explicit canonical-owner baseline at 2,152 recognized calls and layering is
+clean with 37 grandfathered edges.
+
+This advances but does not close `CTX2-SKILL-001/002` or `SKILLS-001`.
+Independent Rust filesystem discovery (rather than parity over Python-produced
+candidates), clean-install/relocation/wheel/Rust-absent portability, and a
+production route integration proof through `IntentRouter` and the real
+`CapabilityEngine` remain open. The resident 32B recurrent-SFT campaign is
+independently preserved at durable step 71 while its supervised terminal-step
+attempt runs; this checkpoint does not claim step 72, reasoning gain,
+promotion, frontier performance, or the `WOW Signal`.

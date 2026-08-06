@@ -1688,9 +1688,16 @@ function applyStateSummary(summary, commitments) {
     }
 }
 
-function renderToolCatalog(catalog) {
+function renderToolCatalog(catalog, catalogHealth = null) {
     const tools = Array.isArray(catalog) ? catalog.slice() : [];
     state.toolCatalog = tools;
+    if (catalogHealth && typeof catalogHealth === 'object') state.toolCatalogHealth = catalogHealth;
+    const health = state.toolCatalogHealth && typeof state.toolCatalogHealth === 'object'
+        ? state.toolCatalogHealth
+        : {};
+    const preflight = health.execution_preflight && typeof health.execution_preflight === 'object'
+        ? health.execution_preflight
+        : {};
 
     const available = tools.filter(tool => !!tool.available);
     const degraded = tools.filter(tool => !tool.available);
@@ -1698,6 +1705,25 @@ function renderToolCatalog(catalog) {
     if ($('c-tools-available')) $('c-tools-available').textContent = `${available.length}/${tools.length}`;
     if ($('tool-available-count')) $('tool-available-count').textContent = String(available.length);
     if ($('tool-degraded-count')) $('tool-degraded-count').textContent = String(degraded.length);
+    if ($('tool-catalog-state')) $('tool-catalog-state').textContent = health.ready === true ? 'READY' : health.ready === false ? 'BLOCKED' : '--';
+    if ($('tool-preflight-state')) {
+        $('tool-preflight-state').textContent = preflight.complete === true
+            ? (preflight.ok === true ? 'VERIFIED' : 'FAILED')
+            : 'NOT RUN';
+    }
+    if ($('tool-catalog-detail')) {
+        const failed = Array.isArray(preflight.failed) ? preflight.failed.filter(Boolean) : [];
+        const missing = Array.isArray(health.missing_live) ? health.missing_live.filter(Boolean) : [];
+        const quarantined = Number(health.quarantined_count || 0);
+        const parts = [
+            `source ${health.ready === true ? 'ready' : String(health.reason || 'unverified').replace(/_/g, ' ')}`,
+            `execution ${preflight.complete === true ? (preflight.ok === true ? 'verified' : 'failed') : 'not yet verified'}`,
+        ];
+        if (failed.length) parts.push(`failed: ${failed.slice(0, 4).join(', ')}`);
+        if (missing.length) parts.push(`missing: ${missing.slice(0, 4).join(', ')}`);
+        if (quarantined) parts.push(`${quarantined} quarantined`);
+        $('tool-catalog-detail').textContent = parts.join(' · ');
+    }
 
     const list = $('skills-list');
     if (!list) return;
@@ -1715,7 +1741,8 @@ function renderToolCatalog(catalog) {
         const detailBits = [
             tool.route_class ? `<span class="badge">${escHtml(String(tool.route_class).replace(/_/g, ' '))}</span>` : '',
             tool.risk_class ? `<span class="badge badge-${tool.risk_class === 'critical' ? 'diagnostic' : tool.risk_class === 'high' ? 'autonomic' : 'reflex'}">${escHtml(tool.risk_class)}</span>` : '',
-            tool.availability ? `<span class="badge ${tool.available ? 'badge-reflex' : 'badge-diagnostic'}">${escHtml(tool.availability)}</span>` : ''
+            tool.availability ? `<span class="badge ${tool.available ? 'badge-reflex' : 'badge-diagnostic'}">${escHtml(tool.availability)}</span>` : '',
+            tool.preflight_state ? `<span class="badge ${tool.preflight_state === 'ready' ? 'badge-reflex' : tool.preflight_state === 'failed' ? 'badge-diagnostic' : ''}">preflight ${escHtml(String(tool.preflight_state).replace(/_/g, ' '))}</span>` : ''
         ].filter(Boolean).join('');
         return `
             <div class="skill-card ${stateValue}" id="${toolDomId(tool.catalog_id || tool.name)}">
@@ -6740,7 +6767,7 @@ async function loadSkills() {
     if (!accessCapabilityAllowed('tools_catalog')) return;
     try {
         if (state.toolCatalog && state.toolCatalog.length) {
-            renderToolCatalog(state.toolCatalog);
+            renderToolCatalog(state.toolCatalog, state.toolCatalogHealth || null);
         }
 
         let tools = [];
@@ -6750,6 +6777,7 @@ async function loadSkills() {
             if (res.ok && contentType.includes('application/json')) {
                 const d = await res.json();
                 tools = Array.isArray(d.tools) ? d.tools : [];
+                state.toolCatalogHealth = d.health && typeof d.health === 'object' ? d.health : {};
             }
         } catch (err) {
             console.warn('[Tools] catalog fetch failed; trying legacy skills endpoint:', err);
@@ -6765,7 +6793,7 @@ async function loadSkills() {
             const d = await legacyRes.json();
             tools = Array.isArray(d.catalog) ? d.catalog : Array.isArray(d.skills) ? d.skills : [];
         }
-        renderToolCatalog(tools);
+        renderToolCatalog(tools, state.toolCatalogHealth || null);
     } catch (e) {
         console.warn('[Tools] load failed:', e);
         const list = $('skills-list');
