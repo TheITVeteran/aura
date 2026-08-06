@@ -383,7 +383,8 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 14
+        "certified_complete": 1,
+        "ready_for_implementation": 13
       },
       "family": "PASSF"
     },
@@ -633,15 +634,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "2471ad45825b121822d18809219a27ac1b710d67be75a4c53d714117fb93d682",
-    "registry_sha256": "47670be6b388f8c41c6a61bf8e705a69a9ecb15bf1f28c1c26463bc7bcd13687"
+    "evidence_ledger_sha256": "013995d61abfc0ecd3b4ebb1537df8584e1639e8f43c5bfa93262e8382b0556b",
+    "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "c572b608eb0ecb94d9b3856f00f13f3a925628965a2dcca510a3ddec87309dc5",
+  "report_sha256": "4f8fa1e42cf79af116bab98a459b81d48512c8290cb13ff5f546e9fd7e5322c3",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -1993,8 +1994,7 @@
     {
       "acceptance_units": 1,
       "closure_blockers": [
-        "ADDENDUM-22",
-        "PASSF-03"
+        "ADDENDUM-22"
       ],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
@@ -6097,30 +6097,6 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 6,
-      "evidence_cells_verified": 0,
-      "family": "PASSF",
-      "id": "PASSF-03",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
-        "implementation:A3",
-        "test:A3"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Resource envelope and admission system"
-    },
-    {
-      "acceptance_units": 3,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
       "evidence_cells_total": 8,
       "evidence_cells_verified": 0,
       "family": "PASSF",
@@ -8068,6 +8044,23 @@
       "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026"
     },
     {
+      "acceptance_units": 3,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 6,
+      "evidence_cells_verified": 6,
+      "family": "PASSF",
+      "id": "PASSF-03",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Resource envelope and admission system"
+    },
+    {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -8128,11 +8121,11 @@
     "claimed_complete_needs_evidence_ids": [],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 11,
+      "certified_complete": 12,
       "deferred": 1,
       "in_progress": 100,
       "nonmandatory": 1,
-      "ready_for_implementation": 167
+      "ready_for_implementation": 166
     },
     "in_progress_ids": [
       "ACTION-SPINE-001",
@@ -8366,7 +8359,6 @@
       "NEUROSIM-001",
       "PASSF-01",
       "PASSF-02",
-      "PASSF-03",
       "PASSF-04",
       "PASSF-05",
       "PASSF-06",

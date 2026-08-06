@@ -22,15 +22,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **The 313-requirement control plane
-  now has an acyclic prerequisite graph and zero retained structural/status
-  defects. Six premature explicit completion claims plus two inherited child
-  claims were reopened while preserving their verified implementation/test
-  cells. Eleven requirements are machine-certified complete; 301 mandatory
-  requirements remain not closed.**
-- Previous implementation milestone: **All 23 retained dependency-cycle defects
-  were removed by ordering foundations before consumers without deleting any
-  requirement, acceptance unit, proof class, or scope cell.**
+- Current active implementation milestone: **The unified model-resource
+  admission path is machine-certified at source/test scope. All 55 production
+  model-load paths enter one paired scheduling/capacity transaction with
+  priority, pressure, fenced reservations, eviction/compensation receipts, and
+  retry-storm backoff. Current-host live pressure evidence remains open.**
+- Previous implementation milestone: **The 313-requirement control plane has
+  an acyclic prerequisite graph and zero retained structural/status defects;
+  premature completion claims were reopened without discarding valid cells.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -750,7 +749,7 @@ Ordering below is pragmatic; it is not permission to skip later items.
    - Validators: synthetic reconciler tests, startup/liveness/readiness split
      tests, enterprise gate ratchet, and a bounded live desktop proof.
 
-3. **Resource envelope and admission system**
+3. **Resource envelope and admission system** `[COMPLETE 2026-08-06]`
    - Promote model/RAM/thermal admission from scattered checks to a single
      scheduler with requests, limits, priority classes, preemption policy, and
      eviction receipts.
@@ -37379,3 +37378,35 @@ map, and the docket contains no `claimed_complete_needs_evidence` or
 `claimed_complete_needs_dependencies` disposition. Machine-certified verified
 cell completion remains 6.66%, because truthful status correction neither
 destroys earned evidence nor grants missing evidence.
+
+## Checkpoint 2026-08-06-004: Unified Resource Admission Contract
+
+`PASSF-03` is complete at its declared implementation/test scope. Aura's
+runtime control plane owns priority, pressure, fairness, cooperative
+preemption, leases, and decision receipts. The durable model-lane controller
+owns cross-process capacity, fenced reservations, one-primary-lane budgeting,
+required eviction, compensation, process identity, and terminal receipts.
+`_model_load_admission_context` is the single production transaction that
+holds the scheduler lease while durable capacity is reserved, prepares all
+required evictions before load, commits only a ready process-identified worker,
+and cancels/compensates both phases on every failure or cancellation path.
+Background retry denial is exponentially backed off while foreground work
+re-enters current admission policy instead of inheriting a stale denial.
+
+The strengthened AST/ownership audit checks 21 contract functions and all 55
+owned production model-load paths. Mutation tests prove the audit fails if the
+durable reservation or anti-respawn backoff is removed. The affected behavioral
+slice passes `224/224`; the checked proof capture then reruns the broader lane
+suite from exact pushed source. Implementation receipt SHA-256 is
+`27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d`;
+test receipt SHA-256 is
+`255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2`.
+The concurrent repository-wide resource-observation change was also recaptured
+instead of waived; its fresh receipt SHA-256 is
+`4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd`.
+
+This checkpoint does not claim current-host physical release, mixed-pressure
+latency, release readiness, or soak reliability. Those live obligations remain
+under `RESOURCE-001`, `LANE-001`, `FOREGROUND-LATENCY-001`, and the deferred
+final soak. Verified completion rises from 6.66% to 7.06% solely because all
+six `PASSF-03` acceptance/evidence cells now have current pushed receipts.
