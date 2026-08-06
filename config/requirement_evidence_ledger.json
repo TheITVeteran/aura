@@ -1,5 +1,5 @@
 {
-  "content_sha256": "5afadc3aae2214659106541c0b1a1fa866a32577ae47c8baa661e84467d549d3",
+  "content_sha256": "8982a21464ecfa931b1b2b990d6a383b70311f384931e9443698f219a1bdf0b9",
   "entries": [
     {
       "acceptance_ids": [
@@ -58,6 +58,17 @@
       "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/e41d8c5e7cbf8dad92bfec009074dd2ccd6b62eb.json",
       "requirement_id": "ADDENDUM-22",
       "sha256": "0e4d3342aabbf961e9e45cc38718026966831d8600f66217499418837b0cd87b"
+    },
+    {
+      "acceptance_ids": [
+        "A4"
+      ],
+      "commit": "efe589addb76117e26159e354e6df9c0d983a061",
+      "evidence_class": "gui",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/skill-readiness-gui-audit/efe589addb76117e26159e354e6df9c0d983a061.json",
+      "requirement_id": "ADDENDUM-23",
+      "sha256": "16818488108c3be450aada071cecdf861b71e5f575e27f49a2c90ddb23fd3ef3"
     },
     {
       "acceptance_ids": [
@@ -293,12 +304,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "4b6fde0dabe39d164ee7e7432bdc78fcf990ed4a",
+      "commit": "efe589addb76117e26159e354e6df9c0d983a061",
       "evidence_class": "gui",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-readiness-gui-audit/4b6fde0dabe39d164ee7e7432bdc78fcf990ed4a.json",
+      "ref": "artifacts/reqproof/evidence/skill-readiness-gui-audit/efe589addb76117e26159e354e6df9c0d983a061.json",
       "requirement_id": "CTX2-SKILL-002",
-      "sha256": "ca00bca59f860b58b259993a0027844a4ecd3893dbe4b1811d277aa2fd05522d"
+      "sha256": "16818488108c3be450aada071cecdf861b71e5f575e27f49a2c90ddb23fd3ef3"
     },
     {
       "acceptance_ids": [
