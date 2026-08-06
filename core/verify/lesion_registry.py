@@ -25,11 +25,13 @@ faculty. See DEPS.
 from __future__ import annotations
 
 import logging
-import threading
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator
+from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Verify.LesionRegistry")
 
@@ -49,9 +51,9 @@ logger = logging.getLogger("Verify.LesionRegistry")
 #: a separate worker process, the lesion has already done its work: the values
 #: are neutralized while the request is being assembled, and the request
 #: carries them.
-_ACTIVE_LESIONS: ContextVar[dict[str, int]] = ContextVar(
+_ACTIVE_LESIONS: ContextVar[dict[str, int] | None] = ContextVar(
     "aura_active_lesions",
-    default={},
+    default=None,
 )
 
 __all__ = [
@@ -94,7 +96,7 @@ class LesionHandle:
         }
 
 
-class LesionUnavailable(RuntimeError):
+class LesionUnavailable(RuntimeError):  # noqa: N818 - compatibility API
     """Raised when a channel is asked to lesion and has not registered how."""
 
 
@@ -103,14 +105,14 @@ class LesionRegistry:
 
     def __init__(self) -> None:
         self._handles: dict[str, LesionHandle] = {}
-        self._lock = threading.RLock()
+        self._lock = checked_lock("lesion_registry.handles", reentrant=True)
 
     # Lesion depth lives in the ContextVar, never on the instance: two probes
     # in two tasks must not see each other's lesions, and neither may be seen
     # by a user turn.
     @staticmethod
     def _depths() -> dict[str, int]:
-        return _ACTIVE_LESIONS.get()
+        return _ACTIVE_LESIONS.get() or {}
 
     @staticmethod
     def _set_depths(depths: dict[str, int]) -> None:

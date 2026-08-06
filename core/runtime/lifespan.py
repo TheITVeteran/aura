@@ -13,12 +13,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import threading
 from collections.abc import Callable
 from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.executors import run_blocking_io
+from core.runtime.lockdep import checked_async_lock, checked_lock
 from core.runtime.shutdown_coordinator import (
     ShutdownReport,
     get_shutdown_coordinator,
@@ -36,8 +36,8 @@ class LifespanManager:
         self.startup_tasks: list[Callable[[], Any]] = []
         self.shutdown_tasks: list[Callable[[], Any]] = []
         self._running = False
-        self._startup_lock = asyncio.Lock()
-        self._state_lock = threading.RLock()
+        self._startup_lock = checked_async_lock("lifespan.startup")
+        self._state_lock = checked_lock("lifespan.state", reentrant=True)
         self._last_shutdown_report: ShutdownReport | None = None
 
     @property
@@ -166,7 +166,7 @@ class LifespanManager:
 
 
 _lifespan: LifespanManager | None = None
-_lifespan_lock = threading.Lock()
+_lifespan_lock = checked_lock("lifespan.singleton")
 
 
 def get_lifespan_manager() -> LifespanManager:

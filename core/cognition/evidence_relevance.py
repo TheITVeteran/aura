@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import logging
 import math
-import threading
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.Cognition.EvidenceRelevance")
 
@@ -160,7 +162,7 @@ _MARGIN = 0.12
 #: considered part of what was asked.
 _DOMINANCE = 0.20
 
-_LOCK = threading.Lock()
+_LOCK = checked_lock("evidence_relevance.cache")
 _ANCHOR_CACHE: dict[str, Any] = {}
 _REQUEST_CACHE: dict[str, Any] = {}
 #: Bounded: this is a per-turn lookup, not a store.
@@ -230,7 +232,9 @@ def _embed(text: str) -> Any | None:
 
 def _cosine(left: Any, right: Any) -> float:
     try:
-        dot = float(sum(float(a) * float(b) for a, b in zip(left, right)))
+        dot = float(
+            sum(float(a) * float(b) for a, b in zip(left, right, strict=False))
+        )
         left_norm = math.sqrt(sum(float(a) * float(a) for a in left))
         right_norm = math.sqrt(sum(float(b) * float(b) for b in right))
     except (TypeError, ValueError):

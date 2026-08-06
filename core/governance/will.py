@@ -33,7 +33,6 @@ import json
 import logging
 import math
 import os
-import threading
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -45,6 +44,7 @@ from core.container import ServiceContainer
 from core.identity.self_contract import contains_identity_erasure
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.Will")
 _WILL_OUTCOME_REINFORCEMENT_ERRORS = (
@@ -2561,7 +2561,7 @@ class UnifiedWill:
 # ---------------------------------------------------------------------------
 
 _will_instance: UnifiedWill | None = None
-_will_instance_lock = threading.Lock()
+_will_instance_lock = checked_lock("unified_will.singleton")
 
 
 def get_will() -> UnifiedWill:

@@ -26,12 +26,12 @@ from __future__ import annotations
 import logging
 import os
 import random
-import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 from core.runtime.service_access import optional_service
 from core.voice.natural_followup import FollowupDecision, NaturalFollowupEngine
 from core.voice.response_shaper import ResponseShaper
@@ -39,7 +39,7 @@ from core.voice.speech_profile import SpeechProfile, SpeechProfileCompiler
 
 logger = logging.getLogger("Voice.SubstrateVoice")
 
-_UNIFIED_FIELD_CACHE: Dict[str, float] = {}
+_UNIFIED_FIELD_CACHE: dict[str, float] = {}
 _UNIFIED_FIELD_CACHE_AT: float = 0.0
 
 
@@ -85,7 +85,7 @@ def _foreground_or_pressure_reason() -> str:
     return ""
 
 
-def _cache_unified_field_snapshot(result: Dict[str, float]) -> None:
+def _cache_unified_field_snapshot(result: dict[str, float]) -> None:
     global _UNIFIED_FIELD_CACHE, _UNIFIED_FIELD_CACHE_AT
     if not result:
         return
@@ -100,7 +100,7 @@ def _cache_unified_field_snapshot(result: Dict[str, float]) -> None:
     _UNIFIED_FIELD_CACHE_AT = time.monotonic()
 
 
-def _cached_unified_field_snapshot(max_age_s: float) -> Dict[str, float]:
+def _cached_unified_field_snapshot(max_age_s: float) -> dict[str, float]:
     if not _UNIFIED_FIELD_CACHE:
         return {}
     age_s = max(0.0, time.monotonic() - _UNIFIED_FIELD_CACHE_AT)
@@ -126,7 +126,7 @@ class SubstrateVoiceEngine:
     """
 
     def __init__(self):
-        self._current_profile: Optional[SpeechProfile] = None
+        self._current_profile: SpeechProfile | None = None
         self._followup_engine = NaturalFollowupEngine()
         self._silence_streak: int = 0          # consecutive times we chose silence
         self._last_response_time: float = 0.0
@@ -134,7 +134,7 @@ class SubstrateVoiceEngine:
         self._last_profile_compiled_at: float = 0.0
         self._last_profile_message: str = ""
         self._last_profile_origin: str = ""
-        self._demo_affect_override: Optional[Dict[str, Any]] = None
+        self._demo_affect_override: dict[str, Any] | None = None
         self._demo_affect_override_until: float = 0.0
         self._demo_affect_override_mood: str = ""
 
@@ -208,7 +208,7 @@ class SubstrateVoiceEngine:
         user_message: str = "",
         origin: str = "user",
         max_profile_age_s: float = 2.5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return sampler parameters from the current turn profile when safe.
 
         Payload assembly and sampler override derivation run close together on
@@ -289,7 +289,7 @@ class SubstrateVoiceEngine:
             return ""
         return self._current_profile.to_constraint_block()
 
-    def get_generation_params(self) -> Dict[str, Any]:
+    def get_generation_params(self) -> dict[str, Any]:
         """Expose substrate-derived sampler settings for the inference layer."""
         if not self._current_profile:
             return {}
@@ -299,7 +299,7 @@ class SubstrateVoiceEngine:
     # 3. RESPONSE SHAPING — post-LLM enforcement
     # ══════════════════════════════════════════════════════════════════════
 
-    def shape_response(self, raw: str) -> str | List[str]:
+    def shape_response(self, raw: str) -> str | list[str]:
         """Shape the raw LLM output according to the current profile.
 
         This is the enforcement layer. Whatever the LLM produced, this
@@ -323,7 +323,7 @@ class SubstrateVoiceEngine:
         user_message: str,
         aura_response: str,
         state: Any = None,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
+        conversation_history: list[dict[str, str]] | None = None,
     ) -> FollowupDecision:
         """Ask the substrate if a follow-up is warranted."""
         if not self._current_profile:
@@ -370,7 +370,7 @@ class SubstrateVoiceEngine:
     # 5. DIAGNOSTIC / INTROSPECTION
     # ══════════════════════════════════════════════════════════════════════
 
-    def get_current_profile(self) -> Optional[SpeechProfile]:
+    def get_current_profile(self) -> SpeechProfile | None:
         """Get the most recently compiled profile."""
         return self._current_profile
 
@@ -378,9 +378,9 @@ class SubstrateVoiceEngine:
         self,
         *,
         mood: str,
-        affect: Optional[Dict[str, Any]] = None,
+        affect: dict[str, Any] | None = None,
         hold_seconds: float = 30.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Hold a demo affect override long enough for live-panel demos."""
         try:
             duration = float(hold_seconds)
@@ -398,7 +398,7 @@ class SubstrateVoiceEngine:
         self._demo_affect_override_until = 0.0
         self._demo_affect_override_mood = ""
 
-    def get_demo_affect_override_state(self, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def get_demo_affect_override_state(self, *, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else float(now)
         override = getattr(self, "_demo_affect_override", None)
         until = float(getattr(self, "_demo_affect_override_until", 0.0) or 0.0)
@@ -430,7 +430,7 @@ class SubstrateVoiceEngine:
         merged.update(dict(demo_override.get("affect") or {}))
         return SimpleNamespace(**merged)
 
-    def get_voice_state(self) -> Dict[str, Any]:
+    def get_voice_state(self) -> dict[str, Any]:
         """Diagnostic snapshot of the voice engine state."""
         p = self._current_profile
         if not p:
@@ -466,7 +466,7 @@ def get_live_voice_state(
     user_message: str = "",
     origin: str = "user",
     refresh: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the canonical live voice/substrate snapshot used by diagnostics and self-report.
 
     When `refresh` is true and a live state is available, this re-compiles the profile so
@@ -499,7 +499,7 @@ def _extract_affect(state: Any) -> Any:
     return getattr(state, "affect", None)
 
 
-def _extract_neurochemicals() -> Dict[str, float]:
+def _extract_neurochemicals() -> dict[str, float]:
     """Pull current neurochemical effective levels from the consciousness stack."""
     try:
         from core.container import ServiceContainer
@@ -528,7 +528,7 @@ def _extract_neurochemicals() -> Dict[str, float]:
     return {}
 
 
-def _extract_homeostasis() -> Dict[str, float]:
+def _extract_homeostasis() -> dict[str, float]:
     """Pull homeostasis drive levels."""
     try:
         from core.container import ServiceContainer
@@ -553,8 +553,8 @@ def _extract_homeostasis() -> Dict[str, float]:
 def _extract_unified_field(
     *,
     prefer_cached: bool = False,
-    cache_max_age_s: Optional[float] = None,
-) -> Dict[str, float]:
+    cache_max_age_s: float | None = None,
+) -> dict[str, float]:
     """Pull unified-field state without letting rich introspection block chat.
 
     Foreground conversation should be shaped by the substrate, but it must not
@@ -562,7 +562,7 @@ def _extract_unified_field(
     activity, memory pressure, or probe uncertainty we use a recent rich cache
     when available and otherwise collect only cheap live metrics.
     """
-    result: Dict[str, float] = {}
+    result: dict[str, float] = {}
     bound_reason = "prefer_cached" if prefer_cached else _foreground_or_pressure_reason()
     max_cache_age = (
         _env_float("AURA_SUBSTRATE_FIELD_CACHE_MAX_AGE_S", 45.0)
@@ -649,7 +649,7 @@ def _extract_unified_field(
     return result
 
 
-def _extract_personality(state: Any) -> Dict[str, float]:
+def _extract_personality(state: Any) -> dict[str, float]:
     """Pull Big Five personality values (with growth offsets)."""
     try:
         from core.brain.aura_persona import AURA_BIG_FIVE
@@ -666,7 +666,7 @@ def _extract_personality(state: Any) -> Dict[str, float]:
     return {}
 
 
-def _extract_social_context() -> Dict[str, Any]:
+def _extract_social_context() -> dict[str, Any]:
     """Pull the exact active estimator's bounded caution, or abstain."""
     try:
         estimator = optional_service("other_agent_model")
@@ -692,9 +692,9 @@ def _extract_social_context() -> Dict[str, Any]:
     return {}
 
 
-def _extract_conversation_context(state: Any) -> Dict[str, Any]:
+def _extract_conversation_context(state: Any) -> dict[str, Any]:
     """Pull conversation dynamics — energy, topic depth, trends."""
-    ctx: Dict[str, Any] = {}
+    ctx: dict[str, Any] = {}
     try:
         if state and hasattr(state, "cognition"):
             cog = state.cognition
@@ -726,8 +726,8 @@ def _extract_conversation_context(state: Any) -> Dict[str, Any]:
 # Singleton access
 # ─────────────────────────────────────────────────────────────────────────────
 
-_instance: Optional[SubstrateVoiceEngine] = None
-_instance_lock = threading.Lock()
+_instance: SubstrateVoiceEngine | None = None
+_instance_lock = checked_lock("substrate_voice_engine.singleton")
 
 
 def get_substrate_voice_engine() -> SubstrateVoiceEngine:

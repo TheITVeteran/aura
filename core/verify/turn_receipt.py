@@ -31,12 +31,14 @@ other's receipts.
 
 from __future__ import annotations
 
-import threading
 import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Sequence
+from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "TurnReceipt",
@@ -109,7 +111,7 @@ class TurnReceipt:
 
 _CURRENT: ContextVar[TurnReceipt | None] = ContextVar("aura_turn_receipt", default=None)
 _RECENT: list[TurnReceipt] = []
-_RECENT_LOCK = threading.Lock()
+_RECENT_LOCK = checked_lock("turn_receipt.recent")
 _RECENT_LIMIT = 64
 
 

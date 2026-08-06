@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.lockdep import checked_lock
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Identity.IDRAG")
@@ -429,7 +430,7 @@ class IdentityChronicle:
 
 
 _chronicle_singleton: IdentityChronicle | None = None
-_chronicle_singleton_lock = threading.Lock()
+_chronicle_singleton_lock = checked_lock("identity_chronicle.singleton")
 
 
 def get_identity_chronicle() -> IdentityChronicle:

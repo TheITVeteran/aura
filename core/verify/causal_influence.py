@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import math
 import random
-import threading
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Iterable, Sequence
+from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "Verdict",
@@ -203,7 +205,7 @@ def vector_divergence(a: Sequence[float], b: Sequence[float]) -> float:
         # A zero vector has no direction; calling that "identical" would let a
         # dead channel score a perfect null.
         return 0.0 if norm_left == norm_right else 1.0
-    dot = sum(x * y for x, y in zip(left, right))
+    dot = sum(x * y for x, y in zip(left, right, strict=False))
     return max(0.0, min(1.0, 1.0 - (dot / (norm_left * norm_right))))
 
 
@@ -310,7 +312,7 @@ class InfluenceLedger:
         self._resamples = bootstrap_resamples
         self._channels: dict[str, _ChannelSamples] = {}
         self._recent: list[Divergence] = []
-        self._lock = threading.Lock()
+        self._lock = checked_lock("causal_influence.ledger")
         # Seeded so a verdict is reproducible from the same observations. An
         # unseeded bootstrap makes the same data yield different verdicts on
         # either side of a boundary, which is how a measurement turns into a
@@ -576,7 +578,7 @@ class InfluenceLedger:
 
 
 _LEDGER: InfluenceLedger | None = None
-_LEDGER_LOCK = threading.Lock()
+_LEDGER_LOCK = checked_lock("causal_influence.singleton")
 
 
 def get_influence_ledger() -> InfluenceLedger:

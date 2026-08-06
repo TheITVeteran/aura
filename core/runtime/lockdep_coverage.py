@@ -28,9 +28,10 @@ and this cannot tell them apart. The caller decides.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 #: Constructors that create a lock primitive lockdep does not know about.
 _RAW_LOCK_ATTRS = frozenset({
@@ -40,7 +41,8 @@ _RAW_LOCK_MODULES = frozenset({"threading", "asyncio"})
 
 #: The wrapped lane. Constructing through these IS lockdep coverage.
 _CHECKED_CONSTRUCTORS = frozenset({
-    "checked_lock", "checked_async_lock", "checked_semaphore", "instrument",
+    "checked_lock", "checked_async_lock", "checked_async_condition",
+    "checked_semaphore", "instrument",
 })
 
 _DEFAULT_ROOTS = ("core", "interface")

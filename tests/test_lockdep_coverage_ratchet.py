@@ -112,7 +112,12 @@ class TestTheScannerSeesBothLanes:
 
     @pytest.mark.parametrize(
         "expr",
-        ['checked_lock("x")', 'checked_async_lock("x")', 'instrument("x")'],
+        [
+            'checked_lock("x")',
+            'checked_async_lock("x")',
+            'checked_async_condition("x")',
+            'instrument("x")',
+        ],
     )
     def test_checked_constructors_count_as_covered(self, tmp_path, expr):
         report = self._module(tmp_path, f"def f():\n    return {expr}\n")

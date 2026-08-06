@@ -36,10 +36,12 @@ of its own pragmas, timeouts, URI flags and row factories — the alternative
 from __future__ import annotations
 
 import sqlite3
-import threading
 import weakref
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "TrackedConnection",
@@ -93,8 +95,8 @@ def connecting(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 #
 # A registry that keeps nothing alive. `sqlite3.Connection` does not support
 # weak references; a subclass does, which is the whole trick.
-_TRACKED_LOCK = threading.Lock()
-_TRACKED: "weakref.WeakSet[sqlite3.Connection]" = weakref.WeakSet()
+_TRACKED_LOCK = checked_lock("sqlite_support.tracked_connections")
+_TRACKED: weakref.WeakSet[sqlite3.Connection] = weakref.WeakSet()
 
 
 class TrackedConnection(sqlite3.Connection):

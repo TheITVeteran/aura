@@ -35,11 +35,13 @@ from __future__ import annotations
 
 import logging
 import math
-import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
+
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Verify.EarnedMetric")
 
@@ -150,7 +152,7 @@ class EarnedAxis:
             n_holdout=0,
             reason="no observations yet",
         )
-        self._lock = threading.Lock()
+        self._lock = checked_lock(f"earned_metric.axis.{name}")
 
     # -- observation -------------------------------------------------------
 

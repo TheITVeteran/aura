@@ -36,7 +36,11 @@ from core.reality_reach.transaction_store import (
     transaction_sha256,
 )
 from core.runtime.action_executor import ActionExecutor
-from core.runtime.lockdep import checked_async_lock, checked_lock
+from core.runtime.lockdep import (
+    checked_async_condition,
+    checked_async_lock,
+    checked_lock,
+)
 from core.runtime.skill_contract import ActionExpectation
 from core.runtime.task_ownership import create_tracked_task
 
@@ -94,7 +98,9 @@ class RealityActuationCoordinator:
         self._recovery_lock = checked_async_lock("reality_actuation.restart_recovery")
         self._recovery_wake = asyncio.Event()
         self._recovery_stop = asyncio.Event()
-        self._recovery_condition = asyncio.Condition()
+        self._recovery_condition = checked_async_condition(
+            "reality_actuation.recovery_generation"
+        )
         self._recovery_task: asyncio.Task[Any] | None = None
         self._recovery_report: dict[str, Any] | None = None
         self._recovery_generation = 0

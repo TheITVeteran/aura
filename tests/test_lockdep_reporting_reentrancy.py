@@ -19,6 +19,7 @@ an outage. Reporting now runs with the validator lock released.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 
@@ -27,7 +28,9 @@ import pytest
 from core.runtime.lockdep import (
     LockRank,
     LockdepValidator,
+    checked_async_condition,
     checked_lock,
+    lockdep_report,
     reset_lockdep_for_test,
 )
 
@@ -131,3 +134,22 @@ class TestReportingHoldsNoValidatorLock:
         assert "return splat" in source, (
             "_splat_locked must hand the finding back for reporting outside the lock"
         )
+
+
+@pytest.mark.asyncio
+async def test_checked_async_condition_releases_waits_and_reacquires() -> None:
+    condition = checked_async_condition("test.condition")
+    state = {"ready": False}
+
+    async def waiter() -> bool:
+        async with condition:
+            return await condition.wait_for(lambda: state["ready"])
+
+    task = asyncio.create_task(waiter())
+    await asyncio.sleep(0)
+    async with condition:
+        state["ready"] = True
+        condition.notify_all()
+
+    assert await asyncio.wait_for(task, timeout=1.0) is True
+    assert lockdep_report()["splats"] == []

@@ -70,7 +70,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -860,6 +860,44 @@ class CheckedSemaphore:
         self.release()
 
 
+class CheckedAsyncCondition:
+    """An ``asyncio.Condition`` whose mutex is visible to lockdep.
+
+    Condition waiters release and reacquire the same checked mutex, preserving
+    lock ordering and the bounded reacquisition budget instead of introducing
+    an untracked lock behind an otherwise governed critical section.
+    """
+
+    __slots__ = ("_condition", "_lock", "_name")
+
+    def __init__(self, name: str, *, rank: LockRank = LockRank.UNRANKED) -> None:
+        self._name = str(name)
+        self._lock = CheckedAsyncLock(self._name, rank=rank)
+        self._condition = asyncio.Condition(self._lock)
+
+    async def __aenter__(self) -> CheckedAsyncCondition:
+        await self._condition.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self._condition.__aexit__(*exc)
+
+    async def wait(self) -> bool:
+        return await self._condition.wait()
+
+    async def wait_for(self, predicate: Callable[[], bool]) -> bool:
+        return await self._condition.wait_for(predicate)
+
+    def notify(self, n: int = 1) -> None:
+        self._condition.notify(n)
+
+    def notify_all(self) -> None:
+        self._condition.notify_all()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
 def checked_semaphore(
     name: str, value: int = 1, *, budget_s: float = ACQUIRE_BUDGET_S
 ) -> CheckedSemaphore:
@@ -874,6 +912,12 @@ def checked_lock(
 
 def checked_async_lock(name: str, *, rank: LockRank = LockRank.UNRANKED) -> CheckedAsyncLock:
     return CheckedAsyncLock(name, rank=rank)
+
+
+def checked_async_condition(
+    name: str, *, rank: LockRank = LockRank.UNRANKED
+) -> CheckedAsyncCondition:
+    return CheckedAsyncCondition(name, rank=rank)
 
 
 @contextmanager
@@ -954,6 +998,7 @@ def reset_lockdep_for_test() -> None:
 __all__ = [
     "LOOP_BLOCKING_HOLD_S",
     "SANCTIONED_BLOCKING_LOCKS",
+    "CheckedAsyncCondition",
     "CheckedAsyncLock",
     "CheckedLock",
     "CheckedSemaphore",
@@ -962,6 +1007,7 @@ __all__ = [
     "LockdepValidator",
     "Splat",
     "assert_no_locks_held",
+    "checked_async_condition",
     "checked_async_lock",
     "checked_lock",
     "checked_semaphore",

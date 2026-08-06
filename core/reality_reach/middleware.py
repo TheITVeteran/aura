@@ -63,6 +63,12 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lifecycle import ManagedOrgan, State
+from core.runtime.lockdep import (
+    CheckedAsyncLock,
+    CheckedSemaphore,
+    checked_async_lock,
+    checked_semaphore,
+)
 from core.runtime.state_ownership import state_root
 from core.utils.task_tracker import get_task_tracker
 
@@ -77,7 +83,7 @@ class _Node:
     telemetry: dict[str, TelemetryEndpoint]
     services: dict[str, ServiceEndpoint]
     actions: dict[str, ActionEndpoint]
-    service_limits: dict[str, asyncio.Semaphore]
+    service_limits: dict[str, CheckedSemaphore]
     pull_tasks: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
     telemetry_sequences: dict[str, int] = field(default_factory=dict)
     telemetry_failures: dict[str, int] = field(default_factory=dict)
@@ -110,8 +116,8 @@ class RealityMiddlewareRuntime(RealityServiceLane):
         self._monotonic_clock = monotonic_clock
         self._max_actions = int(max_actions)
         self._max_service_receipts = int(max_service_receipts)
-        self._lock = asyncio.Lock()
-        self._persist_lock = asyncio.Lock()
+        self._lock = checked_async_lock("reality_middleware.runtime")
+        self._persist_lock = checked_async_lock("reality_middleware.persistence")
         self._nodes: dict[str, _Node] = {}
         self._endpoint_owner: dict[str, str] = {}
         self._actions: dict[str, ActionRecord] = {}
@@ -122,7 +128,7 @@ class RealityMiddlewareRuntime(RealityServiceLane):
             str,
             tuple[str, str, asyncio.Task[ServiceReceipt]],
         ] = {}
-        self._action_admission_locks: dict[str, asyncio.Lock] = {}
+        self._action_admission_locks: dict[str, CheckedAsyncLock] = {}
         self._desired_active: dict[str, str] = {}
         self._running = False
         self._recovery_dirty = False
@@ -273,7 +279,10 @@ class RealityMiddlewareRuntime(RealityServiceLane):
             services={item.endpoint_id: item for item in declaration.services},
             actions={item.endpoint_id: item for item in declaration.actions},
             service_limits={
-                item.endpoint_id: asyncio.Semaphore(item.max_inflight)
+                item.endpoint_id: checked_semaphore(
+                    f"reality_middleware.service.{declaration.node_id}.{item.endpoint_id}",
+                    item.max_inflight,
+                )
                 for item in declaration.services
             },
         )
@@ -291,7 +300,12 @@ class RealityMiddlewareRuntime(RealityServiceLane):
                 {endpoint_id: declaration.node_id for endpoint_id in endpoint_ids}
             )
             self._action_admission_locks.update(
-                {endpoint_id: asyncio.Lock() for endpoint_id in node.actions}
+                {
+                    endpoint_id: checked_async_lock(
+                        f"reality_middleware.action.{declaration.node_id}.{endpoint_id}"
+                    )
+                    for endpoint_id in node.actions
+                }
             )
             restore_active = (
                 self._desired_active.get(declaration.node_id)

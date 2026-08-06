@@ -46,11 +46,13 @@ what kind of answer the material is for. The sentence stays hers.
 """
 from __future__ import annotations
 
-import enum
 import re
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "ObservationKind",
@@ -65,7 +67,7 @@ __all__ = [
 ]
 
 
-class ObservationKind(str, enum.Enum):
+class ObservationKind(StrEnum):
     """What faculty produced this, so a claim can name its own source."""
 
     SCREEN_TEXT = "screen_text"
@@ -75,7 +77,7 @@ class ObservationKind(str, enum.Enum):
     AUDIO = "audio"
 
 
-class AnswerShape(str, enum.Enum):
+class AnswerShape(StrEnum):
     """What kind of answer the REQUEST wants from this evidence.
 
     The distinction the runtime never had. Identical pixels answer these
@@ -648,8 +650,6 @@ class Observation:
 # different question quietly substituted.
 # ---------------------------------------------------------------------------
 
-import threading
-
 #: How many recent observations stay referenceable. Small deliberately: this
 #: holds screen contents, which are the person's, and a long tail of them is
 #: a privacy surface rather than a memory. Recent enough for follow-ups in
@@ -666,7 +666,7 @@ class ObservationMemory:
     """Recent observations, referenceable and honest about their age."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock = checked_lock("observation_memory.items", reentrant=True)
         self._items: list[Observation] = []
 
     def record(self, observation: Observation) -> Observation:
@@ -811,7 +811,7 @@ class ObservationMemory:
 
 
 _MEMORY: ObservationMemory | None = None
-_MEMORY_LOCK = threading.Lock()
+_MEMORY_LOCK = checked_lock("observation_memory.singleton")
 
 
 def get_observation_memory() -> ObservationMemory:
