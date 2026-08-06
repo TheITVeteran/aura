@@ -18243,10 +18243,31 @@ async def _execute_desktop_objective_from_chat(
                 else f"{observation} (Completed {completed}/{requested} governed desktop steps.)"
             )
         else:
-            response = (
-                f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
-                f"Completed {completed}/{requested} governed desktop steps."
-            )
+            # What was PRODUCED, not how many steps produced it.
+            #
+            # Live 2026-07-30 demo: "open the Notes app and write a note where
+            # you write a paragraph describing yourself" was answered with
+            # "Desktop task completed 2/2 governed computer-use steps through
+            # heuristic_compat planning. Completed 2/2 governed desktop steps."
+            # The note WAS written. Nothing in the reply showed it, so Bryan
+            # asked again — the task had succeeded and the answer made it look
+            # like it had not.
+            #
+            # The same lesson is already written three branches up for
+            # perceptions: nobody asked how many steps it took to look at
+            # their own screen. Nobody asked how many steps it took to write a
+            # paragraph either. They asked for the paragraph.
+            produced = _desktop_deliverable_text(result)
+            step_note = f"Completed {completed}/{requested} governed desktop steps."
+            if produced:
+                response = (
+                    f"{summary or 'Done.'} Here is what I wrote:\n\n{produced}"
+                )
+            else:
+                response = (
+                    f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
+                    f"{step_note}"
+                )
     else:
         error = str(result.get("error") or result.get("status") or "desktop task failed").strip()
         response = (
@@ -18320,6 +18341,60 @@ def _desktop_task_research_response(
         f"{source_sentence}"
         f"{step_sentence}"
     )
+
+
+#: A written deliverable longer than this is summarised by its opening rather
+#: than pasted whole into a chat reply.
+_DESKTOP_DELIVERABLE_MAX_CHARS = 1200
+
+
+def _desktop_deliverable_text(result: Any) -> str:
+    """The text a desktop task actually wrote, if it wrote any.
+
+    A task that produced content has a deliverable, and the deliverable is
+    the answer. Step counts describe the machinery that produced it, which is
+    the thing the person is least interested in once it worked.
+
+    Reads the per-step receipts rather than the summary, because the summary
+    is written by the planner and describes its own execution.
+    """
+    if not isinstance(result, dict):
+        return ""
+    receipts = result.get("receipts")
+    if not isinstance(receipts, list):
+        return ""
+    written: list[str] = []
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            continue
+        if str(receipt.get("action") or "").strip() != "type":
+            continue
+        if not receipt.get("ok"):
+            # A step that did not verify did not write anything, and quoting
+            # its intended text as "what I wrote" would be the false-success
+            # claim wearing a friendlier face.
+            continue
+        # The executor payload is nested under "result"; the top level is the
+        # step record. Check both so a shape change does not silently return
+        # nothing and fall back to the step count.
+        inner = receipt.get("result")
+        typed = None
+        if isinstance(inner, dict):
+            typed = inner.get("typed")
+        if not isinstance(typed, str):
+            typed = receipt.get("typed")
+        if not isinstance(typed, str):
+            continue
+        text = typed.strip()
+        # Keystroke-level fragments are not a deliverable; a paragraph is.
+        if len(text) >= 40:
+            written.append(text)
+    if not written:
+        return ""
+    body = "\n\n".join(written).strip()
+    if len(body) > _DESKTOP_DELIVERABLE_MAX_CHARS:
+        body = _clip_reply_to_sentence(body, _DESKTOP_DELIVERABLE_MAX_CHARS)
+    return body
 
 
 def _clip_reply_to_sentence(text: str, limit: int) -> str:
