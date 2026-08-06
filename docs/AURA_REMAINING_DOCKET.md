@@ -123,4 +123,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `1fcfbd1539aede451bff0a0d3b32c26832ebc189e86ff14e28f4c84a4c55775e`
+Report SHA-256: `780bd975b302a0100e20a1098175a20cd8930eb794756a939d04ac3f8b765da3`

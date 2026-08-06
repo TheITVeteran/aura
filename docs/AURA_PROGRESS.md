@@ -4,9 +4,9 @@
 
 ## Current Truth
 
-- Machine-certified completion: **0.20%**
+- Machine-certified completion: **0.97%**
 - Legacy engineering estimate: **27.00%** (legacy_uncertified_not_used_for_release)
-- Verified acceptance/evidence cells: **3 / 1259**
+- Verified acceptance/evidence cells: **14 / 1259**
 - Mandatory requirements: **301**
 - Weight calibration: **0 assigned / 301**
 
@@ -16,15 +16,15 @@
 - Distinct pushed commits: **391**
 - Records on shared commits: **31**
 - Unpushed checkpoint records: **0**
-- Forecast total: **505-695 records** (low confidence; policy_prior_only)
-- Forecast remaining: **96-286 records**
+- Forecast total: **504-693 records** (low confidence; policy_prior_only)
+- Forecast remaining: **95-284 records**
 
 ## Evidence Burden
 
 | Class | Weight | Verified | Total |
 |---|---:|---:|---:|
 | `implementation` | 2 | 2 | 505 |
-| `test` | 2 | 1 | 505 |
+| `test` | 2 | 12 | 505 |
 | `live` | 3 | 0 | 121 |
 | `gui` | 3 | 0 | 36 |
 | `security` | 4 | 0 | 45 |
@@ -38,4 +38,4 @@ The certified percentage starts at zero until reviewed historical artifacts are 
 
 The forecast is conservative while evidence and weight calibration are incomplete. It will narrow from observed verified points per pushed checkpoint without changing the denominator or dropping open scope.
 
-Report SHA-256: `1cdb49b22211db4fb404f5515514548ee88681dd5fe1c1cd0a87f61f6d2ae290`
+Report SHA-256: `af5f0f7dc329dba17072912d63fe3177d028fcbd8edfe849730af288bc6b2834`
