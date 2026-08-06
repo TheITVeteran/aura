@@ -116,3 +116,88 @@ class TestOrphanedOutputIsStillFenced:
         """Fencing by identity is what actually stops bleed into the next
         turn; the recycle was only ever belt-and-braces on top of it."""
         assert "req_id == self._current_request_id" in _abandonment_source()
+
+
+class TestTheWarmLaneSurvives:
+    """The property, run rather than grepped.
+
+    A healthy, heartbeating worker that overran the caller's deadline must be
+    SOFT-CANCELLED and left loaded. Killing it costs a full model reload and
+    makes the next turn slower, which makes the next deadline likelier to
+    expire — the cascade the module docstring describes.
+    """
+
+    @staticmethod
+    def _client_with_an_active_generation():
+        from types import SimpleNamespace
+
+        client = mlx_client.MLXLocalClient.__new__(mlx_client.MLXLocalClient)
+        client.model_path = "/models/Aura-32B-test"
+        client._cancel_seq = SimpleNamespace(value=0)
+        client._current_request_seq = 7
+        client._current_request_started_at = 1.0
+        return client
+
+    def test_a_soft_cancel_marks_the_active_job_and_nothing_else(self):
+        """The cancel channel is a single shared word; targeting is the whole
+        contract. Cancelling job 7 must not stop job 8."""
+        client = self._client_with_an_active_generation()
+
+        receipt = client.soft_cancel_active_generation("abandoned_first_token_sla")
+
+        assert receipt["requested"] is True
+        assert receipt["reason"] == "abandoned_first_token_sla"
+        assert client._cancel_seq.value == 7
+        assert mlx_client.MLXLocalClient  # module intact
+
+    def test_the_worker_stops_only_the_job_that_was_cancelled(self):
+        """Worker side of the same contract, against the real predicate."""
+        from types import SimpleNamespace
+
+        from core.brain.llm.mlx_worker import soft_cancel_requested
+
+        channel = SimpleNamespace(value=7)
+        assert soft_cancel_requested(channel, 7) is True
+        assert soft_cancel_requested(channel, 8) is False
+        # Nothing requested at all.
+        assert soft_cancel_requested(SimpleNamespace(value=0), 7) is False
+        # No channel is not a licence to keep going forever, but it is also
+        # not a cancel: the caller escalates instead of the worker guessing.
+        assert soft_cancel_requested(None, 7) is False
+
+    def test_a_cancel_with_no_active_generation_is_reported_not_faked(self):
+        """`requested: False` is the honest answer, and callers escalate on it.
+
+        Reporting a cancel that was never delivered would make the preemption
+        ladder skip its next rung believing the cheap one worked.
+        """
+        client = self._client_with_an_active_generation()
+        client._current_request_started_at = 0.0
+
+        receipt = client.soft_cancel_active_generation("abandoned_first_token_sla")
+
+        assert receipt["requested"] is False
+        assert receipt["detail"] == "no_active_generation"
+
+    def test_a_lost_cancel_write_is_reported_as_not_requested(self):
+        """A concurrent job start can clear a superseded sequence.
+
+        The parent used to report the cancel as requested regardless; it now
+        writes, reads back, and says what actually happened — because a
+        preemption ladder that believes a lost write succeeded never escalates.
+        """
+
+        class _Overwritten:
+            """A channel that silently discards writes, as a racing start does."""
+
+            value = 0
+
+            def __setattr__(self, name, _value):
+                object.__setattr__(self, name, 0)
+
+        client = self._client_with_an_active_generation()
+        client._cancel_seq = _Overwritten()
+
+        receipt = client.soft_cancel_active_generation("abandoned_first_token_sla")
+
+        assert receipt["requested"] is False
