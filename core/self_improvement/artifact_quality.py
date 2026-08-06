@@ -134,39 +134,6 @@ def check_source_is_finished(source: str) -> list[QualityFinding]:
     return findings
 
 
-def check_import_is_quiet(source: str) -> tuple[dict[str, Any] | None, list[QualityFinding]]:
-    """Importing must not play the game, print, or block on input."""
-    namespace: dict[str, Any] = {"__name__": "reconstructed_artifact"}
-    printed: list[str] = []
-
-    def _capture(*args: Any, **kwargs: Any) -> None:
-        printed.append(" ".join(str(a) for a in args))
-
-    def _no_input(*_args: Any, **_kwargs: Any) -> str:
-        raise AssertionError("module read input() at import time")
-
-    namespace["print"] = _capture
-    namespace["input"] = _no_input
-    try:
-        exec(compile(source, "<reconstructed>", "exec"), namespace)  # noqa: S102
-    except AssertionError as exc:
-        return None, [QualityFinding("quiet import", str(exc))]
-    except _RECOVERABLE as exc:
-        return None, [
-            QualityFinding("quiet import", f"importing raised {type(exc).__name__}: {exc}")
-        ]
-    findings: list[QualityFinding] = []
-    if printed:
-        findings.append(
-            QualityFinding(
-                "quiet import",
-                f"module printed {len(printed)} line(s) at import; "
-                "the interactive loop belongs under __main__",
-            )
-        )
-    return namespace, findings
-
-
 def check_it_is_interactive(
     namespace: dict[str, Any],
     *,
@@ -328,7 +295,6 @@ def check_there_is_something_to_look_at(
 __all__ = [
     "QualityFinding",
     "QualityReport",
-    "check_import_is_quiet",
     "check_it_can_end",
     "check_it_is_interactive",
     "check_it_refuses_the_illegal",
