@@ -636,7 +636,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "905788b2c2d073b9d02601aaf0afe80afd49391642aba2cd406744a60e7c0a30",
+    "evidence_ledger_sha256": "1eb14b8277fcf41cfcd1c30ae40e73ed02a16368f4ebe8b9bc828f223e420cab",
     "registry_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039"
   },
   "non_claims": [
@@ -644,7 +644,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "7dc927800fe6c0e9c397795d32ccdb53577e7972a7ac504fdf7960c4827b1a97",
+  "report_sha256": "42e6bf1c4015b644762e33a0593622bcedc7cca0c6b81ca00920dcaafe0e296f",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2926,15 +2926,14 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 5,
-      "evidence_cells_verified": 2,
+      "evidence_cells_verified": 3,
       "family": "CTX2",
       "id": "CTX2-SKILL-002",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
         "live:A1",
-        "gui:A1",
-        "portability:A1"
+        "gui:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-23",

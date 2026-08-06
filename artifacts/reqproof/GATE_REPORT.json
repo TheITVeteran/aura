@@ -288,7 +288,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], gui[A1], portability[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], gui[A1]",
       "subject": "CTX2-SKILL-002"
     },
     {
@@ -336,8 +336,8 @@
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 22,
-    "evidence_ledger_sha256": "905788b2c2d073b9d02601aaf0afe80afd49391642aba2cd406744a60e7c0a30",
+    "evidence_ledger_entries": 23,
+    "evidence_ledger_sha256": "1eb14b8277fcf41cfcd1c30ae40e73ed02a16368f4ebe8b9bc828f223e420cab",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
     "registry_revision": 30,
