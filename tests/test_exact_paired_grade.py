@@ -8,6 +8,7 @@ from core.brain.llm.latent_cortex.exact_paired_grade import (
     ExactPairedGradeError,
     ExactPairedObservation,
     exact_campaign_power_plan,
+    exact_group_sequential_power_plan,
     exact_interaction_proven,
     exact_interaction_refuted,
     grade_exact_interaction,
@@ -285,6 +286,63 @@ def test_full_campaign_exact_power_boundary_is_410_fail_411_pass():
     assert powered["powered_for_zero_loss_noninferiority"] is True
     assert powered["planned_total_tasks"] == 2_877
     assert powered["planned_total_cells"] == 17_262
+
+
+def test_group_sequential_power_plan_conserves_alpha_and_freezes_each_look():
+    plan = exact_group_sequential_power_plan(
+        domain_count=7,
+        comparison_count=6,
+        arm_count=6,
+        look_observations_per_domain=(160, 320, 480, 640),
+        alpha_weights=(
+            Rational(1, 100),
+            Rational(4, 100),
+            Rational(15, 100),
+            Rational(80, 100),
+        ),
+    )
+
+    assert plan["alpha_weight_sum"] == {"numerator": 1, "denominator": 1}
+    assert plan["familywise_alpha"] == {"numerator": 1, "denominator": 20}
+    assert [look["look"] for look in plan["looks"]] == [1, 2, 3, 4]
+    assert [look["observations_per_domain"] for look in plan["looks"]] == [
+        160,
+        320,
+        480,
+        640,
+    ]
+    assert plan["looks"][0]["family_alpha"] == {
+        "numerator": 1,
+        "denominator": 2_000,
+    }
+    assert plan["looks"][-1]["family_alpha"] == {
+        "numerator": 1,
+        "denominator": 25,
+    }
+    assert plan["terminal_fixed_design"]["minimum_observations"] == 411
+
+
+@pytest.mark.parametrize(
+    ("looks", "weights", "error"),
+    [
+        ((100, 100), (Rational(1, 2), Rational(1, 2)), "contract_invalid"),
+        ((100, 200), (Rational(1, 2), Rational(1, 3)), "alpha_not_conserved"),
+        ((100,), (Rational(0, 1),), "contract_invalid"),
+    ],
+)
+def test_group_sequential_power_plan_rejects_ambiguous_or_unfunded_looks(
+    looks,
+    weights,
+    error,
+):
+    with pytest.raises(ExactPairedGradeError, match=error):
+        exact_group_sequential_power_plan(
+            domain_count=7,
+            comparison_count=6,
+            arm_count=6,
+            look_observations_per_domain=looks,
+            alpha_weights=weights,
+        )
 
 
 @pytest.mark.parametrize(

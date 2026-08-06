@@ -36,6 +36,9 @@ EXACT_INTERACTION_SCHEMA: Final = (
 EXACT_NONINFERIORITY_POWER_SCHEMA: Final = (
     "aura.latent_cortex.exact_noninferiority_power.v1"
 )
+EXACT_GROUP_SEQUENTIAL_POWER_SCHEMA: Final = (
+    "aura.latent_cortex.exact_group_sequential_power.v1"
+)
 EXACT_GRADE_METHOD: Final = (
     "exact paired binomial + exact Holm + simultaneous rational "
     "Clopper-Pearson effect bounds"
@@ -89,6 +92,21 @@ def _subtract(left: Rational, right: Rational) -> Rational:
     return Rational(
         left.numerator * right.denominator
         - right.numerator * left.denominator,
+        left.denominator * right.denominator,
+    )
+
+
+def _add(left: Rational, right: Rational) -> Rational:
+    return Rational(
+        left.numerator * right.denominator
+        + right.numerator * left.denominator,
+        left.denominator * right.denominator,
+    )
+
+
+def _multiply(left: Rational, right: Rational) -> Rational:
+    return Rational(
+        left.numerator * right.numerator,
         left.denominator * right.denominator,
     )
 
@@ -586,6 +604,7 @@ def minimum_zero_loss_noninferiority_observations(
     *,
     global_bound_family_count: int,
     margin: Rational = MINIMUM_EFFECT,
+    family_alpha: Rational = ALPHA,
 ) -> dict[str, Any]:
     """Certify the minimum all-tie sample that clears non-inferiority."""
 
@@ -595,6 +614,9 @@ def minimum_zero_loss_noninferiority_observations(
         or type(margin) is not Rational
         or margin.numerator <= 0
         or margin.numerator >= margin.denominator
+        or type(family_alpha) is not Rational
+        or not _less(Rational(0, 1), family_alpha)
+        or _less(Rational(1, 2), family_alpha)
     ):
         _fail("exact_noninferiority_power_contract_invalid")
     negative_margin = Rational(-margin.numerator, margin.denominator)
@@ -606,7 +628,7 @@ def minimum_zero_loss_noninferiority_observations(
                 0,
                 observations,
                 family_count=global_bound_family_count,
-                family_alpha=ALPHA,
+                family_alpha=family_alpha,
                 precision_bits=BOUND_PRECISION_BITS,
             )
         except ExactStatisticsError as exc:
@@ -702,6 +724,116 @@ def exact_campaign_power_plan(
     }
 
 
+def exact_group_sequential_power_plan(
+    *,
+    domain_count: int,
+    comparison_count: int,
+    arm_count: int,
+    look_observations_per_domain: Sequence[int],
+    alpha_weights: Sequence[Rational],
+) -> dict[str, Any]:
+    """Freeze exact Bonferroni spending across preregistered campaign looks.
+
+    Each look receives a disjoint rational share of the campaign familywise
+    alpha. Reaching a look does not transfer or recycle unused alpha. This
+    makes every look independently replayable and keeps optional stopping from
+    inflating the complete certificate's error budget.
+    """
+
+    if (
+        type(arm_count) is not int
+        or arm_count <= 0
+        or isinstance(look_observations_per_domain, (str, bytes))
+        or not isinstance(look_observations_per_domain, Sequence)
+        or isinstance(alpha_weights, (str, bytes))
+        or not isinstance(alpha_weights, Sequence)
+    ):
+        _fail("exact_group_sequential_power_contract_invalid")
+    observations = tuple(look_observations_per_domain)
+    weights = tuple(alpha_weights)
+    if (
+        not observations
+        or len(observations) != len(weights)
+        or any(type(value) is not int or value <= 0 for value in observations)
+        or any(
+            current <= previous
+            for previous, current in zip(
+                observations,
+                observations[1:],
+                strict=False,
+            )
+        )
+        or any(
+            type(weight) is not Rational
+            or not _less(Rational(0, 1), weight)
+            for weight in weights
+        )
+    ):
+        _fail("exact_group_sequential_power_contract_invalid")
+    total_weight = Rational(0, 1)
+    for weight in weights:
+        total_weight = _add(total_weight, weight)
+    if total_weight != Rational(1, 1):
+        _fail("exact_group_sequential_alpha_not_conserved")
+
+    global_count = campaign_global_bound_family_count(
+        domain_count=domain_count,
+        comparison_count=comparison_count,
+    )
+    fixed_terminal = exact_campaign_power_plan(
+        domain_count=domain_count,
+        comparison_count=comparison_count,
+        arm_count=arm_count,
+        planned_observations_per_domain=observations[-1],
+    )
+    looks: list[dict[str, Any]] = []
+    for index, (planned, weight) in enumerate(
+        zip(observations, weights, strict=True),
+        start=1,
+    ):
+        look_alpha = _multiply(ALPHA, weight)
+        receipt = minimum_zero_loss_noninferiority_observations(
+            global_bound_family_count=global_count,
+            family_alpha=look_alpha,
+        )
+        planned_tasks = planned * domain_count
+        looks.append(
+            {
+                "look": index,
+                "observations_per_domain": planned,
+                "alpha_weight": _rational(weight),
+                "family_alpha": _rational(look_alpha),
+                "minimum_observations": receipt["minimum_observations"],
+                "powered_for_zero_loss_noninferiority": (
+                    planned >= receipt["minimum_observations"]
+                ),
+                "planned_total_tasks": planned_tasks,
+                "planned_total_cells": planned_tasks * arm_count,
+                "power_receipt": receipt,
+            }
+        )
+    return {
+        "schema": EXACT_GROUP_SEQUENTIAL_POWER_SCHEMA,
+        "certified": True,
+        "method": "preregistered disjoint-look Bonferroni alpha spending",
+        "stopping_rule": "evaluate only declared cumulative looks; no alpha recycling",
+        "domain_count": domain_count,
+        "comparison_count": comparison_count,
+        "arm_count": arm_count,
+        "familywise_alpha": _rational(ALPHA),
+        "alpha_weight_sum": _rational(total_weight),
+        "look_count": len(looks),
+        "looks": looks,
+        "terminal_fixed_design": fixed_terminal,
+        "all_looks_powered_for_zero_loss_noninferiority": all(
+            look["powered_for_zero_loss_noninferiority"] for look in looks
+        ),
+        "terminal_look_powered_for_zero_loss_noninferiority": looks[-1][
+            "powered_for_zero_loss_noninferiority"
+        ],
+    }
+
+
 def exact_interaction_proven(interaction: Mapping[str, Any]) -> bool:
     """Apply the exact preregistered positive interaction gate."""
 
@@ -729,6 +861,7 @@ __all__ = [
     "EFFECT_BOUND_CERTIFICATE_VERSION",
     "EFFECT_BOUND_METHOD",
     "EXACT_GRADE_METHOD",
+    "EXACT_GROUP_SEQUENTIAL_POWER_SCHEMA",
     "EXACT_INTERACTION_METHOD",
     "EXACT_INTERACTION_SCHEMA",
     "EXACT_NONINFERIORITY_POWER_SCHEMA",
@@ -739,6 +872,7 @@ __all__ = [
     "SIGN_FLIP_ASSUMPTION",
     "campaign_global_bound_family_count",
     "exact_campaign_power_plan",
+    "exact_group_sequential_power_plan",
     "exact_interaction_proven",
     "exact_interaction_refuted",
     "grade_exact_interaction",

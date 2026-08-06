@@ -73,6 +73,7 @@ NON_NEURAL_PARITY_COUNTERS = (
 )
 BOUND_CERTIFICATE_VERSION = "aura.latent_cortex.exact_paired_effect_bounds.v1"
 NONINFERIORITY_POWER_SCHEMA = "aura.latent_cortex.exact_noninferiority_power.v1"
+GROUP_SEQUENTIAL_POWER_SCHEMA = "aura.latent_cortex.exact_group_sequential_power.v1"
 BOUND_METHOD = (
     "four one-sided Clopper-Pearson marginal bounds; Bonferroni over "
     "win/loss x lower/upper x declared families; dyadic outward rounding "
@@ -197,6 +198,13 @@ def _q_subtract(left: _Q, right: _Q) -> _Q:
 
 def _q_scale(value: _Q, factor: int) -> _Q:
     return _Q(value.numerator * factor, value.denominator)
+
+
+def _q_multiply(left: _Q, right: _Q) -> _Q:
+    return _Q(
+        left.numerator * right.numerator,
+        left.denominator * right.denominator,
+    )
 
 
 def _q_less(left: _Q, right: _Q) -> bool:
@@ -1509,6 +1517,7 @@ def _effect_bounds(
     losses: int,
     ties: int,
     family_count: int,
+    family_alpha: _Q = ALPHA,
 ) -> dict[str, Any]:
     observations = wins + losses + ties
     if (
@@ -1516,11 +1525,14 @@ def _effect_bounds(
         or not 1 <= observations <= MAX_BOUND_OBSERVATIONS
         or type(family_count) is not int
         or not 1 <= family_count <= 1024
+        or type(family_alpha) is not _Q
+        or not _q_less(ZERO, family_alpha)
+        or _q_less(_Q(1, 2), family_alpha)
     ):
         _fail("independent_effect_bounds_invalid")
     component_alpha = _Q(
-        ALPHA.numerator,
-        ALPHA.denominator * 4 * family_count,
+        family_alpha.numerator,
+        family_alpha.denominator * 4 * family_count,
     )
     components = [
         _proportion_bound(
@@ -1581,9 +1593,9 @@ def _effect_bounds(
         "lower": _q_payload(lower),
         "upper": _q_payload(upper),
         "family_count": family_count,
-        "family_alpha": _q_payload(ALPHA),
+        "family_alpha": _q_payload(family_alpha),
         "component_alpha": _q_payload(component_alpha),
-        "simultaneous_coverage_lower": _q_payload(_Q(19, 20)),
+        "simultaneous_coverage_lower": _q_payload(_q_subtract(ONE, family_alpha)),
         "precision_bits": BOUND_PRECISION_BITS,
         "grid_step": _q_payload(grid),
         "endpoint_max_outward_rounding": _q_payload(_q_scale(grid, 2)),
@@ -1594,8 +1606,15 @@ def _effect_bounds(
 @lru_cache(maxsize=64)
 def _minimum_zero_loss_noninferiority_observations(
     global_bound_family_count: int,
+    family_alpha: _Q = ALPHA,
 ) -> dict[str, Any]:
-    if type(global_bound_family_count) is not int or global_bound_family_count <= 0:
+    if (
+        type(global_bound_family_count) is not int
+        or global_bound_family_count <= 0
+        or type(family_alpha) is not _Q
+        or not _q_less(ZERO, family_alpha)
+        or _q_less(_Q(1, 2), family_alpha)
+    ):
         _fail("independent_power_contract_invalid")
     negative_margin = _Q(-MINIMUM_EFFECT.numerator, MINIMUM_EFFECT.denominator)
 
@@ -1605,6 +1624,7 @@ def _minimum_zero_loss_noninferiority_observations(
             0,
             observations,
             global_bound_family_count,
+            family_alpha,
         )
         return (
             _q_less(negative_margin, _Q(**bounds["lower"])),
@@ -1688,6 +1708,102 @@ def _exact_campaign_power_plan(
         "powered_for_zero_loss_noninferiority": (
             planned_observations_per_domain >= receipt["minimum_observations"]
         ),
+    }
+
+
+def _exact_group_sequential_power_plan(
+    *,
+    domain_count: int,
+    comparison_count: int,
+    arm_count: int,
+    look_observations_per_domain: Sequence[int],
+    alpha_weights: Sequence[_Q],
+) -> dict[str, Any]:
+    if (
+        type(domain_count) is not int
+        or domain_count <= 0
+        or type(comparison_count) is not int
+        or comparison_count <= 0
+        or type(arm_count) is not int
+        or arm_count <= 0
+        or isinstance(look_observations_per_domain, (str, bytes))
+        or not isinstance(look_observations_per_domain, Sequence)
+        or isinstance(alpha_weights, (str, bytes))
+        or not isinstance(alpha_weights, Sequence)
+    ):
+        _fail("independent_group_sequential_power_contract_invalid")
+    observations = tuple(look_observations_per_domain)
+    weights = tuple(alpha_weights)
+    if (
+        not observations
+        or len(observations) != len(weights)
+        or any(type(value) is not int or value <= 0 for value in observations)
+        or any(
+            current <= previous
+            for previous, current in zip(
+                observations,
+                observations[1:],
+                strict=False,
+            )
+        )
+        or any(type(weight) is not _Q or not _q_less(ZERO, weight) for weight in weights)
+    ):
+        _fail("independent_group_sequential_power_contract_invalid")
+    total_weight = ZERO
+    for weight in weights:
+        total_weight = _q_add(total_weight, weight)
+    if total_weight != ONE:
+        _fail("independent_group_sequential_alpha_not_conserved")
+
+    global_count = comparison_count * (domain_count + 1) + 2
+    fixed_terminal = _exact_campaign_power_plan(
+        domain_count=domain_count,
+        comparison_count=comparison_count,
+        arm_count=arm_count,
+        planned_observations_per_domain=observations[-1],
+    )
+    looks: list[dict[str, Any]] = []
+    for index, (planned, weight) in enumerate(zip(observations, weights, strict=True), 1):
+        look_alpha = _q_multiply(ALPHA, weight)
+        receipt = _minimum_zero_loss_noninferiority_observations(
+            global_count,
+            look_alpha,
+        )
+        planned_tasks = planned * domain_count
+        looks.append(
+            {
+                "look": index,
+                "observations_per_domain": planned,
+                "alpha_weight": _q_payload(weight),
+                "family_alpha": _q_payload(look_alpha),
+                "minimum_observations": receipt["minimum_observations"],
+                "powered_for_zero_loss_noninferiority": (
+                    planned >= receipt["minimum_observations"]
+                ),
+                "planned_total_tasks": planned_tasks,
+                "planned_total_cells": planned_tasks * arm_count,
+                "power_receipt": receipt,
+            }
+        )
+    return {
+        "schema": GROUP_SEQUENTIAL_POWER_SCHEMA,
+        "certified": True,
+        "method": "preregistered disjoint-look Bonferroni alpha spending",
+        "stopping_rule": "evaluate only declared cumulative looks; no alpha recycling",
+        "domain_count": domain_count,
+        "comparison_count": comparison_count,
+        "arm_count": arm_count,
+        "familywise_alpha": _q_payload(ALPHA),
+        "alpha_weight_sum": _q_payload(total_weight),
+        "look_count": len(looks),
+        "looks": looks,
+        "terminal_fixed_design": fixed_terminal,
+        "all_looks_powered_for_zero_loss_noninferiority": all(
+            look["powered_for_zero_loss_noninferiority"] for look in looks
+        ),
+        "terminal_look_powered_for_zero_loss_noninferiority": looks[-1][
+            "powered_for_zero_loss_noninferiority"
+        ],
     }
 
 

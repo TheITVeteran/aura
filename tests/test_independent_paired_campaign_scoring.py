@@ -16,6 +16,7 @@ from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.exact_paired_grade import (
     _bound_payload,
     exact_campaign_power_plan,
+    exact_group_sequential_power_plan,
 )
 from core.brain.llm.latent_cortex.exact_paired_statistics import (
     Rational,
@@ -45,6 +46,7 @@ from tools.independent_paired_campaign_scoring import (
     _counts_at_most,
     _effect_bounds,
     _exact_campaign_power_plan,
+    _exact_group_sequential_power_plan,
     _holm,
     _proportion_bound,
     _q_payload,
@@ -536,6 +538,36 @@ def test_independent_power_boundary_matches_production_byte_for_byte():
         assert independent == production
         assert _canonical_bytes(independent) == canonical_json_bytes(production)
         assert independent["powered_for_zero_loss_noninferiority"] is powered
+
+
+def test_independent_group_sequential_power_matches_production_byte_for_byte():
+    production = exact_group_sequential_power_plan(
+        domain_count=7,
+        comparison_count=6,
+        arm_count=6,
+        look_observations_per_domain=(160, 320, 480, 640),
+        alpha_weights=(
+            Rational(1, 100),
+            Rational(4, 100),
+            Rational(15, 100),
+            Rational(80, 100),
+        ),
+    )
+    independent = _exact_group_sequential_power_plan(
+        domain_count=7,
+        comparison_count=6,
+        arm_count=6,
+        look_observations_per_domain=(160, 320, 480, 640),
+        alpha_weights=(
+            _Q(1, 100),
+            _Q(4, 100),
+            _Q(15, 100),
+            _Q(80, 100),
+        ),
+    )
+
+    assert independent == production
+    assert _canonical_bytes(independent) == canonical_json_bytes(production)
 
 
 def test_independent_complete_semantic_tree_matches_production_byte_for_byte():
