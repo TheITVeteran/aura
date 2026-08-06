@@ -1,5 +1,5 @@
 {
-  "content_sha256": "83def680afa2ea0742393944a96b36fe3acc2b900f740175e18048e65ea7b4f5",
+  "content_sha256": "ee42f13cd4e65d0499db566668fe55427b9ac5c843c48af624935aa734647833",
   "entries": [
     {
       "acceptance_ids": [
@@ -58,6 +58,28 @@
       "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/84716489641b9a63dfd7971e627456a0fafb24a0.json",
       "requirement_id": "ADDENDUM-22",
       "sha256": "e0e9170e38e101bcc0c7dfc98c07a59d0a57a508aaac8bbb6d44c00a0e68ab54"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "c99c86e5fc8559eecfd55b24f966370000243fba",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/cognitive-gate-inventory-audit/c99c86e5fc8559eecfd55b24f966370000243fba.json",
+      "requirement_id": "CTX2-GATE-001",
+      "sha256": "76122f0df35568e58e18252461c752b7e861717a3ec3afb9e5831e796732d594"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "c99c86e5fc8559eecfd55b24f966370000243fba",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/cognitive-gate-inventory-audit/c99c86e5fc8559eecfd55b24f966370000243fba.json",
+      "requirement_id": "CTX2-GATE-002",
+      "sha256": "76122f0df35568e58e18252461c752b7e861717a3ec3afb9e5831e796732d594"
     },
     {
       "acceptance_ids": [
