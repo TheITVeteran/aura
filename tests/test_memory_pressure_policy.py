@@ -190,9 +190,13 @@ def test_darwin_footprint_falls_back_to_current_resident_size():
 
 
 def test_background_policy_blocks_on_process_tree_rss_even_when_system_memory_is_low(
+    not_a_proof_run,
     monkeypatch,
     resource_observer,
 ):
+    # background_activity_reason returns "proof_run_active" before it ever looks
+    # at RSS, so under AURA_TESTING the process-tree check this test exists to
+    # cover is unreachable.
     import core.runtime.background_policy as background_policy
 
     resource_observer.configure_memory(

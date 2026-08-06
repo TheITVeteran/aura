@@ -905,7 +905,14 @@ def test_continuity_sanitizer_rejects_evaluation_input_not_answers():
     assert sanitize_continuity_summary(ordinary) == ordinary
 
 
-def test_commitment_engine_quarantines_proof_fixture_on_load(tmp_path, monkeypatch):
+def test_commitment_engine_quarantines_proof_fixture_on_load(
+    not_a_proof_run, tmp_path, monkeypatch
+):
+    # _must_isolate_from_lived_commitments quarantines EVERY commitment while
+    # proof_run_active() holds, so under AURA_TESTING get_active_commitments()
+    # returns nothing and the test cannot see the one commitment it expects to
+    # survive. The quarantine-by-content behaviour being tested only shows once
+    # the blanket proof quarantine is off.
     import json
     import time
 
@@ -2688,9 +2695,16 @@ async def test_cognitive_engine_uses_structured_floor_for_proof_evaluation(monke
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_does_not_fast_floor_live_api_planning(monkeypatch):
+async def test_cognitive_engine_does_not_fast_floor_live_api_planning(
+    not_a_proof_run, monkeypatch
+):
     from core.brain.cognitive_engine import CognitiveEngine
 
+    # The point of the test is that AURA_PROOF_RUN alone must not floor a live
+    # `api` turn. The fixture runs first and clears all three proof signals, so
+    # the one set below is the only one in play — otherwise AURA_TESTING from
+    # the tooling sets is_test_run, the structured floor is selected, and the
+    # test fails on a variable it never meant to be testing.
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
 
     thought = await CognitiveEngine().think(
