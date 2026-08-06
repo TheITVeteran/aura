@@ -308,7 +308,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
@@ -351,8 +351,8 @@
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 1,
-    "evidence_ledger_sha256": "0e39581359445d196504e85dc0885020826d5de4cf85db97ab9b5747d735bfab",
+    "evidence_ledger_entries": 2,
+    "evidence_ledger_sha256": "c5e6f33dfb0f6247d1b7e6b4da674f7e59c57c359140c7c025b1fa2c7721299f",
     "mandatory_not_closed": 282,
     "registry_content_sha256": "2f0227a157fd62dcef0e02aad3fd944ba8b1b1318aaaa840cb7f43c98b4d3d99",
     "registry_revision": 27,

@@ -1,6 +1,17 @@
 {
-  "content_sha256": "0e39581359445d196504e85dc0885020826d5de4cf85db97ab9b5747d735bfab",
+  "content_sha256": "c5e6f33dfb0f6247d1b7e6b4da674f7e59c57c359140c7c025b1fa2c7721299f",
   "entries": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "9a86bfa22f084f84f1e06802a56948b91794eb51",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/9a86bfa22f084f84f1e06802a56948b91794eb51.json",
+      "requirement_id": "LANE-001",
+      "sha256": "767b1bc0629a3d947c2e8653ed8387aa28f7e80a47fb7090fdf2fca5377b85f5"
+    },
     {
       "acceptance_ids": [
         "A1"
