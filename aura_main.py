@@ -569,22 +569,38 @@ if sys.platform == "darwin":
 if getattr(sys, 'frozen', False):
     os.environ.pop("MPLBACKEND", None)
 
-# 2. Bootstrap Configuration & Logging
+# 2. Bootstrap configuration. Persistent logging is initialized only by
+# main(); importing this module for lifecycle helpers must not open files or
+# start a QueueListener thread.
 try:
     from core.config import config
-    from core.observability.logging_config import setup_logging
-    # Centralized logging setup - always include log_dir for persistence
-    setup_logging(log_dir=config.paths.log_dir)
-    logger = logging.getLogger("Aura.Main")
 except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-    # Minimal fallback logging if core is broken
-    import traceback
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    logger = logging.getLogger("Aura.Main")
     record_degradation(_AURA_MAIN_DEGRADATION_KEY, exc)
-    logger.error("❌ BOOTSTRAP FAILURE: Could not load core configuration.")
-    logger.error(traceback.format_exc())
-    config = None # Ensure NameError is avoided
+    config = None  # Ensure NameError is avoided.
+
+
+def _ensure_bootstrap_logging() -> None:
+    """Own persistent log resources only from an actual launcher invocation."""
+
+    global logger
+    try:
+        if config is None:
+            raise RuntimeError("Aura configuration is unavailable")
+        from core.observability.logging_config import setup_logging
+
+        setup_logging(log_dir=config.paths.log_dir)
+        logger = logging.getLogger("Aura.Main")
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        import traceback
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
+        logger = logging.getLogger("Aura.Main")
+        record_degradation(_AURA_MAIN_DEGRADATION_KEY, exc)
+        logger.error("BOOTSTRAP FAILURE: Could not initialize Aura logging.")
+        logger.error(traceback.format_exc())
 
 # Category 11: Reliability Hardening
 _supervisor_tree: Any | None = None
@@ -3863,6 +3879,7 @@ def stop_aura():
 # ---------------------------------------------------------------------------
 
 def main():
+    _ensure_bootstrap_logging()
     operator_commands = {
         "doctor", "conformance", "backup", "restore", "migrate",
         "verify-state", "verify-memory", "rebuild-index", "chaos", "plugin",

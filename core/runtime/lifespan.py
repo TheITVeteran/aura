@@ -1,96 +1,178 @@
-"""core/runtime/lifespan.py — v1.0 ATOMIC LIFECYCLE MANAGER
-Ensures every service starts and stops in correct order with zero resource leaks.
-No more dangling tasks, queues, or VRAM holds.
+"""Compatibility lifecycle facade over Aura's canonical runtime owners.
+
+Historically this module maintained a second hard-coded service start/stop
+list.  That path could lazily resolve services while the process was already
+quiescing and it was invisible to the process-wide shutdown coordinator.
+Keep the public API for older callers, but make it a strict adapter: startup
+hooks are explicit, shutdown hooks belong to the canonical phase graph, and
+every stop request uses the monotonic process latch.
 """
 
-import inspect
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
 import asyncio
+import inspect
 import logging
-from typing import List, Callable, Optional
-from core.container import ServiceContainer, ServiceLifetime
+import threading
+from collections.abc import Callable
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.executors import run_blocking_io
+from core.runtime.shutdown_coordinator import (
+    ShutdownReport,
+    get_shutdown_coordinator,
+    is_shutdown_requested,
+    request_shutdown,
+)
 
 logger = logging.getLogger("Aura.Lifespan")
 
+
 class LifespanManager:
-    def __init__(self):
-        self.startup_tasks: List[Callable] = []
-        self.shutdown_tasks: List[Callable] = []
+    """Legacy-compatible facade with one canonical shutdown owner."""
+
+    def __init__(self) -> None:
+        self.startup_tasks: list[Callable[[], Any]] = []
+        self.shutdown_tasks: list[Callable[[], Any]] = []
         self._running = False
+        self._startup_lock = asyncio.Lock()
+        self._state_lock = threading.RLock()
+        self._last_shutdown_report: ShutdownReport | None = None
 
-    async def startup(self):
-        logger.info("🌟 Aura Lifespan Startup Sequence Initiated")
-        self._running = True
+    @property
+    def running(self) -> bool:
+        with self._state_lock:
+            return self._running
 
-        # Critical order: Reliability first → everything else
-        services = [
-            "reliability_engine",
-            "local_voice_cortex",
-            "terminal_monitor",
-            "system_monitor",
-            "planner",
-            "insight_journal",
-            "sovereign_swarm"
-        ]
+    async def _invoke_startup_hook(self, hook: Callable[[], Any]) -> None:
+        if inspect.iscoroutinefunction(hook):
+            result = hook()
+        else:
+            result = await run_blocking_io(
+                hook,
+                timeout_s=15.0,
+                label=f"lifespan-startup:{getattr(hook, '__qualname__', 'hook')}",
+            )
+        if inspect.isawaitable(result):
+            await asyncio.wait_for(result, timeout=15.0)
 
-        for name in services:
+    async def startup(self) -> None:
+        """Run explicitly registered startup hooks without resolving services."""
+
+        if is_shutdown_requested():
+            raise RuntimeError("runtime_shutdown")
+        async with self._startup_lock:
+            if self.running:
+                return
+            if is_shutdown_requested():
+                raise RuntimeError("runtime_shutdown")
+            logger.info("Aura lifespan startup sequence initiated")
             try:
-                svc = ServiceContainer.get(name)
-                if svc and hasattr(svc, "start") and inspect.iscoroutinefunction(svc.start):
-                    await svc.start()
-                    logger.info("✅ %s started", name)
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('lifespan', e)
-                logger.critical("❌ %s failed to start: %s", name, e)
-                await self.emergency_shutdown()
+                for hook in tuple(self.startup_tasks):
+                    if is_shutdown_requested():
+                        raise RuntimeError("runtime_shutdown")
+                    await self._invoke_startup_hook(hook)
+            except asyncio.CancelledError as exc:
+                record_degradation(
+                    "lifespan",
+                    exc,
+                    severity="degraded",
+                    action="latched canonical shutdown after startup cancellation",
+                )
+                await self.emergency_shutdown(reason="lifespan_startup_cancelled")
                 raise
+            except Exception as exc:  # noqa: BLE001 - startup ownership boundary
+                record_degradation(
+                    "lifespan",
+                    exc,
+                    severity="degraded",
+                    action="latched canonical shutdown after startup hook failure",
+                )
+                await self.emergency_shutdown(reason="lifespan_startup_failed")
+                raise
+            with self._state_lock:
+                self._running = True
 
-    async def shutdown(self):
-        if not self._running:
-            return
-        logger.info("🛑 Aura Lifespan Shutdown Sequence Initiated")
+    async def shutdown(self, *, reason: str = "lifespan_shutdown") -> ShutdownReport:
+        """Latch quiescence and replay the one canonical teardown execution."""
 
-        # Reverse order shutdown with timeout
-        for name in reversed([
-            "sovereign_swarm", "planner", "insight_journal",
-            "system_monitor", "terminal_monitor", "local_voice_cortex",
-            "reliability_engine"
-        ]):
-            try:
-                svc = ServiceContainer.get(name)
-                if svc and hasattr(svc, "stop") and inspect.iscoroutinefunction(svc.stop):
-                    await asyncio.wait_for(svc.stop(), timeout=8.0)
-                    logger.info("✅ %s stopped cleanly", name)
-                elif svc and hasattr(svc, "stop"):
-                    # Fallback for non-async stop if any
-                    svc.stop()
-                    logger.info("✅ %s stopped (sync)", name)
-            except asyncio.TimeoutError:
-                logger.error("⏰ %s shutdown timeout — force cancelling", name)
-            except (ImportError, AttributeError, RuntimeError) as e:
-                record_degradation('lifespan', e)
-                logger.error("⚠️ %s shutdown error: %s", name, e)
+        request_shutdown(reason)
+        report = await get_shutdown_coordinator().shutdown()
+        with self._state_lock:
+            self._running = False
+            self._last_shutdown_report = report.clone()
+        logger.info(
+            "Aura canonical shutdown complete (clean=%s repeated=%d)",
+            report.clean,
+            report.repeated_call_count,
+        )
+        return report
 
-        self._running = False
-        logger.info("✅ Aura shutdown complete — all resources released.")
+    async def on_stop_async(self) -> None:
+        """ServiceContainer hook; canonical shutdown remains the sole owner."""
 
-    def register_startup(self, coro: Callable):
-        self.startup_tasks.append(coro)
+        await self.shutdown(reason="lifespan_container_stop")
 
-    def register_shutdown(self, coro: Callable):
-        self.shutdown_tasks.append(coro)
+    def register_startup(self, callback: Callable[[], Any]) -> None:
+        if not callable(callback):
+            raise TypeError("startup callback must be callable")
+        with self._state_lock:
+            if self._running:
+                raise RuntimeError("cannot register startup hooks after startup")
+            self.startup_tasks.append(callback)
 
-    async def emergency_shutdown(self):
-        logger.critical("🚨 EMERGENCY SHUTDOWN TRIGGERED")
-        await self.shutdown()
+    def register_shutdown(
+        self,
+        callback: Callable[[], Any],
+        *,
+        phase: str = "actors",
+        name: str | None = None,
+        timeout: float = 15.0,
+    ) -> None:
+        if not callable(callback):
+            raise TypeError("shutdown callback must be callable")
+        get_shutdown_coordinator().register(
+            callback,
+            phase=phase,
+            name=name or getattr(callback, "__qualname__", "lifespan_hook"),
+            timeout=timeout,
+        )
+        with self._state_lock:
+            self.shutdown_tasks.append(callback)
 
-# Singleton
-_lifespan: Optional[LifespanManager] = None
+    async def emergency_shutdown(
+        self,
+        *,
+        reason: str = "lifespan_emergency_shutdown",
+    ) -> ShutdownReport:
+        logger.critical("Emergency shutdown requested through lifespan facade")
+        return await self.shutdown(reason=reason)
+
+    def get_status(self) -> dict[str, Any]:
+        with self._state_lock:
+            report = (
+                self._last_shutdown_report.clone().as_dict()
+                if self._last_shutdown_report is not None
+                else None
+            )
+            return {
+                "running": self._running,
+                "shutdown_requested": is_shutdown_requested(),
+                "startup_hook_count": len(self.startup_tasks),
+                "shutdown_hook_count": len(self.shutdown_tasks),
+                "last_shutdown_report": report,
+            }
+
+
+_lifespan: LifespanManager | None = None
+_lifespan_lock = threading.Lock()
+
+
 def get_lifespan_manager() -> LifespanManager:
     global _lifespan
     if _lifespan is None:
-        _lifespan = LifespanManager()
+        with _lifespan_lock:
+            if _lifespan is None:
+                _lifespan = LifespanManager()
     return _lifespan
-
-# Registration
-ServiceContainer.register("lifespan_manager", get_lifespan_manager, ServiceLifetime.SINGLETON)
