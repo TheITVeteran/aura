@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from reqproof_testkit import make_registry_dict, make_requirement
@@ -26,7 +28,7 @@ from tools.reqproof.schema import Registry
 from tools.reqproof.validate import validate_registry
 
 
-def _hashed_specs(specs: list[dict]) -> dict:
+def _hashed_specs(specs: list[dict[str, Any]]) -> dict[str, Any]:
     body = {"schema_version": 1, "specs": specs}
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return {
@@ -35,7 +37,7 @@ def _hashed_specs(specs: list[dict]) -> dict:
     }
 
 
-def _spec(**overrides) -> dict:
+def _spec(**overrides: Any) -> dict[str, Any]:
     base = {
         "id": "bounded-proof",
         "command": ["{python}", "-m", "pytest", "-q", "tests/test_one.py"],
@@ -68,7 +70,9 @@ class FakeGateway:
         self.remote = remote or head
         self.status = status
 
-    def run(self, argv, **kwargs):
+    def run(
+        self, argv: Sequence[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
         command = tuple(argv)
         if command[-2:] == ("rev-parse", "HEAD"):
             stdout = self.head + "\n"
@@ -87,15 +91,19 @@ class CaptureGateway(FakeGateway):
         *,
         command_returncode: int = 0,
         stdout: str | None = None,
+        stderr: str | None = None,
         timeout: bool = False,
     ):
         super().__init__()
         self.command_returncode = command_returncode
         self.stdout = stdout
+        self.stderr = stderr
         self.timeout = timeout
-        self.command_kwargs = None
+        self.command_kwargs: dict[str, Any] | None = None
 
-    def run(self, argv, **kwargs):
+    def run(
+        self, argv: Sequence[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
         if tuple(argv[:2]) == ("git", "rev-parse") or "status" in argv:
             return super().run(argv, **kwargs)
         self.command_kwargs = kwargs
@@ -109,7 +117,11 @@ class CaptureGateway(FakeGateway):
                 if self.stdout is not None
                 else "2 passed in 0.01s\n" if self.command_returncode == 0 else ""
             ),
-            stderr="proof failed\n" if self.command_returncode else "",
+            stderr=(
+                self.stderr
+                if self.stderr is not None
+                else "proof failed\n" if self.command_returncode else ""
+            ),
         )
 
 
@@ -220,16 +232,19 @@ def test_capture_writes_hash_bound_receipt_and_ledger_cell(tmp_path: Path) -> No
     ]
     assert ledger.entries[0].evidence.ref == receipt_path.relative_to(tmp_path).as_posix()
     assert ledger.entries[0].acceptance_ids == ("A1",)
+    assert gateway.command_kwargs is not None
     assert gateway.command_kwargs["offline_tooling"] is True
     assert gateway.command_kwargs["accelerator_capability"] == "none"
     assert gateway.command_kwargs["stdin_devnull"] is True
 
 
-def test_failed_command_leaves_no_receipt_or_ledger_entry(tmp_path: Path) -> None:
+def test_failed_command_reports_both_streams_and_leaves_no_evidence(
+    tmp_path: Path,
+) -> None:
     spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
     before = ledger_path.read_bytes()
 
-    with pytest.raises(ProofCaptureError, match="failed with exit 1"):
+    with pytest.raises(ProofCaptureError, match="failed with exit 1") as raised:
         capture_proof(
             root=tmp_path,
             spec_registry_path=spec_path,
@@ -238,10 +253,50 @@ def test_failed_command_leaves_no_receipt_or_ledger_entry(tmp_path: Path) -> Non
             artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
             proof_id="bounded-proof",
             record=True,
-            gateway=CaptureGateway(command_returncode=1),
+            gateway=CaptureGateway(
+                command_returncode=1,
+                stdout="assertion details from pytest\n",
+                stderr="runner diagnostics\n",
+            ),
         )
 
+    assert "stdout tail:\nassertion details from pytest" in str(raised.value)
+    assert "stderr tail:\nrunner diagnostics" in str(raised.value)
     assert ledger_path.read_bytes() == before
+    assert not (tmp_path / "artifacts").exists()
+
+
+def test_failed_command_diagnostics_are_bounded_and_redact_common_secrets(
+    tmp_path: Path,
+) -> None:
+    spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
+
+    with pytest.raises(ProofCaptureError) as raised:
+        capture_proof(
+            root=tmp_path,
+            spec_registry_path=spec_path,
+            registry_path=registry_path,
+            ledger_path=ledger_path,
+            artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
+            proof_id="bounded-proof",
+            record=True,
+            gateway=CaptureGateway(
+                command_returncode=1,
+                stdout="x" * 6000 + "\napi_key=do-not-print\nLATEST_STDOUT\n",
+                stderr=(
+                    "y" * 6000
+                    + "\nAuthorization: Bearer do-not-print-either\nLATEST_STDERR\n"
+                ),
+            ),
+        )
+
+    message = str(raised.value)
+    assert len(message.encode("utf-8")) <= 4300
+    assert "LATEST_STDOUT" in message
+    assert "LATEST_STDERR" in message
+    assert "do-not-print" not in message
+    assert "api_key=<redacted>" in message
+    assert "Authorization: Bearer <redacted>" in message
     assert not (tmp_path / "artifacts").exists()
 
 
@@ -278,7 +333,7 @@ def test_new_file_matching_source_glob_revokes_captured_evidence(tmp_path: Path)
     assert "added=['plugins/second.py']" in defects[0].detail
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("gateway", "message"),
     [
         (CaptureGateway(timeout=True), "exceeded 30s"),

@@ -48,7 +48,17 @@ DEFAULT_LEDGER_PATH = ROOT / "config" / "requirement_evidence_ledger.json"
 DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "reqproof" / "evidence"
 _BLOCKED_ENV_PREFIXES = ("AURA_", "PYTEST_", "COVERAGE_")
 _OUTPUT_LIMIT_MAX = 8 * 1024 * 1024
+_FAILURE_DIAGNOSTIC_BYTES = 4096
 _FORBIDDEN_COMMANDS = frozenset({"bash", "dash", "fish", "osascript", "sh", "zsh"})
+_BEARER_SECRET_RE = re.compile(r"(?i)(\bauthorization\s*:\s*bearer\s+)[^\s,;]+")
+_NAMED_SECRET_RE = re.compile(
+    r"(?i)(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)"
+    r"\b\s*[=:]\s*)[^\s,;]+"
+)
+_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
+    re.DOTALL,
+)
 
 
 class ProofCaptureError(RuntimeError):
@@ -372,6 +382,42 @@ def _proof_environment(log_dir: Path) -> tuple[dict[str, str], dict[str, Any]]:
     return env, policy
 
 
+def _redact_diagnostic(text: str) -> str:
+    redacted = _BEARER_SECRET_RE.sub(r"\1<redacted>", text)
+    redacted = _NAMED_SECRET_RE.sub(r"\1<redacted>", redacted)
+    return _PRIVATE_KEY_RE.sub("<redacted-private-key>", redacted)
+
+
+def _utf8_tail(text: str, budget: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= budget:
+        return text
+    marker = b"...[truncated]...\n"
+    tail_budget = max(0, budget - len(marker))
+    return (marker + encoded[-tail_budget:]).decode("utf-8", errors="replace")
+
+
+def _failure_diagnostic(stdout: str, stderr: str) -> str:
+    streams = [
+        (label, _redact_diagnostic(value))
+        for label, value in (("stdout", stdout), ("stderr", stderr))
+        if value
+    ]
+    if not streams:
+        return "<no captured output>"
+    label_budget = sum(len(label.encode("utf-8")) + len(" tail:\n") for label, _ in streams)
+    separator_budget = max(0, len(streams) - 1)
+    content_budget = max(
+        256,
+        _FAILURE_DIAGNOSTIC_BYTES - label_budget - separator_budget,
+    )
+    per_stream_budget = max(128, content_budget // len(streams))
+    return "\n".join(
+        f"{label} tail:\n{_utf8_tail(value, per_stream_budget)}"
+        for label, value in streams
+    )
+
+
 def _atomic_write_new(path: Path, payload: str) -> None:
     _require(not path.exists(), f"refusing to overwrite proof receipt {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,12 +509,13 @@ def capture_proof(
     stderr = str(result.stderr or "")
     output_size = len(stdout.encode("utf-8")) + len(stderr.encode("utf-8"))
     _require(
-        output_size <= spec.max_output_bytes,
-        f"proof output {output_size} bytes exceeds {spec.max_output_bytes}-byte contract",
+        result.returncode == 0,
+        f"proof {proof_id} failed with exit {result.returncode}:\n"
+        f"{_failure_diagnostic(stdout, stderr)}",
     )
     _require(
-        result.returncode == 0,
-        f"proof {proof_id} failed with exit {result.returncode}: {stderr[-2000:]}",
+        output_size <= spec.max_output_bytes,
+        f"proof output {output_size} bytes exceeds {spec.max_output_bytes}-byte contract",
     )
     _require(
         _git(gateway, root, "rev-parse", "HEAD") == source_commit,
