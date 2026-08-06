@@ -38,4 +38,4 @@ The certified percentage starts at zero until reviewed historical artifacts are 
 
 The forecast is conservative while evidence and weight calibration are incomplete. It will narrow from observed verified points per pushed checkpoint without changing the denominator or dropping open scope.
 
-Report SHA-256: `8c3721f5be857ba970ac609257d6e62526fa8b5389337d855bb4f24c06cb36f1`
+Report SHA-256: `fda837d147ef74dc105e7c6a846196d58fbf529b2bd6e85fbc11ffd5c1fe83ef`
