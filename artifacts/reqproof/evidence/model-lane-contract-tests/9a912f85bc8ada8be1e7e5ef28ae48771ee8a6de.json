@@ -1,0 +1,182 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_model_lane_control.py",
+    "tests/test_subprocess_gateway_contract.py",
+    "tests/test_embedding_model_lane.py",
+    "tests/test_image_gen_model_lane.py",
+    "tests/test_local_code_model_lane.py",
+    "tests/test_mlx_lane_heartbeat.py",
+    "tests/test_model_lane_contract_audit.py",
+    "tests/test_model_load_ownership_audit.py",
+    "tests/test_voice_model_lane.py"
+  ],
+  "cwd": ".",
+  "duration_seconds": 35.473168,
+  "environment_policy": {
+    "inherited_names_sha256": "d12f8af3945b55076bdd76a2cdf3cc66e07d258036c0de5dacd66c8eb8d92f27",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "A5",
+        "A6",
+        "A7",
+        "A8",
+        "A9"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "ADDENDUM-21"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-LANE-001"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-LANE-002"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-LANE-003"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-LANE-004"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "LANE-001"
+    }
+  ],
+  "finished_at": "2026-08-06T18:38:26.919733+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+  "output_bytes": 261,
+  "proof_id": "model-lane-contract-tests",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+  "source_manifest": [
+    {
+      "path": "core/runtime/model_lane_control.py",
+      "sha256": "8f140d3266ebbdaaef97e6dfab89e0a43c25d95e130cd9a2d86f3e40f8b56eb7",
+      "size_bytes": 172842
+    },
+    {
+      "path": "core/runtime/subprocess_gateway.py",
+      "sha256": "80757150c3daf746c8b883ce0f09d8d7ad44ed67097cd5787cf5b28daa70e0b7",
+      "size_bytes": 63192
+    },
+    {
+      "path": "tests/test_embedding_model_lane.py",
+      "sha256": "ab8b9bebf5bb9c13d47aa37c91a0ddd47a5494e0aa6080332d3f59cfd334c08c",
+      "size_bytes": 6236
+    },
+    {
+      "path": "tests/test_image_gen_model_lane.py",
+      "sha256": "0d708f084c2a0c02114d092ec04ade5704d0751efbd14eb9e76b7b1c52ae4d41",
+      "size_bytes": 5108
+    },
+    {
+      "path": "tests/test_local_code_model_lane.py",
+      "sha256": "200360d6811bdf297fee3bfdab99130aef43d3627bf1228ada4a96dcec761c98",
+      "size_bytes": 6271
+    },
+    {
+      "path": "tests/test_mlx_lane_heartbeat.py",
+      "sha256": "2b3c87114c298d49fee1208056165b3c519944a36a2ad7bae66a99091cb88891",
+      "size_bytes": 10096
+    },
+    {
+      "path": "tests/test_model_lane_contract_audit.py",
+      "sha256": "134c6403485c0390431445f157f83a8543c1d8113c0281c8390f051c60e1d6b2",
+      "size_bytes": 1941
+    },
+    {
+      "path": "tests/test_model_lane_control.py",
+      "sha256": "1eff5bfc6eb82fc703d96031363112d45c77cc1f711ea4876e6952c2592b3d34",
+      "size_bytes": 67299
+    },
+    {
+      "path": "tests/test_model_load_ownership_audit.py",
+      "sha256": "0210d99ba1db09ddef5ae952e88883c80e8f1cbf6ad3bfce097f58bda10ac33a",
+      "size_bytes": 7855
+    },
+    {
+      "path": "tests/test_subprocess_gateway_contract.py",
+      "sha256": "049b34592f010750d722dd4b2ae8183707bd502d6d6f194af6ac75070e11b815",
+      "size_bytes": 49029
+    },
+    {
+      "path": "tests/test_voice_model_lane.py",
+      "sha256": "285274b7c8155b5502380c63cba1c02616fd74f0f9d94813125ffccad1dad9cf",
+      "size_bytes": 10596
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "core/runtime/model_lane_control.py",
+      "core/runtime/subprocess_gateway.py",
+      "tests/test_embedding_model_lane.py",
+      "tests/test_image_gen_model_lane.py",
+      "tests/test_local_code_model_lane.py",
+      "tests/test_mlx_lane_heartbeat.py",
+      "tests/test_model_lane_contract_audit.py",
+      "tests/test_model_lane_control.py",
+      "tests/test_model_load_ownership_audit.py",
+      "tests/test_subprocess_gateway_contract.py",
+      "tests/test_voice_model_lane.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "238aa115c80f8174c0800929f1a8992650ab956a1dd78d3f75b1befb8952a52a",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T18:37:51.446232+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "........................................................................ [ 48%]\n........................................................................ [ 96%]\n.....                                                                    [100%]\n149 passed in 34.48s\n",
+  "stdout_sha256": "52fd6f600ec31139ceb39c9bc46f1edbf867a545764ff61daf7463e345377c3f",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}
