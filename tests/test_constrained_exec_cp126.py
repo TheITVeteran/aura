@@ -65,10 +65,10 @@ def test_the_receipt_names_the_quotas():
 # --- environment scrubbing ------------------------------------------------
 
 
-def test_only_safe_keys_are_inherited(monkeypatch):
+def test_only_safe_keys_are_inherited(monkeypatch, tmp_path):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "leak")
     monkeypatch.setenv("HTTP_PROXY", "http://evil")
-    monkeypatch.setenv("HOME", "/Users/someone")
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     env = scrubbed_env()
 

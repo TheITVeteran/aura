@@ -1,10 +1,15 @@
 import hashlib
 import json
 import time
+from pathlib import Path
 
 import pytest
 
 from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+#: Derived rather than naming one developer's home directory. The path
+#: is fixture data, so what matters is its shape, not whose machine it is.
+_DOCS = Path.home() / "Documents"
 
 
 def _fake_computer_use_result(params):
@@ -3080,13 +3085,13 @@ def test_research_semantic_completion_proves_every_requested_predicate() -> None
             "action": "create_folder",
             "ok": True,
             "effect_verified": True,
-            "result": {"path": "/Users/bryan/Documents/Orca Demo"},
+            "result": {"path": str(_DOCS / "Orca Demo")},
         },
         {
             "action": "render_text_pdf",
             "ok": True,
             "effect_verified": True,
-            "result": {"path": "/Users/bryan/Documents/Orca Demo/orca_synthesis.pdf"},
+            "result": {"path": str(_DOCS / "Orca Demo" / "orca_synthesis.pdf")},
         },
     ]
     context = {
@@ -3151,7 +3156,7 @@ def test_research_semantic_completion_rejects_mechanical_only_success() -> None:
                 "action": "render_text_pdf",
                 "ok": True,
                 "effect_verified": True,
-                "result": {"path": "/Users/bryan/Documents/orca.pdf"},
+                "result": {"path": str(_DOCS / "orca.pdf")},
             }
         ],
         all_effects_verified=True,

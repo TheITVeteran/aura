@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import tokenize
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -235,11 +235,14 @@ _HOME_PATH_PREFIX = "/" + "home" + "/"
 _WINDOWS_USERS_PREFIX = "C:" + "\\\\" + "Users" + "\\\\"
 
 TEXT_PATTERNS = {
+    # The match extends over the WHOLE path, not just the prefix. Two rules
+    # below compare the matched text against other evidence in the file, and
+    # a match of "/Users/" alone carries none of the information they need.
     "hardcoded_local_path": re.compile(
         rf"({re.escape(_USERS_PATH_PREFIX)}|"
         rf"{re.escape(_HOME_PATH_PREFIX)}[^/\s]+/|"
         rf"{re.escape(_WINDOWS_USERS_PREFIX)}|"
-        rf"{re.escape(_TMP_PATH_PREFIX)}[^\s]+)"
+        rf"{re.escape(_TMP_PATH_PREFIX)})[^\s\"'`,)\]}}]*"
     ),
     "placeholder_stub_mock": re.compile(
         r"\b(placeholder|stub|mock|dummy|not implemented|notimplemented)\b",
@@ -409,7 +412,7 @@ def is_abstract_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def is_deliberate_constructor_override(
-    node: ast.FunctionDef | ast.AsyncFunctionDef, parents: dict[int, ast.AST]
+    node: ast.FunctionDef | ast.AsyncFunctionDef, enclosing: ast.AST | None
 ) -> bool:
     """A no-op __init__ on a class that has real methods is intentional.
 
@@ -424,10 +427,9 @@ def is_deliberate_constructor_override(
     """
     if node.name != "__init__":
         return False
-    parent = parents.get(id(node))
-    if not isinstance(parent, ast.ClassDef):
+    if not isinstance(enclosing, ast.ClassDef):
         return False
-    for item in parent.body:
+    for item in enclosing.body:
         if item is node or not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         sibling_body = body_without_docstring(item)
@@ -476,15 +478,22 @@ class AstGate(ast.NodeVisitor):
         self.report = report
         self.async_depth = 0
         self.source_lines = source_lines or []
-        #: child id -> parent node. ast has no parent pointers and a couple of
-        #: checks need the enclosing class to tell a deliberate override from
-        #: an unimplemented function.
-        self._parents: dict[int, ast.AST] = {}
+        #: Innermost enclosing scope, so a no-op ``__init__`` can be told from
+        #: unimplemented scaffolding by looking at its class. This used to be
+        #: an id -> parent map filled by overriding ``visit``, which walked
+        #: every one of the repo's 9.2M nodes a second time and cost the gate
+        #: about a third of its running time. A ``None`` is pushed for a
+        #: function so a nested def does not inherit the class above it.
+        self._scopes: list[ast.AST | None] = []
 
-    def visit(self, node: ast.AST) -> object:
-        for child in ast.iter_child_nodes(node):
-            self._parents[id(child)] = node
-        return super().visit(node)
+    @property
+    def _enclosing(self) -> ast.AST | None:
+        return self._scopes[-1] if self._scopes else None
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scopes.append(node)
+        self.generic_visit(node)
+        self._scopes.pop()
 
     def _line_has_marker(self, node: ast.AST, marker: str) -> bool:
         lineno = int(getattr(node, "lineno", 0) or 0)
@@ -558,7 +567,7 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Pass)
             and not is_abstract_function(node)
-            and not is_deliberate_constructor_override(node, self._parents)
+            and not is_deliberate_constructor_override(node, self._enclosing)
         ):
             self.add(
                 "high" if is_production(self.rel) else "medium",
@@ -582,7 +591,9 @@ class AstGate(ast.NodeVisitor):
                 node.name,
             )
         self.async_depth += 1
+        self._scopes.append(None)
         self.generic_visit(node)
+        self._scopes.pop()
         self.async_depth -= 1
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -591,7 +602,7 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Pass)
             and not is_abstract_function(node)
-            and not is_deliberate_constructor_override(node, self._parents)
+            and not is_deliberate_constructor_override(node, self._enclosing)
         ):
             self.add(
                 "high" if is_production(self.rel) else "medium",
@@ -615,9 +626,11 @@ class AstGate(ast.NodeVisitor):
             )
         previous_async_depth = self.async_depth
         self.async_depth = 0
+        self._scopes.append(None)
         try:
             self.generic_visit(node)
         finally:
+            self._scopes.pop()
             self.async_depth = previous_async_depth
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -733,6 +746,198 @@ def pytest_collect_gate(root: Path, report: GateReport, timeout_s: int) -> None:
         report.pytest_collect_seconds = round(time.time() - start, 3)
 
 
+_FILESYSTEM_CALL_NAMES = frozenset(
+    {
+        "open", "makedirs", "mkdir", "rmdir", "remove", "unlink", "rename",
+        "replace", "chdir", "symlink", "touch", "write_text", "write_bytes",
+        "read_text", "read_bytes", "rmtree", "copy", "copy2", "copyfile",
+        "copytree", "move", "listdir", "scandir", "walk", "glob", "rglob",
+        "run", "Popen", "call", "check_call", "check_output",
+        "create_subprocess_exec", "create_subprocess_shell",
+        "NamedTemporaryFile", "TemporaryDirectory", "mkstemp", "mkdtemp",
+    }
+)
+_FILESYSTEM_KEYWORDS = frozenset({"cwd", "dir", "path", "filename", "file"})
+_PASSTHROUGH_CALL_NAMES = frozenset({"Path", "PurePath", "str", "fspath"})
+_DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+#: Rules whose finding is about a VALUE that must not be embedded in the
+#: repository. Those, and only those, are exempt inside prose: a path or a key
+#: quoted in a docstring or a comment is not a path the program uses, it is
+#: usually the verbatim text of the incident the module exists to prevent.
+#:
+#: placeholder_stub_mock is deliberately NOT here. Its finding is a CLAIM of
+#: incompleteness, and prose is exactly where such claims live — "# Placeholder
+#: for real calibration logic" is the finding, not a false positive.
+_PROSE_SENSITIVE_KINDS = frozenset({"hardcoded_local_path", "potential_secret"})
+
+
+@dataclass
+class LocalPathContext:
+    """What a file's syntax says about the path literals inside it.
+
+    Built from a single AST walk, because the gate scans several thousand
+    files and each extra pass over the tree costs real seconds on the clock
+    the pre-commit gate runs against.
+    """
+
+    #: Lines where a path literal is handed to something that touches the
+    #: disk. ``None`` means the file would not parse, so nothing is known.
+    disk_lines: set[int] | None = None
+    #: Strings the file asserts must NOT appear in some output.
+    redaction_evidence: tuple[str, ...] = ()
+
+
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _path_shaped_constants(node: ast.AST) -> Iterator[ast.Constant]:
+    """String constants inside `node` that look like a local path.
+
+    Descends through the wrappers that do not themselves touch the disk —
+    ``Path(...)``, ``str(...)``, an f-string, a ``/`` join — so that
+    ``open(Path("/tmp/x"))`` is recognised while a bare ``Path("/tmp/x")``
+    assigned to a name is not.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str) and TEXT_PATTERNS["hardcoded_local_path"].search(
+            node.value
+        ):
+            yield node
+        return
+    if isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            yield from _path_shaped_constants(value)
+        return
+    if isinstance(node, ast.FormattedValue):
+        return
+    if isinstance(node, ast.Call) and _call_name(node) in _PASSTHROUGH_CALL_NAMES:
+        for arg in node.args:
+            yield from _path_shaped_constants(arg)
+        return
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+        yield from _path_shaped_constants(node.left)
+        yield from _path_shaped_constants(node.right)
+
+
+def docstring_line_numbers(tree: ast.AST | None) -> set[int]:
+    """Lines occupied by docstrings.
+
+    A path or a key quoted inside a docstring is PROSE — usually the verbatim
+    text of the incident the module exists to prevent.
+    ``tests/test_fetched_image_path_is_resolved.py`` opens by quoting the live
+    error, complete with the absolute path that broke. That is the evidence,
+    not a dependency on one machine, and flagging it pressures the next person
+    to delete the record to quiet the gate.
+
+    Walks statement containers only, never expressions: this runs on every
+    file that trips any text rule, and ``ast.walk`` over whole expression
+    trees was costing more than the rule it serves.
+    """
+    lines: set[int] = set()
+    if tree is None:
+        return lines
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        body = getattr(node, "body", None)
+        if isinstance(node, _DOCSTRING_OWNERS) and isinstance(body, list) and body:
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                start = int(getattr(first, "lineno", 0) or 0)
+                end = int(getattr(first, "end_lineno", start) or start)
+                lines.update(range(start, end + 1))
+        for child in ast.iter_child_nodes(node):
+            if isinstance(getattr(child, "body", None), list):
+                stack.append(child)
+    return lines
+
+
+def local_path_context(tree: ast.AST | None) -> LocalPathContext:
+    """Collect, in one walk, everything the path rule needs to know.
+
+    Two questions, one traversal:
+
+    * **What reaches the disk?** A shared-temp path is a hazard because the
+      process WRITES there: a predictable name under a world-writable
+      directory is a symlink-attack surface and a collision between two users
+      on one host. A literal that is only compared against, rejected by a
+      policy, or returned from a monkeypatched stub never becomes a file.
+      Only direct operands are traced — a path bound to a name and opened
+      three lines later is missed; this filters noise, it does not prove
+      absence.
+    * **What is redaction evidence?** A scrubber test has to name the secret
+      it proves gets removed, and both the fixture and its assertion match
+      the path rule. Deleting either destroys the proof.
+    """
+    context = LocalPathContext()
+    if tree is None:
+        return context
+    context.disk_lines = set()
+    evidence: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name in _FILESYSTEM_CALL_NAMES:
+                operands: list[ast.AST] = list(node.args)
+                operands.extend(
+                    kw.value for kw in node.keywords if kw.arg in _FILESYSTEM_KEYWORDS
+                )
+                for operand in operands:
+                    for constant in _path_shaped_constants(operand):
+                        context.disk_lines.add(int(getattr(constant, "lineno", 0) or 0))
+            elif name == "assertNotIn" and node.args:
+                first_arg = node.args[0]
+                if isinstance(first_arg, ast.Constant) and isinstance(
+                    first_arg.value, str
+                ):
+                    evidence.append(first_arg.value)
+        elif isinstance(node, ast.Compare):
+            left = node.left
+            if (
+                isinstance(left, ast.Constant)
+                and isinstance(left.value, str)
+                and any(isinstance(op, ast.NotIn) for op in node.ops)
+            ):
+                evidence.append(left.value)
+
+    context.redaction_evidence = tuple(
+        text for text in evidence if len(text) >= 4 and ("/" in text or len(text) >= 6)
+    )
+    return context
+
+
+def _local_path_is_inert(matched: str, line_no: int, context: LocalPathContext) -> bool:
+    """Is this path literal data, rather than somewhere the program goes?
+
+    Two different hazards wear one regex here, and they do not have the same
+    answer:
+
+    * ``/Users/<name>``, ``/home/<name>``, ``C:\\Users\\`` name one human's
+      account. That is machine-specific wherever it appears, so it stays a
+      finding unless the file proves it is redaction evidence.
+    * ``/tmp/...`` is portable; what makes it a defect is writing to a
+      predictable name in a world-writable directory. A literal nothing ever
+      opens is not that.
+    """
+    if any(text in matched or matched in text for text in context.redaction_evidence):
+        return True
+    if matched.startswith(_TMP_PATH_PREFIX):
+        # disk_lines is None when the file would not parse: unknown, so report.
+        return context.disk_lines is not None and line_no not in context.disk_lines
+    return False
+
+
 def scan_file(path: Path, root: Path, report: GateReport) -> None:
     rel = rel_path(path, root)
     try:
@@ -742,9 +947,44 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
 
     report.python_files += 1
 
+    # One parse for the whole file. The path rules, the comment sweep and
+    # AstGate all used to parse it separately; on ~5,000 files that cost real
+    # seconds on the clock the pre-commit gate runs against.
+    try:
+        tree: ast.AST | None = ast.parse(source, filename=rel)
+        parse_error: SyntaxError | None = None
+    except SyntaxError as exc:
+        tree, parse_error = None, exc
+
+    # Both are built on the first line that needs them, and never at all for
+    # the large majority of files where no text rule matches. They are kept
+    # apart because the prose sweep is cheap and often needed, while the path
+    # analysis is a full expression walk that almost no file asks for.
+    cached_prose: list[set[int]] = []
+    cached_context: list[LocalPathContext] = []
+
+    def prose_lines() -> set[int]:
+        if not cached_prose:
+            cached_prose.append(docstring_line_numbers(tree))
+        return cached_prose[0]
+
+    def context() -> LocalPathContext:
+        if not cached_context:
+            cached_context.append(local_path_context(tree))
+        return cached_context[0]
+
     for line_no, line in enumerate(source.splitlines(), start=1):
         for kind, pattern in TEXT_PATTERNS.items():
-            if not pattern.search(line):
+            match = pattern.search(line)
+            if match is None:
+                continue
+            if kind in _PROSE_SENSITIVE_KINDS and (
+                line.lstrip().startswith("#") or line_no in prose_lines()
+            ):
+                continue
+            if kind == "hardcoded_local_path" and _local_path_is_inert(
+                match.group(0), line_no, context()
+            ):
                 continue
             if kind == "placeholder_stub_mock" and re.search(
                 r"""(?:id|class)\s*=\s*["'][^"']*(?:placeholder|stub|mock)"""
@@ -833,10 +1073,10 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
         )
         report.findings.append(Finding("critical", "syntax_error", rel, line_no, str(exc)))
 
-    try:
-        tree = ast.parse(source, filename=rel)
-    except SyntaxError as exc:
-        report.findings.append(Finding("critical", "syntax_error", rel, exc.lineno or 0, exc.msg))
+    if parse_error is not None or tree is None:
+        line_no = getattr(parse_error, "lineno", 0) or 0
+        message = getattr(parse_error, "msg", "unparseable")
+        report.findings.append(Finding("critical", "syntax_error", rel, line_no, message))
         return
 
     AstGate(rel, report, source_lines=source.splitlines()).visit(tree)

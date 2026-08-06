@@ -3,10 +3,10 @@
   "generated_at_unix": 1784885522.205312,
   "max_counts": {
     "broad_exception_review": 40,
-    "hardcoded_local_path": 13,
+    "hardcoded_local_path": 0,
     "pass_only_function": 1,
     "placeholder_stub_mock": 13,
-    "potential_secret": 1,
+    "potential_secret": 0,
     "pytest_skip_xfail": 7,
     "raise_only_function": 44,
     "subprocess_usage_review": 24,

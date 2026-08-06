@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +36,10 @@ def _write_holder_meta(lock_name: str, pid: int, **over):
         "lock_name": lock_name,
         "pid": pid,
         "cmdline": ["aura_main.py", "--headless", "--port", "8001"],
-        "cwd": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass",
+        # Derived, not this developer's home: the value is incidental to what
+        # the fixture proves, and a hardcoded /Users/<name> makes the test
+        # a statement about one machine.
+        "cwd": str(Path(__file__).resolve().parents[1] / ".claude" / "worktrees" / "probe"),
         "create_time": 1785019140.7,
     }
     meta.update(over)
@@ -65,7 +69,8 @@ def test_background_worktree_instance_is_named_as_such():
 def test_a_desktop_holder_is_not_labelled_background():
     _write_holder_meta(
         "orchestrator", os.getpid(),
-        cmdline=["aura_main.py", "--desktop"], cwd="/Users/bryan/.aura/live-source",
+        cmdline=["aura_main.py", "--desktop"],
+        cwd=str(Path(__file__).resolve().parents[1]),
     )
     singleton._publish_boot_blocked("orchestrator", os.getpid())
     notice = singleton.read_boot_blocked()

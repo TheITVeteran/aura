@@ -13,6 +13,7 @@ bootstrap and no marker could ever appear in it.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import psutil  # noqa: F401 - fixture patches mw.psutil
@@ -27,8 +28,11 @@ _REAL_WORKER_CMD = (
     "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, "
     "pipe_handle=9)"
 )
+#: Same shape, with the checkout resolved here rather than pinned to the
+#: machine the incident happened on — the marker under test is the script
+#: name, and a fixture that only holds on one laptop proves nothing elsewhere.
 _SENTINEL_CMD = (
-    "/opt/homebrew/.../Python /Users/bryan/.aura/live-source/tools/"
+    f"/opt/homebrew/.../Python {Path(__file__).resolve().parents[1]}/tools/"
     "memory_sentinel.py --pid 31812 --lethal-mb 43008.0 --interval 0.5"
 )
 
