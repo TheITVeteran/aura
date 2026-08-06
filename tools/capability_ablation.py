@@ -58,7 +58,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.evaluation.ablation_harness import AblationTask, grade  # noqa: E402
-from core.evaluation.lesion_inference import LesionClaim, summarise  # noqa: E402
+from core.evaluation.lesion_inference import (  # noqa: E402
+    InferenceClass,
+    LesionClaim,
+    summarise,
+)
 from core.evaluation.matched_budget import (  # noqa: E402
     Attempt,
     AttemptLedger,
@@ -231,6 +235,60 @@ def deterministic_responder(condition: str, task: AblationTask, _turn: int, hist
     return task.answer_key if task.answer_key.lower() in visible.lower() else "I do not know."
 
 
+def run_reachability_control(responder, tasks: list[AblationTask]) -> dict[str, Any]:
+    """Is the answer reachable from the raw transcript AT ALL?
+
+    Not a fourth arm — a control on the battery, and deliberately NOT under
+    budget parity: it hands the long_context reader the entire history with no
+    window. It exists to answer one question the main comparison cannot ask of
+    itself: are these tasks solvable without Aura's retrieval?
+
+    That question decides which inference the result licenses, and it was
+    previously answered by a hardcoded `tasks_solvable_without_component=True`
+    with a comment claiming it was "true by construction". At
+    history=40/window=12 that assertion was false — the long_context arm scored
+    0.000 on all 40 tasks because the fact sat outside its window, so the
+    lesion removed the ONLY path to the answer and the result was mechanistic
+    while the scorecard printed "capability: 1".
+
+    Two outcomes, both informative:
+      rate > 0  — a plain reader with enough context solves these. The tasks
+                  are not rigged, and beating a BUDGETED reader is a capability
+                  result about what the architecture buys under a real budget.
+      rate == 0 — nothing can solve them from the transcript. The battery is
+                  broken or the grader is wrong; no lesion run over it means
+                  anything, and the caller is told so rather than shown a
+                  confident delta.
+    """
+    solved = 0
+    attempted = 0
+    for task in tasks:
+        history = visible_history(LONG_CONTEXT, task)  # unwindowed: the whole transcript
+        attempted += 1
+        try:
+            output = str(responder(LONG_CONTEXT, task, len(task.turns) - 1, history))
+        except Exception:  # noqa: BLE001 — a crashed control is a failed control, and counted
+            continue
+        if grade(output, task) > 0:
+            solved += 1
+    rate = round(solved / attempted, 4) if attempted else 0.0
+    return {
+        "purpose": (
+            "measures whether the battery is solvable from the raw transcript without "
+            "Aura's retrieval; decides whether the main result licenses a capability claim"
+        ),
+        "arm": LONG_CONTEXT,
+        "window_turns": 0,
+        "under_budget_parity": False,
+        "budget_note": "intentionally unbudgeted — a control on the tasks, not an arm of the experiment",
+        "attempts": attempted,
+        "solved": solved,
+        "success_rate": rate,
+        "tasks_solvable_without_component": rate > 0,
+        "battery_is_gradeable": rate > 0,
+    }
+
+
 def run(
     responder,
     tasks: list[AblationTask],
@@ -377,6 +435,10 @@ def main(argv: list[str] | None = None) -> int:
             condition_budgets=condition_budgets,
             window_turns=args.context_window_turns,
         )
+        # Run the control on the SAME responder before releasing it, so the
+        # control and the arms are answered by one loaded model. A control run
+        # against a differently-configured reader controls nothing.
+        reachability = run_reachability_control(responder, tasks)
     finally:
         close_responder = getattr(responder, "close", None)
         if callable(close_responder):
@@ -401,8 +463,14 @@ def main(argv: list[str] | None = None) -> int:
         delta=round(full_rate - long_rate, 4),
         metric_has_other_producers=True,
         metric_is_task_success=True,
-        # True by construction: long_context solves these with no Aura at all.
-        tasks_solvable_without_component=True,
+        # MEASURED, not asserted. This was `True` with a comment reading "true
+        # by construction: long_context solves these with no Aura at all" —
+        # which held only while the history fit the window. Once the history
+        # ran past it the assertion silently inverted and the scorecard kept
+        # printing "capability". The control now answers it every run.
+        tasks_solvable_without_component=bool(
+            reachability["tasks_solvable_without_component"]
+        ),
     )
 
     # "deterministic", not "stub": it is a real responder with fully
@@ -453,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
             "full_vs_stateless": round(full_rate - summaries[STATELESS]["success_rate"], 4),
         },
         "separation": separation,
+        "reachability_control": reachability,
         "claims": [claim.to_dict()],
         "inference": summarise([claim]),
         "attempts": ledger.to_dict(),
@@ -482,6 +551,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     if separation.get("reason"):
         print(f"  {separation['reason']}")
+
+    inference_class = claim.inference_class
+    print(
+        f"\nreachability control (unbudgeted raw transcript): "
+        f"{reachability['success_rate']:.3f} over {reachability['attempts']}"
+    )
+    if not reachability["battery_is_gradeable"]:
+        print(
+            "  BATTERY NOT GRADEABLE: no arm can reach the answer from the raw\n"
+            "  transcript even unbudgeted, so the delta above measures the\n"
+            "  battery, not the architecture. The claim is withheld."
+        )
+    print(f"  inference class: {inference_class} (measured, not declared)")
+    if inference_class is not InferenceClass.CAPABILITY:
+        print(
+            "  This run does NOT license a capability claim: the lesion removed the\n"
+            "  only path to the answer, so the result establishes mechanism/wiring."
+        )
     if not is_evidence:
         print("\n" + report["caveat"])
     print(f"\nscorecard: {out_path}")
