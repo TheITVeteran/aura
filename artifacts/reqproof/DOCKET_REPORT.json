@@ -32,7 +32,8 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 3,
+        "certified_complete": 2,
+        "claimed_complete_needs_evidence": 1,
         "ready_for_implementation": 12
       },
       "family": "ADDENDUM"
@@ -70,8 +71,7 @@
     },
     {
       "counts": {
-        "in_progress": 1,
-        "ready_for_implementation": 1
+        "in_progress": 2
       },
       "family": "AUTONOMY"
     },
@@ -95,8 +95,7 @@
     },
     {
       "counts": {
-        "in_progress": 1,
-        "ready_for_implementation": 1
+        "in_progress": 2
       },
       "family": "CHAT"
     },
@@ -114,7 +113,7 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "CLOSEOUT"
     },
@@ -150,7 +149,8 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 10,
+        "certified_complete": 9,
+        "claimed_complete_needs_evidence": 1,
         "ready_for_implementation": 37
       },
       "family": "CTX2"
@@ -237,7 +237,7 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "GUI"
     },
@@ -292,7 +292,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "claimed_complete_needs_dependencies": 1
       },
       "family": "LIFECYCLE"
     },
@@ -359,7 +359,7 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "OBSERVABILITY"
     },
@@ -445,15 +445,14 @@
     {
       "counts": {
         "claimed_complete_needs_evidence": 1,
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "RESOURCE"
     },
     {
       "counts": {
         "blocked_by_dependency": 4,
-        "in_progress": 19,
-        "ready_for_implementation": 1
+        "in_progress": 20
       },
       "family": "RLC"
     },
@@ -491,13 +490,13 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "SEMANTIC"
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "certified_complete": 1
       },
       "family": "SHUTDOWN"
     },
@@ -515,7 +514,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "certified_complete": 1
       },
       "family": "SKILLS"
     },
@@ -551,7 +550,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "claimed_complete_needs_dependencies": 1
       },
       "family": "STORAGE"
     },
@@ -617,7 +616,7 @@
     },
     {
       "counts": {
-        "ready_for_implementation": 1
+        "in_progress": 1
       },
       "family": "VOICE"
     },
@@ -635,15 +634,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "c9dffea73bcd7bf9c91ff1478251514159ad0972a1114ae08905b48e2aea91f8",
-    "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
+    "evidence_ledger_sha256": "b38d81fa4aea8207bc22fbf818a91de9fec2d98c9f319ef7db1fb250d8602bd9",
+    "registry_sha256": "953ba56ab5ad0809453358a1718f8a6ca2c208b265ee631e9441a20ba30832a3"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "5960a759add36f7c824eb3e9457da5cf1480b423f8760a721f0569fbffcc05dd",
+  "report_sha256": "1e62d473f366b7978b3518eeb8e7bbbd1e51602dc37e222f6dbc629fba7b7a5d",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -751,7 +750,6 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "FAULT-001",
-        "LIFECYCLE-001",
         "CONVERSATION-001"
       ],
       "disposition": "in_progress",
@@ -770,6 +768,27 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, shutdown admission, and structured termina\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "AUTONOMY",
+      "id": "AUTONOMY-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Make self-directed goal formation, reflection, learning, communication, and bounded action an always-available property of the live organism rather than a user\u2026"
     },
     {
       "acceptance_units": 1,
@@ -826,6 +845,27 @@
     {
       "acceptance_units": 1,
       "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "CHAT",
+      "id": "CHAT-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Make every public text-chat path deliver one complete, grounded, semantically responsive Aura answer with stable identity, conversational continuity, natural l\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
       "direct_dependency_blockers": [
         "CONVERSATION-001",
         "ACTION-SPINE-001",
@@ -869,6 +909,27 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Keep work directly on `main`; preserve unrelated work; update evidence/status at each bounded milestone; commit and push meaningful checkpoints; finish with a\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "CLOSEOUT",
+      "id": "CLOSEOUT-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Complete the exhaustive codebase closeout as a finite, machine-counted program: reconcile every tracked requirement, inspect every executable and persistent su\u2026"
     },
     {
       "acceptance_units": 1,
@@ -1313,6 +1374,26 @@
     {
       "acceptance_units": 1,
       "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
+      "family": "GUI",
+      "id": "GUI-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Certify the installed desktop application as the real product surface: current signed build and runtime provenance, truthful readiness, complete data wiring, s\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
       "direct_dependency_blockers": [
         "RUNTIME-001",
         "FOREGROUND-LATENCY-001",
@@ -1634,6 +1715,28 @@
     },
     {
       "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 4,
+      "evidence_cells_verified": 0,
+      "family": "OBSERVABILITY",
+      "id": "OBSERVABILITY-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "security:A1",
+        "release:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Provide one bounded operational evidence plane joining structured logs, metrics, traces, health, Neural events, tool and action receipts, user-visible status,\u2026"
+    },
+    {
+      "acceptance_units": 1,
       "closure_blockers": [
         "MATRIX-12",
         "MATRIX-15",
@@ -1760,6 +1863,27 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Preserve the bounded exact simulator and governed typed skill while adding a real quantum-compute backend abstraction, simulator/hardware capability negotiatio\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RESOURCE",
+      "id": "RESOURCE-OWNERSHIP-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Give every model, accelerator, memory reservation, process, task, thread, socket, file lock, timer, browser or desktop session, and long-running campaign exact\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2049,6 +2173,26 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Rebuild and launch the installed Aura.app from the exact pushed commit, prove the resident checkpoint is the intended 32B artifact, run every mechanism and ful\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
+      "family": "RLC",
+      "id": "RLC-MECH-006",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Productionize the sixth Recursive Latent Cortex mechanism, episode-scoped generated temporary synapses: attach only to declared projections under exclusive own\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2437,6 +2581,26 @@
     },
     {
       "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
+      "family": "SEMANTIC",
+      "id": "SEMANTIC-REVIEW-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Complete hash-bound semantic review of every tracked source and governed configuration span before claiming whole-codebase closure."
+    },
+    {
+      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-33"
       ],
@@ -2672,6 +2836,28 @@
     {
       "acceptance_units": 1,
       "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 4,
+      "evidence_cells_verified": 0,
+      "family": "VOICE",
+      "id": "VOICE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1",
+        "security:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Deliver production-grade live speech input and output with truthful device and permission state, bounded wake and endpoint detection, interruption and cancella\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
       "direct_dependency_blockers": [
         "ARCH-001",
         "SUBSTRATE-001",
@@ -2698,34 +2884,22 @@
     {
       "acceptance_units": 9,
       "closure_blockers": [
-        "CTX2-TEST-001",
-        "CTX2-TEST-002",
-        "CTX2-TEST-003"
+        "CTX2-TEST-002"
       ],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 24,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 10,
       "family": "ADDENDUM",
       "id": "ADDENDUM-22",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
         "live:A2",
-        "implementation:A3",
-        "test:A3",
         "implementation:A4",
         "test:A4",
         "live:A4",
-        "implementation:A5",
-        "test:A5",
         "live:A5",
-        "implementation:A6",
-        "test:A6",
         "implementation:A7",
         "test:A7",
         "implementation:A8",
@@ -2742,273 +2916,23 @@
       "title": "Hermetic resource and pressure testing"
     },
     {
-      "acceptance_units": 5,
-      "closure_blockers": [
-        "CTX2-GATE-001",
-        "CTX2-GATE-002",
-        "CTX2-SKILL-001",
-        "CTX2-SKILL-002"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 14,
-      "evidence_cells_verified": 1,
-      "family": "ADDENDUM",
-      "id": "ADDENDUM-23",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
-        "implementation:A3",
-        "test:A3",
-        "implementation:A4",
-        "test:A4",
-        "live:A4",
-        "portability:A4",
-        "implementation:A5",
-        "test:A5",
-        "live:A5"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Fail-closed cognitive gates and complete skill discovery"
-    },
-    {
-      "acceptance_units": 4,
-      "closure_blockers": [
-        "CTX2-SHUTDOWN-001",
-        "CTX2-SHUTDOWN-002",
-        "CTX2-SHUTDOWN-003"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 8,
-      "evidence_cells_verified": 0,
-      "family": "ADDENDUM",
-      "id": "ADDENDUM-32",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
-        "implementation:A3",
-        "test:A3",
-        "implementation:A4",
-        "test:A4"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Signal-safe quiescence and no-resurrection shutdown"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-GATE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-GATE-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-SHUTDOWN-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-32",
-      "state_claim": "complete",
-      "title": "- `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-SHUTDOWN-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-32",
-      "state_claim": "complete",
-      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel, actor, model worker, and lock owner in one reverse-dependency shutdown graph."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-SHUTDOWN-003",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-32",
-      "state_claim": "complete",
-      "title": "- `CTX2-SHUTDOWN-003`: make stop progress observable and replayable."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-SKILL-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 5,
-      "evidence_cells_verified": 1,
-      "family": "CTX2",
-      "id": "CTX2-SKILL-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "live:A1",
-        "portability:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-TEST-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
-    },
-    {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-TEST-002",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-22",
       "state_claim": "complete",
       "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-TEST-003",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
     },
     {
       "acceptance_units": 1,
@@ -3019,14 +2943,12 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 4,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "LANE",
       "id": "LANE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1",
         "release:A1"
       ],
@@ -3037,31 +2959,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [
-        "FAULT-001",
-        "ARCH-001",
-        "REPO-001",
-        "VALIDATE-001"
-      ],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "LIFECYCLE",
-      "id": "LIFECYCLE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-22",
         "PASSF-03"
@@ -3069,14 +2966,12 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "RESOURCE",
       "id": "RESOURCE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
@@ -3086,47 +2981,25 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-32"
+      "closure_blockers": [],
+      "direct_dependency_blockers": [
+        "FAULT-001",
+        "ARCH-001",
+        "REPO-001",
+        "VALIDATE-001"
       ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
+      "disposition": "claimed_complete_needs_dependencies",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "SHUTDOWN",
-      "id": "SHUTDOWN-001",
-      "kind": "parent",
+      "evidence_cells_verified": 2,
+      "family": "LIFECYCLE",
+      "id": "LIFECYCLE-001",
+      "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": null,
       "state_claim": "complete",
-      "title": "Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-23"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "SKILLS",
-      "id": "SKILLS-001",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
+      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
     },
     {
       "acceptance_units": 1,
@@ -3135,16 +3008,14 @@
         "EFFECT-001",
         "FAULT-001"
       ],
-      "disposition": "claimed_complete_needs_evidence",
+      "disposition": "claimed_complete_needs_dependencies",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "STORAGE",
       "id": "STORAGE-GATEWAY-001",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": null,
       "state_claim": "complete",
@@ -3232,32 +3103,14 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 22,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 18,
       "family": "ADDENDUM",
       "id": "ADDENDUM-21",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
-        "implementation:A3",
-        "test:A3",
         "live:A3",
-        "implementation:A4",
-        "test:A4",
-        "implementation:A5",
-        "test:A5",
         "live:A5",
-        "implementation:A6",
-        "test:A6",
-        "implementation:A7",
-        "test:A7",
-        "implementation:A8",
-        "test:A8",
-        "implementation:A9",
-        "test:A9",
         "live:A9",
         "soak:A9"
       ],
@@ -3681,26 +3534,6 @@
       "title": "Complete first and independent second every-line semantic passes, rerun the entire criticism/question corpus code-first, add every surviving gap, and make only\u2026"
     },
     {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "AUTONOMY",
-      "id": "AUTONOMY-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
-    },
-    {
       "acceptance_units": 14,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -3933,26 +3766,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CHAT",
-      "id": "CHAT-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [
         "MATRIX-02",
         "MATRIX-17"
@@ -3973,26 +3786,6 @@
       "parent": null,
       "state_claim": "open",
       "title": "Keep consciousness, self-awareness, sentience, ALife, organism, entity, personhood-candidate, inner-life, AGI, ASI, and comparison claims operational, falsifia\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CLOSEOUT",
-      "id": "CLOSEOUT-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
     },
     {
       "acceptance_units": 1,
@@ -4351,15 +4144,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-001",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4371,15 +4161,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-002",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4391,14 +4178,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
@@ -4412,15 +4197,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-004",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -5302,26 +5084,6 @@
       "parent": null,
       "state_claim": "open",
       "title": "Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "GUI",
-      "id": "GUI-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
     },
     {
       "acceptance_units": 1,
@@ -6247,26 +6009,6 @@
       "title": "Establish scientifically bounded high-fidelity neural simulation and connectome mapping/tuning with explicit model assumptions, measurable prediction/control o\u2026"
     },
     {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "OBSERVABILITY",
-      "id": "OBSERVABILITY-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
-    },
-    {
       "acceptance_units": 5,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -6628,7 +6370,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "PRIVACY",
       "id": "PRIVACY-001",
@@ -6636,12 +6378,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": null,
       "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
+      "title": "Enforce privacy across prompts, memory, self-model state, telemetry, logs, screen and accessibility capture, browser and device data, credentials, contact chan\u2026"
     },
     {
       "acceptance_units": 1,
@@ -6671,7 +6414,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 6,
       "evidence_cells_verified": 0,
       "family": "RELEASE",
       "id": "RELEASE-001",
@@ -6679,12 +6422,16 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1",
+        "portability:A1",
+        "release:A1",
+        "soak:A1"
       ],
       "owner": "unassigned",
       "parent": null,
       "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
+      "title": "Produce a reproducible, signed, notarized, provenance-bound Aura release whose installed application, models, adapters, configuration, schemas, migrations, doc\u2026"
     },
     {
       "acceptance_units": 1,
@@ -6709,46 +6456,6 @@
       "parent": null,
       "state_claim": "open",
       "title": "Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-pla\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "RESOURCE",
-      "id": "RESOURCE-OWNERSHIP-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "RLC",
-      "id": "RLC-MECH-006",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
     },
     {
       "acceptance_units": 1,
@@ -6897,26 +6604,6 @@
       "parent": null,
       "state_claim": "open",
       "title": "Make Reality Reach universally causal across Aura: publish one-provenance observations/effects into world model, embodiment, twins, science, memory, belief rev\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "SEMANTIC",
-      "id": "SEMANTIC-REVIEW-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
     },
     {
       "acceptance_units": 1,
@@ -7231,26 +6918,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "VOICE",
-      "id": "VOICE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "open",
-      "title": "Obligation referenced in tracker prose without a defining row (minted by migration)"
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-29"
       ],
@@ -7331,7 +6998,6 @@
       "direct_dependency_blockers": [
         "IMMUNE-CODING-001",
         "ADAPT-001",
-        "STORAGE-GATEWAY-001",
         "FAULT-001",
         "ACTION-SPINE-001"
       ],
@@ -7468,7 +7134,6 @@
       "direct_dependency_blockers": [
         "MEMORY-001",
         "STATE-001",
-        "STORAGE-GATEWAY-001",
         "SECURITY-001",
         "OPERATIONS-001"
       ],
@@ -8230,6 +7895,227 @@
       "title": "Run bounded multi-hour and then 24-72 hour longevity/pressure/idle/recovery soaks only after `VALIDATE-001` and every shorter requirement are green; triage any\u2026"
     },
     {
+      "acceptance_units": 5,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 14,
+      "evidence_cells_verified": 14,
+      "family": "ADDENDUM",
+      "id": "ADDENDUM-23",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Fail-closed cognitive gates and complete skill discovery"
+    },
+    {
+      "acceptance_units": 4,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 8,
+      "evidence_cells_verified": 8,
+      "family": "ADDENDUM",
+      "id": "ADDENDUM-32",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Signal-safe quiescence and no-resurrection shutdown"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-GATE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-GATE-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-SHUTDOWN-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-32",
+      "state_claim": "complete",
+      "title": "- `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-SHUTDOWN-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-32",
+      "state_claim": "complete",
+      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel, actor, model worker, and lock owner in one reverse-dependency shutdown graph."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-SHUTDOWN-003",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-32",
+      "state_claim": "complete",
+      "title": "- `CTX2-SHUTDOWN-003`: make stop progress observable and replayable."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-SKILL-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 5,
+      "evidence_cells_verified": 5,
+      "family": "CTX2",
+      "id": "CTX2-SKILL-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "complete",
+      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-003",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "complete",
+      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "SHUTDOWN",
+      "id": "SHUTDOWN-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "SKILLS",
+      "id": "SKILLS-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
+    },
+    {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -8255,32 +8141,19 @@
   "summary": {
     "claimed_complete_needs_evidence_ids": [
       "ADDENDUM-22",
-      "ADDENDUM-23",
-      "ADDENDUM-32",
-      "CTX2-GATE-001",
-      "CTX2-GATE-002",
-      "CTX2-SHUTDOWN-001",
-      "CTX2-SHUTDOWN-002",
-      "CTX2-SHUTDOWN-003",
-      "CTX2-SKILL-001",
-      "CTX2-SKILL-002",
-      "CTX2-TEST-001",
       "CTX2-TEST-002",
-      "CTX2-TEST-003",
       "LANE-001",
-      "LIFECYCLE-001",
-      "RESOURCE-001",
-      "SHUTDOWN-001",
-      "SKILLS-001",
-      "STORAGE-GATEWAY-001"
+      "RESOURCE-001"
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "claimed_complete_needs_evidence": 19,
+      "certified_complete": 13,
+      "claimed_complete_needs_dependencies": 2,
+      "claimed_complete_needs_evidence": 4,
       "deferred": 1,
-      "in_progress": 83,
+      "in_progress": 92,
       "nonmandatory": 1,
-      "ready_for_implementation": 176
+      "ready_for_implementation": 167
     },
     "in_progress_ids": [
       "ACTION-SPINE-001",
@@ -8288,10 +8161,13 @@
       "AGENCY-001",
       "ARCH-001",
       "ASYNC-TASK-001",
+      "AUTONOMY-001",
       "AUTONOMY-AUTHORITY-001",
       "BOOT-HEALTH-001",
+      "CHAT-001",
       "CHAT-DELIVERY-001",
       "CHECKPOINT-001",
+      "CLOSEOUT-001",
       "CONVERSATION-001",
       "CTX3-DECIDE-001",
       "CTX3-PERCEPT-001",
@@ -8311,6 +8187,7 @@
       "FAULT-001",
       "FOREGROUND-LATENCY-001",
       "FRONTIER-COGNITION-001",
+      "GUI-001",
       "HEALTH-SURFACE-001",
       "IIT-SYSTEM-001",
       "INFERENCE-RELIABILITY-001",
@@ -8323,11 +8200,13 @@
       "MEMORY-LEAK-001",
       "MULTIMODAL-001",
       "OBJECTIVE-LIFECYCLE-001",
+      "OBSERVABILITY-001",
       "OBSERVE-001",
       "OS-AUTOMATION-001",
       "PERF-001",
       "PROGRESS-CONTROL-001",
       "QUANTUM-001",
+      "RESOURCE-OWNERSHIP-001",
       "RLC-ANTI-INTERFERENCE-001",
       "RLC-BRANCHES-001",
       "RLC-COMPUTE-001",
@@ -8340,6 +8219,7 @@
       "RLC-LATENT-OPT-001",
       "RLC-LIFECYCLE-001",
       "RLC-LIVE32B-001",
+      "RLC-MECH-006",
       "RLC-MECHANICS-001",
       "RLC-RECURRENCE-001",
       "RLC-RUNTIME-001",
@@ -8356,6 +8236,7 @@
       "SCOPE-001",
       "SECURITY-001",
       "SELF-STATE-CHAT-001",
+      "SEMANTIC-REVIEW-001",
       "SIMWORLD-001",
       "SKILL-EXECUTION-001",
       "SOCIAL-001",
@@ -8365,6 +8246,7 @@
       "TOPOLOGY-CONSISTENCY-001",
       "UI-001",
       "UI-LONG-CONTENT-001",
+      "VOICE-001",
       "WORKSPACE-INGRESS-001"
     ],
     "mandatory_requirements": 312,
@@ -8383,7 +8265,6 @@
       "ADDENDUM-33",
       "AMPLIFY-001",
       "AUDIT-001",
-      "AUTONOMY-001",
       "CARRYOVER-01",
       "CARRYOVER-02",
       "CARRYOVER-03",
@@ -8393,9 +8274,7 @@
       "CARRYOVER-07",
       "CARRYOVER-08",
       "CARRYOVER-09",
-      "CHAT-001",
       "CLAIMS-001",
-      "CLOSEOUT-001",
       "CODING-001",
       "COLLEAGUE-001",
       "CTX2-AGI-001",
@@ -8460,7 +8339,6 @@
       "FND-09-HARDENING",
       "FND-10-EXPANSION",
       "FRONTIER-001",
-      "GUI-001",
       "IDENTITY-001",
       "INTELLIGENCE-001",
       "LONGHORIZON-001",
@@ -8499,7 +8377,6 @@
       "MQ-18",
       "MULTIAGENT-001",
       "NEUROSIM-001",
-      "OBSERVABILITY-001",
       "PASSF-01",
       "PASSF-02",
       "PASSF-03",
@@ -8518,8 +8395,6 @@
       "PROOF-001",
       "RELEASE-001",
       "REPO-001",
-      "RESOURCE-OWNERSHIP-001",
-      "RLC-MECH-006",
       "RR-03",
       "RR-04",
       "RR-05",
@@ -8527,7 +8402,6 @@
       "RR-08",
       "RR-10",
       "RR-11",
-      "SEMANTIC-REVIEW-001",
       "SM-01-CANONICAL-SELF",
       "SM-02-EMBODIMENT-LOCATION",
       "SM-03-SELF-OTHER-WORLD",
@@ -8543,7 +8417,6 @@
       "STATE-001",
       "VALIDATE-001",
       "VALUES-001",
-      "VOICE-001",
       "WELFARE-001"
     ],
     "requirements_total": 313

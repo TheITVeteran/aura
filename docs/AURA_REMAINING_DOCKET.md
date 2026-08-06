@@ -5,11 +5,11 @@
 ## Current Truth
 
 - Requirements: **313** total / **312** mandatory
-- In progress: **83**
-- Claimed complete but missing evidence: **19**
-- Ready for implementation: **176**
+- In progress: **92**
+- Claimed complete but missing evidence: **4**
+- Ready for implementation: **167**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **0**
+- Machine-certified complete: **13**
 
 ## Active Requirements
 
@@ -19,11 +19,14 @@
 | `ADAPT-001` | `in_progress` | 3 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
-| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
+| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, CONVERSATION-001 |
+| `AUTONOMY-001` | `in_progress` | 3 | none |
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | AGENCY-001, EFFECT-001, VALUES-001 |
 | `BOOT-HEALTH-001` | `in_progress` | 3 | RUNTIME-001, HEALTH-SURFACE-001, FOREGROUND-LATENCY-001, CONVERSATION-001, FAULT-001 |
+| `CHAT-001` | `in_progress` | 3 | none |
 | `CHAT-DELIVERY-001` | `in_progress` | 4 | CONVERSATION-001, ACTION-SPINE-001, DATA-LIFECYCLE-001, LAUNCH-PROVENANCE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
 | `CHECKPOINT-001` | `in_progress` | 0 | none |
+| `CLOSEOUT-001` | `in_progress` | 3 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
 | `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
@@ -43,6 +46,7 @@
 | `FAULT-001` | `in_progress` | 2 | none |
 | `FOREGROUND-LATENCY-001` | `in_progress` | 4 | PERF-001, RUNTIME-001, FAULT-001, SUBSTRATE-001, IIT-SYSTEM-001 |
 | `FRONTIER-COGNITION-001` | `in_progress` | 4 | CODING-001, IMMUNE-CODING-001, TOOLS-001, SUBSTRATE-001, INTELLIGENCE-001, PROOF-001, AUTONOMY-AUTHORITY-001 |
+| `GUI-001` | `in_progress` | 2 | none |
 | `HEALTH-SURFACE-001` | `in_progress` | 4 | RUNTIME-001, FOREGROUND-LATENCY-001, OBSERVE-001, UI-001, PERF-001 |
 | `IIT-SYSTEM-001` | `in_progress` | 3 | STATE-001, SUBSTRATE-001, INTELLIGENCE-001, CLAIMS-001, PROOF-001, TEST-DEPTH-001, FOREGROUND-LATENCY-001 |
 | `INFERENCE-RELIABILITY-001` | `in_progress` | 3 | CONVERSATION-001, LANE-001, RUNTIME-001, FAULT-001, CAPABILITY-CERT-001, FRONTIER-COGNITION-001 |
@@ -55,11 +59,13 @@
 | `MEMORY-LEAK-001` | `in_progress` | 3 | RESOURCE-001, RUNTIME-001, FAULT-001, PERF-001 |
 | `MULTIMODAL-001` | `in_progress` | 3 | none |
 | `OBJECTIVE-LIFECYCLE-001` | `in_progress` | 3 | AGENCY-001, STATE-001, IDENTITY-001, CONVERSATION-001, MIND-001, ACTION-SPINE-001 |
+| `OBSERVABILITY-001` | `in_progress` | 4 | none |
 | `OBSERVE-001` | `in_progress` | 3 | none |
 | `OS-AUTOMATION-001` | `in_progress` | 3 | DESKTOP-001, EFFECT-001, FOREGROUND-LATENCY-001, TOOLS-001 |
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
 | `PROGRESS-CONTROL-001` | `in_progress` | 6 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
+| `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
 | `RLC-ANTI-INTERFERENCE-001` | `in_progress` | 3 | RLC-CONSOLIDATION-001, CAPABILITY-CERT-001, IDENTITY-001 |
 | `RLC-BRANCHES-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
 | `RLC-COMPUTE-001` | `in_progress` | 2 | RLC-LIFECYCLE-001, PERF-001, RLC-FRONTIER-001 |
@@ -72,6 +78,7 @@
 | `RLC-LATENT-OPT-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-COMPUTE-001, RLC-EXPERIMENTS-001 |
 | `RLC-LIFECYCLE-001` | `in_progress` | 2 | RUNTIME-001, FOREGROUND-LATENCY-001, RLC-MECHANICS-001 |
 | `RLC-LIVE32B-001` | `in_progress` | 3 | RLC-RUNTIME-001, GUI-001, VALIDATE-001 |
+| `RLC-MECH-006` | `in_progress` | 2 | none |
 | `RLC-MECHANICS-001` | `in_progress` | 2 | RLC-SCOPE-001, RLC-LIFECYCLE-001, RLC-COMPUTE-001 |
 | `RLC-RECURRENCE-001` | `in_progress` | 3 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
 | `RLC-RUNTIME-001` | `in_progress` | 3 | RLC-LIFECYCLE-001, RUNTIME-001, CHAT-001 |
@@ -88,6 +95,7 @@
 | `SCOPE-001` | `in_progress` | 3 | none |
 | `SECURITY-001` | `in_progress` | 3 | none |
 | `SELF-STATE-CHAT-001` | `in_progress` | 3 | CONVERSATION-001, MIND-001, STATE-001 |
+| `SEMANTIC-REVIEW-001` | `in_progress` | 2 | none |
 | `SIMWORLD-001` | `in_progress` | 3 | none |
 | `SKILL-EXECUTION-001` | `in_progress` | 3 | CAPABILITY-CERT-001, TOOLS-001, EFFECT-001, FAULT-001, TEST-DEPTH-001 |
 | `SOCIAL-001` | `in_progress` | 3 | none |
@@ -97,6 +105,7 @@
 | `TOPOLOGY-CONSISTENCY-001` | `in_progress` | 4 | ARCH-001, ASYNC-TASK-001, HEALTH-SURFACE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
 | `UI-001` | `in_progress` | 4 | LAUNCH-PROVENANCE-001 |
 | `UI-LONG-CONTENT-001` | `in_progress` | 3 | UI-001, CONVERSATION-001, CHAT-DELIVERY-001, RLC-RUNTIME-001 |
+| `VOICE-001` | `in_progress` | 4 | none |
 | `WORKSPACE-INGRESS-001` | `in_progress` | 3 | ARCH-001, SUBSTRATE-001, MULTIAGENT-001, FAULT-001 |
 
 ## Evidence Backfill
@@ -104,27 +113,12 @@
 These requirements carry a historical complete claim but are not machine-certified:
 
 - `ADDENDUM-22`
-- `ADDENDUM-23`
-- `ADDENDUM-32`
-- `CTX2-GATE-001`
-- `CTX2-GATE-002`
-- `CTX2-SHUTDOWN-001`
-- `CTX2-SHUTDOWN-002`
-- `CTX2-SHUTDOWN-003`
-- `CTX2-SKILL-001`
-- `CTX2-SKILL-002`
-- `CTX2-TEST-001`
 - `CTX2-TEST-002`
-- `CTX2-TEST-003`
 - `LANE-001`
-- `LIFECYCLE-001`
 - `RESOURCE-001`
-- `SHUTDOWN-001`
-- `SKILLS-001`
-- `STORAGE-GATEWAY-001`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `5960a759add36f7c824eb3e9457da5cf1480b423f8760a721f0569fbffcc05dd`
+Report SHA-256: `1e62d473f366b7978b3518eeb8e7bbbd1e51602dc37e222f6dbc629fba7b7a5d`

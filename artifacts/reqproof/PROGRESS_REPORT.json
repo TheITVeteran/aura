@@ -1,8 +1,8 @@
 {
   "checkpoint_inventory": {
-    "distinct_pushed_commits": 391,
-    "pushed_checkpoint_records": 409,
-    "records_in_tracker": 409,
+    "distinct_pushed_commits": 392,
+    "pushed_checkpoint_records": 410,
+    "records_in_tracker": 410,
     "records_on_shared_commits": 31,
     "unpushed_checkpoint_records": 0,
     "unpushed_record_ids": []
@@ -71,13 +71,13 @@
     "optimistic_weighted_points_per_checkpoint": 30,
     "remaining_checkpoint_records_high": 279,
     "remaining_checkpoint_records_low": 93,
-    "total_checkpoint_records_high": 688,
-    "total_checkpoint_records_low": 502
+    "total_checkpoint_records_high": 689,
+    "total_checkpoint_records_low": 503
   },
   "inputs": {
-    "evidence_ledger_sha256": "895b418d5ba47451900b1eb623dbc485b75c8388220628fc2d50981b650f3ab5",
+    "evidence_ledger_sha256": "b38d81fa4aea8207bc22fbf818a91de9fec2d98c9f319ef7db1fb250d8602bd9",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "d3bb5530969eb883ecd6d781e1831c03a7d629cac65c2ab8bd9a8f8ecffabed1",
+    "registry_sha256": "953ba56ab5ad0809453358a1718f8a6ca2c208b265ee631e9441a20ba30832a3",
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336"
   },
   "non_claims": [
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "f1522b4094331cb658a1524e4b6b890c3eb3d7ce42fcddb1c5b54ff72c74997b",
+  "report_sha256": "41f264fa1b5ee8e595ad41d778962b1fc08c1f94654491a67514acbadca99631",
   "requirements": [
     {
       "acceptance_evidence_required": [
