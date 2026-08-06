@@ -725,6 +725,34 @@ def _publish_receipt(
     return receipt
 
 
+def _publish_wall_clock_boundary_receipt(
+    out_dir: Path,
+    *,
+    authority: Mapping[str, Any],
+    state: Mapping[str, Any],
+    checkpoint_sha256: str,
+    base_before: Mapping[str, Any],
+    base_after: Mapping[str, Any],
+    required_end_step: int,
+    custody: DirectoryCustody | None = None,
+) -> dict[str, Any] | None:
+    if state["step"] == required_end_step:
+        return None
+    if state.get("terminal") is not True or state.get("halt_reason") != "wall_clock":
+        return None
+    return _publish_receipt(
+        out_dir,
+        authority=authority,
+        state=state,
+        checkpoint_sha256=checkpoint_sha256,
+        base_before=base_before,
+        base_after=base_after,
+        halt_reason="wall_clock",
+        required_end_step=int(state["step"]),
+        custody=custody,
+    )
+
+
 def _run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     authority_preview = _load_authority(
@@ -1374,6 +1402,22 @@ def _run(args: argparse.Namespace) -> int:
             )
             final_state = inspected.state
             if final_state["step"] != required_end_step:
+                boundary_receipt = _publish_wall_clock_boundary_receipt(
+                    out_dir,
+                    authority=authority,
+                    state=final_state,
+                    checkpoint_sha256=inspected.complete_sha256,
+                    base_before=base_before,
+                    base_after=full_weight_checkpoint_identity(model_dir),
+                    required_end_step=required_end_step,
+                    custody=out_custody,
+                )
+                if boundary_receipt is not None:
+                    out_custody.verify()
+                    print(json.dumps(boundary_receipt, sort_keys=True), flush=True)
+                    del model, tokenizer, optimizer
+                    mx.synchronize()
+                    return 0
                 _fail("resident_sft_trainer_required_end_step_not_reached")
             if halt_reason == "wall_clock" and not final_state["terminal"]:
                 sequence += 1

@@ -101,7 +101,7 @@ def _authority(root: Path, *, campaign: str, trainer_sha: str) -> dict[str, Any]
             "runtime_sha256": _sha("tokenizer-runtime"),
         },
         "execution_spec": {"semantic_sha256": _sha("spec")},
-        "trainer": {"objective": "same", "max_steps": 4},
+        "trainer": {"objective": "same", "max_steps": 4, "max_minutes": 1_440.0},
         "runtime": {"identity_sha256": _sha("runtime")},
         "trust_policy": {
             "path": trust_path.name,
@@ -202,6 +202,8 @@ def test_migration_preserves_exact_training_state_and_rebinds_source(monkeypatch
         "optimizer_state_reset": False,
         "sample_cursor_reset": False,
         "loss_or_validation_history_reset": False,
+        "elapsed_training_reset": False,
+        "terminal_latch_reopened": False,
     }
     assert {
         key: value for key, value in source_loaded.state.items() if key not in BINDING_ROLES
@@ -330,6 +332,115 @@ def test_migration_refuses_scientific_config_change(monkeypatch, tmp_path):
             source_authority_path=source_path,
             destination_repo_root=tmp_path,
             destination_authority_path=destination_path,
+        )
+
+
+def test_budget_extension_preserves_trainable_state_and_reopens_only_wall_clock(
+    monkeypatch,
+    tmp_path,
+):
+    source_root = tmp_path / "source-run"
+    destination_root = tmp_path / "destination-run"
+    source_root.mkdir()
+    destination_root.mkdir()
+    source_bindings = _bindings("source")
+    destination_bindings = _bindings("destination")
+    _seed_checkpoint(source_root, source_bindings)
+    terminal_state = _state(source_bindings, sequence=4, step=2)
+    terminal_state.update(
+        terminal=True,
+        halt_reason="wall_clock",
+        elapsed_training_s=86_401.0,
+    )
+    save_checkpoint(
+        source_root,
+        adapter_tensors={"adapter.weight": mx.array([[1.0, 2.0]])},
+        optimizer_tensors={"state.m": mx.array([0.25, 0.5])},
+        state=terminal_state,
+    )
+    source = _authority(source_root, campaign="source", trainer_sha=_sha("old"))
+    destination = _authority(
+        destination_root,
+        campaign="destination",
+        trainer_sha=_sha("fixed"),
+    )
+    destination["trainer"]["max_minutes"] = 2_880.0
+    source_path = tmp_path / "source.json"
+    destination_path = tmp_path / "destination.json"
+    _write_authority(source_path, source)
+    _write_authority(destination_path, destination)
+    monkeypatch.setattr(migration, "validate_authority", lambda value, **_kwargs: dict(value))
+    monkeypatch.setattr(
+        migration,
+        "authority_state_bindings",
+        lambda authority: (
+            source_bindings if authority["campaign_id"] == "source" else destination_bindings
+        ),
+    )
+
+    receipt = migration.migrate_checkpoint(
+        source_repo_root=tmp_path,
+        source_authority_path=source_path,
+        destination_repo_root=tmp_path,
+        destination_authority_path=destination_path,
+        allow_budget_extension=True,
+    )
+    verified = migration.verify_migration(
+        destination_root / "checkpoint-migration.json",
+        destination_repo_root=tmp_path,
+        destination_authority=destination,
+    )
+    source_loaded = load_checkpoint(source_root, expected_bindings=source_bindings)
+    destination_loaded = load_checkpoint(destination_root, expected_bindings=destination_bindings)
+
+    assert verified["migration_sha256"] == receipt["migration_sha256"]
+    assert receipt["budget_extension"]["additional_minutes"] == 1_440.0
+    assert receipt["preservation"]["terminal_latch_reopened"] is True
+    assert destination_loaded.state["terminal"] is False
+    assert destination_loaded.state["halt_reason"] is None
+    assert destination_loaded.state["elapsed_training_s"] == 86_401.0
+    assert destination_loaded.state["step"] == source_loaded.state["step"]
+    assert destination_loaded.state["cursor"] == source_loaded.state["cursor"]
+    assert all(
+        bool(mx.array_equal(source_loaded.adapter_tensors[key], value))
+        for key, value in destination_loaded.adapter_tensors.items()
+    )
+    assert all(
+        bool(mx.array_equal(source_loaded.optimizer_tensors[key], value))
+        for key, value in destination_loaded.optimizer_tensors.items()
+    )
+
+
+def test_budget_extension_refuses_any_optimizer_protocol_change(monkeypatch, tmp_path):
+    source_root = tmp_path / "source-run"
+    destination_root = tmp_path / "destination-run"
+    source_root.mkdir()
+    destination_root.mkdir()
+    source_bindings = _bindings("source")
+    _seed_checkpoint(source_root, source_bindings)
+    source = _authority(source_root, campaign="source", trainer_sha=_sha("old"))
+    destination = _authority(
+        destination_root,
+        campaign="destination",
+        trainer_sha=_sha("fixed"),
+    )
+    destination["trainer"].update(max_minutes=2_880.0, objective="changed")
+    source_path = tmp_path / "source.json"
+    destination_path = tmp_path / "destination.json"
+    _write_authority(source_path, source)
+    _write_authority(destination_path, destination)
+    monkeypatch.setattr(migration, "validate_authority", lambda value, **_kwargs: dict(value))
+
+    with pytest.raises(
+        migration.ResidentSFTCheckpointMigrationError,
+        match="scientific_identity_changed",
+    ):
+        migration.migrate_checkpoint(
+            source_repo_root=tmp_path,
+            source_authority_path=source_path,
+            destination_repo_root=tmp_path,
+            destination_authority_path=destination_path,
+            allow_budget_extension=True,
         )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 import time
@@ -31,12 +32,15 @@ from core.runtime.atomic_writer import (
 )
 
 MIGRATION_SCHEMA: Final = "aura.resident_recurrent_sft_checkpoint_migration.v1"
+BUDGET_EXTENSION_SCHEMA: Final = "aura.resident_recurrent_sft_budget_extension.v1"
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 COPY_CHUNK_BYTES: Final = 4 * 1024 * 1024
 ALLOWED_CHANGED_SOURCE_ROLES: Final = frozenset(
     {
         "trainer",
         "controller",
+        "preparer",
+        "model_lane_control",
         "state",
         "objective",
         "objective_policy",
@@ -104,6 +108,11 @@ APPROVED_SEMANTICS_PRESERVING_TRANSITIONS: Final = {
         "2642c39ec7b351c5662d858505430ee7dd5bd8e1e3ee198f6d3794a159737e42",
         "0bcb27c3820b0c7f8518ed81925b51586aa301fddb2c672bf6108037e9ba2389",
     ): "exact_decoder_kv_adjoint_v3",
+    (
+        "model_lane_control",
+        "a9e039cecddef5033a82c16910d6435d53a57ed379687d54cd849b1388cd14a5",
+        "140737e7d09e455ae312b0e0c4c352541eedac77f5b6484b34c9d68e1ce70ee9",
+    ): "transactional_owner_fencing_and_capacity_validation_v1",
 }
 
 
@@ -151,7 +160,10 @@ def _read_authority(path: Path) -> dict[str, Any]:
         ) from exc
     if not isinstance(value, dict) or canonical_json_bytes(value) != raw:
         _fail("resident_sft_migration_authority_noncanonical")
-    return validate_authority(value, allow_expired_resume=True)
+    validated = validate_authority(value, allow_expired_resume=True)
+    if not isinstance(validated, dict):
+        _fail("resident_sft_migration_authority_invalid")
+    return dict(validated)
 
 
 def _resolve_artifact_root(repo_root: Path, authority: Mapping[str, Any]) -> Path:
@@ -203,6 +215,37 @@ def _identity(authority: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _budget_extension(
+    source: Mapping[str, Any],
+    destination: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    source_config = dict(source["trainer"])
+    destination_config = dict(destination["trainer"])
+    source_minutes = source_config.pop("max_minutes", None)
+    destination_minutes = destination_config.pop("max_minutes", None)
+    if source_config != destination_config:
+        return None
+    if (
+        isinstance(source_minutes, bool)
+        or isinstance(destination_minutes, bool)
+        or not isinstance(source_minutes, (int, float))
+        or not isinstance(destination_minutes, (int, float))
+        or not math.isfinite(float(source_minutes))
+        or not math.isfinite(float(destination_minutes))
+        or float(destination_minutes) <= float(source_minutes)
+    ):
+        return None
+    return {
+        "schema": BUDGET_EXTENSION_SCHEMA,
+        "source_max_minutes": float(source_minutes),
+        "destination_max_minutes": float(destination_minutes),
+        "additional_minutes": float(destination_minutes) - float(source_minutes),
+        "optimization_config_sha256": _sha(canonical_json_bytes(source_config)),
+        "elapsed_training_reset": False,
+        "pre_evaluation_protocol_amendment": True,
+    }
+
+
 def _trust_policy_identity(repo_root: Path, authority: Mapping[str, Any]) -> str:
     binding = authority["trust_policy"]
     path = (repo_root.expanduser().resolve(strict=True) / binding["path"]).resolve(strict=True)
@@ -243,7 +286,7 @@ def _source_transition_attestations(
     for role in changed_roles:
         if role not in ALLOWED_CHANGED_SOURCE_ROLES:
             _fail("resident_sft_migration_source_change_not_authorized")
-        if role in {"trainer", "controller"}:
+        if role in {"trainer", "controller", "preparer"}:
             continue
         source_sha = str(source[role]["sha256"])
         destination_sha = str(destination[role]["sha256"])
@@ -296,6 +339,7 @@ def migrate_checkpoint(
     source_authority_path: Path,
     destination_repo_root: Path,
     destination_authority_path: Path,
+    allow_budget_extension: bool = False,
 ) -> dict[str, Any]:
     """Rebind one exact durable checkpoint to a repaired source closure."""
 
@@ -310,9 +354,23 @@ def migrate_checkpoint(
     if (destination_root / "latest.json").exists() or (destination_root / "checkpoints").exists():
         _fail("resident_sft_migration_destination_not_fresh")
 
-    scientific_identity = _identity(source_authority)
-    if scientific_identity != _identity(destination_authority):
-        _fail("resident_sft_migration_scientific_identity_changed")
+    source_scientific_identity = _identity(source_authority)
+    scientific_identity = _identity(destination_authority)
+    budget_extension = (
+        _budget_extension(source_authority, destination_authority)
+        if allow_budget_extension
+        else None
+    )
+    if budget_extension is None:
+        if source_scientific_identity != scientific_identity:
+            _fail("resident_sft_migration_scientific_identity_changed")
+    else:
+        comparable_source = dict(source_scientific_identity)
+        comparable_destination = dict(scientific_identity)
+        comparable_source.pop("trainer_config_sha256", None)
+        comparable_destination.pop("trainer_config_sha256", None)
+        if comparable_source != comparable_destination:
+            _fail("resident_sft_migration_scientific_identity_changed")
     source_trust_identity = _trust_policy_identity(source_repo_root, source_authority)
     destination_trust_identity = _trust_policy_identity(
         destination_repo_root, destination_authority
@@ -333,15 +391,38 @@ def migrate_checkpoint(
     source_bindings = authority_state_bindings(source_authority)
     destination_bindings = authority_state_bindings(destination_authority)
     inspected = inspect_checkpoint(source_root, expected_bindings=source_bindings)
-    if inspected.state["terminal"]:
+    if inspected.state["terminal"] and budget_extension is None:
         _fail("resident_sft_migration_terminal_checkpoint_forbidden")
+    if budget_extension is not None and (
+        inspected.state["terminal"] is not True
+        or inspected.state.get("halt_reason") != "wall_clock"
+        or float(inspected.state["elapsed_training_s"])
+        < float(budget_extension["source_max_minutes"]) * 60.0
+    ):
+        _fail("resident_sft_migration_budget_extension_source_invalid")
     preserved_state = {
         key: value for key, value in inspected.state.items() if key not in BINDING_ROLES
     }
-    rebound_state = validate_checkpoint_state({**inspected.state, **destination_bindings})
-    if {
+    rebound_state = validate_checkpoint_state(
+        {
+            **inspected.state,
+            **destination_bindings,
+            **(
+                {"terminal": False, "halt_reason": None}
+                if budget_extension is not None
+                else {}
+            ),
+        }
+    )
+    comparable_rebound = {
         key: value for key, value in rebound_state.items() if key not in BINDING_ROLES
-    } != preserved_state:
+    }
+    comparable_preserved = dict(preserved_state)
+    if budget_extension is not None:
+        for key in ("terminal", "halt_reason"):
+            comparable_rebound.pop(key, None)
+            comparable_preserved.pop(key, None)
+    if comparable_rebound != comparable_preserved:
         _fail("resident_sft_migration_state_changed")
 
     generation_name = (
@@ -392,16 +473,20 @@ def migrate_checkpoint(
             "bindings": destination_bindings,
         },
         "scientific_identity": scientific_identity,
+        "source_scientific_identity": source_scientific_identity,
+        "budget_extension": budget_extension,
         "trust_policy_identity_sha256": source_trust_identity,
         "changed_source_roles": list(changed_roles),
         "source_transition_attestations": transition_attestations,
         "migration_implementation": _binding(Path(__file__).resolve()),
-        "preserved_state_sha256": _sha(canonical_json_bytes(preserved_state)),
+        "preserved_state_sha256": _sha(canonical_json_bytes(comparable_preserved)),
         "preservation": {
             "adapter_state_reset": False,
             "optimizer_state_reset": False,
             "sample_cursor_reset": False,
             "loss_or_validation_history_reset": False,
+            "elapsed_training_reset": False,
+            "terminal_latch_reopened": budget_extension is not None,
         },
     }
     receipt = {
@@ -450,18 +535,21 @@ def verify_migration(
     preservation = receipt.get("preservation")
     changed_roles = receipt.get("changed_source_roles")
     implementation = receipt.get("migration_implementation")
+    budget_extension = receipt.get("budget_extension")
+    expected_preservation = {
+        "adapter_state_reset": False,
+        "optimizer_state_reset": False,
+        "sample_cursor_reset": False,
+        "loss_or_validation_history_reset": False,
+        "elapsed_training_reset": False,
+        "terminal_latch_reopened": budget_extension is not None,
+    }
     if (
         receipt.get("schema") != MIGRATION_SCHEMA
         or claimed != _sha(canonical_json_bytes(material))
         or not isinstance(source, Mapping)
         or not isinstance(destination, Mapping)
-        or preservation
-        != {
-            "adapter_state_reset": False,
-            "optimizer_state_reset": False,
-            "sample_cursor_reset": False,
-            "loss_or_validation_history_reset": False,
-        }
+        or preservation != expected_preservation
         or not isinstance(changed_roles, list)
         or not changed_roles
         or not isinstance(implementation, Mapping)
@@ -520,8 +608,16 @@ def verify_migration(
         validated_authority["sources"],
         observed_changed_roles,
     )
+    observed_budget_extension = _budget_extension(
+        source_authority,
+        validated_authority,
+    )
+    if budget_extension != observed_budget_extension:
+        _fail("resident_sft_migration_budget_extension_drift")
+    expected_source_identity = _identity(source_authority)
     if (
-        receipt.get("scientific_identity") != _identity(source_authority)
+        receipt.get("source_scientific_identity") != expected_source_identity
+        or (budget_extension is None and receipt.get("scientific_identity") != expected_source_identity)
         or receipt.get("trust_policy_identity_sha256")
         != _trust_policy_identity(source_repo_root, source_authority)
         or tuple(changed_roles) != observed_changed_roles
@@ -598,6 +694,17 @@ def verify_migration(
     source_preserved_state = {
         key: value for key, value in source_inspected.state.items() if key not in BINDING_ROLES
     }
+    if budget_extension is not None:
+        if (
+            source_preserved_state.get("terminal") is not True
+            or source_preserved_state.get("halt_reason") != "wall_clock"
+            or preserved_state.get("terminal") is not False
+            or preserved_state.get("halt_reason") is not None
+        ):
+            _fail("resident_sft_migration_budget_extension_state_invalid")
+        for key in ("terminal", "halt_reason"):
+            source_preserved_state.pop(key, None)
+            preserved_state.pop(key, None)
     if source_preserved_state != preserved_state or receipt.get("preserved_state_sha256") != _sha(
         canonical_json_bytes(preserved_state)
     ):
@@ -608,6 +715,7 @@ def verify_migration(
 __all__ = [
     "ALLOWED_CHANGED_SOURCE_ROLES",
     "APPROVED_SEMANTICS_PRESERVING_TRANSITIONS",
+    "BUDGET_EXTENSION_SCHEMA",
     "MIGRATION_SCHEMA",
     "ResidentSFTCheckpointMigrationError",
     "migrate_checkpoint",

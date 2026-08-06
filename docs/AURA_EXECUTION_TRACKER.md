@@ -36792,3 +36792,38 @@ fenced-owner, MLX-heartbeat, embedding, voice, image, and local-code family
 passed 79/79. This advances the every-line semantic workstream but does not
 close it, does not close the remaining model-lane findings, and does not change
 the honest 809/920 total.
+
+#### Resident role-v6 budget-boundary recovery
+
+The active resident-32B role-v6 campaign reached an exact durable checkpoint at
+step 63/104 and then exhausted its signed 1,440-minute cumulative training
+budget. The trainer had saved the adapter, optimizer, cursor, sample history,
+and loss/validation history, but failed before publishing the matching
+invocation status because the wall-clock stop landed one step before the
+controller's required step-64 cell boundary. Two retries then read the terminal
+checkpoint as an overshoot and the launchd job exited after the no-progress
+limit. This was a real crash-consistency and unattended-supervision defect, not
+an OOM and not loss of the first 63 steps.
+
+Closed in source in this bounded checkpoint:
+
+- a wall-clock terminal checkpoint now publishes a canonical invocation receipt
+  and status for the actual committed step before the trainer exits;
+- the controller recognizes a terminal wall-clock checkpoint as an explicit
+  budget-exhaustion state and never retries it into an overshoot loop;
+- full-campaign preparation accepts only finite, bounded budget extensions from
+  1,440 through 10,080 minutes, while canary budgets remain immutable;
+- exact checkpoint migration can reopen a wall-clock terminal latch only under
+  an explicit pre-evaluation budget amendment whose sole trainer-config change
+  is an increased `max_minutes`; and
+- the amendment preserves elapsed time and byte-identical adapter/optimizer
+  tensors, cursor, epoch, sample history, and loss/validation history. Any
+  simultaneous optimization-protocol change remains fail-closed.
+
+Evidence: the affected trainer, preparer, controller, and migration family
+passed 86/86; Ruff, compile, and smoke passed, with smoke at 103/103. The real
+campaign remains open until the step-63 generation is migrated into a published
+source-bound capsule, independently verified, relaunched under launchd plus a
+trainer-bound sleep inhibitor, and observed crossing step 64. No reasoning,
+frontier, promotion, or completion claim is supported yet, and the honest total
+remains 809/920.

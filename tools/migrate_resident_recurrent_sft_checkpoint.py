@@ -23,12 +23,14 @@ def main() -> int:
     parser.add_argument("--source-authority", type=Path, required=True)
     parser.add_argument("--destination-repo-root", type=Path, required=True)
     parser.add_argument("--destination-authority", type=Path, required=True)
+    parser.add_argument("--allow-budget-extension", action="store_true")
     args = parser.parse_args()
     receipt = migrate_checkpoint(
         source_repo_root=args.source_repo_root,
         source_authority_path=args.source_authority,
         destination_repo_root=args.destination_repo_root,
         destination_authority_path=args.destination_authority,
+        allow_budget_extension=args.allow_budget_extension,
     )
     print(json.dumps(receipt, sort_keys=True), flush=True)
     return 0

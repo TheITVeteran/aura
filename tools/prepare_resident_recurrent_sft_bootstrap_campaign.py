@@ -253,6 +253,7 @@ def _preparation_intent(
     seed: int,
     committed_at: datetime,
     custody: DirectoryCustody,
+    max_minutes: float | None = None,
 ) -> dict[str, Any]:
     body = {
         "schema": PREPARATION_INTENT_SCHEMA,
@@ -264,6 +265,8 @@ def _preparation_intent(
         "seed": seed,
         "committed_at": committed_at.astimezone(UTC).isoformat(),
     }
+    if max_minutes is not None:
+        body["max_minutes"] = float(max_minutes)
     intent = {**body, "intent_sha256": sha256_json(body)}
     _write_once(root / "preparation-intent.json", _canonical(intent), custody=custody)
     return intent
@@ -277,6 +280,7 @@ def _existing_intent_committed_at(
     execution_spec: str,
     artifact_root: str,
     seed: int,
+    max_minutes: float | None = None,
 ) -> datetime | None:
     root = _repo_path(artifact_root, role="artifact_root", directory=None)
     path = root / "preparation-intent.json"
@@ -299,6 +303,8 @@ def _existing_intent_committed_at(
         "artifact_root": artifact_root,
         "seed": seed,
     }
+    if max_minutes is not None:
+        expected["max_minutes"] = float(max_minutes)
     if (
         not isinstance(intent, dict)
         or _canonical(intent) != payload
@@ -341,9 +347,20 @@ def _git_source_state() -> dict[str, str]:
 
 
 def _profile_config(
-    profile: str, *, seed: int
+    profile: str,
+    *,
+    seed: int,
+    max_minutes: float | None = None,
 ) -> tuple[ResidentSFTBootstrapConfig, int, int, tuple[int, ...]]:
+    if max_minutes is not None and (
+        isinstance(max_minutes, bool)
+        or not isinstance(max_minutes, (int, float))
+        or not math.isfinite(float(max_minutes))
+    ):
+        _fail("resident_sft_prepare_max_minutes_invalid")
     if profile == "canary":
+        if max_minutes is not None and float(max_minutes) != 120.0:
+            _fail("resident_sft_prepare_canary_budget_override_forbidden")
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
@@ -378,6 +395,9 @@ def _profile_config(
             (2,),
         )
     if profile == "full":
+        effective_max_minutes = 1_440.0 if max_minutes is None else float(max_minutes)
+        if not 1_440.0 <= effective_max_minutes <= 10_080.0:
+            _fail("resident_sft_prepare_full_budget_invalid")
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
@@ -394,7 +414,7 @@ def _profile_config(
                 lora_initialization_seed=(seed ^ 0x51F7A11) & 0xFFFFFFFF,
                 max_steps=104,
                 max_invocation_steps=4,
-                max_minutes=1_440.0,
+                max_minutes=effective_max_minutes,
                 learning_rate=5e-6,
                 weight_decay=0.01,
                 lora_rank=8,
@@ -544,6 +564,7 @@ def prepare_campaign(
     artifact_root: str,
     seed: int,
     committed_at: datetime,
+    max_minutes: float | None = None,
 ) -> dict[str, Any]:
     if profile not in PROFILES:
         _fail("resident_sft_prepare_profile_invalid")
@@ -568,11 +589,13 @@ def prepare_campaign(
         seed=seed,
         committed_at=committed_at,
         custody=root_custody,
+        max_minutes=max_minutes,
     )
 
     config, train_per_cell, validation_per_cell, depths = _profile_config(
         profile,
         seed=seed,
+        max_minutes=max_minutes,
     )
     train_tasks, validation_tasks = disjoint_task_split(
         families=RECURRENCE_TRAINING_FAMILIES,
@@ -792,6 +815,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--artifact-root", required=True)
     parser.add_argument("--seed", type=int, default=2026080108)
     parser.add_argument("--committed-at")
+    parser.add_argument("--max-minutes", type=float)
     return parser
 
 
@@ -805,6 +829,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             execution_spec=args.execution_spec,
             artifact_root=args.artifact_root,
             seed=args.seed,
+            max_minutes=args.max_minutes,
         )
         requested_committed_at = (
             datetime.fromisoformat(args.committed_at) if args.committed_at else None
@@ -824,6 +849,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             artifact_root=args.artifact_root,
             seed=args.seed,
             committed_at=committed_at,
+            max_minutes=args.max_minutes,
         )
     except Exception as exc:
         print(

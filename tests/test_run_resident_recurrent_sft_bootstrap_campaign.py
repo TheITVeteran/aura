@@ -229,14 +229,21 @@ def _stub_verified_supervision(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _snapshot(step: int, *, terminal: bool = False) -> dict[str, Any]:
+def _snapshot(
+    step: int,
+    *,
+    terminal: bool = False,
+    halt_reason: str | None = None,
+    elapsed_training_s: float = 0.0,
+) -> dict[str, Any]:
     return {
         "present": step > 0,
         "step": step,
         "checkpoint_sequence": step + (1 if step else 0),
         "invocation_count": step,
         "terminal": terminal,
-        "halt_reason": "max_steps" if terminal else None,
+        "halt_reason": ("max_steps" if terminal else None) if halt_reason is None else halt_reason,
+        "elapsed_training_s": elapsed_training_s,
         "complete_sha256": f"{step + 1:064x}" if step else "",
         "model_identity_sha256": "f" * 64 if step else None,
     }
@@ -727,6 +734,56 @@ def test_controller_stops_after_two_consecutive_no_progress_failures(
         (tmp_path / "artifacts" / "run" / "controller" / "attempt-results").glob("*.json")
     )
     assert len(results) == 2
+
+
+def test_controller_stops_cleanly_for_a_budget_extension_instead_of_retrying(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _stub_verified_supervision(monkeypatch)
+    config = _config()
+    plan = CampaignPlan.build(
+        config["campaign_id"],
+        [{"expected_start_step": 60, "required_end_step": 64}],
+        metadata={"strict_execution_order": True},
+    )
+    authority = {
+        "authority_sha256": "c" * 64,
+        "artifact_root": "artifacts/run/training",
+        "trainer": {"max_steps": 104, "max_minutes": 1_440.0},
+    }
+    snapshot = _snapshot(
+        63,
+        terminal=True,
+        halt_reason="wall_clock",
+        elapsed_training_s=87_983.0,
+    )
+    monkeypatch.setattr(controller, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(controller, "_load_config", lambda _path: config)
+    monkeypatch.setattr(controller, "_load_contracts", lambda _path: (config, authority, plan))
+    monkeypatch.setattr(controller, "_verify_source_lineage", lambda _source: {})
+    monkeypatch.setattr(controller, "_verify_authority_artifacts", lambda _authority: None)
+    monkeypatch.setattr(controller, "_checkpoint_snapshot", lambda _authority: snapshot)
+    monkeypatch.setattr(
+        controller,
+        "_wait_attempt",
+        lambda **_kwargs: pytest.fail("a terminal wall-clock checkpoint must not relaunch"),
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}")
+
+    with pytest.raises(
+        controller.ResidentSFTCampaignControllerError,
+        match="training_budget_exhausted",
+    ):
+        controller.run_controller(config_path, launchd_supervised=True)
+
+    status = json.loads(
+        (tmp_path / "artifacts" / "run" / "controller" / "status.json").read_text()
+    )
+    assert status["state"] == "budget_exhausted"
+    assert status["details"]["step"] == 63
+    assert status["details"]["elapsed_training_s"] == 87_983.0
 
 
 def test_reconcile_imports_staged_success_after_controller_crash(

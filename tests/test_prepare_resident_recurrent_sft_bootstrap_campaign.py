@@ -369,6 +369,26 @@ def test_preparation_intent_recovers_original_timestamp_after_crash(
     assert recovered == committed_at
 
 
+def test_full_profile_accepts_only_a_bounded_budget_extension() -> None:
+    config, *_ = prepare._profile_config("full", seed=19, max_minutes=2_880.0)
+    assert config.max_minutes == 2_880.0
+
+    for invalid in (1_439.0, 10_081.0, float("nan"), float("inf")):
+        with pytest.raises(
+            prepare.ResidentSFTCampaignPreparationError,
+            match="max_minutes|full_budget",
+        ):
+            prepare._profile_config("full", seed=19, max_minutes=invalid)
+
+
+def test_canary_profile_refuses_a_budget_override() -> None:
+    with pytest.raises(
+        prepare.ResidentSFTCampaignPreparationError,
+        match="canary_budget_override_forbidden",
+    ):
+        prepare._profile_config("canary", seed=19, max_minutes=240.0)
+
+
 def test_prepare_rejects_symlink_in_output_ancestry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

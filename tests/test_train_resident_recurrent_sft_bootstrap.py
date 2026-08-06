@@ -401,6 +401,43 @@ def test_invocation_receipt_is_nonpromotable_and_refuses_base_drift(
         )
 
 
+def test_wall_clock_boundary_publishes_the_actual_committed_step(tmp_path: Path) -> None:
+    authority = {
+        "authority_sha256": "a" * 64,
+        "campaign_id": "resident-32b-recurrent-sft-bootstrap-cp-test",
+        "campaign_scope": "full_bootstrap",
+        "trainer": {"max_steps": 4},
+    }
+    state = {
+        "invocation_count": 7,
+        "checkpoint_sequence": 64,
+        "step": 3,
+        "terminal": True,
+        "halt_reason": "wall_clock",
+    }
+    base = {"fingerprint": "b" * 64, "method": "sha256", "files": 1}
+
+    receipt = trainer._publish_wall_clock_boundary_receipt(
+        tmp_path,
+        authority=authority,
+        state=state,
+        checkpoint_sha256="c" * 64,
+        base_before=base,
+        base_after=base,
+        required_end_step=4,
+    )
+
+    assert receipt is not None
+    assert receipt["step"] == 3
+    assert receipt["required_end_step"] == 3
+    assert receipt["halt_reason"] == "wall_clock"
+    assert receipt["claim_state"]["resident_sft_complete"] is False
+    status = json.loads((tmp_path / "status.json").read_text())
+    assert status["step"] == 3
+    assert status["terminal"] is True
+    assert status["halt_reason"] == "wall_clock"
+
+
 @pytest.mark.parametrize("objective_version", ("v1", "v2", "v3"))
 def test_tiny_real_mlx_training_exactly_resumes_cached_update(
     monkeypatch,

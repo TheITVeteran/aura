@@ -268,10 +268,10 @@ def _retire_resident_training_jobs(
             )
             if stopped.returncode != 0:
                 _fail(f"resident_training_launchd_retirement_failed:{label}")
-        path = discovered.get(label)
-        if path is not None:
-            destination = quarantine_root / f"{time.time_ns()}-{path.name}"
-            os.replace(path, destination)
+        discovered_path = discovered.get(label)
+        if discovered_path is not None:
+            destination = quarantine_root / f"{time.time_ns()}-{discovered_path.name}"
+            os.replace(discovered_path, destination)
             os.chmod(destination, 0o600)
             quarantined.append(str(destination))
         retired_labels.append(label)
@@ -945,6 +945,7 @@ def _checkpoint_snapshot(authority: Mapping[str, Any]) -> dict[str, Any]:
         "invocation_count": state["invocation_count"],
         "terminal": state["terminal"],
         "halt_reason": state["halt_reason"],
+        "elapsed_training_s": state["elapsed_training_s"],
         "complete_sha256": inspected.complete_sha256,
         "model_identity_sha256": state["model_identity_sha256"],
     }
@@ -1638,6 +1639,19 @@ def _run_controller_custodied(
                 required_start = int(definition["expected_start_step"])
                 required_end = int(definition["required_end_step"])
                 before = _checkpoint_snapshot(authority)
+                if before.get("terminal") is True and before.get("halt_reason") == "wall_clock":
+                    _publish_status(
+                        root,
+                        config,
+                        "budget_exhausted",
+                        {
+                            "step": before["step"],
+                            "max_steps": authority["trainer"]["max_steps"],
+                            "elapsed_training_s": before.get("elapsed_training_s"),
+                            "max_minutes": authority["trainer"]["max_minutes"],
+                        },
+                    )
+                    _fail("resident_sft_controller_training_budget_exhausted")
                 initial_attempt_status = journal.attempt_status(cell_id)
                 if migration_start is not None and required_end <= migration_start:
                     if (
