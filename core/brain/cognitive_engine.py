@@ -30,6 +30,13 @@ from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
 from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
+from core.verify import influence_channels
+from core.verify.influence_receipt import InfluenceReceipt, build_influence_receipt
+from core.verify.lesion_registry import (
+    apply_channel,
+    get_lesion_registry,
+    register_flag_lesion,
+)
 from core.utils.queues import USER_FACING_ORIGINS
 
 from .autopoiesis import AutopoieticGraph
@@ -555,6 +562,75 @@ def _live_mind_controls_bound(
         return False
     return REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
         generation_controls.keys()
+    )
+
+
+#: Steering off. Not 0.0 — the latent cortex refuses alpha below 0.01 and
+#: falls back to an ordinary generation, which would make the lesioned arm
+#: measure "the cortex declined the turn" instead of "the cortex contributed
+#: nothing". See the comment on the determinate-computation branch above.
+_STEERING_OFF = 0.01
+
+#: One forward pass: the neutral for recurrent depth.
+_SINGLE_PASS = 1
+
+
+def _register_live_mind_lesions() -> None:
+    """Make the live-mind channels neutralizable, and therefore measurable.
+
+    Each of these already reaches generation. What none of them had was a way
+    to run the turn without it, which is the only thing that can distinguish a
+    channel that shapes the reply from one that is merely computed.
+    """
+
+    register_flag_lesion(
+        influence_channels.LIVE_MIND_GENERATION_CONTROLS,
+        owner="core/brain/cognitive_engine.py",
+        neutral="temperature and top_p omitted; the router samples at its own defaults",
+        direct_actuation=True,
+    )
+    register_flag_lesion(
+        influence_channels.LIVE_MIND_STEERING_ALPHA,
+        owner="core/brain/cognitive_engine.py",
+        neutral=f"steering alpha forced to {_STEERING_OFF} (off, inside the admitted range)",
+        direct_actuation=True,
+    )
+    register_flag_lesion(
+        influence_channels.LIVE_MIND_RECURRENT_LOOPS,
+        owner="core/brain/cognitive_engine.py",
+        neutral=f"{_SINGLE_PASS} recurrent pass: the answer is read off a clean forward pass",
+        direct_actuation=True,
+    )
+    register_flag_lesion(
+        influence_channels.LIVE_MIND_CONTEXT_BLOCK,
+        owner="core/brain/cognitive_engine.py",
+        neutral="the [LIVE MIND CONTEXT] block is omitted from the system prompt entirely",
+        direct_actuation=False,
+    )
+
+
+_register_live_mind_lesions()
+
+
+def live_mind_influence_receipt(source: str) -> InfluenceReceipt:
+    """What is actually measured about the channels this turn claims to use.
+
+    Provenance and causality are different questions and this codebase has been
+    answering the first while readers heard the second. A control derived from
+    a real snapshot and applied to a real sampler is bound; whether it moved
+    the reply is only knowable from paired trials against a measured null, and
+    for most channels nobody has run one. This says so rather than implying
+    otherwise by omission.
+    """
+
+    return build_influence_receipt(
+        (
+            influence_channels.LIVE_MIND_GENERATION_CONTROLS,
+            influence_channels.LIVE_MIND_STEERING_ALPHA,
+            influence_channels.LIVE_MIND_RECURRENT_LOOPS,
+            influence_channels.LIVE_MIND_CONTEXT_BLOCK,
+        ),
+        source=source,
     )
 
 
@@ -3137,7 +3213,14 @@ class CognitiveEngine:
             # memory and audit attribution.
             system_prompt = f"{system_prompt}\n[PERSONA CONTRACT]\n{persona_contract[:2000]}"
         mind_context_contract = str(context.get("mind_context_contract") or "").strip()
-        if isinstance(live_mind_context, dict) and live_mind_context:
+        # The block below tells the model its own state is "causal grounding for
+        # the reply". Whether it is, is a measurement, and this is the switch
+        # that lets the measurement happen: lesioned, the whole block is absent
+        # and the turn runs without ever being told about the mind behind it.
+        mind_context_lesioned = get_lesion_registry().is_lesioned(
+            influence_channels.LIVE_MIND_CONTEXT_BLOCK
+        )
+        if isinstance(live_mind_context, dict) and live_mind_context and not mind_context_lesioned:
             mind_context_limit = 900 if memory_state_contract else 360 if capability_inventory_contract else 2600
             if capability_inventory_contract:
                 compact_mind_context = {
@@ -3390,13 +3473,25 @@ class CognitiveEngine:
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": visible_user_message or objective,
-                "clean_user_surface_recurrent_loops": live_mind_generation_controls.get(
-                    "clean_user_surface_recurrent_loops",
-                    1,
+                # Wrapped so a paired trial can run this exact code with the
+                # contribution removed, rather than reconstructing what that
+                # would have looked like. Outside a trial this is one dict
+                # lookup and the value passes through unchanged.
+                "clean_user_surface_recurrent_loops": apply_channel(
+                    influence_channels.LIVE_MIND_RECURRENT_LOOPS,
+                    live_mind_generation_controls.get(
+                        "clean_user_surface_recurrent_loops",
+                        _SINGLE_PASS,
+                    ),
+                    neutral=_SINGLE_PASS,
                 ),
-                "clean_user_surface_steering_alpha": live_mind_generation_controls.get(
-                    "clean_user_surface_steering_alpha",
-                    0.25,
+                "clean_user_surface_steering_alpha": apply_channel(
+                    influence_channels.LIVE_MIND_STEERING_ALPHA,
+                    live_mind_generation_controls.get(
+                        "clean_user_surface_steering_alpha",
+                        0.25,
+                    ),
+                    neutral=_STEERING_OFF,
                 ),
                 "live_mind_controls_bound": live_mind_controls_bound,
                 "live_mind_generation_controls": dict(live_mind_generation_controls),
@@ -3441,11 +3536,18 @@ class CognitiveEngine:
                 ),
                 "timeout": request_timeout,
             }
-            if "temperature" in live_mind_generation_controls:
-                router_kwargs["temperature"] = live_mind_generation_controls["temperature"]
-                router_kwargs["temp"] = live_mind_generation_controls["temperature"]
-            if "top_p" in live_mind_generation_controls:
-                router_kwargs["top_p"] = live_mind_generation_controls["top_p"]
+            # The lesion for this channel is omission, not substitution: a
+            # neutral temperature is still a temperature somebody chose, and
+            # measuring against one would compare two mind-derived settings
+            # instead of comparing the mind's setting against its absence.
+            if not get_lesion_registry().is_lesioned(
+                influence_channels.LIVE_MIND_GENERATION_CONTROLS
+            ):
+                if "temperature" in live_mind_generation_controls:
+                    router_kwargs["temperature"] = live_mind_generation_controls["temperature"]
+                    router_kwargs["temp"] = live_mind_generation_controls["temperature"]
+                if "top_p" in live_mind_generation_controls:
+                    router_kwargs["top_p"] = live_mind_generation_controls["top_p"]
             content = await asyncio.wait_for(
                 router.think(**router_kwargs),
                 timeout=request_timeout + 3.0,
@@ -3928,15 +4030,26 @@ class CognitiveEngine:
         required_subsystems_ok = bool(context.get("live_mind_required_subsystems_ok"))
         if not required_subsystems_ok and isinstance(live_mind_context, dict):
             required_subsystems_ok = bool(live_mind_context.get("required_subsystems_ok"))
-        if not generation_controls and snapshot_ready and required_subsystems_ok:
-            generation_controls = {
-                "temperature": 0.58,
-                "top_p": 0.88,
-                "clean_user_surface_recurrent_loops": 1,
-                "clean_user_surface_steering_alpha": 0.25,
-            }
-        if generation_controls and snapshot_ready and required_subsystems_ok:
-            controls_bound = True
+        # There used to be a fallback here that invented the controls.
+        #
+        # When `_live_mind_generation_controls` came back empty — no snapshot,
+        # no affect, nothing to derive from — this filled the dict with four
+        # constants (temperature 0.58, top_p 0.88, one recurrent loop, alpha
+        # 0.25) and then set controls_bound=True because the dict was no longer
+        # empty. The receipt for a turn where the mind contributed nothing was
+        # byte-identical to the receipt for a turn where it contributed
+        # everything, and `live_mind_controls_bound` was the field readers used
+        # to tell those apart.
+        #
+        # `_live_mind_controls_bound` is the real predicate: it requires a
+        # ready snapshot quality, an actual mind_snapshot dict, and every
+        # required control key. It is the authority here now, and when it says
+        # no, the receipt says no.
+        if not controls_bound:
+            controls_bound = _live_mind_controls_bound(
+                live_mind_context,
+                generation_controls,
+            )
         desktop_required = bool(
             context.get("desktop_cognitive_engine_required")
             or context.get("cognitive_engine_required")
@@ -3960,6 +4073,7 @@ class CognitiveEngine:
             "source": source,
         }
         return {
+            # PROVENANCE: these controls were derived from a real mind snapshot.
             "live_mind_controls_bound": bool(controls_bound),
             "live_mind_generation_controls": dict(generation_controls),
             "live_mind_snapshot_ready": snapshot_ready,
@@ -3968,6 +4082,12 @@ class CognitiveEngine:
             "live_mind_surface_control_receipt": surface_control_receipt,
             "live_mind_controls_worker_applied": False,
             "live_mind_generation_required": False,
+            # CAUSALITY: whether those controls changed the answer is a
+            # different question, and one provenance cannot answer. Readers
+            # have been treating `live_mind_controls_bound` as though it did.
+            # This receipt is the honest answer, and it starts at "unmeasured"
+            # for every channel nobody has run a paired trial on.
+            "live_mind_influence": live_mind_influence_receipt(source).as_dict(),
             "response_path": "cognitive_engine",
             "structured_floor_source": source,
         }

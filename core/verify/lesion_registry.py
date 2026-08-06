@@ -286,3 +286,64 @@ def lesioned(*channels: str) -> Iterator[tuple[LesionHandle, ...]]:
     with ExitStack() as stack:
         handles = tuple(stack.enter_context(registry.lesion(c)) for c in channels)
         yield handles
+
+
+# ---------------------------------------------------------------------------
+# The two-line adoption path
+# ---------------------------------------------------------------------------
+
+
+def register_flag_lesion(
+    channel: str,
+    *,
+    owner: str,
+    neutral: str,
+    direct_actuation: bool,
+) -> LesionHandle:
+    """Register a channel whose lesion is just a flag the registry holds.
+
+    Most faculties do not need ``lesion()``/``restore()`` methods and a mutable
+    engine object. They need one place — where the channel's value reaches the
+    thing it actuates — to substitute a neutral. This registers the flag; pair
+    it with :func:`apply_channel` at that site and the channel is measurable.
+
+    Deliberately free of any state of its own beyond the registry's depth
+    counter, so a lesion cannot leak into a faculty's persistent state and
+    outlive the trial that set it.
+    """
+
+    def noop() -> None:
+        return None
+
+    return register_lesion(
+        channel,
+        lesion=noop,
+        restore=noop,
+        owner=owner,
+        neutral=neutral,
+        direct_actuation=direct_actuation,
+        replace=True,
+    )
+
+
+def apply_channel(channel: str, value: Any, *, neutral: Any) -> Any:
+    """The value this channel contributes right now — or its neutral.
+
+    Wrap the point where a faculty's output reaches what it actuates::
+
+        alpha = apply_channel(
+            influence_channels.LIVE_MIND_STEERING_ALPHA,
+            derived_alpha,
+            neutral=STEERING_OFF,
+        )
+
+    Outside a measurement trial this returns ``value`` and costs one dict
+    lookup, so it is safe on the live generation path. Inside one it returns
+    ``neutral``, which is what makes the counterfactual arm real rather than
+    simulated: the trial runs the actual production code with the actual
+    contribution removed, not a reconstruction of what that might look like.
+    """
+
+    if _REGISTRY.is_lesioned(channel):
+        return neutral
+    return value
