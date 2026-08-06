@@ -317,6 +317,13 @@ class HermeticResourceSandbox:
         "/usr/share/",
         "/Library/Apple/",
         "/private/var/db/",
+        # Ray's driver opens its own session logs and holds them for the life
+        # of the process, by design and outside any test's reach. Same shape as
+        # the Metal shader cache and the multiprocessing resource tracker: a
+        # third-party runtime's own files, which the test neither opened nor
+        # can close, reported as that test's leak.
+        "/private/tmp/ray/",
+        "/tmp/ray/",
     )
 
     @classmethod
