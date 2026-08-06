@@ -1,11 +1,11 @@
 {
-  "content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
+  "content_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e",
   "generated_from": {
     "migration_rules_version": 3,
-    "tracker_extraction_sha256": "be31f37d109c67f97636e27a174c730a10a488a8084c8c5e8716f829283e6e45",
+    "tracker_extraction_sha256": "efe31788441ca6144975fd44739ca582c42793e1527ee8fc040014d9b4126f83",
     "tracker_path": "docs/AURA_EXECUTION_TRACKER.md"
   },
-  "registry_revision": 30,
+  "registry_revision": 31,
   "requirements": [
     {
       "acceptance": [
@@ -13809,7 +13809,7 @@
     },
     {
       "acceptance": [
-        "Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings."
+        "Removed all seven original production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. A later source-drift audit found eight new bypasses in local identity keys, durable-run state, resident-SFT temporary material, and independent evidence. Checkpoint `e13b8f809` restores zero direct-file-write findings with no exemptions and adds stable no-follow private-key adoption, governed durable-run persistence, and lifecycle cleanup. The complete production-surface scanner still reports 53 non-storage findings, so the historical Checkpoint-63 whole-scanner closure is no longer current and this requirement remains open until that aggregate returns to zero."
       ],
       "acceptance_evidence_required": [
         [
@@ -13832,7 +13832,7 @@
       "kind": "atomic",
       "mandatory": true,
       "non_claims": [],
-      "notes": "refs: `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63",
+      "notes": "refs: `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63, `e13b8f809`",
       "owner": "unassigned",
       "parent": null,
       "proof_weight": 1.0,
@@ -13844,10 +13844,10 @@
           "sha256": ""
         }
       ],
-      "state": "complete",
-      "status_date": "2026-07-13",
-      "status_detail": "COMPLETE 2026-07-13",
-      "title": "Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA stag\u2026",
+      "state": "in_progress",
+      "status_date": "2026-08-06",
+      "status_detail": "IN PROGRESS (DIRECT-WRITE ZERO; FULL SURFACE 53 FINDINGS OPEN) 2026-08-06",
+      "title": "Removed all seven original production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program\u2026",
       "weight_provenance": "default"
     },
     {
