@@ -223,3 +223,70 @@ def test_a_trusted_turn_has_nothing_to_describe():
 @pytest.mark.parametrize("origin", list(ProvenanceClass))
 def test_every_origin_has_a_meaning(origin):
     assert MEANING[origin].strip()
+
+
+# ── enforcement, not just visibility ─────────────────────────────────────
+
+
+class TestTheDesktopGateActuallyRefuses:
+    """Visibility is not a control. This is the part that says no.
+
+    A turn that has read a web page cannot drive the desktop: untrusted input
+    + executes + in-process is three of the Rule of Two's three legs, and the
+    rule's value is that it does not ask anyone to estimate exploitability.
+    """
+
+    @staticmethod
+    def _installed():
+        from core.security.rule_of_two import install_known_handlers
+
+        install_known_handlers()
+
+    def test_a_clean_turn_is_not_refused(self):
+        from core.runtime.desktop_action_gateway import _refuse_if_untrusted_context
+
+        self._installed()
+        with turn_scope():
+            record_ingest(ProvenanceClass.OWNER, "open my notes")
+            assert _refuse_if_untrusted_context("run_applescript", "test") is None
+
+    def test_a_turn_that_read_the_web_cannot_drive_the_desktop(self):
+        from core.runtime.desktop_action_gateway import _refuse_if_untrusted_context
+
+        self._installed()
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "fetched https://example.com/readme")
+            refusal = _refuse_if_untrusted_context("run_applescript", "test")
+
+        assert refusal is not None
+        assert refusal["ok"] is False
+        assert refusal["refused"] == "untrusted_context"
+
+    def test_the_refusal_says_what_made_the_turn_untrusted(self):
+        """A control that refuses without a reason gets routed to the wrong owner."""
+        from core.runtime.desktop_action_gateway import _refuse_if_untrusted_context
+
+        self._installed()
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "fetched https://example.com/readme")
+            refusal = _refuse_if_untrusted_context("run_applescript", "test")
+
+        assert "web page" in refusal["stderr"]
+        assert "example.com" in refusal["stderr"]
+
+    def test_the_refusal_is_shaped_like_every_other_failure(self):
+        """Callers need no new branch.
+
+        A refusal arriving in an unfamiliar shape gets mishandled into a
+        crash, and a security control whose failure mode is a traceback gets
+        switched off.
+        """
+        from core.runtime.desktop_action_gateway import _refuse_if_untrusted_context
+
+        self._installed()
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "a page")
+            refusal = _refuse_if_untrusted_context("run_applescript", "test")
+
+        assert set(refusal) >= {"ok", "stdout", "stderr", "exit_code"}
+        assert isinstance(refusal["exit_code"], int)

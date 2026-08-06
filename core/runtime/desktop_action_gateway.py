@@ -34,6 +34,59 @@ _DESKTOP_ACTION_DOMAINS = (
 _MAX_APPLESCRIPT_CHARS = 50_000
 
 
+
+def _refuse_if_untrusted_context(operation: str, source: str) -> dict[str, Any] | None:
+    """Refuse a desktop action when this turn read something untrusted.
+
+    Returns a refusal payload, or None to proceed. Shaped like every other
+    failure this gateway returns so callers need no new branch — a refusal
+    that arrives in an unfamiliar shape gets mishandled into a crash, and a
+    security control whose failure mode is a traceback gets turned off.
+
+    Fails OPEN on its own error, deliberately and with a recorded degradation:
+    a provenance lookup that breaks must not take out desktop control on a
+    turn that read nothing. The degradation is the signal that the control
+    stopped covering this path.
+    """
+    try:
+        from core.security.content_provenance import describe_untrusted_context
+        from core.security.rule_of_two import get_rule_of_two_registry
+
+        handler = get_rule_of_two_registry().get("desktop_automation")
+        if handler is None or not handler.violates_now():
+            return None
+        why = describe_untrusted_context() or "this turn read untrusted content"
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "desktop_action_gateway",
+            exc,
+            severity="warning",
+            action="proceeded without the untrusted-context check; rule-of-two is not covering this path",
+            enforce_failure_policy=False,
+        )
+        return None
+
+    record_degradation(
+        "desktop_action_gateway",
+        PermissionError(f"desktop action refused under untrusted context: {why}"),
+        severity="degraded",
+        action="refused a desktop action taken during a turn that ingested untrusted content",
+    )
+    return {
+        "ok": False,
+        "stdout": "",
+        "stderr": (
+            f"Desktop control is not available on this turn: {why}. Acting on the "
+            "desktop with untrusted content in context would put this surface at "
+            "three of the Rule of Two's three legs. Ask again in a turn that has "
+            "not read external content, or run the action through an isolated lane."
+        ),
+        "exit_code": 126,
+        "refused": "untrusted_context",
+        "operation": operation,
+        "source": source,
+    }
+
 class DesktopActionGateway:
     """Single canonical owner for desktop control and AppleScript actions."""
 
@@ -50,6 +103,18 @@ class DesktopActionGateway:
         """Execute a desktop command via AppleScript."""
         script = _coerce_script(script)
         timeout_s = _coerce_timeout(timeout)
+
+        # Rule of Two, asked of THIS turn rather than of the declaration.
+        # This surface declares TRUSTED input because it drives the desktop
+        # from internally-formed intent — true until the turn has read a web
+        # page, at which point "internally formed" means "formed from
+        # something a stranger wrote". Untrusted input + executes + in-process
+        # is three legs, and the rule's whole value is that it does not ask
+        # anyone to estimate exploitability.
+        refusal = _refuse_if_untrusted_context("run_applescript", source)
+        if refusal is not None:
+            return refusal
+
         if governance_runtime_active():
             require_governance(
                 f"desktop_action_gateway.run_applescript:{source}",
