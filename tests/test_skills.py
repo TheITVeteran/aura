@@ -335,8 +335,13 @@ async def test_web_search_skill_initializes_and_accepts_input():
 async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governor(monkeypatch):
     captured = {}
 
-    class _Skill:
-        timeout_seconds = 57.0
+    # A real BaseSkill subclass. The engine refuses an implementation that is
+    # not one — correctly: an unverified callable on the tool path cannot be
+    # governed, timed out or receipted. A bare `class _Skill` could only pass
+    # if the engine abandoned that check, so the fixture is what changes.
+    from tests.support.skill_doubles import make_test_skill
+
+    _Skill = make_test_skill("slow_skill", timeout_seconds=57.0)
 
     class _Governor:
         async def execute_safely(self, task_name, coroutine, *args, timeout_seconds=30.0, **kwargs):

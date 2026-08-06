@@ -186,9 +186,15 @@ def close_leaked_sqlite_connections(leaked_files: set[str]) -> list[str]:
         return []
 
     holders: list[str] = []
-    connections: list[Any] = [
-        obj for obj in gc.get_objects() if isinstance(obj, sqlite3.Connection)
-    ]
+    # Walking every live object touches deprecated attributes on third-party
+    # classes (torch.distributed.reduce_op, for one) purely by looking at them.
+    # That warning is about the sweeper's traversal, not about anything the
+    # test did, and printing it would send readers to the wrong place.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        connections: list[Any] = [
+            obj for obj in gc.get_objects() if isinstance(obj, sqlite3.Connection)
+        ]
     for connection in connections:
         try:
             rows = connection.execute("PRAGMA database_list").fetchall()

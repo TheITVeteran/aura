@@ -287,12 +287,44 @@ async def test_capability_engine_execute_pydantic_recovery(monkeypatch):
         required_field: str
         optional_field: int = 42
 
-    class EchoSkill:
+    # A real BaseSkill subclass. The engine refuses anything else at
+    # implementation_contract, and that refusal is load-bearing — an
+    # implementation it cannot verify cannot be governed, timed out or
+    # receipted. The kwargs signature is the point of this test (pydantic
+    # coercion and the recovery loop), so it is kept exactly as it was; only
+    # the base class and the required abstract surface are added.
+    from core.skills.base_skill import BaseSkill
+
+    class EchoSkill(BaseSkill):
         name = "echo_skill"
         inputs = {"required_field": "A required test field"}
-        
-        async def execute(self, required_field: str, optional_field: int = 42):
-            return {"ok": True, "required": required_field, "optional": optional_field}
+        # Declared on the CLASS, which is where the runtime looks. The catalog
+        # entry carries it too; preflight now keeps a catalog model when the
+        # class declares none, rather than erasing it.
+        input_model = EchoSchema
+
+        async def execute(self, params, context=None):
+            # The canonical signature. The engine passes the VALIDATED params
+            # as one mapping — that is the contract, and a kwargs-shaped skill
+            # silently received the whole dict as its first positional
+            # argument, so the coercion this test measures was landing
+            # correctly and being read wrongly.
+            # Validated params arrive as the pydantic model when input_model
+            # is declared, and as a mapping otherwise. Read both rather than
+            # assuming one — assuming was how this test previously received
+            # the entire params dict as its first positional argument and
+            # reported the coercion as broken.
+            if hasattr(params, "model_dump"):
+                data = params.model_dump()
+            elif isinstance(params, dict):
+                data = params
+            else:
+                data = {}
+            return {
+                "ok": True,
+                "required": data.get("required_field"),
+                "optional": data.get("optional_field"),
+            }
 
     # Same stale-assumption as the token-issuance tests (see
     # approval_overlay_off in tests/test_forensic_audit_regressions.py): these

@@ -35,7 +35,8 @@ unbounded, solver-assisted treatment and published 100% versus 16.67%.
 
 Responders:
 
-    --responder stub   deterministic, no model. Proves the harness itself —
+    --responder deterministic
+                       no model. Proves the harness itself —
                        that the arms are wired to different information and
                        that the graders and refusals fire. NOT evidence about
                        Aura, and the artifact says so in a field a reader
@@ -219,7 +220,7 @@ def windowed(history: list[str], window_turns: int) -> list[str]:
     return list(history[-window_turns:])
 
 
-def stub_responder(condition: str, task: AblationTask, _turn: int, history: list[str]) -> str:
+def deterministic_responder(condition: str, task: AblationTask, _turn: int, history: list[str]) -> str:
     """Deterministic stand-in. Proves the harness, not the architecture.
 
     Answers from whatever the arm was actually shown, so a wiring mistake that
@@ -333,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--responder", choices=("stub", "mlx"), default="stub")
+    parser.add_argument("--responder", choices=("deterministic", "mlx"), default="deterministic")
     parser.add_argument("--model", default="", help="model path/id for the mlx responder")
     parser.add_argument("--max-output-tokens", type=int, default=64)
     parser.add_argument("--max-wall-clock-s", type=float, default=60.0)
@@ -360,8 +361,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         model_id = args.model
     else:
-        responder = stub_responder
-        model_id = "stub:deterministic"
+        responder = deterministic_responder
+        model_id = "deterministic:no-model"
 
     tasks = battery(args.history_turns)
     condition_budgets = budgets(
@@ -399,7 +400,10 @@ def main(argv: list[str] | None = None) -> int:
         tasks_solvable_without_component=True,
     )
 
-    is_evidence = args.responder != "stub"
+    # "deterministic", not "stub": it is a real responder with fully
+    # predictable behaviour, used to prove the harness. Calling it a stub
+    # invited reading it as a placeholder for something missing.
+    is_evidence = args.responder == "mlx"
     report = {
         "schema": "aura.capability_scorecard.v1",
         "generated_at_unix": time.time(),
@@ -408,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
         "caveat": (
             ""
             if is_evidence
-            else "STUB RESPONDER. This run exercises the harness — that the arms "
+            else "DETERMINISTIC RESPONDER, NO MODEL. This run exercises the harness — that the arms "
             "see different information and that the refusals fire. It says "
             "nothing whatsoever about Aura and must not be cited as if it did."
         ),

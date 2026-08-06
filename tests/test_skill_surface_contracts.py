@@ -794,9 +794,16 @@ async def test_self_evolution_read_only_skips_llm_planning(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_capability_engine_promotes_executive_constraints_into_skill_context(monkeypatch):
-    class _ConstraintProbeSkill:
+    # A real BaseSkill subclass: the engine refuses anything else, and it is
+    # right to — an implementation it cannot verify cannot be governed.
+    from core.skills.base_skill import BaseSkill
+
+    class _ConstraintProbeSkill(BaseSkill):
         name = "constraint_probe"
         timeout_seconds = 30
+
+        async def execute(self, params, context):
+            return await self.safe_execute(params, context)
 
         async def safe_execute(self, params, context):
             return {
@@ -856,9 +863,14 @@ async def test_capability_engine_promotes_executive_constraints_into_skill_conte
 
 @pytest.mark.asyncio
 async def test_os_automation_outer_authority_closure_failure_rewrites_success(monkeypatch):
-    class _VerifiedOSAutomationSkill:
+    from core.skills.base_skill import BaseSkill
+
+    class _VerifiedOSAutomationSkill(BaseSkill):
         name = "os_automation"
         timeout_seconds = 30
+
+        async def execute(self, params, context):
+            return await self.safe_execute(params, context)
 
         async def safe_execute(self, params, context):
             # The engine no longer stamps a self-asserted "_capability_token_verified"

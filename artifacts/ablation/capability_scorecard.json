@@ -18,7 +18,7 @@
       },
       "long_context": {
         "attempts": 40,
-        "clean_success_rate": 0.0,
+        "clean_success_rate": 1.0,
         "condition": "long_context",
         "fell_back": 0,
         "lanes": [
@@ -26,9 +26,9 @@
         ],
         "needed_human": 0,
         "outcomes": {
-          "failure": 40
+          "success": 40
         },
-        "success_rate": 0.0,
+        "success_rate": 1.0,
         "total_retries": 0
       },
       "stateless": {
@@ -63,20 +63,20 @@
     "schema": "aura.budget_parity.v1",
     "violations": []
   },
-  "caveat": "STUB RESPONDER. This run exercises the harness \u2014 that the arms see different information and that the refusals fire. It says nothing whatsoever about Aura and must not be cited as if it did.",
+  "caveat": "DETERMINISTIC RESPONDER, NO MODEL. This run exercises the harness \u2014 that the arms see different information and that the refusals fire. It says nothing whatsoever about Aura and must not be cited as if it did.",
   "claims": [
     {
       "condition": "architecture_vs_long_context",
-      "delta": 1.0,
+      "delta": 0.0,
       "inference_class": "capability",
       "licenses": "the component measurably changes TASK SUCCESS, scored against an answer key it did not write, on tasks that are solvable without it. This is the only class that supports an earns-its-cost claim.",
       "metric": "multi_turn_recall_success_rate",
       "subsystem": "core.memory (context assembly)",
-      "supports_earns_its_cost": true
+      "supports_earns_its_cost": false
     }
   ],
   "comparisons": {
-    "full_vs_long_context": 1.0,
+    "full_vs_long_context": 0.0,
     "full_vs_stateless": 1.0
   },
   "conditions": {
@@ -97,7 +97,7 @@
     },
     "long_context": {
       "attempts": 40,
-      "clean_success_rate": 0.0,
+      "clean_success_rate": 1.0,
       "condition": "long_context",
       "fell_back": 0,
       "lanes": [
@@ -105,9 +105,9 @@
       ],
       "needed_human": 0,
       "outcomes": {
-        "failure": 40
+        "success": 40
       },
-      "success_rate": 0.0,
+      "success_rate": 1.0,
       "total_retries": 0
     },
     "stateless": {
@@ -126,39 +126,44 @@
       "total_retries": 0
     }
   },
-  "generated_at_unix": 1786027827.911554,
+  "generated_at_unix": 1786028991.510785,
   "inference": {
     "by_inference_class": {
       "capability": 1,
       "mechanistic": 0,
       "tautological": 0
     },
-    "capability_claims": 1,
+    "capability_claims": 0,
     "conditions": 1,
-    "earns_its_cost_supported_by": [
-      "architecture_vs_long_context"
-    ],
-    "honest_summary": "1 of 1 conditions measure task success on tasks solvable without the component; the rest establish wiring or mechanism and cannot support a capability claim.",
+    "earns_its_cost_supported_by": [],
+    "honest_summary": "0 of 1 conditions measure task success on tasks solvable without the component; the rest establish wiring or mechanism and cannot support a capability claim.",
     "schema": "aura.lesion_inference.v1"
   },
   "is_evidence_about_aura": false,
   "regime": {
     "context_window_turns": 12,
-    "history_exceeds_window": true,
-    "history_turns": 40
+    "history_exceeds_window": false,
+    "history_turns": 2
   },
-  "responder": "stub",
+  "responder": "deterministic",
   "schema": "aura.capability_scorecard.v1",
+  "scope": {
+    "baseline_policy": "long_context keeps the most RECENT turns, which is what chat clients do and is a naive policy. A baseline that also kept the first turns would score higher, and this result does not claim to beat one.",
+    "model": "single small local model; not shown to hold at other scales",
+    "regime_dependence": "at history_turns <= context_window_turns both arms sit at 1.000 and the delta is 0.000 (measured). The advantage exists only where history exceeds what the caller can afford to send \u2014 which is the situation memory architecture is FOR, and is not every situation.",
+    "subsystem": "retrieval / context assembly only \u2014 NOT the cognitive layer as a whole",
+    "task_family": "multi_turn factual recall with an exact answer key"
+  },
   "separation": {
     "ci95": [
-      1.0,
-      1.0
+      0.0,
+      0.0
     ],
     "n_tasks": 40,
-    "observed_delta": 1.0,
-    "reason": "",
-    "resolved": true,
+    "observed_delta": 0.0,
+    "reason": "the 95% interval [0.0000, 0.0000] spans zero; with 40 tasks the smallest non-zero delta expressible is 0.0250, so this run cannot tell an effect from one task changing its mind. Add tasks.",
+    "resolved": false,
     "smallest_resolvable_delta": 0.025,
-    "verdict": "treatment_better"
+    "verdict": "unresolved"
   }
 }

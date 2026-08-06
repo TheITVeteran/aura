@@ -3200,7 +3200,15 @@ class CapabilityEngine(AuraBaseModule):
                     ):
                         raise RuntimeError("skill catalog generation changed before publication")
                     metadata.skill_class = skill_class
-                    metadata.input_model = input_model
+                    # Only adopt a model the class actually declares. This was
+                    # unconditional, so a catalog entry carrying an input_model
+                    # the implementation did not repeat had it erased at
+                    # publication — and the skill then ran with NO input
+                    # validation at all, silently, having just passed preflight.
+                    # A validation gate that disappears during the check meant
+                    # to confirm it is the worst shape available.
+                    if input_model is not None:
+                        metadata.input_model = input_model
                     metadata.source_sha256 = revalidated_digest or metadata.source_sha256
                     metadata.dependency_ready = True
                     metadata.dependency_errors = []
