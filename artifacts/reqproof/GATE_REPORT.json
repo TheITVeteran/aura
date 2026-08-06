@@ -39,11 +39,11 @@
     "unmapped_lines": 0
   },
   "defect_counts": {
-    "contradictory-status": 3,
+    "contradictory-status": 2,
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 9
+    "unproven-closure": 8
   },
   "defects": [
     {
@@ -55,11 +55,6 @@
       "defect_class": "contradictory-status",
       "detail": "complete requirement depends on VALIDATE-001 which is still open",
       "subject": "LIFECYCLE-001::VALIDATE-001"
-    },
-    {
-      "defect_class": "contradictory-status",
-      "detail": "complete requirement depends on REPO-001 which is still open",
-      "subject": "STORAGE-GATEWAY-001::REPO-001"
     },
     {
       "defect_class": "dependency-cycle",
@@ -280,11 +275,6 @@
       "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
       "subject": "SHUTDOWN-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "STORAGE-GATEWAY-001"
     }
   ],
   "failures": [],
@@ -294,29 +284,29 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 48,
-    "current_fingerprints": 48,
+    "baseline_fingerprints": 46,
+    "current_fingerprints": 46,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 37,
-    "evidence_ledger_sha256": "df2d72aea771402624d2de2aec2012a9e79eac4a4d4bea5ad19255857b038cb5",
-    "mandatory_not_closed": 293,
-    "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
-    "registry_revision": 30,
+    "evidence_ledger_sha256": "34979c7b5a3f52cd752005f46d03ecf6b9ce6b7a47f4d6f0249cc68aa26e7371",
+    "mandatory_not_closed": 294,
+    "registry_content_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e",
+    "registry_revision": 31,
     "requirements": 313,
     "scope_baseline_cells": 1292,
     "scope_baseline_sha256": "4fc286ff70e632ee2d2db184c2fd105e4791bf74ae618fd65e6d32aafebf2049",
     "states": {
-      "complete": 19,
+      "complete": 18,
       "deferred": 1,
-      "in_progress": 83,
+      "in_progress": 84,
       "open": 209,
       "withdrawn": 1
     },
-    "tracker_extraction_sha256": "be31f37d109c67f97636e27a174c730a10a488a8084c8c5e8716f829283e6e45"
+    "tracker_extraction_sha256": "efe31788441ca6144975fd44739ca582c42793e1527ee8fc040014d9b4126f83"
   },
   "verdict": "pass"
 }

@@ -2,7 +2,6 @@
   "fingerprints": [
     "contradictory-status::LIFECYCLE-001::REPO-001",
     "contradictory-status::LIFECYCLE-001::VALIDATE-001",
-    "contradictory-status::STORAGE-GATEWAY-001::REPO-001",
     "dependency-cycle::ACTION-SPINE-001+AGENCY-001+AUTONOMY-AUTHORITY-001",
     "dependency-cycle::ACTION-SPINE-001+EXPECT-001",
     "dependency-cycle::CAPABILITY-CERT-001+RELEASE-CONTRACT-001",
@@ -46,8 +45,7 @@
     "unproven-closure::LANE-001",
     "unproven-closure::LIFECYCLE-001",
     "unproven-closure::RESOURCE-001",
-    "unproven-closure::SHUTDOWN-001",
-    "unproven-closure::STORAGE-GATEWAY-001"
+    "unproven-closure::SHUTDOWN-001"
   ],
   "schema_version": 1
 }

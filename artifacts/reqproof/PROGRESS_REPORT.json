@@ -75,9 +75,9 @@
     "total_checkpoint_records_low": 504
   },
   "inputs": {
-    "evidence_ledger_sha256": "df2d72aea771402624d2de2aec2012a9e79eac4a4d4bea5ad19255857b038cb5",
+    "evidence_ledger_sha256": "34979c7b5a3f52cd752005f46d03ecf6b9ce6b7a47f4d6f0249cc68aa26e7371",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
+    "registry_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e",
     "scope_baseline_sha256": "4fc286ff70e632ee2d2db184c2fd105e4791bf74ae618fd65e6d32aafebf2049"
   },
   "non_claims": [
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "1b80c1509a349155472e013f1e4ee91b16d00cb214f42ce17d863124ea7e0241",
+  "report_sha256": "401acad4b96bbd8a14e930e112ac73b6a81397818416c9c1a4833ae478a60e99",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -7612,7 +7612,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
