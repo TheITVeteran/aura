@@ -42,8 +42,7 @@
     "contradictory-status": 2,
     "dependency-cycle": 23,
     "false-closure": 2,
-    "stale-evidence": 11,
-    "unproven-closure": 6
+    "unproven-closure": 4
   },
   "defects": [
     {
@@ -182,140 +181,45 @@
       "subject": "RESOURCE-001::PASSF-03"
     },
     {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "ADDENDUM-21::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-LANE-001::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-LANE-002::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-LANE-003::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-LANE-004::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "LANE-001::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json"
-    },
-    {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], implementation[A2], live[A2], implementation[A3], implementation[A4], test[A4], live[A4], implementation[A5], live[A5], implementation[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A2], implementation[A4], test[A4], live[A4], live[A5], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1]",
-      "subject": "CTX2-TEST-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "CTX2-TEST-002"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1]",
-      "subject": "CTX2-TEST-003"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "RESOURCE-001"
     }
   ],
-  "failures": [
-    "stale-evidence::ADDENDUM-21::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-LANE-001::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-LANE-002::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-LANE-003::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-LANE-004::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-lane-contract-audit/a43f57d35044cd40ebd2afca5ca3ae7670c8b109.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/48e6e46f18839e6720960efc6ce598920297af79.json: manifested source changed: core/brain/llm/latent_cortex/campaign_launch_bundle.py: expected 6f363cf9b360/28201, current 4591fa0adac3/28213; core/learning/recurrence_native_objective_v6.py: expected ac6dbff3fa3d/28588, current bb15e3ee3a6b/28885; tools/capability_ablation.py: expected 3045b3c5d762/22805, current fef3f0334b1a/27008; tools/materialize_resident_recurrent_sft_adapter.py: expected 4eb7f477b63b/54149, current 9e324400243a/59507; tools/prepare_latent_cortex_campaign.py: expected 223e5b5af685/40183, current bf5ee0a73d15/40258",
-    "NEW ratcheted defect unproven-closure::CTX2-TEST-001: complete without acceptance-granular verifiable evidence for: implementation[A1]",
-    "NEW ratcheted defect unproven-closure::CTX2-TEST-003: complete without acceptance-granular verifiable evidence for: implementation[A1]",
-    "defect baseline is STALE (defects were fixed \u2014 good): run tools/reqproof/gate.py --refresh-baseline to shrink it; fixed: ['prose-minted::AUTONOMY-001', 'prose-minted::CHAT-001', 'prose-minted::CLOSEOUT-001', 'prose-minted::GUI-001', 'prose-minted::OBSERVABILITY-001']"
-  ],
+  "failures": [],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 42,
-    "current_fingerprints": 33,
-    "fixed_pending_refresh": [
-      "prose-minted::AUTONOMY-001",
-      "prose-minted::CHAT-001",
-      "prose-minted::CLOSEOUT-001",
-      "prose-minted::GUI-001",
-      "prose-minted::OBSERVABILITY-001",
-      "prose-minted::PRIVACY-001",
-      "prose-minted::RELEASE-001",
-      "prose-minted::RESOURCE-OWNERSHIP-001",
-      "prose-minted::RLC-MECH-006",
-      "prose-minted::SEMANTIC-REVIEW-001",
-      "prose-minted::VOICE-001"
-    ],
-    "new": [
-      "unproven-closure::CTX2-TEST-001",
-      "unproven-closure::CTX2-TEST-003"
-    ]
+    "baseline_fingerprints": 31,
+    "current_fingerprints": 31,
+    "fixed_pending_refresh": [],
+    "new": []
   },
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 56,
-    "evidence_ledger_sha256": "e812f0ffe932864925b0b0923f2791a94f0a5186ade87a5a380cca3629df20b5",
+    "evidence_ledger_sha256": "895b418d5ba47451900b1eb623dbc485b75c8388220628fc2d50981b650f3ab5",
     "mandatory_not_closed": 293,
-    "registry_content_sha256": "41b5e0ccf0c3193a9bc9e4e1ac291ed96ea088ed694893e6f4cf061a8620f014",
-    "registry_revision": 33,
+    "registry_content_sha256": "d3bb5530969eb883ecd6d781e1831c03a7d629cac65c2ab8bd9a8f8ecffabed1",
+    "registry_revision": 34,
     "requirements": 313,
     "scope_baseline_cells": 1305,
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336",
@@ -326,7 +230,7 @@
       "open": 200,
       "withdrawn": 1
     },
-    "tracker_extraction_sha256": "93cc45b8da74e5a9ab5580100a39a00db63b6249073300a5cc8a7dc8d2ddfc2e"
+    "tracker_extraction_sha256": "126754c2e20f488a7d72c13d08730fbd6de96457a5709cc09f9a9d446d2662fb"
   },
-  "verdict": "fail"
+  "verdict": "pass"
 }
