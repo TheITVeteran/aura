@@ -1,0 +1,59 @@
+{
+  "campaign": "caa_steering_live_alpha_0.35_replacement",
+  "hypothesis": "Residual-stream CAA injection at Aura's live surface alpha (0.35), using the production valence_positive+curiosity vectors on their 10 extracted layers of the active fused 32B, moves generated text further from an unsteered baseline than that baseline moves from its own independent redraw; the movement is specific to these vectors on these layers rather than to perturbation as such; it exceeds what either affect-describing text prompt achieves; and it shifts a declared affect proxy in the intended positive direction.",
+  "parameters": {
+    "alpha": 0.35,
+    "model": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "steered_dimensions": [
+      "valence_positive",
+      "curiosity"
+    ],
+    "target_layers": [
+      25,
+      27,
+      29,
+      30,
+      31,
+      33,
+      35,
+      37,
+      39,
+      41
+    ],
+    "held_out_tasks": 5,
+    "trials_per_task": 10,
+    "max_tokens": 100,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "paired_seeds": true,
+    "baseline_replicate_seed_offset": 5000000,
+    "control_arms": [
+      "zero",
+      "random",
+      "shuffled_layers"
+    ],
+    "n_resamples": 5000,
+    "analysis_seed": 42,
+    "direction_metric": "count_affect_positive_minus_negative"
+  },
+  "metrics": {
+    "effect_exceeds_sampling_noise": 1.0,
+    "effect_is_specific": 1.0,
+    "beats_text_controls": 1.0,
+    "direction_established": 1.0,
+    "steered_effect_size_d": 0.5
+  },
+  "arms": [
+    "steered_black_box",
+    "baseline",
+    "baseline_replicate",
+    "text_terse",
+    "text_rich_adversarial",
+    "zero_vector",
+    "random_vector",
+    "shuffled_layers"
+  ],
+  "registered_at": "2026-08-06T00:00:00+00:00",
+  "notes": "Registered BEFORE the run and before any of its numbers exist. Replaces the 2026-08-04 campaign, whose statistic scored d(steered,control) - d(steered,baseline) over steered and baseline drawn from the same prompt and seed: with no effect they are identical, the subtracted term is exactly zero, and the score is the control distance, positive by construction. Its null hypothesis passed at d=2.502, p=0.0002 over word-for-word identical samples. LIMITATION DECLARED IN ADVANCE: direction is measured by a small affect-word lexicon (count_affect), not by blinded semantic evaluation. A negative result on direction therefore means THIS PROXY did not move over 100 tokens, which is weaker than 'steering has no affective direction'. It is declared here so that distinction cannot be made after seeing the outcome.",
+  "plan_hash": "36464654b8accbcf851654784bda16dcfc9ce47ff5dc7fcb1113adc40b3d69f8"
+}
