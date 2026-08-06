@@ -1,5 +1,5 @@
 {
-  "content_sha256": "788ac9a315a23a48b7c76e19fe8cf8cec8afcb503fc43a1cb4ca860448cb070a",
+  "content_sha256": "1e474dd1ce957eff54a48ba0fed33e6eedc8e99b2f82995a3f02a06356bdca93",
   "entries": [
     {
       "acceptance_ids": [
@@ -129,12 +129,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1ad9280874cc21ec1dbb75b7a89d2a0f6b255d4f",
+      "commit": "9fb335ef68b2e0a56b9f299d00db641740ecbde8",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/1ad9280874cc21ec1dbb75b7a89d2a0f6b255d4f.json",
+      "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/9fb335ef68b2e0a56b9f299d00db641740ecbde8.json",
       "requirement_id": "CTX2-SKILL-002",
-      "sha256": "aaffe32282170d6d3e7461b3ab21a0bc2e981904435c3ee08a5794585c5ad645"
+      "sha256": "bab81d24f6a0c582eafcf0a77a9feade99f59fc8c51c1f42a0a8ee42849bb34f"
     },
     {
       "acceptance_ids": [
@@ -272,12 +272,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1ad9280874cc21ec1dbb75b7a89d2a0f6b255d4f",
+      "commit": "9fb335ef68b2e0a56b9f299d00db641740ecbde8",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/1ad9280874cc21ec1dbb75b7a89d2a0f6b255d4f.json",
+      "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/9fb335ef68b2e0a56b9f299d00db641740ecbde8.json",
       "requirement_id": "SKILLS-001",
-      "sha256": "aaffe32282170d6d3e7461b3ab21a0bc2e981904435c3ee08a5794585c5ad645"
+      "sha256": "bab81d24f6a0c582eafcf0a77a9feade99f59fc8c51c1f42a0a8ee42849bb34f"
     },
     {
       "acceptance_ids": [
