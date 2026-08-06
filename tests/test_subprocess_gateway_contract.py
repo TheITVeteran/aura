@@ -346,6 +346,8 @@ async def test_spawn_async_commits_and_releases_model_process_owner(
     assert len(snapshot["owners"]) == 1
     assert snapshot["owners"][0]["process"]["pid"] == proc.pid
     assert snapshot["owners"][0]["metadata"]["managed_model_process"] is True
+    assert snapshot["owners"][0]["metadata"]["process_group_id"] == proc.pid
+    assert snapshot["owners"][0]["metadata"]["process_session_id"] == proc.pid
     assert proc._aura_model_lane_fencing_token > 0
 
     proc.terminate()

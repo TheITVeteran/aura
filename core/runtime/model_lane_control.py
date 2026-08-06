@@ -171,13 +171,21 @@ def managed_process_group_liveness(
     process_group_id: int,
     *,
     root_started_at: float = 0.0,
+    session_id: int = 0,
+    root_pid: int = 0,
     observer: ResourceObserver | None = None,
 ) -> ProcessLiveness:
     """Observe an isolated process group without treating observation gaps as death."""
 
     pgid = int(process_group_id)
+    expected_session_id = int(session_id)
+    expected_root_pid = int(root_pid)
     if pgid <= 0 or pgid == os.getpgrp():
         return ProcessLiveness.DEAD
+    if expected_session_id <= 1 or expected_root_pid <= 1:
+        return ProcessLiveness.UNKNOWN
+    if expected_session_id != expected_root_pid:
+        return ProcessLiveness.UNKNOWN
     earliest_member = max(0.0, float(root_started_at) - 1.0)
     uncertain = False
     try:
@@ -188,6 +196,8 @@ def managed_process_group_liveness(
         try:
             pid = int(process.pid)
             if pid <= 0 or pid == os.getpid() or os.getpgid(pid) != pgid:
+                continue
+            if os.getsid(pid) != expected_session_id:
                 continue
             started_at = float(process.create_time)
             if earliest_member and started_at < earliest_member:
@@ -203,12 +213,16 @@ def managed_process_group_alive(
     process_group_id: int,
     *,
     root_started_at: float = 0.0,
+    session_id: int = 0,
+    root_pid: int = 0,
     observer: ResourceObserver | None = None,
 ) -> bool:
     return (
         managed_process_group_liveness(
             process_group_id,
             root_started_at=root_started_at,
+            session_id=session_id,
+            root_pid=root_pid,
             observer=observer,
         )
         is ProcessLiveness.ALIVE
@@ -707,11 +721,14 @@ def discover_external_model_processes(
     known = list(known_owners)
     known_pids = {owner.process.pid for owner in known if owner.process.pid > 0}
     managed_groups = {
-        int(dict(owner.metadata).get("process_group_id") or 0)
+        (
+            int(dict(owner.metadata).get("process_group_id") or 0),
+            int(dict(owner.metadata).get("process_session_id") or 0),
+        )
         for owner in known
         if bool(dict(owner.metadata).get("managed_model_process", False))
     }
-    managed_groups.discard(0)
+    managed_groups.discard((0, 0))
     observations: list[LaneOwnerObservation] = []
     resource_observer = observer or get_resource_observer()
     for process in resource_observer.processes():
@@ -725,9 +742,14 @@ def discover_external_model_processes(
                 continue
             try:
                 process_group_id = int(os.getpgid(pid))
+                process_session_id = int(os.getsid(pid))
             except (OSError, ProcessLookupError, ValueError):
                 process_group_id = 0
-            if process_group_id > 0 and process_group_id in managed_groups:
+                process_session_id = 0
+            if (
+                process_group_id > 0
+                and (process_group_id, process_session_id) in managed_groups
+            ):
                 continue
             started_at = float(process.create_time)
             observed_gb = float(process.rss_bytes) / float(1024**3)
@@ -770,6 +792,7 @@ def discover_external_model_processes(
                         ),
                         "command_sha256": command_digest,
                         "process_group_id": process_group_id,
+                        "process_session_id": process_session_id,
                         "process_tree_escape": parent_owner is not None,
                         "registered_parent_owner_id": (
                             parent_owner.owner_id if parent_owner is not None else ""
@@ -790,6 +813,7 @@ async def evict_managed_process_owner(owner: LaneOwnerObservation, reason: str) 
         return False
     identity = owner.process
     pgid = int(metadata.get("process_group_id") or 0)
+    session_id = int(metadata.get("process_session_id") or 0)
     current_pgid = os.getpgrp()
     isolated_group = bool(metadata.get("start_new_session", False))
 
@@ -801,6 +825,8 @@ async def evict_managed_process_owner(owner: LaneOwnerObservation, reason: str) 
             group_liveness = managed_process_group_liveness(
                 pgid,
                 root_started_at=identity.started_at,
+                session_id=session_id,
+                root_pid=identity.pid,
             )
             if group_liveness is ProcessLiveness.ALIVE:
                 return group_liveness
@@ -1231,6 +1257,8 @@ class ModelLaneController:
             group_liveness = managed_process_group_liveness(
                 int(metadata.get("process_group_id") or 0),
                 root_started_at=identity.started_at,
+                session_id=int(metadata.get("process_session_id") or 0),
+                root_pid=identity.pid,
                 observer=self.resource_observer,
             )
             if group_liveness is ProcessLiveness.ALIVE:
@@ -1307,6 +1335,26 @@ class ModelLaneController:
             lease_mode = str(dict(record.get("metadata") or {}).get("lease_mode") or "process")
             heartbeat_expired = lease_mode == "heartbeat" and lease_expired
             metadata = dict(record.get("metadata") or {})
+            if (
+                liveness is ProcessLiveness.ALIVE
+                and metadata.get("managed_model_process", False)
+                and metadata.get("start_new_session", False)
+                and int(metadata.get("process_session_id") or 0) <= 1
+            ):
+                try:
+                    observed_group_id = int(os.getpgid(identity.pid))
+                    observed_session_id = int(os.getsid(identity.pid))
+                except (OSError, ProcessLookupError, TypeError, ValueError):
+                    observed_group_id = 0
+                    observed_session_id = 0
+                if (
+                    observed_group_id == int(metadata.get("process_group_id") or 0)
+                    and observed_session_id == identity.pid
+                ):
+                    metadata["process_session_id"] = observed_session_id
+                    metadata["process_group_identity_version"] = 1
+                    record["metadata"] = metadata
+                    changed = True
             if liveness is ProcessLiveness.UNKNOWN:
                 if not bool(metadata.get("process_liveness_unknown", False)):
                     metadata["process_liveness_unknown"] = True
@@ -3078,7 +3126,10 @@ class ModelLaneController:
             if owner_metadata.get("start_new_session") is not True:
                 return False
             try:
-                return int(owner_metadata.get("process_group_id") or 0) == os.getpgrp()
+                return bool(
+                    int(owner_metadata.get("process_group_id") or 0) == os.getpgrp()
+                    and int(owner_metadata.get("process_session_id") or 0) == os.getsid(0)
+                )
             except (OSError, TypeError, ValueError):
                 return False
 

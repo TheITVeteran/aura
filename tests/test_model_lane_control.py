@@ -27,8 +27,10 @@ from core.runtime.model_lane_control import (
     acquire_synchronous_in_process_model_lane,
     compensate_registered_model_owner,
     discover_external_model_processes,
+    evict_managed_process_owner,
     evict_registered_model_owner,
     infer_model_process_claim,
+    managed_process_group_liveness,
     register_model_lane_owner_adapter,
     unregister_model_lane_owner_adapter,
 )
@@ -799,6 +801,7 @@ def test_inherited_child_is_bound_to_declared_model_roots_and_purposes(
             "managed_model_process": True,
             "start_new_session": True,
             "process_group_id": os.getpgrp(),
+            "process_session_id": os.getsid(0),
         },
     )
     monkeypatch.setattr(controller, "validate_inherited_claim", lambda **_kwargs: True)
@@ -951,6 +954,105 @@ def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_esca
     assert observed.metadata["model_identity_status"] == "unresolved_fail_closed"
     assert observed.metadata["process_tree_escape"] is True
     assert observed.metadata["registered_parent_owner_id"] == "managed-parent"
+
+
+def test_managed_group_liveness_rejects_reused_pgid_from_another_session(
+    monkeypatch: pytest.MonkeyPatch,
+    resource_observer,
+) -> None:
+    from core.runtime.resource_observation import ProcessObservation
+
+    root_pid = os.getpid() + 310_000
+    descendant_pid = root_pid + 1
+    process_group_id = root_pid
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=descendant_pid,
+                ppid=1,
+                create_time=5001.0,
+                status="running",
+                cmdline=("/usr/bin/python3", "worker.py"),
+                name="python3",
+                rss_bytes=1024,
+                ancestor_pids=(),
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.os.getpgid",
+        lambda pid: process_group_id if pid == descendant_pid else os.getpgrp(),
+    )
+    observed_session = [root_pid]
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.os.getsid",
+        lambda _pid: observed_session[0],
+    )
+
+    assert managed_process_group_liveness(
+        process_group_id,
+        root_started_at=5000.0,
+        session_id=root_pid,
+        root_pid=root_pid,
+        observer=resource_observer,
+    ) is ProcessLiveness.ALIVE
+
+    observed_session[0] = root_pid + 99
+    assert managed_process_group_liveness(
+        process_group_id,
+        root_started_at=5000.0,
+        session_id=root_pid,
+        root_pid=root_pid,
+        observer=resource_observer,
+    ) is ProcessLiveness.DEAD
+
+
+@pytest.mark.asyncio
+async def test_managed_eviction_never_signals_reused_or_unattested_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[dict[str, int]] = []
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control._default_process_liveness",
+        lambda _identity: ProcessLiveness.DEAD,
+    )
+
+    def group_liveness(process_group_id: int, **kwargs: int) -> ProcessLiveness:
+        observed.append({"process_group_id": process_group_id, **kwargs})
+        return ProcessLiveness.DEAD
+
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.managed_process_group_liveness",
+        group_liveness,
+    )
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.os.killpg",
+        lambda *_args: pytest.fail("reused process group must never be signalled"),
+    )
+    owner = LaneOwnerObservation(
+        owner_id="managed:finished-session",
+        model_path="/models/finished-32b",
+        declared_gb=23.0,
+        process=ProcessIdentity(51_001, 5_001.0),
+        preemptible=True,
+        metadata={
+            "managed_model_process": True,
+            "start_new_session": True,
+            "process_group_id": 51_001,
+            "process_session_id": 51_001,
+        },
+    )
+
+    assert await evict_managed_process_owner(owner, "test-reused-group") is True
+    assert observed == [
+        {
+            "process_group_id": 51_001,
+            "root_started_at": 5_001.0,
+            "session_id": 51_001,
+            "root_pid": 51_001,
+        }
+    ]
 
 
 def test_external_discovery_drops_process_registered_during_scan(tmp_path: Path) -> None:

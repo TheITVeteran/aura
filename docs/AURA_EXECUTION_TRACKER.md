@@ -36856,3 +36856,28 @@ now live but remains open until the signed step-64 checkpoint is committed.
 Process-group session/descendant binding and the other retained model-lane
 requirements remain open. No reasoning-gain, frontier, promotion, `WOW Signal`,
 or CP810 claim is supported, so the honest total remains 809/920.
+
+#### Model-lane process-group identity continuation
+
+Managed process groups are now bound to the exact isolated POSIX session that
+the subprocess gateway created. Admission records the session leader PID and
+creation time already carried by the process identity plus the observed PGID,
+SID, and identity-contract version. A group member counts as part of that owner
+only when its PGID and SID match the registered session and it was created no
+earlier than the root. Reuse of the same numeric PGID in another session cannot
+prove liveness, suppress external discovery, satisfy eviction verification, or
+receive `SIGTERM`/`SIGKILL` intended for the former owner.
+
+New model subprocesses fail closed and are reaped if `start_new_session=True`
+does not produce `PID == PGID == SID`. Existing persisted managed owners are
+upgraded only when their still-live original root proves the missing session
+identity; otherwise they remain conservatively fenced. Inherited child claims
+now require both the registered process group and session.
+
+Focused identity regressions pass 4/4; the complete model-lane, subprocess
+gateway, heartbeat, embedding, voice, image, and local-code family passes
+124/124; Ruff, compile, scoped production MyPy, and smoke pass, with smoke at
+103/103. This closes the retained PGID-reuse requirement but not the remaining
+write-ahead eviction, compensation serialization, cumulative inherited
+sublease, or subprocess capability-declaration requirements. CP810 and the
+honest total remain open at 809/920.

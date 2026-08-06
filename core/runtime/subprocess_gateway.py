@@ -1092,9 +1092,30 @@ class SubprocessGateway:
 
             try:
                 process_group_id = int(os.getpgid(proc.pid))
+                process_session_id = int(os.getsid(proc.pid))
             except (OSError, ProcessLookupError, ValueError):
                 process_group_id = 0
+                process_session_id = 0
             committed_process = process_identity_for_pid(proc.pid)
+            if start_new_session and (
+                process_group_id != proc.pid or process_session_id != proc.pid
+            ):
+                try:
+                    proc.kill()
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except (OSError, RuntimeError, ProcessLookupError, TimeoutError, ValueError):
+                    logger.error(
+                        "Model subprocess survived invalid session identity pid=%s pgid=%s sid=%s",
+                        getattr(proc, "pid", None),
+                        process_group_id,
+                        process_session_id,
+                    )
+                await _cancel_model_lane_process(
+                    model_controller,
+                    model_decision,
+                    reason="model_subprocess_session_identity_invalid",
+                )
+                raise RuntimeError("model_subprocess_session_identity_invalid")
             try:
                 committed = await model_controller.commit(
                     model_decision,
@@ -1102,6 +1123,8 @@ class SubprocessGateway:
                     metadata={
                         "managed_model_process": True,
                         "process_group_id": process_group_id,
+                        "process_session_id": process_session_id,
+                        "process_group_identity_version": 1,
                         "start_new_session": bool(start_new_session),
                         "source": source,
                         "command": list(command),
@@ -1139,12 +1162,16 @@ class SubprocessGateway:
                     while managed_process_group_alive(  # noqa: ASYNC110
                         process_group_id,
                         root_started_at=committed_process.started_at,
+                        session_id=process_session_id,
+                        root_pid=committed_process.pid,
                     ):
                         await asyncio.sleep(0.1)
                 except asyncio.CancelledError:
                     if proc.returncode is None or managed_process_group_alive(
                         process_group_id,
                         root_started_at=committed_process.started_at,
+                        session_id=process_session_id,
+                        root_pid=committed_process.pid,
                     ):
                         logger.info(
                             "Model subprocess monitor cancelled while process tree remains "
@@ -1158,6 +1185,8 @@ class SubprocessGateway:
                     if proc.returncode is not None and not managed_process_group_alive(
                         process_group_id,
                         root_started_at=committed_process.started_at,
+                        session_id=process_session_id,
+                        root_pid=committed_process.pid,
                     ):
                         try:
                             await model_controller.release_owner(
