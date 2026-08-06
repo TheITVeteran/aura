@@ -8,14 +8,18 @@ from typing import Any
 
 import pytest
 
+from core.embodiment import ros2_contracts, rosbridge_transport
 from core.embodiment.reality_connectors import (
     build_configured_reality_connector_catalog,
 )
 from core.embodiment.ros2_connector import (
+    ROS2ActionSpec,
     ROS2Connector,
     ROS2ConnectorError,
     ROS2ManagedAdapter,
     ROS2NodeSpec,
+    ROS2ServiceSpec,
+    ROS2TelemetrySpec,
     ROS2Transport,
     RosbridgeWebSocketTransport,
     ROSGraphSnapshot,
@@ -30,6 +34,23 @@ from core.reality_reach.middleware_contracts import (
     ActionState,
     PhysicalEffectIndeterminateError,
 )
+from core.runtime.audit_chain import canonical_json, sha256_hex
+
+
+def test_ros2_connector_facade_preserves_contract_type_identity() -> None:
+    assert ROS2ActionSpec is ros2_contracts.ROS2ActionSpec
+    assert ROS2ConnectorError is ros2_contracts.ROS2ConnectorError
+    assert ROS2NodeSpec is ros2_contracts.ROS2NodeSpec
+    assert ROS2ServiceSpec is ros2_contracts.ROS2ServiceSpec
+    assert ROS2TelemetrySpec is ros2_contracts.ROS2TelemetrySpec
+    assert ROS2Transport is ros2_contracts.ROS2Transport
+    assert ROSGraphSnapshot is ros2_contracts.ROSGraphSnapshot
+    assert ROSTopicSample is ros2_contracts.ROSTopicSample
+    assert parse_ros2_node_manifest is ros2_contracts.parse_ros2_node_manifest
+    assert (
+        RosbridgeWebSocketTransport
+        is rosbridge_transport.RosbridgeWebSocketTransport
+    )
 
 
 def _manifest() -> dict[str, Any]:
@@ -93,6 +114,12 @@ def _manifest() -> dict[str, Any]:
             },
         ],
     }
+
+
+def test_ros2_contract_digest_matches_audit_chain_canonicalization() -> None:
+    spec = parse_ros2_node_manifest(_manifest())
+
+    assert spec.sha256 == sha256_hex(canonical_json(spec.to_dict()))
 
 
 class FakeROS2Transport:

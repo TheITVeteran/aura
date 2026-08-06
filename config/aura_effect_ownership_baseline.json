@@ -6205,7 +6205,7 @@
       "canonical_owner": false,
       "category": "network_gateway",
       "count": 1,
-      "path": "core/embodiment/ros2_connector.py",
+      "path": "core/embodiment/rosbridge_transport.py",
       "scope": "<module>.RosbridgeWebSocketTransport.connect"
     },
     {
@@ -15970,6 +15970,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "7e420ffdc6f59cc89a45a912b3174c9417b7d308f01c621144a5f7d1dea8f053",
+  "inventory_sha256": "b192eeac2bde869f2e76391e394b3a0a6c7a11284306a928fbd6251e4f8eb028",
   "schema_version": 1
 }
