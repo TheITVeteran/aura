@@ -193,7 +193,13 @@ def raw_model_draft() -> str:
         return ""
 
 
-def repair_is_an_improvement(before: Any, after: Any, question: Any = "") -> bool:
+def repair_is_an_improvement(
+    before: Any,
+    after: Any,
+    question: Any = "",
+    *,
+    targeted: Any = (),
+) -> bool:
     """Whether a repair actually made the reply better, or merely different.
 
     Most of the gates in this pipeline were written when Aura was a weaker
@@ -208,6 +214,17 @@ def repair_is_an_improvement(before: Any, after: Any, question: Any = "") -> boo
     does neither, it is an improvement and it wins; otherwise the original
     stands. A gate that cannot describe a better answer does not get to
     replace this one.
+
+    ``targeted`` names the objections the repair was INVOKED to fix, and a
+    repair that leaves one of them in place is not accepted. That is the rule a
+    trust-region optimizer applies to every step it takes: compute the
+    reduction the step PREDICTED, measure the reduction it DELIVERED, and
+    reject the step when the ratio is poor rather than moving because the step
+    was computed. Without it, ``_attempt_repair_retry(text, (failure_reason,))``
+    could return a draft that still carries ``failure_reason``, differ from the
+    original in some incidental way, satisfy "no new objections, not much
+    shorter", and be served — a substitution that traded a known answer for an
+    equally objectionable one and called it a repair.
     """
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -225,6 +242,10 @@ def repair_is_an_improvement(before: Any, after: Any, question: Any = "") -> boo
     if replacement_reasons - original_reasons:
         return False
     if replacement_reasons & UNSPEAKABLE_REASONS:
+        return False
+    # It did not do the thing it was called to do.
+    unresolved = _reason_set(targeted) & replacement_reasons
+    if unresolved:
         return False
     # Losing a third of the answer is a downgrade even when it silences a
     # complaint — unless the complaint was that the answer must be shorter.
@@ -557,3 +578,13 @@ def short_draft_answers_closed_question(text: Any, question: Any) -> bool:
     ):
         return True
     return False
+
+
+# Importing registers the structural invariants over the reason sets declared
+# above — that no reason is both advisory and unspeakable, that an advisory one
+# cannot cost the turn its memory, that the names are comparable as strings, and
+# that `disposition_for` implements the classification it is given. Registered
+# HERE, at the bottom of the module that owns the sets, so a check nothing
+# imports cannot be a check nothing runs. Last line of the file: everything the
+# checks reach for is already defined, and they import this module lazily.
+from core.conversation import disposition_invariants as _disposition_invariants  # noqa: E402,F401

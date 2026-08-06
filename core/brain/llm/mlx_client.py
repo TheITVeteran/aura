@@ -924,6 +924,14 @@ _READINESS_ANSWER_MAX_CHARS = 200
 _MIN_READINESS_PROBE_BUDGET_S = 10.0
 #: And no single probe may consume an arbitrarily large campaign either.
 _MAX_READINESS_PROBE_S = 60.0
+
+#: Overshoot the out-of-band watchdog already allows itself before enforcing a
+#: first-token ceiling. Named because it is now used twice — once to decide
+#: WHEN to fire, and once as the grace a cooperative cancel gets to be
+#: acknowledged before the ladder escalates to killing the worker. A second,
+#: differently-chosen number for the second use would be exactly the kind of
+#: unmoored constant that makes a composed timing contract unreadable.
+_WATCHDOG_ENFORCEMENT_SLACK_S = 2.0
 # A warmup still running after this long is stuck: cancel it (and prove it
 # ended) before a replacement starts.
 _WARMUP_STALE_AFTER_S = 300.0
@@ -5536,7 +5544,7 @@ class MLXLocalClient:
             if hard_ceiling_s is not None
             else self._first_token_hard_ceiling(foreground_request=True)
         )
-        fire_after = max(10.0, hard_ceiling + 2.0)
+        fire_after = max(10.0, hard_ceiling + _WATCHDOG_ENFORCEMENT_SLACK_S)
         model_name = os.path.basename(self.model_path)
 
         def _enforce() -> None:
@@ -5565,7 +5573,20 @@ class MLXLocalClient:
                     severity="critical",
                     foreground_request=True,
                 )
-                self.force_abort_active_generation("first_token_wall_clock_watchdog")
+                # The preemption ladder, both rungs. This site went straight to
+                # the kill, which costs a ~60-90s reload of a 20GB resident
+                # model — the price of the recovery, paid in full, on the
+                # chance that the worker was merely slow rather than wedged.
+                if self._first_token_watchdog_soft_cancel(req_id):
+                    return
+                # …and bound to the request this watchdog actually checked.
+                # Without expected_request_id there is a window between the id
+                # check above and the abort in which a NEW foreground request
+                # can start, and the abort kills that one instead.
+                self.force_abort_active_generation(
+                    "first_token_wall_clock_watchdog",
+                    expected_request_id=str(req_id or ""),
+                )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logger.error("MLX first-token watchdog failed: %s", exc)
 
@@ -5575,6 +5596,58 @@ class MLXLocalClient:
         timer.start()
         self._foreground_generation_watchdog = timer
         return timer
+
+    def _first_token_watchdog_soft_cancel(self, req_id: str) -> bool:
+        """Ask first. True when the job ended without killing the worker.
+
+        A first-token overrun has two causes that look identical from here: a
+        worker stuck in prefill on the GPU, which cannot poll the cancel word
+        and must be killed, and a worker that is simply slow and one decode
+        step from its first token, which will observe the cancel immediately.
+        Only the first needs a reload. Telling them apart costs one bounded
+        wait; guessing wrong costs a 20GB model.
+
+        Runs on the watchdog's own timer thread, never the event loop, so the
+        wait blocks nothing a caller is on.
+        """
+        try:
+            receipt = self.soft_cancel_active_generation(
+                "first_token_wall_clock_watchdog"
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+        if not receipt.get("requested"):
+            return False
+        target = self._soft_cancel_target
+        if not target:
+            return False
+        # The same slack this watchdog already allots itself for out-of-band
+        # enforcement (`fire_after`), reused rather than a second number: it is
+        # the overshoot this function has always treated as acceptable.
+        deadline = time.monotonic() + _WATCHDOG_ENFORCEMENT_SLACK_S
+        while time.monotonic() < deadline:
+            process = self._process
+            if process is None or not process.is_alive():
+                return False
+            if self._soft_cancel_ack_matches(target):
+                logger.info(
+                    "✋ [MLX] First-token overrun on %s ended cooperatively — "
+                    "worker and model kept warm.",
+                    os.path.basename(self.model_path),
+                )
+                return True
+            if str(self._current_request_id or "") != str(req_id or ""):
+                # The job finished on its own while we waited. Nothing to kill,
+                # and killing now would take whatever started after it.
+                return True
+            time.sleep(0.05)
+        logger.warning(
+            "🛑 [MLX] Soft-cancel unacknowledged after %.1fs on %s — the worker "
+            "is not decoding; escalating to abort.",
+            _WATCHDOG_ENFORCEMENT_SLACK_S,
+            os.path.basename(self.model_path),
+        )
+        return False
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
         stretch, _ = self._pressure_adaptive_stretch()

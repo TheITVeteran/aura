@@ -9149,7 +9149,13 @@ async def _run_cognitive_engine_chat_turn(
                     repair_is_an_improvement,
                 )
 
-                keep_retry = repair_is_an_improvement(text, retry_reply, visible)
+                # `failure_reason` is what this retry was FOR. A replacement
+                # that still carries it delivered nothing the retry predicted,
+                # and swapping it in trades a known answer for an equally
+                # objectionable one.
+                keep_retry = repair_is_an_improvement(
+                    text, retry_reply, visible, targeted=(failure_reason,)
+                )
             except _CHAT_RECOVERABLE_ERRORS:
                 keep_retry = True
             if not keep_retry:
