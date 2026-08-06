@@ -1,0 +1,169 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_lifecycle_ownership_audit.py",
+    "tests/test_container_2026.py",
+    "tests/test_state_repository_runtime_contract.py",
+    "tests/test_runtime_process_identity.py",
+    "tests/test_sqlite_connections_are_closed.py",
+    "tests/test_sqlite_lifecycle.py",
+    "tests/test_tasks_managed_command.py",
+    "tests/test_subprocess_gateway_contract.py::test_cancelled_effectful_run_terminates_process_group_before_propagating",
+    "tests/test_subprocess_gateway_contract.py::test_async_spawn_terminates_child_when_shutdown_crosses_creation"
+  ],
+  "cwd": ".",
+  "duration_seconds": 17.582737,
+  "environment_policy": {
+    "inherited_names_sha256": "53e9f28c81964a0f7bab7503bac0191802cf126997b5191db9fe4245b52e7c29",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "LIFECYCLE-001"
+    }
+  ],
+  "finished_at": "2026-08-06T15:04:10.296676+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "836ac7e29b51550ac6fd376d43b5f0a1b2b40fad",
+  "output_bytes": 100,
+  "proof_id": "lifecycle-ownership-contract-tests",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "836ac7e29b51550ac6fd376d43b5f0a1b2b40fad",
+  "source_manifest": [
+    {
+      "path": "core/container.py",
+      "sha256": "9500e8b1c27911a63374f86ea1c8b26ea60c02b8a13b85bb65963fb6bff8222e",
+      "size_bytes": 67954
+    },
+    {
+      "path": "core/runtime/process_identity.py",
+      "sha256": "540630d1c47d8bbca015139bea931c2720a134026a77469583cb06b4cc7564c1",
+      "size_bytes": 10488
+    },
+    {
+      "path": "core/runtime/service_registry.py",
+      "sha256": "6a9adccef98da82fac7b8fc57ba80ce4573962fb4ed82d456046380eb2d1cb63",
+      "size_bytes": 9510
+    },
+    {
+      "path": "core/runtime/subprocess_gateway.py",
+      "sha256": "3b7fe4dfae0bda1b8940b8d79ca4da9a6c640d22d7c8bf0df6cf798fafcbdf58",
+      "size_bytes": 63018
+    },
+    {
+      "path": "core/state/state_repository.py",
+      "sha256": "3adf67f45fcb7796c0e7ab17925925119107d4dcd80b254070f3a8152ef1eae8",
+      "size_bytes": 86522
+    },
+    {
+      "path": "core/tasks/managed_command.py",
+      "sha256": "f61c66a3dbffbef17fd9f07d61f7e6d5148028126897acf62214595b5549e801",
+      "size_bytes": 6482
+    },
+    {
+      "path": "scripts/one_off/aura_cleanup.py",
+      "sha256": "1628246361313d74b198abed81bfaa827c41ce8126f5f2fbc295191c22a9c629",
+      "size_bytes": 8698
+    },
+    {
+      "path": "tests/test_container_2026.py",
+      "sha256": "6705630d90be9300cbcd0141666d6f2b3fc83aa04a8851a94624fa9669b0d824",
+      "size_bytes": 7235
+    },
+    {
+      "path": "tests/test_lifecycle_ownership_audit.py",
+      "sha256": "6711ca80d3ba0b93ff2e563ef946851e37bd81ea0de3a359372ffd8137c3e615",
+      "size_bytes": 4980
+    },
+    {
+      "path": "tests/test_runtime_process_identity.py",
+      "sha256": "31d02d8ae1a05495b6c5fa39edcd4c48853ac78f703c3a8b6c41eed66fb688a5",
+      "size_bytes": 2684
+    },
+    {
+      "path": "tests/test_sqlite_connections_are_closed.py",
+      "sha256": "f9b58d5f305f287a0e1b1f33bd34ebb581b67cc4908edf83d2d1d86517fa48ca",
+      "size_bytes": 6315
+    },
+    {
+      "path": "tests/test_sqlite_lifecycle.py",
+      "sha256": "5d49aebe16452f9640d6ed8fad442a0d4a1de90dffed6d260663da06958609a1",
+      "size_bytes": 5221
+    },
+    {
+      "path": "tests/test_state_repository_runtime_contract.py",
+      "sha256": "14ce44db2ad0424b51a7e392e5d4bcbcd38a0181c128b393744fa8f0ef082e7e",
+      "size_bytes": 11930
+    },
+    {
+      "path": "tests/test_subprocess_gateway_contract.py",
+      "sha256": "049b34592f010750d722dd4b2ae8183707bd502d6d6f194af6ac75070e11b815",
+      "size_bytes": 49029
+    },
+    {
+      "path": "tests/test_tasks_managed_command.py",
+      "sha256": "96d5916b2e9bd7b7764deed4a3a5e79f4cb2be7b8887cecd4f7dfe3715ee93f5",
+      "size_bytes": 2618
+    },
+    {
+      "path": "tools/closeout/audit_lifecycle_ownership.py",
+      "sha256": "e7e57856e784773c49cb799308c0cadab64bc9c9d8b03bec79e4212ccb692daf",
+      "size_bytes": 11053
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "core/container.py",
+      "core/runtime/process_identity.py",
+      "core/runtime/service_registry.py",
+      "core/runtime/subprocess_gateway.py",
+      "core/state/state_repository.py",
+      "core/tasks/managed_command.py",
+      "scripts/one_off/aura_cleanup.py",
+      "tests/test_container_2026.py",
+      "tests/test_lifecycle_ownership_audit.py",
+      "tests/test_runtime_process_identity.py",
+      "tests/test_sqlite_connections_are_closed.py",
+      "tests/test_sqlite_lifecycle.py",
+      "tests/test_state_repository_runtime_contract.py",
+      "tests/test_subprocess_gateway_contract.py",
+      "tests/test_tasks_managed_command.py",
+      "tools/closeout/audit_lifecycle_ownership.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "b94e93937c12e3ed6ed7dd2f7aa7793eb248a3e342c9089ab43768a46b7e4d86",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T15:03:52.713786+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "................................................................         [100%]\n64 passed in 16.90s\n",
+  "stdout_sha256": "17c78a38976f1b30650ac896597c7067c8538ea6d49faaeeec053507e7ded519",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}

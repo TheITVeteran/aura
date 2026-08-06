@@ -1,5 +1,5 @@
 {
-  "content_sha256": "fe27dd1fcdddb17af266aaf408ff6dec34a874128ec5f54322e787f88a064dbd",
+  "content_sha256": "60b0f10c46d2c1d6058898934e245aae72946d671d8ab54715c6ad68426d61da",
   "entries": [
     {
       "acceptance_ids": [
@@ -534,6 +534,17 @@
       "ref": "artifacts/reqproof/evidence/lifecycle-ownership-audit/6d044056e7eba71f31eb0f292eb14af020172b3e.json",
       "requirement_id": "LIFECYCLE-001",
       "sha256": "dfdc8885d00cc6a4bd3c0c5f48984314af28d622fa97df21fcf08e01d2a3d4fa"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "836ac7e29b51550ac6fd376d43b5f0a1b2b40fad",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/lifecycle-ownership-contract-tests/836ac7e29b51550ac6fd376d43b5f0a1b2b40fad.json",
+      "requirement_id": "LIFECYCLE-001",
+      "sha256": "a47583bfd0cd80f660e712668762e3ce18a6e426c85ace4b7ff7b4e327b6529c"
     },
     {
       "acceptance_ids": [
