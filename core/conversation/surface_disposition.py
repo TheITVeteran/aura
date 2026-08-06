@@ -49,6 +49,7 @@ __all__ = [
     "SurfaceDisposition",
     "SHORTFALL_REASONS",
     "ADVISORY_ONLY_REASONS",
+    "CONTINUITY_SAFE_REASONS",
     "UNSPEAKABLE_REASONS",
     "best_available_reply",
     "raw_model_draft",
@@ -313,6 +314,29 @@ class SurfaceDisposition(Enum):
 ADVISORY_ONLY_REASONS: frozenset[str] = frozenset(
     {
         "reply_abandons_thread",
+    }
+)
+
+#: Objections about HOW something was said, not about whether it was true or
+#: responsive. A turn carrying only these is still a real exchange: the person
+#: asked, Aura answered, and the answer was merely worded badly.
+#:
+#: The distinction is load-bearing. Refusing to LEARN from a poorly worded
+#: reply is right — storing it as experience primes the model to repeat the
+#: shape. Refusing to REMEMBER the exchange is not: it discards the person's
+#: half of the conversation to punish Aura's half. Seen in the 2026-07-30
+#: demo, where a desktop answer in internal vocabulary tripped
+#: pseudo_internal_jargon and the whole turn vanished from continuity.
+#:
+#: Deliberately narrow, and it does NOT include grounding failures such as
+#: host_telemetry_substituted_for_self_condition. A reply that asserted the
+#: wrong thing about her own state is not merely worded badly, and the record
+#: of it would be retrieved as evidence about that state.
+CONTINUITY_SAFE_REASONS: frozenset[str] = frozenset(
+    {
+        "reply_abandons_thread",
+        "pseudo_internal_jargon",
+        "function_word_starvation",
     }
 )
 

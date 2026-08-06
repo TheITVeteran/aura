@@ -68,3 +68,61 @@ class TestTheParaphraseThatTriggeredIt:
     def test_but_the_exchange_is_still_recorded(self) -> None:
         verdict = assess_thread_continuity(self.REPLY, self.USER)
         assert disposition_for((verdict.reason,)) is SurfaceDisposition.SERVE
+
+
+class TestWordingFailuresKeepTheRecord:
+    """The demo bug: her own jargon erased the conversation.
+
+    2026-07-30 demo — Aura answered a desktop request in internal vocabulary
+    ("Desktop task completed 2/2 governed computer-use steps through
+    heuristic_compat planning"). The reply tripped pseudo_internal_jargon and
+    function_word_starvation, the learning gate refused, and the ENTIRE turn
+    was dropped: not just her answer, but the fact that Bryan had asked.
+    """
+
+    def test_wording_objections_are_continuity_safe(self) -> None:
+        from core.conversation.surface_disposition import CONTINUITY_SAFE_REASONS
+
+        assert {"pseudo_internal_jargon", "function_word_starvation"} <= (
+            CONTINUITY_SAFE_REASONS
+        )
+
+    def test_a_grounding_failure_is_not_continuity_safe(self) -> None:
+        """A wrong claim about her own state must not be stored as what she said."""
+        from core.conversation.surface_disposition import CONTINUITY_SAFE_REASONS
+
+        assert "host_telemetry_substituted_for_self_condition" not in (
+            CONTINUITY_SAFE_REASONS
+        )
+
+    def test_the_demo_reply_is_wording_only(self) -> None:
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+        )
+        from core.conversation.surface_disposition import CONTINUITY_SAFE_REASONS
+
+        verdict = assess_conversation_learning_admission(
+            "Can you open the Notes app and write a note where you write a "
+            "paragraph describing yourself?",
+            "Desktop task completed 2/2 governed computer-use steps through "
+            "heuristic_compat planning. Completed 2/2 governed desktop steps.",
+        )
+        assert not verdict.ok, "this reply should still not become experience"
+        assert set(verdict.reasons) <= CONTINUITY_SAFE_REASONS, (
+            "but every objection to it is about wording, so the exchange is "
+            "still remembered"
+        )
+
+    def test_the_misgrounded_reply_is_not(self) -> None:
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+        )
+        from core.conversation.surface_disposition import CONTINUITY_SAFE_REASONS
+
+        verdict = assess_conversation_learning_admission(
+            "Are you okay though? Feeling fine?",
+            "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
+            "CPU load is 25.8% on this host.",
+        )
+        assert not verdict.ok
+        assert not set(verdict.reasons) <= CONTINUITY_SAFE_REASONS

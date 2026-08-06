@@ -632,6 +632,84 @@ def _clip_continuity_text(text: Any, *, limit: int = 520) -> str:
     return clipped[: max(0, limit - 1)].rstrip() + "..."
 
 
+def _resolve_conversation_user_id(
+    exact_agent_id: Any,
+    *,
+    explicit_principal: bool,
+    scoped_principal: bool,
+    state_obj: Any,
+) -> str:
+    """Who this turn is attributed to.
+
+    Extracted so the continuity-only path and the full learning path cannot
+    attribute the same exchange to different people. An explicitly
+    identity-less request must never be re-attributed from mutable process
+    state, which is why the fallback is a named unattributed session rather
+    than whoever the runtime happens to think is present.
+    """
+    return exact_agent_id or (
+        "unattributed_session"
+        if explicit_principal or scoped_principal
+        else resolve_primary_user_id(state_obj)
+    )
+
+
+async def _record_continuity_only(
+    user_input: str,
+    aura_response: str,
+    *,
+    user_id: str,
+    reasons: tuple[str, ...],
+) -> bool:
+    """Remember that the exchange happened, without learning from the reply.
+
+    Written when the learning gate refuses. The metadata says plainly that
+    this reply was NOT admitted as experience, so a retrieval path looking
+    for examples of good answers can exclude it while a retrieval path
+    looking for "what did we talk about" still finds it.
+    """
+    try:
+        memory_facade = service_access.optional_service("memory_facade", default=None)
+        if memory_facade is None or not hasattr(memory_facade, "add_memory"):
+            return False
+        continuity_text = _build_conversation_continuity_memory(
+            user_input,
+            aura_response,
+            user_id=user_id,
+        )
+        result = memory_facade.add_memory(
+            continuity_text,
+            metadata={
+                "origin": "api",
+                "source": "chat_api",
+                "domain": "conversation",
+                "memory_type": "conversation_continuity",
+                "conversation_turn": True,
+                "preserve_for_continuity": True,
+                "searchable_conversation_context": True,
+                "user_id": user_id,
+                "user_utterance": _clip_continuity_text(user_input, limit=700),
+                "aura_response": _clip_continuity_text(aura_response, limit=700),
+                "provenance_source": "live_conversation_turn",
+                "confidence": 1.0,
+                # The two fields that keep this out of the priming loop.
+                "learning_admission": "refused",
+                "reply_is_exemplary": False,
+                "reply_quality_reasons": list(reasons),
+                "importance": 0.5,
+            },
+        )
+        if hasattr(result, "__await__"):
+            result = await result
+        return bool(result)
+    except (AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="lost the continuity record for a turn that was not admitted as learning",
+        )
+        return False
+
+
 def _build_conversation_continuity_memory(
     user_input: str,
     aura_response: str,
@@ -666,9 +744,61 @@ async def record_conversation_experience(
         )
         if not learning_admission.ok:
             logger.warning(
-                "Skipping non-admissible conversation learning input (%s); "
-                "the durable transcript remains the audit record.",
+                "Not learning from this reply (%s); recording the exchange for "
+                "continuity without treating the reply as an example.",
                 ",".join(learning_admission.reasons) or "unknown",
+            )
+            # The rationale for refusing to LEARN here is sound and evidenced:
+            # a repaired or rejected reply stored as experience comes back as
+            # memory evidence and primes the model to repeat the broken shape
+            # (live 2026-07-27, the truncated marbles answer, turn after turn).
+            #
+            # What was wrong is the scope. Refusing to learn from a bad reply
+            # also threw away the USER'S half of the exchange — that they asked
+            # at all, and what about. Seen in the 2026-07-30 demo: Aura answered
+            # a desktop request in her own internal vocabulary, the reply
+            # tripped pseudo_internal_jargon, and the entire turn vanished from
+            # continuity. The worse her wording, the less she remembered of the
+            # conversation.
+            #
+            # So: no experience commit, but the continuity record still
+            # happens — marked so nothing can retrieve it as a model of how to
+            # answer — and ONLY when every objection is about wording. A
+            # grounding failure (host telemetry offered as a feeling, say) is
+            # not merely badly worded, and its record would be retrieved as
+            # evidence about the state it got wrong.
+            from core.conversation.surface_disposition import (
+                CONTINUITY_SAFE_REASONS,
+            )
+
+            wording_only = bool(learning_admission.reasons) and set(
+                learning_admission.reasons
+            ) <= CONTINUITY_SAFE_REASONS
+            if not wording_only:
+                return
+            refused_state = state
+            if refused_state is None:
+                repo = service_access.resolve_state_repository(default=None)
+                refused_state = getattr(repo, "_current", None) if repo else None
+            await _record_continuity_only(
+                user_input,
+                aura_response,
+                user_id=_resolve_conversation_user_id(
+                    _normalize_agent_id(
+                        principal_id
+                        if principal_id is not None
+                        else current_relational_principal()
+                    )
+                    if (
+                        principal_id is not None
+                        or relational_principal_scope_is_bound()
+                    )
+                    else resolve_exact_partner_id(refused_state),
+                    explicit_principal=principal_id is not None,
+                    scoped_principal=relational_principal_scope_is_bound(),
+                    state_obj=refused_state,
+                ),
+                reasons=learning_admission.reasons,
             )
             return
         self_condition_grounded = bool(is_self_condition_turn(user_input))
@@ -694,13 +824,11 @@ async def record_conversation_experience(
     # An explicitly identity-less request must never be re-attributed from
     # mutable process state. Non-request callers retain the legacy state
     # resolver until they pass a causal principal of their own.
-    user_id = (
-        exact_agent_id
-        or (
-            "unattributed_session"
-            if explicit_principal or scoped_principal
-            else resolve_primary_user_id(state_obj)
-        )
+    user_id = _resolve_conversation_user_id(
+        exact_agent_id,
+        explicit_principal=explicit_principal,
+        scoped_principal=scoped_principal,
+        state_obj=state_obj,
     )
     importance = _conversation_importance(user_input)
     emotional_valence = _conversation_emotional_valence(user_input)
