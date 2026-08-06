@@ -33,6 +33,18 @@ _REQUIRED_DECISION_FIELDS = {
     "evicted_owner_ids", "receipt_id", "replayed",
 }
 _REQUIRED_CALLS: dict[str, dict[str, set[str]]] = {
+    "core/runtime/control_plane.py": {
+        "ResourceAdmissionController.acquire": {
+            "_pressure_block_reason", "_blocking_leases_locked",
+            "_older_waiter_blocks_locked", "_emit_receipt_async", "on_preempt",
+        },
+        "ResourceAdmissionController.release": {
+            "_emit_receipt_async", "_append_history_locked",
+        },
+        "ResourceAdmissionController.status": {
+            "pressure_snapshot", "_expire_leases_locked",
+        },
+    },
     "core/runtime/model_lane_control.py": {
         "ModelLaneController.reserve": {"reconcile_expired_compensations", "to_thread"},
         "ModelLaneController.reserve_sync": {
@@ -68,6 +80,22 @@ _REQUIRED_CALLS: dict[str, dict[str, set[str]]] = {
         "_reserve_model_lane_process": {"prepare_model_lane_claim"},
         "_inferred_model_lane_claim": {"infer_model_process_claim"},
         "_declared_model_lane_claim": {"declared_model_process_claim"},
+    },
+    "core/brain/llm/mlx_client.py": {
+        "_model_load_admission_context": {
+            "get_runtime_control_plane", "get_model_lane_controller", "acquire",
+            "reserve", "prepare", "commit", "cancel", "release",
+            "clear_admission_backoff",
+        },
+        "MLXLocalClient._ensure_worker_alive": {
+            "_model_load_admission_backoff_active",
+            "_release_durable_model_lane_owner",
+            "_model_load_admission_context",
+            "_note_model_load_admission_denial",
+        },
+        "MLXLocalClient._note_model_load_admission_denial": {
+            "_model_load_admission_backoff_seconds", "monotonic",
+        },
     },
     "tools/live_resource_pressure_proof.py": {
         "_run_physical_lane_sequence": {
@@ -227,6 +255,12 @@ def audit(
         "snapshot_fields": sorted(_REQUIRED_SNAPSHOT_FIELDS),
         "external_owner_metadata": sorted(_REQUIRED_EXTERNAL_METADATA),
         "bounded_live_checks": sorted(_REQUIRED_LIVE_CHECKS),
+        "unified_admission_contract": {
+            "policy_owner": "ResourceAdmissionController",
+            "durable_capacity_owner": "ModelLaneController",
+            "production_transaction": "_model_load_admission_context",
+            "anti_thrash_owner": "MLXLocalClient._ensure_worker_alive",
+        },
         "model_load_ownership": {
             "passed": ownership.get("passed") is True,
             "inventory_entries": ownership.get("inventory_entries"),
