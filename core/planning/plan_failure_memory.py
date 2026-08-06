@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.PlanFailureMemory")
 
@@ -143,7 +144,7 @@ class PlanFailureMemory:
 
     def _init_db(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS plan_outcomes (
                         goal_class TEXT NOT NULL,
@@ -172,7 +173,7 @@ class PlanFailureMemory:
         sig = strategy_signature(strategy)
         with self._lock:
             try:
-                with self._connect() as conn:
+                with connecting(self._connect()) as conn:
                     conn.execute(
                         """INSERT INTO plan_outcomes (goal_class, strategy, successes, failures, last_failure_mode, updated_at)
                            VALUES (?, ?, ?, ?, ?, ?)
@@ -202,7 +203,7 @@ class PlanFailureMemory:
         rates: dict[str, float] = {}
         total = 0
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT goal_class, strategy, successes, failures FROM plan_outcomes"
                 ).fetchall()
@@ -247,7 +248,7 @@ class PlanFailureMemory:
 
     def stats(self) -> dict[str, Any]:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 row = conn.execute(
                     "SELECT COUNT(*), COALESCE(SUM(successes),0), COALESCE(SUM(failures),0) FROM plan_outcomes"
                 ).fetchone()

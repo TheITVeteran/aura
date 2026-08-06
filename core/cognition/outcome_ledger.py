@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Cognition.OutcomeLedger")
 
@@ -157,7 +158,7 @@ class OutcomeLedger:
 
     def _init_schema(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS outcome_receipts (
                         receipt_id TEXT PRIMARY KEY,
@@ -203,7 +204,7 @@ class OutcomeLedger:
 
     def _persist(self, r: OutcomeReceipt) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """INSERT OR REPLACE INTO outcome_receipts
                        (receipt_id, action, category, expected, sources_json, opened_at,
@@ -225,7 +226,7 @@ class OutcomeLedger:
     def _load_pending(self) -> None:
         try:
             now = time.time()
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 expired = conn.execute(
                     "UPDATE outcome_receipts "
                     "SET observed = 0.0, resolved_at = ?, status = 'expired', "
@@ -288,7 +289,7 @@ class OutcomeLedger:
 
     def _fetch_pending_receipt(self, receipt_id: str) -> OutcomeReceipt | None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 row = conn.execute(
                     "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
                     "horizon_s, context_json FROM outcome_receipts "
@@ -531,7 +532,7 @@ class OutcomeLedger:
         cutoff = (time.time() if now is None else now) - hours * 3600
         out: Dict[str, float] = {}
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT sources_json, observed FROM outcome_receipts "
                     "WHERE status != 'pending' AND resolved_at > ?",

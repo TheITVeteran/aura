@@ -21,6 +21,7 @@ from typing import Dict, Mapping, Optional
 
 import numpy as np
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class AdaptiveMoodCoefficients:
         return conn
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS adaptive_mood_weights (
@@ -136,7 +137,7 @@ class AdaptiveMoodCoefficients:
     def _load(self) -> None:
         if self._db_path is None:
             return
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             rows = conn.execute("SELECT mood, weights, bias, updates FROM adaptive_mood_weights").fetchall()
         for mood, weights_json, bias, updates in rows:
             if mood not in self._weights:
@@ -157,7 +158,7 @@ class AdaptiveMoodCoefficients:
         bias = float(self._bias[mood])
         updates = int(self._updates[mood])
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """
                     INSERT INTO adaptive_mood_weights (mood, weights, bias, updates, updated_at)

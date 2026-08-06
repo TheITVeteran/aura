@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.runtime.errors import record_degradation
 from core.runtime.resource_observation import ResourceObserver, get_resource_observer
+from core.runtime.sqlite_support import connecting
 
 
 @dataclass(frozen=True)
@@ -326,7 +327,7 @@ class ResourceStakesLedger:
             bounded = max(1, min(1000, int(limit)))
         except (TypeError, ValueError):
             bounded = 50
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute(
                 "SELECT kind, payload, created_at FROM resource_events ORDER BY id DESC LIMIT ?",
                 (bounded,),
@@ -354,7 +355,7 @@ class ResourceStakesLedger:
         )
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS resource_state (
@@ -377,7 +378,7 @@ class ResourceStakesLedger:
 
     def _load_state(self) -> ViabilityState | None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with connecting(sqlite3.connect(self.db_path)) as conn:
                 row = conn.execute("SELECT payload FROM resource_state WHERE id = 1").fetchone()
             if row is None:
                 return None
@@ -405,7 +406,7 @@ class ResourceStakesLedger:
             return None
 
     def _save_state(self, state: ViabilityState) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO resource_state (id, payload, updated_at)
@@ -416,7 +417,7 @@ class ResourceStakesLedger:
             )
 
     def _append_event(self, kind: str, payload: Mapping[str, object]) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 "INSERT INTO resource_events (kind, payload, created_at) VALUES (?, ?, ?)",
                 (kind, json.dumps(payload, sort_keys=True), time.time()),

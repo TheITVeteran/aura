@@ -15,6 +15,7 @@ import json
 import time
 from pathlib import Path
 from typing import Any, Dict
+from core.runtime.sqlite_support import connecting
 
 # Ensure core is on the path if run directly
 BASE_DIR = Path(__file__).parent.parent.resolve()
@@ -70,7 +71,7 @@ def _check_database() -> dict[str, Any]:
     
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(DB_PATH), timeout=5) as conn:
+        with connecting(sqlite3.connect(str(DB_PATH), timeout=5)) as conn:
             cursor = conn.cursor()
 
             # Test projects table

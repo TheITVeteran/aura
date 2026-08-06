@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Cognition.ScientificEngine")
 
@@ -102,7 +103,7 @@ class ScientificEngine:
 
     def _init_schema(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS hypotheses (
                         hypothesis_id TEXT PRIMARY KEY,
@@ -125,7 +126,7 @@ class ScientificEngine:
 
     def _persist(self, h: Hypothesis) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """INSERT OR REPLACE INTO hypotheses
                        (hypothesis_id, claim, predicted_observable, expected, confidence, status,
@@ -143,7 +144,7 @@ class ScientificEngine:
 
     def _load(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT hypothesis_id, claim, predicted_observable, expected, confidence, status, "
                     "trials, supports, created_at, updated_at, receipt_id, evidence_json FROM hypotheses"

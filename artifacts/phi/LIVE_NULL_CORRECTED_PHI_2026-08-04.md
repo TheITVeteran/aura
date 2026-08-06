@@ -100,22 +100,55 @@ Sixteen falls back. Folding 16 bits into the 8 that the exact MIP search needs
 collides too often, so past some width the fold costs more than the resolution
 buys. Twelve is a real optimum, not a ceiling artefact.
 
-**`GRASSMANN_ANCHORS_DEFAULT` is now 12** — the measured optimum, not the
-smallest number that runs.
+**`GRASSMANN_ANCHORS_DEFAULT` is now 12** — the best current guess, *selected
+after seeing these three numbers*, and labelled as such everywhere it travels.
 
-### The corrected reading
+### The corrected reading (revised 2026-08-05)
 
-On the transformer's own residual-stream geometry, at adequate encoder
-resolution, with the sampling null subtracted, Aura's measured integration sits
-**meaningfully above the floor** (fraction 0.307 vs a 0.049 independent-halves
-control). That is a real, live, activation-grounded, null-corrected result — the
-first this system has produced.
+The paragraph that stood here said this was "a real, live,
+activation-grounded, null-corrected result — the first this system has
+produced", and then the provenance section below said the same measurement is
+"not evidence of integration". Both were written in the same sitting. Only the
+second one follows the rule this document sets.
 
-It is one run. It should be repeated across loads and seeds before it is cited
-as a standing property, and `integration_is_significant` requires the p-value
-alongside the fraction. But the honest summary is no longer "not
-distinguishable from the floor": that was an artefact of an encoder too coarse
-to see what it was measuring.
+What the sweep established, solidly:
+
+* The old `state & 0xFF` mask discarded every mode above the eighth, so
+  widening the encoder used to SUBTRACT information. Real bug, now fixed.
+* The 8-mode negative result was therefore partly an encoder artefact, and the
+  earlier "not distinguishable from the floor" conclusion does not stand on
+  its own evidence.
+
+What it does not establish:
+
+* **That 12 is the right width.** Twelve was chosen after observing 8/12/16 on
+  ONE run. Best-of-three is also the expected shape of noise, and 16 falling
+  back is equally consistent with either story.
+* **That the fraction 0.307 means integration.** No p-value is published for
+  the 12-mode arm, and this document's own rule requires one.
+* **That 12 modes reached the measurement.** They did not, intact: 12-bit
+  states fold into 8 bits with a **0.938 collision rate**
+  (`grassmann_fold_collision_rate`, measured; 0.996 at 16 bits). A 12-mode φ is
+  a φ over a finer PARTITION of the dynamics, not over twelve modes.
+
+So the honest summary is neither "at the floor" nor "meaningfully above" it. It
+is: **the first activation-grounded, null-corrected measurement exists, it is
+exploratory, and the encoder width it depends on was chosen post hoc.**
+
+`PhiResult.provenance()` now carries `encoder_width`,
+`encoder_width_selection`, `encoder_fold_collision_rate` and a computed
+`citable_as_evidence`, so this cannot be reconstructed wrongly downstream.
+
+### The replication that would settle it
+
+Preregistered before running, at
+`artifacts/phi/PREREGISTRATION_phi_width_replication.json`
+(plan hash `ea0ddfd8…`): width fixed at 12 in advance, three fresh boots, three
+encoder seeds, ≥500 transitions, p-value published, and the coupled-ring
+positive control and independent-halves / memoryless negative controls run
+ALONGSIDE the live arm in every campaign rather than cited from an earlier one.
+Any deviation from those parameters makes the run a different experiment, and
+`Preregistration.verify_result` marks its metrics exploratory automatically.
 
 ## What the open question actually is
 
@@ -136,9 +169,14 @@ supports — and either outcome is worth more than another hour of soaking.
 ## Provenance rules for citing this
 
 Never publish the scalar alone. `PhiResult.provenance()` carries grounding,
-estimator identity, node count, population sampled from, TPM sample count, and
-the null. A value is citable as evidence only when
-`integration_is_significant` is true and `null_surrogates >= 2`.
+estimator identity, node count, population sampled from, TPM sample count, the
+null, the encoder width, how that width was selected, and the fold's collision
+rate. A value is citable as evidence only when `integration_is_significant` is
+true, `null_surrogates >= 2`, and the encoder width was preregistered.
+
+That rule is no longer a paragraph someone has to remember: it is
+`PhiResult.citable_as_evidence`, computed from the same fields, so a section of
+this document cannot claim what another section forbids.
 
 By that rule this measurement is **not** evidence of integration, and the
 registered claim stays `RETRACTED` (core/organism/model_validation.py).

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Identity.IDRAG")
 
@@ -194,7 +195,7 @@ class IdentityChronicle:
             conn.close()
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS identity_facts (
@@ -236,7 +237,7 @@ class IdentityChronicle:
         if not fact.object:
             return fact.fact_id
         now = time.time()
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             existing = conn.execute("SELECT created_at FROM identity_facts WHERE id = ?", (fact.fact_id,)).fetchone()
             created_at = float(existing["created_at"]) if existing else now
             conn.execute(
@@ -282,11 +283,11 @@ class IdentityChronicle:
             self.upsert_fact(subject, relation, obj, confidence=0.9, source="seed_defaults", tags=tags)
 
     def count(self) -> int:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             return int(conn.execute("SELECT COUNT(*) FROM identity_facts").fetchone()[0])
 
     def all_facts(self) -> list[IdentityFact]:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             rows = conn.execute("SELECT * FROM identity_facts ORDER BY confidence DESC, updated_at DESC").fetchall()
         return [self._row_to_fact(row) for row in rows]
 
@@ -297,7 +298,7 @@ class IdentityChronicle:
             cached = self._facts_cache
         if cached is not None:
             return cached
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             rows = conn.execute("SELECT * FROM identity_facts").fetchall()
         facts = [self._row_to_fact(row) for row in rows]
         with self._facts_cache_lock:
@@ -371,7 +372,7 @@ class IdentityChronicle:
             updates.extend([(now, fact_id) for fact_id in fact_ids])
         if not updates:
             return
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             conn.executemany(
                 "UPDATE identity_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
                 updates,

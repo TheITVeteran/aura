@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from core.runtime.sqlite_support import connecting
 
 STATE_ROOTS = ("data", "storage", ".aura_runtime", ".aura_snapshots")
 EXCLUDE_RELATIVE = ("data/training", "data/error_logs", "data/bench")
@@ -59,8 +60,9 @@ def _consistent_db_copy(src: Path, dest: Path) -> str:
     """Copy a SQLite store through the backup API (WAL-safe). Returns how."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30.0) as conn, \
-                sqlite3.connect(dest) as out:
+        with connecting(
+            sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30.0)
+        ) as conn, connecting(sqlite3.connect(dest)) as out:
             conn.backup(out)
         return "sqlite-backup-api"
     except sqlite3.Error:
@@ -242,7 +244,7 @@ def verify_backup(out_dir: Path, archive: Path | None = None) -> int:
                 continue
             checked += 1
             try:
-                with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+                with connecting(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
                     verdict = conn.execute("PRAGMA quick_check").fetchone()[0]
             except sqlite3.Error as exc:
                 verdict = f"unreadable: {exc}"

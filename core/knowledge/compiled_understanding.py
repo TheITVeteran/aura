@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.CompiledUnderstanding")
 
@@ -201,7 +202,7 @@ class DigestLibrary:
 
     def _ensure_schema(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS digests (
@@ -250,7 +251,7 @@ class DigestLibrary:
 
     def get(self, key: str) -> ConceptDigest | None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 row = conn.execute(
                     f"SELECT {self._COLUMNS} FROM digests WHERE key = ?", (key,)
                 ).fetchone()
@@ -259,7 +260,7 @@ class DigestLibrary:
         return self._row_to_digest(row) if row else None
 
     def put(self, digest: ConceptDigest) -> None:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO digests
@@ -290,7 +291,7 @@ class DigestLibrary:
 
     def record_use(self, key: str) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     "UPDATE digests SET hits = hits + 1, last_used_at = ? WHERE key = ?",
                     (time.time(), key),
@@ -313,7 +314,7 @@ class DigestLibrary:
     def heavily_used(self, *, min_hits: int = 3, limit: int = 32) -> list[ConceptDigest]:
         """Reuse evidence for consolidation: verified digests with real traffic."""
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     f"SELECT {self._COLUMNS} FROM digests "
                     "WHERE hits >= ? AND verified = 1 "
@@ -326,7 +327,7 @@ class DigestLibrary:
 
     def recent_keys(self, *, limit: int = 16) -> list[str]:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT key FROM digests ORDER BY last_used_at DESC LIMIT ?",
                     (limit,),
@@ -337,7 +338,7 @@ class DigestLibrary:
 
     def stats(self) -> dict[str, Any]:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 total, verified, bridged, hits = conn.execute(
                     "SELECT COUNT(*), COALESCE(SUM(verified), 0), "
                     "COALESCE(SUM(bridges_json != '[]'), 0), "

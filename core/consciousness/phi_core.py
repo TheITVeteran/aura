@@ -53,6 +53,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -147,21 +148,38 @@ INTEGRATION_FRACTION_FLOOR = 0.10
 GRASSMANN_ANCHORS_EXACT = 8
 GRASSMANN_ANCHORS_MAX = 16
 
-#: MEASURED 2026-08-04 on the live 32B — a width sweep over the same
-#: conversation load, null-corrected integration fraction:
+#: EXPLORATORY, on one campaign. 2026-08-04 on the live 32B, a width sweep over
+#: the same conversation load, null-corrected integration fraction:
 #:
 #:      8 modes   φ_s 0.185   net 0.0013   fraction 0.007  (at the floor)
 #:     12 modes   φ_s 0.224   net 0.0687   fraction 0.307  (3x the floor)
 #:     16 modes   φ_s 0.219   net 0.0235   fraction 0.107  (just above)
 #:
-#: Eight modes over a ~5120-dimensional residual stream was too coarse: it
-#: projected the structure away and returned the floor, which reads exactly
-#: like an absence of integration. Twelve resolves it. Sixteen falls back —
-#: folding 16 bits into the 8 the exact MIP search needs collides too often,
-#: so past some width the fold costs more than the resolution buys.
+#: This sweep did establish something solid: the old `state & 0xFF` mask threw
+#: away every mode above the eighth, so a wider encoder used to SUBTRACT
+#: information. That was a real bug and it is fixed.
 #:
-#: The default is the measured optimum, not the smallest number that works.
+#: What it does not establish is that 12 is right. Twelve was chosen AFTER
+#: seeing these three numbers, from one run, and "the best of three arms" is
+#: also the expected shape of noise. The previous wording here — "the measured
+#: optimum, not the smallest number that works" — asserted a settled fact from
+#: a post-hoc selection, which is the same order-of-operations error that let
+#: the CAA A/B report a decisive pass for its own null.
+#:
+#: So the default is 12 because 12 is the best current guess, and every result
+#: computed at it carries `encoder_width_selection: exploratory_post_hoc` in
+#: its provenance until a PREREGISTERED replication at a fixed width, across
+#: fresh boots and seeds, confirms it. See
+#: `core/evaluation/preregistration.py` and
+#: `artifacts/phi/PREREGISTRATION_phi_width_replication.json`.
 GRASSMANN_ANCHORS_DEFAULT = 12
+
+#: How the running width was arrived at. A reader of a φ number needs this to
+#: know whether the resolution it was measured at is evidence or a guess.
+GRASSMANN_WIDTH_SELECTION = "exploratory_post_hoc"
+#: The one width whose choice predates any measurement it justifies: it is the
+#: largest the exact MIP search can enumerate without folding at all.
+GRASSMANN_WIDTH_PREREGISTERED = GRASSMANN_ANCHORS_EXACT
 
 
 def _fold_modes_to_byte(state: int) -> int:
@@ -183,6 +201,33 @@ def _fold_modes_to_byte(state: int) -> int:
         folded ^= value & 0xFF
         value >>= 8
     return folded & 0xFF
+
+
+@lru_cache(maxsize=None)
+def grassmann_fold_collision_rate(width: int) -> float:
+    """Fraction of distinct width-bit states that share a folded byte.
+
+    "12 or 16 geometric modes are still being lossily folded into an eight-bit
+    system" was a reviewer's objection, and the right answer to it is a number
+    rather than an argument. MEASURED over the actual fold, so an implementation
+    change moves it:
+
+        width  8 -> 0.000   (no fold at all)
+        width 12 -> 0.938    (4096 states into 256 buckets)
+        width 16 -> 0.996    (65536 states into 256 buckets)
+
+    This is the cost side of widening the encoder. It does not make a wider
+    encoder wrong — a finer partition of the same dynamics can still be more
+    informative than a coarser one, which is what the 8→12 jump appeared to show
+    — but it belongs in the provenance next to the φ, so nobody reads a
+    12-mode result as though 12 modes reached the MIP search intact.
+    """
+    width = int(width)
+    if width <= 8:
+        return 0.0
+    total = 1 << width
+    seen = {_fold_modes_to_byte(state) for state in range(total)}
+    return float(1.0 - (len(seen) / total))
 
 
 def _grassmann_anchor_count() -> int:
@@ -298,7 +343,37 @@ class PhiResult:
             ),
             "null_surrogates": self.null_surrogates,
             "integration_is_significant": self.integration_is_significant,
+            "encoder_width": self.encoder_width,
+            "encoder_width_selection": self.encoder_width_selection or "unrecorded",
+            "encoder_fold_collision_rate": (
+                round(grassmann_fold_collision_rate(self.encoder_width), 6)
+                if self.encoder_width
+                else None
+            ),
+            "citable_as_evidence": self.citable_as_evidence,
         }
+
+    @property
+    def citable_as_evidence(self) -> bool:
+        """The artifact's own rule, enforced here instead of remembered.
+
+        ``artifacts/phi/LIVE_NULL_CORRECTED_PHI_2026-08-04.md`` states it:
+        "A value is citable as evidence only when ``integration_is_significant``
+        is true and ``null_surrogates >= 2``." It then reported an integration
+        fraction of 0.307 as "a real, live, activation-grounded, null-corrected
+        result" in one section and "not evidence of integration" in another,
+        because nothing computed the rule.
+
+        The third clause is new and follows from the same reasoning: a width
+        picked after seeing the sweep it is justified by makes the number
+        exploratory, and exploratory numbers are worth repeating rather than
+        citing.
+        """
+        return bool(
+            self.integration_is_significant
+            and self.null_surrogates >= 2
+            and self.encoder_width_selection == "preregistered"
+        )
 
     # ── the sampling null ─────────────────────────────────────────────────
     # MEASURED 2026-08-04, by tests/test_phi_satisfies_the_iit_axioms.py: an
@@ -329,6 +404,12 @@ class PhiResult:
     #: Share of the measured φ that the null does NOT account for.
     integration_fraction: float | None = None
     null_surrogates: int = 0
+    #: Geometric modes the encoder resolved, and how that number was arrived
+    #: at. A φ measured at a width chosen after seeing the sweep it is
+    #: justified by is not comparable to one measured at a preregistered width,
+    #: and a reader of the scalar cannot tell them apart without this.
+    encoder_width: int | None = None
+    encoder_width_selection: str = ""
 
     @property
     def phi_net(self) -> float | None:
@@ -756,10 +837,28 @@ class PhiCore:
             population_size=self._grassmann_population_size(),
         )
         if result is not None:
+            # Stamp the encoder story onto the number, at the one place that
+            # knows it. A φ scalar travels — into logs, health reports, claim
+            # registries, artifacts — and by the time it arrives, "measured at
+            # a width chosen after seeing the sweep that justifies it" is not
+            # recoverable from anywhere else.
+            width = _grassmann_anchor_count()
+            result.encoder_width = width
+            result.encoder_width_selection = (
+                "preregistered"
+                if width == GRASSMANN_WIDTH_PREREGISTERED
+                else GRASSMANN_WIDTH_SELECTION
+            )
             self._grassmann_last_result = result
             logger.debug(
-                "PhiCore (grassmann): phi_s=%.5f, complex=%s, n=%d transitions",
-                result.phi_s, result.is_complex, result.tpm_n_samples,
+                "PhiCore (grassmann): phi_s=%.5f, complex=%s, n=%d transitions, "
+                "width=%d (%s, fold collisions %.3f)",
+                result.phi_s,
+                result.is_complex,
+                result.tpm_n_samples,
+                width,
+                result.encoder_width_selection,
+                grassmann_fold_collision_rate(width),
             )
         return result
 

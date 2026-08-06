@@ -1,0 +1,30 @@
+{
+  "campaign": "phi_grassmann_width_replication",
+  "hypothesis": "At a FIXED 12-mode Grassmann encoder, live activation-grounded phi over the resident 32B's residual stream leaves an integration fraction at or above the 0.10 floor, with p < 0.05 against the shuffled-transition null, replicated across fresh boots and conversation loads.",
+  "parameters": {
+    "encoder_width": 12,
+    "encoder_width_selection": "preregistered",
+    "null_surrogates": 8,
+    "min_transitions": 500,
+    "independent_boots": 3,
+    "encoder_seeds": 3,
+    "grounding": "activation_geometry"
+  },
+  "metrics": {
+    "integration_fraction": 0.1,
+    "null_p_value_inverted": 0.95,
+    "null_surrogates": 2.0,
+    "boots_replicated": 3.0,
+    "coupled_ring_control_fraction": 0.4,
+    "independent_halves_control_ceiling_inverted": 0.9
+  },
+  "arms": [
+    "live_activation_geometry",
+    "coupled_ring_positive_control",
+    "independent_halves_negative_control",
+    "memoryless_negative_control"
+  ],
+  "registered_at": "2026-08-05T00:00:00+00:00",
+  "notes": "Registered BEFORE the replication runs, and specifically before any further width sweeping. The 2026-08-04 campaign selected width 12 after observing 8/12/16 on a single run; the best of three arms is also the expected shape of noise, so that result is EXPLORATORY and core/consciousness/phi_core.py stamps every phi measured at a non-preregistered width accordingly. Widening the encoder is not free: grassmann_fold_collision_rate measures 0.938 of 12-bit states sharing a folded byte (0.996 at 16 bits), so a 12-mode phi is a phi over a finer PARTITION of the dynamics, not over 12 intact modes. Changing any parameter above makes the run a different experiment and every metric in it exploratory \u2014 that is the point.",
+  "plan_hash": "ea0ddfd802d0a3d25f666ee47e0158f848a0afe5ae5c25cf9118af1b863dc990"
+}

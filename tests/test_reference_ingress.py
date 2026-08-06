@@ -130,13 +130,44 @@ def test_broken_or_absent_store_is_absent_never_fatal(corpus):
     ).present is False
 
 
+#: The corpus this test can reach, resolved the way PRODUCTION resolves it.
+#:
+#: The skip guard used to hardcode `~/.aura/knowledge/corpus.db` while the code
+#: under test called `default_corpus_db_path()`, which honours
+#: `AURA_PATHS__HOME_DIR` — and tests/conftest.py redirects that to a temp home
+#: for state hermeticity. So on a host WITH the live corpus the guard said
+#: "run", the store opened an empty temp database, and the test failed with
+#: "0 hits" over a 37GB corpus that was sitting right there.
+#:
+#: A guard that does not name the condition the body depends on is not a
+#: guard. This one resolves the same path, and when the hermetic home has no
+#: corpus it points the store at the real one EXPLICITLY — read-only, which is
+#: all `search` ever opens — instead of silently testing an empty file.
+def _reachable_corpus() -> Path | None:
+    from core.knowledge.local_corpus import default_corpus_db_path
+
+    resolved = default_corpus_db_path()
+    if resolved.exists():
+        return resolved
+    live = Path("~/.aura/knowledge/corpus.db").expanduser()
+    return live if live.exists() else None
+
+
 @pytest.mark.skipif(
-    not Path("~/.aura/knowledge/corpus.db").expanduser().exists(),
+    _reachable_corpus() is None,
     reason="live 37GB corpus not present on this host",
 )
 def test_live_corpus_end_to_end(monkeypatch):
     """The real database: a factual objective seeds a real reference slot."""
     import core.brain.cognitive_ingress as ingress_mod
+    import core.knowledge.local_corpus as corpus_mod
+
+    corpus_path = _reachable_corpus()
+    assert corpus_path is not None
+    monkeypatch.setenv("AURA_KNOWLEDGE_DB", str(corpus_path))
+    # The store is a module singleton; a previous test may have built one
+    # against the empty hermetic home.
+    monkeypatch.setattr(corpus_mod, "_store", None, raising=False)
 
     monkeypatch.setattr(ingress_mod, "_get_service", lambda name: None)
     ingress = assemble_cognitive_ingress(

@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from core.runtime.errors import record_degradation
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.FrontierDiscovery")
 
@@ -379,7 +380,7 @@ class FrontierDiscoveryEngine:
 
     def _init_schema(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """CREATE TABLE IF NOT EXISTS discoveries (
                         id TEXT PRIMARY KEY,
@@ -401,7 +402,7 @@ class FrontierDiscoveryEngine:
 
     def _already_known(self, statement: str) -> bool:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM discoveries WHERE statement = ? LIMIT 1", (statement,)
                 ).fetchone()
@@ -412,7 +413,7 @@ class FrontierDiscoveryEngine:
 
     def _persist(self, c: Conjecture) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """INSERT OR IGNORE INTO discoveries
                        (id, statement, domain, formal_form, status, confidence, trials,
@@ -430,7 +431,7 @@ class FrontierDiscoveryEngine:
 
     def knowledge(self, *, limit: int = 50) -> list[dict[str, Any]]:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT statement, domain, status, confidence, trials, exhaustive, provenance "
                     "FROM discoveries ORDER BY created_at DESC LIMIT ?",
@@ -832,7 +833,7 @@ class FrontierDiscoveryEngine:
     # ── introspection ───────────────────────────────────────────────────────
     def stats(self) -> dict[str, Any]:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 rows = conn.execute(
                     "SELECT status, COUNT(*) FROM discoveries GROUP BY status"
                 ).fetchall()

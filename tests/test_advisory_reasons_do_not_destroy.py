@@ -15,6 +15,8 @@ good reply does. Overlap zero, verdict reply_abandons_thread, memory gone.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from core.conversation.surface_disposition import (
     ADVISORY_ONLY_REASONS,
     SurfaceDisposition,
@@ -126,3 +128,88 @@ class TestWordingFailuresKeepTheRecord:
         )
         assert not verdict.ok
         assert not set(verdict.reasons) <= CONTINUITY_SAFE_REASONS
+
+
+class TestEveryGateThatReadsTheAssessment:
+    """One advisory-only exchange, driven through every gate that judges one.
+
+    `disposition_for` learning about ADVISORY_REASONS fixed the gates that
+    read `.ok`. It did not fix a gate reading `.reasons` directly — and
+    `cognitive_ingress._conversation_pre_admission` did exactly that,
+    rejecting a memory on ANY entry in the list. So the reply was served, was
+    committed as experience, and was then refused re-admission as evidence,
+    because a heuristic that three other gates had already ruled harmless was
+    fatal at the fourth.
+
+    The generalisation is behavioural rather than lexical on purpose: a rule
+    like "never write `.reasons`" is a style check a new gate can satisfy
+    while still failing. This drives the actual gates.
+    """
+
+    #: A correct answer that paraphrases instead of echoing. Overlap 0.000.
+    USER = "Can you explain why the deadline slipped?"
+    REPLY = (
+        "Because a floor was applied on top of the remaining allowance. "
+        "Whenever less than ten seconds were left, the probe still got ten, "
+        "so the promise was exceeded by however much was missing."
+    )
+
+    def _assessment(self):
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+        )
+
+        return assess_conversation_learning_admission(self.USER, self.REPLY)
+
+    def test_the_heuristic_does_fire_on_it(self) -> None:
+        assert "reply_abandons_thread" in self._assessment().reasons
+
+    def test_and_the_assessment_calls_it_admissible(self) -> None:
+        verdict = self._assessment()
+        assert verdict.ok
+        assert verdict.blocking_reasons == ()
+
+    def test_the_chat_turn_logger_admits_it(self) -> None:
+        from core.memory.chat_turn_logger import ChatTurnLogger
+
+        turn_logger = ChatTurnLogger.__new__(ChatTurnLogger)
+        assert turn_logger._is_meaningful_turn(self.USER, self.REPLY) is True
+
+    def test_the_retrieval_pre_admission_admits_it(self) -> None:
+        """The gate that was still reading `.reasons`."""
+        from core.brain.cognitive_ingress import _conversation_pre_admission
+
+        hit = SimpleNamespace(
+            metadata={
+                "conversation_turn": True,
+                "user_utterance": self.USER,
+                "aura_response": self.REPLY,
+            }
+        )
+        admitted, detail = _conversation_pre_admission(
+            self.USER, hit, origin="unit"
+        )
+
+        assert admitted, f"advisory-only memory refused re-admission: {detail}"
+
+    def test_a_genuinely_bad_reply_is_still_refused_there(self) -> None:
+        """The gate must still work — this is not a removal of the check."""
+        from core.brain.cognitive_ingress import _conversation_pre_admission
+
+        hit = SimpleNamespace(
+            metadata={
+                "conversation_turn": True,
+                "user_utterance": "Are you okay though? Feeling fine?",
+                "aura_response": (
+                    "I am with you. RAM pressure is 75.6% with 15.6 GB "
+                    "available; CPU load is 25.8% on this host."
+                ),
+            }
+        )
+        admitted, detail = _conversation_pre_admission(
+            "Are you okay though? Feeling fine?", hit, origin="unit"
+        )
+
+        assert not admitted
+        assert detail is not None
+        assert any(r.startswith("current_quality:") for r in detail["reasons"])

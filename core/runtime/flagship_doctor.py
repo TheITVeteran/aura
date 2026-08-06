@@ -24,6 +24,7 @@ from typing import Any, Optional
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.sqlite_support import connecting
 
 
 @dataclass
@@ -790,7 +791,7 @@ class FlagshipDoctorDaemon:
                 if db_path.exists():
                     try:
                         logger.info("Compacting SQLite database under explicit doctor DB maintenance: %s", db_path)
-                        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+                        with connecting(sqlite3.connect(str(db_path), timeout=5.0)) as conn:
                             conn.execute("VACUUM;")
                         compacted_count += 1
                     except (sqlite3.Error, OSError, RuntimeError, ValueError) as e:

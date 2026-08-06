@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from core.runtime.base_module import AuraBaseModule
 from core.config import config
+from core.runtime.sqlite_support import connecting
 
 @dataclass
 class Experience:
@@ -85,19 +86,19 @@ class ExperienceStore:
 
     def _init_db(self) -> None:
         """Creates the necessary tables if they do not exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("CREATE TABLE IF NOT EXISTS experiences (id TEXT PRIMARY KEY, timestamp REAL, input TEXT, response TEXT, quality REAL, domain TEXT, strategy TEXT, context_hash TEXT, corrections TEXT, tags TEXT)")
             conn.execute("CREATE TABLE IF NOT EXISTS patterns (id TEXT PRIMARY KEY, description TEXT, trigger TEXT, recommendation TEXT, confidence REAL, evidence INTEGER, domain TEXT, last_updated REAL)")
 
     def save_experience(self, exp: Experience) -> None:
         """Persists an experience to the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("INSERT OR REPLACE INTO experiences VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (exp.id, exp.timestamp, exp.input_summary, exp.response_summary, exp.outcome_quality, exp.domain, exp.strategy, exp.context_hash, json.dumps(exp.corrections), json.dumps(exp.tags)))
 
     def update_outcome(self, exp_id: str, quality: float, corrections: Optional[List[str]] = None) -> None:
         """Updates the feedback quality and corrections for an existing experience."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             if corrections:
                 conn.execute("UPDATE experiences SET quality=?, corrections=? WHERE id=?", (quality, json.dumps(corrections), exp_id))
             else:
@@ -105,19 +106,19 @@ class ExperienceStore:
 
     def get_experiences(self, limit: int = 500) -> List[Experience]:
         """Retrieves recent experiences from the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("SELECT * FROM experiences ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             return [Experience(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], json.loads(r[8])) for r in rows]
 
     def save_pattern(self, p: LearningPattern) -> None:
         """Persists a learned pattern to the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("INSERT OR REPLACE INTO patterns VALUES (?,?,?,?,?,?,?,?)",
                         (p.id, p.description, p.trigger, p.recommendation, p.confidence, p.evidence, p.domain, p.last_updated))
 
     def get_patterns(self) -> List[LearningPattern]:
         """Retrieves high-confidence patterns from the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("SELECT * FROM patterns WHERE confidence > 0.6 ORDER BY confidence DESC").fetchall()
             return [LearningPattern(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in rows]
 
@@ -375,7 +376,7 @@ class ContinuousLearningEngine(AuraBaseModule):
             
         # 1. Get older experiences (past 500 but older than 50)
         # We keep the very recent ones raw for short-term context
-        with sqlite3.connect(self.store.db_path) as conn:
+        with connecting(sqlite3.connect(self.store.db_path)) as conn:
             rows = conn.execute(
                 "SELECT id, input, response FROM experiences "
                 "WHERE timestamp < ? ORDER BY timestamp ASC LIMIT 20",
@@ -406,7 +407,7 @@ class ContinuousLearningEngine(AuraBaseModule):
                 
                 # 4. Delete the raw experiences (They are now 'digested')
                 ids_to_delete = [r[0] for r in rows]
-                with sqlite3.connect(self.store.db_path) as conn:
+                with connecting(sqlite3.connect(self.store.db_path)) as conn:
                     conn.executemany("DELETE FROM experiences WHERE id=?", [(i,) for i in ids_to_delete])
                 
                 self.logger.info("✅ Compressed %s experiences into persistent knowledge.", len(ids_to_delete))

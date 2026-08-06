@@ -65,6 +65,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.utils.concurrency import run_io_bound
 from core.utils.exceptions import capture_and_log
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Mycelium")
 
@@ -4485,7 +4486,7 @@ class MycelialNetwork:
                 key = _vault_mac_key(config.paths.base_dir)
                 mac = _vault_mac(key, encoded) if key else ""
                 db_path.parent.mkdir(parents=True, exist_ok=True)
-                with sqlite3.connect(db_path) as conn:
+                with connecting(sqlite3.connect(db_path)) as conn:
                     conn.execute("PRAGMA busy_timeout=5000;")
                     conn.execute("PRAGMA journal_mode=WAL;")
                     conn.execute("PRAGMA synchronous=FULL;")
@@ -4597,7 +4598,7 @@ class MycelialNetwork:
             # vault first, then topology. The vault lock remains held until the
             # decoded generation is either rejected or fully published.
             with cls._vault_io_lock:
-                with sqlite3.connect(db_path) as conn:
+                with connecting(sqlite3.connect(db_path)) as conn:
                     row = conn.execute(
                         "SELECT data FROM aegis_vault WHERE key = ?",
                         ("topology_v3",),

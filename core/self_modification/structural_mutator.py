@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 
 MUTATION_KINDS = {
@@ -105,7 +106,7 @@ class StructuralMutator:
         self._parameter_registry: Dict[str, Callable[[float], None]] = {}
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS structural_mutations (
@@ -308,7 +309,7 @@ class StructuralMutator:
             prev_hash=prev_hash,
             hash=hash_,
         )
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO structural_mutations (
@@ -339,19 +340,19 @@ class StructuralMutator:
         return record
 
     def _tail_hash(self) -> str:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             row = conn.execute(
                 "SELECT hash FROM structural_mutations ORDER BY applied_at DESC, mutation_id DESC LIMIT 1"
             ).fetchone()
         return row[0] if row else "GENESIS"
 
     def _fetch_row(self, mutation_id: str) -> Optional[sqlite3.Row]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             return conn.execute("SELECT * FROM structural_mutations WHERE mutation_id = ?", (mutation_id,)).fetchone()
 
     def audit_log(self, limit: int = 50) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM structural_mutations ORDER BY applied_at DESC LIMIT ?",
@@ -377,7 +378,7 @@ class StructuralMutator:
 
     def verify_chain(self) -> bool:
         """Walk the audit chain and confirm each hash is intact."""
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM structural_mutations ORDER BY applied_at ASC, mutation_id ASC"

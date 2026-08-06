@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ class LineageManager:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS lineage_snapshots (
@@ -137,7 +138,7 @@ class LineageManager:
         )
 
     def _persist(self, snap: LineageSnapshot) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO lineage_snapshots
@@ -181,7 +182,7 @@ class LineageManager:
     # Queries
     # ------------------------------------------------------------------
     def get(self, snapshot_id: str) -> Optional[LineageSnapshot]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM lineage_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
         if row is None:
@@ -198,7 +199,7 @@ class LineageManager:
         )
 
     def descendants(self, snapshot_id: str) -> List[LineageSnapshot]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM lineage_snapshots WHERE parent_id = ? ORDER BY created_at ASC",
@@ -219,7 +220,7 @@ class LineageManager:
         ]
 
     def survivors(self) -> List[LineageSnapshot]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM lineage_snapshots WHERE survived = 1 ORDER BY selection_score DESC"

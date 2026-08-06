@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+from core.runtime.sqlite_support import connecting
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -474,7 +475,7 @@ class SovereignReconstitutionGauntlet:
         db = self.sandbox / "memory.sqlite"
         if db.exists():
             db.unlink()
-        with sqlite3.connect(db) as conn:
+        with connecting(sqlite3.connect(db)) as conn:
             conn.execute(
                 "CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL, created_at REAL NOT NULL)"
             )
@@ -495,7 +496,7 @@ class SovereignReconstitutionGauntlet:
             action="query_durable_identity_records",
             payload={"query": "Bryan Aura continuity identity governance"},
         )
-        with sqlite3.connect(db) as conn:
+        with connecting(sqlite3.connect(db)) as conn:
             rows = conn.execute(
                 "SELECT id, content, tags FROM memories WHERE tags LIKE '%identity%' OR content LIKE '%Aura%'"
             ).fetchall()
@@ -704,7 +705,7 @@ class SovereignReconstitutionGauntlet:
         goal_db = self.sandbox / "goals.sqlite"
         if goal_db.exists():
             goal_db.unlink()
-        with sqlite3.connect(goal_db) as conn:
+        with connecting(sqlite3.connect(goal_db)) as conn:
             conn.execute("CREATE TABLE goals (id TEXT PRIMARY KEY, status TEXT NOT NULL, objective TEXT NOT NULL)")
             conn.execute(
                 "INSERT INTO goals VALUES (?, ?, ?)",
@@ -713,7 +714,7 @@ class SovereignReconstitutionGauntlet:
         shutdown_ts = _now()
         time.sleep(0.01)
         restart_ts = _now()
-        with sqlite3.connect(goal_db) as conn:
+        with connecting(sqlite3.connect(goal_db)) as conn:
             restored_goals = conn.execute("SELECT id, status, objective FROM goals WHERE status='IN_PROGRESS'").fetchall()
         will = self.chain.emit(
             kind="will",

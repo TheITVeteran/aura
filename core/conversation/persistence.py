@@ -17,6 +17,7 @@ from typing import Any
 from core.config import config
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.ConvPersistence")
 SECONDS_PER_DAY = 86400
@@ -399,7 +400,7 @@ class ConversationPersistence:
         if not sid:
             return []
         limit = _safe_limit(limit, 100)
-        with self._connect() as con:
+        with connecting(self._connect()) as con:
             rows = con.execute(
                 "SELECT * FROM ("
                 "SELECT * FROM turns WHERE session_id = ? "
@@ -411,7 +412,7 @@ class ConversationPersistence:
 
     def get_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         limit = _safe_limit(limit, 10)
-        with self._connect() as con:
+        with connecting(self._connect()) as con:
             rows = con.execute(
                 "SELECT s.*, COUNT(t.id) as turn_count "
                 "FROM sessions s LEFT JOIN turns t ON t.session_id = s.id "
@@ -422,7 +423,7 @@ class ConversationPersistence:
 
     def recover_last_session(self) -> str | None:
         """Return the most recent session ID for crash recovery."""
-        with self._connect() as con:
+        with connecting(self._connect()) as con:
             row = con.execute(
                 "SELECT id FROM sessions ORDER BY last_active DESC LIMIT 1"
             ).fetchone()

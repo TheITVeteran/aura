@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ class RepairCalibrationStore:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS repair_calibration (
@@ -82,7 +83,7 @@ class RepairCalibrationStore:
         patch_id: str = "",
     ) -> None:
         predicted = max(0.0, min(1.0, float(predicted)))
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO repair_calibration
@@ -93,7 +94,7 @@ class RepairCalibrationStore:
             )
 
     def bucket(self, *, bug_class: str, risk_tier: str, module_family: str) -> CalibrationBucket:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute(
                 """
                 SELECT predicted, outcome FROM repair_calibration
@@ -145,7 +146,7 @@ class RepairCalibrationStore:
         return probability < threshold or (risk_tier in {"tier2_propose_only", "tier3_sealed"} and not bucket.autonomous_safe)
 
     def export_summary(self) -> dict[str, Any]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute(
                 """
                 SELECT bug_class, risk_tier, module_family, COUNT(*), AVG(outcome), AVG(predicted)

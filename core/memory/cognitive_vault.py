@@ -18,6 +18,7 @@ from typing import Any
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.CognitiveVault")
 
@@ -151,7 +152,7 @@ class CognitiveVault:
 
     def _initialize_schema(self) -> None:
         """Sets up WAL mode and core tables."""
-        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+        with connecting(sqlite3.connect(self.db_path, timeout=10.0)) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute(
@@ -214,7 +215,7 @@ class CognitiveVault:
         values = [payload[column] for column in insert_columns if column != "timestamp"]
         values.append(tx.timestamp)
         query = f"INSERT INTO {tx.table} ({quoted_columns}) VALUES ({placeholders})"
-        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+        with connecting(sqlite3.connect(self.db_path, timeout=10.0)) as conn:
             conn.execute(query, values)
             conn.commit()
 

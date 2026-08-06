@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 
 EVENT_TYPES = (
@@ -101,7 +102,7 @@ class LifeTraceLedger:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS life_trace (
@@ -165,7 +166,7 @@ class LifeTraceLedger:
             payload["prev_hash"] = prev_hash
             payload["event_id"] = event_id
             hash_ = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-            with sqlite3.connect(self._db_path) as conn:
+            with connecting(sqlite3.connect(self._db_path)) as conn:
                 conn.execute(
                     """
                     INSERT INTO life_trace
@@ -206,7 +207,7 @@ class LifeTraceLedger:
     # Query
     # ------------------------------------------------------------------
     def recent(self, limit: int = 50) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM life_trace ORDER BY timestamp DESC LIMIT ?",
@@ -215,7 +216,7 @@ class LifeTraceLedger:
         return [self._row_to_dict(r) for r in rows]
 
     def since(self, since_ts: float) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM life_trace WHERE timestamp >= ? ORDER BY timestamp ASC",
@@ -234,7 +235,7 @@ class LifeTraceLedger:
         return payload
 
     def _tail_hash(self) -> str:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             row = conn.execute(
                 "SELECT hash FROM life_trace ORDER BY timestamp DESC, event_id DESC LIMIT 1"
             ).fetchone()
@@ -244,7 +245,7 @@ class LifeTraceLedger:
     # Audit
     # ------------------------------------------------------------------
     def verify_chain(self) -> bool:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM life_trace ORDER BY timestamp ASC, event_id ASC"

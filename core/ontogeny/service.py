@@ -75,6 +75,7 @@ from core.ontogeny.state import DEFAULT_SEED, DEFAULT_UNITS, OntogeneticState, S
 from core.ontogeny.trainer import Trainer, TrainingResult, design_names, design_width
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Ontogeny")
 
@@ -688,7 +689,7 @@ class OntogenyCore:
             return {}
         contexts: dict[str, dict[str, Any]] = {}
         uri = f"file:{self._spine.db_path}?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+        with connecting(sqlite3.connect(uri, uri=True, timeout=2.0)) as conn:
             for offset in range(0, len(episode_ids), 500):
                 chunk = list(episode_ids[offset:offset + 500])
                 placeholders = ",".join("?" for _ in chunk)

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Core.Uncertainty")
 
@@ -305,7 +306,7 @@ class CalibrationTracker:
         self._init_db()
     
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS predictions (
                     id TEXT PRIMARY KEY,
@@ -324,7 +325,7 @@ class CalibrationTracker:
         import hashlib
         pred_id = hashlib.md5(f"{time.time()}{query_summary[:30]}".encode()).hexdigest()[:12]
         
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 INSERT INTO predictions (id, timestamp, query_summary, 
                 stated_confidence, domain, was_correct, verified_at)
@@ -335,7 +336,7 @@ class CalibrationTracker:
     
     def record_outcome(self, pred_id: str, was_correct: bool):
         """Record whether a prediction was correct."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 UPDATE predictions SET was_correct=?, verified_at=? WHERE id=?
             """, (1 if was_correct else 0, time.time(), pred_id))
@@ -344,7 +345,7 @@ class CalibrationTracker:
         """How well-calibrated is Aura's confidence?
         Returns calibration by confidence bucket.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             verified = conn.execute("""
                 SELECT stated_confidence, was_correct FROM predictions
                 WHERE was_correct IS NOT NULL
@@ -397,7 +398,7 @@ class CalibrationTracker:
         > 1.0 means system has been underconfident (boost)
         < 1.0 means system has been overconfident (reduce)
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("""
                 SELECT stated_confidence, was_correct FROM predictions
                 WHERE domain = ? AND was_correct IS NOT NULL

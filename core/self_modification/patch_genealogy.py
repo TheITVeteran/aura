@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class PatchGenealogyGraph:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS patch_nodes (
@@ -89,7 +90,7 @@ class PatchGenealogyGraph:
         return "patch_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def add_node(self, node: PatchNode) -> PatchNode:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO patch_nodes
@@ -113,7 +114,7 @@ class PatchGenealogyGraph:
         return node
 
     def add_edge(self, parent_id: str, child_id: str, relation: str) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO patch_edges(parent_id, child_id, relation, created_at)
@@ -139,11 +140,11 @@ class PatchGenealogyGraph:
             assignments.append("post_metrics = ?")
             values.append(json.dumps(post_metrics, sort_keys=True, default=str))
         values.append(patch_id)
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute(f"UPDATE patch_nodes SET {', '.join(assignments)} WHERE patch_id = ?", values)
 
     def get_node(self, patch_id: str) -> PatchNode | None:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM patch_nodes WHERE patch_id = ?", (patch_id,)).fetchone()
         if row is None:
@@ -170,13 +171,13 @@ class PatchGenealogyGraph:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at DESC LIMIT ?"
         values.append(int(limit))
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, values).fetchall()
         return [self._row_to_node(row) for row in rows]
 
     def causal_chain(self, patch_id: str) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             edges = conn.execute(
                 """

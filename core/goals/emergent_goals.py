@@ -34,6 +34,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.EmergentGoals")
 
@@ -257,7 +258,7 @@ class EmergentGoalEngine:
     # Persistence
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS emergent_goal_candidates (
@@ -275,7 +276,7 @@ class EmergentGoalEngine:
             )
 
     def _persist_candidate(self, goal: EmergentGoal) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO emergent_goal_candidates (goal_id, name, objective, tension_kind, evidence, priority, created_at, adopted, support_count)
@@ -298,7 +299,7 @@ class EmergentGoalEngine:
             )
 
     def _load(self) -> None:
-        with sqlite3.connect(self._db_path) as conn:
+        with connecting(sqlite3.connect(self._db_path)) as conn:
             rows = conn.execute("SELECT * FROM emergent_goal_candidates").fetchall()
         for row in rows:
             goal_id, name, objective, kind, evidence_json, priority, created_at, adopted, support = row
@@ -327,7 +328,7 @@ class EmergentGoalEngine:
             self._candidates.pop(gid, None)
             self._support_counts.pop(gid, None)
             try:
-                with sqlite3.connect(self._db_path) as conn:
+                with connecting(sqlite3.connect(self._db_path)) as conn:
                     conn.execute("DELETE FROM emergent_goal_candidates WHERE goal_id = ?", (gid,))
             except (sqlite3.Error, OSError) as exc:
                 record_degradation("emergent_goals", exc)

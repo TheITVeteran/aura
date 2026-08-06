@@ -801,3 +801,25 @@ def get_unity_runtime() -> UnityRuntime:
     if _UNITY_RUNTIME is None:
         _UNITY_RUNTIME = UnityRuntime()
     return _UNITY_RUNTIME
+
+
+def reset_unity_runtime_for_test() -> None:
+    """Drop the process-global runtime and the frame it published.
+
+    ``UnityRuntime.__init__`` registers itself into the ServiceContainer, so
+    merely CONSTRUCTING a ``GlobalWorkspace`` in a test leaves ``unity_runtime``
+    and ``unity_workspace_frame`` behind for every later test in the process —
+    and a later test that evicts them then gets blamed for removing state it
+    never created. Both directions were live in the suite.
+    """
+    global _UNITY_RUNTIME
+    _UNITY_RUNTIME = None
+    try:
+        from core.container import ServiceContainer
+
+        services = getattr(ServiceContainer, "_services", None)
+        if isinstance(services, dict):
+            for key in ("unity_runtime", "unity_workspace_frame"):
+                services.pop(key, None)
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        pass

@@ -316,7 +316,25 @@ def _conversation_pre_admission(
             user_utterance,
             aura_response,
         )
-        reasons.extend(f"current_quality:{reason}" for reason in assessment.reasons)
+        # `.blocking_reasons`, not `.reasons`.
+        #
+        # ADVISORY_REASONS exists so a reader can tell an observation from a
+        # defect, and every other consumer of this assessment honours it —
+        # `assess_user_facing_reply` keeps `ok` blind to advisories, the
+        # learning admission returns SERVE for an advisory-only reply, and the
+        # conversation-support gate reads `.ok`. This one read `.reasons` and
+        # rejected on any entry at all, so an advisory came out of a gate that
+        # had already decided it was harmless and became a refusal here.
+        #
+        # Concretely: `reply_abandons_thread` fires on a correct answer that
+        # paraphrases instead of repeating the user's words — measured
+        # overlap 0.000 on "Because a floor was applied on top of the
+        # remaining allowance…" against "Can you explain why the deadline
+        # slipped?". Served to the person, and then refused re-admission as
+        # memory evidence for the crime of not quoting the question back.
+        reasons.extend(
+            f"current_quality:{reason}" for reason in assessment.blocking_reasons
+        )
         relevant, relevance = _subject_relevance(objective, user_utterance)
         if not relevant:
             reasons.append("subject_mismatch")

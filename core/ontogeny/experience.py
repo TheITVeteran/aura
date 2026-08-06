@@ -52,6 +52,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.state_ownership import state_root
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Ontogeny.Experience")
 
@@ -325,7 +326,7 @@ class ExperienceSpine:
 
     def _init_schema(self) -> None:
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS episodes (
@@ -494,7 +495,7 @@ class ExperienceSpine:
         if not batch and not resolutions and not repeats:
             return 0
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 if batch:
                     conn.executemany(
                         """
@@ -592,7 +593,7 @@ class ExperienceSpine:
             params.extend([str(OutcomeKind.SUCCESS), str(OutcomeKind.FAILURE)])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     f"SELECT * FROM episodes {where} ORDER BY decided_at DESC LIMIT ?",
@@ -613,7 +614,7 @@ class ExperienceSpine:
         """
         now = time.time()
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 conn.row_factory = sqlite3.Row
                 if older_than_horizon:
                     rows = conn.execute(
@@ -646,7 +647,7 @@ class ExperienceSpine:
             return self._stats_with_live_counters(cached[1])
         clause, params = ("WHERE control_point = ?", [control_point]) if control_point else ("", [])
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 total, repeats = conn.execute(
                     f"SELECT COUNT(*), COALESCE(SUM(repeat_count), 0) FROM episodes {clause}", params
                 ).fetchone()
@@ -691,7 +692,7 @@ class ExperienceSpine:
     def compact(self, *, retention_rows: int = _RETENTION_ROWS) -> int:
         """Bound the corpus. Drops the oldest resolved rows past the retention line."""
         try:
-            with self._connect() as conn:
+            with connecting(self._connect()) as conn:
                 total = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
                 if total <= retention_rows:
                     return 0

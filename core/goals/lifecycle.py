@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
+from core.runtime.sqlite_support import connecting
 
 
 class GoalState(str, Enum):
@@ -471,7 +472,7 @@ class TaskLifecycleManager:
         return conn
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             # The goals table is owned by GoalEngine; mirror just the
             # subset we need for cases where this manager is used
             # standalone (e.g. unit tests).
@@ -533,7 +534,7 @@ class TaskLifecycleManager:
                 reason="cannot create a goal in a terminal state",
             )
         now = time.time()
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO goals(
@@ -558,7 +559,7 @@ class TaskLifecycleManager:
     # state read / write
     # ------------------------------------------------------------------
     def get_state(self, goal_id: str) -> Optional[GoalState]:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             row = conn.execute(
                 "SELECT status FROM goals WHERE id = ?", (goal_id,)
             ).fetchone()
@@ -567,7 +568,7 @@ class TaskLifecycleManager:
         return coerce_state(row["status"])
 
     def transition(self, req: TransitionRequest) -> TransitionResult:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             row = conn.execute(
                 "SELECT status FROM goals WHERE id = ?", (req.goal_id,)
             ).fetchone()
@@ -630,7 +631,7 @@ class TaskLifecycleManager:
         return result
 
     def history(self, goal_id: str) -> List[Dict[str, Any]]:
-        with self._connect() as conn:
+        with connecting(self._connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM goal_transitions

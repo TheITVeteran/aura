@@ -237,6 +237,12 @@ _TEST_SCOPED_SERVICE_KEYS = frozenset(
         "thought_interoception",
         "unified_felt_state",
         "unified_will",
+        # Registered as a side effect of CONSTRUCTING a GlobalWorkspace, so any
+        # consciousness test leaks them and the next test to evict one is
+        # blamed for removing shared state it never created.
+        "inhibition_manager",
+        "unity_runtime",
+        "unity_workspace_frame",
         "world_state",
     }
 )
@@ -247,6 +253,8 @@ _TEST_SCOPED_RESET_FUNCTIONS = (
     ("core.being.thought_interoception", "reset_thought_interoception_for_test"),
     ("core.being.unified_felt_state", "reset_unified_felt_state_for_test"),
     ("core.governance.will", "reset_unified_will_for_test"),
+    ("core.resilience.inhibition_manager", "reset_inhibition_manager_for_test"),
+    ("core.unity.runtime", "reset_unity_runtime_for_test"),
     ("core.social.dialogue_cognition", "reset_dialogue_cognition_for_test"),
     ("core.social.relational_memory", "reset_relational_memory_authority"),
     ("core.social.social_imagination", "reset_social_imagination_for_test"),

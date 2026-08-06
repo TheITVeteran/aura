@@ -126,3 +126,23 @@ def get_inhibition_manager() -> InhibitionManager:
             if _MANAGER is None:
                 _MANAGER = InhibitionManager()
     return _MANAGER
+
+
+def reset_inhibition_manager_for_test() -> None:
+    """Drop the process-global manager and its ServiceContainer registration.
+
+    ``GlobalWorkspace`` lazily registers this on first competition, so a test
+    that runs one leaves it behind and the next test to evict it is reported as
+    having removed shared state.
+    """
+    global _MANAGER
+    with _MANAGER_LOCK:
+        _MANAGER = None
+    try:
+        from core.container import ServiceContainer
+
+        services = getattr(ServiceContainer, "_services", None)
+        if isinstance(services, dict):
+            services.pop("inhibition_manager", None)
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        pass

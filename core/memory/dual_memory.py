@@ -39,6 +39,7 @@ from core.memory.physics import PhysicsEngine
 from core.memory.rag import compute_term_freq, tokenize
 from core.runtime.errors import record_degradation
 from core.utils.concurrency import RobustLock
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Core.DualMemory")
 _BLACK_HOLE_PREFIX = "bh:v1:"
@@ -127,7 +128,7 @@ class EpisodicMemoryStore:
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS episodes (
                     id TEXT PRIMARY KEY,
@@ -153,7 +154,7 @@ class EpisodicMemoryStore:
         enc_ctx = _encode_black_hole_value(snapshot, self.vault_key) if snapshot else ""
         episode_id = _episode_id(episode)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO episodes VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """, (
@@ -167,7 +168,7 @@ class EpisodicMemoryStore:
 
     def retrieve_recent(self, limit: int = 10, min_strength: float = 0.1) -> list[Episode]:
         """Get most recent episodes, filtered by current memory strength."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("""
                 SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?
             """, (limit * 3,)).fetchall()   # Fetch extra to filter by strength
@@ -180,7 +181,7 @@ class EpisodicMemoryStore:
     def retrieve_by_emotion(self, target_valence: float, limit: int = 5,
                              tolerance: float = 0.3) -> list[Episode]:
         """Retrieve episodes by emotional tone — for empathy-informed responses."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("""
                 SELECT * FROM episodes
                 WHERE emotional_valence BETWEEN ? AND ?
@@ -192,14 +193,14 @@ class EpisodicMemoryStore:
 
     def get_all_episodes(self) -> list[Episode]:
         """Fetch all episodes for RAG operations."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("SELECT * FROM episodes").fetchall()
         return [self._row_to_episode(row) for row in rows]
 
 
     def get_salient_memories(self, top_n: int = 5) -> list[Episode]:
         """Get the most emotionally significant memories regardless of age."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("""
                 SELECT * FROM episodes
                 ORDER BY (importance + ABS(emotional_valence)) DESC
@@ -288,7 +289,7 @@ class SemanticMemoryStore:
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS facts (
                     id TEXT PRIMARY KEY,
@@ -307,7 +308,7 @@ class SemanticMemoryStore:
 
     def store(self, fact: SemanticFact):
         enc_val = _encode_black_hole_value(fact.value, self.vault_key)
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO facts VALUES (?,?,?,?,?,?,?,?,?)
             """, (
@@ -319,7 +320,7 @@ class SemanticMemoryStore:
     def retrieve_by_concept(self, concept: str,
                              min_confidence: float = 0.3) -> list[SemanticFact]:
         """Get all facts about a concept."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("""
                 SELECT * FROM facts
                 WHERE concept LIKE ? AND confidence >= ?
@@ -330,7 +331,7 @@ class SemanticMemoryStore:
 
     def get_all_facts(self) -> list[SemanticFact]:
         """Fetch all facts for RAG operations."""
-        with sqlite3.connect(self.db_path) as conn:
+        with connecting(sqlite3.connect(self.db_path)) as conn:
             rows = conn.execute("SELECT * FROM facts").fetchall()
         return [self._row_to_fact(row) for row in rows]
 
@@ -572,13 +573,13 @@ class DualMemorySystem:
 
     def get_memory_stats(self) -> dict[str, Any]:
         """Summary of memory system state."""
-        with sqlite3.connect(self.episodic.db_path) as conn:
+        with connecting(sqlite3.connect(self.episodic.db_path)) as conn:
             episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
             avg_valence = conn.execute(
                 "SELECT AVG(emotional_valence) FROM episodes"
             ).fetchone()[0]
 
-        with sqlite3.connect(self.semantic.db_path) as conn:
+        with connecting(sqlite3.connect(self.semantic.db_path)) as conn:
             try:
                 fact_count = conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
                 avg_confidence = conn.execute(

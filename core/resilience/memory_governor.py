@@ -14,6 +14,7 @@ from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 from core.utils.memory_monitor import get_memory_pressure_snapshot, process_memory_bytes
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Resilience.MemoryGovernor")
 
@@ -594,7 +595,7 @@ class MemoryGovernor:
                     for ep in episodes:
                         decay = hawking_decay(int(ep.timestamp * 1000), vault_key)
                         if decay["fidelity"] < 0.1:
-                            with sqlite3.connect(episodic.db_path) as conn:
+                            with connecting(sqlite3.connect(episodic.db_path)) as conn:
                                 conn.execute("DELETE FROM episodes WHERE id=?", (ep.id,))
                             result["episodes_evaporated"] += 1
                         else:
