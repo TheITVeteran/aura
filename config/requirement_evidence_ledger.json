@@ -1,16 +1,27 @@
 {
-  "content_sha256": "c7a1c59ccc1ae8f3d6470024c24d1b7c1ea05e1e8918f210c95e1a1adde8fb6c",
+  "content_sha256": "c2d95e73da0a73b544652ac7e98b8d145091c76a40f8ee086455244caa8d67ef",
   "entries": [
+    {
+      "acceptance_ids": [
+        "A7"
+      ],
+      "commit": "2898f9099fe476ec02be1f251e51c64924639f2f",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/2898f9099fe476ec02be1f251e51c64924639f2f.json",
+      "requirement_id": "ADDENDUM-21",
+      "sha256": "7cbecac72b9d5b19ae4c6168caf6f08140ccc85d49ee47fecac2ae6f6692575d"
+    },
     {
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "3c9f262917e14e3a687d474d373bbd71d65997d7",
+      "commit": "2898f9099fe476ec02be1f251e51c64924639f2f",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/3c9f262917e14e3a687d474d373bbd71d65997d7.json",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/2898f9099fe476ec02be1f251e51c64924639f2f.json",
       "requirement_id": "LANE-001",
-      "sha256": "3d50c5d1fc8e6e398f4d31ccef760a5f05eb7aa05ce791989876648f8942450a"
+      "sha256": "7cbecac72b9d5b19ae4c6168caf6f08140ccc85d49ee47fecac2ae6f6692575d"
     },
     {
       "acceptance_ids": [

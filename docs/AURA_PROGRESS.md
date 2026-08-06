@@ -4,9 +4,9 @@
 
 ## Current Truth
 
-- Machine-certified completion: **0.06%**
+- Machine-certified completion: **0.20%**
 - Legacy engineering estimate: **27.00%** (legacy_uncertified_not_used_for_release)
-- Verified acceptance/evidence cells: **1 / 1259**
+- Verified acceptance/evidence cells: **3 / 1259**
 - Mandatory requirements: **301**
 - Weight calibration: **0 assigned / 301**
 
@@ -23,7 +23,7 @@
 
 | Class | Weight | Verified | Total |
 |---|---:|---:|---:|
-| `implementation` | 2 | 0 | 505 |
+| `implementation` | 2 | 2 | 505 |
 | `test` | 2 | 1 | 505 |
 | `live` | 3 | 0 | 121 |
 | `gui` | 3 | 0 | 36 |
@@ -38,4 +38,4 @@ The certified percentage starts at zero until reviewed historical artifacts are 
 
 The forecast is conservative while evidence and weight calibration are incomplete. It will narrow from observed verified points per pushed checkpoint without changing the denominator or dropping open scope.
 
-Report SHA-256: `336be4dc23e9cec0fd263020a83abd47ce227a301d498d28aaf0027b41999727`
+Report SHA-256: `4870afc5a2228d776fee6018170b82c91ccf609d084bce570e1aebe0dd8c3487`

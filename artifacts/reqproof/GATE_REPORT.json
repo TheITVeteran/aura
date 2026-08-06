@@ -43,7 +43,6 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "stale-evidence": 1,
     "unproven-closure": 19
   },
   "defects": [
@@ -243,11 +242,6 @@
       "subject": "VOICE-001"
     },
     {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tools/reqproof/tracker_parse.py: expected 442a1463e2a3/15179, current 5c0f4d7e5d3d/15831",
-      "subject": "LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/3c9f262917e14e3a687d474d373bbd71d65997d7.json"
-    },
-    {
       "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], live[A2], implementation[A3], test[A3], implementation[A4], test[A4], live[A4], implementation[A5], test[A5], live[A5], implementation[A6], test[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
@@ -314,7 +308,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
@@ -343,9 +337,7 @@
       "subject": "STORAGE-GATEWAY-001"
     }
   ],
-  "failures": [
-    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/3c9f262917e14e3a687d474d373bbd71d65997d7.json: manifested source changed: tools/reqproof/tracker_parse.py: expected 442a1463e2a3/15179, current 5c0f4d7e5d3d/15831"
-  ],
+  "failures": [],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
@@ -359,8 +351,8 @@
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 2,
-    "evidence_ledger_sha256": "c7a1c59ccc1ae8f3d6470024c24d1b7c1ea05e1e8918f210c95e1a1adde8fb6c",
+    "evidence_ledger_entries": 3,
+    "evidence_ledger_sha256": "c2d95e73da0a73b544652ac7e98b8d145091c76a40f8ee086455244caa8d67ef",
     "mandatory_not_closed": 282,
     "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
     "registry_revision": 29,
@@ -376,5 +368,5 @@
     },
     "tracker_extraction_sha256": "b586f35869378ac91cc03cd13b4bc51cc82589a3b2d86c81aa5edad3ef604b58"
   },
-  "verdict": "fail"
+  "verdict": "pass"
 }
