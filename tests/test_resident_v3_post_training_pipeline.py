@@ -58,6 +58,9 @@ def test_config_freezes_sources_paths_and_63_bit_seeds(tmp_path: Path) -> None:
     assert config["training_runs"]["resume_sentinel"].endswith("sentinel-resume")
     assert config["claim_policy"]["physical_weight_merge_allowed"] is False
     assert config["source_bindings"]["pipeline"]["sha256"]
+    assert config["source_bindings"]["pipeline_contracts"]["path"] == (
+        "tools/resident_v3_post_training_contracts.py"
+    )
 
 
 def test_event_journal_restores_exact_hash_chain(tmp_path: Path) -> None:
