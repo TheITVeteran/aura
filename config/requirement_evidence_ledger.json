@@ -1,5 +1,5 @@
 {
-  "content_sha256": "d4b55ba910b6ee45df1e199c7d84c5c4e1294a1a432d87cecc5668be4665fad6",
+  "content_sha256": "7862a14e4edc04121ed6aedae5dc03cab39579c28179f2729d37615dc6c403f6",
   "entries": [
     {
       "acceptance_ids": [
@@ -47,12 +47,12 @@
         "A5",
         "A6"
       ],
-      "commit": "1186f9c5cf7743cfb5817f4223a19885a60c9be9",
+      "commit": "f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21.json",
       "requirement_id": "ADDENDUM-22",
-      "sha256": "3fcf794b3cc62c09f88fc7f4e89bae108fb0d93ee246a4858c49e075fdf64ec9"
+      "sha256": "4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd"
     },
     {
       "acceptance_ids": [
@@ -462,12 +462,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1186f9c5cf7743cfb5817f4223a19885a60c9be9",
+      "commit": "f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21.json",
       "requirement_id": "CTX2-TEST-001",
-      "sha256": "3fcf794b3cc62c09f88fc7f4e89bae108fb0d93ee246a4858c49e075fdf64ec9"
+      "sha256": "4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd"
     },
     {
       "acceptance_ids": [
@@ -484,12 +484,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1186f9c5cf7743cfb5817f4223a19885a60c9be9",
+      "commit": "f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21.json",
       "requirement_id": "CTX2-TEST-002",
-      "sha256": "3fcf794b3cc62c09f88fc7f4e89bae108fb0d93ee246a4858c49e075fdf64ec9"
+      "sha256": "4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd"
     },
     {
       "acceptance_ids": [
@@ -506,12 +506,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1186f9c5cf7743cfb5817f4223a19885a60c9be9",
+      "commit": "f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21.json",
       "requirement_id": "CTX2-TEST-003",
-      "sha256": "3fcf794b3cc62c09f88fc7f4e89bae108fb0d93ee246a4858c49e075fdf64ec9"
+      "sha256": "4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd"
     },
     {
       "acceptance_ids": [
@@ -598,12 +598,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "1186f9c5cf7743cfb5817f4223a19885a60c9be9",
+      "commit": "f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f4a2dc9d3ab7cdb815d9d774be5b40499d5a6d21.json",
       "requirement_id": "RESOURCE-001",
-      "sha256": "3fcf794b3cc62c09f88fc7f4e89bae108fb0d93ee246a4858c49e075fdf64ec9"
+      "sha256": "4ab6666b639a168c50d034d90ccf82975cadf3d5efcfcd8edbb1d5ac0624b3bd"
     },
     {
       "acceptance_ids": [
