@@ -10,20 +10,20 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "0.83",
+    "machine_certified_percent": "2.23",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 83
+    "verified_basis_points": 223
   },
   "evidence_classes": [
     {
       "cells_total": 505,
-      "cells_verified": 0,
+      "cells_verified": 11,
       "evidence_class": "implementation",
       "weight": 2
     },
     {
       "cells_total": 505,
-      "cells_verified": 12,
+      "cells_verified": 21,
       "evidence_class": "test",
       "weight": 2
     },
@@ -69,13 +69,13 @@
     "confidence": "low",
     "conservative_weighted_points_per_checkpoint": 10,
     "optimistic_weighted_points_per_checkpoint": 30,
-    "remaining_checkpoint_records_high": 284,
-    "remaining_checkpoint_records_low": 95,
-    "total_checkpoint_records_high": 693,
-    "total_checkpoint_records_low": 504
+    "remaining_checkpoint_records_high": 280,
+    "remaining_checkpoint_records_low": 94,
+    "total_checkpoint_records_high": 689,
+    "total_checkpoint_records_low": 503
   },
   "inputs": {
-    "evidence_ledger_sha256": "7560bf8efecbb5bf5e836e77588f8f13b23209ed1906649b5a24c9bd9ab19d44",
+    "evidence_ledger_sha256": "dec5f58ec246e6eb3463c17bf578cf21b5eafb333811cf1fc029f062db06e314",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
     "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
     "scope_baseline_sha256": "4f9b736b41d16d657bf213871e6f3768bbd05dfb8e91f331269cdc075792b7cc"
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "3884fb33093926c463469620bc84471b992b5acdaed56e1e51a5e3c0f31d1cfa",
+  "report_sha256": "539ff61e75d8e6a809ec3e48556dc89ef29cecabcdd53d7e71cc09358527451a",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -331,7 +331,7 @@
       ],
       "acceptance_units": 9,
       "cells_total": 22,
-      "cells_verified": 7,
+      "cells_verified": 8,
       "id": "ADDENDUM-21",
       "kind": "parent",
       "required_evidence_classes": [
@@ -343,7 +343,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "49.00",
-      "weighted_points_verified": "14.00"
+      "weighted_points_verified": "16.00"
     },
     {
       "acceptance_evidence_required": [
@@ -392,7 +392,7 @@
       ],
       "acceptance_units": 9,
       "cells_total": 24,
-      "cells_verified": 0,
+      "cells_verified": 10,
       "id": "ADDENDUM-22",
       "kind": "parent",
       "required_evidence_classes": [
@@ -405,7 +405,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "56.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "20.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2554,7 +2554,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 0,
+      "cells_verified": 2,
       "id": "CTX2-TEST-001",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2564,7 +2564,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "4.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2576,7 +2576,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 3,
-      "cells_verified": 0,
+      "cells_verified": 2,
       "id": "CTX2-TEST-002",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2587,7 +2587,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "4.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2598,7 +2598,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 0,
+      "cells_verified": 2,
       "id": "CTX2-TEST-003",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2608,7 +2608,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "4.00"
     },
     {
       "acceptance_evidence_required": [
@@ -4060,7 +4060,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 4,
-      "cells_verified": 1,
+      "cells_verified": 2,
       "id": "LANE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -4072,7 +4072,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
-      "weighted_points_verified": "2.00"
+      "weighted_points_verified": "4.00"
     },
     {
       "acceptance_evidence_required": [
@@ -6201,7 +6201,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 3,
-      "cells_verified": 0,
+      "cells_verified": 2,
       "id": "RESOURCE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -6212,7 +6212,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "4.00"
     },
     {
       "acceptance_evidence_required": [
@@ -7696,13 +7696,13 @@
   "schema_version": 1,
   "scope": {
     "acceptance_evidence_cells_total": 1259,
-    "acceptance_evidence_cells_verified": 12,
+    "acceptance_evidence_cells_verified": 32,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 301,
     "requirements_total": 302,
     "scope_baseline_cells": 1259,
-    "weighted_points_remaining": "2835.00",
+    "weighted_points_remaining": "2795.00",
     "weighted_points_total": "2859.00",
-    "weighted_points_verified": "24.00"
+    "weighted_points_verified": "64.00"
   }
 }
