@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -111,8 +112,8 @@ class ProjectSkill(BaseSkill):
     )
 
     assert catalog.ok is True
-    assert catalog.backend == "rust+python-parity"
-    assert catalog.parity_status == "matched"
+    assert catalog.backend == "rust-canonicalizer+python-discovery"
+    assert catalog.parity_status == "canonicalizer_matched"
     assert {item.name for item in catalog.accepted} == {
         "annotated",
         "decorated",
@@ -177,6 +178,41 @@ class OneSkill(BaseSkill):
     assert catalog.blocking_issues[0].code == "rust_python_catalog_divergence"
 
 
+def test_catalog_fails_closed_on_independent_rust_filesystem_divergence(tmp_path: Path):
+    root = tmp_path / "skills"
+    _write(
+        root / "one.py",
+        """
+from core.skills.base_skill import BaseSkill
+class OneSkill(BaseSkill):
+    name = "one"
+    description = "One."
+    effect_scope = "pure_compute"
+    async def execute(self, params, context): return {"ok": True}
+""",
+    )
+    catalog = build_skill_catalog(
+        (SkillSourceRoot(root, "fixture", "project"),),
+        rust_builder=canonicalize_skill_candidates,
+        rust_discoverer=lambda _roots: json.dumps(
+            {
+                "accepted": [],
+                "candidates": [],
+                "duplicates": [],
+                "excluded": [],
+                "issues": [],
+                "source_file_count": 0,
+            }
+        ),
+    )
+
+    assert catalog.ok is False
+    assert catalog.parity_status == "diverged"
+    assert [issue.code for issue in catalog.blocking_issues] == [
+        "rust_python_filesystem_catalog_divergence"
+    ]
+
+
 def test_discovery_does_not_import_and_probe_blocks_out_of_sandbox_write(tmp_path: Path):
     package = tmp_path / "fixture_skills"
     marker = tmp_path / "must_not_be_written.txt"
@@ -221,7 +257,7 @@ def test_live_repo_catalog_matches_rust_and_dry_runs_every_skill():
     engine = CapabilityEngine()
 
     assert catalog.ok is True
-    assert catalog.backend == "rust+python-parity"
+    assert catalog.backend == "rust-filesystem+python-parity"
     assert catalog.parity_status == "matched"
     assert len(catalog.accepted) == 76
     assert len(catalog.excluded) == 10

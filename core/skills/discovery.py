@@ -755,11 +755,69 @@ def _load_rust_builder() -> Callable[[str], str] | None:
         return None
 
 
+def _load_rust_discoverer() -> Callable[[str], str] | None:
+    try:
+        from aura_m1_ext import discover_skill_candidates
+
+        return cast(Callable[[str], str], discover_skill_candidates)
+    except (ImportError, AttributeError):
+        return None
+
+
+def _rust_roots_json(roots: Iterable[SkillSourceRoot]) -> str:
+    return json.dumps(
+        [
+            {
+                "kind": root.source_kind,
+                "package": root.module_prefix,
+                "path": str(root.path.expanduser().resolve()),
+            }
+            for root in roots
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _issue_identity(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload.get(key)
+        for key in ("class_name", "code", "line", "module_path", "severity", "source_path")
+    }
+
+
+def _sorted_payloads(payloads: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (dict(payload) for payload in payloads),
+        key=lambda payload: json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    )
+
+
+def _filesystem_parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "accepted": list(payload.get("accepted") or ()),
+        "candidates": _sorted_payloads(payload.get("candidates") or ()),
+        "duplicates": list(payload.get("duplicates") or ()),
+        "excluded": list(payload.get("excluded") or ()),
+        "issues": _sorted_payloads(
+            _issue_identity(dict(item)) for item in payload.get("issues") or ()
+        ),
+        "source_file_count": payload.get("source_file_count"),
+    }
+
+
 def build_skill_catalog(
     roots: Iterable[SkillSourceRoot] | None = None,
     *,
     try_rust: bool = True,
     rust_builder: Callable[[str], str] | None = None,
+    rust_discoverer: Callable[[str], str] | None = None,
 ) -> SkillCatalog:
     roots = tuple(roots or default_skill_roots())
     declarations, issues, source_file_count = parse_skill_sources(roots)
@@ -780,28 +838,61 @@ def build_skill_catalog(
     candidate_json = _candidate_payload_json(eligible)
     python_json = canonicalize_skill_candidates(candidate_json)
     python_payload = json.loads(python_json)
+    duplicates = list(python_payload.get("duplicates") or [])
+    for duplicate in duplicates:
+        candidates = list(duplicate.get("candidates") or [])
+        locations = ", ".join(
+            f"{item.get('module_path')}.{item.get('class_name')}" for item in candidates
+        )
+        issues.append(
+            CatalogIssue(
+                code="duplicate_skill_name",
+                severity="error",
+                detail=(
+                    f"ambiguous case-insensitive name {duplicate.get('name_key')!r}: {locations}"
+                ),
+            )
+        )
+
+    excluded_tuple = tuple(
+        sorted(excluded, key=lambda item: (item.name.casefold(), item.module_path, item.class_name))
+    )
+    python_filesystem_payload = {
+        "accepted": list(python_payload.get("accepted") or ()),
+        "candidates": json.loads(candidate_json).get("candidates") or [],
+        "duplicates": duplicates,
+        "excluded": [item.to_dict() for item in excluded_tuple],
+        "issues": [item.to_dict() for item in issues],
+        "source_file_count": source_file_count,
+    }
     backend = "python"
     parity_status = "unavailable" if try_rust else "python_only"
     if try_rust:
         builder = rust_builder or _load_rust_builder()
+        discoverer = rust_discoverer
+        if discoverer is None and rust_builder is None:
+            discoverer = _load_rust_discoverer()
+        canonicalizer_state = "unavailable"
+        filesystem_state = "unavailable"
         if builder is not None:
             try:
                 rust_json = builder(candidate_json)
                 rust_payload = json.loads(str(rust_json))
                 if rust_payload != python_payload:
-                    parity_status = "diverged"
+                    canonicalizer_state = "diverged"
                     issues.append(
                         CatalogIssue(
                             code="rust_python_catalog_divergence",
                             severity="error",
-                            detail="Rust and Python canonicalizers produced different skill catalogs",
+                            detail=(
+                                "Rust and Python canonicalizers produced different skill catalogs"
+                            ),
                         )
                     )
                 else:
-                    backend = "rust+python-parity"
-                    parity_status = "matched"
+                    canonicalizer_state = "matched"
             except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                parity_status = "failed"
+                canonicalizer_state = "failed"
                 issues.append(
                     CatalogIssue(
                         code="rust_catalog_failed",
@@ -809,27 +900,50 @@ def build_skill_catalog(
                         detail=f"{type(exc).__name__}: {exc}",
                     )
                 )
+        if discoverer is not None:
+            try:
+                rust_discovery_json = discoverer(_rust_roots_json(roots))
+                rust_discovery_payload = json.loads(str(rust_discovery_json))
+                if _filesystem_parity_projection(
+                    rust_discovery_payload
+                ) != _filesystem_parity_projection(python_filesystem_payload):
+                    filesystem_state = "diverged"
+                    issues.append(
+                        CatalogIssue(
+                            code="rust_python_filesystem_catalog_divergence",
+                            severity="error",
+                            detail=(
+                                "Independent Rust filesystem discovery and Python AST discovery "
+                                "produced different skill catalogs"
+                            ),
+                        )
+                    )
+                else:
+                    filesystem_state = "matched"
+            except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                filesystem_state = "failed"
+                issues.append(
+                    CatalogIssue(
+                        code="rust_filesystem_catalog_failed",
+                        severity="error",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    )
+                )
 
-    duplicates = list(python_payload.get("duplicates") or [])
-    for duplicate in duplicates:
-        candidates = list(duplicate.get("candidates") or [])
-        locations = ", ".join(
-            f"{item.get('module_path')}.{item.get('class_name')}"
-            for item in candidates
-        )
-        issues.append(
-            CatalogIssue(
-                code="duplicate_skill_name",
-                severity="error",
-                detail=f"ambiguous case-insensitive name {duplicate.get('name_key')!r}: {locations}",
-            )
-        )
+        states = {canonicalizer_state, filesystem_state}
+        if "diverged" in states:
+            parity_status = "diverged"
+        elif "failed" in states:
+            parity_status = "failed"
+        elif filesystem_state == "matched":
+            backend = "rust-filesystem+python-parity"
+            parity_status = "matched"
+        elif canonicalizer_state == "matched":
+            backend = "rust-canonicalizer+python-discovery"
+            parity_status = "canonicalizer_matched"
 
     accepted = tuple(
         SkillDeclaration.from_dict(item) for item in python_payload.get("accepted") or []
-    )
-    excluded_tuple = tuple(
-        sorted(excluded, key=lambda item: (item.name.casefold(), item.module_path, item.class_name))
     )
     digest_payload = {
         "accepted": [item.to_dict() for item in accepted],
