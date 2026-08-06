@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,61 @@ def test_shutdown_latch_is_visible_before_grace_flag_io(monkeypatch: pytest.Monk
     assert second["first_reason"] == "first"
     assert second["last_reason"] == "second"
     assert second["request_count"] == 2
+
+
+def test_repeated_shutdown_request_can_only_tighten_process_deadline() -> None:
+    first = shutdown_coordinator.request_shutdown("first", deadline_seconds=10.0)
+    first_deadline = first["deadline_at_unix"]
+
+    tightened = shutdown_coordinator.request_shutdown("repeat", deadline_seconds=2.0)
+    tightened_deadline = tightened["deadline_at_unix"]
+    attempted_extension = shutdown_coordinator.request_shutdown(
+        "late-extension",
+        deadline_seconds=20.0,
+    )
+
+    assert tightened["first_reason"] == "first"
+    assert tightened["deadline_source"] == "repeat"
+    assert tightened["deadline_tighten_count"] == 1
+    assert tightened_deadline < first_deadline
+    assert attempted_extension["deadline_at_unix"] == tightened_deadline
+    assert attempted_extension["deadline_tighten_count"] == 1
+    assert 0.0 < attempted_extension["remaining_budget_seconds"] <= 2.0
+
+
+@pytest.mark.asyncio
+async def test_shutdown_coordinator_obeys_process_deadline_and_reports_blocker() -> None:
+    coordinator = shutdown_coordinator.ShutdownCoordinator(phases=("actors",))
+    entered = asyncio.Event()
+
+    async def _wedged_owner() -> None:
+        entered.set()
+        await asyncio.sleep(5.0)
+
+    coordinator.register(
+        _wedged_owner,
+        phase="actors",
+        name="wedged-owner",
+        timeout=5.0,
+    )
+    shutdown_coordinator.request_shutdown("bounded-test", deadline_seconds=0.08)
+
+    started = time.monotonic()
+    task = asyncio.create_task(coordinator.shutdown())
+    await entered.wait()
+    status = coordinator.get_status()
+    report = await task
+    elapsed = time.monotonic() - started
+
+    assert status["progress"]["blocker_owner"] == "actors:wedged-owner"
+    assert status["request"]["remaining_budget_seconds"] <= 0.08
+    assert elapsed < 0.5
+    assert report.clean is False
+    assert report.failed_phases == ["actors"]
+    assert any(
+        item["kind"] == "global_deadline_exhausted"
+        for item in report.escalations
+    )
 
 
 @pytest.mark.asyncio

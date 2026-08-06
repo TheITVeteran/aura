@@ -41,10 +41,10 @@ from core.runtime.shutdown_artifact_store import (
     write_shutdown_artifact,
 )
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
+from core.runtime.state_ownership import state_root
 from core.utils.task_tracker import (
     get_task_tracker,
 )
-from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ShutdownCoordinator")
 
@@ -247,6 +247,10 @@ class ShutdownCoordinator:
             phase_remaining = None
             if self._current_phase_deadline_monotonic is not None:
                 phase_remaining = max(0.0, self._current_phase_deadline_monotonic - now)
+            active_handlers = sorted(self._active_handlers)
+            blocker_owner = active_handlers[0] if active_handlers else None
+            if blocker_owner is None and report is not None and report.current_phase:
+                blocker_owner = f"phase:{report.current_phase}"
             return {
                 "running": self._running,
                 "lifecycle_state": self.lifecycle_state(),
@@ -261,7 +265,8 @@ class ShutdownCoordinator:
                     "phase_remaining_seconds": (
                         round(phase_remaining, 6) if phase_remaining is not None else None
                     ),
-                    "active_handlers": sorted(self._active_handlers),
+                    "blocker_owner": blocker_owner,
+                    "active_handlers": active_handlers,
                     "handlers": {
                         key: dict(value) for key, value in self._handler_progress.items()
                     },
@@ -325,6 +330,12 @@ class ShutdownCoordinator:
                     ),
                 ),
             )
+        remaining_global_budget = shutdown_remaining_budget_seconds()
+        if remaining_global_budget is not None:
+            cross_loop_timeout = min(
+                cross_loop_timeout,
+                max(0.05, remaining_global_budget),
+            )
         completed = await run_sync_shutdown_callable(
             lambda: self._completion.wait(cross_loop_timeout),
             timeout_s=cross_loop_timeout + 0.1,
@@ -365,7 +376,7 @@ class ShutdownCoordinator:
                     report.current_phase = phase
                     handlers = list(self._handlers.get(phase, []))
                     if timeout_per_phase is not None:
-                        effective_timeout = float(timeout_per_phase)
+                        configured_timeout = float(timeout_per_phase)
                     else:
                         longest_handler_timeout = max(
                             (handler.timeout for handler in handlers),
@@ -373,19 +384,26 @@ class ShutdownCoordinator:
                         )
                         # Give per-handler wait_for() enough scheduling margin to
                         # publish the real blocker before the phase-level fuse.
-                        effective_timeout = longest_handler_timeout + min(
+                        configured_timeout = longest_handler_timeout + min(
                             1.0,
                             max(0.1, longest_handler_timeout * 0.1),
                         )
                         if not handlers:
-                            effective_timeout = 0.0
+                            configured_timeout = 0.0
+                    global_remaining = shutdown_remaining_budget_seconds()
+                    effective_timeout = configured_timeout
+                    if global_remaining is not None:
+                        effective_timeout = min(
+                            configured_timeout,
+                            max(0.0, global_remaining - probe_hold_seconds),
+                        )
                     self._current_phase_started_monotonic = phase_started
                     self._current_phase_timeout_seconds = effective_timeout
-                    self._current_phase_deadline_monotonic = (
-                        phase_started + probe_hold_seconds + effective_timeout
-                        if handlers
-                        else None
-                    )
+                    phase_deadline = phase_started + probe_hold_seconds + effective_timeout
+                    global_deadline = shutdown_deadline_monotonic()
+                    if global_deadline is not None:
+                        phase_deadline = min(phase_deadline, global_deadline)
+                    self._current_phase_deadline_monotonic = phase_deadline
                     self._active_handlers.clear()
                 logger.info(
                     "ShutdownCoordinator: phase started "
@@ -394,7 +412,21 @@ class ShutdownCoordinator:
                     len(handlers),
                     effective_timeout,
                 )
-                await hold_shutdown_probe_async(probe_target)
+                probe_budget = shutdown_remaining_budget_seconds()
+                if probe_budget is not None and probe_budget <= 0.0:
+                    self._record_global_deadline_exhausted(report, phase=phase)
+                    break
+                if probe_budget is None:
+                    await hold_shutdown_probe_async(probe_target)
+                else:
+                    try:
+                        await asyncio.wait_for(
+                            hold_shutdown_probe_async(probe_target),
+                            timeout=max(0.05, probe_budget),
+                        )
+                    except TimeoutError:
+                        self._record_global_deadline_exhausted(report, phase=phase)
+                        break
                 if not handlers:
                     report.completed_phases.append(phase)
                     report.phase_durations_seconds[phase] = round(
@@ -405,6 +437,12 @@ class ShutdownCoordinator:
                         self._current_phase_timeout_seconds = None
                         self._current_phase_deadline_monotonic = None
                     continue
+                remaining_after_probe = shutdown_remaining_budget_seconds()
+                if remaining_after_probe is not None:
+                    effective_timeout = min(effective_timeout, remaining_after_probe)
+                if effective_timeout <= 0.0:
+                    self._record_global_deadline_exhausted(report, phase=phase)
+                    break
                 phase_failed = False
                 coros: list[asyncio.Future[Any]] = []
                 for record in handlers:
@@ -432,9 +470,17 @@ class ShutdownCoordinator:
                         for key, status in report.handler_statuses.items()
                         if status in {"running", "cancelled"}
                     )
+                    global_deadline_exhausted = (
+                        shutdown_remaining_budget_seconds() is not None
+                        and shutdown_remaining_budget_seconds() <= 0.0
+                    )
                     report.escalations.append(
                         {
-                            "kind": "phase_timeout",
+                            "kind": (
+                                "global_deadline_exhausted"
+                                if global_deadline_exhausted
+                                else "phase_timeout"
+                            ),
                             "phase": phase,
                             "at_unix": time.time(),
                             "timeout_seconds": effective_timeout,
@@ -534,6 +580,30 @@ class ShutdownCoordinator:
             )
         return report
 
+    def _record_global_deadline_exhausted(
+        self,
+        report: ShutdownReport,
+        *,
+        phase: str,
+    ) -> None:
+        if phase not in report.failed_phases:
+            report.failed_phases.append(phase)
+        report.handler_failures[phase] = "process-wide shutdown deadline exhausted"
+        report.escalations.append(
+            {
+                "kind": "global_deadline_exhausted",
+                "phase": phase,
+                "at_unix": time.time(),
+                "active_handlers": sorted(self._active_handlers),
+                "request": shutdown_request_snapshot(),
+            }
+        )
+        logger.error(
+            "Shutdown process-wide deadline exhausted (phase=%s active_handlers=%s)",
+            phase,
+            sorted(self._active_handlers),
+        )
+
     async def _invoke(
         self,
         record: _RegisteredHandler,
@@ -552,13 +622,19 @@ class ShutdownCoordinator:
             }
             report.handler_statuses[key] = "running"
         try:
-            deadline = time.monotonic() + record.timeout
+            effective_timeout = record.timeout
+            remaining_global_budget = shutdown_remaining_budget_seconds()
+            if remaining_global_budget is not None:
+                effective_timeout = min(effective_timeout, remaining_global_budget)
+            if effective_timeout <= 0.0:
+                raise TimeoutError("process-wide shutdown deadline exhausted")
+            deadline = time.monotonic() + effective_timeout
             if inspect.iscoroutinefunction(record.handler):
                 result = record.handler()
             else:
                 result = await run_sync_shutdown_callable(
                     cast(Callable[[], Any], record.handler),
-                    timeout_s=record.timeout,
+                    timeout_s=effective_timeout,
                     name=f"{record.phase}:{record.name}",
                 )
             if inspect.isawaitable(result):
@@ -621,6 +697,11 @@ _shutdown_first_reason = ""
 _shutdown_last_reason = ""
 _shutdown_first_requested_at_unix: float | None = None
 _shutdown_first_requested_at_monotonic: float | None = None
+_shutdown_deadline_at_unix: float | None = None
+_shutdown_deadline_monotonic: float | None = None
+_shutdown_deadline_source = ""
+_shutdown_deadline_tighten_count = 0
+_shutdown_initial_budget_seconds: float | None = None
 _shutdown_request_count = 0
 _shutdown_admission_counts: dict[str, int] = {}
 _shutdown_admission_events: deque[dict[str, object]] = deque(maxlen=64)
@@ -714,6 +795,39 @@ def _declared_bool(name: str, default: bool, description: str) -> bool:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return default
+
+
+def _declared_float(name: str, default: float, description: str) -> float:
+    try:
+        from core.runtime.flags import FlagKind, declare
+
+        return float(
+            declare(
+                name,
+                kind=FlagKind.FLOAT,
+                default=default,
+                description=description,
+                owner="core.runtime.shutdown_coordinator",
+            ).value()
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return default
+
+
+def _shutdown_budget_seconds(*, first_request: bool) -> float:
+    if first_request:
+        value = _declared_float(
+            "AURA_SHUTDOWN_GLOBAL_TIMEOUT_SECONDS",
+            180.0,
+            "Process-wide graceful shutdown deadline",
+        )
+    else:
+        value = _declared_float(
+            "AURA_SHUTDOWN_REPEAT_TIMEOUT_SECONDS",
+            120.0,
+            "Maximum remaining shutdown time after a repeated stop request",
+        )
+    return min(3600.0, max(0.05, float(value)))
 
 
 def shutdown_verdict_path() -> Path:
@@ -975,17 +1089,45 @@ def shutdown_request_snapshot() -> dict[str, object]:
 
     with _shutdown_state_lock:
         requested = _shutdown_requested.is_set()
+        now_monotonic = time.monotonic()
         elapsed = None
         if requested and _shutdown_first_requested_at_monotonic is not None:
-            elapsed = max(0.0, time.monotonic() - _shutdown_first_requested_at_monotonic)
+            elapsed = max(0.0, now_monotonic - _shutdown_first_requested_at_monotonic)
+        remaining = None
+        if requested and _shutdown_deadline_monotonic is not None:
+            remaining = max(0.0, _shutdown_deadline_monotonic - now_monotonic)
         return {
             "requested": requested,
             "first_reason": _shutdown_first_reason,
             "last_reason": _shutdown_last_reason,
             "first_requested_at_unix": _shutdown_first_requested_at_unix,
             "elapsed_seconds": round(elapsed, 6) if elapsed is not None else None,
+            "deadline_at_unix": _shutdown_deadline_at_unix,
+            "deadline_source": _shutdown_deadline_source,
+            "initial_budget_seconds": _shutdown_initial_budget_seconds,
+            "remaining_budget_seconds": (
+                round(remaining, 6) if remaining is not None else None
+            ),
+            "deadline_exhausted": bool(remaining is not None and remaining <= 0.0),
+            "deadline_tighten_count": _shutdown_deadline_tighten_count,
             "request_count": _shutdown_request_count,
         }
+
+
+def shutdown_deadline_monotonic() -> float | None:
+    """Return the immutable-or-tightened process deadline for internal fuses."""
+
+    with _shutdown_state_lock:
+        return _shutdown_deadline_monotonic
+
+
+def shutdown_remaining_budget_seconds() -> float | None:
+    """Return remaining process-wide teardown budget, or ``None`` before stop."""
+
+    with _shutdown_state_lock:
+        if not _shutdown_requested.is_set() or _shutdown_deadline_monotonic is None:
+            return None
+        return max(0.0, _shutdown_deadline_monotonic - time.monotonic())
 
 
 def _write_grace_flag(*, reason: str, created_at_unix: float) -> None:
@@ -1038,7 +1180,11 @@ def _write_grace_flag(*, reason: str, created_at_unix: float) -> None:
     )
 
 
-def request_shutdown(reason: str = "") -> dict[str, object]:
+def request_shutdown(
+    reason: str = "",
+    *,
+    deadline_seconds: float | None = None,
+) -> dict[str, object]:
     """Latch process shutdown before logging or filesystem side effects.
 
     The event is the mechanical no-new-work fence. Metadata and the grace flag
@@ -1050,6 +1196,11 @@ def request_shutdown(reason: str = "") -> dict[str, object]:
     global _shutdown_last_reason
     global _shutdown_first_requested_at_unix
     global _shutdown_first_requested_at_monotonic
+    global _shutdown_deadline_at_unix
+    global _shutdown_deadline_monotonic
+    global _shutdown_deadline_source
+    global _shutdown_deadline_tighten_count
+    global _shutdown_initial_budget_seconds
     global _shutdown_request_count
 
     normalized_reason = str(reason or "")
@@ -1057,14 +1208,34 @@ def request_shutdown(reason: str = "") -> dict[str, object]:
     now_monotonic = time.monotonic()
     with _shutdown_state_lock:
         first_request = not _shutdown_requested.is_set()
+        requested_budget = (
+            _shutdown_budget_seconds(first_request=first_request)
+            if deadline_seconds is None
+            else min(3600.0, max(0.05, float(deadline_seconds)))
+        )
+        candidate_deadline_monotonic = now_monotonic + requested_budget
+        candidate_deadline_at_unix = now_unix + requested_budget
         if first_request:
             _shutdown_requested.set()
             _shutdown_first_reason = normalized_reason
             _shutdown_first_requested_at_unix = now_unix
             _shutdown_first_requested_at_monotonic = now_monotonic
+            _shutdown_deadline_monotonic = candidate_deadline_monotonic
+            _shutdown_deadline_at_unix = candidate_deadline_at_unix
+            _shutdown_deadline_source = normalized_reason
+            _shutdown_initial_budget_seconds = requested_budget
+            _shutdown_deadline_tighten_count = 0
             _shutdown_request_count = 1
         else:
             _shutdown_request_count += 1
+            if (
+                _shutdown_deadline_monotonic is None
+                or candidate_deadline_monotonic < _shutdown_deadline_monotonic
+            ):
+                _shutdown_deadline_monotonic = candidate_deadline_monotonic
+                _shutdown_deadline_at_unix = candidate_deadline_at_unix
+                _shutdown_deadline_source = normalized_reason
+                _shutdown_deadline_tighten_count += 1
         _shutdown_last_reason = normalized_reason
         snapshot = shutdown_request_snapshot()
 
@@ -1103,6 +1274,11 @@ def clear_shutdown_request() -> None:
     global _shutdown_last_reason
     global _shutdown_first_requested_at_unix
     global _shutdown_first_requested_at_monotonic
+    global _shutdown_deadline_at_unix
+    global _shutdown_deadline_monotonic
+    global _shutdown_deadline_source
+    global _shutdown_deadline_tighten_count
+    global _shutdown_initial_budget_seconds
     global _shutdown_request_count
 
     if _shutdown_requested.is_set() and not _shutdown_reset_allowed():
@@ -1115,6 +1291,11 @@ def clear_shutdown_request() -> None:
         _shutdown_last_reason = ""
         _shutdown_first_requested_at_unix = None
         _shutdown_first_requested_at_monotonic = None
+        _shutdown_deadline_at_unix = None
+        _shutdown_deadline_monotonic = None
+        _shutdown_deadline_source = ""
+        _shutdown_deadline_tighten_count = 0
+        _shutdown_initial_budget_seconds = None
         _shutdown_request_count = 0
         _shutdown_admission_counts.clear()
         _shutdown_admission_events.clear()

@@ -22,6 +22,26 @@ from core.runtime.shutdown_coordinator import clear_shutdown_request, request_sh
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.fixture
+def model_lane_controller_factory(tmp_path: Path):
+    stores: list[ReceiptStore] = []
+
+    def _build(*, state_path: Path | None = None) -> ModelLaneController:
+        store = ReceiptStore(tmp_path / f"receipts-{len(stores)}")
+        stores.append(store)
+        return ModelLaneController(
+            state_path=state_path or tmp_path / "model_lanes.json",
+            receipt_store=store,
+            process_discovery=None,
+        )
+
+    try:
+        yield _build
+    finally:
+        for store in reversed(stores):
+            store.close()
+
+
 def test_model_process_claim_inference_requires_identity_and_sizes_peak() -> None:
     claim = infer_model_process_claim(
         [
@@ -380,16 +400,12 @@ async def test_cleanup_signals_isolated_group_after_root_already_exited(
 @pytest.mark.asyncio
 async def test_spawn_async_commits_and_releases_model_process_owner(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    controller = ModelLaneController(
-        state_path=tmp_path / "model_lanes.json",
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory()
     monkeypatch.setattr(
         model_lane_control,
         "get_model_lane_controller",
@@ -430,16 +446,12 @@ async def test_spawn_async_commits_and_releases_model_process_owner(
 @pytest.mark.asyncio
 async def test_model_owner_survives_root_exit_until_process_group_drains(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    controller = ModelLaneController(
-        state_path=tmp_path / "model_lanes.json",
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory()
     monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
     claim = LaneClaim(
         owner_id="subprocess:test:escaped-descendant",
@@ -506,16 +518,12 @@ async def test_model_subprocess_requires_isolated_process_group(
 @pytest.mark.asyncio
 async def test_cancelled_monitor_retains_owner_until_child_process_dies(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    controller = ModelLaneController(
-        state_path=tmp_path / "model_lanes.json",
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory()
     monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
     claim = LaneClaim(
         owner_id="subprocess:test:cancelled-monitor",
@@ -550,17 +558,14 @@ async def test_cancelled_monitor_retains_owner_until_child_process_dies(
 async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
     home = tmp_path / "delegated-home"
     state_path = home / ".aura" / "run" / "model_lane_control.json"
-    controller = ModelLaneController(
-        state_path=state_path,
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory(state_path=state_path)
     monkeypatch.setattr(
         model_lane_control,
         "get_model_lane_controller",
@@ -614,16 +619,12 @@ async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
 @pytest.mark.asyncio
 async def test_run_async_tracks_model_owner_through_completion(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    controller = ModelLaneController(
-        state_path=tmp_path / "model_lanes.json",
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory()
     monkeypatch.setattr(
         model_lane_control,
         "get_model_lane_controller",
@@ -657,17 +658,13 @@ async def test_run_async_tracks_model_owner_through_completion(
 @pytest.mark.asyncio
 async def test_monitor_registration_failure_reaps_committed_model_child(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    model_lane_controller_factory,
 ) -> None:
     from core.runtime import model_lane_control
     from core.utils import task_tracker
 
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    controller = ModelLaneController(
-        state_path=tmp_path / "model_lanes.json",
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
-        process_discovery=None,
-    )
+    controller = model_lane_controller_factory()
     monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
     actual_tracker = task_tracker.get_task_tracker()
 
