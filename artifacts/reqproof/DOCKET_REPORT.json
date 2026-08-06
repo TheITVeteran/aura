@@ -150,8 +150,8 @@
     },
     {
       "counts": {
-        "certified_complete": 4,
-        "claimed_complete_needs_evidence": 6,
+        "certified_complete": 6,
+        "claimed_complete_needs_evidence": 4,
         "ready_for_implementation": 37
       },
       "family": "CTX2"
@@ -636,7 +636,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "83def680afa2ea0742393944a96b36fe3acc2b900f740175e18048e65ea7b4f5",
+    "evidence_ledger_sha256": "81956d79cbd65a9baf61333945d51e7cb97534e2794d112b77aa1ff2f0190629",
     "registry_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039"
   },
   "non_claims": [
@@ -644,7 +644,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "d5c0d9e8ec891c3c0945561f8bcbf88a1323e2c511a110ba31377b9312cd8359",
+  "report_sha256": "dedbf7ad5dbce7ad9e3e60fa5a21993711a093f30e095b8ed5687b7ec0c8ef88",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2735,10 +2735,7 @@
     },
     {
       "acceptance_units": 5,
-      "closure_blockers": [
-        "CTX2-GATE-001",
-        "CTX2-GATE-002"
-      ],
+      "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 14,
@@ -2797,46 +2794,6 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Signal-safe quiescence and no-resurrection shutdown"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-GATE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-GATE-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
     },
     {
       "acceptance_units": 1,
@@ -8127,6 +8084,40 @@
       "evidence_cells_total": 2,
       "evidence_cells_verified": 2,
       "family": "CTX2",
+      "id": "CTX2-GATE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-GATE-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
       "id": "CTX2-SKILL-001",
       "kind": "atomic",
       "mandatory": true,
@@ -8215,8 +8206,6 @@
       "ADDENDUM-22",
       "ADDENDUM-23",
       "ADDENDUM-32",
-      "CTX2-GATE-001",
-      "CTX2-GATE-002",
       "CTX2-SHUTDOWN-001",
       "CTX2-SHUTDOWN-002",
       "CTX2-SHUTDOWN-003",
@@ -8229,9 +8218,9 @@
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 4,
+      "certified_complete": 6,
       "claimed_complete_needs_children": 1,
-      "claimed_complete_needs_evidence": 14,
+      "claimed_complete_needs_evidence": 12,
       "deferred": 1,
       "in_progress": 83,
       "nonmandatory": 1,
