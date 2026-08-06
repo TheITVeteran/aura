@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from core.runtime.receipts import ReceiptStore
+
 _DEFAULT_INHIBITION = object()
 
 
@@ -38,11 +40,24 @@ def _install_services(
     monkeypatch.setattr(workspace_module.ServiceContainer, "get", staticmethod(_get))
 
 
-def _install_gate_receipt_store(monkeypatch, tmp_path):
-    import core.consciousness.global_workspace as workspace_module
-    from core.runtime.receipts import ReceiptStore
+@pytest.fixture
+def receipt_store_factory():
+    stores = []
 
-    store = ReceiptStore(tmp_path / "receipts")
+    def create(path):
+        store = ReceiptStore(path)
+        stores.append(store)
+        return store
+
+    yield create
+    for store in reversed(stores):
+        store.close()
+
+
+def _install_gate_receipt_store(monkeypatch, tmp_path, receipt_store_factory):
+    import core.consciousness.global_workspace as workspace_module
+
+    store = receipt_store_factory(tmp_path / "receipts")
     monkeypatch.setattr(workspace_module, "get_receipt_store", lambda: store)
     return store
 
@@ -255,6 +270,7 @@ async def test_workspace_flood_guard_drops_bid_and_records_reflex_failure(monkey
 async def test_workspace_inhibition_check_failure_rejects_and_receipts(
     monkeypatch,
     tmp_path,
+    receipt_store_factory,
 ):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
@@ -265,7 +281,7 @@ async def test_workspace_inhibition_check_failure_rejects_and_receipts(
             raise RuntimeError(f"gate offline for {source}")
 
     _install_services(monkeypatch, inhibition=BrokenInhibition())
-    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    store = _install_gate_receipt_store(monkeypatch, tmp_path, receipt_store_factory)
     workspace = GlobalWorkspace()
 
     accepted = await workspace.submit(CognitiveCandidate("unsafe", "drive", 1.0))
@@ -286,6 +302,7 @@ async def test_workspace_inhibition_check_failure_rejects_and_receipts(
 async def test_workspace_inhibition_timeout_rejects_without_late_admission(
     monkeypatch,
     tmp_path,
+    receipt_store_factory,
 ):
     import asyncio
 
@@ -300,7 +317,7 @@ async def test_workspace_inhibition_timeout_rejects_without_late_admission(
 
     monkeypatch.setenv("AURA_WORKSPACE_INHIBITION_GATE_TIMEOUT_S", "0.01")
     _install_services(monkeypatch, inhibition=WedgedInhibition())
-    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    store = _install_gate_receipt_store(monkeypatch, tmp_path, receipt_store_factory)
     workspace = GlobalWorkspace()
 
     assert await workspace.submit(CognitiveCandidate("late", "memory", 0.8)) is False
@@ -313,6 +330,7 @@ async def test_workspace_inhibition_timeout_rejects_without_late_admission(
 async def test_workspace_gate_recovers_and_uses_canonical_fallback_instance(
     monkeypatch,
     tmp_path,
+    receipt_store_factory,
 ):
     import core.consciousness.global_workspace as workspace_module
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
@@ -330,7 +348,7 @@ async def test_workspace_gate_recovers_and_uses_canonical_fallback_instance(
         "register_instance",
         classmethod(lambda _cls, name, instance, **_kwargs: published.append((name, instance))),
     )
-    _install_gate_receipt_store(monkeypatch, tmp_path)
+    _install_gate_receipt_store(monkeypatch, tmp_path, receipt_store_factory)
     workspace = GlobalWorkspace()
 
     assert await workspace.submit(CognitiveCandidate("safe", "memory", 0.8)) is True
@@ -345,7 +363,9 @@ async def test_workspace_gate_recovers_and_uses_canonical_fallback_instance(
 
 
 @pytest.mark.asyncio
-async def test_workspace_policy_inhibition_is_a_receipted_rejection(monkeypatch, tmp_path):
+async def test_workspace_policy_inhibition_is_a_receipted_rejection(
+    monkeypatch, tmp_path, receipt_store_factory
+):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
     class ActiveInhibition:
@@ -355,7 +375,7 @@ async def test_workspace_policy_inhibition_is_a_receipted_rejection(monkeypatch,
             return source == "looping_source"
 
     _install_services(monkeypatch, inhibition=ActiveInhibition())
-    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    store = _install_gate_receipt_store(monkeypatch, tmp_path, receipt_store_factory)
     workspace = GlobalWorkspace()
 
     accepted = await workspace.submit(

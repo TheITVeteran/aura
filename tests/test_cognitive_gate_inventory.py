@@ -12,7 +12,23 @@ from core.runtime.receipts import ReceiptStore
 from tools.closeout.audit_cognitive_candidate_gates import audit
 
 
-def _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref):
+@pytest.fixture
+def receipt_store_factory():
+    stores = []
+
+    def create(path):
+        store = ReceiptStore(path)
+        stores.append(store)
+        return store
+
+    yield create
+    for store in reversed(stores):
+        store.close()
+
+
+def _install_workspace_dependencies(
+    monkeypatch, tmp_path, manager_ref, receipt_store_factory
+):
     import core.consciousness.global_workspace as workspace_module
 
     def _get(name, default=None):
@@ -20,7 +36,7 @@ def _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref):
             return manager_ref["current"]
         return default
 
-    store = ReceiptStore(tmp_path / "receipts")
+    store = receipt_store_factory(tmp_path / "receipts")
     monkeypatch.setattr(workspace_module.ServiceContainer, "get", staticmethod(_get))
     monkeypatch.setattr(workspace_module, "get_receipt_store", lambda: store)
     return store
@@ -40,7 +56,9 @@ def test_cognitive_candidate_gate_inventory_matches_source():
 
 
 @pytest.mark.asyncio
-async def test_workspace_revalidates_after_gate_instance_restart(monkeypatch, tmp_path):
+async def test_workspace_revalidates_after_gate_instance_restart(
+    monkeypatch, tmp_path, receipt_store_factory
+):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
     class Inhibition:
@@ -57,7 +75,9 @@ async def test_workspace_revalidates_after_gate_instance_restart(monkeypatch, tm
     first = Inhibition("gate-before-restart", False)
     second = Inhibition("gate-after-restart", True)
     manager_ref = {"current": first}
-    store = _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref)
+    store = _install_workspace_dependencies(
+        monkeypatch, tmp_path, manager_ref, receipt_store_factory
+    )
     workspace = GlobalWorkspace()
 
     candidate = CognitiveCandidate("stale approval", "memory", 0.9)
@@ -77,7 +97,7 @@ async def test_workspace_revalidates_after_gate_instance_restart(monkeypatch, tm
 
 @pytest.mark.asyncio
 async def test_workspace_submission_cancellation_rejects_and_receipts(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, receipt_store_factory
 ):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
@@ -96,7 +116,9 @@ async def test_workspace_submission_cancellation_rejects_and_receipts(
             return True
 
     manager_ref = {"current": Inhibition()}
-    store = _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref)
+    store = _install_workspace_dependencies(
+        monkeypatch, tmp_path, manager_ref, receipt_store_factory
+    )
     workspace = GlobalWorkspace()
     task = asyncio.create_task(
         workspace.submit(CognitiveCandidate("cancel me", "memory", 0.9))
@@ -118,7 +140,7 @@ async def test_workspace_submission_cancellation_rejects_and_receipts(
 
 @pytest.mark.asyncio
 async def test_workspace_competition_cancellation_quarantines_approved_candidate(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, receipt_store_factory
 ):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 
@@ -143,7 +165,9 @@ async def test_workspace_competition_cancellation_quarantines_approved_candidate
             return True
 
     manager_ref = {"current": Inhibition()}
-    store = _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref)
+    store = _install_workspace_dependencies(
+        monkeypatch, tmp_path, manager_ref, receipt_store_factory
+    )
     workspace = GlobalWorkspace()
     assert await workspace.submit(CognitiveCandidate("approved", "memory", 0.9))
 
@@ -163,7 +187,9 @@ async def test_workspace_competition_cancellation_quarantines_approved_candidate
 
 
 @pytest.mark.asyncio
-async def test_somatic_candidate_uses_same_inhibition_gate(monkeypatch, tmp_path):
+async def test_somatic_candidate_uses_same_inhibition_gate(
+    monkeypatch, tmp_path, receipt_store_factory
+):
     from core.consciousness.global_workspace import GlobalWorkspace
 
     class Inhibition:
@@ -178,7 +204,9 @@ async def test_somatic_candidate_uses_same_inhibition_gate(monkeypatch, tmp_path
     monkeypatch.setenv("AURA_SOMATIC_NOISE", "1")
     monkeypatch.setenv("AURA_SOMATIC_NOISE_FORCE", "1")
     manager_ref = {"current": Inhibition()}
-    store = _install_workspace_dependencies(monkeypatch, tmp_path, manager_ref)
+    store = _install_workspace_dependencies(
+        monkeypatch, tmp_path, manager_ref, receipt_store_factory
+    )
     workspace = GlobalWorkspace()
 
     assert await workspace.run_competition() is None
@@ -193,12 +221,12 @@ async def test_somatic_candidate_uses_same_inhibition_gate(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_attention_focus_gate_failure_retains_focus_and_recovers(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, receipt_store_factory
 ):
     import core.consciousness.attention_schema as attention_module
     from core.consciousness.attention_schema import AttentionSchema
 
-    store = ReceiptStore(tmp_path / "attention-receipts")
+    store = receipt_store_factory(tmp_path / "attention-receipts")
     monkeypatch.setattr(attention_module, "get_receipt_store", lambda: store)
     schema = AttentionSchema()
     original = await schema.set_focus("the current task", "user", 0.8)
@@ -232,11 +260,13 @@ async def test_attention_focus_gate_failure_retains_focus_and_recovers(
 
 
 @pytest.mark.asyncio
-async def test_attention_focus_gate_timeout_retains_focus(monkeypatch, tmp_path):
+async def test_attention_focus_gate_timeout_retains_focus(
+    monkeypatch, tmp_path, receipt_store_factory
+):
     import core.consciousness.attention_schema as attention_module
     from core.consciousness.attention_schema import AttentionSchema
 
-    store = ReceiptStore(tmp_path / "attention-timeout-receipts")
+    store = receipt_store_factory(tmp_path / "attention-timeout-receipts")
     monkeypatch.setattr(attention_module, "get_receipt_store", lambda: store)
     monkeypatch.setenv("AURA_ATTENTION_RIGIDITY_GATE_TIMEOUT_S", "0.01")
     schema = AttentionSchema()
@@ -258,12 +288,12 @@ async def test_attention_focus_gate_timeout_retains_focus(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_attention_focus_gate_cancellation_retains_focus_and_receipts(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, receipt_store_factory
 ):
     import core.consciousness.attention_schema as attention_module
     from core.consciousness.attention_schema import AttentionSchema
 
-    store = ReceiptStore(tmp_path / "attention-cancel-receipts")
+    store = receipt_store_factory(tmp_path / "attention-cancel-receipts")
     monkeypatch.setattr(attention_module, "get_receipt_store", lambda: store)
     started = threading.Event()
     release = threading.Event()

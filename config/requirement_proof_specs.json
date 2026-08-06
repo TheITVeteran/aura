@@ -1,7 +1,81 @@
 {
-  "content_sha256": "5591191107d13582c750b1e159c43464c9cc1add7ccb9b2322178735d5fd1c42",
+  "content_sha256": "a77a9d0e487bc557e12a89c498c8abbb13e9b7c900aacccc6162c57f20d8e7c1",
   "schema_version": 1,
   "specs": [
+    {
+      "command": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_cognitive_gate_inventory.py",
+        "tests/test_global_workspace_runtime_contract.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-GATE-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-GATE-002"
+        }
+      ],
+      "id": "cognitive-gate-contract-tests",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "core/consciousness/attention_schema.py",
+        "core/consciousness/candidate_gate_inventory.py",
+        "core/consciousness/global_workspace.py",
+        "core/runtime/receipts.py",
+        "tests/test_cognitive_gate_inventory.py",
+        "tests/test_global_workspace_runtime_contract.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_cognitive_candidate_gates.py",
+        "--json"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-GATE-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-GATE-002"
+        }
+      ],
+      "id": "cognitive-gate-inventory-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/consciousness/**/*.py",
+        "core/phenomenal_substrate/**/*.py"
+      ],
+      "source_paths": [
+        "core/brain/llm/context_gate.py",
+        "tools/closeout/audit_cognitive_candidate_gates.py"
+      ],
+      "timeout_seconds": 300
+    },
     {
       "command": [
         "{python}",
