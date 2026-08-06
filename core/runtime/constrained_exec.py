@@ -145,8 +145,8 @@ def reap_process_group(pgid: int | None, process: Any = None) -> dict[str, Any]:
             receipt["reaped"] = True
             receipt["confirmed_by"] = "child_exit"
             return receipt
-        except Exception:  # noqa: BLE001 - any wait failure leaves it unconfirmed
-            pass
+        except Exception as exc:  # noqa: BLE001 - any wait failure leaves it unconfirmed
+            logger.debug("Child-exit confirmation failed for pid=%s: %s", process.pid, exc)
     try:
         os.killpg(pgid, 0)
         receipt["reaped"] = False

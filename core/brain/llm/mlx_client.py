@@ -13,11 +13,11 @@ import math
 import multiprocessing as mp
 import os
 import pathlib
+import platform
 import queue
 import re
 import stat
 import subprocess
-import platform
 import sys
 import threading as _threading
 import time
@@ -4543,11 +4543,12 @@ class MLXLocalClient:
             if current_span() is None:
                 return job
             return inject_trace_carrier(job)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # Total on purpose. This is observability decorating a job that is
             # about to do real work; a tracing fault must never be able to take
             # down inference. The job proceeds untraced, which loses a
             # correlation but not the answer.
+            logger.debug("Causal trace injection failed; continuing untraced: %s", exc)
             return job
 
     def _record_latent_progress(self, response: dict[str, Any]) -> None:
@@ -12881,7 +12882,7 @@ class MLXLocalClient:
                             self._recover_worker_for_warmup_retry(),
                             timeout=recovery_budget,
                         )
-                    except (TimeoutError, asyncio.TimeoutError):
+                    except TimeoutError:
                         raise last_exc from None
                     continue
                 raise last_exc from None
@@ -13628,8 +13629,10 @@ class MLXLocalClient:
         # nothing here is worth a traceback on exit.
         try:
             self.close()
-        except BaseException:  # noqa: BLE001 - finalizer during teardown
-            return
+        except Exception as exc:  # noqa: BLE001 - finalizer during teardown
+            log = getattr(globals().get("logger"), "debug", None)
+            if callable(log):
+                log("MLX client finalizer could not close cleanly: %s", exc)
 
 
 def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:

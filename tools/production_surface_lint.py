@@ -258,8 +258,19 @@ class AstLinter(ast.NodeVisitor):
             isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"}
         )
         if broad:
+            exception_name = node.name if isinstance(node.name, str) else ""
+
+            def return_reports_exception(stmt: ast.stmt) -> bool:
+                if not isinstance(stmt, ast.Return) or stmt.value is None or not exception_name:
+                    return False
+                return any(
+                    isinstance(child, ast.Name) and child.id == exception_name
+                    for child in ast.walk(stmt.value)
+                )
+
             has_pass = any(isinstance(stmt, ast.Pass) for stmt in node.body) or all(
-                isinstance(stmt, (ast.Pass, ast.Break, ast.Continue, ast.Return))
+                isinstance(stmt, (ast.Pass, ast.Break, ast.Continue))
+                or (isinstance(stmt, ast.Return) and not return_reports_exception(stmt))
                 for stmt in node.body
             )
             if has_pass:

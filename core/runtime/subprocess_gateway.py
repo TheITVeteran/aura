@@ -549,8 +549,14 @@ def _enforce_process_privilege(
 
     try:
         from core.security.structural_redaction import is_sensitive_key
-    except Exception:  # noqa: BLE001 — a missing redactor must not break spawning
-        return
+    except Exception as exc:  # noqa: BLE001 — security dependency must fail closed
+        logger.error(
+            "Refusing low-trust subprocess because secret-key classification failed: %s",
+            exc,
+        )
+        raise GovernanceViolation(
+            f"{operation}:{source} denied: secret-key classification unavailable"
+        ) from exc
 
     leaked = sorted({str(key) for key in env if is_sensitive_key(key)})
     if not leaked:

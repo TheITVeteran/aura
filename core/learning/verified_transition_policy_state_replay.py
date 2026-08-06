@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import stat
 from collections.abc import Callable, Mapping
@@ -23,6 +24,8 @@ from core.learning.recurrent_grpo import (
     recurrent_policy_optimizer_config,
     recurrent_policy_tensor_map_sha256,
 )
+
+logger = logging.getLogger("Aura.VerifiedTransition.PolicyStateReplay")
 
 POLICY_STATE_REPLAY_RECEIPT_SCHEMA = "aura.verified_transition.policy_state_replay_receipt.v1"
 POLICY_STATE_REPLAY_CONTRACT_SCHEMA = "aura.verified_transition.policy_state_replay_contract.v1"
@@ -829,7 +832,8 @@ def _tensor_maps_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> boo
             comparisons.append(mx.array_equal(left_map[key], right_map[key]))
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Policy-state tensor comparison failed closed: %s", exc)
         return False
 
 

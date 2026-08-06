@@ -40,12 +40,13 @@ import logging
 import os
 import shutil
 import subprocess
-import threading
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
-from core.runtime.subprocess_gateway import get_subprocess_gateway
+from typing import Any
+
 from core.runtime.lockdep import checked_lock
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ScreenBlueprint")
 
@@ -77,7 +78,7 @@ _DOCUMENT_READ_TIMEOUT_S = 8.0
 _CACHE_TTL_S = 1.5
 
 _CACHE_LOCK = checked_lock("screen_blueprint")
-_CACHED: tuple[float, "ScreenBlueprint"] | None = None
+_CACHED: tuple[float, ScreenBlueprint] | None = None
 
 #: Set to "0" to make every capture report itself unavailable.
 #:
@@ -312,7 +313,7 @@ def blueprint_is_available() -> bool:
         return False
     try:
         import Quartz  # noqa: F401
-    except Exception:  # noqa: BLE001 - absence is an answer, not an error
+    except (ImportError, OSError):
         return False
     return True
 

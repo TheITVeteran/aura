@@ -9,7 +9,7 @@ from core.cognition.cognitive_loop import CognitiveLoop
 
 
 def close_loop(loop: CognitiveLoop) -> None:
-    loop._deliberation_pool.shutdown(wait=False)
+    loop.shutdown_deliberation_pool(wait=False)
 
 
 @pytest.mark.asyncio

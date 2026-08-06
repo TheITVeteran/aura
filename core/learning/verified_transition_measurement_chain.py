@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -46,6 +47,8 @@ from core.runtime.file_read_gateway import (
     open_stable_readonly_binary,
     read_stable_bytes,
 )
+
+logger = logging.getLogger("Aura.VerifiedTransition.MeasurementChain")
 
 PRE_MEASUREMENT_INTENT_SCHEMA = "aura.verified_transition.pre_measurement_intent.v1"
 PRE_MEASUREMENT_GENERATION_SCHEMA = "aura.verified_transition.pre_measurement_generation.v1"
@@ -248,7 +251,8 @@ def _tensor_maps_equal(
         comparisons = [mx.array_equal(left[key], right[key]) for key in sorted(left)]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Tensor-map identity comparison failed closed: %s", exc)
         return False
 
 

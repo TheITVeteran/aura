@@ -98,8 +98,8 @@ class CognitiveLoop:
         # shutdown_deliberation_pool() reap deterministically.
         try:
             self.shutdown_deliberation_pool()
-        except Exception:  # noqa: BLE001 — a finalizer must not raise
-            pass
+        except Exception as exc:  # noqa: BLE001 — a finalizer must not raise
+            logger.debug("Cognitive loop finalizer could not close its pool: %s", exc)
 
     async def start(self):
         """Start the cognitive cycle."""
@@ -347,7 +347,7 @@ class CognitiveLoop:
         are all exercised by the heartbeat instead of sitting idle.
         """
         try:
-            from core.agency.hierarchical_agency import get_hierarchical_agency, Situation
+            from core.agency.hierarchical_agency import Situation, get_hierarchical_agency
 
             threat = 0.0
             try:

@@ -845,8 +845,13 @@ def _signal_reference(
     try:
         query = str(retrieval_query or objective or "")[:1200]
         hits = store.search(query, limit=4)
-    except Exception:  # noqa: BLE001 - organ contract unknown; absent
-        return IngressSignal(source="reference", present=False)
+    except Exception as exc:  # noqa: BLE001 - organ contract unknown; degrade with evidence
+        logger.warning("Local reference-corpus search failed: %s", exc)
+        return IngressSignal(
+            source="reference",
+            present=False,
+            detail=f"local_corpus_search_failed:{type(exc).__name__}",
+        )
     if not hits:
         return IngressSignal(
             source="reference",

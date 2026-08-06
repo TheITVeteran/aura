@@ -10,6 +10,7 @@ and fences live, simulated, and HIL evidence from one another.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import statistics
@@ -31,6 +32,8 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lockdep import checked_async_lock
 from core.runtime.state_ownership import state_root
+
+logger = logging.getLogger("Aura.RealityReach.Metrology")
 
 _STATE_SCHEMA = "aura.reality_reach.metrology"
 _STATE_VERSION = 1
@@ -608,8 +611,8 @@ class RealityMetrologyService:
                     self._inflight_refresh.result()
                 except asyncio.CancelledError:
                     pass
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Prior Reality Reach refresh failed before acquisition: %s", exc)
                 self._inflight_refresh = None
             started_ns = int(self._wall_clock_ns())
             run_id = str(uuid.uuid4())

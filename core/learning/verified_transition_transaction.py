@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -45,6 +46,8 @@ from core.runtime.file_read_gateway import (
     open_stable_readonly_binary,
     read_stable_bytes,
 )
+
+logger = logging.getLogger("Aura.VerifiedTransition.Transaction")
 
 PENDING_TRAINER_STEP_SCHEMA = "aura.verified_transition.pending_trainer_step.v3"
 PENDING_TRAINER_STEP_SCHEMA_V4 = (
@@ -292,7 +295,8 @@ def _tensor_maps_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> boo
         comparisons = [mx.array_equal(left[key], right[key]) for key in left]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Transaction tensor comparison failed closed: %s", exc)
         return False
 
 

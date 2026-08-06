@@ -250,6 +250,34 @@ def test_lint_has_no_audited_production_exemptions() -> None:
     assert EXEMPT_FILES == {}
 
 
+def test_lint_allows_broad_exception_returned_as_failure_evidence() -> None:
+    kinds = _findings(
+        '''
+def probe(operation):
+    try:
+        return operation()
+    except Exception as exc:
+        return {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"}
+'''
+    )
+
+    assert "swallowed_broad_exception" not in kinds
+
+
+def test_lint_blocks_broad_exception_collapsed_to_boolean() -> None:
+    kinds = _findings(
+        '''
+def probe(operation):
+    try:
+        return operation()
+    except Exception:
+        return False
+'''
+    )
+
+    assert "swallowed_broad_exception" in kinds
+
+
 def test_hardcoded_path_lint_ignores_comments_and_docstrings() -> None:
     tree = ast.parse(
         '''

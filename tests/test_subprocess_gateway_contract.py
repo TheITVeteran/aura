@@ -1117,6 +1117,22 @@ def test_offline_tooling_run_allowed_for_approved_source(monkeypatch: pytest.Mon
     assert result.stdout.strip() == "ok"
 
 
+def test_low_trust_spawn_fails_closed_when_secret_classifier_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "core.security.structural_redaction", None)
+
+    with pytest.raises(
+        subprocess_gateway.GovernanceViolation,
+        match="secret-key classification unavailable",
+    ):
+        subprocess_gateway._enforce_process_privilege(
+            env={"API_KEY": "must-not-reach-child"},
+            source="generated_code:test",
+            operation="run",
+        )
+
+
 def test_desktop_safe_run_blocks_proof_scale_environment_jobs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
