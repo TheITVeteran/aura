@@ -11,7 +11,15 @@ import itertools
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+
+from core.reasoning.proof_answer_domains import (
+    _solve_planning_prompt,
+    _solve_python_debug_prompt,
+    _solve_python_semantics_prompt,
+    _solve_research_prompt,
+    _solve_transfer_prompt,
+)
+from core.reasoning.proof_answer_types import ProofAnswer, ProofAnswerValidation
 
 _NAME_RE = re.compile(r"\b[A-Z][a-z]+\b")
 _UNIQUE_ASSIGNMENT_RE = re.compile(
@@ -41,7 +49,6 @@ _JOIN_QUOTED_TOKENS_RE = re.compile(
     r"\bjoin(?:ing)?\s+(?P<tokens>(?:['\"][^'\"]+['\"](?:\s*(?:,|and)\s*)?)+)",
     re.IGNORECASE,
 )
-_PY_CODE_BLOCK_RE = re.compile(r"```python\s*(?P<code>.*?)```", re.IGNORECASE | re.DOTALL)
 _SMALL_NUMBER_WORDS = {
     "one": 1,
     "two": 2,
@@ -56,22 +63,6 @@ _SMALL_NUMBER_WORDS = {
     "eighteen": 18,
     "hundred": 100,
 }
-
-
-@dataclass(frozen=True)
-class ProofAnswer:
-    answer: str
-    solver: str
-    confidence: float = 1.0
-
-
-@dataclass(frozen=True)
-class ProofAnswerValidation:
-    valid: bool | None
-    solver: str | None
-    candidate_answer: str
-    derived_answer: str | None = None
-    reason: str = "unknown_prompt_shape"
 
 
 def _normalize_answer_value(value: str) -> str:
@@ -262,7 +253,6 @@ def _matches_known_item(raw_item: str, items: Iterable[str]) -> str | None:
         if wanted == item or wanted.endswith(item) or item.endswith(wanted):
             return item
     return None
-
 
 def _solve_joined_quoted_tokens(prompt: str) -> ProofAnswer | None:
     match = _JOIN_QUOTED_TOKENS_RE.search(prompt)
@@ -598,275 +588,4 @@ def _solve_classic_reasoning_prompt(prompt: str) -> ProofAnswer | None:
         a, b = map(int, lcm.groups())
         return ProofAnswer(answer=str(abs(a * b) // math.gcd(a, b)), solver="number_theory")
 
-    return None
-
-
-def _solve_planning_prompt(prompt: str) -> ProofAnswer | None:
-    lower = prompt.lower()
-
-    if "two independent engineering teams" in lower and "stage c depends strictly on stage b" in lower:
-        stage_durations = {
-            name: int(hours)
-            for name, hours in re.findall(r"stage\s+([abc]).*?takes\s+(\d+)\s+hours", lower)
-        }
-        if {"a", "b", "c"} <= stage_durations.keys():
-            return ProofAnswer(
-                answer=str(max(stage_durations["a"], stage_durations["b"] + stage_durations["c"])),
-                solver="parallel_schedule_planning",
-            )
-
-    if "knapsack" in lower or "maximize utility" in lower or "maximize total utility" in lower:
-        capacity_match = re.search(r"(?:capacity|constraint)\s+of\s+(\d+)\s*(?:kg|kwh)", lower)
-        if not capacity_match:
-            capacity_match = re.search(r"under\s+the\s+(\d+)\s*(?:kg|kwh)", lower)
-        options = [
-            (int(weight), int(value))
-            for weight, value in re.findall(
-                r"(?:weight|uses)\s+(\d+)\s*(?:kg|kwh),\s*(?:utility\s+)?"
-                r"(?:value\s+)?(?:yields\s+)?(\d+)\s+(?:utility\s+)?(?:points|point)",
-                lower,
-            )
-        ]
-        if capacity_match and options:
-            capacity = int(capacity_match.group(1))
-            best = 0
-            for mask in range(1 << len(options)):
-                weight = sum(options[i][0] for i in range(len(options)) if mask & (1 << i))
-                value = sum(options[i][1] for i in range(len(options)) if mask & (1 << i))
-                if weight <= capacity:
-                    best = max(best, value)
-            return ProofAnswer(answer=str(best), solver="zero_one_knapsack")
-
-    if "wolf" in lower and "goat" in lower and "cabbage" in lower and "minimum number" in lower:
-        return ProofAnswer(answer="7", solver="river_crossing_planning")
-
-    if "dijkstra" in lower or "shortest path" in lower or "minimum latency distance" in lower:
-        links = re.findall(r"link\s+([a-z])\s+to\s+([a-z]):\s+(?:weight|latency)\s+(\d+)", lower)
-        source_dest = re.search(r"from\s+(?:source\s+)?node\s+([a-z])\s+to\s+(?:destination\s+)?(?:node\s+)?([a-z])", lower)
-        if not source_dest:
-            source_dest = re.search(r"from\s+node\s+([a-z])\s+to\s+destination\s+node\s+([a-z])", lower)
-        if links and source_dest:
-            graph: dict[str, list[tuple[str, int]]] = {}
-            for left, right, weight_text in links:
-                weight = int(weight_text)
-                graph.setdefault(left, []).append((right, weight))
-                graph.setdefault(right, []).append((left, weight))
-            source, dest = source_dest.groups()
-            distances = {source: 0}
-            frontier = {source}
-            while frontier:
-                current = min(frontier, key=lambda node: distances[node])
-                frontier.remove(current)
-                if current == dest:
-                    return ProofAnswer(answer=str(distances[current]), solver="shortest_path_planning")
-                for neighbor, weight in graph.get(current, []):
-                    candidate = distances[current] + weight
-                    if candidate < distances.get(neighbor, 10**9):
-                        distances[neighbor] = candidate
-                        frontier.add(neighbor)
-
-    if "critical path method" in lower or "resources are unlimited" in lower:
-        durations: dict[str, int] = {}
-        dependency_text_by_task: dict[str, str] = {}
-        for line in lower.splitlines():
-            duration_match = re.search(
-                r"\*\*(?:activity|task)\s+([a-z])\*\*.*?(?:duration|takes)\s+(\d+)\s+days?",
-                line,
-            )
-            if not duration_match:
-                continue
-            name = duration_match.group(1).lower()
-            durations[name] = int(duration_match.group(2))
-            dep_match = re.search(r"depends on\s+([^(.]+)", line)
-            if dep_match:
-                dependency_text_by_task[name] = dep_match.group(1)
-        dependencies: dict[str, list[str]] = {name: [] for name in durations}
-        for name, dep_text in dependency_text_by_task.items():
-            dependencies[name.lower()] = [
-                dep.lower()
-                for dep in re.findall(r"\b[a-z]\b", dep_text)
-                if dep.lower() in durations
-            ]
-        if durations:
-            memo: dict[str, int] = {}
-
-            def finish_time(task: str) -> int:
-                if task in memo:
-                    return memo[task]
-                memo[task] = durations[task] + max((finish_time(dep) for dep in dependencies.get(task, [])), default=0)
-                return memo[task]
-
-            return ProofAnswer(answer=str(max(finish_time(task) for task in durations)), solver="critical_path_planning")
-
-    if "two machines" in lower and "minimum makespan" in lower:
-        jobs = [int(hours) for hours in re.findall(r"job\s+[a-z]\*\*:\s+takes\s+(\d+)\s+hours", lower)]
-        if jobs:
-            total = sum(jobs)
-            best = total
-            for mask in range(1 << len(jobs)):
-                left = sum(jobs[i] for i in range(len(jobs)) if mask & (1 << i))
-                best = min(best, max(left, total - left))
-            return ProofAnswer(answer=str(best), solver="partition_makespan_planning")
-
-    if "valid topological sorting orders" in lower and "dependencies:" in lower:
-        nodes = sorted(set(re.findall(r"\b([a-z])\s+depends on\b", lower)) | set(re.findall(r"depends on\s+([a-z])\b", lower)))
-        if not nodes and "packages: a, b, c, d, e" in lower:
-            nodes = ["a", "b", "c", "d", "e"]
-        dependencies: dict[str, set[str]] = {node: set() for node in nodes}
-        for node, deps in re.findall(r"-\s*([a-z])\s+depends on\s+([^(]+)", lower):
-            dependencies.setdefault(node, set()).update(re.findall(r"\b[a-z]\b", deps))
-            for dep in dependencies[node]:
-                dependencies.setdefault(dep, set())
-        count = 0
-        all_nodes = sorted(dependencies)
-        for ordering in itertools.permutations(all_nodes):
-            position = {node: idx for idx, node in enumerate(ordering)}
-            if all(position[dep] < position[node] for node, deps in dependencies.items() for dep in deps):
-                count += 1
-        if count:
-            return ProofAnswer(answer=str(count), solver="topological_order_counting")
-
-    return None
-
-
-def _solve_research_prompt(prompt: str) -> ProofAnswer | None:
-    lower = prompt.lower()
-
-    if "project alpha" in lower and "project beta" in lower and "combined total budget" in lower:
-        alpha = float(re.search(r"project alpha.*?\$(\d+)m", lower).group(1))
-        beta = float(re.search(r"project beta.*?\$(\d+)m", lower).group(1))
-        constriction = float(re.search(r"alpha suffered.*?(\d+)%", lower).group(1)) / 100
-        return ProofAnswer(answer=str(int(alpha * (1 - constriction) + beta * 2)), solver="document_arithmetic")
-    if "randomized controlled trial of 500 patients" in lower and "positive recovery rate" in lower:
-        total = int(re.search(r"trial of\s+(\d+)\s+patients", lower).group(1))
-        cohort_a_fraction = float(re.search(r"(\d+)%\s+of patients were assigned to cohort a", lower).group(1)) / 100
-        recovery_a = float(re.search(r"recovery rate of\s+(\d+)%\s+in cohort a", lower).group(1)) / 100
-        recovery_b = float(re.search(r"(\d+)%\s+recovery rate in cohort b", lower).group(1)) / 100
-        recovered = total * cohort_a_fraction * recovery_a + total * (1 - cohort_a_fraction) * recovery_b
-        return ProofAnswer(answer=str(int(recovered)), solver="document_arithmetic")
-    if "attrition" in lower and "sales" in lower and "engineering" in lower:
-        sales = int(re.search(r"sales\s+\((\d+)\s+ftes", lower).group(1))
-        engineering = int(re.search(r"engineering\s+\((\d+)\s+ftes", lower).group(1))
-        sales_rate = float(re.search(r"(\d+)%\s+in the sales", lower).group(1)) / 100
-        engineering_rate = float(re.search(r"(\d+)%\s+in the engineering", lower).group(1)) / 100
-        return ProofAnswer(answer=str(int(sales * sales_rate + engineering * engineering_rate)), solver="document_arithmetic")
-    if "49th parallel" in lower and "south by 2" in lower and "north by 1" in lower:
-        return ProofAnswer(answer="48", solver="document_sequence_arithmetic")
-    if "large boxes" in lower and "medium boxes" in lower and "small boxes" in lower:
-        total = sum(
-            int(weight) * int(count)
-            for weight, count in re.findall(r"unit weight\s+(\d+)\s+lbs,\s+stock count\s+(\d+)", lower)
-        )
-        return ProofAnswer(answer=str(total), solver="document_arithmetic")
-    if "candidate c captured the remaining 1000 votes" in lower:
-        known_percent = sum(int(percent) for percent in re.findall(r"candidate [ab] secured\s+(\d+)%", lower))
-        return ProofAnswer(answer=str(int(1000 / ((100 - known_percent) / 100))), solver="document_arithmetic")
-    if "1,500 science fiction" in lower and "30%" in lower and "50%" in lower:
-        return ProofAnswer(answer="10000", solver="document_arithmetic")
-    if "daily flights" in lower and "passengers per flight" in lower:
-        total = sum(
-            int(flights) * int(passengers)
-            for flights, passengers in re.findall(r"(\d+)\s+daily flights?,\s+averaging\s+(\d+)\s+passengers", lower)
-        )
-        return ProofAnswer(answer=str(total), solver="document_arithmetic")
-    if "enrichment y" in lower and "baseline agricultural crop yield" in lower:
-        baseline = float(re.search(r"yield is established at exactly\s+([\d.]+)", lower).group(1))
-        increase = float(re.search(r"enrichment y yields a\s+(\d+)%", lower).group(1)) / 100
-        answer = baseline * (1 + increase)
-        return ProofAnswer(answer=f"{answer:g}", solver="document_arithmetic")
-    if "80,000 lines of code" in lower and "subsystem c" in lower:
-        total = int(re.search(r"([\d,]+)\s+lines of code", lower).group(1).replace(",", ""))
-        a_percent = int(re.search(r"subsystem a represents exactly\s+(\d+)%", lower).group(1))
-        a_lines = total * a_percent // 100
-        b_lines = a_lines // 2
-        return ProofAnswer(answer=str(total - a_lines - b_lines), solver="document_arithmetic")
-
-    return None
-
-
-def _solve_transfer_prompt(prompt: str) -> ProofAnswer | None:
-    lower = prompt.lower()
-    mappings = [
-        (("compiler design", "raw target machine", "assembly code"), "codegen"),
-        (("thermodynamics", "unavailability of useful thermal energy"), "entropy"),
-        (("forward reaction", "reverse reaction", "no net macroscopic change"), "equilibrium"),
-        (("phonology", "adjacent consonants", "intervening vowel"), "consonant cluster"),
-        (("terminal target", "written continuously", "never be subsequently read"), "sink"),
-        (("packet-switched", "queue buffer exhaustion", "packet loss"), "congestion"),
-        (("legal jurisprudence", "rebuttable presumption"), "prima facie"),
-        (("temporary memory", "accelerates data retrieval"), "cache"),
-        (("horizontal tiers", "presentation", "data access"), "layered architecture"),
-        (("western musical notation", "beginning of a staff", "pitch mapping"), "clef"),
-    ]
-    for needles, answer in mappings:
-        if all(needle in lower for needle in needles):
-            return ProofAnswer(answer=answer, solver="analogical_transfer")
-    return None
-
-
-def _solve_python_debug_prompt(prompt: str) -> ProofAnswer | None:
-    lower = prompt.lower()
-    if "left = mid" in lower and (
-        "fails to advance pointer" in lower
-        or "binary search" in lower
-        or "infinite loop" in lower
-    ):
-        return ProofAnswer(answer="mid + 1", solver="python_boundary_debug")
-    if "missing base case" in lower and "fib(2)" in lower:
-        return ProofAnswer(answer="recursion", solver="python_recursion_debug")
-    if "zerodivisionerror" in lower and "empty list" in lower:
-        return ProofAnswer(answer="empty list", solver="python_exception_debug")
-    if "string and an integer" in lower and "'2' + 2" in prompt:
-        return ProofAnswer(answer="typeerror", solver="python_exception_debug")
-    if "dictionary lookup" in lower or "key-lookup failure" in lower:
-        return ProofAnswer(answer="keyerror", solver="python_exception_debug")
-    if "proper integer modulo arithmetic" in lower and "write_ptr" in lower:
-        return ProofAnswer(
-            answer="(self.write_ptr + 1) % self.capacity",
-            solver="python_boundary_debug",
-        )
-    if "with open(filepath, 'a') as f:" in prompt:
-        return ProofAnswer(answer="with open(filepath, 'a') as f:", solver="python_resource_debug")
-    if "referenced before assignment" in lower and "response" in lower:
-        return ProofAnswer(answer="nameerror", solver="python_exception_debug")
-    if "default argument" in lower and "items=[]" in prompt:
-        return ProofAnswer(answer="list", solver="python_mutable_default_debug")
-    if "instead of `pass`" in lower and "re-raise" in lower:
-        return ProofAnswer(answer="raise", solver="python_exception_debug")
-
-    code_match = _PY_CODE_BLOCK_RE.search(prompt)
-    if not code_match or "exception class" not in lower:
-        return None
-    code = code_match.group("code")
-    if re.search(r"\[[\"']c[\"']\]", code) and "{" in code:
-        return ProofAnswer(answer="keyerror", solver="python_exception_debug")
-    if re.search(r"['\"]\d+['\"]\s*\+\s*\d+", code):
-        return ProofAnswer(answer="typeerror", solver="python_exception_debug")
-    if re.search(r"/\s*0\b", code):
-        return ProofAnswer(answer="zerodivisionerror", solver="python_exception_debug")
-    return None
-
-
-def _solve_python_semantics_prompt(prompt: str) -> ProofAnswer | None:
-    lower = prompt.lower()
-    if "x[1:4]" in prompt and "y[0] = 99" in prompt and "print(x[1], y[0])" in prompt:
-        return ProofAnswer(answer="2 99", solver="python_semantics")
-    if "def f(a, b=[])" in prompt and "print(len(f(1)), len(f(2)), len(f(3)))" in prompt:
-        return ProofAnswer(answer="1 2 3", solver="python_semantics")
-    if "d[1] = 'A'" in prompt and "d[1.0] = 'B'" in prompt and "print(len(d), d[1])" in prompt:
-        return ProofAnswer(answer="1 B", solver="python_semantics")
-    if "g = (i**2 for i in x)" in prompt and "print(next(g))" in prompt:
-        return ProofAnswer(answer="1", solver="python_semantics")
-    if "print((1, 2) < (1, 2, -1))" in prompt:
-        return ProofAnswer(answer="True", solver="python_semantics")
-    if "x = 10" in prompt and "x = 20" in prompt and "print(x)" in prompt:
-        return ProofAnswer(answer="10", solver="python_semantics")
-    if "funcs = [lambda: i for i in range(3)]" in prompt:
-        return ProofAnswer(answer="2 2", solver="python_semantics")
-    if "a = [[]] * 3" in prompt and "a[0].append(1)" in prompt:
-        return ProofAnswer(answer="1", solver="python_semantics")
-    if "print(bool('False'), bool(''))" in prompt:
-        return ProofAnswer(answer="True False", solver="python_semantics")
-    if "finally:" in lower and "return 2" in lower and "print(f())" in lower:
-        return ProofAnswer(answer="2", solver="python_semantics")
     return None
