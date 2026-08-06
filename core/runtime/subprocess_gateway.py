@@ -623,7 +623,9 @@ class SubprocessGateway:
                 raise GovernanceViolation("incomplete inherited model-lane delegation")
             from core.runtime.model_lane_control import get_model_lane_controller
 
-            inherited_valid = get_model_lane_controller().validate_inherited_child_claim(
+            inherited_controller = get_model_lane_controller()
+            inherited_child_request_id = str(claim.request_id)
+            inherited_valid = inherited_controller.validate_inherited_child_claim(
                 owner_id=inherited_owner,
                 request_id=inherited_request,
                 model_path=inherited_model,
@@ -634,54 +636,63 @@ class SubprocessGateway:
                 requested_gb=float(claim.request_gb),
                 child_model_path=str(claim.model_path),
                 child_purpose=str(claim.purpose),
+                child_request_id=inherited_child_request_id,
+                ttl_s=max(60.0, float(timeout) + 30.0),
             )
             if not inherited_valid:
                 raise GovernanceViolation("invalid inherited model-child delegation")
-
-            offline_bypass = _validate_offline_tooling_bypass(
-                offline_tooling=offline_tooling,
-                source=source,
-                command=command,
-                env=env,
-            )
-            _require_not_shutting_down(
-                f"subprocess_gateway.run_model_blocking:{source}",
-                read_only=read_only,
-                offline_tooling=offline_tooling,
-                allow_during_shutdown=allow_during_shutdown,
-                bounded_completion=True,
-            )
-            if not read_only and not offline_bypass:
-                _require_effect_governance(
-                    f"subprocess_gateway.run_model_blocking:{source}"
+            try:
+                offline_bypass = _validate_offline_tooling_bypass(
+                    offline_tooling=offline_tooling,
+                    source=source,
+                    command=command,
+                    env=env,
                 )
-            _validate_desktop_safe_subprocess(
-                command,
-                env=env,
-                source=source,
-                operation="run_model_blocking",
-            )
-            # Deliberately inherit the outer worker's isolated process group.
-            # Its durable lane owner and cancellation boundary account for the
-            # full train/fuse/verify descendant tree as one transaction.
-            child_env = dict(env) if env is not None else dict(os.environ)
-            for key in (*_DELEGATED_GOVERNANCE_ENV_KEYS, *_INHERITED_MODEL_LANE_ENV_KEYS):
-                child_env.pop(key, None)
-            child_env["AURA_GOVERNANCE_MODE"] = "delegated_subprocess_child"
-            child_env["AURA_REQUIRE_GOVERNANCE"] = "0"
-            child_env["AURA_MODEL_LANE_PARENT_ACCOUNTED"] = "1"
-            return subprocess.run(
-                command,
-                cwd=_coerce_cwd(cwd),
-                env=child_env,
-                timeout=float(timeout),
-                capture_output=bool(capture_output),
-                input=input,
-                text=True,
-                check=bool(check),
-                shell=False,
-                start_new_session=False,
-            )
+                _require_not_shutting_down(
+                    f"subprocess_gateway.run_model_blocking:{source}",
+                    read_only=read_only,
+                    offline_tooling=offline_tooling,
+                    allow_during_shutdown=allow_during_shutdown,
+                    bounded_completion=True,
+                )
+                if not read_only and not offline_bypass:
+                    _require_effect_governance(
+                        f"subprocess_gateway.run_model_blocking:{source}"
+                    )
+                _validate_desktop_safe_subprocess(
+                    command,
+                    env=env,
+                    source=source,
+                    operation="run_model_blocking",
+                )
+                # Deliberately inherit the outer worker's isolated process group.
+                child_env = dict(env) if env is not None else dict(os.environ)
+                for key in (*_DELEGATED_GOVERNANCE_ENV_KEYS, *_INHERITED_MODEL_LANE_ENV_KEYS):
+                    child_env.pop(key, None)
+                child_env["AURA_GOVERNANCE_MODE"] = "delegated_subprocess_child"
+                child_env["AURA_REQUIRE_GOVERNANCE"] = "0"
+                child_env["AURA_MODEL_LANE_PARENT_ACCOUNTED"] = "1"
+                return subprocess.run(
+                    command,
+                    cwd=_coerce_cwd(cwd),
+                    env=child_env,
+                    timeout=float(timeout),
+                    capture_output=bool(capture_output),
+                    input=input,
+                    text=True,
+                    check=bool(check),
+                    shell=False,
+                    start_new_session=False,
+                )
+            finally:
+                released = inherited_controller.release_inherited_child_claim(
+                    owner_id=inherited_owner,
+                    request_id=inherited_request,
+                    child_request_id=inherited_child_request_id,
+                    child_pid=os.getpid(),
+                )
+                if not released:
+                    raise RuntimeError("inherited_model_child_sublease_release_failed")
         return asyncio.run(
             self.run_async(
                 command,

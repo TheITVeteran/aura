@@ -1024,6 +1024,7 @@ def test_inherited_child_is_bound_to_declared_model_roots_and_purposes(
             },
         )
     )
+    controller.issue_inherited_claim_sync(decision)
     committed = controller.commit_sync(
         decision,
         process=ProcessIdentity.current(observer=controller.resource_observer),
@@ -1068,6 +1069,103 @@ def test_inherited_child_is_bound_to_declared_model_roots_and_purposes(
         child_model_path=committed.model_path,
         child_purpose="serve",
     ) is False
+
+
+def test_inherited_child_subleases_are_cumulative_idempotent_and_released(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    fused_root = tmp_path / "fused-model"
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="subprocess:compound-cumulative",
+            model_path=str(tmp_path / "base-model"),
+            request_gb=40.0,
+            purpose="compound",
+            request_id="compound-cumulative-request",
+            metadata={
+                "allow_inherited_model_children": True,
+                "allowed_inherited_model_purposes": ["train", "fuse"],
+                "allowed_inherited_model_roots": [str(fused_root)],
+            },
+        )
+    )
+    controller.issue_inherited_claim_sync(decision)
+    committed = controller.commit_sync(
+        decision,
+        process=ProcessIdentity.current(observer=controller.resource_observer),
+        metadata={
+            "managed_model_process": True,
+            "start_new_session": True,
+            "process_group_id": os.getpgrp(),
+            "process_session_id": os.getsid(0),
+        },
+    )
+    monkeypatch.setattr(controller, "validate_inherited_claim", lambda **_kwargs: True)
+    common = {
+        "owner_id": committed.owner_id,
+        "request_id": committed.request_id,
+        "model_path": committed.model_path,
+        "purpose": "compound",
+        "delegation_token": "consumed-by-worker",
+        "child_pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "child_model_path": str(fused_root / "candidate"),
+    }
+
+    for invalid_ttl in (float("nan"), float("inf"), float("-inf"), 0.0):
+        assert controller.validate_inherited_child_claim(
+            **common,
+            requested_gb=1.0,
+            child_purpose="train",
+            child_request_id="invalid-ttl",
+            ttl_s=invalid_ttl,
+        ) is False
+    assert controller.validate_inherited_child_claim(
+        **common,
+        requested_gb=1.0,
+        child_purpose="train",
+        child_request_id="invalid\nchild",
+    ) is False
+    assert controller.validate_inherited_child_claim(
+        **common,
+        requested_gb=24.0,
+        child_purpose="train",
+        child_request_id="child-train",
+    ) is True
+    assert controller.validate_inherited_child_claim(
+        **common,
+        requested_gb=24.0,
+        child_purpose="train",
+        child_request_id="child-train",
+    ) is True
+    assert controller.validate_inherited_child_claim(
+        **common,
+        requested_gb=20.0,
+        child_purpose="fuse",
+        child_request_id="child-fuse",
+    ) is False
+    subleases = controller.snapshot()["reservations"][0]["delegation"]["child_subleases"]
+    assert len(subleases) == 1
+    assert sum(item["requested_gb"] for item in subleases.values()) == pytest.approx(24.0)
+
+    assert controller.release_inherited_child_claim(
+        owner_id=committed.owner_id,
+        request_id=committed.request_id,
+        child_request_id="child-train",
+        child_pid=os.getpid(),
+    ) is True
+    assert controller.validate_inherited_child_claim(
+        **common,
+        requested_gb=20.0,
+        child_purpose="fuse",
+        child_request_id="child-fuse",
+    ) is True
+    subleases = controller.snapshot()["reservations"][0]["delegation"]["child_subleases"]
+    assert len(subleases) == 1
+    assert next(iter(subleases.values()))["child_request_id"] == "child-fuse"
 
 
 @pytest.mark.asyncio

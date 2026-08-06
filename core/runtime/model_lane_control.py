@@ -3150,6 +3150,7 @@ class ModelLaneController:
                 ).to_dict(),
                 "consumed_at": 0.0,
                 "consumed_process": ProcessIdentity(0, 0.0).to_dict(),
+                "child_subleases": {},
             }
             self._append_event(
                 state,
@@ -3261,6 +3262,8 @@ class ModelLaneController:
         requested_gb: float,
         child_model_path: str,
         child_purpose: str,
+        child_request_id: str = "",
+        ttl_s: float = 300.0,
     ) -> bool:
         """Authorize a nested model child inside one delegated pipeline lane.
 
@@ -3271,9 +3274,12 @@ class ModelLaneController:
         """
         try:
             requested_gb_value = float(requested_gb)
+            ttl_s_value = float(ttl_s)
         except (TypeError, ValueError):
             return False
         if not math.isfinite(requested_gb_value) or requested_gb_value <= 0.0:
+            return False
+        if not math.isfinite(ttl_s_value) or ttl_s_value <= 0.0:
             return False
         if not self.validate_inherited_claim(
             owner_id=owner_id,
@@ -3321,7 +3327,8 @@ class ModelLaneController:
                 for root in allowed_roots
             ):
                 return False
-            if requested_gb_value > float(record.get("request_gb") or 0.0):
+            parent_capacity_gb = float(record.get("request_gb") or 0.0)
+            if requested_gb_value > parent_capacity_gb:
                 return False
             owner_metadata = dict(owner.get("metadata") or {})
             if owner_metadata.get("managed_model_process") is not True:
@@ -3329,12 +3336,148 @@ class ModelLaneController:
             if owner_metadata.get("start_new_session") is not True:
                 return False
             try:
-                return bool(
+                process_boundary_valid = bool(
                     int(owner_metadata.get("process_group_id") or 0) == os.getpgrp()
                     and int(owner_metadata.get("process_session_id") or 0) == os.getsid(0)
                 )
             except (OSError, TypeError, ValueError):
                 return False
+            if not process_boundary_valid:
+                return False
+            delegation = record.get("delegation")
+            if not isinstance(delegation, dict):
+                return False
+            subleases = delegation.setdefault("child_subleases", {})
+            if not isinstance(subleases, dict):
+                return False
+            for sublease_id, sublease in list(subleases.items()):
+                if not isinstance(sublease, Mapping):
+                    return False
+                holder = self._identity_from_record(sublease, key="holder_process")
+                expired = float(sublease.get("expires_at") or 0.0) <= now
+                holder_dead = self._process_liveness(holder) is ProcessLiveness.DEAD
+                if expired or holder_dead:
+                    subleases.pop(sublease_id, None)
+                    self._append_event(
+                        state,
+                        "inherited_child_sublease_reaped",
+                        at=now,
+                        transaction_id=str(record.get("transaction_id") or ""),
+                        child_request_id=str(sublease.get("child_request_id") or ""),
+                        reason="expired" if expired else "holder_dead",
+                    )
+            normalized_child_request_id = str(child_request_id or "").strip()
+            if not normalized_child_request_id:
+                normalized_child_request_id = hashlib.sha256(
+                    (
+                        f"{child_pid}:{child_model_path}:{child_purpose}:"
+                        f"{requested_gb_value:.9f}"
+                    ).encode()
+                ).hexdigest()
+            if len(normalized_child_request_id) > 240 or any(
+                ord(char) < 32 for char in normalized_child_request_id
+            ):
+                return False
+            sublease_id = hashlib.sha256(
+                f"{record.get('transaction_id', '')}:{normalized_child_request_id}".encode()
+            ).hexdigest()
+            existing_sublease = subleases.get(sublease_id)
+            holder_identity = process_identity_for_pid(
+                child_pid,
+                observer=self.resource_observer,
+            )
+            if (
+                holder_identity.pid <= 0
+                or holder_identity.started_at <= 0.0
+                or self._process_liveness(holder_identity) is not ProcessLiveness.ALIVE
+            ):
+                return False
+            exact_payload = {
+                "child_request_id": normalized_child_request_id,
+                "requested_gb": requested_gb_value,
+                "child_model_path": str(child_path),
+                "child_purpose": str(child_purpose),
+                "holder_process": holder_identity.to_dict(),
+            }
+            if isinstance(existing_sublease, Mapping):
+                return all(existing_sublease.get(key) == value for key, value in exact_payload.items())
+            allocated_gb = 0.0
+            for sublease in subleases.values():
+                if not isinstance(sublease, Mapping):
+                    return False
+                allocation = float(sublease.get("requested_gb") or 0.0)
+                if not math.isfinite(allocation) or allocation <= 0.0:
+                    return False
+                allocated_gb += allocation
+            if allocated_gb + requested_gb_value > parent_capacity_gb + 1e-9:
+                return False
+            subleases[sublease_id] = {
+                **exact_payload,
+                "sublease_id": sublease_id,
+                "created_at": now,
+                "expires_at": now + max(5.0, ttl_s_value),
+            }
+            self._append_event(
+                state,
+                "inherited_child_sublease_acquired",
+                at=now,
+                transaction_id=str(record.get("transaction_id") or ""),
+                child_request_id=normalized_child_request_id,
+                requested_gb=requested_gb_value,
+                allocated_gb=allocated_gb + requested_gb_value,
+                parent_capacity_gb=parent_capacity_gb,
+            )
+            self._save_locked(state)
+            return True
+
+    def release_inherited_child_claim(
+        self,
+        *,
+        owner_id: str,
+        request_id: str,
+        child_request_id: str,
+        child_pid: int,
+    ) -> bool:
+        now = self._clock()
+        normalized_child_request_id = str(child_request_id or "").strip()
+        if not normalized_child_request_id:
+            return False
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            record = state["reservations"].get(str(request_id))
+            if not isinstance(record, Mapping):
+                return False
+            if str(record.get("owner_id") or "") != str(owner_id):
+                return False
+            delegation = record.get("delegation")
+            if not isinstance(delegation, dict):
+                return False
+            subleases = delegation.get("child_subleases")
+            if not isinstance(subleases, dict):
+                return False
+            sublease_id = hashlib.sha256(
+                f"{record.get('transaction_id', '')}:{normalized_child_request_id}".encode()
+            ).hexdigest()
+            sublease = subleases.get(sublease_id)
+            if not isinstance(sublease, Mapping):
+                return False
+            holder = self._identity_from_record(sublease, key="holder_process")
+            current_holder = process_identity_for_pid(
+                child_pid,
+                observer=self.resource_observer,
+            )
+            if holder != current_holder:
+                return False
+            subleases.pop(sublease_id, None)
+            self._append_event(
+                state,
+                "inherited_child_sublease_released",
+                at=now,
+                transaction_id=str(record.get("transaction_id") or ""),
+                child_request_id=normalized_child_request_id,
+            )
+            self._save_locked(state)
+            return True
 
     def snapshot(self) -> dict[str, Any]:
         self._refresh_external_owners()

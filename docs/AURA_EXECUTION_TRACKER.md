@@ -36932,3 +36932,27 @@ smoke at 103/103. This closes compensation claim serialization across direct
 and recovered paths. Cumulative inherited sublease accounting and fail-closed
 subprocess capability declaration remain open. CP810 and the honest total
 remain open at 809/920.
+
+#### Model-lane inherited sublease continuation
+
+Nested model children now acquire durable subleases beneath the compound
+parent reservation. Each sublease is bound to an exact child request, model,
+purpose, memory claim, holder process identity, and bounded TTL. Exact replay
+of the same payload is idempotent; a request-ID collision with different
+content is refused. The sum of all live child allocations must remain within
+the parent's admitted envelope, so parallel train/fuse/evaluation descendants
+cannot each reuse the full parent capacity.
+
+The subprocess gateway supplies the nested claim's request ID, strips inherited
+secrets before spawn, and releases the exact sublease in `finally` across
+success, timeout, exception, and cancellation. Expired or provably dead holders
+are reaped; unknown liveness remains accounted. Non-finite TTL/allocation data,
+unobservable holders, malformed identifiers, disallowed roots, and disallowed
+purposes all fail closed before ledger mutation.
+
+Focused inherited-child regressions pass 3/3; the complete model-lane,
+subprocess-gateway, heartbeat, embedding, voice, image, and local-code family
+passes 129/129; Ruff, compile, scoped production MyPy, and smoke pass, with
+smoke at 103/103. This closes cumulative inherited child-sublease accounting.
+Fail-closed subprocess capability declaration remains the final retained
+model-lane semantic finding. CP810 and the honest total remain open at 809/920.

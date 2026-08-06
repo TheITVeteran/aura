@@ -180,6 +180,10 @@ def test_inherited_model_child_reuses_parent_group_and_strips_delegation(
             captured["validation"] = kwargs
             return True
 
+        def release_inherited_child_claim(self, **kwargs):
+            captured["release"] = kwargs
+            return True
+
     def _run(command, **kwargs):
         captured["command"] = list(command)
         captured["run"] = kwargs
@@ -213,6 +217,8 @@ def test_inherited_model_child_reuses_parent_group_and_strips_delegation(
 
     assert result.returncode == 0
     assert captured["validation"]["requested_gb"] == 12.0
+    assert captured["validation"]["child_request_id"] == claim.request_id
+    assert captured["release"]["child_request_id"] == claim.request_id
     assert captured["validation"]["child_model_path"] == "/models/qwen-32b"
     assert captured["validation"]["child_purpose"] == "train"
     run = captured["run"]
