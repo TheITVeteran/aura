@@ -279,6 +279,144 @@ class AppleScriptRunner:
 # The Provider
 # ---------------------------------------------------------------------------
 
+#: Where macOS keeps applications. Bounded and explicit rather than a
+#: filesystem walk: an app that is not in one of these is not something a
+#: person means when they say "open X".
+_APPLICATION_DIRECTORIES: tuple[str, ...] = (
+    "/Applications",
+    "/Applications/Utilities",
+    "/System/Applications",
+    "/System/Applications/Utilities",
+    str(Path.home() / "Applications"),
+)
+
+_INSTALLED_APPS_CACHE: tuple[float, tuple[str, ...]] | None = None
+_INSTALLED_APPS_TTL_S = 60.0
+
+
+def _normalize_app_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(name or "").lower())
+
+
+def installed_application_names(*, refresh: bool = False) -> tuple[str, ...]:
+    """Applications actually present on this machine.
+
+    Cached briefly — an app list does not change between two steps of one
+    task, and stat-ing five directories per launch attempt is waste.
+    """
+    global _INSTALLED_APPS_CACHE
+    now = time.monotonic()
+    if (
+        not refresh
+        and _INSTALLED_APPS_CACHE is not None
+        and now - _INSTALLED_APPS_CACHE[0] < _INSTALLED_APPS_TTL_S
+    ):
+        return _INSTALLED_APPS_CACHE[1]
+
+    found: list[str] = []
+    for directory in _APPLICATION_DIRECTORIES:
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.endswith(".app"):
+                found.append(entry[: -len(".app")])
+    names = tuple(sorted(set(found)))
+    _INSTALLED_APPS_CACHE = (now, names)
+    return names
+
+
+@dataclass(frozen=True)
+class AppNameResolution:
+    """What the requested app name actually refers to, if anything."""
+
+    requested: str
+    resolved: str | None
+    basis: str
+    candidates: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.resolved)
+
+    def failure_detail(self) -> str:
+        """A refusal a person can act on.
+
+        The live 2026-07-30 demo failed with "Unable to find application named
+        'Note'" while Notes.app sat in /System/Applications. A name that does
+        not resolve should say what IS there, not just that this is not.
+        """
+        if self.candidates:
+            return (
+                f"no application named {self.requested!r}; "
+                f"closest installed: {', '.join(self.candidates[:5])}"
+            )
+        return f"no application named {self.requested!r} is installed"
+
+
+def resolve_application_name(app_name: str) -> AppNameResolution:
+    """Map what a person said onto an app that exists.
+
+    "Note app" means Notes. "chrome" means Google Chrome. Passing the raw
+    string to AppleScript makes the difference between doing the task and
+    refusing it a matter of whether the person typed the exact bundle name,
+    which is not a thing anyone knows.
+
+    Resolution is tiered and only auto-selects when the tier yields exactly
+    ONE candidate. Two plausible matches is an ambiguity to report, not a
+    coin to flip — opening the wrong application is worse than asking.
+    """
+    requested = str(app_name or "").strip()
+    if not requested:
+        return AppNameResolution(requested, None, "empty")
+
+    installed = installed_application_names()
+    if not installed:
+        # Cannot enumerate: let AppleScript try the literal name rather than
+        # refusing on the strength of a directory listing that did not work.
+        return AppNameResolution(requested, requested, "unverified_passthrough")
+
+    # "the Notes app" is how people say it. Strip a TRAILING app/application
+    # only, so "App Store" is untouched.
+    spoken = re.sub(r"^\s*the\s+", "", requested, flags=re.IGNORECASE).strip()
+    spoken = (
+        re.sub(
+            r"^(.*?)\s*(?:app|application)\s*$", r"\1", spoken, flags=re.IGNORECASE
+        ).strip()
+        or spoken
+        or requested
+    )
+
+    wanted = _normalize_app_name(spoken)
+    by_normal: dict[str, list[str]] = {}
+    for name in installed:
+        by_normal.setdefault(_normalize_app_name(name), []).append(name)
+
+    if wanted in by_normal and len(by_normal[wanted]) == 1:
+        return AppNameResolution(requested, by_normal[wanted][0], "exact")
+
+    # "note" -> "notes", "notes" -> "note"
+    for variant in (wanted + "s", wanted.rstrip("s")):
+        if variant and variant != wanted and len(by_normal.get(variant, ())) == 1:
+            return AppNameResolution(requested, by_normal[variant][0], "plural_form")
+
+    # "chrome" -> "Google Chrome"; unique substring only.
+    contains = [name for name in installed if wanted and wanted in _normalize_app_name(name)]
+    if len(contains) == 1:
+        return AppNameResolution(requested, contains[0], "substring")
+
+    prefixed = [
+        name for name in installed if wanted and _normalize_app_name(name).startswith(wanted)
+    ]
+    if len(prefixed) == 1:
+        return AppNameResolution(requested, prefixed[0], "prefix")
+
+    candidates = tuple(sorted(set(contains + prefixed)))
+    return AppNameResolution(requested, None, "ambiguous" if candidates else "absent", candidates)
+
+
+
 class HostAutomationProvider:
     """Generalized OS automation through governed primitives.
 
@@ -346,7 +484,31 @@ class HostAutomationProvider:
     # ------------------------------------------------------------------
 
     async def launch_app(self, app_name: str) -> AutomationReceipt:
-        """Launch an application by name. Uses AppleScript 'activate'."""
+        """Launch an application by name. Uses AppleScript 'activate'.
+
+        The name is resolved against what is installed first (CP: the
+        2026-07-30 demo refused "Note" while Notes.app was present), so a
+        person can say what they mean instead of the exact bundle name.
+        """
+        resolution = await asyncio.to_thread(resolve_application_name, app_name)
+        if not resolution.ok:
+            receipt = AutomationReceipt(
+                action="launch_app",
+                target=app_name,
+                adapter="applescript",
+                success=False,
+                error=resolution.failure_detail(),
+            )
+            self._log_receipt(receipt)
+            return receipt
+        if resolution.resolved != app_name:
+            logger.info(
+                "🖥️ Resolved requested app %r to %r (%s).",
+                app_name,
+                resolution.resolved,
+                resolution.basis,
+            )
+        app_name = resolution.resolved
         script = f'tell application {_as_applescript_string(app_name)} to activate'
         receipt = await AppleScriptRunner.run(script, timeout=10.0)
         receipt.action = "launch_app"
