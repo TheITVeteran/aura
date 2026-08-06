@@ -1,0 +1,143 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "tools/closeout/audit_shutdown_contract.py",
+    "--json"
+  ],
+  "cwd": ".",
+  "duration_seconds": 0.205548,
+  "environment_policy": {
+    "inherited_names_sha256": "ef6beaed0e8a44e60d33bb5cef8642714a849686f003a6cbb2d277de638c3d41",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "CTX2-SHUTDOWN-001"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "CTX2-SHUTDOWN-002"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "CTX2-SHUTDOWN-003"
+    }
+  ],
+  "finished_at": "2026-08-06T09:04:30.406521+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "569fbade91e4df6b097ceb26ab0db9e575d2ede6",
+  "output_bytes": 879,
+  "proof_id": "shutdown-contract-audit",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "569fbade91e4df6b097ceb26ab0db9e575d2ede6",
+  "source_manifest": [
+    {
+      "path": "aura_main.py",
+      "sha256": "d9787627a38281fe046cffae54bf713ea51a119306f7d3b41d305bea56edc6d3",
+      "size_bytes": 178197
+    },
+    {
+      "path": "core/container.py",
+      "sha256": "9500e8b1c27911a63374f86ea1c8b26ea60c02b8a13b85bb65963fb6bff8222e",
+      "size_bytes": 67954
+    },
+    {
+      "path": "core/runtime/operator_control_plane.py",
+      "sha256": "105ac514ad0c05cc3a7b8cb96aee47184e67c4a1f73c79bfaf9060c91ac58cbc",
+      "size_bytes": 12899
+    },
+    {
+      "path": "core/runtime/root_signal_owner.py",
+      "sha256": "c7e5d02fff3b7df2c8db702b62e45a049ed6ea4eed69e7b039f610f94b4b7040",
+      "size_bytes": 6942
+    },
+    {
+      "path": "core/runtime/runtime_hygiene.py",
+      "sha256": "12ef491558983471eb2f486274d2fac4b032fe1d19fa2660168cdc480746614a",
+      "size_bytes": 94368
+    },
+    {
+      "path": "core/runtime/shutdown_coordinator.py",
+      "sha256": "c8960ad7d1915d232bc4e023c7e18f537455b5d9f516c4accb8f2be3ff5a9198",
+      "size_bytes": 54507
+    },
+    {
+      "path": "core/runtime/subprocess_gateway.py",
+      "sha256": "e5d5cee31ef96a12bf179e396677c22fc92a61c44ef2bb2679b38671bf59ddd2",
+      "size_bytes": 62364
+    },
+    {
+      "path": "core/runtime/task_ownership.py",
+      "sha256": "2a9b66def318c64888e7063d0123959e5061b13b2ee29ca5dc39e44624566009",
+      "size_bytes": 8534
+    },
+    {
+      "path": "interface/routes/system.py",
+      "sha256": "09cc969857f07b903cf60e3a20fc3619be95811f3d16b42678e814d0aaeaeffc",
+      "size_bytes": 245268
+    },
+    {
+      "path": "tools/closeout/audit_shutdown_contract.py",
+      "sha256": "da7028449099fdecea6d1bef38d601da0f9ed4ca164e19dd98029b44b3de3245",
+      "size_bytes": 8796
+    },
+    {
+      "path": "tools/shutdown_signal_matrix.py",
+      "sha256": "8d424efadeec98c856a2f2dd72c886fc2b5c0cc6fb5c34a4cc36c906adc35b0c",
+      "size_bytes": 30888
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "aura_main.py",
+      "core/container.py",
+      "core/runtime/operator_control_plane.py",
+      "core/runtime/root_signal_owner.py",
+      "core/runtime/runtime_hygiene.py",
+      "core/runtime/shutdown_coordinator.py",
+      "core/runtime/subprocess_gateway.py",
+      "core/runtime/task_ownership.py",
+      "interface/routes/system.py",
+      "tools/closeout/audit_shutdown_contract.py",
+      "tools/shutdown_signal_matrix.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "054f9d4bb7392a5e2c38dce993e701889b71e7841d2746b9bac27c3d01593c3b",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T09:04:30.200786+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "{\n  \"canonical_phases\": [\n    \"output_flush\",\n    \"memory_commit\",\n    \"state_vault\",\n    \"actors\",\n    \"model_runtime\",\n    \"event_bus\",\n    \"task_supervisor\"\n  ],\n  \"checked_functions\": 12,\n  \"issues\": [],\n  \"passed\": true,\n  \"request_snapshot_fields\": [\n    \"deadline_at_unix\",\n    \"deadline_exhausted\",\n    \"deadline_source\",\n    \"deadline_tighten_count\",\n    \"elapsed_seconds\",\n    \"first_reason\",\n    \"first_requested_at_unix\",\n    \"initial_budget_seconds\",\n    \"last_reason\",\n    \"remaining_budget_seconds\",\n    \"request_count\",\n    \"requested\"\n  ],\n  \"schema\": \"aura.closeout.shutdown_contract_audit.v1\",\n  \"signal_matrix_cases\": [\n    \"active_foreground_repeated\",\n    \"container_repeated\",\n    \"launcher_bootstrap\",\n    \"model_runtime_repeated\",\n    \"orchestrator_boot_repeated\",\n    \"ready_repeated\",\n    \"root_finalization_repeated\",\n    \"state_vault_repeated\"\n  ]\n}\n",
+  "stdout_sha256": "3fe6f3bc88b49eb37c7ffa35e95b143c21604712f44fc50ec4c42ac886e9a936",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}
