@@ -19,6 +19,7 @@ from core.runtime.model_lane_control import (
     ModelLaneControlError,
     ModelLaneController,
     ProcessIdentity,
+    ProcessLiveness,
     StandaloneModelLaneLease,
     SynchronousInProcessModelLaneLease,
     acquire_in_process_model_lane,
@@ -42,6 +43,17 @@ class AliveTable:
 
     def __call__(self, identity: ProcessIdentity) -> bool:
         return identity.pid in self.alive and identity.started_at > 0.0
+
+
+class MutableLivenessProbe:
+    def __init__(self, result: bool | ProcessLiveness = True) -> None:
+        self.result = result
+        self.error: Exception | None = None
+
+    def __call__(self, _identity: ProcessIdentity) -> bool | ProcessLiveness:
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 def _owner(
@@ -1441,6 +1453,72 @@ def test_live_in_process_owner_heartbeat_expiry_fails_closed_until_recovery(
     assert recovered["lease_expires_at"] == pytest.approx(132.0)
 
     assert lease.release(reason="stale-heartbeat-test-complete") is True
+
+
+def test_process_observation_failure_retains_and_fences_live_owner_until_recovery(
+    tmp_path: Path,
+) -> None:
+    probe = MutableLivenessProbe()
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=probe,
+        process_discovery=None,
+    )
+    claim = LaneClaim(
+        owner_id="trainer:unknown-liveness",
+        model_path="/m/Aura-32B-cortex",
+        request_gb=23.0,
+        request_id="unknown-liveness-owner",
+    )
+    decision = controller.reserve_sync(claim)
+    controller.commit_sync(decision, process=ProcessIdentity(1901, 1901.0))
+
+    probe.error = RuntimeError("process observer temporarily unavailable")
+    retained = controller.snapshot()["owners"][0]
+
+    assert retained["owner_id"] == claim.owner_id
+    assert retained["preemptible"] is False
+    assert retained["metadata"]["process_liveness_unknown"] is True
+    assert retained["metadata"]["preemptible_before_liveness_unknown"] is True
+
+    probe.error = None
+    probe.result = ProcessLiveness.ALIVE
+    recovered = controller.snapshot()["owners"][0]
+
+    assert recovered["preemptible"] is True
+    assert "process_liveness_unknown" not in recovered["metadata"]
+    assert "preemptible_before_liveness_unknown" not in recovered["metadata"]
+
+
+def test_unknown_candidate_liveness_cannot_commit_or_consume_reservation(
+    tmp_path: Path,
+) -> None:
+    probe = MutableLivenessProbe()
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=probe,
+        process_discovery=None,
+    )
+    claim = LaneClaim(
+        owner_id="trainer:commit-unknown",
+        model_path="/m/Aura-32B-cortex",
+        request_gb=23.0,
+        request_id="unknown-liveness-commit",
+    )
+    decision = controller.reserve_sync(claim)
+    probe.result = ProcessLiveness.UNKNOWN
+
+    with pytest.raises(ModelLaneControlError, match="candidate_process_identity_unobservable"):
+        controller.commit_sync(decision, process=ProcessIdentity(1902, 1902.0))
+
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == claim.request_id
+    )
+    assert reservation["state"] == LaneTransactionState.READY.value
 
 
 @pytest.mark.asyncio

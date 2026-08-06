@@ -36827,3 +36827,32 @@ source-bound capsule, independently verified, relaunched under launchd plus a
 trainer-bound sleep inhibitor, and observed crossing step 64. No reasoning,
 frontier, promotion, or completion claim is supported yet, and the honest total
 remains 809/920.
+
+#### Model-lane liveness and real recovery launch continuation
+
+Process observation is now a tri-state contract: `alive`, `dead`, or `unknown`.
+Observer exceptions and incomplete process-group scans produce `unknown`, never
+synthetic death. An owner whose liveness becomes unknown remains capacity
+accounted, is made non-preemptible, and records its prior preemptibility so a
+later positive observation can restore the negotiated policy. Only a proved
+dead identity may be reaped or satisfy post-eviction verification. Candidate
+commit and delegated-child consumption continue to require proved-alive
+identities, so uncertainty fails closed in both directions.
+
+The real step-63 state was migrated without resetting elapsed time into frozen
+source commit `6a2d6db28`, under migration receipt
+`3a2b5c698bf590714449313114853bb7c585ed89df1f6f1cf9c0bbfdf0171361`.
+The amended 2,880-minute ceiling changes only the pre-evaluation wall-clock
+budget; adapter, optimizer, cursor, sample history, losses, validation history,
+seed, dataset, and scientific protocol remain exact. Launchd owns the recovery
+controller, a controller-level `caffeinate` protects its lineage, the detached
+supervisor reports an authenticated moving heartbeat with zero restarts, and a
+second `caffeinate -w` is bound to the active trainer process executing only the
+missing step-63-to-64 cell.
+
+Focused liveness regressions pass 2/2 and the full model-lane module passes
+46/46; Ruff, compile, and scoped production MyPy pass. The recovery campaign is
+now live but remains open until the signed step-64 checkpoint is committed.
+Process-group session/descendant binding and the other retained model-lane
+requirements remain open. No reasoning-gain, frontier, promotion, `WOW Signal`,
+or CP810 claim is supported, so the honest total remains 809/920.

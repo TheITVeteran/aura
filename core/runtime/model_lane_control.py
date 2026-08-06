@@ -85,6 +85,14 @@ class LaneTransactionState(StrEnum):
     EXPIRED = "expired"
 
 
+class ProcessLiveness(StrEnum):
+    """Observation result that never equates probe failure with process death."""
+
+    ALIVE = "alive"
+    DEAD = "dead"
+    UNKNOWN = "unknown"
+
+
 _ACTIVE_RESERVATION_STATES = {
     LaneTransactionState.RESERVED.value,
     LaneTransactionState.EVICTING.value,
@@ -130,36 +138,53 @@ def process_identity_for_pid(
     return ProcessIdentity(pid, 0.0)
 
 
+def _default_process_liveness(
+    identity: ProcessIdentity,
+    *,
+    observer: ResourceObserver | None = None,
+) -> ProcessLiveness:
+    if identity.pid <= 0 or identity.started_at <= 0.0:
+        return ProcessLiveness.DEAD
+    try:
+        process = (observer or get_resource_observer()).process(identity.pid)
+        if process is None:
+            return ProcessLiveness.DEAD
+        observed = float(process.create_time)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return ProcessLiveness.UNKNOWN
+    return (
+        ProcessLiveness.ALIVE
+        if abs(observed - identity.started_at) <= 0.5
+        else ProcessLiveness.DEAD
+    )
+
+
 def _default_process_alive(
     identity: ProcessIdentity,
     *,
     observer: ResourceObserver | None = None,
 ) -> bool:
-    if identity.pid <= 0 or identity.started_at <= 0.0:
-        return False
-    try:
-        process = (observer or get_resource_observer()).process(identity.pid)
-        if process is None:
-            return False
-        observed = float(process.create_time)
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        return False
-    return abs(observed - identity.started_at) <= 0.5
+    return _default_process_liveness(identity, observer=observer) is ProcessLiveness.ALIVE
 
 
-def managed_process_group_alive(
+def managed_process_group_liveness(
     process_group_id: int,
     *,
     root_started_at: float = 0.0,
     observer: ResourceObserver | None = None,
-) -> bool:
-    """Return whether an isolated managed group still has a live member."""
+) -> ProcessLiveness:
+    """Observe an isolated process group without treating observation gaps as death."""
 
     pgid = int(process_group_id)
     if pgid <= 0 or pgid == os.getpgrp():
-        return False
+        return ProcessLiveness.DEAD
     earliest_member = max(0.0, float(root_started_at) - 1.0)
-    for process in (observer or get_resource_observer()).processes():
+    uncertain = False
+    try:
+        processes = (observer or get_resource_observer()).processes()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return ProcessLiveness.UNKNOWN
+    for process in processes:
         try:
             pid = int(process.pid)
             if pid <= 0 or pid == os.getpid() or os.getpgid(pid) != pgid:
@@ -168,10 +193,26 @@ def managed_process_group_alive(
             if earliest_member and started_at < earliest_member:
                 continue
             if str(process.status).lower() != "zombie":
-                return True
+                return ProcessLiveness.ALIVE
         except (OSError, ProcessLookupError, RuntimeError, TypeError, ValueError):
-            continue
-    return False
+            uncertain = True
+    return ProcessLiveness.UNKNOWN if uncertain else ProcessLiveness.DEAD
+
+
+def managed_process_group_alive(
+    process_group_id: int,
+    *,
+    root_started_at: float = 0.0,
+    observer: ResourceObserver | None = None,
+) -> bool:
+    return (
+        managed_process_group_liveness(
+            process_group_id,
+            root_started_at=root_started_at,
+            observer=observer,
+        )
+        is ProcessLiveness.ALIVE
+    )
 
 
 @dataclass(frozen=True)
@@ -282,7 +323,7 @@ ObserveCallback = Callable[
 ]
 ReclaimCallback = Callable[[LaneClaim], bool | Awaitable[bool]]
 CompensateCallback = Callable[[LaneOwnerObservation, str], bool | Awaitable[bool]]
-ProcessAliveProbe = Callable[[ProcessIdentity], bool]
+ProcessAliveProbe = Callable[[ProcessIdentity], bool | ProcessLiveness]
 ProcessDiscoveryProbe = Callable[
     [Iterable[LaneOwnerObservation]],
     Iterable[LaneOwnerObservation],
@@ -752,48 +793,57 @@ async def evict_managed_process_owner(owner: LaneOwnerObservation, reason: str) 
     current_pgid = os.getpgrp()
     isolated_group = bool(metadata.get("start_new_session", False))
 
-    def _tree_alive() -> bool:
-        return _default_process_alive(identity) or (
-            isolated_group
-            and managed_process_group_alive(
+    def _tree_liveness() -> ProcessLiveness:
+        root_liveness = _default_process_liveness(identity)
+        if root_liveness is ProcessLiveness.ALIVE:
+            return root_liveness
+        if isolated_group:
+            group_liveness = managed_process_group_liveness(
                 pgid,
                 root_started_at=identity.started_at,
             )
-        )
+            if group_liveness is ProcessLiveness.ALIVE:
+                return group_liveness
+            if root_liveness is ProcessLiveness.UNKNOWN or group_liveness is ProcessLiveness.UNKNOWN:
+                return ProcessLiveness.UNKNOWN
+        return root_liveness
 
-    if not _tree_alive():
+    initial_liveness = _tree_liveness()
+    if initial_liveness is ProcessLiveness.DEAD:
         return True
+    if initial_liveness is ProcessLiveness.UNKNOWN:
+        return False
     try:
         if isolated_group and pgid > 0 and pgid != current_pgid:
             os.killpg(pgid, signal.SIGTERM)
-        elif _default_process_alive(identity):
+        elif _default_process_liveness(identity) is ProcessLiveness.ALIVE:
             os.kill(identity.pid, signal.SIGTERM)
         else:
             return False
     except ProcessLookupError:
-        return not _tree_alive()
+        return _tree_liveness() is ProcessLiveness.DEAD
     except (OSError, ValueError):
         return False
 
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        if not _tree_alive():
+        if _tree_liveness() is ProcessLiveness.DEAD:
             return True
         await asyncio.sleep(0.1)
     try:
         if isolated_group and pgid > 0 and pgid != current_pgid:
             os.killpg(pgid, signal.SIGKILL)
-        elif _default_process_alive(identity):
+        elif _default_process_liveness(identity) is ProcessLiveness.ALIVE:
             os.kill(identity.pid, signal.SIGKILL)
         else:
             return False
     except ProcessLookupError:
-        return not _tree_alive()
+        return _tree_liveness() is ProcessLiveness.DEAD
     except (OSError, ValueError):
         return False
     kill_deadline = time.monotonic() + 5.0
     while time.monotonic() < kill_deadline:
-        if not _tree_alive():
+        if _tree_liveness() is ProcessLiveness.DEAD:
             return True
         await asyncio.sleep(0.1)
     logger.error(
@@ -998,8 +1048,8 @@ class ModelLaneController:
         self.lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
         self._receipt_store = receipt_store
         self._observer = observer
-        self._process_alive = process_alive or (
-            lambda identity: _default_process_alive(
+        self._process_probe = process_alive or (
+            lambda identity: _default_process_liveness(
                 identity,
                 observer=self.resource_observer,
             )
@@ -1076,7 +1126,10 @@ class ModelLaneController:
                         owner_id=owner_id,
                         pid=identity.pid,
                     )
-                elif owner_id not in discovered_ids and not self._process_alive(identity):
+                elif (
+                    owner_id not in discovered_ids
+                    and self._process_liveness(identity) is ProcessLiveness.DEAD
+                ):
                     state["owners"].pop(owner_id, None)
             self._sync_observations_locked(state, discovered, now)
             self._save_locked(state)
@@ -1143,24 +1196,51 @@ class ModelLaneController:
             return ProcessIdentity(0, 0.0)
         return ProcessIdentity(int(raw.get("pid") or 0), float(raw.get("started_at") or 0.0))
 
-    def _record_alive(self, record: Mapping[str, Any], *, key: str = "process") -> bool:
-        identity = self._identity_from_record(record, key)
-        return bool(identity.pid > 0 and identity.started_at > 0.0 and self._process_alive(identity))
+    def _process_liveness(self, identity: ProcessIdentity) -> ProcessLiveness:
+        try:
+            observed = self._process_probe(identity)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return ProcessLiveness.UNKNOWN
+        if isinstance(observed, ProcessLiveness):
+            return observed
+        return ProcessLiveness.ALIVE if observed is True else ProcessLiveness.DEAD
 
-    def _owner_process_tree_alive(self, record: Mapping[str, Any]) -> bool:
+    def _process_alive(self, identity: ProcessIdentity) -> bool:
+        return self._process_liveness(identity) is ProcessLiveness.ALIVE
+
+    def _record_liveness(
+        self,
+        record: Mapping[str, Any],
+        *,
+        key: str = "process",
+    ) -> ProcessLiveness:
+        identity = self._identity_from_record(record, key)
+        if identity.pid <= 0 or identity.started_at <= 0.0:
+            return ProcessLiveness.DEAD
+        return self._process_liveness(identity)
+
+    def _owner_process_tree_liveness(self, record: Mapping[str, Any]) -> ProcessLiveness:
         identity = self._identity_from_record(record)
-        if identity.pid > 0 and identity.started_at > 0.0 and self._process_alive(identity):
-            return True
+        root_liveness = self._record_liveness(record)
+        if root_liveness is ProcessLiveness.ALIVE:
+            return root_liveness
         metadata = dict(record.get("metadata") or {})
-        return bool(
-            metadata.get("managed_model_process", False)
-            and metadata.get("start_new_session", False)
-            and managed_process_group_alive(
+        if metadata.get("managed_model_process", False) and metadata.get(
+            "start_new_session", False
+        ):
+            group_liveness = managed_process_group_liveness(
                 int(metadata.get("process_group_id") or 0),
                 root_started_at=identity.started_at,
                 observer=self.resource_observer,
             )
-        )
+            if group_liveness is ProcessLiveness.ALIVE:
+                return group_liveness
+            if root_liveness is ProcessLiveness.UNKNOWN or group_liveness is ProcessLiveness.UNKNOWN:
+                return ProcessLiveness.UNKNOWN
+        return root_liveness
+
+    def _owner_process_tree_alive(self, record: Mapping[str, Any]) -> bool:
+        return self._owner_process_tree_liveness(record) is ProcessLiveness.ALIVE
 
     def _prune_locked(self, state: dict[str, Any], now: float) -> bool:
         changed = False
@@ -1170,7 +1250,8 @@ class ModelLaneController:
             if status not in _ACTIVE_RESERVATION_STATES:
                 continue
             expired = float(record.get("expires_at") or 0.0) <= now
-            controller_dead = not self._record_alive(record, key="controller_process")
+            controller_liveness = self._record_liveness(record, key="controller_process")
+            controller_dead = controller_liveness is ProcessLiveness.DEAD
             if not expired and not controller_dead:
                 continue
             record["state"] = LaneTransactionState.EXPIRED.value
@@ -1216,10 +1297,54 @@ class ModelLaneController:
         for owner_id, record in list(owners.items()):
             identity = self._identity_from_record(record)
             has_identity = identity.pid > 0 and identity.started_at > 0.0
-            alive = self._owner_process_tree_alive(record) if has_identity else False
+            liveness = (
+                self._owner_process_tree_liveness(record)
+                if has_identity
+                else ProcessLiveness.DEAD
+            )
+            alive = liveness is ProcessLiveness.ALIVE
             lease_expired = float(record.get("lease_expires_at") or 0.0) <= now
             lease_mode = str(dict(record.get("metadata") or {}).get("lease_mode") or "process")
             heartbeat_expired = lease_mode == "heartbeat" and lease_expired
+            metadata = dict(record.get("metadata") or {})
+            if liveness is ProcessLiveness.UNKNOWN:
+                if not bool(metadata.get("process_liveness_unknown", False)):
+                    metadata["process_liveness_unknown"] = True
+                    metadata["preemptible_before_liveness_unknown"] = bool(
+                        record.get("preemptible", True)
+                    )
+                    record["metadata"] = metadata
+                    record["preemptible"] = False
+                    self._append_event(
+                        state,
+                        "owner_liveness_unknown_fail_closed",
+                        at=now,
+                        owner_id=owner_id,
+                        fencing_token=int(record.get("fencing_token") or 0),
+                    )
+                    changed = True
+                elif bool(record.get("preemptible", True)):
+                    record["preemptible"] = False
+                    changed = True
+                continue
+            if (
+                liveness is ProcessLiveness.ALIVE
+                and bool(metadata.pop("process_liveness_unknown", False))
+            ):
+                restore_preemptible = bool(
+                    metadata.pop("preemptible_before_liveness_unknown", False)
+                )
+                record["metadata"] = metadata
+                record["preemptible"] = restore_preemptible
+                self._append_event(
+                    state,
+                    "owner_liveness_observation_recovered",
+                    at=now,
+                    owner_id=owner_id,
+                    liveness=liveness.value,
+                    fencing_token=int(record.get("fencing_token") or 0),
+                )
+                changed = True
             if heartbeat_expired and has_identity and alive:
                 metadata = dict(record.get("metadata") or {})
                 if not bool(metadata.get("heartbeat_lease_stale", False)):
@@ -1239,7 +1364,7 @@ class ModelLaneController:
                     changed = True
                 continue
             if (
-                (has_identity and not alive)
+                (has_identity and liveness is ProcessLiveness.DEAD)
                 or (not has_identity and lease_expired)
                 or heartbeat_expired
             ):
@@ -1299,7 +1424,11 @@ class ModelLaneController:
     ) -> None:
         for observation in observations:
             process = observation.process
-            if process.pid > 0 and process.started_at > 0.0 and not self._process_alive(process):
+            if (
+                process.pid > 0
+                and process.started_at > 0.0
+                and self._process_liveness(process) is not ProcessLiveness.ALIVE
+            ):
                 continue
             lane, qos = classify_lane(observation.model_path, purpose=observation.purpose)
             existing = state["owners"].get(observation.owner_id, {})
@@ -2070,11 +2199,14 @@ class ModelLaneController:
                             (item for item in observations if item.owner_id == owner_id),
                             None,
                         )
-                        process_alive = self._owner_process_tree_alive(owner_record)
+                        process_liveness = self._owner_process_tree_liveness(owner_record)
                         in_process_owner = bool(
                             dict(owner.metadata).get("in_process_model_owner", False)
                         )
-                        if matching is None and (in_process_owner or not process_alive):
+                        if matching is None and (
+                            in_process_owner
+                            or process_liveness is ProcessLiveness.DEAD
+                        ):
                             outcome = "evicted"
                             detail = (
                                 "in_process_model_unloaded_and_owner_absent"
@@ -2295,7 +2427,12 @@ class ModelLaneController:
         observed_gb: float = 0.0,
         metadata: Mapping[str, Any] | None = None,
     ) -> LaneTransactionDecision:
-        if process.pid <= 0 or process.started_at <= 0.0 or not self._process_alive(process):
+        if process.pid <= 0 or process.started_at <= 0.0:
+            raise ModelLaneControlError("candidate_process_identity_not_live")
+        process_liveness = self._process_liveness(process)
+        if process_liveness is ProcessLiveness.UNKNOWN:
+            raise ModelLaneControlError("candidate_process_identity_unobservable")
+        if process_liveness is ProcessLiveness.DEAD:
             raise ModelLaneControlError("candidate_process_identity_not_live")
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
