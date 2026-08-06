@@ -543,6 +543,92 @@ def test_derived_completion_and_admission_are_canonical_and_cycle_free() -> None
     assert claimed == sha256_json(body)
 
 
+def test_migrated_terminal_validation_remains_part_of_descendant_schedule() -> None:
+    assert materializer._expected_validation_steps(
+        step=72,
+        evaluate_every=8,
+        terminal=False,
+        migrated_terminal_step=63,
+    ) == [8, 16, 24, 32, 40, 48, 56, 63, 64, 72]
+    assert materializer._expected_validation_steps(
+        step=74,
+        evaluate_every=8,
+        terminal=True,
+        migrated_terminal_step=63,
+    ) == [8, 16, 24, 32, 40, 48, 56, 63, 64, 72, 74]
+
+
+def test_invocation_receipt_must_bind_exact_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _build_campaign(tmp_path)
+    invocation = fixture.campaign / "training" / "invocation-0001.json"
+    receipt = json.loads(invocation.read_bytes())
+    receipt["checkpoint_complete_sha256"] = "0" * 64
+    body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = sha256_json(body)
+    invocation.write_bytes(canonical_json_bytes(receipt))
+
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="invocation_checkpoint_unbound",
+    ):
+        _materialize(fixture, monkeypatch)
+    assert not fixture.destination.exists()
+
+
+def test_failed_invocation_gap_is_allowed_when_receipts_bind_checkpoints(
+    tmp_path: Path,
+) -> None:
+    training = tmp_path / "training"
+    training.mkdir()
+    authority = {"authority_sha256": "a" * 64, "campaign_id": "campaign"}
+    base_identity = {"fingerprint": "b" * 64}
+    bindings = []
+    for ordinal, step, sequence, terminal in ((1, 1, 2, False), (3, 2, 3, True)):
+        complete_sha256 = str(ordinal) * 64
+        body = {
+            "schema": "aura.resident_recurrent_sft_bootstrap_invocation.v1",
+            "authority_sha256": authority["authority_sha256"],
+            "campaign_id": authority["campaign_id"],
+            "campaign_scope": "full_bootstrap",
+            "invocation_count": ordinal,
+            "step": step,
+            "checkpoint_sequence": sequence,
+            "checkpoint_complete_sha256": complete_sha256,
+            "terminal": terminal,
+            "halt_reason": "max_steps" if terminal else "invocation_step_limit",
+            "bootstrap_complete": terminal,
+            "base_checkpoint_before": base_identity,
+            "base_checkpoint_after": base_identity,
+            "base_checkpoint_immutable": True,
+            "claim_state": {"resident_sft_complete": terminal},
+        }
+        receipt = {**body, "receipt_sha256": sha256_json(body)}
+        (training / f"invocation-{ordinal:04d}.json").write_bytes(
+            canonical_json_bytes(receipt)
+        )
+        bindings.append(
+            {
+                "invocation_count": ordinal,
+                "step": step,
+                "checkpoint_sequence": sequence,
+                "complete_sha256": complete_sha256,
+            }
+        )
+
+    observed = materializer._verify_invocations(
+        training,
+        authority=authority,
+        state={"invocation_count": 3, "step": 2, "checkpoint_sequence": 3},
+        base_identity=base_identity,
+        checkpoint_invocation_bindings=bindings,
+    )
+
+    assert [ordinal for ordinal, _path, _payload, _receipt in observed] == [1, 3]
+
+
 def test_materializes_validated_atomic_package_and_adjacent_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -581,6 +667,84 @@ def test_materializes_validated_atomic_package_and_adjacent_admission(
     assert claimed == sha256_json(body)
     assert result["checkpoint_generation_count"] == 2
     assert len(manifest["tensors"]) == 48
+
+
+def test_materializes_verified_migration_root_and_preserves_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _build_campaign(tmp_path)
+    training = fixture.campaign / "training"
+    first = sorted((training / "checkpoints").iterdir())[0]
+    migrated = first.with_name(f"migration-{first.name}")
+    first.rename(migrated)
+    complete_path = migrated / "complete.json"
+    complete = json.loads(complete_path.read_bytes())
+    complete["checkpoint_id"] = migrated.name
+    complete_path.write_bytes(canonical_json_bytes(complete))
+    migration_receipt = {
+        "schema": "aura.resident_recurrent_sft_checkpoint_migration.v1",
+        "migration_sha256": "a" * 64,
+        "source": {"complete": {"sha256": "b" * 64}},
+        "destination": {
+            "checkpoint": str(migrated),
+            "complete": {"sha256": sha256_bytes(complete_path.read_bytes())},
+        },
+        "preserved_state_sha256": "c" * 64,
+    }
+    (training / "checkpoint-migration.json").write_bytes(
+        canonical_json_bytes(migration_receipt)
+    )
+    monkeypatch.setattr(
+        materializer,
+        "verify_migration",
+        lambda *_args, **_kwargs: migration_receipt,
+    )
+
+    result = _materialize(fixture, monkeypatch)
+
+    chain = json.loads(
+        (fixture.destination / "evidence/checkpoint/chain-replay.json").read_bytes()
+    )
+    manifest = json.loads(
+        (fixture.destination / "recurrence_adapter_manifest.json").read_bytes()
+    )
+    assert result["checkpoint_generation_count"] == 2
+    assert chain["first_sequence"] == 1
+    assert chain["first_step"] == 0
+    assert chain["migration"]["migration_sha256"] == "a" * 64
+    assert manifest["bindings"]["checkpoint_migration"]["path"] == (
+        "evidence/checkpoint/checkpoint-migration.json"
+    )
+
+
+def test_refuses_migration_root_without_verified_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _build_campaign(tmp_path)
+    training = fixture.campaign / "training"
+    first = sorted((training / "checkpoints").iterdir())[0]
+    migrated = first.with_name(f"migration-{first.name}")
+    first.rename(migrated)
+    complete_path = migrated / "complete.json"
+    complete = json.loads(complete_path.read_bytes())
+    complete["checkpoint_id"] = migrated.name
+    complete_path.write_bytes(canonical_json_bytes(complete))
+    monkeypatch.setattr(
+        materializer,
+        "verify_migration",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            materializer.ResidentSFTCheckpointMigrationError("tampered")
+        ),
+    )
+
+    with pytest.raises(
+        materializer.ResidentRecurrentSFTMaterializationError,
+        match="checkpoint_migration_invalid",
+    ):
+        _materialize(fixture, monkeypatch)
+    assert not fixture.destination.exists()
 
 
 def test_materializes_depth_conditioned_tensor_bank_round_trip(

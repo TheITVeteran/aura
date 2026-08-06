@@ -43,6 +43,13 @@ BRANCH_SPECIALIZATION_RECEIPT_SCHEMA: Final = "aura.branch_specialization_receip
 COMPOSITE_RECEIPT_SCHEMA: Final = "aura.generated_rollin_specialization_receipt.v1"
 EXACT_ADJOINT_ALGORITHM: Final = "layer_rematerialized_recomputed_states_reverse_v3"
 EXACT_ADJOINT_LAYER_GROUP_SIZE: Final = 1
+SUPPORTED_EXACT_ADJOINT_ALGORITHMS: Final = frozenset(
+    {
+        "materialized_recurrent_states_single_transition_reverse_v1",
+        "recomputed_recurrent_states_single_transition_reverse_v2",
+        EXACT_ADJOINT_ALGORITHM,
+    }
+)
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -726,7 +733,7 @@ def validate_branch_specialization_receipt(value: Mapping[str, Any]) -> dict[str
     if (
         receipt["schema"] != BRANCH_SPECIALIZATION_RECEIPT_SCHEMA
         or receipt["objective_schema"] != RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA
-        or receipt["algorithm"] != EXACT_ADJOINT_ALGORITHM
+        or receipt["algorithm"] not in SUPPORTED_EXACT_ADJOINT_ALGORITHMS
     ):
         raise ValueError("branch specialization receipt identity is invalid")
     config = BranchSpecializationConfig.from_dict(receipt["config"])
@@ -849,6 +856,7 @@ __all__ = [
     "BRANCH_SPECIALIZATION_RECEIPT_SCHEMA",
     "COMPOSITE_RECEIPT_SCHEMA",
     "RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA",
+    "SUPPORTED_EXACT_ADJOINT_ALGORITHMS",
     "BranchSpecializationConfig",
     "BranchSpecializationEvaluation",
     "BranchSpecializationResult",

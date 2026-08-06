@@ -73,6 +73,10 @@ from core.learning.resident_recurrent_sft_bootstrap_state import (  # noqa: E402
     inspect_checkpoint,
     validate_checkpoint_state,
 )
+from core.learning.resident_recurrent_sft_checkpoint_migration import (  # noqa: E402
+    ResidentSFTCheckpointMigrationError,
+    verify_migration,
+)
 from core.runtime.atomic_writer import interprocess_file_lock  # noqa: E402
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     absent_personality_identity,
@@ -85,6 +89,9 @@ MAX_JSON_BYTES: Final = 64 * 1024 * 1024
 MAX_ARTIFACT_BYTES: Final = 1 << 50
 _INVOCATION_NAME = re.compile(r"invocation-([0-9]{4})\.json\Z")
 _CHECKPOINT_NAME = re.compile(r"sequence-([0-9]{8})-step-([0-9]{8})-([0-9a-f]{32})\Z")
+_MIGRATION_CHECKPOINT_NAME = re.compile(
+    r"migration-sequence-([0-9]{8})-step-([0-9]{8})-([0-9a-f]{32})\Z"
+)
 
 
 class ResidentRecurrentSFTMaterializationError(RuntimeError):
@@ -293,6 +300,7 @@ def _verify_invocations(
     authority: Mapping[str, Any],
     state: Mapping[str, Any],
     base_identity: Mapping[str, Any],
+    checkpoint_invocation_bindings: Sequence[Mapping[str, Any]],
 ) -> list[tuple[int, Path, bytes, dict[str, Any]]]:
     observed: list[tuple[int, Path, bytes, dict[str, Any]]] = []
     for path in sorted(training_root.glob("invocation-*.json")):
@@ -318,8 +326,31 @@ def _verify_invocations(
             _fail("resident_sft_materialize_invocation_invalid")
         observed.append((ordinal, path, payload, receipt))
     expected_count = state["invocation_count"]
-    if [row[0] for row in observed] != list(range(1, expected_count + 1)):
+    ordinals = [row[0] for row in observed]
+    if (
+        not ordinals
+        or ordinals != sorted(set(ordinals))
+        or any(ordinal < 1 or ordinal > expected_count for ordinal in ordinals)
+        or ordinals[-1] != expected_count
+    ):
         _fail("resident_sft_materialize_invocation_sequence_incomplete")
+    checkpoint_receipts = {
+        (
+            binding.get("invocation_count"),
+            binding.get("step"),
+            binding.get("checkpoint_sequence"),
+            binding.get("complete_sha256"),
+        )
+        for binding in checkpoint_invocation_bindings
+    }
+    for ordinal, _path, _payload, receipt in observed:
+        if (
+            ordinal,
+            receipt.get("step"),
+            receipt.get("checkpoint_sequence"),
+            receipt.get("checkpoint_complete_sha256"),
+        ) not in checkpoint_receipts:
+            _fail("resident_sft_materialize_invocation_checkpoint_unbound")
     terminal = observed[-1][3]
     if (
         terminal.get("step") != state["step"]
@@ -491,33 +522,90 @@ def _verify_objective_evidence(
             _verify_generated_rollin_record(record)
 
 
+def _expected_validation_steps(
+    *,
+    step: int,
+    evaluate_every: int,
+    terminal: bool,
+    migrated_terminal_step: int | None,
+) -> list[int]:
+    expected = list(range(evaluate_every, step + 1, evaluate_every))
+    for boundary in (migrated_terminal_step, step if terminal else None):
+        if boundary is not None and boundary > 0 and boundary <= step and boundary not in expected:
+            expected.append(boundary)
+    return sorted(expected)
+
+
 def _verify_checkpoint_chain(
     training_root: Path,
     *,
     authority: Mapping[str, Any],
     final_complete_sha256: str,
+    source_capsule_root: Path,
 ) -> dict[str, Any]:
     checkpoints = _directory(training_root / "checkpoints", role="checkpoint_root")
     expected_bindings = authority_state_bindings(authority)
     generations: list[tuple[int, int, Path]] = []
+    migration_generation: Path | None = None
     for path in checkpoints.iterdir():
         resolved = _directory(path, role="checkpoint_generation")
         match = _CHECKPOINT_NAME.fullmatch(resolved.name)
         if match is None:
-            _fail("resident_sft_materialize_checkpoint_generation_name_invalid")
+            match = _MIGRATION_CHECKPOINT_NAME.fullmatch(resolved.name)
+            if match is None:
+                _fail("resident_sft_materialize_checkpoint_generation_name_invalid")
+            if migration_generation is not None:
+                _fail("resident_sft_materialize_checkpoint_migration_duplicate")
+            migration_generation = resolved
         generations.append((int(match.group(1)), int(match.group(2)), resolved))
     generations.sort(key=lambda row: row[0])
     max_steps = authority["trainer"]["max_steps"]
+    migration_receipt: dict[str, Any] | None = None
+    migration_path = training_root / "checkpoint-migration.json"
+    if migration_generation is None:
+        if migration_path.exists() or migration_path.is_symlink():
+            _fail("resident_sft_materialize_checkpoint_migration_orphaned")
+        first_sequence = 1
+        first_step = 0
+    else:
+        try:
+            migration_receipt = verify_migration(
+                migration_path,
+                destination_repo_root=source_capsule_root,
+                destination_authority=authority,
+            )
+        except (FileNotFoundError, OSError, ResidentSFTCheckpointMigrationError) as exc:
+            raise ResidentRecurrentSFTMaterializationError(
+                "resident_sft_materialize_checkpoint_migration_invalid"
+            ) from exc
+        destination = migration_receipt.get("destination")
+        if (
+            not isinstance(destination, Mapping)
+            or Path(str(destination.get("checkpoint", ""))).resolve(strict=True)
+            != migration_generation
+        ):
+            _fail("resident_sft_materialize_checkpoint_migration_root_mismatch")
+        migration_match = _MIGRATION_CHECKPOINT_NAME.fullmatch(migration_generation.name)
+        if migration_match is None:
+            _fail("resident_sft_materialize_checkpoint_migration_root_mismatch")
+        first_sequence = int(migration_match.group(1))
+        first_step = int(migration_match.group(2))
+        if first_sequence != first_step + 1:
+            _fail("resident_sft_materialize_checkpoint_migration_root_mismatch")
+    terminal_sequence = max_steps + 1
     if (
-        len(generations) != max_steps + 1
-        or [sequence for sequence, _step, _path in generations] != list(range(1, max_steps + 2))
-        or [step for _sequence, step, _path in generations] != list(range(0, max_steps + 1))
+        len(generations) != max_steps - first_step + 1
+        or [sequence for sequence, _step, _path in generations]
+        != list(range(first_sequence, terminal_sequence + 1))
+        or [step for _sequence, step, _path in generations]
+        != list(range(first_step, max_steps + 1))
     ):
         _fail("resident_sft_materialize_checkpoint_chain_incomplete")
 
     prior_state: dict[str, Any] | None = None
     prior_adapter_value_sha256: str | None = None
     final: dict[str, Any] | None = None
+    checkpoint_invocation_bindings: list[dict[str, Any]] = []
     evaluate_every = authority["trainer"]["evaluate_every"]
     for sequence, step, generation in generations:
         complete_payload = _stable_bytes(
@@ -547,8 +635,8 @@ def _verify_checkpoint_chain(
             state["checkpoint_sequence"] != sequence
             or state["step"] != step
             or any(state[role] != digest for role, digest in expected_bindings.items())
-            or state["terminal"] is not (sequence == len(generations))
-            or state["halt_reason"] != ("max_steps" if sequence == len(generations) else None)
+            or state["terminal"] is not (sequence == terminal_sequence)
+            or state["halt_reason"] != ("max_steps" if sequence == terminal_sequence else None)
         ):
             _fail("resident_sft_materialize_checkpoint_transition_invalid")
         for role in ("adapter", "optimizer"):
@@ -579,9 +667,12 @@ def _verify_checkpoint_chain(
         )
         loss_trail = state["loss_trail"]
         validation_trail = state["validation_trail"]
-        expected_validation_steps = list(range(evaluate_every, step + 1, evaluate_every))
-        if state["terminal"] and step % evaluate_every:
-            expected_validation_steps.append(step)
+        expected_validation_steps = _expected_validation_steps(
+            step=step,
+            evaluate_every=evaluate_every,
+            terminal=state["terminal"],
+            migrated_terminal_step=(first_step if migration_receipt is not None else None),
+        )
         if (
             len(loss_trail) != step
             or [entry.get("step") for entry in loss_trail] != list(range(1, step + 1))
@@ -601,7 +692,10 @@ def _verify_checkpoint_chain(
             latest_loss = loss_trail[-1]
             if (
                 latest_loss.get("adapter_after_sha256") != adapter_value_sha256
-                or latest_loss.get("adapter_before_sha256") != prior_adapter_value_sha256
+                or (
+                    prior_adapter_value_sha256 is not None
+                    and latest_loss.get("adapter_before_sha256") != prior_adapter_value_sha256
+                )
             ):
                 _fail("resident_sft_materialize_adapter_value_continuity_invalid")
         if prior_state is not None:
@@ -619,6 +713,14 @@ def _verify_checkpoint_chain(
                 _fail("resident_sft_materialize_checkpoint_prefix_drift")
         prior_state = state
         prior_adapter_value_sha256 = adapter_value_sha256
+        checkpoint_invocation_bindings.append(
+            {
+                "invocation_count": state["invocation_count"],
+                "step": step,
+                "checkpoint_sequence": sequence,
+                "complete_sha256": sha256_bytes(complete_payload),
+            }
+        )
         final = {
             "sequence": sequence,
             "step": step,
@@ -637,13 +739,26 @@ def _verify_checkpoint_chain(
         or pointer.get("complete_sha256") != final["complete_sha256"]
     ):
         _fail("resident_sft_materialize_checkpoint_pointer_not_final")
-    return {
+    receipt = {
         "generation_count": len(generations),
+        "first_sequence": first_sequence,
+        "first_step": first_step,
         "terminal_sequence": final["sequence"],
         "terminal_step": final["step"],
         "terminal_complete_sha256": final["complete_sha256"],
         "terminal_adapter_value_sha256": final["adapter_value_sha256"],
+        "checkpoint_invocation_bindings": checkpoint_invocation_bindings,
     }
+    if migration_receipt is not None:
+        receipt["migration"] = {
+            "migration_sha256": migration_receipt["migration_sha256"],
+            "source_complete_sha256": migration_receipt["source"]["complete"]["sha256"],
+            "destination_complete_sha256": migration_receipt["destination"]["complete"][
+                "sha256"
+            ],
+            "preserved_state_sha256": migration_receipt["preserved_state_sha256"],
+        }
+    return receipt
 
 
 def _lora_metadata(
@@ -941,6 +1056,7 @@ def materialize_resident_recurrent_sft_adapter(
         training,
         authority=authority,
         final_complete_sha256=inspected.complete_sha256,
+        source_capsule_root=capsule,
     )
     pointer_path = training / "latest.json"
     complete_path = inspected.checkpoint_dir / "complete.json"
@@ -956,6 +1072,7 @@ def materialize_resident_recurrent_sft_adapter(
         authority=authority,
         state=state,
         base_identity=base_identity,
+        checkpoint_invocation_bindings=chain_receipt["checkpoint_invocation_bindings"],
     )
     if invocations[-1][3]["checkpoint_complete_sha256"] != inspected.complete_sha256:
         _fail("resident_sft_materialize_terminal_invocation_checkpoint_mismatch")
@@ -1074,6 +1191,16 @@ def materialize_resident_recurrent_sft_adapter(
             bindings["checkpoint_chain_replay"] = _copy_into(
                 staging, "evidence/checkpoint/chain-replay.json", chain_payload
             )
+            if "migration" in chain_receipt:
+                bindings["checkpoint_migration"] = _copy_into(
+                    staging,
+                    "evidence/checkpoint/checkpoint-migration.json",
+                    _stable_bytes(
+                        training / "checkpoint-migration.json",
+                        role="checkpoint_migration",
+                        maximum=MAX_JSON_BYTES,
+                    ),
+                )
             for ordinal, _path, payload, _receipt in invocations[:-1]:
                 bindings[f"invocation_{ordinal:04d}"] = _copy_into(
                     staging,

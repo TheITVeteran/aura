@@ -234,6 +234,42 @@ def test_receipt_replays_hinge_and_rejects_rehashed_measurement_tamper():
         validate_branch_specialization_receipt(attacked)
 
 
+@pytest.mark.parametrize(
+    "algorithm",
+    [
+        "materialized_recurrent_states_single_transition_reverse_v1",
+        "recomputed_recurrent_states_single_transition_reverse_v2",
+    ],
+)
+def test_receipt_replays_supported_historical_adjoint(algorithm: str):
+    model = _model()
+    result = branch_specialization_live_path_value_and_grad(
+        model,
+        PROMPT,
+        spec=_spec(),
+    )
+    receipt = result.evaluation.receipt()
+    receipt["algorithm"] = algorithm
+    _rehash(receipt)
+
+    assert validate_branch_specialization_receipt(receipt) == receipt
+
+
+def test_receipt_rejects_unknown_adjoint_even_when_rehashed():
+    model = _model()
+    result = branch_specialization_live_path_value_and_grad(
+        model,
+        PROMPT,
+        spec=_spec(),
+    )
+    receipt = result.evaluation.receipt()
+    receipt["algorithm"] = "unreviewed_reverse_v99"
+    _rehash(receipt)
+
+    with pytest.raises(ValueError, match="identity is invalid"):
+        validate_branch_specialization_receipt(receipt)
+
+
 def test_composite_receipt_binds_generated_and_structural_objectives():
     model = _model()
     result = generated_rollin_specialization_value_and_grad(
