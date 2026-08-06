@@ -26,8 +26,12 @@ Two disciplines carry over from everything that bit us this session:
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger("Aura.Learning.FacadeRetrieval")
 
 FACADE_RETRIEVAL_SCHEMA = "aura.facade_retrieval.v1"
 
@@ -56,8 +60,17 @@ class FacadeRetrieval:
                 "facade_retrieval", exc, severity="warning", action=action,
                 enforce_failure_policy=False,
             )
-        except Exception:
-            pass
+        except Exception as recorder_exc:  # noqa: BLE001 - reporting must not raise
+            # The degradation recorder is itself unavailable. Nothing further
+            # can be done here, but a blind reporting path must not look
+            # identical to a quiet one.
+            logger.debug(
+                "facade_retrieval could not record a degradation (%s: %s); the "
+                "original was: %s",
+                type(recorder_exc).__name__,
+                recorder_exc,
+                exc,
+            )
 
     def _passage_text(self, item: Any) -> str:
         if isinstance(item, dict):

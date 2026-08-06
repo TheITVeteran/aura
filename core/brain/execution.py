@@ -1,3 +1,4 @@
+import logging
 # core/brain/execution.py
 import asyncio
 import hashlib
@@ -13,6 +14,8 @@ from typing import Any
 
 from core.brain.trace_logger import TraceLogger
 from core.runtime.errors import FallbackClassification, record_degradation
+
+logger = logging.getLogger("Aura.Brain.Execution")
 
 _MAX_RETRIES = 20
 _SENSITIVE_META_MARKERS = ("secret", "password", "passwd", "token", "key", "credential", "auth")
@@ -400,7 +403,22 @@ def _looks_successful(res: Any, predicate: Callable[[Any], bool] | None) -> bool
     if predicate is not None:
         try:
             return bool(predicate(res))
-        except Exception:  # noqa: BLE001 — a predicate fault is a failed judgment
+        except Exception as exc:  # noqa: BLE001 — a predicate fault is a failed judgment
+            # False is the right answer: an unevaluable predicate has not
+            # judged the result successful. But a predicate that CRASHES and a
+            # predicate that returned False are different events, and only one
+            # of them needs fixing.
+            try:
+                from core.runtime.errors import record_degradation
+
+                record_degradation(
+                    "execution_predicate",
+                    exc,
+                    severity="warning",
+                    action="treated an unevaluable success predicate as not satisfied",
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Success predicate raised and was unrecorded: %s", exc)
             return False
     if isinstance(res, dict):
         if res.get("ok") is False:

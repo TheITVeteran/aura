@@ -34,8 +34,12 @@ module makes that measurable; it does not assume it.
 """
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+logger = logging.getLogger("Aura.Learning.WorkspaceProducers")
 
 WORKSPACE_PRODUCERS_SCHEMA = "aura.workspace_producers.v1"
 
@@ -85,6 +89,28 @@ class WorkspaceProducer(Protocol):
     def produce(self, query: str, *, limit: int) -> list[WorkspaceMaterial]: ...
 
 
+def _record_producer_degradation(
+    exc: BaseException, *, producer: str, action: str
+) -> None:
+    """Name a producer failure. A workspace short one input should say so."""
+    try:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "workspace_producers",
+            exc,
+            severity="warning",
+            action=action,
+            extra={"producer": producer},
+        )
+    except Exception as recorder_exc:  # noqa: BLE001 - reporting must not raise
+        logger.debug(
+            "workspace producer degradation unrecorded (%s); original: %s",
+            recorder_exc,
+            exc,
+        )
+
+
 @dataclass
 class RetrievalProducer:
     """Adapts any RetrievalSource (e.g. FacadeRetrieval) to the seam.
@@ -129,8 +155,16 @@ class ImaginationProducer:
             return []
         try:
             scenarios = run(query, limit=limit)
-        except Exception:
-            # A generator failure is a degradation, not grounds to fabricate.
+        except Exception as exc:  # noqa: BLE001 - a producer must not break the workspace
+            # The comment here already said this is a degradation. It was not
+            # recorded as one, so the workspace silently lost a producer and
+            # nothing anywhere said which. Returning [] is still right —
+            # fabricating material would be worse — but the loss is named.
+            _record_producer_degradation(
+                exc,
+                producer=self.name,
+                action="returned no imagination material after the generator failed",
+            )
             return []
         return [
             WorkspaceMaterial(text=str(s), source=self.name, trust=self.trust)
