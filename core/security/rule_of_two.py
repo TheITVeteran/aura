@@ -116,6 +116,34 @@ class HandlerSpec:
     def leg_count(self) -> int:
         return sum(self.legs)
 
+    def legs_now(self) -> tuple[bool, bool, bool]:
+        """The three legs as they stand for THIS turn, not on average.
+
+        `input_trust` is declared once, at import. Two shipped surfaces declare
+        TRUSTED on the grounds that their input is "model-generated" or
+        "internally-formed intent" — self_modification_apply and
+        desktop_automation, both of which EXECUTE and both of which run
+        IN_PROCESS. That declaration is correct exactly when Aura has read
+        nothing untrusted, and wrong the rest of the time, because indirect
+        prompt injection does not make untrusted text act: it makes untrusted
+        text persuade something trusted to act.
+
+        So the first leg is asked of the live turn. A surface at two legs at
+        rest is at three the moment a web page is in the context, which is
+        precisely when the rule says to give one up.
+        """
+        from core.security.content_provenance import effective_input_trust
+
+        return (
+            effective_input_trust(self.input_trust) is InputTrust.UNTRUSTED,
+            self.capability is Capability.EXECUTES,
+            self.isolation is Isolation.IN_PROCESS,
+        )
+
+    def violates_now(self) -> bool:
+        """Does this surface hold all three legs right now?"""
+        return all(self.legs_now())
+
     def remedies(self) -> list[str]:
         """The three ways out, phrased as what to actually do."""
         return [

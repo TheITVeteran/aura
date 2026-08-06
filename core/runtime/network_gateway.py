@@ -88,6 +88,31 @@ class StreamAdmission:
     read_only: bool
 
 
+
+def _record_web_provenance(url: str) -> None:
+    """Mark that this turn ingested content from the open web.
+
+    Never raises and never blocks the fetch: provenance is a note about the
+    turn, and failing to take the note must not fail the request. A missing
+    note is a gate that answers "trusted" for a turn that read the web, so the
+    failure is recorded rather than passed over in silence.
+    """
+    try:
+        from core.security.content_provenance import ProvenanceClass, record_ingest
+
+        record_ingest(ProvenanceClass.WEB, f"fetched {str(url)[:120]}")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "network_gateway",
+            exc,
+            severity="warning",
+            action=(
+                "web content provenance not recorded; action gates will treat "
+                "this turn as untainted"
+            ),
+            enforce_failure_policy=False,
+        )
+
 class NetworkGateway:
     """Single canonical owner for HTTP/Network requests."""
 
@@ -191,6 +216,13 @@ class NetworkGateway:
             )
             open_request = opener.open if opener is not None else urllib.request.urlopen
             with open_request(req, timeout=timeout_s) as response:
+                # The turn has now read text somebody else wrote — possibly
+                # somebody who knows an agent reads this page. That fact rides
+                # with the turn so an action gate can ask about it later:
+                # indirect prompt injection does not make untrusted text act,
+                # it makes untrusted text persuade something trusted to act,
+                # and the persuaded party looks entirely legitimate at the gate.
+                _record_web_provenance(response.url or url_text)
                 return {
                     "status_code": response.status,
                     "headers": dict(response.info()),
