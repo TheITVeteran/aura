@@ -271,7 +271,10 @@ class BackgroundReasoningQueue:
         # Replace it: a queue that reports itself running must have workers.
         with contextlib.suppress(RuntimeError):
             asyncio.get_running_loop().call_soon(
-                lambda: asyncio.ensure_future(self.start())
+                lambda: get_task_tracker().create_task(
+                    self.start(),
+                    name="ReasoningQueue.recover_workers",
+                )
             )
 
     async def _run(self, worker_id: int = 0):

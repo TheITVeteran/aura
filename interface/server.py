@@ -217,7 +217,10 @@ class _QueueHandler(logging.Handler):
             running = None
 
         if running is not None and running is loop:
-            task = loop.create_task(publish_coro)
+            task = _server_task_tracker.create_task(
+                publish_coro,
+                name="AuraServer.inline_log_publish",
+            )
             cls._inline_publishes.add(task)
             task.add_done_callback(cls._inline_publishes.discard)
             return

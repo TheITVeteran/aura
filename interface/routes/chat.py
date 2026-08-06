@@ -553,7 +553,7 @@ async def _finalize_chat_delivery(
     status_code: int,
     payload: dict[str, Any],
 ) -> DeliveryRecord:
-    operation = asyncio.create_task(
+    operation = get_task_tracker().create_task(
         journal.finalize(
             admission,
             state=state,
@@ -924,7 +924,7 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
             admission.record.identity.idempotency_key
         )
         fence_lost = asyncio.Event()
-        heartbeat_task = asyncio.create_task(
+        heartbeat_task = get_task_tracker().create_task(
             _chat_delivery_heartbeat(journal, admission, fence_lost),
             name=f"ChatDeliveryHeartbeat:{admission.record.turn_id}",
         )

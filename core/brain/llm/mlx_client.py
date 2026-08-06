@@ -12947,7 +12947,7 @@ class MLXLocalClient:
                 pass
             self._warmup_in_flight = False
 
-        task = asyncio.ensure_future(
+        task = get_task_tracker().create_task(
             self._warmup_impl(
                 foreground_request=foreground_request,
                 skip_swap_cooldown=skip_swap_cooldown,

@@ -33,6 +33,7 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 from core.voice.duplex.config import OUTPUT_RATE, TtsConfig
 from core.voice.duplex.prosody import ProsodySpec
 
@@ -663,7 +664,10 @@ class StreamingTts:
                 text = (chunk or "").strip()
                 if not text:
                     continue
-                task = asyncio.ensure_future(_synth(text))
+                task = get_task_tracker().create_task(
+                    _synth(text),
+                    name="VoiceTTSStream.synthesize_chunk",
+                )
                 if pending is not None:
                     result = await pending
                     if token.cancelled:

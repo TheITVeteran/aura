@@ -41,6 +41,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.RateGroups")
 
 #: A cycle that runs this far past its period is a slip, not jitter.
@@ -262,7 +264,10 @@ class RateGroup:
             return
         self._stopping.clear()
         self._next_due = time.monotonic()
-        self._task = asyncio.create_task(self._run(), name=f"rate_group.{self.name}")
+        self._task = get_task_tracker().create_task(
+            self._run(),
+            name=f"rate_group.{self.name}",
+        )
 
     async def _run(self) -> None:
         while not self._stopping.is_set():

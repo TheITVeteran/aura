@@ -36,6 +36,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.CognitiveIngress")
 
 COGNITIVE_INGRESS_SCHEMA = "aura.cognitive_ingress.v1"
@@ -1404,7 +1406,7 @@ async def assemble_cognitive_ingress_async(
     memory_task = (
         None
         if acquisition_source == "reference"
-        else asyncio.create_task(
+        else get_task_tracker().create_task(
             _resolve_memory_async(
                 orchestrator,
                 objective,

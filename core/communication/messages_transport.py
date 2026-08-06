@@ -40,8 +40,9 @@ from core.executive.execution_policy import canonical_authority_arguments
 from core.governance.capability_chain import CapabilityViolation, enforce_capability
 from core.governance_context import governed_scope, require_governance
 from core.runtime.errors import record_degradation
-from core.runtime.subprocess_gateway import SubprocessGateway, get_subprocess_gateway
 from core.runtime.lockdep import checked_async_lock
+from core.runtime.subprocess_gateway import SubprocessGateway, get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.MessagesTransport")
 
@@ -414,7 +415,10 @@ class MessagesTransport:
         self._stop_event.clear()
         coroutine = self._run()
         if task_factory is None:
-            self._task = asyncio.create_task(coroutine, name="messages_transport.poll")
+            self._task = get_task_tracker().create_task(
+                coroutine,
+                name="messages_transport.poll",
+            )
         else:
             self._task = task_factory(coroutine, name="messages_transport.poll")
 

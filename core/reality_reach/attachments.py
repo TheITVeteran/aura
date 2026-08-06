@@ -483,7 +483,7 @@ class DeviceAttachmentBroker:
         await self._ensure_state_loaded()
         canonical = _identifier(connector_id, name="connector_id")
         reason_text = str(reason or "connector_retired")[:320]
-        retirement = asyncio.create_task(
+        retirement = get_task_tracker().create_task(
             self._retire_connector_transaction(canonical, reason=reason_text),
             name=f"RealityConnectorRetirement:{canonical}",
         )
@@ -878,7 +878,7 @@ class DeviceAttachmentBroker:
                 self._pending_manifest_migrations[request.request_id] = migration_evidence
         try:
             if persistent:
-                persistence = asyncio.create_task(
+                persistence = get_task_tracker().create_task(
                     self._persist_state(),
                     name=f"RealityAttachmentAuthorityPersist:{request.request_id}",
                 )
@@ -896,7 +896,7 @@ class DeviceAttachmentBroker:
                                 "rolling authority back"
                             ),
                         )
-                    rollback = asyncio.create_task(
+                    rollback = get_task_tracker().create_task(
                         self._rollback_cancelled_authorization(
                             request=previous_request,
                             grant=grant,
@@ -923,7 +923,7 @@ class DeviceAttachmentBroker:
             if persistent and result.state == ConnectionState.ATTACHED:
                 with self._lock:
                     self._pending_grant_activations.discard(grant.identity_fingerprint)
-                activation = asyncio.create_task(
+                activation = get_task_tracker().create_task(
                     self._persist_state(),
                     name=f"RealityAttachmentAuthorityActivate:{request.request_id}",
                 )
@@ -960,7 +960,7 @@ class DeviceAttachmentBroker:
                 )
             return result
         except asyncio.CancelledError:
-            rollback = asyncio.create_task(
+            rollback = get_task_tracker().create_task(
                 self._rollback_cancelled_authorization(
                     request=previous_request,
                     grant=grant,
@@ -1147,7 +1147,7 @@ class DeviceAttachmentBroker:
                 continue
 
     async def _attach(self, request: ConnectionRequest) -> ConnectionRequest:
-        transaction = asyncio.create_task(
+        transaction = get_task_tracker().create_task(
             self._attach_transaction(request),
             name=f"RealityAttachmentTransaction:{request.request_id}",
         )
@@ -1156,7 +1156,7 @@ class DeviceAttachmentBroker:
         except asyncio.CancelledError:
             result = await self._await_task_completion(transaction)
             if isinstance(result, ConnectionRequest) and result.state == ConnectionState.ATTACHED:
-                rollback = asyncio.create_task(
+                rollback = get_task_tracker().create_task(
                     self._detach_request(
                         request.request_id,
                         state=ConnectionState.ERROR,

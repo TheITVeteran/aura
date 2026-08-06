@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 from core.voice.duplex.config import DuplexConfig
 from core.voice.duplex.mind_bridge import MindBridge
 from core.voice.duplex.session import DuplexVoiceSession
@@ -396,7 +397,7 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                 except TimeoutError:
                     continue
 
-        authorization_task = asyncio.create_task(
+        authorization_task = get_task_tracker().create_task(
             authorization_monitor(),
             name=f"VoiceAuthorization:{session_id}",
         )

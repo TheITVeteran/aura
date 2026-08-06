@@ -49,6 +49,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.Reconcile")
 
 #: Rate-limiter shape. The kernel of the idea is a very small base delay
@@ -383,7 +385,10 @@ class Controller:
                 with contextlib.suppress(Exception):
                     await bus.unsubscribe(topic, queue)
 
-        task = asyncio.create_task(listen(), name=f"{self.name}.watch.{topic}")
+        task = get_task_tracker().create_task(
+            listen(),
+            name=f"{self.name}.watch.{topic}",
+        )
         self._tasks.append(task)
         return task
 
@@ -394,11 +399,17 @@ class Controller:
         self._running = True
         for index in range(self._workers):
             self._tasks.append(
-                asyncio.create_task(self._worker(index), name=f"{self.name}.worker{index}")
+                get_task_tracker().create_task(
+                    self._worker(index),
+                    name=f"{self.name}.worker{index}",
+                )
             )
         if self._resync_s > 0 and self._list_keys is not None:
             self._tasks.append(
-                asyncio.create_task(self._resync_loop(), name=f"{self.name}.resync")
+                get_task_tracker().create_task(
+                    self._resync_loop(),
+                    name=f"{self.name}.resync",
+                )
             )
         logger.info(
             "🔁 controller %s started (%d worker(s), resync %.0fs)",

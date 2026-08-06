@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from core.bus.qos import QosProfile, Reliability
+from core.container import ServiceContainer
 from core.reality_reach import attachments as attachment_module
 from core.reality_reach.attachment_authority import AttachmentAuthorityError
 from core.reality_reach.attachments import (
@@ -414,13 +415,29 @@ class FakeMigrationAuthorityVerifier(FakeAuthorityVerifier):
 
 
 @pytest.fixture
-def no_body_projection(monkeypatch: pytest.MonkeyPatch) -> None:
+def no_body_projection(monkeypatch: pytest.MonkeyPatch):
+    opened_graphs: list[RealityDigitalTwinGraph] = []
+    had_neural_feed = ServiceContainer.has("neural_feed")
+    original_init = RealityDigitalTwinGraph.__init__
+
+    def tracked_init(self, *args, **kwargs) -> None:
+        original_init(self, *args, **kwargs)
+        opened_graphs.append(self)
+
+    monkeypatch.setattr(RealityDigitalTwinGraph, "__init__", tracked_init)
     monkeypatch.setattr(
         attachment_module,
         "project_adapter_to_body",
         lambda adapter, **_kwargs: PhysicalBodyProjection(adapter.adapter_id, ()),
     )
     monkeypatch.setattr(attachment_module, "remove_body_projection", lambda _item: None)
+    try:
+        yield
+    finally:
+        for graph in reversed(opened_graphs):
+            graph.close()
+        if not had_neural_feed:
+            ServiceContainer.unregister("neural_feed")
 
 
 def _broker(

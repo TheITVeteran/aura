@@ -1036,8 +1036,11 @@ class RosbridgeWebSocketTransport:
             return queue.get_nowait()
         if result.done():
             return result.result()
-        feedback_task = asyncio.create_task(queue.get())
-        result_task = asyncio.ensure_future(asyncio.shield(result))
+        feedback_task = get_task_tracker().create_task(
+            queue.get(),
+            name=f"ROS2Feedback:{goal_id}",
+        )
+        result_task = asyncio.shield(result)
         try:
             done, pending = await asyncio.wait(
                 {feedback_task, result_task},

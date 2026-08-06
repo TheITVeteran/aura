@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 # How long the activity watcher waits for a telemetry event before
 # re-checking whether it has been asked to stop. Silence is normal.
@@ -307,7 +308,10 @@ class MindBridge:
             self._activity_task = None
         self._activity_callback = callback
         self._activity_stop.clear()
-        self._activity_task = asyncio.ensure_future(self._watch_activity())
+        self._activity_task = get_task_tracker().create_task(
+            self._watch_activity(),
+            name="VoiceMindBridge.activity_watch",
+        )
         self._activity_task.add_done_callback(self._activity_watch_done)
 
     def _activity_watch_done(self, task: asyncio.Task[None]) -> None:

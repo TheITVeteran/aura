@@ -39,6 +39,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.Foundations")
 
 #: Host memory available-fraction below which the OOM policy starts
@@ -93,7 +95,10 @@ class MemorySentinel:
         if self._task is not None and not self._task.done():
             return
         self._stopping.clear()
-        self._task = asyncio.create_task(self._run(), name="foundations.memory_sentinel")
+        self._task = get_task_tracker().create_task(
+            self._run(),
+            name="foundations.memory_sentinel",
+        )
 
     async def stop(self) -> None:
         self._stopping.set()

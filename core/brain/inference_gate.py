@@ -2231,7 +2231,7 @@ class InferenceGate:
                         # close hangs. Keep a strong reference until the
                         # close actually finishes.
                         self._closing_clients.add(client)
-                        task = running_loop.create_task(
+                        task = get_task_tracker().create_task(
                             asyncio.wait_for(result, timeout=10.0),
                             name=f"inference_gate_close_{type(client).__name__}",
                         )

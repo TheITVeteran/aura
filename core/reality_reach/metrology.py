@@ -32,6 +32,7 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lockdep import checked_async_lock
 from core.runtime.state_ownership import state_root
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.RealityReach.Metrology")
 
@@ -508,7 +509,7 @@ class RealityMetrologyService:
                 )
 
     async def _persist_shielded(self) -> None:
-        persistence = asyncio.create_task(
+        persistence = get_task_tracker().create_task(
             self._persist(),
             name="RealityMetrologyPersist",
         )
@@ -639,7 +640,7 @@ class RealityMetrologyService:
                     remaining = deadline - self._monotonic_clock()
                     if remaining <= 0.0:
                         raise MetrologyError("acquisition deadline expired")
-                    refresh_task = asyncio.create_task(
+                    refresh_task = get_task_tracker().create_task(
                         asyncio.to_thread(self._reality.refresh),
                         name=f"RealityMetrologyRefresh:{run_id}:{sample_index}",
                     )
@@ -749,7 +750,7 @@ class RealityMetrologyService:
             raise MetrologyError(
                 "enclosing acquisition requires at least two temporally separated samples"
             )
-        acquisition = asyncio.create_task(
+        acquisition = get_task_tracker().create_task(
             self.acquire(task),
             name=f"RealityMetrologyEnclosure:{task.task_id}",
         )

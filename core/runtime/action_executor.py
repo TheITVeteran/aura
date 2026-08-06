@@ -49,6 +49,7 @@ from core.runtime.skill_contract import (
 )
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.state.state_gateway import get_state_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ActionExecutor")
 
@@ -527,7 +528,7 @@ class ActionExecutor:
             async with governed_scope(decision):
                 pre_state = await capture_pre_action_state(domain, params)
                 if external_execution_offer is not None:
-                    begin_task = asyncio.create_task(
+                    begin_task = get_task_tracker().create_task(
                         asyncio.to_thread(
                             external_execute_coordinator.begin_dispatch,
                             external_execution_offer,
@@ -568,7 +569,7 @@ class ActionExecutor:
                         raise ValueError(
                             "external execution dispatch intent lacks an owner token"
                         )
-                    external_dispatch_heartbeat = asyncio.create_task(
+                    external_dispatch_heartbeat = get_task_tracker().create_task(
                         _renew_external_dispatch_lease(
                             coordinator=external_execute_coordinator,
                             offer=external_execution_offer,
@@ -1927,7 +1928,7 @@ async def _abandon_external_dispatch(
 ) -> None:
     if coordinator is None or offer is None or not dispatch_attempt_id:
         return
-    cleanup = asyncio.create_task(
+    cleanup = get_task_tracker().create_task(
         asyncio.to_thread(
             coordinator.abandon_dispatch,
             offer=offer,

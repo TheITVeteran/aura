@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import stat
@@ -306,10 +307,11 @@ async def test_compaction_fences_expired_owner_from_another_turn(
 
     # Make the next unrelated reservation run compaction. The expired running
     # row must be fenced by its lease, not left active until abandon_after_s.
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE chat_delivery_meta SET value='0' WHERE key='last_compaction_at'"
-        )
+    with contextlib.closing(sqlite3.connect(path)) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE chat_delivery_meta SET value='0' WHERE key='last_compaction_at'"
+            )
     unrelated = await short.reserve(
         _identity("unrelated-turn"),
         _request_hash("new request"),
@@ -366,11 +368,12 @@ async def test_tampered_terminal_receipt_fails_closed(
         http_status=200,
         response={"response": "sealed"},
     )
-    with sqlite3.connect(journal.db_path) as conn:
-        conn.execute(
-            "UPDATE chat_deliveries SET response_hash=? WHERE turn_id=?",
-            ("0" * 64, owner.record.turn_id),
-        )
+    with contextlib.closing(sqlite3.connect(journal.db_path)) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE chat_deliveries SET response_hash=? WHERE turn_id=?",
+                ("0" * 64, owner.record.turn_id),
+            )
 
     with pytest.raises(ChatDeliveryJournalCorruption):
         await journal.get(identity)
@@ -419,7 +422,7 @@ async def test_capacity_evicts_oldest_terminal_receipt_before_rejecting_new_work
 
     assert replacement.kind is AdmissionKind.EXECUTE
     assert await bounded.get(first_identity) is None
-    with sqlite3.connect(bounded.db_path) as conn:
+    with contextlib.closing(sqlite3.connect(bounded.db_path)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM chat_deliveries").fetchone()[0] == 10
 
 

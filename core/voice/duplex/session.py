@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 #: Exception class names that mean "the peer's transport is gone".
 #:
@@ -1435,7 +1436,10 @@ class DuplexVoiceSession:
 
     def _spawn(self, coro: Any) -> asyncio.Task[Any]:
         """Track background tasks so close() can cancel every one."""
-        task = asyncio.ensure_future(coro)
+        task = get_task_tracker().create_task(
+            coro,
+            name=f"VoiceSession:{self._id}:side-task",
+        )
         self._side_tasks.add(task)
         task.add_done_callback(self._task_done)
         return task

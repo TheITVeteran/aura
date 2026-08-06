@@ -23,6 +23,7 @@ from core.runtime.task_ownership import (
     drain_owned_awaitable,
     runtime_shutdown_blocks_new_work,
 )
+from core.utils.task_tracker import get_task_tracker
 
 # Bounds for synthesized world-model mutations. LLM-generated actuator output
 # is untrusted, so both the fan-out (how many entities/fields it can touch)
@@ -1498,7 +1499,7 @@ class ActuatorRegistry:
                 # the deadline must expire by *not waiting any longer*, never
                 # by cancelling: cancelling here would be absorbed by the drain
                 # and would wait for the thread anyway.
-                observer = asyncio.ensure_future(
+                observer = get_task_tracker().create_task(
                     drain_owned_awaitable(
                         asyncio.to_thread(
                             self._execute_actuator_body,

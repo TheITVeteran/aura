@@ -56,6 +56,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.utils.task_tracker import get_task_tracker
+
 logger = logging.getLogger("Aura.Lease")
 
 #: A lease is valid this long after its last renewal. A challenger may not
@@ -446,7 +448,10 @@ class LeaderElector:
         if self._task is not None and not self._task.done():
             return
         self._stopping.clear()
-        self._task = asyncio.create_task(self._run(), name=f"lease.{self.name}")
+        self._task = get_task_tracker().create_task(
+            self._run(),
+            name=f"lease.{self.name}",
+        )
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
