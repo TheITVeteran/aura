@@ -1,5 +1,5 @@
 {
-  "content_sha256": "c0e0a3df55885c550ba53526551975229c6ff4b527779ad95f3f7d5424860594",
+  "content_sha256": "74995dd68715281b7b0f7b3bf699f2cbf90a5d8f8ad5fa78204d89514ddab415",
   "entries": [
     {
       "acceptance_ids": [
@@ -162,6 +162,17 @@
       "acceptance_ids": [
         "A1"
       ],
+      "commit": "c5bfd0b375929215d043c8429bbd1f724cf079f5",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c5bfd0b375929215d043c8429bbd1f724cf079f5.json",
+      "requirement_id": "CTX2-SHUTDOWN-001",
+      "sha256": "78e6ce6b0f0577da8e1f23e40d071995bbd4fc978abcdf5f7c3891d2d90e7d34"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
       "commit": "ff62ddb6a79de0e692a50779706cd2b319a5b1fc",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
@@ -173,12 +184,34 @@
       "acceptance_ids": [
         "A1"
       ],
+      "commit": "c5bfd0b375929215d043c8429bbd1f724cf079f5",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c5bfd0b375929215d043c8429bbd1f724cf079f5.json",
+      "requirement_id": "CTX2-SHUTDOWN-002",
+      "sha256": "78e6ce6b0f0577da8e1f23e40d071995bbd4fc978abcdf5f7c3891d2d90e7d34"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
       "commit": "ff62ddb6a79de0e692a50779706cd2b319a5b1fc",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
       "ref": "artifacts/reqproof/evidence/shutdown-contract-audit/ff62ddb6a79de0e692a50779706cd2b319a5b1fc.json",
       "requirement_id": "CTX2-SHUTDOWN-003",
       "sha256": "95fb1b186bc5f508491ebaa27bff990187da9b9dfcc3c16d4ffafac5393fdd99"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "c5bfd0b375929215d043c8429bbd1f724cf079f5",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c5bfd0b375929215d043c8429bbd1f724cf079f5.json",
+      "requirement_id": "CTX2-SHUTDOWN-003",
+      "sha256": "78e6ce6b0f0577da8e1f23e40d071995bbd4fc978abcdf5f7c3891d2d90e7d34"
     },
     {
       "acceptance_ids": [
