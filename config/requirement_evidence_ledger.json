@@ -1,5 +1,5 @@
 {
-  "content_sha256": "34979c7b5a3f52cd752005f46d03ecf6b9ce6b7a47f4d6f0249cc68aa26e7371",
+  "content_sha256": "7e481372bf420171f8552598ad7495da5e9ad3a47e0ec4cc82c93052bd93e813",
   "entries": [
     {
       "acceptance_ids": [
@@ -421,6 +421,17 @@
       "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5.json",
       "requirement_id": "SKILLS-001",
       "sha256": "339f16b9011ee38fdb4600b9b76ca685865ae7ba0723c103cb233570e065eb06"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "9ec4ff4689b2e45719bafbafb659ee0c6fae4fbe",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/production-surface-ownership-audit/9ec4ff4689b2e45719bafbafb659ee0c6fae4fbe.json",
+      "requirement_id": "STORAGE-GATEWAY-001",
+      "sha256": "0520b017d836706383905c7a4dbab517b1c45dff572a20c72f2cf48337cd0cad"
     }
   ],
   "registry_content_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e",
