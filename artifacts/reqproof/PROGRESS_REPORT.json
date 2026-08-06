@@ -1,8 +1,8 @@
 {
   "checkpoint_inventory": {
-    "distinct_pushed_commits": 392,
-    "pushed_checkpoint_records": 410,
-    "records_in_tracker": 410,
+    "distinct_pushed_commits": 393,
+    "pushed_checkpoint_records": 411,
+    "records_in_tracker": 411,
     "records_on_shared_commits": 31,
     "unpushed_checkpoint_records": 0,
     "unpushed_record_ids": []
@@ -71,8 +71,8 @@
     "optimistic_weighted_points_per_checkpoint": 30,
     "remaining_checkpoint_records_high": 279,
     "remaining_checkpoint_records_low": 93,
-    "total_checkpoint_records_high": 689,
-    "total_checkpoint_records_low": 503
+    "total_checkpoint_records_high": 690,
+    "total_checkpoint_records_low": 504
   },
   "inputs": {
     "evidence_ledger_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "78d3c71483b8c598ae6a9dd26903d273611f6c4ec4cad5d64f19aa2518c25700",
+  "report_sha256": "fb0dafc93477ecec1f53746c6059f9ddc2108367a6865eac9fa93d2c90eb833f",
   "requirements": [
     {
       "acceptance_evidence_required": [
