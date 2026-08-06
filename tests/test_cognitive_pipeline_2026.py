@@ -302,8 +302,28 @@ async def test_moral_reasoning_accepts_self_model_identity_fallback():
     assert assessment["identity_context"]["beliefs"] == ["protect continuity"]
 
 
+@pytest.fixture
+def router_reachable(monkeypatch):
+    """Let a structured generation actually reach the router.
+
+    StructuredLLM defers before its first router call whenever the background
+    policy says the runtime is busy, and ``proof_run_active()`` reports True for
+    any of AURA_PROOF_RUN, AURA_AGI_MAX_TASKS or AURA_TESTING. AURA_TESTING is
+    set by most of this repo's tooling, so the two tests below — which assert
+    what StructuredLLM SENDS to the router — were unreachable in exactly the
+    environment they run in, and failed on a deferral rather than on anything
+    they were written to check.
+
+    A test that asserts a call happens has to establish the preconditions for
+    that call rather than inherit them from whoever exported what.
+    """
+
+    for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.asyncio
-async def test_structured_llm_keeps_ghost_example_for_json_prompts():
+async def test_structured_llm_keeps_ghost_example_for_json_prompts(router_reachable):
     router = RouterMetadataProbe(
         {
             "text": (
@@ -326,7 +346,7 @@ async def test_structured_llm_keeps_ghost_example_for_json_prompts():
 
 
 @pytest.mark.asyncio
-async def test_structured_llm_treats_background_deferral_as_non_failure():
+async def test_structured_llm_treats_background_deferral_as_non_failure(router_reachable):
     router = RouterMetadataProbe({"text": "", "error": "background_deferred:cortex_startup_quiet"})
     ServiceContainer.register_instance("llm_router", router)
 
