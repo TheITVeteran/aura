@@ -3841,6 +3841,11 @@ end tell
                     capture_output=True,
                     timeout=30,
                     source="computer_use",
+                    # Required, and omitting it made the gateway refuse every
+                    # run_command with subprocess_accelerator_capability_undeclared
+                    # — a shell command Aura could never actually run. These are
+                    # ls/find/tree and friends: they touch no accelerator.
+                    accelerator_capability="none",
                 )
                 output = (result.stdout or result.stderr or "").strip()[:3000]
                 ok = result.returncode == 0
@@ -3890,6 +3895,8 @@ end tell
                         capture_output=True,
                         timeout=10,
                         source="computer_use",
+                        # Same requirement; launching an app uses no accelerator.
+                        accelerator_capability="none",
                     )
                     if result.returncode == 0:
                         resolution = candidate

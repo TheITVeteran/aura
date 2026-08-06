@@ -48,14 +48,22 @@ def _probe_audio_presence(video_path: Path) -> tuple[bool, bool, str]:
     if sys.platform != "darwin":
         return False, False, "native_media_metadata_unavailable"
     try:
+        import objc
         from AVFoundation import AVMediaTypeAudio, AVURLAsset
         from Foundation import NSURL
 
-        url = NSURL.fileURLWithPath_(str(video_path))
-        asset = AVURLAsset.URLAssetWithURL_options_(url, None)
-        tracks = asset.tracksWithMediaType_(AVMediaTypeAudio)
-        return bool(len(tracks)), True, "macos_avfoundation"
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        # Inside an autorelease pool. AVURLAsset opens the file and holds it
+        # until the enclosing pool drains — which, without one here, is
+        # whenever the interpreter next happens to drain the outer pool. The
+        # handle does come back; it comes back at an unpredictable moment,
+        # inside unrelated work, which is how a probe that only reads metadata
+        # was reported as leaking the video file at another test's teardown.
+        with objc.autorelease_pool():
+            url = NSURL.fileURLWithPath_(str(video_path))
+            asset = AVURLAsset.URLAssetWithURL_options_(url, None)
+            present = bool(len(asset.tracksWithMediaType_(AVMediaTypeAudio)))
+        return present, True, "macos_avfoundation"
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
         return False, False, f"native_media_metadata_error_{type(exc).__name__}"[:160]
 
 

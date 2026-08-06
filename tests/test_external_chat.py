@@ -141,10 +141,18 @@ def test_terminal_shell_fails_closed_when_safety_controller_unavailable(monkeypa
         "AutonomousBehaviorController",
         BrokenController,
     )
+    # Patch the GATEWAY, not asyncio. Shell launches route through
+    # get_subprocess_gateway().spawn_shell_async — governed, with a declared
+    # accelerator capability — so patching asyncio.create_subprocess_shell
+    # replaced something the code no longer calls, and these tests were
+    # asserting against a fake process the runtime never touched.
+    async def _gateway_spawn(command, **kwargs):
+        return await fail_if_launched(command)
+
     monkeypatch.setattr(
-        terminal_chat.asyncio,
-        "create_subprocess_shell",
-        fail_if_launched,
+        terminal_chat,
+        "get_subprocess_gateway",
+        lambda: SimpleNamespace(spawn_shell_async=_gateway_spawn),
     )
 
     asyncio.run(terminal._run_shell_command("echo should-not-run"))
@@ -193,7 +201,19 @@ def test_terminal_shell_timeout_kills_and_reaps_process(monkeypatch):
         "AutonomousBehaviorController",
         ApprovingController,
     )
-    monkeypatch.setattr(terminal_chat.asyncio, "create_subprocess_shell", spawn)
+    # Patch the GATEWAY, not asyncio. Shell launches route through
+    # get_subprocess_gateway().spawn_shell_async — governed, with a declared
+    # accelerator capability — so patching asyncio.create_subprocess_shell
+    # replaced something the code no longer calls, and these tests were
+    # asserting against a fake process the runtime never touched.
+    async def _gateway_spawn(command, **kwargs):
+        return await spawn(command)
+
+    monkeypatch.setattr(
+        terminal_chat,
+        "get_subprocess_gateway",
+        lambda: SimpleNamespace(spawn_shell_async=_gateway_spawn),
+    )
 
     asyncio.run(terminal._run_shell_command("sleep 60"))
 
@@ -227,7 +247,19 @@ def test_terminal_shell_launch_error_is_reported(monkeypatch):
         "AutonomousBehaviorController",
         ApprovingController,
     )
-    monkeypatch.setattr(terminal_chat.asyncio, "create_subprocess_shell", spawn)
+    # Patch the GATEWAY, not asyncio. Shell launches route through
+    # get_subprocess_gateway().spawn_shell_async — governed, with a declared
+    # accelerator capability — so patching asyncio.create_subprocess_shell
+    # replaced something the code no longer calls, and these tests were
+    # asserting against a fake process the runtime never touched.
+    async def _gateway_spawn(command, **kwargs):
+        return await spawn(command)
+
+    monkeypatch.setattr(
+        terminal_chat,
+        "get_subprocess_gateway",
+        lambda: SimpleNamespace(spawn_shell_async=_gateway_spawn),
+    )
 
     asyncio.run(terminal._run_shell_command("echo hi"))
 

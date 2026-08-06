@@ -360,7 +360,11 @@ class PlayLocallyGovernanceTest(unittest.TestCase):
                 return 0
 
         class SpawnRecorder:
-            def spawn(self, argv, *, source=""):
+            def spawn(self, argv, *, source="", **kwargs):
+                # **kwargs so a NEW governance requirement on the real gateway
+                # (accelerator_capability, most recently) surfaces as the
+                # production behaviour it is, rather than as this double
+                # raising TypeError and looking like a runtime bug.
                 from core.governance_context import get_active_governance
 
                 seen["spawn_governed"] = get_active_governance() is not None

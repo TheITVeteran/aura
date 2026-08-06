@@ -699,6 +699,32 @@ async def test_named_click_refuses_when_the_target_is_not_observed(monkeypatch):
         "core.skills.computer_use.get_pyautogui", lambda: (TestPyAutoGUI(), None)
     )
 
+    # A granting permission guard. Without one registered the skill fails
+    # CLOSED at the permissions stage with status "unavailable" — correct
+    # behaviour, and it means this test never reached the resolution path it
+    # names. Registering the guard is what puts the test back on its subject.
+    from core.container import ServiceContainer
+
+    class _GrantingGuard:
+        async def check_permission(self, *_args, **_kwargs):
+            return {"granted": True, "status": "active", "guidance": ""}
+
+        async def check_permission_direct(self, *_args, **_kwargs):
+            return {"granted": True, "status": "active", "guidance": ""}
+
+        def get_guidance(self, *_args, **_kwargs):
+            return ""
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _GrantingGuard()
+            if name == "permission_guard"
+            else default
+        ),
+    )
+
     result = await skill.execute(
         {"action": "click", "target": "Publish", "x": 900, "y": 600},
         {},

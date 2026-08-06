@@ -1537,7 +1537,12 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                 request_is_background=False,
                 foreground_request=True,
                 owner_name="warmup:test",
-                warmup_timeout=1.0,
+                # Above _MIN_READINESS_PROBE_BUDGET_S. A warmup with less
+                # than that left deliberately does NOT open a readiness
+                # probe — it ends inside the budget it promised — so a 1.0s
+                # timeout never reached the path this test is about and
+                # failed on the budget refusal instead.
+                warmup_timeout=30.0,
             )
 
         self.assertEqual(client.get_lane_status()["state"], "ready")
@@ -1674,7 +1679,10 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                             request_is_background=False,
                             foreground_request=True,
                             owner_name="warmup:test",
-                            warmup_timeout=1.0,
+                            # See above: below _MIN_READINESS_PROBE_BUDGET_S
+                            # no probe opens at all, so the empty-probe
+                            # rejection this test names was unreachable.
+                            warmup_timeout=30.0,
                         )
 
         lane = client.get_lane_status()
