@@ -12,6 +12,9 @@ pyo3 = { version = "0.22", features = ["extension-module"] }
 numpy = "0.22"
 ndarray = "0.15"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+rustpython-parser = "0.4"
 # bumpalo is used for the slab allocator to eliminate GC pressure
 bumpalo = "3.16"
 
