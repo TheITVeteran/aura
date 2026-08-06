@@ -184,19 +184,6 @@ ALLOW_BLOCKING_SLEEP_IN_ASYNC = {
     "tools/chaos/injector.py",
 }
 
-#: Files whose pytest skip/xfail markers are self-describing rather than debt.
-#: This used to carry thirty-nine more entries, exempting whole files from the
-#: stub/placeholder rule because they mentioned the words in a docstring. A
-#: file-name exemption cannot tell a docstring from a defect, and this one was
-#: hiding three: a startup check that passed itself when unimplemented, a
-#: "[DUMMY VOICE]" engine that reported success, and a dead ``mock_hear``
-#: seam. The rule now judges the line, so the list has nothing left to do.
-SELF_DESCRIPTIVE_PATTERN_FILES = {
-    "tools/aura_enterprise_gate.py",
-    # macOS-only detached-execution suite: sandbox-exec + process groups do
-    # not exist elsewhere, so the platform skipif is honest, not debt.
-    "tests/test_run_detached_step.py",
-}
 
 _TMP_PATH_PREFIX = "/" + "tmp" + "/"
 _USERS_PATH_PREFIX = "/" + "Users" + "/"
@@ -225,7 +212,12 @@ TEXT_PATTERNS = {
     "potential_secret": re.compile(
         r"(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})"
     ),
-    "pytest_skip_xfail": re.compile(r"pytest\.mark\.skip|pytest\.skip|xfail", re.IGNORECASE),
+    # ``pytest.mark.skip`` (no "if") is unconditional. ``skipif`` is excluded
+    # by the word boundary, and a bare ``pytest.skip()`` is filtered below by
+    # whether anything guards it — a precondition is not parked debt.
+    "pytest_skip_xfail": re.compile(
+        r"pytest\.mark\.skip\b|pytest\.skip\b|\bxfail\b", re.IGNORECASE
+    ),
 }
 
 #: Credential-shaped strings that cannot be credentials.
@@ -751,14 +743,21 @@ _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctio
 #: ends up with silent stubs and a clean report — the exact failure this gate
 #: exists to prevent. The defect is code that BEHAVES as though it were
 #: complete, and that is what the rule now looks for.
+#: pytest_skip_xfail is here too: a comment saying "pytest.skip" skips
+#: nothing. It was the last thing keeping the file-name allowlist alive.
 _PROSE_SENSITIVE_KINDS = frozenset(
-    {"hardcoded_local_path", "potential_secret", "placeholder_stub_mock"}
+    {
+        "hardcoded_local_path",
+        "potential_secret",
+        "placeholder_stub_mock",
+        "pytest_skip_xfail",
+    }
 )
 
 
 @dataclass
-class LocalPathContext:
-    """What a file's syntax says about the path literals inside it.
+class FileTextContext:
+    """What a file's syntax says about the text the line rules matched.
 
     Built from a single AST walk, because the gate scans several thousand
     files and each extra pass over the tree costs real seconds on the clock
@@ -777,6 +776,11 @@ class LocalPathContext:
     #: Lines where every such string is used as a NAME, a KEY or a PATTERN —
     #: a detector's vocabulary rather than a claim about this code.
     marker_vocabulary_lines: set[int] = field(default_factory=set)
+    #: Lines calling ``pytest.skip()`` with nothing guarding the call.
+    unconditional_skip_lines: set[int] = field(default_factory=set)
+    #: Lines where a skip marker sits INSIDE a string — sample source in a
+    #: test for the rule itself, or the rule's own pattern. Not a skip.
+    quoted_skip_lines: set[int] = field(default_factory=set)
 
 
 def _call_name(node: ast.Call) -> str:
@@ -860,6 +864,73 @@ _REGEX_CALL_NAMES = frozenset(
 _NAME_LOOKUP_CALL_NAMES = frozenset({"getattr", "hasattr", "setattr", "get", "pop"})
 
 
+_GUARDING_STATEMENTS = (ast.If, ast.Try, ast.While, ast.For, ast.AsyncFor, ast.Match)
+
+
+def _quoted_skip_lines(tree: ast.AST) -> set[int]:
+    """Lines where a skip marker is inside a string constant.
+
+    A rule that reports its own pattern, and reports the fixtures of the test
+    that proves the pattern works, is how a file-name allowlist gets born.
+    Sample source quoted in a test is data.
+    """
+    pattern = TEXT_PATTERNS["pytest_skip_xfail"]
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        text = _marker_text(node)
+        if text and pattern.search(text):
+            lines.add(int(getattr(node, "lineno", 0) or 0))
+            end = int(getattr(node, "end_lineno", 0) or 0)
+            lines.update(range(int(getattr(node, "lineno", 0) or 0), end + 1))
+    return lines
+
+
+def _unconditional_skip_lines(tree: ast.AST) -> set[int]:
+    """Lines where ``pytest.skip()`` runs with nothing deciding whether to.
+
+    A skip guarded by a condition is how pytest spells a precondition, and
+    the suite is full of honest ones: no fork on this platform, no node
+    installed, vm_stat absent, a symlink that would not create. Counting
+    those made the rule grow every time the suite learned to run somewhere
+    new, which is the opposite of a debt signal.
+
+    An UNGUARDED skip is different. It fires every run, so the assertions
+    below it never execute anywhere — a parked failure wearing a precondition
+    as a disguise. Same for ``pytest.mark.skip`` (as opposed to ``skipif``)
+    and for ``xfail``, both of which the line rule still catches on sight.
+    """
+    lines: set[int] = set()
+
+    def is_skip_call(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+            return False
+        func = node.value.func
+        return (
+            isinstance(func, ast.Attribute)
+            and func.attr == "skip"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "pytest"
+        )
+
+    def walk(body: list[ast.stmt], guarded: bool) -> None:
+        for statement in body:
+            if is_skip_call(statement) and not guarded:
+                lines.add(int(getattr(statement, "lineno", 0) or 0))
+                continue
+            inner_guarded = guarded or isinstance(statement, _GUARDING_STATEMENTS)
+            for name in ("body", "orelse", "finalbody", "handlers", "cases"):
+                child = getattr(statement, name, None)
+                if isinstance(child, list) and child and isinstance(child[0], ast.AST):
+                    if isinstance(child[0], ast.stmt):
+                        walk(child, inner_guarded)
+                    else:
+                        for sub in child:
+                            walk(getattr(sub, "body", []), inner_guarded)
+
+    walk(getattr(tree, "body", []), guarded=False)
+    return lines
+
+
 def _marker_text(node: ast.AST) -> str:
     """The text of a str or bytes constant, or "" for anything else.
 
@@ -889,6 +960,12 @@ def _vocabulary_string_lines(tree: ast.AST) -> set[int]:
     findings were sitting behind this repo's, a "[DUMMY VOICE]" fallback and
     a "Mock hear" path, both in shipping code.
 
+    A string that carries a ``{slot}`` of its own alongside the word is
+    talking about format-template syntax — "command_template must contain
+    exactly one {value} placeholder" is a name for a brace pair, not an
+    admission. The brace has to be in the SAME literal, so a message that
+    merely happens to be an f-string does not qualify.
+
     A marker used as a VALUE — returned, assigned, or handed to a message —
     is not covered here, because that is the module speaking about itself.
     """
@@ -899,7 +976,13 @@ def _vocabulary_string_lines(tree: ast.AST) -> set[int]:
         if marker.search(_marker_text(node)):
             lines.add(int(getattr(node, "lineno", 0) or 0))
 
+    template_slot = re.compile(r"\{[A-Za-z_][A-Za-z_0-9]*\}")
+
     for node in ast.walk(tree):
+        if isinstance(node, ast.Constant):
+            text = _marker_text(node)
+            if text and marker.search(text) and template_slot.search(text):
+                lines.add(int(getattr(node, "lineno", 0) or 0))
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             for element in node.elts:
                 note(element)
@@ -926,7 +1009,7 @@ def _marker_string_lines(tree: ast.AST) -> set[int]:
     return lines
 
 
-def local_path_context(tree: ast.AST | None) -> LocalPathContext:
+def file_text_context(tree: ast.AST | None) -> FileTextContext:
     """Collect, in one walk, everything the path rule needs to know.
 
     Two questions, one traversal:
@@ -943,7 +1026,7 @@ def local_path_context(tree: ast.AST | None) -> LocalPathContext:
       it proves gets removed, and both the fixture and its assertion match
       the path rule. Deleting either destroys the proof.
     """
-    context = LocalPathContext()
+    context = FileTextContext()
     if tree is None:
         return context
     context.disk_lines = set()
@@ -980,10 +1063,12 @@ def local_path_context(tree: ast.AST | None) -> LocalPathContext:
     )
     context.marker_string_lines = _marker_string_lines(tree)
     context.marker_vocabulary_lines = _vocabulary_string_lines(tree)
+    context.unconditional_skip_lines = _unconditional_skip_lines(tree)
+    context.quoted_skip_lines = _quoted_skip_lines(tree)
     return context
 
 
-def _local_path_is_inert(matched: str, line_no: int, context: LocalPathContext) -> bool:
+def _local_path_is_inert(matched: str, line_no: int, context: FileTextContext) -> bool:
     """Is this path literal data, rather than somewhere the program goes?
 
     Two different hazards wear one regex here, and they do not have the same
@@ -1004,7 +1089,7 @@ def _local_path_is_inert(matched: str, line_no: int, context: LocalPathContext) 
     return False
 
 
-def _marker_is_not_a_claim(line_no: int, rel: str, context: LocalPathContext) -> bool:
+def _marker_is_not_a_claim(line_no: int, rel: str, context: FileTextContext) -> bool:
     """Does this stub/placeholder marker say this code is unfinished?
 
     Three ways it does not, all judged by what the line IS rather than by
@@ -1032,6 +1117,25 @@ def _marker_is_not_a_claim(line_no: int, rel: str, context: LocalPathContext) ->
     return line_no in context.marker_vocabulary_lines
 
 
+def _skip_is_not_parked_debt(line: str, line_no: int, context: FileTextContext) -> bool:
+    """Is this skip a precondition rather than a test nobody runs?
+
+    Thirty-one findings, every one a conditional skip and not one xfail: no
+    fork on this platform, no node installed, vm_stat absent, a symlink that
+    would not create. The count grew each time the suite learned to run
+    somewhere new, which is the opposite of a debt signal.
+
+    What IS debt is a skip nothing decides — it fires every run, so the
+    assertions below it never execute anywhere. That, ``pytest.mark.skip``
+    (as against ``skipif``), and any xfail still report.
+    """
+    if line_no in context.unconditional_skip_lines:
+        return False
+    if line_no in context.quoted_skip_lines:
+        return True
+    return "pytest.skip" in line and "pytest.mark.skip" not in line
+
+
 def scan_file(path: Path, root: Path, report: GateReport) -> None:
     rel = rel_path(path, root)
     try:
@@ -1055,16 +1159,16 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
     # apart because the prose sweep is cheap and often needed, while the path
     # analysis is a full expression walk that almost no file asks for.
     cached_prose: list[set[int]] = []
-    cached_context: list[LocalPathContext] = []
+    cached_context: list[FileTextContext] = []
 
     def prose_lines() -> set[int]:
         if not cached_prose:
             cached_prose.append(docstring_line_numbers(tree))
         return cached_prose[0]
 
-    def context() -> LocalPathContext:
+    def context() -> FileTextContext:
         if not cached_context:
-            cached_context.append(local_path_context(tree))
+            cached_context.append(file_text_context(tree))
         return cached_context[0]
 
     for line_no, line in enumerate(source.splitlines(), start=1):
@@ -1128,7 +1232,9 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
                 # DOM/AX "placeholder" is a UI attribute (input hint text),
                 # not unfinished code.
                 continue
-            if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind == "pytest_skip_xfail":
+            if kind == "pytest_skip_xfail" and _skip_is_not_parked_debt(
+                line, line_no, context()
+            ):
                 continue
             if kind == "placeholder_stub_mock" and _marker_is_not_a_claim(
                 line_no, rel, context()

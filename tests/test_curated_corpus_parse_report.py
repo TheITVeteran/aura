@@ -89,8 +89,9 @@ class TestTheRealCorpusIsHealthy:
         from pathlib import Path
 
         real = Path(__file__).resolve().parents[1] / "aura/knowledge/bryan-curated-media.md"
-        if not real.exists():
-            pytest.skip("curated corpus not present")
+        # Tracked in git. Skipping on absence turned "the corpus was deleted"
+        # into a green run.
+        assert real.exists(), f"{real} is tracked in git and must exist"
         items, report = load_corpus_with_report(real)
         assert report.unmatched == 0, report.samples
         assert report.complete is True

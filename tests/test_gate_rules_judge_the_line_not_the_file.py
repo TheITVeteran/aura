@@ -1,18 +1,23 @@
-"""One regex, two hazards, and only one of them was real.
+"""Four gate rules that were counting sentences instead of defects.
 
-The local-path rule reported 37 findings. Every one was a test file, and 27
-of them were strings nothing ever opened: a jail-escape path a policy has to
-reject, a fake socket name, a monkeypatched stub's return value. Nine more
-were redaction fixtures — the secret a scrubber is proven to remove, plus the
-assertion proving it — where deleting either line destroys the proof.
+The pattern was the same in each: a text rule matched a WORD, the word turned
+up constantly in prose that was doing its job, and the rule was quieted with a
+file-name allowlist. A file-name exemption cannot tell a docstring from a
+defect, and this repo's did not — it was covering a startup check that marked
+itself passed when unimplemented, a "[DUMMY VOICE]" engine that reported
+success, and a dead ``mock_hear`` seam.
 
-Two of the 37 were genuine. They were indistinguishable from the noise, which
-is the whole failure: a rule that fires 35 times for nothing is a rule whose
-output stops being read, and the two defects ride out on the ignored list.
+  * hardcoded_local_path: 37 findings, 35 of them strings nothing opened, and
+    the two genuine ones invisible inside the noise.
+  * placeholder_stub_mock: 79 findings, its three loudest being an enum
+    member documented "Not implemented", a docstring saying in capitals that
+    a discovery step is unwritten, and a residual_risk line — the honesty
+    mechanism working, punished.
+  * pytest_skip_xfail: 31 findings, every one a conditional skip and not one
+    xfail, so the count grew each time the suite learned to run somewhere new.
+  * potential_secret: fake keys written so the redaction code could be tested.
 
-So the rule now asks what the hazard actually is. A path naming one human's
-account is machine-specific wherever it appears. A shared-temp path is a
-defect when the process WRITES to it, and inert otherwise.
+Each rule now judges what the line IS.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.aura_enterprise_gate import (  # noqa: E402
     docstring_line_numbers,
-    local_path_context,
+    file_text_context,
 )
 
 # Built here rather than written as literals: a test proving the rule still
@@ -43,7 +48,7 @@ def _tree(source: str):
 
 
 def _context(source: str):
-    return local_path_context(_tree(source))
+    return file_text_context(_tree(source))
 
 
 def _scan(source: str) -> set[int]:
@@ -53,7 +58,7 @@ def _scan(source: str) -> set[int]:
     pattern = TEXT_PATTERNS["hardcoded_local_path"]
     tree = _tree(source)
     prose = docstring_line_numbers(tree)
-    context = local_path_context(tree)
+    context = file_text_context(tree)
 
     reported: set[int] = set()
     for line_no, line in enumerate(source.splitlines(), start=1):
@@ -193,7 +198,7 @@ def _scan_markers(source: str, rel: str = "core/example.py") -> set[int]:
     pattern = TEXT_PATTERNS["placeholder_stub_mock"]
     tree = _tree(source)
     prose = docstring_line_numbers(tree)
-    context = local_path_context(tree)
+    context = file_text_context(tree)
 
     reported: set[int] = set()
     for line_no, line in enumerate(source.splitlines(), start=1):
@@ -274,3 +279,140 @@ class TestNotImplementedIsAProtocolNotAConfession:
         from tools.aura_enterprise_gate import TEXT_PATTERNS
 
         assert TEXT_PATTERNS["placeholder_stub_mock"].search('msg = "not implemented"')
+
+
+def _scan_skips(source: str) -> set[int]:
+    """Lines the skip/xfail rule would report."""
+    from tools.aura_enterprise_gate import TEXT_PATTERNS, file_text_context
+
+    pattern = TEXT_PATTERNS["pytest_skip_xfail"]
+    context = file_text_context(_tree(source))
+
+    reported: set[int] = set()
+    for line_no, line in enumerate(source.splitlines(), start=1):
+        if pattern.search(line) is None:
+            continue
+        if (
+            "pytest.skip" in line
+            and "pytest.mark.skip" not in line
+            and line_no not in context.unconditional_skip_lines
+        ):
+            continue
+        reported.add(line_no)
+    return reported
+
+
+class TestAPreconditionIsNotParkedDebt:
+    """31 findings, every one a conditional skip, and not one xfail.
+
+    No fork on this platform, no node installed, vm_stat absent, a symlink
+    that would not create: the count grew every time the suite learned to run
+    somewhere new, which is the opposite of a debt signal.
+    """
+
+    def test_a_skip_behind_a_condition_is_not_reported(self) -> None:
+        source = (
+            "import pytest\n"
+            "def test_x():\n"
+            "    if not shutil.which('node'):\n"
+            "        pytest.skip('node is not installed')\n"
+            "    assert run()\n"
+        )
+        assert _scan_skips(source) == set()
+
+    def test_a_skip_in_an_except_handler_is_not_reported(self) -> None:
+        """The capability probe that answers by raising."""
+        source = (
+            "import pytest\n"
+            "def test_x():\n"
+            "    try:\n"
+            "        link.symlink_to('/etc/passwd')\n"
+            "    except OSError:\n"
+            "        pytest.skip('symlinks unavailable')\n"
+        )
+        assert _scan_skips(source) == set()
+
+    def test_skipif_is_the_conditional_form_and_is_not_reported(self) -> None:
+        """``pytest.mark.skip`` matched ``skipif`` by prefix before this."""
+        source = (
+            "import pytest\n"
+            "@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS only')\n"
+            "def test_x():\n"
+            "    assert True\n"
+        )
+        assert _scan_skips(source) == set()
+
+
+class TestAnUnguardedSkipIsStillReported:
+    def test_a_bare_skip_in_a_test_body_is_reported(self) -> None:
+        """Fires every run, so the assertions below never execute anywhere."""
+        source = "import pytest\ndef test_x():\n    pytest.skip('later')\n    assert False\n"
+        assert _scan_skips(source) == {3}
+
+    def test_a_module_level_skip_is_reported(self) -> None:
+        source = "import pytest\npytest.skip('whole file parked')\n"
+        assert _scan_skips(source) == {2}
+
+    def test_a_bare_skip_inside_a_class_is_reported(self) -> None:
+        source = (
+            "import pytest\n"
+            "class TestX:\n"
+            "    def test_y(self):\n"
+            "        pytest.skip('later')\n"
+        )
+        assert _scan_skips(source) == {4}
+
+    def test_the_unconditional_marker_is_reported(self) -> None:
+        source = "import pytest\n@pytest.mark.skip(reason='later')\ndef test_x():\n    pass\n"
+        assert _scan_skips(source) == {2}
+
+    def test_xfail_is_always_reported(self) -> None:
+        """A parked failure, conditional or not. The repo has none."""
+        source = "import pytest\n@pytest.mark.xfail\ndef test_x():\n    assert False\n"
+        assert _scan_skips(source) == {2}
+
+
+class TestTheFileNameAllowlistIsGone:
+    """It exempted forty-one files and hid three real defects doing it.
+
+    Every rule it covered now judges the line, so there is nothing left for
+    it to do. This asserts it stays gone: reaching for a file-name exemption
+    is the move that made a scanner unreadable in the first place.
+    """
+
+    def test_the_gate_has_no_file_name_exemption_list(self) -> None:
+        from tools import aura_enterprise_gate
+
+        assert not hasattr(aura_enterprise_gate, "SELF_DESCRIPTIVE_PATTERN_FILES")
+
+    def test_the_gate_does_not_report_its_own_pattern_strings(self) -> None:
+        """It used to need an exemption for exactly this."""
+        from pathlib import Path
+
+        from tools.aura_enterprise_gate import GateReport, rel_path, scan_file
+
+        root = Path(__file__).resolve().parents[1]
+        gate = root / "tools" / "aura_enterprise_gate.py"
+        report = GateReport(root=str(root), generated_at_unix=0.0)
+        scan_file(gate, root, report)
+
+        noisy = [
+            f
+            for f in report.findings
+            if f.kind in {"pytest_skip_xfail", "placeholder_stub_mock", "potential_secret"}
+        ]
+        assert noisy == [], [(f.kind, f.line, f.detail) for f in noisy]
+        assert rel_path(gate, root) == "tools/aura_enterprise_gate.py"
+
+    def test_this_test_file_is_not_reported_either(self) -> None:
+        """It is full of sample source containing every marker there is."""
+        from pathlib import Path
+
+        from tools.aura_enterprise_gate import GateReport, scan_file
+
+        root = Path(__file__).resolve().parents[1]
+        report = GateReport(root=str(root), generated_at_unix=0.0)
+        scan_file(Path(__file__).resolve(), root, report)
+
+        noisy = [f for f in report.findings if f.kind != "syntax_error"]
+        assert noisy == [], [(f.kind, f.line, f.detail) for f in noisy]

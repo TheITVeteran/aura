@@ -113,8 +113,11 @@ class TestNoRawBypass:
         seeing them, it has stopped working and the test above is decorative.
         """
         adapter = REPO_ROOT / "core" / "adapters" / "nethack_adapter.py"
-        if not adapter.exists():
-            pytest.skip("nethack adapter not present in this checkout")
+        # Tracked in git, so it is present in every checkout. This used to
+        # skip when it was missing, which meant the one test that proves the
+        # scanner still works would vanish exactly when the adapter it scans
+        # had been moved or deleted — the moment the proof matters most.
+        assert adapter.exists(), f"{adapter} is tracked in git and must exist"
         found = self._keystroke_sinks_in(adapter)
         assert found, "scanner found no sinks in a known pty adapter — it is broken"
 

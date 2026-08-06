@@ -48,8 +48,11 @@ ARTIFACT = (
 
 @pytest.fixture(scope="module")
 def report() -> dict:
-    if not ARTIFACT.exists():  # pragma: no cover - artifact removed
-        pytest.skip(f"{ARTIFACT.name} not present")
+    # Tracked in git: the recorded result of the live run is the subject of
+    # every assertion in this file. Skipping when it is missing meant a
+    # deleted artifact read as "nothing to check" instead of "the evidence
+    # for the live steering alpha is gone".
+    assert ARTIFACT.exists(), f"{ARTIFACT} is tracked in git and must exist"
     return json.loads(ARTIFACT.read_text(encoding="utf-8"))
 
 
