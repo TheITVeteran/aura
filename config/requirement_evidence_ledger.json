@@ -1,5 +1,5 @@
 {
-  "content_sha256": "4b903b7792ede26dceceb44179bf43a5a78db3cc3a22717e890ba41ac3571da6",
+  "content_sha256": "9752ba52e94adf96e85b6f9866015839a3dc485038412955655d9dfe633f743e",
   "entries": [
     {
       "acceptance_ids": [
@@ -162,12 +162,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "a81678edc7a2a0c8515d46f6542b69ec89aa96f3",
+      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/a81678edc7a2a0c8515d46f6542b69ec89aa96f3.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
       "requirement_id": "CTX2-SHUTDOWN-001",
-      "sha256": "3a5e5fe45b245f91122a1772d44866f8b043c083532ec5787445f95c2cf6bb39"
+      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
     },
     {
       "acceptance_ids": [
@@ -184,12 +184,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "a81678edc7a2a0c8515d46f6542b69ec89aa96f3",
+      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/a81678edc7a2a0c8515d46f6542b69ec89aa96f3.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
       "requirement_id": "CTX2-SHUTDOWN-002",
-      "sha256": "3a5e5fe45b245f91122a1772d44866f8b043c083532ec5787445f95c2cf6bb39"
+      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
     },
     {
       "acceptance_ids": [
@@ -206,12 +206,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "a81678edc7a2a0c8515d46f6542b69ec89aa96f3",
+      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/a81678edc7a2a0c8515d46f6542b69ec89aa96f3.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
       "requirement_id": "CTX2-SHUTDOWN-003",
-      "sha256": "3a5e5fe45b245f91122a1772d44866f8b043c083532ec5787445f95c2cf6bb39"
+      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
     },
     {
       "acceptance_ids": [
