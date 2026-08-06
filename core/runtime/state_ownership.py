@@ -37,14 +37,15 @@ from __future__ import annotations
 import enum
 import os
 import platform
-import threading
+import sys
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
-import sys
-from core.runtime.lockdep import checked_lock
+from typing import Any
+
 from core.runtime.flags import env_str
+from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "RuntimeProfile",
@@ -52,6 +53,7 @@ __all__ = [
     "runtime_instance_id",
     "runtime_profile",
     "state_root",
+    "state_root_override",
     "live_state_root",
     "is_live_state_path",
     "assert_state_path_allowed",
@@ -61,7 +63,7 @@ __all__ = [
 ]
 
 
-class StateOwnershipViolation(RuntimeError):
+class StateOwnershipViolation(RuntimeError):  # noqa: N818
     """A runtime reached for state it does not own.
 
     Deliberately not a warning. The failures this prevents were silent:
@@ -70,7 +72,7 @@ class StateOwnershipViolation(RuntimeError):
     """
 
 
-class RuntimeProfile(str, enum.Enum):
+class RuntimeProfile(enum.StrEnum):
     """Which kind of runtime this process is. Derived, never self-declared."""
 
     LIVE = "live"
@@ -214,6 +216,16 @@ def runtime_instance_id() -> str:
         return _INSTANCE_ID
 
 
+def state_root_override() -> str:
+    """Return the one canonical declaration of the explicit state root."""
+
+    return env_str(
+        "AURA_STATE_ROOT",
+        description="state root",
+        owner="core.runtime.state_ownership",
+    )
+
+
 def state_root() -> Path:
     """THE state root. The only way to find where state lives.
 
@@ -238,7 +250,7 @@ def state_root() -> Path:
     """
     global _ROOT, _ROOT_KEY
     with _LOCK:
-        injected = env_str("AURA_STATE_ROOT", description="state root", owner="core.runtime.state_ownership") or ""
+        injected = state_root_override()
         key = (injected, str(_home()))
         if _ROOT is not None and _ROOT_KEY == key:
             return _ROOT

@@ -83,6 +83,26 @@ def _manager(
     )
 
 
+def test_gateway_uses_canonical_state_root_without_redeclaring_flag(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from core.runtime.flags import declared_flags
+    from core.runtime.state_ownership import state_root
+    from core.state.state_gateway import reset_state_gateway
+
+    root = tmp_path / "authority-state"
+    monkeypatch.setenv("AURA_STATE_ROOT", str(root))
+    state_root()
+    reset_state_gateway()
+    manager = StandingAuthorityManager()
+
+    gateway = manager._gateway()
+
+    assert gateway.root == root.resolve()
+    assert declared_flags()["AURA_STATE_ROOT"].owner == "core.runtime.state_ownership"
+
+
 @pytest.mark.parametrize(
     ("tool_name", "arguments", "scope", "risk"),
     [

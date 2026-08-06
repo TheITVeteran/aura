@@ -36,7 +36,7 @@ from core.executive.execution_policy import (
 )
 from core.runtime.errors import record_degradation
 from core.runtime.receipts import AutonomyReceipt, get_receipt_store
-from core.runtime.state_ownership import state_root
+from core.runtime.state_ownership import state_root, state_root_override
 
 logger = logging.getLogger("Aura.StandingAuthority")
 
@@ -558,29 +558,19 @@ class StandingAuthorityManager:
 
     def _gateway(self) -> Any:
         if self._state_gateway is None:
-            from core.runtime.flags import FlagKind, declare
+            from core.runtime.flags import env_str
             from core.state.state_gateway import get_state_gateway
 
-            configured_root = str(
-                declare(
-                    "AURA_STATE_ROOT",
-                    kind=FlagKind.STRING,
-                    default="",
-                    description="Override root for durable state stores",
-                    owner="core.executive.standing_authority",
-                ).value()
-            ).strip()
-            test_root = str(
-                declare(
-                    "AURA_TEST_RUNTIME_ROOT",
-                    kind=FlagKind.STRING,
-                    default="",
-                    description="Hermetic test runtime root (set by the suite)",
-                    owner="core.executive.standing_authority",
-                ).value()
-            ).strip()
-            root = Path(configured_root) if configured_root else (
-                Path(test_root) / "state" if test_root else None
+            configured_root = state_root_override()
+            test_root = env_str(
+                "AURA_TEST_RUNTIME_ROOT",
+                description="Hermetic test runtime root (set by the suite)",
+                owner="core.executive.standing_authority",
+            )
+            root = (
+                Path(configured_root)
+                if configured_root
+                else (Path(test_root) / "state" if test_root else None)
             )
             self._state_gateway = get_state_gateway(root=root)
         return self._state_gateway
