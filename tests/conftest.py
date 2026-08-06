@@ -324,6 +324,15 @@ _TEST_SCOPED_SERVICE_KEYS = frozenset(
         "constitutional_core",
         "executive_core",
         "standing_authority",
+        # Registered lazily by the conversation and initiative lanes, so the
+        # first test through one is blamed for adding them — and the first test
+        # to evict welfare_model is blamed for removing it.
+        "personality_engine",
+        "unified_self",
+        "welfare_model",
+        "ambient_life_director",
+        "decision_preference_learner",
+        "subjective_choice_engine",
     }
 )
 _TEST_SCOPED_RESET_FUNCTIONS = (
@@ -1521,3 +1530,25 @@ def not_a_proof_run(monkeypatch):
 
     for name in proof_active_env_names():
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def restores_environ():
+    """Put os.environ back exactly as it was.
+
+    monkeypatch.setenv only restores what the TEST set. When the code under
+    test sets variables of its own — _activate_proof_runtime_policy exports four
+    AURA_ENABLE_* flags, APIAdapter mints an AURA_API_TOKEN — they survive the
+    test and every later test inherits them. Popping them by name is what the
+    call sites tried, and it goes stale the moment the function under test
+    exports one more.
+    """
+
+    import os
+
+    snapshot = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(snapshot)

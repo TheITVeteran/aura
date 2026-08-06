@@ -1049,6 +1049,7 @@ def test_memory_provider_registers_persistent_state_audit_log():
 
 
 def test_sqlite_persistent_state_logs_execution_without_sqlalchemy(tmp_path: Path):
+    import contextlib
     import sqlite3
 
     from core.db.sqlite_persistent_state import SQLitePersistentState
@@ -1064,7 +1065,10 @@ def test_sqlite_persistent_state_logs_execution_without_sqlalchemy(tmp_path: Pat
         result={"ok": True, "stdout": "1\n"},
     )
 
-    with sqlite3.connect(db_path) as conn:
+    # contextlib.closing, not a bare `with sqlite3.connect(...)`: the latter
+    # wraps a transaction and leaves the connection open, which is the same
+    # leak this test was written to exercise in the class under test.
+    with contextlib.closing(sqlite3.connect(db_path)) as conn:
         row = conn.execute(
             "SELECT skill_name, status, result FROM skill_execution_logs"
         ).fetchone()
@@ -1126,7 +1130,7 @@ def test_run_code_skill_keeps_unexpected_execution_failure_failed(monkeypatch):
     assert "SyntaxError" in result["error"]
 
 
-def test_api_adapter_container_shutdown_closes_http_session():
+def test_api_adapter_container_shutdown_closes_http_session(restores_environ):
     from core.adapters.api_adapter import APIAdapter
 
     class FakeSession:
@@ -1960,20 +1964,19 @@ def test_mlx_client_refuses_lower_lane_during_primary_proof(monkeypatch):
         mlx_client.get_mlx_client("Qwen2.5-7B-Instruct-4bit", origin="unit_test")
 
 
-def test_canonical_proof_boot_activates_proof_runtime_policy(monkeypatch):
+def test_canonical_proof_boot_activates_proof_runtime_policy(restores_environ, monkeypatch):
     import aura_main
 
     _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_PROOF_MODEL_TIER", raising=False)
 
-    try:
-        aura_main._activate_proof_runtime_policy("proof", "Proof-External")
+    # _activate_proof_runtime_policy exports four AURA_ENABLE_* flags besides
+    # the two asserted here, and popping by name missed every one of them.
+    # restores_environ puts the whole environment back.
+    aura_main._activate_proof_runtime_policy("proof", "Proof-External")
 
-        assert os.environ["AURA_PROOF_RUN"] == "1"
-        assert os.environ["AURA_PROOF_MODEL_TIER"] == "primary"
-    finally:
-        os.environ.pop("AURA_PROOF_RUN", None)
-        os.environ.pop("AURA_PROOF_MODEL_TIER", None)
+    assert os.environ["AURA_PROOF_RUN"] == "1"
+    assert os.environ["AURA_PROOF_MODEL_TIER"] == "primary"
 
 
 def test_primary_proof_boot_skips_non_primary_llm_tiers_without_degradation():
@@ -2521,9 +2524,14 @@ def test_cognitive_ledger_quarantines_corrupt_sqlite_storage(tmp_path):
     db_path.write_bytes(b"not a sqlite database")
 
     ledger = CognitiveLedger(str(db_path))
-
-    assert ledger._conn is not None
-    assert list((tmp_path / "quarantine").glob("cognitive_ledger.db.corrupt.*"))
+    # The ledger holds its connection until closed, and under journal_mode=WAL
+    # that is three handles. Left open, the hermetic guard reports them against
+    # whichever test runs next.
+    try:
+        assert ledger._conn is not None
+        assert list((tmp_path / "quarantine").glob("cognitive_ledger.db.corrupt.*"))
+    finally:
+        ledger.close()
 
 
 def test_resource_governor_handles_ledger_lock_and_corruption_without_degradation():

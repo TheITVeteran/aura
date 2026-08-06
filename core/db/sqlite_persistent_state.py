@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -20,11 +21,26 @@ class SQLitePersistentState:
         self._lock = threading.RLock()
         self._init_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self):
+        """Open a connection, commit or roll back, and CLOSE it.
+
+        ``with sqlite3.connect(...) as conn`` does not close the connection —
+        it only wraps a transaction — so every call here leaked a handle, and
+        with journal_mode=WAL it leaked the -wal and -shm files with it. The
+        symptom was a hermetic-leak failure reported against whichever test ran
+        next, which is why it looked like a test-ordering problem rather than a
+        connection this class never closed.
+        """
+
         conn = sqlite3.connect(self.db_path, timeout=15.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=15000")
-        return conn
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=15000")
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:

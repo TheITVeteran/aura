@@ -65,17 +65,41 @@ class CognitiveLoop:
         self.cycle_count = 0
         self.last_cycle_time = time.monotonic()
         self.stall_threshold = 30.0  # Seconds
-        from concurrent.futures import ProcessPoolExecutor
-
-        self._deliberation_pool = ProcessPoolExecutor(max_workers=2)
+        # Two worker PROCESSES used to be forked here, in __init__, whether or
+        # not this loop ever deliberated — and the only thing that reaped them
+        # was __del__ calling shutdown(wait=False), which depends on GC timing
+        # and does not wait for the children to actually go. Constructing a
+        # CognitiveLoop is cheap and common; forking is neither.
+        self._deliberation_pool: Any | None = None
         self._active_deliberation_task: asyncio.Task | None = None
 
+    def _get_deliberation_pool(self):
+        """The process pool, created the first time deliberation needs one."""
+
+        if self._deliberation_pool is None:
+            from concurrent.futures import ProcessPoolExecutor
+
+            self._deliberation_pool = ProcessPoolExecutor(max_workers=2)
+        return self._deliberation_pool
+
+    def shutdown_deliberation_pool(self, *, wait: bool = False) -> None:
+        """Reap the deliberation workers, if any were ever started."""
+
+        pool, self._deliberation_pool = self._deliberation_pool, None
+        if pool is None:
+            return
+        try:
+            pool.shutdown(wait=wait)
+        except _COGNITIVE_LOOP_RECOVERABLE_ERRORS as e:
+            logger.debug("Failed to shutdown deliberation pool: %s", e)
+
     def __del__(self):
-        if hasattr(self, "_deliberation_pool"):
-            try:
-                self._deliberation_pool.shutdown(wait=False)
-            except _COGNITIVE_LOOP_RECOVERABLE_ERRORS as e:
-                logger.debug("Failed to shutdown deliberation pool: %s", e)
+        # Retained as a backstop, but no longer the only path: stop() and
+        # shutdown_deliberation_pool() reap deterministically.
+        try:
+            self.shutdown_deliberation_pool()
+        except Exception:  # noqa: BLE001 — a finalizer must not raise
+            pass
 
     async def start(self):
         """Start the cognitive cycle."""
@@ -114,7 +138,7 @@ class CognitiveLoop:
                     severity="warning",
                 )
             self._active_deliberation_task = None
-        self._deliberation_pool.shutdown(wait=False)
+        self.shutdown_deliberation_pool()
         logger.info("🧠 Cognitive Loop service stopped.")
 
     async def run(self):
