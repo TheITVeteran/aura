@@ -108,6 +108,45 @@ def _write_summary(run_dir: Path, *, run_id: str, profile_name: str, duration_s:
             unique_hashes = sorted({r.get("continuity_hash", "?") for r in rows})
             fh.write(f"unique continuity hashes: {len(unique_hashes)}\n")
 
+        pulses = _read_jsonl(run_dir / "user_pulse.jsonl")
+        fh.write("\n## User pulses\n\n")
+        if not pulses:
+            fh.write("none scheduled.\n")
+        elif all(p.get("kind") == "undriven_pulse" for p in pulses):
+            fh.write(
+                f"{len(pulses)} UNDRIVEN pulses — no --chat-url was given, so "
+                "nothing was asked of the runtime. This run says nothing about "
+                "behaviour under load and must not be cited as if it did.\n"
+            )
+        else:
+            answered = [p for p in pulses if p.get("ok")]
+            correct = [p for p in pulses if p.get("correct")]
+            latencies = sorted(
+                float(p.get("latency_s") or 0.0) for p in answered
+            )
+            fh.write(f"pulses: {len(pulses)}\n")
+            fh.write(f"answered: {len(answered)}\n")
+            # Correctness over ATTEMPTS, not over answers. A run where most
+            # pulses never got a reply must not report high accuracy on the
+            # handful that did.
+            fh.write(f"correct: {len(correct)} ({len(correct) / len(pulses):.1%} of attempts)\n")
+            if latencies:
+                mid = latencies[len(latencies) // 2]
+                fh.write(f"latency p50: {mid:.2f}s  max: {latencies[-1]:.2f}s\n")
+                # The documented failure mode is a latency WALL, not a bad
+                # average: 11s -> 25s -> 105s, dead by turn 20. First versus
+                # last is what shows it.
+                first = float(answered[0].get("latency_s") or 0.0)
+                last = float(answered[-1].get("latency_s") or 0.0)
+                fh.write(f"latency first: {first:.2f}s  last: {last:.2f}s\n")
+                if first > 0 and last > first * 3:
+                    fh.write(
+                        f"LATENCY WALL: last pulse was {last / first:.1f}x the first.\n"
+                    )
+            lanes = sorted({str(p.get("lane") or p.get("model") or "") for p in answered} - {""})
+            if lanes:
+                fh.write(f"lanes that answered: {', '.join(lanes)}\n")
+
 
 async def _tick_snapshot(
     run_dir: Path,
@@ -150,14 +189,117 @@ async def _tick_snapshot(
     return out
 
 
-async def _maybe_fire_user(run_dir: Path) -> None:
-    # Hook: write a synthetic user-event into events.jsonl. Actual user
-    # injection requires the chat HTTP endpoint, which is the user's
-    # responsibility to wire when running this against a live instance.
+#: Pulses with checkable answers. A soak that only proves Aura REPLIED after 60
+#: hours proves the process is alive, which the resource sampler already says.
+#: What matters is whether she is still right, and these are chosen so the
+#: grader is exact and needs no model: no ambiguity, no partial credit, no
+#: judgement call at hour 60 that nobody is awake to make.
+_VERIFIABLE_PULSES: tuple[tuple[str, str], ...] = (
+    ("What is 17 multiplied by 23? Reply with the number only.", "391"),
+    ("How many days are in a leap year? Reply with the number only.", "366"),
+    ("What is the chemical symbol for iron? Reply with the symbol only.", "Fe"),
+    ("Spell the word 'rhythm' backwards. Reply with the word only.", "mhtyhr"),
+    ("What is 144 divided by 12? Reply with the number only.", "12"),
+)
+
+
+async def _fire_verifiable_pulse(
+    run_dir: Path,
+    *,
+    chat_url: str,
+    index: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    """Ask one checkable question and record what came back.
+
+    Every outcome is recorded, including the ones that are tempting to drop: an
+    unreachable endpoint, a timeout, a wrong answer. A soak whose trace only
+    contains successes cannot distinguish 72 hours of health from 72 hours of
+    silence, which is exactly what the previous hook produced.
+    """
+    prompt, expected = _VERIFIABLE_PULSES[index % len(_VERIFIABLE_PULSES)]
+    record: dict[str, Any] = {
+        "when": time.time(),
+        "kind": "verifiable_user_pulse",
+        "prompt": prompt,
+        "expected": expected,
+    }
+    started = time.monotonic()
+    try:
+        # Raw httpx, deliberately, and flagged as such by governance lint. This
+        # driver is a CLIENT of the runtime, not part of it — it exists to
+        # exercise Aura from outside exactly as a user's browser does, and a
+        # user's browser does not route through Aura's own network gateway.
+        # Driving the soak through the runtime's governed egress would make the
+        # measurement depend on the subsystem under measurement.
+        import httpx
+
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.post(chat_url, json={"message": prompt})
+        record["status_code"] = response.status_code
+        body = response.json() if response.content else {}
+        answer = str(
+            body.get("response") or body.get("message") or body.get("text") or ""
+        )
+        record["answer"] = answer[:500]
+        record["ok"] = response.status_code == 200
+        # Substring, deliberately: the pulse asks for the bare value but a
+        # runtime is entitled to be conversational, and grading that as wrong
+        # would report a style difference as a capability collapse.
+        record["correct"] = expected.lower() in answer.lower()
+        # Lane provenance when the runtime offers it. A reply from the reflex
+        # rung at hour 60 is a different event from a reply from the cortex,
+        # and a trace that cannot tell them apart cannot say what survived.
+        for key in ("lane", "model", "source", "provenance"):
+            if key in body:
+                record[key] = body[key]
+    except Exception as exc:  # noqa: BLE001 — every outcome must be recorded
+        # Broad on purpose, and this is the one place in this file where that
+        # is right. The whole value of the pulse is that its outcome lands in
+        # the trace, and httpx raises from its own hierarchy
+        # (httpx.ConnectError is not an OSError) — enumerating a third-party
+        # library's exception tree here would mean an unreachable endpoint
+        # CRASHES a 72-hour run at hour 3 instead of recording "unreachable"
+        # and continuing. Measured: the first version did exactly that.
+        record["ok"] = False
+        record["correct"] = False
+        record["error"] = f"{type(exc).__name__}: {exc}"[:300]
+    record["latency_s"] = round(time.monotonic() - started, 3)
     await asyncio.to_thread(
-        _append_text,
-        run_dir / "user_pulse.jsonl",
-        json.dumps({"when": time.time(), "kind": "scripted_user_pulse"}) + "\n",
+        _append_text, run_dir / "user_pulse.jsonl", json.dumps(record, default=str) + "\n"
+    )
+    return record
+
+
+async def _maybe_fire_user(
+    run_dir: Path,
+    *,
+    chat_url: str = "",
+    index: int = 0,
+    timeout_s: float = 120.0,
+) -> dict[str, Any]:
+    """Drive one real turn when a chat endpoint is configured.
+
+    Without --chat-url this records an EXPLICITLY undriven pulse rather than a
+    synthetic one that reads like a real interaction. The distinction is the
+    whole point: the previous hook wrote `{"kind": "scripted_user_pulse"}`
+    whether or not anything had been asked, so a trace full of them was
+    indistinguishable from a trace of a runtime nobody ever contacted.
+    """
+    if not chat_url:
+        record = {
+            "when": time.time(),
+            "kind": "undriven_pulse",
+            "ok": False,
+            "correct": False,
+            "reason": "no --chat-url configured; nothing was asked of the runtime",
+        }
+        await asyncio.to_thread(
+            _append_text, run_dir / "user_pulse.jsonl", json.dumps(record) + "\n"
+        )
+        return record
+    return await _fire_verifiable_pulse(
+        run_dir, chat_url=chat_url, index=index, timeout_s=timeout_s
     )
 
 
@@ -176,6 +318,19 @@ async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", required=True, choices=list(_PROFILES.keys()))
     parser.add_argument("--tick-s", type=float, default=30.0, help="seconds between snapshots")
+    parser.add_argument(
+        "--chat-url",
+        default="",
+        help=(
+            "chat endpoint to drive real verifiable turns against, e.g. "
+            "http://127.0.0.1:8000/api/chat. WITHOUT this the user-pulse "
+            "profiles record undriven pulses and prove nothing about load."
+        ),
+    )
+    parser.add_argument(
+        "--pulse-timeout-s", type=float, default=120.0,
+        help="per-pulse timeout; a slow reply is a finding, not a hang",
+    )
     args = parser.parse_args()
     profile = _PROFILES[args.profile]
     run_id = f"longevity-{args.profile}-{uuid.uuid4().hex[:8]}"
@@ -186,12 +341,28 @@ async def main() -> int:
     started = time.time()
     last_user_pulse = 0.0
     last_chaos = 0.0
+    pulse_index = 0
+    pulses: list[dict[str, Any]] = []
+    if profile["user_pulse_s"] and not args.chat_url:
+        logger.warning(
+            "profile %s schedules user pulses but no --chat-url was given: "
+            "pulses will be recorded as UNDRIVEN and this run cannot support "
+            "any claim about behaviour under load.",
+            args.profile,
+        )
     while time.time() - started <= profile["duration_s"]:
         now = time.time()
         elapsed = now - started
         await _tick_snapshot(run_dir)
         if profile["user_pulse_s"] and (now - last_user_pulse) > profile["user_pulse_s"]:
-            await _maybe_fire_user(run_dir)
+            pulse = await _maybe_fire_user(
+                run_dir,
+                chat_url=args.chat_url,
+                index=pulse_index,
+                timeout_s=args.pulse_timeout_s,
+            )
+            pulse_index += 1
+            pulses.append(pulse)
             last_user_pulse = now
         if profile.get("chaos") and (now - last_chaos) > 600.0:
             await _maybe_inject_chaos(run_dir)

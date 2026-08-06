@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import contextlib
 import sqlite3
 import threading
 import time
@@ -945,8 +946,16 @@ class ReceiptStore:
                 self._ledger_pid = 0
                 try:
                     connection.commit()
+                except sqlite3.Error as exc:
+                    # Already closed, or unusable. Shutdown must not raise:
+                    # the tracked-connection registry can close this handle
+                    # from outside (test teardown, runtime shutdown), and a
+                    # store's own close() failing on a connection someone
+                    # else already released turns cleanup into an incident.
+                    logger.debug("Receipt ledger commit during close failed: %s", exc)
                 finally:
-                    connection.close()
+                    with contextlib.suppress(sqlite3.Error):
+                        connection.close()
             self._ledger_available = False
             if self._chain is not None:
                 chain = self._chain

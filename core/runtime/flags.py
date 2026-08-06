@@ -63,6 +63,9 @@ class Flag:
 
     def __init__(self, spec: FlagSpec) -> None:
         self.spec = spec
+        #: Modules that also declare this knob. One knob may have many
+        #: readers; only the contract has to agree.
+        self.additional_owners: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -177,11 +180,25 @@ def declare(
     with _REGISTRY_LOCK:
         existing = _REGISTRY.get(name)
         if existing is not None:
-            if existing.spec != spec:
+            # The CONTRACT is kind and default. Two modules disagreeing about
+            # whether this is a bool defaulting to True or a string defaulting
+            # to "" is a real contradiction and still fails loudly.
+            #
+            # Description and owner are metadata. Two modules that both read
+            # AURA_OPCUA_ENDPOINT and describe it slightly differently are not
+            # contradicting each other; they are both readers, which is the
+            # normal case and used to be inexpressible — the second one raised
+            # a ValueError that surfaced far from the actual problem.
+            if (existing.spec.kind, existing.spec.default) != (spec.kind, spec.default):
                 raise ValueError(
                     f"flag {name} already declared by {existing.spec.owner} with a "
                     f"different spec; refusing the conflicting declaration from {owner}"
                 )
+            # Accountability is kept, not dropped: "who reads this knob" is now
+            # answerable, which it was not when the second reader could not
+            # register at all.
+            if owner and owner != existing.spec.owner:
+                existing.additional_owners.add(str(owner))
             return existing
         flag = Flag(spec)
         _REGISTRY[name] = flag

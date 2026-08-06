@@ -37,7 +37,27 @@ _STOP = frozenset(
     "explain describe implement function module method class".split()
 )
 _SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "archive", "dev_archive", ".mypy_cache",
-              ".ruff_cache", ".pytest_cache", "dist", "build"}
+              ".ruff_cache", ".pytest_cache", "dist", "build",
+              # Worktrees are COPIES of this repository. Measured 2026-08-06:
+              # 326,885 of the 334,558 scannable .py files were under
+              # .claude/worktrees — 98% — so the 4,000-file scan cap was spent
+              # almost entirely on duplicates and core/ was never reached. Two
+              # separate harms: evidence gathering silently found nothing for
+              # most symbols, and anything it did find could cite
+              # `.claude/worktrees/<branch>/core/x.py:42`, which is a real line
+              # in a file that is not the running code.
+              ".claude", "worktrees",
+              # Generated evidence bundles, not source. Aura citing her own
+              # past output as evidence for a claim about her source is a
+              # circularity nobody asked for.
+              "artifacts"}
+
+#: A hit scoring at least this much is admitted no matter how full the
+#: candidate bucket is: it means the file is named after the symbol, or the
+#: line defines it. Those are exactly the hits a cap must never discard —
+#: without this, asking about SubprocessGateway filled up on aura_main.py and
+#: interface/server.py and never reached core/runtime/subprocess_gateway.py.
+_STRONG_EVIDENCE_SCORE = 5.0
 
 
 @dataclass
@@ -169,9 +189,27 @@ class EvidenceProvider:
                 try:
                     res = await gateway.run_async(
                         argv, timeout=10.0, read_only=True, source="evidence_provider:ripgrep",
-                        accelerator_capability="auto",
+                        # "none", not "auto". ripgrep is a text search and uses
+                        # no accelerator, and "auto" could not infer that: the
+                        # gateway raised
+                        # subprocess_accelerator_capability_unresolved on EVERY
+                        # call, the handler below swallowed it, and this
+                        # provider returned zero spans. Silently. Every ReAct
+                        # answer that was supposed to be grounded in real source
+                        # spans has been grounded in nothing.
+                        accelerator_capability="none",
                     )
-                except (OSError, RuntimeError, ValueError):
+                except (OSError, RuntimeError, ValueError) as exc:
+                    # Recorded, not swallowed. The failure that hid here
+                    # disabled evidence grounding entirely while every caller
+                    # kept reporting success, which is the exact shape this
+                    # codebase keeps having to dig out.
+                    record_degradation(
+                        "evidence_repo",
+                        exc,
+                        severity="degraded",
+                        action="repo evidence search failed; answering without source spans",
+                    )
                     continue
                 for line in (res.stdout or "").splitlines():
                     parts = line.split(":", 2)
@@ -205,10 +243,23 @@ class EvidenceProvider:
         import re as _re
 
         def_re = {t: _re.compile(rf"\b(?:def|class)\s+{_re.escape(t)}\b") for t in needles}
-        buckets: dict[str, list[EvidenceSpan]] = {t: [] for t in needles}
-        def_hits: dict[str, list[EvidenceSpan]] = {t: [] for t in needles}
-        scanned = 0
+        # SubprocessGateway -> subprocess_gateway, so a file named after the
+        # symbol can be recognised as its home.
+        snake = {
+            t: _re.sub(r"(?<!^)(?=[A-Z])", "_", t).lower().strip("_") for t in needles
+        }
+        # (score, term_rank, tie) -> span. Candidates are SCORED and sorted
+        # rather than taken in walk order: the previous version filled a small
+        # per-term bucket first-come-first-served, so six test files could
+        # crowd out the module that defines the symbol. Measured: asking about
+        # SubprocessGateway returned six test spans and not
+        # core/runtime/subprocess_gateway.py.
+        candidates: list[tuple[float, int, int, EvidenceSpan]] = []
         per_term_cap = max(2, limit)
+        per_term_candidates = max(per_term_cap * 8, 40)
+        counts = {t: 0 for t in needles}
+        scanned = 0
+        tie = 0
         for py in self._root.rglob("*.py"):
             if scanned >= 4000:
                 break
@@ -217,28 +268,63 @@ class EvidenceProvider:
             scanned += 1
             try:
                 rel = py.relative_to(self._root)
-                for i, ln in enumerate(py.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
-                    for t in needles:
-                        if t in ln:
-                            span = EvidenceSpan("repo", f"{rel}:{i}", ln.strip()[:200])
-                            if def_re[t].search(ln) and len(def_hits[t]) < per_term_cap:
-                                def_hits[t].append(span)
-                            elif len(buckets[t]) < per_term_cap:
-                                buckets[t].append(span)
+                parts = set(rel.parts)
+                stem = py.stem.lower()
+                # What a person does when asked where a symbol lives: look at
+                # the file named after it, in the implementation tree, at the
+                # line that defines it.
+                is_test = bool(parts & {"tests", "test"}) or stem.startswith("test_")
+                is_tooling = bool(parts & {"tools", "scripts", "training"})
+                path_score = 0.0
+                if not is_test and not is_tooling:
+                    path_score += 2.0
+                elif is_tooling:
+                    path_score += 0.5
+                for i, ln in enumerate(
+                    py.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1
+                ):
+                    for rank, t in enumerate(needles):
+                        if t not in ln:
+                            continue
+                        score = path_score
+                        if def_re[t].search(ln):
+                            score += 4.0
+                        if stem == snake[t] or stem == t.lower():
+                            score += 5.0
+                        # A cap that admits candidates in walk order still lets
+                        # early files crowd out the answer: with the cap alone,
+                        # asking about SubprocessGateway filled up on aura_main
+                        # and interface/server before ever reaching
+                        # core/runtime/subprocess_gateway.py. A hit in the file
+                        # named after the symbol, or one that defines it, is
+                        # admitted regardless of how full the bucket is —
+                        # that is precisely the hit worth displacing others.
+                        if score < _STRONG_EVIDENCE_SCORE and counts[t] >= per_term_candidates:
                             break
+                        counts[t] += 1
+                        tie += 1
+                        candidates.append(
+                            (
+                                -score,
+                                rank,
+                                tie,
+                                EvidenceSpan("repo", f"{rel}:{i}", ln.strip()[:200]),
+                            )
+                        )
+                        break
             except (OSError, ValueError):
                 continue
-        # Definitions of the most-specific terms first, then plain hits in rank order.
+
+        candidates.sort()
         ordered: list[EvidenceSpan] = []
         seen: set[str] = set()
-        for source in (def_hits, buckets):
-            for t in needles:
-                for span in source[t]:
-                    if span.ref not in seen:
-                        seen.add(span.ref)
-                        ordered.append(span)
-                        if len(ordered) >= limit:
-                            return ordered
+        for _score, _rank, _tie, span in candidates:
+            if span.ref in seen:
+                continue
+            seen.add(span.ref)
+            ordered.append(span)
+            if len(ordered) >= limit:
+                break
         return ordered
 
     # -------------------------------------------------------------- memory

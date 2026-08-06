@@ -385,6 +385,15 @@ class HermeticResourceSandbox:
             for handle in alive:
                 with contextlib.suppress(self._native_error):
                     handle.kill()
+            # Re-measure. The old code terminated every child it found and then
+            # failed on the snapshot taken BEFORE doing so, so a child that was
+            # successfully reaped still failed its test — and a test that
+            # passes alone failed in a chunk because an earlier test's
+            # slow-starting subprocess appeared inside its window. What
+            # survives SIGTERM and SIGKILL is a real leak and is still
+            # reported; that is the failure worth reading.
+            self._native_wait_procs(handles, timeout=0.5)
+            leaks = self.leaks()
 
         listener_leaks = list(leaks["listeners"])
         for pid, fd, _host, _port in listener_leaks:
@@ -626,6 +635,59 @@ def _restore_service_container(snapshot: dict[str, object] | None) -> None:
         # A test that sealed registration leaves every later test unable to
         # register anything, with an error that names the victim's service.
         container._registration_locked = bool(snapshot["_registration_locked"])
+
+
+#: Config surfaces a boot profile mutates. Named explicitly: a deep copy of the
+#: whole config would duplicate Paths, locks and lazily-built clients, and
+#: restoring THOSE would be a worse bug than the one being fixed.
+_CONFIG_SCALAR_ATTRS = ("skeletal_mode",)
+_CONFIG_SECTION_ATTRS = ("security", "features")
+
+
+def _snapshot_config() -> dict[str, object] | None:
+    """Copy the config flags a boot profile sets, or None if unimported."""
+    module = sys.modules.get("core.config")
+    config = getattr(module, "config", None) if module is not None else None
+    if config is None:
+        return None
+    snapshot: dict[str, object] = {}
+    for attr in _CONFIG_SCALAR_ATTRS:
+        if hasattr(config, attr):
+            snapshot[attr] = getattr(config, attr)
+    for section_name in _CONFIG_SECTION_ATTRS:
+        section = getattr(config, section_name, None)
+        if section is None or not hasattr(section, "__dict__"):
+            continue
+        snapshot[section_name] = dict(vars(section))
+    return snapshot
+
+
+def _restore_config(snapshot: dict[str, object] | None) -> None:
+    """Put the boot-profile flags back.
+
+    In place, attribute by attribute: other modules hold references to
+    config.security and config.features, so rebinding the sections would leave
+    those references pointing at the mutated objects.
+    """
+    if snapshot is None:
+        return
+    module = sys.modules.get("core.config")
+    config = getattr(module, "config", None) if module is not None else None
+    if config is None:
+        return
+    for attr in _CONFIG_SCALAR_ATTRS:
+        if attr in snapshot:
+            with contextlib.suppress(AttributeError, TypeError):
+                setattr(config, attr, snapshot[attr])
+    for section_name in _CONFIG_SECTION_ATTRS:
+        saved = snapshot.get(section_name)
+        section = getattr(config, section_name, None)
+        if not isinstance(saved, dict) or section is None:
+            continue
+        for key, value in saved.items():
+            if getattr(section, key, object()) != value:
+                with contextlib.suppress(AttributeError, TypeError):
+                    setattr(section, key, value)
 
 
 def _snapshot_process_globals() -> dict[str, object]:
@@ -1762,6 +1824,7 @@ def _global_state_contamination_guard(request, hermetic_resource_sandbox):
     _reset_test_scoped_runtime_services()
     container_snapshot = _snapshot_service_container()
     globals_snapshot = _snapshot_process_globals()
+    config_snapshot = _snapshot_config()
     before = _global_state_fingerprint()
     try:
         yield
@@ -1772,6 +1835,7 @@ def _global_state_contamination_guard(request, hermetic_resource_sandbox):
         # global state; the next test does not.
         _restore_service_container(container_snapshot)
         _restore_process_globals(globals_snapshot)
+        _restore_config(config_snapshot)
         changes: list[str] = []
         contained: list[str] = []
         for key in sorted(set(before) | set(after)):

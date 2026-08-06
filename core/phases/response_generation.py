@@ -1150,9 +1150,9 @@ class ResponseGenerationPhase(BasePhase):
 
         is_test_run = (
             origin == "test"
-            or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
-            or env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
-            or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
+            or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.runtime")
+            or env_present("AURA_TESTING", description="presence marks a test run", owner="core.runtime")
+            or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.runtime")
         )
 
         if not objective:
@@ -1253,9 +1253,9 @@ class ResponseGenerationPhase(BasePhase):
                 strict_answer_request
                 and (
                     origin == "test"
-                    or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
-                    or env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
-                    or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
+                    or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.runtime")
+                    or env_present("AURA_TESTING", description="presence marks a test run", owner="core.runtime")
+                    or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.runtime")
                 )
             )
             if proof_answer_run:
@@ -2306,9 +2306,9 @@ class ResponseGenerationPhase(BasePhase):
             if not is_background:
                 if (
                     origin != "test"
-                    and not env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
-                    and not env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
-                    and not env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
+                    and not env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.runtime")
+                    and not env_present("AURA_TESTING", description="presence marks a test run", owner="core.runtime")
+                    and not env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.runtime")
                 ):
                     reliability = assess_user_facing_reply(
                         user_surface_validation_prompt, response_text

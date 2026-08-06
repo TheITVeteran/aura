@@ -205,9 +205,9 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
-    opcua_endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.reality_connectors") or "").strip()
-    opcua_manifest = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.reality_connectors") or "").strip()
-    opcua_installation = str(env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.reality_connectors") or "").strip()
+    opcua_endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.opcua") or "").strip()
+    opcua_manifest = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.opcua") or "").strip()
+    opcua_installation = str(env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.opcua") or "").strip()
     opcua_present = bool(opcua_endpoint or opcua_manifest or opcua_installation)
     if not opcua_present:
         statuses.append(

@@ -322,9 +322,9 @@ class AsyncUaScalarTransport:
         if not resources:
             raise ValueError("resources must not be empty")
         self._resources = {item.resource_id: item for item in resources}
-        self._endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.opcua_connector") or "").strip()
+        self._endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.opcua") or "").strip()
         self._installation_id = str(
-            env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.opcua_connector") or ""
+            env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.opcua") or ""
         ).strip()
         if not self._endpoint or not self._installation_id:
             raise OPCUAConnectorError("opcua_endpoint_and_installation_id_required")
@@ -736,7 +736,7 @@ class OPCUAConnector:
 
 
 def build_configured_opcua_connector() -> OPCUAConnector:
-    raw = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.opcua_connector") or "").strip()
+    raw = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.opcua") or "").strip()
     if not raw:
         raise OPCUAConnectorError("opcua_resource_manifest_missing")
     resources = parse_opcua_resource_manifest(raw)

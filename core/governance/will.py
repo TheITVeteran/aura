@@ -248,6 +248,14 @@ class WillDecision:
     timestamp: float = field(default_factory=time.time)
     latency_ms: float = 0.0
 
+    #: Who filled which role in this decision, and what that leaves it able to
+    #: support. `source` above names only the proposer; a receipt carrying a
+    #: signature and observed evidence is otherwise fully compatible with one
+    #: model having proposed the action, set the bar and declared it cleared.
+    #: Reported, never enforced — refusing a self-graded decision is a policy
+    #: change, and the first honest step is being able to count them.
+    role_attribution: dict[str, Any] = field(default_factory=dict)
+
     # Downstream references
     substrate_receipt_id: str = ""
     executive_intent_id: str = ""
@@ -283,6 +291,41 @@ class WillState:
 # ---------------------------------------------------------------------------
 # The Unified Will
 # ---------------------------------------------------------------------------
+
+def _role_attribution_for(
+    *,
+    source: str,
+    domain: "ActionDomain",
+    context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Who proposed, authorized, set the criterion and read the evidence.
+
+    Read from the decision context rather than assumed. An unfilled role stays
+    UNATTRIBUTED — recording the proposer as the interpreter because nothing
+    else was named would manufacture exactly the false comfort this is meant to
+    remove, in the opposite direction.
+
+    Never raises: this is a record about a decision, and failing to describe a
+    decision must not prevent one.
+    """
+    try:
+        from core.governance.role_independence import RoleAttribution, analyse
+
+        payload = dict(context or {})
+        attribution = RoleAttribution(
+            proposer=str(source or "") or None,
+            authorizer=str(payload.get("authorizer") or payload.get("authority") or "") or None,
+            criterion=str(payload.get("criterion_setter") or payload.get("criterion") or "") or None,
+            interpreter=str(
+                payload.get("evidence_interpreter") or payload.get("interpreter") or ""
+            )
+            or None,
+            effect_scope=str(payload.get("effect_scope") or getattr(domain, "value", "") or "unknown"),
+        )
+        return analyse(attribution).to_dict()
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        return {"schema": "aura.role_independence.v1", "error": f"{type(exc).__name__}: {exc}"[:200]}
+
 
 class UnifiedWill:
     """The single locus of decision authority.
@@ -708,6 +751,11 @@ class UnifiedWill:
             outcome=outcome,
             domain=domain,
             reason=reason,
+            role_attribution=_role_attribution_for(
+                source=source,
+                domain=domain,
+                context=context,
+            ),
             identity_alignment=identity_alignment,
             affect_valence=affect_valence,
             substrate_coherence=substrate_coherence,
