@@ -250,6 +250,35 @@ TEXT_PATTERNS = {
     ),
     "pytest_skip_xfail": re.compile(r"pytest\.mark\.skip|pytest\.skip|xfail", re.IGNORECASE),
 }
+
+#: Credential-shaped strings that cannot be credentials.
+#:
+#: All ten "potential_secret" findings in the repo are test fixtures: fake
+#: keys written so the redaction code can be tested against them. A scanner
+#: that flags its own fixtures teaches people to ignore it, and an ignored
+#: secret scanner is worse than none — the day it finds a real key, that
+#: finding arrives in a list nobody reads.
+#:
+#: The exclusions are properties of the VALUE, not of the file it sits in, so
+#: a real key pasted into a test is still caught:
+#:   * AKIAIOSFODNN7EXAMPLE is AWS's own published example key.
+#:   * A body that is the alphabet in sequence is not entropy.
+#:   * EXAMPLE/PLACEHOLDER/REDACTED/XXXX bodies announce themselves.
+_NON_SECRET_LITERALS = re.compile(
+    r"""(?x)
+    AKIAIOSFODNN7EXAMPLE
+    | (?:sk-|ghp_|xox[baprs]-)?
+      (?:abcdefghijklmnopqrstuvwxyz|abcdefghijklmnopqrstuvwx)
+    | (?:EXAMPLE|PLACEHOLDER|REDACTED|FAKE|DUMMY|SAMPLE|TESTKEY)
+    | X{8,}
+    """,
+    re.IGNORECASE,
+)
+
+
+def _is_non_secret_literal(text: str) -> bool:
+    """Whether this credential-shaped match is a known non-secret."""
+    return bool(_NON_SECRET_LITERALS.search(str(text or "")))
 TODO_MARKER_PATTERN = re.compile(
     r"^(TODO|FIXME|XXX|HACK)\b(?:\([^)]*\))?\s*(?::|-|\s|$)",
     re.IGNORECASE,
@@ -722,6 +751,8 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
             }:
                 continue
             if kind == "potential_secret":
+                if _is_non_secret_literal(line):
+                    continue
                 severity = "critical"
             elif kind in {"hardcoded_local_path", "placeholder_stub_mock"} and is_production(rel):
                 severity = "high"
