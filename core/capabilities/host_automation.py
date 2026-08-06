@@ -35,8 +35,8 @@ from core.container import ServiceContainer
 from core.governance.will import ActionDomain
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.state_ownership import state_root
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.HostAutomation")
 
@@ -53,6 +53,20 @@ def _as_applescript_string(value: Any) -> str:
     text = "".join(ch for ch in str(value or "") if ch == " " or ord(ch) >= 32)[:256]
     text = text.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{text}"'
+
+
+def _resolve_screenshot_path_policy(save_path: str) -> tuple[Path | None, tuple[Path, ...]]:
+    """Resolve a requested capture path and its allowed roots off the event loop."""
+    try:
+        resolved = Path(save_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved = None
+    roots = (
+        (Path(state_root()) / "data").resolve(),
+        (Path.home() / "Desktop" / "Aura").resolve(),
+        (Path.home() / "Documents" / "Aura").resolve(),
+    )
+    return resolved, roots
 
 
 _HOST_AUTOMATION_ERRORS = (
@@ -492,7 +506,8 @@ class HostAutomationProvider:
         person can say what they mean instead of the exact bundle name.
         """
         resolution = await asyncio.to_thread(resolve_application_name, app_name)
-        if not resolution.ok:
+        resolved_name = str(resolution.resolved or "").strip()
+        if not resolution.ok or not resolved_name:
             receipt = AutomationReceipt(
                 action="launch_app",
                 target=app_name,
@@ -502,14 +517,14 @@ class HostAutomationProvider:
             )
             self._log_receipt(receipt)
             return receipt
-        if resolution.resolved != app_name:
+        if resolved_name != app_name:
             logger.info(
                 "🖥️ Resolved requested app %r to %r (%s).",
                 app_name,
-                resolution.resolved,
+                resolved_name,
                 resolution.basis,
             )
-        app_name = resolution.resolved
+        app_name = resolved_name
         script = f'tell application {_as_applescript_string(app_name)} to activate'
         receipt = await AppleScriptRunner.run(script, timeout=10.0)
         receipt.action = "launch_app"
@@ -1146,15 +1161,9 @@ class HostAutomationProvider:
             # A caller-supplied path must resolve inside an allowed screenshot
             # root and be an image file — otherwise screencapture would write an
             # arbitrary host path (symlink/traversal) with no boundary.
-            try:
-                resolved = Path(save_path).expanduser().resolve()
-            except (OSError, RuntimeError, ValueError):
-                resolved = None
-            allowed_roots = [
-                (state_root() / "data").resolve(),
-                (Path.home() / "Desktop" / "Aura").resolve(),
-                (Path.home() / "Documents" / "Aura").resolve(),
-            ]
+            resolved, allowed_roots = await asyncio.to_thread(
+                _resolve_screenshot_path_policy, save_path
+            )
             in_root = resolved is not None and any(
                 resolved == r or str(resolved).startswith(str(r) + os.sep) for r in allowed_roots
             )

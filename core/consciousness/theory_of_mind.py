@@ -15,11 +15,11 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import optional_service
+from core.runtime.state_ownership import state_root
 from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
-from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ToM")
 
@@ -178,7 +178,7 @@ class TheoryOfMindEngine:
             from core.config import config
             return Path(config.paths.data_dir) / "memory" / "theory_of_mind.json"
         except (ImportError, AttributeError, RuntimeError):
-            return state_root() / "data" / "memory" / "theory_of_mind.json"
+            return Path(state_root()) / "data" / "memory" / "theory_of_mind.json"
 
     @staticmethod
     def _sanitize_interaction_history(value: Any) -> list[dict[str, Any]]:

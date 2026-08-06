@@ -143,7 +143,10 @@ def test_mlx_foreground_first_token_watchdog_aborts_tokenless_wall_clock_stall(m
     monkeypatch.setattr(
         client,
         "force_abort_active_generation",
-        lambda reason: aborted.append(reason) or True,
+        lambda reason, *, expected_request_id=None: aborted.append(
+            (reason, expected_request_id)
+        )
+        or True,
     )
     client._mark_generation_started("req-live", prompt_chars=32, requested_max_tokens=16)
     client._current_request_started_at = time.time() - 1.0
@@ -156,7 +159,7 @@ def test_mlx_foreground_first_token_watchdog_aborts_tokenless_wall_clock_stall(m
     assert timer is timers[0]
     assert timer.delay >= 10.0
     timer.callback()
-    assert aborted == ["first_token_wall_clock_watchdog"]
+    assert aborted == [("first_token_wall_clock_watchdog", "req-live")]
     assert degraded
     assert degraded[0][0][0] == "first_token_wall_clock_watchdog"
 

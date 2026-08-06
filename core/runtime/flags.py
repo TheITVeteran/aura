@@ -128,7 +128,8 @@ class _BootstrapFlag(Flag):
     def value_with_source(self) -> tuple[Any, str]:
         from core.runtime.state_ownership import bootstrap_flag_value
 
-        return bootstrap_flag_value(self.name)
+        value, source = bootstrap_flag_value(self.name)
+        return value, str(source)
 
 
 def _bootstrap_flags() -> dict[str, Flag]:

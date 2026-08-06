@@ -876,6 +876,10 @@ class SubprocessGateway:
         if any(inherited_fields):
             if not all(inherited_fields):
                 raise GovernanceViolation("incomplete inherited model-lane delegation")
+            if claim is None:
+                raise GovernanceViolation(
+                    "inherited model-lane delegation requires a child model claim"
+                )
             from core.runtime.model_lane_control import get_model_lane_controller
 
             inherited_controller = get_model_lane_controller()

@@ -1353,7 +1353,7 @@ class ServiceContainer:
         except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             record_degradation("container", exc)
             logger.debug("Falling back to default sovereignty seal path after config lookup failed: %s", exc)
-            return state_root() / "data" / "sovereignty_seal.json"
+            return Path(state_root()) / "data" / "sovereignty_seal.json"
 
     @classmethod
     def _manifest_snapshot(cls) -> dict[str, str]:
@@ -1401,7 +1401,7 @@ class ServiceContainer:
         key = cls._seal_key()
         if key is None:
             return ""
-        body = f"{digest}:{service_count}".encode("utf-8")
+        body = f"{digest}:{service_count}".encode()
         return hmac.new(key, body, hashlib.sha256).hexdigest()
 
     @classmethod

@@ -71,7 +71,7 @@ def _default_flight_dir() -> Path:
     """
     from core.utils.paths import forensics_dir
 
-    return forensics_dir("flight")
+    return Path(forensics_dir("flight"))
 _RING_NAME = "flight_ring.bin"
 _PREV_RING_NAME = "flight_ring.prev"
 _LOCK_NAME = "flight_ring.lock"

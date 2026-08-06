@@ -20,11 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
-from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Social.OtherAgentModel")
 
@@ -493,7 +493,7 @@ class OtherAgentStateEstimator:
 
             return Path(config.paths.memory_dir) / "other_agent_models.json"
         except (ImportError, AttributeError, RuntimeError):
-            return state_root() / "data" / "memory" / "other_agent_models.json"
+            return Path(state_root()) / "data" / "memory" / "other_agent_models.json"
 
     def _invalidate(self, agent_id: str) -> None:
         self._models.pop(agent_id, None)

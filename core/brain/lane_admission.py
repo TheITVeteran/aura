@@ -303,12 +303,13 @@ class LaneAdmissionController:
         # so a NaN request did not refuse loudly, it fell through to the
         # eviction path and could emit an evict_first advisory for a request
         # that means nothing. A malformed request is refused as malformed.
-        request_gb = _finite_gb(request_gb)
-        if request_gb is None:
+        requested_value = request_gb
+        finite_request_gb = _finite_gb(requested_value)
+        if finite_request_gb is None:
             return self._record(
                 AdmissionDecision(
                     admitted=False,
-                    reason=f"malformed_request_gb:{request_gb!r}",
+                    reason=f"malformed_request_gb:{requested_value!r}",
                     lane=lane,
                     qos=qos,
                     request_gb=0.0,
@@ -316,6 +317,7 @@ class LaneAdmissionController:
                     budget_gb=0.0,
                 )
             )
+        request_gb = finite_request_gb
         observer = self._observer or get_resource_observer()
         provenance = observer.provenance
         host_total, observation_available = _host_total_gb(observer)
