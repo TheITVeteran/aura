@@ -54,6 +54,64 @@ def _record_stage_degradation(stage: str, exc: BaseException) -> None:
         enforce_failure_policy=False,
     )
 
+
+_StageFailure = Callable[[BaseException], "StageResult"]
+
+
+def _stage_boundary(stage: str, exc: BaseException, on_failure: _StageFailure) -> "StageResult":
+    """Turn a collaborator's failure into this loop's own vocabulary.
+
+    Every stage of this loop calls out to an injected, Protocol-typed
+    collaborator — a gap detector, a composer, a deliberator, a verifier, a
+    learner. Their implementations are not this module's to know, so there is
+    no exception set to narrow to: an injected component can raise anything,
+    and the loop's job is to keep thinking when one of them does.
+
+    So the breadth is deliberate, and it is stated once here rather than eight
+    times inline. The failure is recorded, and the caller is handed a
+    StageResult that says which stage failed and what it raised. Crucially,
+    each caller's failure result preserves the loop's safety direction rather
+    than its convenience: a failed gap check ASSUMES a gap, and a failed
+    verification reports NOT verified. A boundary that converted failures into
+    the permissive answer would be far worse than no boundary at all.
+    """
+    _record_stage_degradation(stage, exc)
+    return on_failure(exc)
+
+
+def _run_stage(
+    stage: str,
+    call: Callable[[], Any],
+    on_failure: _StageFailure,
+) -> tuple[Any, "StageResult | None"]:
+    """Run one stage. Returns (value, None) or (None, failure StageResult)."""
+    try:
+        return call(), None
+    except Exception as exc:  # noqa: BLE001 — see _stage_boundary
+        return None, _stage_boundary(stage, exc, on_failure)
+
+
+async def _run_stage_async(
+    stage: str,
+    call: Callable[[], Any],
+    on_failure: _StageFailure,
+) -> tuple[Any, "StageResult | None"]:
+    """Async twin of _run_stage; awaits the collaborator if it returns a coroutine.
+
+    The await is INSIDE the boundary on purpose. Awaiting outside it would
+    catch only the failures raised before the first suspension point, which is
+    the subset least likely to matter.
+    """
+    import inspect
+
+    try:
+        result = call()
+        if inspect.isawaitable(result):
+            result = await result
+        return result, None
+    except Exception as exc:  # noqa: BLE001 — see _stage_boundary
+        return None, _stage_boundary(stage, exc, on_failure)
+
 COGNITIVE_LOOP_SCHEMA = "aura.cognitive_loop.v1"
 
 
@@ -149,15 +207,19 @@ class CognitiveLoop:
             # is cheap; skipping acquisition you needed is a wrong answer.
             return True, StageResult("identify_gap", "unavailable",
                                      {"assumed_gap": True})
-        try:
-            gap = bool(self.gap_detector.has_gap(query))
-        except Exception as exc:
-            _record_stage_degradation("identify_gap", exc)
-            return True, StageResult(
+        gap, failure = _run_stage(
+            "identify_gap",
+            lambda: bool(self.gap_detector.has_gap(query)),
+            # A detector that raised tells us nothing about whether the gap is
+            # there, so assume it is — same direction as having no detector.
+            lambda exc: StageResult(
                 "identify_gap",
                 "failed",
                 {"assumed_gap": True, "error": type(exc).__name__},
-            )
+            ),
+        )
+        if failure is not None:
+            return True, failure
         return gap, StageResult("identify_gap", "ok", {"gap": gap})
 
     def _acquire(self, query: str, gap: bool) -> tuple[list[str], StageResult]:
@@ -165,13 +227,13 @@ class CognitiveLoop:
             return [], StageResult("acquire", "skipped", {"reason": "no_gap"})
         if self.composer is None:
             return [], StageResult("acquire", "unavailable", {})
-        try:
-            block = self.composer.compose(query)
-        except Exception as exc:
-            _record_stage_degradation("acquire", exc)
-            return [], StageResult(
-                "acquire", "failed", {"error": type(exc).__name__}
-            )
+        block, failure = _run_stage(
+            "acquire",
+            lambda: self.composer.compose(query),
+            lambda exc: StageResult("acquire", "failed", {"error": type(exc).__name__}),
+        )
+        if failure is not None:
+            return [], failure
         if not isinstance(block, dict):
             return [], StageResult(
                 "acquire", "failed", {"error": "invalid_composer_result"}
@@ -189,11 +251,15 @@ class CognitiveLoop:
         })
 
     def _deliberate(self, query: str, material: list[str]) -> tuple[str, StageResult]:
-        try:
-            answer = self.deliberator.deliberate(query, material)
-        except Exception as exc:
-            _record_stage_degradation("deliberate", exc)
-            return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
+        answer, failure = _run_stage(
+            "deliberate",
+            lambda: self.deliberator.deliberate(query, material),
+            lambda exc: StageResult(
+                "deliberate", "failed", {"error": type(exc).__name__}
+            ),
+        )
+        if failure is not None:
+            return "", failure
         answer_text = str(answer or "").strip()
         return answer_text, StageResult(
             "deliberate",
@@ -209,13 +275,18 @@ class CognitiveLoop:
         if self.verifier is None:
             # No verifier -> the answer is UNVERIFIED, never assumed correct.
             return False, StageResult("verify", "unavailable", {"verified": False})
-        try:
-            verdict = self.verifier.check(query, candidate)
-        except Exception as exc:
-            _record_stage_degradation("verify", exc)
-            return False, StageResult(
+        verdict, failure = _run_stage(
+            "verify",
+            lambda: self.verifier.check(query, candidate),
+            # A verifier that raised has not verified anything. Reporting
+            # anything but False here is how a system starts trusting answers
+            # nothing checked.
+            lambda exc: StageResult(
                 "verify", "failed", {"verified": False, "error": type(exc).__name__}
-            )
+            ),
+        )
+        if failure is not None:
+            return False, failure
         if not isinstance(verdict, dict) or "correct" not in verdict:
             return False, StageResult(
                 "verify",
@@ -231,15 +302,15 @@ class CognitiveLoop:
         return ok, StageResult("verify", "ok", detail)
 
     async def _adeliberate(self, query: str, material: list[str]) -> tuple[str, StageResult]:
-        import inspect
-
-        try:
-            result = self.deliberator.deliberate(query, material)
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:
-            _record_stage_degradation("deliberate", exc)
-            return "", StageResult("deliberate", "failed", {"error": type(exc).__name__})
+        result, failure = await _run_stage_async(
+            "deliberate",
+            lambda: self.deliberator.deliberate(query, material),
+            lambda exc: StageResult(
+                "deliberate", "failed", {"error": type(exc).__name__}
+            ),
+        )
+        if failure is not None:
+            return "", failure
         answer_text = str(result or "").strip()
         return answer_text, StageResult(
             "deliberate",
@@ -248,23 +319,21 @@ class CognitiveLoop:
         )
 
     async def _averify(self, query: str, candidate: str) -> tuple[bool, StageResult]:
-        import inspect
-
         if not candidate.strip():
             return False, StageResult(
                 "verify", "skipped", {"verified": False, "reason": "no_answer"}
             )
         if self.verifier is None:
             return False, StageResult("verify", "unavailable", {"verified": False})
-        try:
-            verdict = self.verifier.check(query, candidate)
-            if inspect.isawaitable(verdict):
-                verdict = await verdict
-        except Exception as exc:
-            _record_stage_degradation("verify", exc)
-            return False, StageResult(
+        verdict, failure = await _run_stage_async(
+            "verify",
+            lambda: self.verifier.check(query, candidate),
+            lambda exc: StageResult(
                 "verify", "failed", {"verified": False, "error": type(exc).__name__}
-            )
+            ),
+        )
+        if failure is not None:
+            return False, failure
         if not isinstance(verdict, dict) or "correct" not in verdict:
             return False, StageResult(
                 "verify",
@@ -348,23 +417,18 @@ class CognitiveLoop:
                 correction_material = self._correction_material(deliberated, ver_stage)
         learned = False
         if verified and self.learner is not None and answer is not None:
-            import inspect
-
-            try:
-                outcome = self.learner(query, answer, {"verified": True})
-                if inspect.isawaitable(outcome):
-                    outcome = await outcome
-                learned = bool(outcome)
-            except Exception as exc:
+            outcome, failure = await _run_stage_async(
+                "learn",
+                lambda: self.learner(query, answer, {"verified": True}),
+                lambda exc: StageResult(
+                    "learn", "failed", {"retained": False, "error": type(exc).__name__}
+                ),
+            )
+            if failure is not None:
                 learned = False
-                stages.append(
-                    StageResult(
-                        "learn",
-                        "failed",
-                        {"retained": False, "error": type(exc).__name__},
-                    )
-                )
+                stages.append(failure)
             else:
+                learned = bool(outcome)
                 stages.append(StageResult("learn", "ok" if learned else "skipped",
                                           {"retained": learned}))
         elif self.learner is not None:
@@ -411,18 +475,18 @@ class CognitiveLoop:
         # system trains on its own mistakes.
         learned = False
         if verified and self.learner is not None and answer is not None:
-            try:
-                learned = bool(self.learner(query, answer, {"verified": True}))
-            except Exception as exc:
+            outcome, failure = _run_stage(
+                "learn",
+                lambda: self.learner(query, answer, {"verified": True}),
+                lambda exc: StageResult(
+                    "learn", "failed", {"retained": False, "error": type(exc).__name__}
+                ),
+            )
+            if failure is not None:
                 learned = False
-                stages.append(
-                    StageResult(
-                        "learn",
-                        "failed",
-                        {"retained": False, "error": type(exc).__name__},
-                    )
-                )
+                stages.append(failure)
             else:
+                learned = bool(outcome)
                 stages.append(StageResult("learn", "ok" if learned else "skipped",
                                           {"retained": learned}))
         elif verified and self.learner is not None:

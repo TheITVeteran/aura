@@ -482,6 +482,62 @@ def handler_answers_with_a_value(handler: ast.ExceptHandler) -> bool:
     )
 
 
+#: The sanctioned degradation protocol. CLAUDE.md states the rule this gate is
+#: enforcing a corner of: "never a silent ``except: pass``" — record the
+#: degradation with a subsystem and an action instead.
+_DEGRADATION_RECORDERS = frozenset({"record_degradation", "_record_degradation"})
+
+
+def handler_records_a_degradation(handler: ast.ExceptHandler) -> bool:
+    """Did the handler report the failure through the runtime's own protocol?
+
+    ``# noqa: BLE001`` says a human looked at this handler once. A call to
+    ``record_degradation(subsystem, exc, action=...)`` says the same thing and
+    then keeps saying it at runtime: the record lands in
+    ``runtime_health_report()["integrity"]``, opens an incident, and escalates
+    to CRITICAL for every module on the fail-closed list. One is a comment that
+    cannot be wrong because it cannot be checked; the other is evidence that
+    the boundary actually fired, in production, on real inputs.
+
+    So a handler that records a degradation is reviewed by the stronger of the
+    two mechanisms, and the gate should say so. What stays reported is the
+    handler that does none of the three: does not re-raise, does not record,
+    and carries no annotation — which continues past a failure nobody
+    enumerated and tells nobody it happened.
+    """
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Call) and _call_name(node) in _DEGRADATION_RECORDERS:
+            return True
+    return False
+
+
+def handler_always_reraises(handler: ast.ExceptHandler) -> bool:
+    """Does control leave this handler only by the exception path?
+
+    ``except Exception: rollback(); raise`` catches broadly on purpose. The
+    breadth decides WHICH failures get cleaned up — and the answer should be
+    "all of them", because a KeyError between two SQL statements leaves the
+    transaction just as open as an sqlite3.Error does. The exception then
+    propagates unchanged: the caller learns everything it would have learned
+    without the handler, and nothing has been decided on its behalf.
+
+    That is not the debt this rule exists to surface. The debt is
+    ``except Exception: logger.warning(...)`` with no re-raise — a handler that
+    DECIDES to continue, across a set of failures nobody enumerated, including
+    the ones nobody thought of. Breadth is dangerous exactly when it is paired
+    with a decision, and harmless when it is paired with cleanup.
+
+    Ninety of this rule's one hundred and fifty-four findings re-raise.
+
+    The check is deliberately conservative: the last top-level statement must
+    be a ``raise``, so a handler that re-raises on one branch and falls through
+    on another still counts as a decision and is still reported.
+    """
+    if not handler.body:
+        return False
+    return isinstance(handler.body[-1], ast.Raise)
+
+
 class AstGate(ast.NodeVisitor):
     def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
         self.rel = rel
@@ -572,7 +628,11 @@ class AstGate(ast.NodeVisitor):
                 # A silent swallow is debt even when annotated; a swallow that
                 # at least logs (non-trivial body) may be a reviewed floor.
                 self.add(severity, "swallowed_broad_exception", node)
-            elif not self._line_has_reviewed_broad_except(node):
+            elif not (
+                self._line_has_reviewed_broad_except(node)
+                or handler_always_reraises(node)
+                or handler_records_a_degradation(node)
+            ):
                 self.add(
                     "medium" if is_production(self.rel) else "low",
                     "broad_exception_review",
@@ -920,6 +980,37 @@ def docstring_line_numbers(tree: ast.AST | None) -> set[int]:
         for child in ast.iter_child_nodes(node):
             if isinstance(getattr(child, "body", None), list):
                 stack.append(child)
+    lines.update(_multiline_string_lines(tree))
+    return lines
+
+
+def _multiline_string_lines(tree: ast.AST | None) -> set[int]:
+    """Lines inside a string constant that spans more than one line.
+
+    A docstring is a string constant that happens to sit in statement
+    position, so the docstring exemption above was always the special case of
+    a general rule: text inside quotes is data, not something the program
+    does. The general rule matters because the files most likely to quote a
+    forbidden pattern are the tests that prove the rule against it works, and
+    a gate that reports its own fixtures is a gate on its way to a file-name
+    allowlist. ``_quoted_skip_lines`` already reached this conclusion for
+    pytest skips; this is the same conclusion, applied once instead of once
+    per rule.
+
+    Only MULTI-line literals qualify. ``STATE_ROOT = "/Users/bryan/.aura"`` is
+    a single-line constant and stays reported — it is a real path this module
+    would really use.
+    """
+    lines: set[int] = set()
+    if tree is None:
+        return lines
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        start = int(getattr(node, "lineno", 0) or 0)
+        end = int(getattr(node, "end_lineno", start) or start)
+        if end > start:
+            lines.update(range(start, end + 1))
     return lines
 
 
