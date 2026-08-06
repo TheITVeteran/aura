@@ -89,3 +89,64 @@ class TestTheGateAgrees:
             report = json.loads(out.read_text())
         secrets = [f for f in report["findings"] if f["kind"] == "potential_secret"]
         assert secrets == [], secrets
+
+
+class TestPassOnlyConstructorsAreJudgedByShape:
+    """A test double's no-op __init__ is not an unimplemented function.
+
+    All three pass_only_function findings were constructor overrides on test
+    doubles — the standard way to stop a real constructor from running, where
+    `pass` IS the correct implementation of "set nothing up".
+
+    The exemption is shaped, not path-based: the class must define at least
+    one other method with a real body. A class that is nothing BUT a
+    pass-only __init__ is still scaffolding and is still reported, which is
+    what stops this from being "skip tests/" under a better name.
+    """
+
+    @staticmethod
+    def _findings(source: str) -> list[str]:
+        import ast
+
+        from tools.aura_enterprise_gate import AstGate, GateReport
+
+        report = GateReport(root=Path("."), generated_at_unix=0.0)
+        AstGate("tests/probe.py", report, source.splitlines()).visit(ast.parse(source))
+        return [f.kind for f in report.findings]
+
+    def test_a_double_with_real_methods_is_exempt(self) -> None:
+        source = (
+            "class Double:\n"
+            "    def __init__(self) -> None:\n"
+            "        pass\n"
+            "    def is_ready(self) -> bool:\n"
+            "        return True\n"
+        )
+        assert "pass_only_function" not in self._findings(source)
+
+    def test_a_class_that_is_only_a_stub_is_still_reported(self) -> None:
+        source = "class Stub:\n    def __init__(self) -> None:\n        pass\n"
+        assert "pass_only_function" in self._findings(source)
+
+    def test_a_class_whose_other_methods_are_also_stubs_is_reported(self) -> None:
+        source = (
+            "class Hollow:\n"
+            "    def __init__(self) -> None:\n"
+            "        pass\n"
+            "    def later(self) -> None:\n"
+            "        pass\n"
+        )
+        assert "pass_only_function" in self._findings(source)
+
+    def test_a_pass_only_method_that_is_not_a_constructor_is_reported(self) -> None:
+        source = (
+            "class Real:\n"
+            "    def work(self) -> None:\n"
+            "        pass\n"
+            "    def other(self) -> int:\n"
+            "        return 1\n"
+        )
+        assert "pass_only_function" in self._findings(source)
+
+    def test_a_bare_pass_only_function_is_reported(self) -> None:
+        assert "pass_only_function" in self._findings("def nothing():\n    pass\n")

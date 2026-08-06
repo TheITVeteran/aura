@@ -408,6 +408,36 @@ def is_abstract_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     )
 
 
+def is_deliberate_constructor_override(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, parents: dict[int, ast.AST]
+) -> bool:
+    """A no-op __init__ on a class that has real methods is intentional.
+
+    A test double overrides the constructor so the real one does not run, and
+    ``pass`` is the correct implementation of "do not set anything up". All
+    three pass_only_function findings in this repo were exactly that.
+
+    Judged by SHAPE, not by path: the class must define at least one other
+    method with a real body. A class that is nothing but a pass-only __init__
+    is still unimplemented scaffolding and is still reported — which is what
+    keeps this from being "skip tests/" wearing a better name.
+    """
+    if node.name != "__init__":
+        return False
+    parent = parents.get(id(node))
+    if not isinstance(parent, ast.ClassDef):
+        return False
+    for item in parent.body:
+        if item is node or not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        sibling_body = body_without_docstring(item)
+        if sibling_body and not (
+            len(sibling_body) == 1 and isinstance(sibling_body[0], ast.Pass)
+        ):
+            return True
+    return False
+
+
 def is_not_implemented_only(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     body = body_without_docstring(node)
     if len(body) != 1 or not isinstance(body[0], ast.Raise):
@@ -446,6 +476,15 @@ class AstGate(ast.NodeVisitor):
         self.report = report
         self.async_depth = 0
         self.source_lines = source_lines or []
+        #: child id -> parent node. ast has no parent pointers and a couple of
+        #: checks need the enclosing class to tell a deliberate override from
+        #: an unimplemented function.
+        self._parents: dict[int, ast.AST] = {}
+
+    def visit(self, node: ast.AST) -> object:
+        for child in ast.iter_child_nodes(node):
+            self._parents[id(child)] = node
+        return super().visit(node)
 
     def _line_has_marker(self, node: ast.AST, marker: str) -> bool:
         lineno = int(getattr(node, "lineno", 0) or 0)
@@ -515,7 +554,12 @@ class AstGate(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         body = body_without_docstring(node)
-        if len(body) == 1 and isinstance(body[0], ast.Pass) and not is_abstract_function(node):
+        if (
+            len(body) == 1
+            and isinstance(body[0], ast.Pass)
+            and not is_abstract_function(node)
+            and not is_deliberate_constructor_override(node, self._parents)
+        ):
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "pass_only_function",
@@ -543,7 +587,12 @@ class AstGate(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         body = body_without_docstring(node)
-        if len(body) == 1 and isinstance(body[0], ast.Pass) and not is_abstract_function(node):
+        if (
+            len(body) == 1
+            and isinstance(body[0], ast.Pass)
+            and not is_abstract_function(node)
+            and not is_deliberate_constructor_override(node, self._parents)
+        ):
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "pass_only_function",
