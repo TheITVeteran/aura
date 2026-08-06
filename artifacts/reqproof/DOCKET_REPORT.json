@@ -294,7 +294,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "claimed_complete_needs_dependencies": 1
       },
       "family": "LIFECYCLE"
     },
@@ -637,7 +637,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "1380bbc6e9313fca66ae664f424e0efdbc1e54409c9a78cf0a6ff964958aba11",
+    "evidence_ledger_sha256": "d6f91fa4a77190ec2b606107b63ac1384c9c6abbd3d4e999908bd7c583af4563",
     "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
@@ -645,7 +645,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "54187af3dcc90da4235331c6091b3b76d64816208bbdbbcda9e29af5b74d138b",
+  "report_sha256": "e62e5c61d75486ee98386cd8ab3156e63c3cd6bec1cb198a73c2e949140000f9",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -753,7 +753,6 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "FAULT-001",
-        "LIFECYCLE-001",
         "CONVERSATION-001"
       ],
       "disposition": "in_progress",
@@ -2778,31 +2777,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [
-        "FAULT-001",
-        "ARCH-001",
-        "REPO-001",
-        "VALIDATE-001"
-      ],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "LIFECYCLE",
-      "id": "LIFECYCLE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-22",
         "PASSF-03"
@@ -2822,6 +2796,28 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [
+        "FAULT-001",
+        "ARCH-001",
+        "REPO-001",
+        "VALIDATE-001"
+      ],
+      "disposition": "claimed_complete_needs_dependencies",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "LIFECYCLE",
+      "id": "LIFECYCLE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
     },
     {
       "acceptance_units": 1,
@@ -8140,14 +8136,13 @@
       "ADDENDUM-22",
       "CTX2-TEST-002",
       "LANE-001",
-      "LIFECYCLE-001",
       "RESOURCE-001"
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
       "certified_complete": 13,
-      "claimed_complete_needs_dependencies": 1,
-      "claimed_complete_needs_evidence": 5,
+      "claimed_complete_needs_dependencies": 2,
+      "claimed_complete_needs_evidence": 4,
       "deferred": 1,
       "in_progress": 83,
       "nonmandatory": 1,

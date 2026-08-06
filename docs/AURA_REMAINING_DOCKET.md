@@ -6,7 +6,7 @@
 
 - Requirements: **313** total / **312** mandatory
 - In progress: **83**
-- Claimed complete but missing evidence: **5**
+- Claimed complete but missing evidence: **4**
 - Ready for implementation: **176**
 - Blocked by direct dependency: **33**
 - Machine-certified complete: **13**
@@ -19,7 +19,7 @@
 | `ADAPT-001` | `in_progress` | 3 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
-| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
+| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, CONVERSATION-001 |
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | AGENCY-001, EFFECT-001, VALUES-001 |
 | `BOOT-HEALTH-001` | `in_progress` | 3 | RUNTIME-001, HEALTH-SURFACE-001, FOREGROUND-LATENCY-001, CONVERSATION-001, FAULT-001 |
 | `CHAT-DELIVERY-001` | `in_progress` | 4 | CONVERSATION-001, ACTION-SPINE-001, DATA-LIFECYCLE-001, LAUNCH-PROVENANCE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
@@ -106,11 +106,10 @@ These requirements carry a historical complete claim but are not machine-certifi
 - `ADDENDUM-22`
 - `CTX2-TEST-002`
 - `LANE-001`
-- `LIFECYCLE-001`
 - `RESOURCE-001`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `54187af3dcc90da4235331c6091b3b76d64816208bbdbbcda9e29af5b74d138b`
+Report SHA-256: `e62e5c61d75486ee98386cd8ab3156e63c3cd6bec1cb198a73c2e949140000f9`
