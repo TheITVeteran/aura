@@ -232,6 +232,13 @@ def test_skill_execute_api_uses_real_router_engine_and_discovered_skill(tmp_path
     )
     assert report["catalog"]["ready"] is True
     assert report["catalog"]["parity_status"] == "matched"
+    assert report["catalog_preflight"] == {
+        "complete": True,
+        "entry_count": report["catalog"]["live_count"],
+        "failed": [],
+        "ok": True,
+        "skill_bodies_invoked": 0,
+    }
     catalog_id = report["metadata"].pop("catalog_id")
     assert catalog_id
     assert report["metadata"] == {

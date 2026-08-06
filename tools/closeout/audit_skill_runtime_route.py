@@ -47,6 +47,7 @@ async def audit_skill_runtime_route() -> dict[str, Any]:
                 "route": "api.skill.execute -> intent_router.route_execution -> capability_engine.execute",
             }
 
+        catalog_preflight = engine.dry_run_catalog()
         response = await api_skill_execute("clock", {}, None, None)
         payload = json.loads(response.body)
         receipt = engine.preflight_skill("clock")
@@ -55,6 +56,17 @@ async def audit_skill_runtime_route() -> dict[str, Any]:
 
         if response.status_code != 200:
             failures.append(f"unexpected_http_status:{response.status_code}")
+        if catalog_preflight.get("ok") is not True:
+            failures.append("catalog_execution_preflight_failed")
+        if catalog_preflight.get("complete") is not True:
+            failures.append("catalog_execution_preflight_incomplete")
+        if catalog_preflight.get("failed"):
+            failures.append("catalog_execution_preflight_has_failures")
+        if any(
+            entry.get("skill_body_invoked") is not False
+            for entry in catalog_preflight.get("entries") or ()
+        ):
+            failures.append("catalog_preflight_invoked_skill_body")
         if payload.get("ok") is not True:
             failures.append("skill_execution_failed")
         if payload.get("skill") != "clock":
@@ -81,6 +93,16 @@ async def audit_skill_runtime_route() -> dict[str, Any]:
                 "live_count": health.get("live_count"),
                 "parity_status": health.get("parity_status"),
                 "ready": health.get("ready"),
+            },
+            "catalog_preflight": {
+                "complete": catalog_preflight.get("complete"),
+                "entry_count": len(catalog_preflight.get("entries") or ()),
+                "failed": catalog_preflight.get("failed"),
+                "ok": catalog_preflight.get("ok"),
+                "skill_bodies_invoked": sum(
+                    entry.get("skill_body_invoked") is not False
+                    for entry in catalog_preflight.get("entries") or ()
+                ),
             },
             "execution": {
                 "duration_ms": payload.get("duration_ms"),
