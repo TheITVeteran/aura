@@ -216,10 +216,10 @@
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 56,
-    "evidence_ledger_sha256": "895b418d5ba47451900b1eb623dbc485b75c8388220628fc2d50981b650f3ab5",
+    "evidence_ledger_sha256": "b38d81fa4aea8207bc22fbf818a91de9fec2d98c9f319ef7db1fb250d8602bd9",
     "mandatory_not_closed": 293,
-    "registry_content_sha256": "d3bb5530969eb883ecd6d781e1831c03a7d629cac65c2ab8bd9a8f8ecffabed1",
-    "registry_revision": 34,
+    "registry_content_sha256": "953ba56ab5ad0809453358a1718f8a6ca2c208b265ee631e9441a20ba30832a3",
+    "registry_revision": 35,
     "requirements": 313,
     "scope_baseline_cells": 1305,
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336",
@@ -230,7 +230,7 @@
       "open": 200,
       "withdrawn": 1
     },
-    "tracker_extraction_sha256": "126754c2e20f488a7d72c13d08730fbd6de96457a5709cc09f9a9d446d2662fb"
+    "tracker_extraction_sha256": "1ca4f4671e7cc1d10bebf6d8dd08bc34c7768ee762380d5152ca9c8f4c9466d8"
   },
   "verdict": "pass"
 }

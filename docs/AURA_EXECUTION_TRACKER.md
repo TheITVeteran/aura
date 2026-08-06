@@ -22,14 +22,18 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 760 freezes S30 from
-  clean pushed CP759 source with twelve fresh depth-two training tasks and one
-  fresh holdout. Their task and prompt identities have zero overlap with S28,
-  S29, and each other. Resident preflights remain next; no policy update or
-  gain claim exists.**
-- Previous implementation milestone: **Checkpoint 759 made the next resident
-  canary answer-complete before it can train by targeting the observed
-  family/depth, using 512 tokens, and requiring current v3 causal evidence.**
+- Current active implementation milestone: **The terminal resident-32B
+  role-v6 step-104 adapter is materialized, content-frozen, and exercised in a
+  complete four-arm mechanics campaign. All four arms ran once and committed
+  verifiable evidence, but all four failed the one sealed mathematics task, so
+  the result is an underpowered zero-effect conjecture rather than a reasoning
+  gain. The next empirical gate is a powered, broad, externally rooted frozen
+  campaign; no promotion, fusion, frontier, or `WOW Signal` claim exists.**
+- Previous implementation milestone: **The canonical requirement registry was
+  reconciled to 313 requirements and a 1,305-cell no-shrink denominator. Its
+  structural gate passes while retaining 31 explicit architecture/status
+  defects and 293 mandatory requirements that are not yet machine-certified
+  closed.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -37264,3 +37268,57 @@ ownership invariant. This does not close the wider repository review, exact-app
 runtime validation, release certification, resident-32B gain claims, or final
 multi-hour soaks; those remain independently tracked and cannot inherit credit
 from this scanner closure.
+
+## Checkpoint 2026-08-06-001: Frozen Resident Four-Arm Mechanics
+
+The terminal role-v6 recurrent-SFT product is no longer represented only by a
+training journal. Step 104/104 was materialized and frozen against base model
+fingerprint
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`,
+adapter SHA-256
+`e529013e732cc86b8bcb33f1dcbb8fd9a2cf2edad9109944f1b1710621d6f2a1`,
+terminal checkpoint receipt
+`a9ded93b2d7ec71dde300f7eee5f49e209da34a32860b827ff737d1749ae2a54`,
+and freeze certificate
+`d03f4e68a5d3a678a58ff83cc2ff81e98f1e8c3e3a308a9bf2a605f069051fa9`.
+The frozen execution contract uses 16 latent slots, two role-conditioned
+branches, four recurrent steps, and the exact resident Qwen2.5-32B base.
+
+The source-bound campaign
+`resident_32b_role_v6_step104_mechanics_20260806` then executed
+`base_vanilla`, `base_rlc`, `adapter_vanilla`, and `adapter_rlc` against the
+same post-seal task commitment. Every arm completed on its first attempt. The
+adapter arms loaded the frozen adapter across 24 declared projections; the RLC
+arms emitted recurrent episode, answer-selection, model-identity, information,
+and operation-level resource receipts. The journal contains 17 hash-chained
+events and four terminal commits. The committed campaign manifest is
+`9a9cdbb2b2cd611b02136a18620e5ad6f2d78d1ec0c860d951a70b136b34800b`;
+the production grade is
+`b641ac254ecb8c60e13e04efde212b61ccdfc370c492174d01a5d88c550fec0e`.
+The independent verifier reopened the artifacts, recomputed the semantic grade,
+and passed with zero integrity failures; its independently computed semantic
+grade is
+`d39060f74a87203d990de943a4d03adf243843ebacfaa3300551aa234feb3dfe`.
+
+The scientific result is negative and deliberately narrow. All four arms were
+incorrect on the one sealed combinatorics task. The two vanilla arms produced
+the same output and score; both recurrent arms also failed exact post-reveal
+grading. Every base/RLC, adapter/RLC, adapter/base, and difference-in-differences
+comparison is therefore one tie with paired effect zero. The accepted verdict
+is `incomplete_underpowered`, the claim tier is `CONJECTURE`, and the only
+grading reason is `underpowered_domain:mathematics`. This proves that the exact
+frozen resident adapter and four execution paths can produce independently
+replayable causal/mechanical evidence. It does **not** prove task improvement,
+positive adapter/RLC interaction, broad reasoning gain, frontier performance,
+installed-app benefit, promotion, fusion, release readiness, or a `WOW Signal`.
+
+Evidence: `tools/verify_paired_campaign_evidence.py` independently passed the
+committed campaign; the paired-campaign, independent-worker, and contamination
+verification suites pass `32/32`. This advances `RLC-EXPERIMENTS-001`,
+`RLC-LIVE32B-001`, `RLC-INDEPENDENT-001`, and `RLC-FRONTIER-001` only at the
+mechanics/evidence level. Closure still requires the preregistered powered
+multi-domain task count, canonical strong baselines, fresh contamination-safe
+tasks, genuinely separately administered trust roots, repeated positive and
+non-regressed effects, external-frontier comparisons, live installed-app
+causality, and independent acceptance. Final multi-hour soaks remain deferred
+until the shorter release gates are green.
