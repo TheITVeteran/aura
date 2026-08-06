@@ -43,7 +43,8 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 15
+    "stale-evidence": 12,
+    "unproven-closure": 16
   },
   "defects": [
     {
@@ -242,8 +243,68 @@
       "subject": "VOICE-001"
     },
     {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "ADDENDUM-21::artifacts/reqproof/evidence/model-load-ownership-audit/61e13360430b3898c5b7e706504e9522ae7a2fb9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/61e13360430b3898c5b7e706504e9522ae7a2fb9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json"
+    },
+    {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A2], implementation[A4], test[A4], live[A4], live[A5], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], live[A2], implementation[A3], test[A3], implementation[A4], test[A4], live[A4], implementation[A5], test[A5], live[A5], implementation[A6], test[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
     },
     {
@@ -283,17 +344,22 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], gui[A1]",
-      "subject": "CTX2-SKILL-002"
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-TEST-001"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
       "subject": "CTX2-TEST-002"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+      "subject": "CTX2-TEST-003"
+    },
+    {
+      "defect_class": "unproven-closure",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
@@ -303,7 +369,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
       "subject": "RESOURCE-001"
     },
     {
@@ -317,7 +383,23 @@
       "subject": "STORAGE-GATEWAY-001"
     }
   ],
-  "failures": [],
+  "failures": [
+    "stale-evidence::ADDENDUM-21::artifacts/reqproof/evidence/model-load-ownership-audit/61e13360430b3898c5b7e706504e9522ae7a2fb9.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json: manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json: manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json: manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json: manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/61e13360430b3898c5b7e706504e9522ae7a2fb9.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-contract-tests/07f0ffe2393381455b189eece3b3f97c09b20dd6.json: manifested source changed: tests/conftest.py: expected 3794af72294d/55925, current 9e9c27d24ed6/57085",
+    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1b7cb29e5f0f490e844a395d2a4cf808a20f023e.json: manifested source changed: selector membership changed: added=['tools/closeout/audit_skill_readiness_surface.py', 'tools/closeout/audit_skill_readiness_ui.py'] removed=[]; interface/routes/subsystems.py: expected 4934123b4e5e/61014, current 5774e08f1876/60824; interface/routes/system.py: expected 208397fdeb99/241775, current 09cc969857f0/245268",
+    "NEW ratcheted defect unproven-closure::CTX2-TEST-001: complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+    "NEW ratcheted defect unproven-closure::CTX2-TEST-003: complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
+    "defect baseline is STALE (defects were fixed \u2014 good): run tools/reqproof/gate.py --refresh-baseline to shrink it; fixed: ['unproven-closure::CTX2-SKILL-002']"
+  ],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
@@ -325,14 +407,19 @@
   ],
   "ratchet": {
     "baseline_fingerprints": 54,
-    "current_fingerprints": 54,
-    "fixed_pending_refresh": [],
-    "new": []
+    "current_fingerprints": 55,
+    "fixed_pending_refresh": [
+      "unproven-closure::CTX2-SKILL-002"
+    ],
+    "new": [
+      "unproven-closure::CTX2-TEST-001",
+      "unproven-closure::CTX2-TEST-003"
+    ]
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 25,
-    "evidence_ledger_sha256": "a8c097f471621e73a6f655de0201db622df45e6c4bd4c2398fdf90e20172b356",
+    "evidence_ledger_entries": 27,
+    "evidence_ledger_sha256": "ffb5be2a94e01d828f5e7f141b84b60d7e75a751cc9d49ea3ccbbcd1e729bcec",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
     "registry_revision": 30,
@@ -348,5 +435,5 @@
     },
     "tracker_extraction_sha256": "be31f37d109c67f97636e27a174c730a10a488a8084c8c5e8716f829283e6e45"
   },
-  "verdict": "pass"
+  "verdict": "fail"
 }
