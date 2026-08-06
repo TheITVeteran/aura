@@ -46,7 +46,42 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.evaluation.lesion_inference import LesionClaim, summarise
+
 DEFAULT_OUT = PROJECT_ROOT / "artifacts" / "ablation" / "ablation_scorecard.json"
+
+#: Declared per condition, because only the person who wrote the lesion knows
+#: whether the metric could have moved for any other reason. Answering these
+#: honestly is the work; the classifier only applies the answers.
+#:
+#: All three are currently False for `metric_is_task_success`, which is the
+#: finding: this scorecard contains no capability evidence, and said
+#: "3/3 load-bearing" anyway.
+INFERENCE_INPUTS: dict[str, dict[str, bool]] = {
+    "without_substrate": {
+        # Policy divergence across self-states is a property of the coupler's
+        # own output. Nothing else produces it, but it is also not a claim
+        # about task outcomes.
+        "metric_has_other_producers": False,
+        "metric_is_task_success": False,
+        "tasks_solvable_without_component": False,
+    },
+    "without_system2": {
+        # The lesioned component IS the strict-proof solver, and the metric is
+        # the rate at which strict-proof answers appear. Removing it must zero
+        # the metric. This is a wiring check reported as a 1.0 delta.
+        "metric_has_other_producers": False,
+        "metric_is_task_success": True,
+        "tasks_solvable_without_component": False,
+    },
+    "without_verifier": {
+        # Rejection rate of wrong candidates: the verifier is the only
+        # rejector, so a null verifier passing everything is definitional.
+        "metric_has_other_producers": False,
+        "metric_is_task_success": False,
+        "tasks_solvable_without_component": False,
+    },
+}
 
 
 @dataclass
@@ -283,12 +318,41 @@ def main() -> int:
     results = asyncio.run(run(chosen))
 
     all_load_bearing = all(r.load_bearing for r in results)
+
+    # What each delta LICENSES, alongside the delta. "load-bearing" answers
+    # whether removing the organ changed its metric; it does not answer whether
+    # the organ helps, and a scorecard reporting 3/3 load-bearing over three
+    # wiring checks reads exactly like a scorecard reporting three capability
+    # results. `without_system2` is the clearest case in this file: 1.000 →
+    # 0.000 on strict_proof_exact_answer_rate, where the lesioned component is
+    # the strict-proof solver. Large, real, correctly measured, inferentially
+    # almost empty.
+    claims = [
+        LesionClaim(
+            condition=r.name,
+            subsystem=r.subsystem,
+            metric_name=r.metric_name,
+            delta=round(r.delta, 4),
+            metric_has_other_producers=INFERENCE_INPUTS[r.name]["metric_has_other_producers"],
+            metric_is_task_success=INFERENCE_INPUTS[r.name]["metric_is_task_success"],
+            tasks_solvable_without_component=INFERENCE_INPUTS[r.name][
+                "tasks_solvable_without_component"
+            ],
+        )
+        for r in results
+        if r.name in INFERENCE_INPUTS
+    ]
+    inference = summarise(claims)
+
     report = {
         "schema": "aura.ablation_scorecard.v1",
         "generated_at_unix": time.time(),
         "honesty": "every value measured from the real organ; no clamps or hardcoded statistics; "
                    "a no-delta result is reported as not-load-bearing, never hidden",
         "all_conditions_load_bearing": all_load_bearing,
+        # Read this before the deltas.
+        "inference": inference,
+        "claims": [c.to_dict() for c in claims],
         "conditions": [r.to_dict() for r in results],
         "context_conditions_dedicated_runner": CONTEXT_CONDITIONS,
     }

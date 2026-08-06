@@ -1,8 +1,49 @@
 {
   "schema": "aura.ablation_scorecard.v1",
-  "generated_at_unix": 1783190910.8870049,
+  "generated_at_unix": 1786027101.610039,
   "honesty": "every value measured from the real organ; no clamps or hardcoded statistics; a no-delta result is reported as not-load-bearing, never hidden",
   "all_conditions_load_bearing": true,
+  "inference": {
+    "schema": "aura.lesion_inference.v1",
+    "conditions": 3,
+    "by_inference_class": {
+      "tautological": 3,
+      "mechanistic": 0,
+      "capability": 0
+    },
+    "capability_claims": 0,
+    "earns_its_cost_supported_by": [],
+    "honest_summary": "0 of 3 conditions measure task success on tasks solvable without the component; the rest establish wiring or mechanism and cannot support a capability claim."
+  },
+  "claims": [
+    {
+      "condition": "without_substrate",
+      "subsystem": "core.being.policy_coupler",
+      "metric": "policy_divergence_across_states (mean pairwise normalized L1)",
+      "delta": 0.085,
+      "inference_class": "tautological",
+      "licenses": "the component is wired to the metric it produces. This is a wiring check: the delta could not have been anything else, so it is not evidence about capability, usefulness, or architecture.",
+      "supports_earns_its_cost": false
+    },
+    {
+      "condition": "without_system2",
+      "subsystem": "core.reasoning.proof_answer_solver",
+      "metric": "strict_proof_exact_answer_rate",
+      "delta": 1.0,
+      "inference_class": "tautological",
+      "licenses": "the component is wired to the metric it produces. This is a wiring check: the delta could not have been anything else, so it is not evidence about capability, usefulness, or architecture.",
+      "supports_earns_its_cost": false
+    },
+    {
+      "condition": "without_verifier",
+      "subsystem": "core.reasoning.proof_answer_solver.validate_strict_proof_answer",
+      "metric": "balanced_accuracy (accept correct + reject wrong)",
+      "delta": 0.5,
+      "inference_class": "tautological",
+      "licenses": "the component is wired to the metric it produces. This is a wiring check: the delta could not have been anything else, so it is not evidence about capability, usefulness, or architecture.",
+      "supports_earns_its_cost": false
+    }
+  ],
   "conditions": [
     {
       "condition": "without_substrate",
