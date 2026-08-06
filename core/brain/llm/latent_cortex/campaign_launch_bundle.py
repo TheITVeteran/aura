@@ -45,7 +45,7 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
     IDENTITY_RECEIPT_SCHEMA as RESIDENT_SFT_IDENTITY_RECEIPT_SCHEMA,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
-    MANIFEST_SCHEMA as RESIDENT_SFT_MANIFEST_SCHEMA,
+    MANIFEST_SCHEMAS as RESIDENT_SFT_MANIFEST_SCHEMAS,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
     declared_bindings as resident_sft_declared_bindings,
@@ -169,7 +169,7 @@ def read_canonical_json(
     value = _strict_json(raw, role=role)
     if trailing_newline is None:
         trailing_newline = value.get("schema") not in {
-            RESIDENT_SFT_MANIFEST_SCHEMA,
+            *RESIDENT_SFT_MANIFEST_SCHEMAS,
             RESIDENT_SFT_COMPLETION_SCHEMA,
             "aura.resident_recurrent_sft_training_admission.v1",
         }
@@ -248,7 +248,7 @@ def _declared_paths(manifest: Mapping[str, Any]) -> list[str]:
         binding_roles = _BINDING_ROLES
     elif schema == GRPO_MANIFEST_SCHEMA:
         binding_roles = GRPO_BINDING_ROLES
-    elif schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+    elif schema in RESIDENT_SFT_MANIFEST_SCHEMAS:
         paths = [_MANIFEST_FILE, _COMPLETION_FILE]
         paths.extend(binding["path"] for _role, binding in resident_sft_declared_bindings(manifest))
         if len(paths) > _MAX_ARTIFACTS or len(set(paths)) != len(paths):
@@ -308,7 +308,7 @@ def adapter_artifact_inventory(
         binding_roles = _BINDING_ROLES
     elif schema == GRPO_MANIFEST_SCHEMA:
         binding_roles = GRPO_BINDING_ROLES
-    elif schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+    elif schema in RESIDENT_SFT_MANIFEST_SCHEMAS:
         binding_roles = ()
     else:
         _fail("adapter_manifest_schema_invalid")
@@ -328,7 +328,7 @@ def adapter_artifact_inventory(
             or declared.get("size_bytes") != actual["size_bytes"]
         ):
             _fail(f"adapter_{role}_binding_mismatch")
-    if schema != RESIDENT_SFT_MANIFEST_SCHEMA:
+    if schema not in RESIDENT_SFT_MANIFEST_SCHEMAS:
         for source_role, source in manifest["sources"].items():
             actual = by_path[source["snapshot_path"]]
             if (
@@ -337,7 +337,7 @@ def adapter_artifact_inventory(
             ):
                 _fail(f"adapter_source_{source_role}_binding_mismatch")
 
-    if schema == RESIDENT_SFT_MANIFEST_SCHEMA:
+    if schema in RESIDENT_SFT_MANIFEST_SCHEMAS:
         for role, declared in resident_sft_declared_bindings(manifest):
             actual = by_path[declared["path"]]
             if (

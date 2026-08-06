@@ -55,7 +55,7 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # no
     MANIFEST_SCHEMA as RECURRENT_GRPO_MANIFEST_SCHEMA,
 )
 from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (  # noqa: E402
-    MANIFEST_SCHEMA as RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
+    MANIFEST_SCHEMAS as RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS,
 )
 from core.runtime.file_read_gateway import (  # noqa: E402
     open_stable_readonly_binary,
@@ -94,6 +94,13 @@ _MAX_ADAPTER_ARTIFACT_BYTES = 1 << 40
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _PREPARE_SCHEMA = "aura.latent_cortex.campaign_trust_requests.v1"
 _LAUNCH_SPEC_SCHEMA = "aura.latent_cortex.launch_spec.v1"
+SUPPORTED_SCOPED_MANIFEST_SCHEMAS = frozenset(
+    {
+        MANIFEST_SCHEMA_V2,
+        RECURRENT_GRPO_MANIFEST_SCHEMA,
+        *RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMAS,
+    }
+)
 
 
 class CampaignPreparationError(RuntimeError):
@@ -441,11 +448,7 @@ def freeze_adapter(args: argparse.Namespace) -> dict[str, Any]:
                 personality_adapter=args.personality_adapter,
             )
         )
-        if adapter_identity.get("format") not in {
-            MANIFEST_SCHEMA_V2,
-            RECURRENT_GRPO_MANIFEST_SCHEMA,
-            RESIDENT_RECURRENT_SFT_MANIFEST_SCHEMA,
-        }:
+        if adapter_identity.get("format") not in SUPPORTED_SCOPED_MANIFEST_SCHEMAS:
             _fail("supported_scoped_adapter_required")
         certificate = build_adapter_freeze_certificate(
             adapter_id=args.adapter_id,

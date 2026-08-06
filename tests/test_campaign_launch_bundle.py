@@ -51,20 +51,26 @@ def test_read_canonical_json_honors_schema_specific_newline_policy(
     # stale test tracking a deliberate bump, not a real canonicalisation bug.
     # It reads the constant now, so the next bump cannot strand it again.
     from core.brain.llm.latent_cortex.campaign_launch_bundle import (
-        RESIDENT_SFT_MANIFEST_SCHEMA,
+        RESIDENT_SFT_MANIFEST_SCHEMAS,
     )
 
-    sft = tmp_path / "sft.json"
-    sft.write_bytes(canonical_json_bytes({"schema": RESIDENT_SFT_MANIFEST_SCHEMA}))
-    assert (
-        read_canonical_json(sft, role="sft", trailing_newline=None)["schema"]
-        == RESIDENT_SFT_MANIFEST_SCHEMA
-    )
+    for index, schema in enumerate(sorted(RESIDENT_SFT_MANIFEST_SCHEMAS)):
+        sft = tmp_path / f"sft-{index}.json"
+        sft.write_bytes(canonical_json_bytes({"schema": schema}))
+        assert read_canonical_json(sft, role="sft", trailing_newline=None)["schema"] == schema
 
     legacy = tmp_path / "legacy.json"
     legacy.write_bytes(canonical_json_bytes({"schema": "legacy"}))
     with pytest.raises(CampaignLaunchBundleError, match="legacy_noncanonical"):
         read_canonical_json(legacy, role="legacy", trailing_newline=None)
+
+
+def test_freeze_allowlist_covers_every_resident_sft_manifest_schema() -> None:
+    from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import (
+        MANIFEST_SCHEMAS,
+    )
+
+    assert MANIFEST_SCHEMAS <= preparation.SUPPORTED_SCOPED_MANIFEST_SCHEMAS
 
 
 def _binding(path: str, payload: bytes) -> dict[str, object]:
