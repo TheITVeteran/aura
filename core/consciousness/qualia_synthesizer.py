@@ -30,6 +30,18 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.verify import influence_channels
+from core.verify.lesion_registry import apply_channel, register_flag_lesion
+
+register_flag_lesion(
+    influence_channels.QUALIA_RICHNESS,
+    owner="core/consciousness/qualia_synthesizer.py",
+    neutral=(
+        "PRI keeps the synthesizer's own entropy measure; the qualia pipeline's "
+        "feature aggregate contributes nothing"
+    ),
+    direct_actuation=False,
+)
 
 logger = logging.getLogger("Consciousness.Qualia")
 
@@ -226,8 +238,20 @@ class QualiaSynthesizer:
                 # it is: a weighted composite of measured features, not a
                 # validated richness measure. `richness_validated` on the
                 # descriptor says so explicitly.
+                #
+                # This blend is the engine's ONLY route to behaviour. PRI from
+                # here reaches peripheral awareness intensity, the aesthetic
+                # engine and memory reconsolidation; the descriptor itself goes
+                # nowhere else but the audit. Lesioning the channel leaves PRI
+                # as the synthesizer's own entropy measure, which is the honest
+                # counterfactual: what the system does without the qualia
+                # pipeline contributing anything.
                 if descriptor.feature_aggregate > 0:
-                    self.pri = 0.6 * self.pri + 0.4 * descriptor.feature_aggregate
+                    self.pri = apply_channel(
+                        influence_channels.QUALIA_RICHNESS,
+                        0.6 * self.pri + 0.4 * descriptor.feature_aggregate,
+                        neutral=self.pri,
+                    )
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('qualia_synthesizer', e)
             logger.debug("QualiaEngine enrichment skipped: %s", e)

@@ -1166,6 +1166,39 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["admission_throughput_error"] = repr(exc)
 
+    # Which faculties have been shown to change the output, and which have only
+    # been shown to run. Attached here for the same reason as taint: the health
+    # verdict is green either way, and "the reply was produced by the full
+    # architecture" is a claim the verdict cannot express or refute.
+    try:
+        from core.verify.causal_influence import get_influence_ledger
+        from core.verify.lesion_registry import get_lesion_registry
+
+        block["causal_influence"] = get_influence_ledger().snapshot()
+        block["lesionable_channels"] = get_lesion_registry().snapshot()
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["causal_influence_error"] = repr(exc)
+
+    # Which path actually produced the recent replies. A demo showing a fluent
+    # answer establishes nothing about the pipeline until this says the pipeline
+    # ran.
+    try:
+        from core.verify.turn_receipt import recent_receipts
+
+        receipts = recent_receipts(limit=16)
+        block["turn_paths"] = {
+            "recent": receipts,
+            "full_pipeline_turns": sum(
+                1 for r in receipts if r.get("full_pipeline_ran")
+            ),
+            "model_generation_turns": sum(
+                1 for r in receipts if r.get("model_generation")
+            ),
+            "turns_recorded": len(receipts),
+        }
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
+        block["turn_paths_error"] = repr(exc)
+
     try:
         from core.runtime.taint import credibility_caveat, taint_compact, taint_report
 

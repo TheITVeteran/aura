@@ -32,6 +32,12 @@ from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
 from core.verify import influence_channels
 from core.verify.influence_receipt import InfluenceReceipt, build_influence_receipt
+from core.verify.turn_receipt import (
+    TurnReceipt,
+    record_phase,
+    record_response_path,
+    recording_turn,
+)
 from core.verify.lesion_registry import (
     apply_channel,
     get_lesion_registry,
@@ -627,6 +633,18 @@ def _register_live_mind_lesions() -> None:
 
 
 _register_live_mind_lesions()
+
+
+def _attach_turn_receipt(thought: Any, receipt: TurnReceipt) -> None:
+    """Travel the path evidence with the answer it explains.
+
+    Attached to the Thought rather than logged, because the consumer who needs
+    it is whoever is about to describe what this reply demonstrates.
+    """
+
+    metadata = getattr(thought, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata["turn_receipt"] = receipt.as_dict()
 
 
 def live_mind_influence_receipt(source: str) -> InfluenceReceipt:
@@ -1756,11 +1774,22 @@ class CognitiveEngine:
         objective = self._objective_with_antecedent(objective)
 
         outcome = TurnOutcome(origin=str(origin or "unknown"))
+        turn_id = str(uuid.uuid4())
         try:
-            with bind_turn(outcome):
+            # A fluent reply proves nothing about which architecture produced
+            # it. The quick lane, a canonical pre-rendered floor, the full
+            # phase pipeline and reactive recovery are indistinguishable
+            # downstream, and only one of them is the mind the demo is taken to
+            # demonstrate. This records which one ran, phase by phase, so the
+            # question has an answer instead of a claim.
+            with bind_turn(outcome), recording_turn(
+                turn_id,
+                phases_available=[phase.__class__.__name__ for phase in self._phases],
+            ) as turn_receipt:
                 thought = await self._think_within_turn(
                     objective, context, mode, origin, **kwargs
                 )
+                _attach_turn_receipt(thought, turn_receipt)
         except BaseException as exc:
             outcome.record_error(
                 f"{type(exc).__name__}: {exc}",
@@ -2162,6 +2191,20 @@ class CognitiveEngine:
             timeout_s=cycle_timeout,
         )
         if direct_quick_reply is not None:
+            # The quick lane returned before any phase executed. Whether the
+            # model was called depends on which branch inside it answered: the
+            # canonical floors return pre-rendered text and never reach it.
+            record_response_path(
+                str(
+                    (direct_quick_reply.metadata or {}).get("response_path")
+                    or "desktop_quick_reply"
+                ),
+                model_generation=bool(
+                    (direct_quick_reply.metadata or {}).get(
+                        "live_mind_generation_required", True
+                    )
+                ),
+            )
             state.cognition.working_memory.append(
                 {
                     "role": "assistant",
@@ -2187,8 +2230,14 @@ class CognitiveEngine:
                             context=context,
                             **kwargs,
                         )
+                        # Marked after the phase returns, so a phase that timed
+                        # out mid-execution is not recorded as having run.
+                        record_phase(phase.__class__.__name__)
 
                     state = temp_state
+                    record_response_path(
+                        "full_phase_pipeline", model_generation=True
+                    )
                     if self._is_user_facing_origin(origin):
                         state.transition_origin = origin
                         final_origin = getattr(state.cognition, "current_origin", "")
@@ -2199,6 +2248,7 @@ class CognitiveEngine:
                     success = True
             except TimeoutError:
                 logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
+                record_response_path("reactive_recovery_timeout", model_generation=False)
                 # Immediate Reactive Recovery
                 return await self._reactive_recovery(
                     objective,
@@ -2222,6 +2272,7 @@ class CognitiveEngine:
                     )
                     return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
 
+                record_response_path("reactive_recovery_crash", model_generation=False)
                 return await self._reactive_recovery(
                     objective,
                     mode,

@@ -220,10 +220,28 @@ class LesionRegistry:
         with self._lock:
             handles = dict(self._handles)
         active = self.active_lesions()
+
+        # Reported against the DECLARED channel set, not just against whatever
+        # happens to have been imported. A registry that only knows about
+        # modules loaded so far reports full coverage in a process that has
+        # loaded nothing, which is the most flattering possible answer and the
+        # least true one.
+        from core.verify import influence_channels
+
+        declared = set(influence_channels.ALL_CHANNELS)
+        registered = set(handles)
         return {
             "registered": {name: h.as_dict() for name, h in sorted(handles.items())},
             "registered_count": len(handles),
             "direct_actuation_count": sum(1 for h in handles.values() if h.direct_actuation),
+            "declared_count": len(declared),
+            #: Declared channels nothing has offered a lesion for. Claims about
+            #: these cannot be checked, and this is where that shows.
+            "declared_without_lesion": tuple(sorted(declared - registered)),
+            #: Lesions registered for channels outside the declared contract.
+            #: Usually a test fixture; in production code it means an id was
+            #: minted without being declared.
+            "undeclared_registrations": tuple(sorted(registered - declared)),
             "active_lesions": active,
         }
 
