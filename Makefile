@@ -1,4 +1,4 @@
-.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot evidence-integrity
+.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot evidence-integrity
 
 
 PYTHON ?= python
@@ -182,6 +182,10 @@ gate-skill-closure-audit:
 	@echo "🧠 Auditing cognitive-gate and executable-skill closure as one system..."
 	@$(PYTHON) tools/closeout/audit_gate_skill_closure.py
 
+model-lane-contract-audit:
+	@echo "🚦 Auditing atomic model-lane ownership and pressure-proof contracts..."
+	@$(PYTHON) tools/closeout/audit_model_lane_contract.py
+
 skill-catalog-audit:
 	@echo "🧰 Auditing skill discovery, quarantine, and live-registry equivalence..."
 	@$(PYTHON) tools/closeout/audit_skill_catalog.py
@@ -305,7 +309,7 @@ smoke:
 	@$(PYTHON) -m pytest $(SMOKE_TEST_TARGETS)
 	@echo "✅ Smoke suite passed"
 
-quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit model-load-audit resource-observation-audit integration-liveness architecture-map compile lint governance-lint security typecheck smoke
+quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit model-load-audit resource-observation-audit integration-liveness architecture-map compile lint governance-lint security typecheck smoke
 	@echo "🏁 Quality gates passed"
 
 decisive:

@@ -1,5 +1,5 @@
 {
-  "content_sha256": "f784a7c3e4aee0e337fb7102f768b620f1bd5801dddbb6fb7796e3d8b685e38b",
+  "content_sha256": "fbeaaeebf70667eaa01b2e4af3f0da767058f2511bf8020c2e8741b6783b2d2b",
   "schema_version": 1,
   "specs": [
     {
@@ -128,6 +128,86 @@
     {
       "command": [
         "{python}",
+        "tools/closeout/audit_model_lane_contract.py",
+        "--json"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5",
+            "A6",
+            "A7",
+            "A8",
+            "A9"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "ADDENDUM-21"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-LANE-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-LANE-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-LANE-003"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-LANE-004"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "LANE-001"
+        }
+      ],
+      "id": "model-lane-contract-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "aura_bench/**/*.py",
+        "benchmarks/**/*.py",
+        "core/**/*.py",
+        "interface/**/*.py",
+        "skills/**/*.py",
+        "tools/**/*.py",
+        "training/**/*.py"
+      ],
+      "source_paths": [
+        "config/model_load_ownership.json",
+        "core/runtime/model_lane_control.py",
+        "core/runtime/subprocess_gateway.py",
+        "tools/closeout/audit_model_lane_contract.py",
+        "tools/closeout/audit_model_load_ownership.py",
+        "tools/live_resource_pressure_proof.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
         "-m",
         "pytest",
         "-q",
@@ -137,6 +217,7 @@
         "tests/test_image_gen_model_lane.py",
         "tests/test_local_code_model_lane.py",
         "tests/test_mlx_lane_heartbeat.py",
+        "tests/test_model_lane_contract_audit.py",
         "tests/test_model_load_ownership_audit.py",
         "tests/test_voice_model_lane.py"
       ],
@@ -150,7 +231,9 @@
             "A4",
             "A5",
             "A6",
-            "A7"
+            "A7",
+            "A8",
+            "A9"
           ],
           "evidence_class": "test",
           "requirement_id": "ADDENDUM-21"
@@ -201,6 +284,7 @@
         "tests/test_image_gen_model_lane.py",
         "tests/test_local_code_model_lane.py",
         "tests/test_mlx_lane_heartbeat.py",
+        "tests/test_model_lane_contract_audit.py",
         "tests/test_model_lane_control.py",
         "tests/test_model_load_ownership_audit.py",
         "tests/test_subprocess_gateway_contract.py",
