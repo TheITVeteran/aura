@@ -552,7 +552,7 @@
     },
     {
       "counts": {
-        "in_progress": 1
+        "claimed_complete_needs_dependencies": 1
       },
       "family": "STORAGE"
     },
@@ -636,15 +636,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "34979c7b5a3f52cd752005f46d03ecf6b9ce6b7a47f4d6f0249cc68aa26e7371",
-    "registry_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e"
+    "evidence_ledger_sha256": "ba9a94314683f9454da9896a8d383e36c9bae87dca0248be49ac3c51d07567b3",
+    "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "ca5b08b56bafc5897ae3d4acf9618d6e5de7a998a9618f7a155ab38030f70262",
+  "report_sha256": "5c467a520463cd171448ce108b1b15582bc1e7c0b86341a766bd4f19743ac61d",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2514,30 +2514,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [
-        "EFFECT-001",
-        "FAULT-001",
-        "REPO-001"
-      ],
-      "disposition": "in_progress",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "STORAGE",
-      "id": "STORAGE-GATEWAY-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "in_progress",
-      "title": "Removed all seven original production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program\u2026"
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-20",
         "ADDENDUM-29",
@@ -2944,6 +2920,26 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [
+        "EFFECT-001",
+        "FAULT-001"
+      ],
+      "disposition": "claimed_complete_needs_dependencies",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "STORAGE",
+      "id": "STORAGE-GATEWAY-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Keep the authoritative production-surface scanner at zero findings and zero exemptions across direct writes, raw subprocesses, raw asynchronous tasks, swallowe\u2026"
     },
     {
       "acceptance_units": 5,
@@ -7114,7 +7110,6 @@
       "direct_dependency_blockers": [
         "IMMUNE-CODING-001",
         "ADAPT-001",
-        "STORAGE-GATEWAY-001",
         "FAULT-001",
         "ACTION-SPINE-001"
       ],
@@ -7251,7 +7246,6 @@
       "direct_dependency_blockers": [
         "MEMORY-001",
         "STATE-001",
-        "STORAGE-GATEWAY-001",
         "SECURITY-001",
         "OPERATIONS-001"
       ],
@@ -8203,9 +8197,10 @@
       "blocked_by_dependency": 33,
       "certified_complete": 9,
       "claimed_complete_needs_children": 1,
+      "claimed_complete_needs_dependencies": 1,
       "claimed_complete_needs_evidence": 8,
       "deferred": 1,
-      "in_progress": 84,
+      "in_progress": 83,
       "nonmandatory": 1,
       "ready_for_implementation": 176
     },
@@ -8286,7 +8281,6 @@
       "SIMWORLD-001",
       "SKILL-EXECUTION-001",
       "SOCIAL-001",
-      "STORAGE-GATEWAY-001",
       "SUBSTRATE-001",
       "TOOL-DISPOSITION-001",
       "TOOLS-001",

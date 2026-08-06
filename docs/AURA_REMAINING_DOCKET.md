@@ -5,7 +5,7 @@
 ## Current Truth
 
 - Requirements: **313** total / **312** mandatory
-- In progress: **84**
+- In progress: **83**
 - Claimed complete but missing evidence: **8**
 - Ready for implementation: **176**
 - Blocked by direct dependency: **33**
@@ -91,7 +91,6 @@
 | `SIMWORLD-001` | `in_progress` | 3 | none |
 | `SKILL-EXECUTION-001` | `in_progress` | 3 | CAPABILITY-CERT-001, TOOLS-001, EFFECT-001, FAULT-001, TEST-DEPTH-001 |
 | `SOCIAL-001` | `in_progress` | 3 | none |
-| `STORAGE-GATEWAY-001` | `in_progress` | 2 | EFFECT-001, FAULT-001, REPO-001 |
 | `SUBSTRATE-001` | `in_progress` | 3 | STATE-001, MIND-001, FOREGROUND-LATENCY-001 |
 | `TOOL-DISPOSITION-001` | `in_progress` | 3 | OBSERVE-001, EXPECT-001, FAULT-001, UI-001, AUTONOMY-AUTHORITY-001 |
 | `TOOLS-001` | `in_progress` | 2 | none |
@@ -117,4 +116,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `ca5b08b56bafc5897ae3d4acf9618d6e5de7a998a9618f7a155ab38030f70262`
+Report SHA-256: `5c467a520463cd171448ce108b1b15582bc1e7c0b86341a766bd4f19743ac61d`
