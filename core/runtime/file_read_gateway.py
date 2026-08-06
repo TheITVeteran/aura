@@ -104,6 +104,30 @@ def open_stable_readonly_binary(
             os.close(fd)
 
 
+def _mark_file_provenance(path: "PathLike") -> None:
+    """Record that this turn read a file whose contents Aura did not write.
+
+    Never raises: provenance is a note about the turn, and failing to take the
+    note must not fail the read. It is recorded as a degradation instead,
+    because a missing note means an action gate answers "trusted" for a turn
+    that read someone else's text.
+    """
+    try:
+        from core.security.content_provenance import ProvenanceClass, record_ingest
+
+        record_ingest(ProvenanceClass.OWNER_FILE, f"read {str(path)[:120]}")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "file_read_gateway",
+            exc,
+            severity="warning",
+            action="file content provenance not recorded; action gates will treat this turn as untainted",
+            enforce_failure_policy=False,
+        )
+
+
 def read_stable_bytes(path: PathLike, *, max_bytes: int) -> bytes:
     """Read one stable regular file under an explicit byte bound."""
 
@@ -113,6 +137,14 @@ def read_stable_bytes(path: PathLike, *, max_bytes: int) -> bytes:
             raise StableFileReadError("bounded_read_length_mismatch", path)
         if handle.read(1):
             raise StableFileReadError("grew_beyond_bound", path)
+        # Recorded as OWNER_FILE, which sits BELOW the untrusted floor and so
+        # does not by itself disarm an action gate. That is a policy choice,
+        # not an oversight: the owner pointed at this file deliberately, and
+        # treating every file read as untrusted would disarm desktop control on
+        # almost every turn, which makes a control nobody keeps. The residual
+        # risk is real and named — a README inside a cloned repository was
+        # authored by a stranger and is currently trusted at this level.
+        _mark_file_provenance(path)
         return payload
 
 

@@ -84,6 +84,15 @@ MEANING: dict[ProvenanceClass, str] = {
 
 #: At or above this, content was authored by someone who is not the owner and
 #: may have written it knowing an agent would read it.
+#:
+#: OWNER_FILE sits deliberately BELOW the floor, and that is the one judgement
+#: call in this module. A file the owner pointed at was a deliberate act by the
+#: owner, and treating every file read as untrusted would disarm action gates
+#: on nearly every turn — producing a control that gets switched off, which
+#: protects nothing. The residual risk is real and stated rather than papered
+#: over: a README inside a cloned repository was authored by a stranger and is
+#: trusted at this level today. Moving it above the floor is a policy change
+#: with a cost, not a bug fix.
 UNTRUSTED_FLOOR = ProvenanceClass.TOOL_OUTPUT
 
 
