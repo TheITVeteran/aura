@@ -6,6 +6,7 @@ import inspect
 import os
 from dataclasses import dataclass, replace
 from typing import Any
+from core.runtime.flags import env_str
 
 _OPENHAB_CONNECTOR_ID = "openhab.local"
 
@@ -94,8 +95,8 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
 
     connectors: list[Any] = []
     statuses: list[ConnectorBootStatus] = []
-    url = str(os.getenv("AURA_OPENHAB_URL") or "").strip()
-    token = str(os.getenv("AURA_OPENHAB_TOKEN") or "").strip()
+    url = str(env_str("AURA_OPENHAB_URL", description="openHAB URL", owner="core.embodiment.reality_connectors") or "").strip()
+    token = str(env_str("AURA_OPENHAB_TOKEN", description="openHAB token", owner="core.embodiment.reality_connectors") or "").strip()
     if not url and not token:
         statuses.append(
             ConnectorBootStatus(
@@ -145,9 +146,9 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
-    mqtt_url = str(os.getenv("AURA_MQTT_BROKER_URL") or "").strip()
-    mqtt_manifest = str(os.getenv("AURA_MQTT_RESOURCES_JSON") or "").strip()
-    mqtt_installation = str(os.getenv("AURA_MQTT_INSTALLATION_ID") or "").strip()
+    mqtt_url = str(env_str("AURA_MQTT_BROKER_URL", description="MQTT broker URL", owner="core.embodiment.reality_connectors") or "").strip()
+    mqtt_manifest = str(env_str("AURA_MQTT_RESOURCES_JSON", description="MQTT resources JSON", owner="core.embodiment.reality_connectors") or "").strip()
+    mqtt_installation = str(env_str("AURA_MQTT_INSTALLATION_ID", description="MQTT installation id", owner="core.embodiment.reality_connectors") or "").strip()
     mqtt_present = bool(mqtt_url or mqtt_manifest or mqtt_installation)
     if not mqtt_present:
         statuses.append(
@@ -204,9 +205,9 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
-    opcua_endpoint = str(os.getenv("AURA_OPCUA_ENDPOINT") or "").strip()
-    opcua_manifest = str(os.getenv("AURA_OPCUA_RESOURCES_JSON") or "").strip()
-    opcua_installation = str(os.getenv("AURA_OPCUA_INSTALLATION_ID") or "").strip()
+    opcua_endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.reality_connectors") or "").strip()
+    opcua_manifest = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.reality_connectors") or "").strip()
+    opcua_installation = str(env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.reality_connectors") or "").strip()
     opcua_present = bool(opcua_endpoint or opcua_manifest or opcua_installation)
     if not opcua_present:
         statuses.append(
@@ -263,9 +264,9 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
-    rosbridge_url = str(os.getenv("AURA_ROSBRIDGE_URL") or "").strip()
-    rosbridge_manifest = str(os.getenv("AURA_ROSBRIDGE_NODE_MANIFEST_JSON") or "").strip()
-    rosbridge_installation = str(os.getenv("AURA_ROSBRIDGE_INSTALLATION_ID") or "").strip()
+    rosbridge_url = str(env_str("AURA_ROSBRIDGE_URL", description="rosbridge URL", owner="core.embodiment.reality_connectors") or "").strip()
+    rosbridge_manifest = str(env_str("AURA_ROSBRIDGE_NODE_MANIFEST_JSON", description="rosbridge node manifest JSON", owner="core.embodiment.reality_connectors") or "").strip()
+    rosbridge_installation = str(env_str("AURA_ROSBRIDGE_INSTALLATION_ID", description="rosbridge installation id", owner="core.embodiment.reality_connectors") or "").strip()
     rosbridge_present = bool(rosbridge_url or rosbridge_manifest or rosbridge_installation)
     if not rosbridge_present:
         statuses.append(
@@ -322,10 +323,10 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                     state="ready",
                 )
             )
-    scpi_endpoint = str(os.getenv("AURA_SCPI_ENDPOINT") or "").strip()
-    scpi_manifest = str(os.getenv("AURA_SCPI_RESOURCES_JSON") or "").strip()
-    scpi_installation = str(os.getenv("AURA_SCPI_INSTALLATION_ID") or "").strip()
-    scpi_expected_idn = str(os.getenv("AURA_SCPI_EXPECTED_IDN_SHA256") or "").strip()
+    scpi_endpoint = str(env_str("AURA_SCPI_ENDPOINT", description="SCPI endpoint", owner="core.embodiment.reality_connectors") or "").strip()
+    scpi_manifest = str(env_str("AURA_SCPI_RESOURCES_JSON", description="SCPI resources JSON", owner="core.embodiment.reality_connectors") or "").strip()
+    scpi_installation = str(env_str("AURA_SCPI_INSTALLATION_ID", description="SCPI installation id", owner="core.embodiment.reality_connectors") or "").strip()
+    scpi_expected_idn = str(env_str("AURA_SCPI_EXPECTED_IDN_SHA256", description="SCPI expected IDN sha256", owner="core.embodiment.reality_connectors") or "").strip()
     scpi_present = bool(scpi_endpoint or scpi_manifest or scpi_installation or scpi_expected_idn)
     if not scpi_present:
         statuses.append(
@@ -384,14 +385,14 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
                 )
             )
     azure_dt_values = {
-        "AURA_AZURE_DT_ENDPOINT": str(os.getenv("AURA_AZURE_DT_ENDPOINT") or "").strip(),
-        "AURA_AZURE_DT_INSTANCE_ID": str(os.getenv("AURA_AZURE_DT_INSTANCE_ID") or "").strip(),
+        "AURA_AZURE_DT_ENDPOINT": str(env_str("AURA_AZURE_DT_ENDPOINT", description="Azure digital-twin endpoint", owner="core.embodiment.reality_connectors") or "").strip(),
+        "AURA_AZURE_DT_INSTANCE_ID": str(env_str("AURA_AZURE_DT_INSTANCE_ID", description="Azure digital-twin instance id", owner="core.embodiment.reality_connectors") or "").strip(),
         "AURA_AZURE_DT_RESOURCES_JSON": str(
-            os.getenv("AURA_AZURE_DT_RESOURCES_JSON") or ""
+            env_str("AURA_AZURE_DT_RESOURCES_JSON", description="Azure digital-twin resources JSON", owner="core.embodiment.reality_connectors") or ""
         ).strip(),
-        "AURA_AZURE_DT_TENANT_ID": str(os.getenv("AURA_AZURE_DT_TENANT_ID") or "").strip(),
-        "AURA_AZURE_DT_CLIENT_ID": str(os.getenv("AURA_AZURE_DT_CLIENT_ID") or "").strip(),
-        "AURA_AZURE_DT_CLIENT_SECRET": str(os.getenv("AURA_AZURE_DT_CLIENT_SECRET") or "").strip(),
+        "AURA_AZURE_DT_TENANT_ID": str(env_str("AURA_AZURE_DT_TENANT_ID", description="Azure digital-twin tenant id", owner="core.embodiment.reality_connectors") or "").strip(),
+        "AURA_AZURE_DT_CLIENT_ID": str(env_str("AURA_AZURE_DT_CLIENT_ID", description="Azure digital-twin client id", owner="core.embodiment.reality_connectors") or "").strip(),
+        "AURA_AZURE_DT_CLIENT_SECRET": str(env_str("AURA_AZURE_DT_CLIENT_SECRET", description="Azure digital-twin client secret", owner="core.embodiment.reality_connectors") or "").strip(),
     }
     if not any(azure_dt_values.values()):
         statuses.append(
@@ -442,10 +443,10 @@ def build_configured_reality_connector_catalog() -> RealityConnectorCatalog:
             )
     aws_twinmaker_required = {
         "AURA_AWS_TWINMAKER_WORKSPACE_ARN": str(
-            os.getenv("AURA_AWS_TWINMAKER_WORKSPACE_ARN") or ""
+            env_str("AURA_AWS_TWINMAKER_WORKSPACE_ARN", description="AWS TwinMaker workspace ARN", owner="core.embodiment.reality_connectors") or ""
         ).strip(),
         "AURA_AWS_TWINMAKER_RESOURCES_JSON": str(
-            os.getenv("AURA_AWS_TWINMAKER_RESOURCES_JSON") or ""
+            env_str("AURA_AWS_TWINMAKER_RESOURCES_JSON", description="AWS TwinMaker resources JSON", owner="core.embodiment.reality_connectors") or ""
         ).strip(),
         "AWS_ACCESS_KEY_ID": str(os.getenv("AWS_ACCESS_KEY_ID") or "").strip(),
         "AWS_SECRET_ACCESS_KEY": str(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),

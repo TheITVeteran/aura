@@ -38,6 +38,7 @@ from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
 
 from ..state.aura_state import AuraState, CognitiveMode
 from . import BasePhase
+from core.runtime.flags import env_present, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -885,7 +886,9 @@ class ResponseGenerationPhase(BasePhase):
 
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
-        if str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() in {
+        if env_str("AURA_REASONING_AMPLIFIER_V2", default="1",
+                description="reasoning amplifier v2; 0/false/off disables it",
+                owner="core.phases.response_generation").strip().lower() in {
             "0",
             "false",
             "off",
@@ -1154,9 +1157,9 @@ class ResponseGenerationPhase(BasePhase):
 
         is_test_run = (
             origin == "test"
-            or os.environ.get("AURA_AGI_MAX_TASKS") is not None
-            or os.environ.get("AURA_TESTING") is not None
-            or os.environ.get("AURA_PROOF_RUN") is not None
+            or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
+            or env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
+            or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
         )
 
         if not objective:
@@ -1257,9 +1260,9 @@ class ResponseGenerationPhase(BasePhase):
                 strict_answer_request
                 and (
                     origin == "test"
-                    or os.environ.get("AURA_AGI_MAX_TASKS")
-                    or os.environ.get("AURA_TESTING")
-                    or os.environ.get("AURA_PROOF_RUN")
+                    or env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
+                    or env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
+                    or env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
                 )
             )
             if proof_answer_run:
@@ -2310,9 +2313,9 @@ class ResponseGenerationPhase(BasePhase):
             if not is_background:
                 if (
                     origin != "test"
-                    and not os.environ.get("AURA_AGI_MAX_TASKS")
-                    and not os.environ.get("AURA_TESTING")
-                    and not os.environ.get("AURA_PROOF_RUN")
+                    and not env_present("AURA_AGI_MAX_TASKS", description="AGI battery task cap; presence marks a battery run", owner="core.phases.response_generation")
+                    and not env_present("AURA_TESTING", description="presence marks a test run", owner="core.phases.response_generation")
+                    and not env_present("AURA_PROOF_RUN", description="presence marks a proof run", owner="core.phases.response_generation")
                 ):
                     reliability = assess_user_facing_reply(
                         user_surface_validation_prompt, response_text

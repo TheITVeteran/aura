@@ -19,8 +19,10 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Exact occurrence count at ratchet introduction (July 9, 2026). ONLY goes down.
-RAW_ENV_READ_BUDGET = 585
+# ONLY goes down. 585 at introduction (July 9, 2026); 576 after migrating
+# reality_connectors, opcua_connector, gemini_adapter, state_ownership and
+# response_generation to declared flags via core.runtime.flags.env_str.
+RAW_ENV_READ_BUDGET = 576
 
 # The flag layer itself and the settings store are the sanctioned readers.
 # model_lane_control's AURA_MODEL_LANE_* vars are parent->child process

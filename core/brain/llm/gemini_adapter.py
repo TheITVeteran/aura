@@ -33,6 +33,7 @@ from core.runtime.errors import FallbackClassification, Severity, record_degrada
 from core.runtime.network_gateway import get_network_gateway
 from core.utils.exceptions import capture_and_log
 from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
+from core.runtime.flags import env_str
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -125,24 +126,24 @@ class DailyRateLimiter:
     """
     
     DEFAULT_LIMITS = {
-        "gemini-pro": int(os.environ.get("AURA_GEMINI_RPD_PRO", 2000)),
-        "gemini-2.5-flash": int(os.environ.get("AURA_GEMINI_RPD_DEEP", 2000)),
-        "gemini-flash-latest": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
-        "gemini-2.0-flash": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
-        "gemini-2.5-pro": int(os.environ.get("AURA_GEMINI_RPD_THINKING", 2000)),
-        "gemini-3.5-flash": int(os.environ.get("AURA_GEMINI_RPD_FLASH", 10000)),
-        "gemini-3.5-pro": int(os.environ.get("AURA_GEMINI_RPD_THINKING", 2000)),
+        "gemini-pro": int(env_str("AURA_GEMINI_RPD_PRO", default=2000, description="gemini rpd pro", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.5-flash": int(env_str("AURA_GEMINI_RPD_DEEP", default=2000, description="gemini rpd deep", owner="core.brain.llm.gemini_adapter")),
+        "gemini-flash-latest": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.0-flash": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.5-pro": int(env_str("AURA_GEMINI_RPD_THINKING", default=2000, description="gemini rpd thinking", owner="core.brain.llm.gemini_adapter")),
+        "gemini-3.5-flash": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-3.5-pro": int(env_str("AURA_GEMINI_RPD_THINKING", default=2000, description="gemini rpd thinking", owner="core.brain.llm.gemini_adapter")),
     }
     
     # Per-minute limits (High-performance baseline for paid tiers)
     RPM_LIMITS = {
-        "gemini-pro": int(os.environ.get("AURA_GEMINI_RPM_PRO", 50)),
-        "gemini-2.5-flash": int(os.environ.get("AURA_GEMINI_RPM_DEEP", 50)),
-        "gemini-flash-latest": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
-        "gemini-2.0-flash": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
-        "gemini-2.5-pro": int(os.environ.get("AURA_GEMINI_RPM_THINKING", 50)),
-        "gemini-3.5-flash": int(os.environ.get("AURA_GEMINI_RPM_FLASH", 500)),
-        "gemini-3.5-pro": int(os.environ.get("AURA_GEMINI_RPM_THINKING", 50)),
+        "gemini-pro": int(env_str("AURA_GEMINI_RPM_PRO", default=50, description="gemini rpm pro", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.5-flash": int(env_str("AURA_GEMINI_RPM_DEEP", default=50, description="gemini rpm deep", owner="core.brain.llm.gemini_adapter")),
+        "gemini-flash-latest": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.0-flash": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-2.5-pro": int(env_str("AURA_GEMINI_RPM_THINKING", default=50, description="gemini rpm thinking", owner="core.brain.llm.gemini_adapter")),
+        "gemini-3.5-flash": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
+        "gemini-3.5-pro": int(env_str("AURA_GEMINI_RPM_THINKING", default=50, description="gemini rpm thinking", owner="core.brain.llm.gemini_adapter")),
     }
     
     def __init__(self, state_path: str | None = None):
@@ -307,7 +308,7 @@ class DailyRateLimiter:
         
         # [Pipeline Hardening] Conservative background limit: Stop using Gemini for background tasks
         # once we hit the preservation threshold (default 30%), preserving 70% for the User.
-        preservation_threshold = float(os.environ.get("AURA_GEMINI_BACKGROUND_THRESHOLD", 0.3))
+        preservation_threshold = float(env_str("AURA_GEMINI_BACKGROUND_THRESHOLD", default=0.3, description="gemini background threshold", owner="core.brain.llm.gemini_adapter"))
         if is_background and self._counts[model] > (limit * preservation_threshold):
             logger.debug("📉 Preserving Gemini %s quota: background call diverted (threshold: %.1f).", model, preservation_threshold)
             return False

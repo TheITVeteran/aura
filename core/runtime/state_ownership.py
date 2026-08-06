@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Mapping
 import sys
 from core.runtime.lockdep import checked_lock
+from core.runtime.flags import env_str
 
 __all__ = [
     "RuntimeProfile",
@@ -95,7 +96,7 @@ _STARTED_AT = time.time()
 
 
 def _home() -> Path:
-    override = os.environ.get("AURA_HOME")
+    override = env_str("AURA_HOME", description="home", owner="core.runtime.state_ownership")
     if override:
         return Path(override).expanduser().resolve()
     return Path.home().expanduser().resolve()
@@ -117,7 +118,7 @@ _ORIGINAL_HOME: Path = _home()
 #:
 #: setdefault, never overwrite: if this process was itself told the answer by a
 #: parent, that parent was closer to the truth than this process is.
-if not os.environ.get("AURA_LIVE_STATE_ROOT"):
+if not env_str("AURA_LIVE_STATE_ROOT", description="live state root", owner="core.runtime.state_ownership"):
     os.environ["AURA_LIVE_STATE_ROOT"] = str(_ORIGINAL_HOME / _LIVE_ROOT_NAME)
 
 
@@ -143,7 +144,7 @@ def live_state_root() -> Path:
     parent, not a self-declaration — the protection this module provides is
     against accident, and an accident cannot forge a parent.
     """
-    inherited = os.environ.get("AURA_LIVE_STATE_ROOT") or ""
+    inherited = env_str("AURA_LIVE_STATE_ROOT", description="live state root", owner="core.runtime.state_ownership") or ""
     if inherited:
         try:
             return Path(inherited).expanduser().resolve()
@@ -161,7 +162,7 @@ def _derive_profile() -> RuntimeProfile:
     own root and its own numbers, and folding it into the test root would
     let one overwrite the other.
     """
-    if os.environ.get("AURA_BENCH_RUN") or os.environ.get("AURA_BENCHMARK"):
+    if env_str("AURA_BENCH_RUN", description="bench run", owner="core.runtime.state_ownership") or env_str("AURA_BENCHMARK", description="benchmark", owner="core.runtime.state_ownership"):
         return RuntimeProfile.BENCH
     # Is THIS process running pytest? `pytest` in sys.modules answers that
     # and the environment does not: a subprocess a test spawns inherits
@@ -177,11 +178,11 @@ def _derive_profile() -> RuntimeProfile:
     # them means it, including for a child.
     if (
         "pytest" in sys.modules
-        or os.environ.get("AURA_TESTING")
-        or os.environ.get("AURA_PROOF_RUN")
+        or env_str("AURA_TESTING", description="testing", owner="core.runtime.state_ownership")
+        or env_str("AURA_PROOF_RUN", description="proof run", owner="core.runtime.state_ownership")
     ):
         return RuntimeProfile.TEST
-    if os.environ.get("AURA_DEV_RUNTIME"):
+    if env_str("AURA_DEV_RUNTIME", description="dev runtime", owner="core.runtime.state_ownership"):
         return RuntimeProfile.DEV
     return RuntimeProfile.LIVE
 
@@ -237,7 +238,7 @@ def state_root() -> Path:
     """
     global _ROOT, _ROOT_KEY
     with _LOCK:
-        injected = os.environ.get("AURA_STATE_ROOT") or ""
+        injected = env_str("AURA_STATE_ROOT", description="state root", owner="core.runtime.state_ownership") or ""
         key = (injected, str(_home()))
         if _ROOT is not None and _ROOT_KEY == key:
             return _ROOT
@@ -271,7 +272,7 @@ def shared_asset_root() -> Path:
     immutable — if a runtime mutates it, it is state and belongs under
     ``state_root()``.
     """
-    override = os.environ.get("AURA_ASSET_ROOT")
+    override = env_str("AURA_ASSET_ROOT", description="asset root", owner="core.runtime.state_ownership")
     if override:
         return Path(override).expanduser().resolve()
     return live_state_root()
@@ -338,7 +339,7 @@ def assert_state_path_allowed(path: Path | str, *, source: str = "unknown") -> N
         return
     if not is_live_state_path(path):
         return
-    if os.environ.get("AURA_ALLOW_LIVE_STATE_WRITE") == "1":
+    if env_str("AURA_ALLOW_LIVE_STATE_WRITE", description="allow live state write", owner="core.runtime.state_ownership") == "1":
         # A deliberate, named escape for the rare tool that really does
         # maintain the live instance. Env-only: nothing in the codebase can
         # set it for itself mid-run without an operator having done so.

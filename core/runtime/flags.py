@@ -274,6 +274,34 @@ def env_float(name: str, *, default: float, description: str, owner: str) -> flo
         return default
 
 
+def env_present(name: str, *, description: str, owner: str) -> bool:
+    """Is this knob SET to something non-empty?
+
+    The declared form of `os.environ.get(X) is not None`, and deliberately not
+    a literal translation of it. Migrating that expression to a helper that
+    returns "" when unset turns it into `"" is not None` — always true — which
+    is exactly the mistake that made `is_test_run` unconditionally True and
+    broke 23 tests in one pass.
+
+    Empty counts as absent. `AURA_TESTING=""` meaning "testing is on" would
+    surprise everyone, and call sites in this codebase already disagreed about
+    it: some checked `is not None`, others checked truthiness, on the same
+    three variables in the same file.
+    """
+    return bool(
+        str(
+            declare(
+                name,
+                kind=FlagKind.STRING,
+                default="",
+                description=description,
+                owner=owner,
+            ).value()
+            or ""
+        ).strip()
+    )
+
+
 def env_bool(name: str, *, default: bool = False, description: str, owner: str) -> bool:
     """A declared boolean knob.
 

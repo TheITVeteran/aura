@@ -33,6 +33,7 @@ from core.reality_reach.scalar_adapter import (
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
 from core.runtime.lockdep import checked_async_lock
+from core.runtime.flags import env_str
 
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _VALUE_TYPES = frozenset(
@@ -321,9 +322,9 @@ class AsyncUaScalarTransport:
         if not resources:
             raise ValueError("resources must not be empty")
         self._resources = {item.resource_id: item for item in resources}
-        self._endpoint = str(os.getenv("AURA_OPCUA_ENDPOINT") or "").strip()
+        self._endpoint = str(env_str("AURA_OPCUA_ENDPOINT", description="OPC UA endpoint", owner="core.embodiment.opcua_connector") or "").strip()
         self._installation_id = str(
-            os.getenv("AURA_OPCUA_INSTALLATION_ID") or ""
+            env_str("AURA_OPCUA_INSTALLATION_ID", description="OPC UA installation id", owner="core.embodiment.opcua_connector") or ""
         ).strip()
         if not self._endpoint or not self._installation_id:
             raise OPCUAConnectorError("opcua_endpoint_and_installation_id_required")
@@ -338,18 +339,18 @@ class AsyncUaScalarTransport:
         ):
             raise OPCUAConnectorError("opcua_endpoint_invalid")
         self._security_policy = str(
-            os.getenv("AURA_OPCUA_SECURITY_POLICY") or "Basic256Sha256"
+            env_str("AURA_OPCUA_SECURITY_POLICY", description="OPC UA security policy", owner="core.embodiment.opcua_connector") or "Basic256Sha256"
         ).strip()
         self._security_mode = str(
-            os.getenv("AURA_OPCUA_SECURITY_MODE") or "SignAndEncrypt"
+            env_str("AURA_OPCUA_SECURITY_MODE", description="OPC UA security mode", owner="core.embodiment.opcua_connector") or "SignAndEncrypt"
         ).strip()
-        self._certificate = str(os.getenv("AURA_OPCUA_CERTIFICATE") or "").strip()
-        self._private_key = str(os.getenv("AURA_OPCUA_PRIVATE_KEY") or "").strip()
+        self._certificate = str(env_str("AURA_OPCUA_CERTIFICATE", description="OPC UA certificate", owner="core.embodiment.opcua_connector") or "").strip()
+        self._private_key = str(env_str("AURA_OPCUA_PRIVATE_KEY", description="OPC UA private key", owner="core.embodiment.opcua_connector") or "").strip()
         self._server_certificate = str(
-            os.getenv("AURA_OPCUA_SERVER_CERTIFICATE") or ""
+            env_str("AURA_OPCUA_SERVER_CERTIFICATE", description="OPC UA server certificate", owner="core.embodiment.opcua_connector") or ""
         ).strip()
         self._private_key_password = str(
-            os.getenv("AURA_OPCUA_PRIVATE_KEY_PASSWORD") or ""
+            env_str("AURA_OPCUA_PRIVATE_KEY_PASSWORD", description="OPC UA private key password", owner="core.embodiment.opcua_connector") or ""
         )
         secure = self._security_policy != "None"
         if secure:
@@ -381,14 +382,14 @@ class AsyncUaScalarTransport:
             if self._server_certificate
             else ""
         )
-        username = str(os.getenv("AURA_OPCUA_USERNAME") or "").strip()
-        password = str(os.getenv("AURA_OPCUA_PASSWORD") or "")
+        username = str(env_str("AURA_OPCUA_USERNAME", description="OPC UA username", owner="core.embodiment.opcua_connector") or "").strip()
+        password = str(env_str("AURA_OPCUA_PASSWORD", description="OPC UA password", owner="core.embodiment.opcua_connector") or "")
         if bool(username) != bool(password):
             raise OPCUAConnectorError("opcua_username_and_password_must_be_paired")
         self._username = username
         self._password = password
         timeout_s = _finite(
-            os.getenv("AURA_OPCUA_TIMEOUT_S") or 8.0,
+            env_str("AURA_OPCUA_TIMEOUT_S", description="OPC UA timeout s", owner="core.embodiment.opcua_connector") or 8.0,
             name="OPC UA timeout",
         )
         if not 1.0 <= timeout_s <= 30.0:
@@ -735,7 +736,7 @@ class OPCUAConnector:
 
 
 def build_configured_opcua_connector() -> OPCUAConnector:
-    raw = str(os.getenv("AURA_OPCUA_RESOURCES_JSON") or "").strip()
+    raw = str(env_str("AURA_OPCUA_RESOURCES_JSON", description="OPC UA resources JSON", owner="core.embodiment.opcua_connector") or "").strip()
     if not raw:
         raise OPCUAConnectorError("opcua_resource_manifest_missing")
     resources = parse_opcua_resource_manifest(raw)
