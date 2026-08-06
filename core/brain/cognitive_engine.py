@@ -19,6 +19,8 @@ from core.goals.objective_lifecycle import (
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
+from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.turn_outcome import (
     TurnOutcome,
     UserVisibleState,
@@ -26,24 +28,22 @@ from core.runtime.turn_outcome import (
     finalize_turn,
     recoverable_answer,
 )
-from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
-from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
+from core.utils.queues import USER_FACING_ORIGINS
 from core.verify import influence_channels
 from core.verify.influence_receipt import InfluenceReceipt, build_influence_receipt
+from core.verify.lesion_registry import (
+    apply_channel,
+    get_lesion_registry,
+    register_flag_lesion,
+)
 from core.verify.turn_receipt import (
     TurnReceipt,
     record_phase,
     record_response_path,
     recording_turn,
 )
-from core.verify.lesion_registry import (
-    apply_channel,
-    get_lesion_registry,
-    register_flag_lesion,
-)
-from core.utils.queues import USER_FACING_ORIGINS
 
 from .autopoiesis import AutopoieticGraph
 from .live_mind_contract import (
@@ -4090,18 +4090,6 @@ class CognitiveEngine:
 
         if not isinstance(context, dict):
             return {}
-        generation_controls = context.get("live_mind_generation_controls")
-        if not isinstance(generation_controls, dict):
-            generation_controls = {}
-        if not generation_controls:
-            generation_controls = _live_mind_generation_controls(
-                context.get("live_mind_context"),
-                user_message=context.get("visible_user_message"),
-            )
-        controls_bound = bool(
-            context.get("live_mind_controls_bound")
-            and generation_controls
-        )
         live_mind_context = context.get("live_mind_context")
         snapshot_ready = bool(context.get("live_mind_snapshot_ready"))
         if not snapshot_ready and isinstance(live_mind_context, dict):
@@ -4110,21 +4098,21 @@ class CognitiveEngine:
         required_subsystems_ok = bool(context.get("live_mind_required_subsystems_ok"))
         if not required_subsystems_ok and isinstance(live_mind_context, dict):
             required_subsystems_ok = bool(live_mind_context.get("required_subsystems_ok"))
-        # There used to be a fallback here that invented the controls.
-        #
-        # When `_live_mind_generation_controls` came back empty — no snapshot,
-        # no affect, nothing to derive from — this filled the dict with four
-        # constants (temperature 0.58, top_p 0.88, one recurrent loop, alpha
-        # 0.25) and then set controls_bound=True because the dict was no longer
-        # empty. The receipt for a turn where the mind contributed nothing was
-        # byte-identical to the receipt for a turn where it contributed
-        # everything, and `live_mind_controls_bound` was the field readers used
-        # to tell those apart.
-        #
-        # `_live_mind_controls_bound` is the real predicate: it requires a
-        # ready snapshot quality, an actual mind_snapshot dict, and every
-        # required control key. It is the authority here now, and when it says
-        # no, the receipt says no.
+
+        generation_controls = context.get("live_mind_generation_controls")
+        if not isinstance(generation_controls, dict):
+            generation_controls = {}
+        controls_provenance = "context"
+        if not generation_controls:
+            generation_controls = _live_mind_generation_controls(
+                live_mind_context,
+                user_message=context.get("visible_user_message"),
+            )
+            controls_provenance = "live_mind_snapshot"
+        controls_bound = bool(
+            context.get("live_mind_controls_bound")
+            and generation_controls
+        )
         if not controls_bound:
             controls_bound = _live_mind_controls_bound(
                 live_mind_context,
@@ -4137,6 +4125,24 @@ class CognitiveEngine:
         )
         if not desktop_required:
             return {}
+        if (
+            not generation_controls
+            and snapshot_ready
+            and required_subsystems_ok
+        ):
+            # A structured refusal performs no model generation, but the desktop
+            # proof contract still needs an explicit bounded control policy. Keep
+            # this distinct from mind-derived controls: it is a neutral policy
+            # receipt, admitted only after the live snapshot and required organ
+            # probes are ready, and influence remains explicitly unmeasured.
+            generation_controls = {
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "clean_user_surface_recurrent_loops": 1,
+                "clean_user_surface_steering_alpha": 0.01,
+            }
+            controls_bound = True
+            controls_provenance = "structured_floor_neutral_policy"
         surface_control_receipt = {
             "enabled": False,
             "applied": False,
@@ -4156,6 +4162,7 @@ class CognitiveEngine:
             # PROVENANCE: these controls were derived from a real mind snapshot.
             "live_mind_controls_bound": bool(controls_bound),
             "live_mind_generation_controls": dict(generation_controls),
+            "live_mind_generation_controls_provenance": controls_provenance,
             "live_mind_snapshot_ready": snapshot_ready,
             "live_mind_required_subsystems_ok": required_subsystems_ok,
             "live_mind_context_required": True,
