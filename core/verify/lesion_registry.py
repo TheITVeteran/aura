@@ -27,10 +27,32 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
 logger = logging.getLogger("Verify.LesionRegistry")
+
+#: Which channels are lesioned *for the current execution context*, and to what
+#: depth. A ContextVar, not a plain dict, and the distinction is a safety
+#: property rather than a style preference.
+#:
+#: A probe measuring the live runtime lesions a channel and generates. If that
+#: flag were process-global, any user turn generating concurrently would be
+#: served by the lesioned faculty — the measurement would degrade the very
+#: system it is measuring, silently, for a real person mid-conversation.
+#:
+#: asyncio tasks inherit a copy of the context at creation and their mutations
+#: never propagate back, so a lesion set inside a probe task covers that task
+#: and everything it awaits, and is invisible to any turn running beside it.
+#: ``asyncio.to_thread`` copies the context too. Where generation crosses into
+#: a separate worker process, the lesion has already done its work: the values
+#: are neutralized while the request is being assembled, and the request
+#: carries them.
+_ACTIVE_LESIONS: ContextVar[dict[str, int]] = ContextVar(
+    "aura_active_lesions",
+    default={},
+)
 
 __all__ = [
     "LesionHandle",
@@ -81,8 +103,18 @@ class LesionRegistry:
 
     def __init__(self) -> None:
         self._handles: dict[str, LesionHandle] = {}
-        self._active: dict[str, int] = {}
         self._lock = threading.RLock()
+
+    # Lesion depth lives in the ContextVar, never on the instance: two probes
+    # in two tasks must not see each other's lesions, and neither may be seen
+    # by a user turn.
+    @staticmethod
+    def _depths() -> dict[str, int]:
+        return _ACTIVE_LESIONS.get()
+
+    @staticmethod
+    def _set_depths(depths: dict[str, int]) -> None:
+        _ACTIVE_LESIONS.set(depths)
 
     def register(self, handle: LesionHandle, *, replace: bool = False) -> None:
         with self._lock:
@@ -100,7 +132,6 @@ class LesionRegistry:
     def unregister(self, channel: str) -> None:
         with self._lock:
             self._handles.pop(channel, None)
-            self._active.pop(channel, None)
 
     def get(self, channel: str) -> LesionHandle | None:
         with self._lock:
@@ -115,53 +146,68 @@ class LesionRegistry:
             return channel in self._handles
 
     def is_lesioned(self, channel: str) -> bool:
-        with self._lock:
-            return self._active.get(channel, 0) > 0
+        return self._depths().get(channel, 0) > 0
 
     def active_lesions(self) -> tuple[str, ...]:
-        with self._lock:
-            return tuple(sorted(name for name, depth in self._active.items() if depth > 0))
+        return tuple(sorted(name for name, depth in self._depths().items() if depth > 0))
 
     @contextmanager
     def lesion(self, channel: str) -> Iterator[LesionHandle]:
         """Neutralize ``channel`` for the duration of the block.
 
-        Reentrant by depth: nested lesions of the same channel restore once, on
-        the outermost exit. Restoration runs even when the body raises — a
-        measurement harness that leaves a faculty lesioned after a failed trial
-        silently lobotomizes the live runtime.
+        Scoped to the calling execution context, so a trial never reaches a
+        turn running beside it. Reentrant by depth: nested lesions of the same
+        channel restore once, on the outermost exit. Restoration runs even when
+        the body raises — a harness that leaves a faculty lesioned after a
+        failed trial silently lobotomizes whatever comes next.
         """
 
         with self._lock:
             handle = self._handles.get(channel)
-            if handle is None:
-                raise LesionUnavailable(
-                    f"channel {channel!r} has no registered lesion; it cannot be "
-                    "measured, and nothing may claim it is causally influential"
-                )
-            depth = self._active.get(channel, 0)
-            self._active[channel] = depth + 1
-            should_lesion = depth == 0
+        if handle is None:
+            raise LesionUnavailable(
+                f"channel {channel!r} has no registered lesion; it cannot be "
+                "measured, and nothing may claim it is causally influential"
+            )
+
+        # Copy-on-write: rebinding the ContextVar to a new dict rather than
+        # mutating the one already there. A mutation would be visible through
+        # every context that inherited the same object, which is the leak this
+        # whole mechanism exists to prevent.
+        depths = dict(self._depths())
+        depth = depths.get(channel, 0)
+        depths[channel] = depth + 1
+        token = _ACTIVE_LESIONS.set(depths)
+        should_lesion = depth == 0
 
         try:
             if should_lesion:
+                # Stateful faculties (an engine with a real lesion() method)
+                # are process-global whatever the ContextVar does. Only the
+                # flag-based channels are genuinely concurrency-safe; a
+                # stateful lesion is safe because the probe holds it briefly
+                # and restores unconditionally, not because it is scoped.
                 handle.lesion()
             yield handle
         finally:
-            with self._lock:
-                remaining = self._active.get(channel, 1) - 1
-                if remaining <= 0:
-                    self._active.pop(channel, None)
+            try:
+                _ACTIVE_LESIONS.reset(token)
+            except ValueError:
+                # Token from a different context: the block was entered and
+                # exited across a context boundary. Fall back to recomputing.
+                remaining = dict(self._depths())
+                if remaining.get(channel, 0) <= 1:
+                    remaining.pop(channel, None)
                 else:
-                    self._active[channel] = remaining
-                should_restore = remaining <= 0
-            if should_restore:
+                    remaining[channel] -= 1
+                _ACTIVE_LESIONS.set(remaining)
+            if should_lesion:
                 try:
                     handle.restore()
                 except Exception:
-                    # A restore that fails leaves the runtime lesioned, which is
-                    # far worse than a failed measurement. Say so at CRITICAL and
-                    # let the caller's degradation path see the raise.
+                    # A restore that fails leaves the faculty neutralized, which
+                    # is far worse than a failed measurement. Say so at CRITICAL
+                    # and let the caller's degradation path see the raise.
                     logger.critical(
                         "🚨 [LESION] restore FAILED for channel %s (owner %s): the "
                         "faculty is still neutralized",
@@ -173,7 +219,7 @@ class LesionRegistry:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             handles = dict(self._handles)
-            active = tuple(sorted(n for n, d in self._active.items() if d > 0))
+        active = self.active_lesions()
         return {
             "registered": {name: h.as_dict() for name, h in sorted(handles.items())},
             "registered_count": len(handles),

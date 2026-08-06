@@ -4,6 +4,9 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from core.verify import influence_channels
+from core.verify.lesion_registry import lesionable
+
 from .aura_now import AffectiveState, BodyState, PredictionState, WorldState
 
 
@@ -11,9 +14,25 @@ def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, float(value)))
 
 
+@lesionable(
+    influence_channels.AFFECT_GENERATION_CONTROLS,
+    owner="core/being/affective_valence.py",
+    neutral=(
+        "flat affect: neutral valence, mid arousal, no distress or curiosity, "
+        "and control_effects that modulate nothing"
+    ),
+    direct_actuation=True,
+)
 @dataclass
 class AffectiveValenceEngine:
-    """Turns interoceptive prediction error into control variables."""
+    """Turns interoceptive prediction error into control variables.
+
+    This engine already carried ``lesion()``/``restore()`` before any of the
+    measurement machinery existed, which made it the one faculty in the system
+    whose contribution could actually be checked. The decorator publishes that
+    capability to :mod:`core.verify.lesion_registry` so the paired-trial probe
+    can reach it the same way it reaches everything else.
+    """
 
     _lesioned: bool = False
 

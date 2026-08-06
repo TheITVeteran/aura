@@ -402,6 +402,12 @@ def _apply_neurodynamic_sampling_bias(
     """
     if not controls or not isinstance(advice, dict):
         return controls
+    # Lesioned, the deltas are dropped and the decode runs at whatever the mind
+    # controls already said — which is precisely the state this function was
+    # written to end, so it is also the counterfactual that measures whether
+    # ending it changed anything.
+    if get_lesion_registry().is_lesioned(influence_channels.SPIKING_SAMPLING_BIAS):
+        return controls
     sampling = advice.get("sampling_bias")
     if not isinstance(sampling, dict):
         return controls
@@ -607,6 +613,17 @@ def _register_live_mind_lesions() -> None:
         neutral="the [LIVE MIND CONTEXT] block is omitted from the system prompt entirely",
         direct_actuation=False,
     )
+    for channel, source in (
+        (influence_channels.SPIKING_SAMPLING_BIAS, "spiking active inference"),
+        (influence_channels.IMAGINATION_SAMPLING_BIAS, "the imagination workspace"),
+        (influence_channels.BICAMERAL_SAMPLING_BIAS, "the bicameral advisory"),
+    ):
+        register_flag_lesion(
+            channel,
+            owner="core/brain/cognitive_engine.py",
+            neutral=f"no sampling bias from {source} reaches the decode",
+            direct_actuation=True,
+        )
 
 
 _register_live_mind_lesions()
@@ -3518,16 +3535,28 @@ class CognitiveEngine:
                 # 512 — the caller's reason for asking was never carried, so
                 # the train problem still ran out of room at "- The".
                 "reply_needs_room": shape_wants_room,
-                "sampling_bias": advice.get("sampling_bias") if isinstance(advice, dict) else None,
-                "imagination_sampling_bias": (
-                    imagination_frame.get("sampling_bias")
-                    if isinstance(imagination_frame, dict)
-                    else None
+                "sampling_bias": apply_channel(
+                    influence_channels.SPIKING_SAMPLING_BIAS,
+                    advice.get("sampling_bias") if isinstance(advice, dict) else None,
+                    neutral=None,
                 ),
-                "bicameral_sampling_bias": (
-                    bicameral_frame.get("sampling_bias")
-                    if isinstance(bicameral_frame, dict)
-                    else None
+                "imagination_sampling_bias": apply_channel(
+                    influence_channels.IMAGINATION_SAMPLING_BIAS,
+                    (
+                        imagination_frame.get("sampling_bias")
+                        if isinstance(imagination_frame, dict)
+                        else None
+                    ),
+                    neutral=None,
+                ),
+                "bicameral_sampling_bias": apply_channel(
+                    influence_channels.BICAMERAL_SAMPLING_BIAS,
+                    (
+                        bicameral_frame.get("sampling_bias")
+                        if isinstance(bicameral_frame, dict)
+                        else None
+                    ),
+                    neutral=None,
                 ),
                 "cognitive_situation_sampling_bias": (
                     cognitive_situation_frame.get("sampling_bias")
