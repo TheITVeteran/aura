@@ -150,7 +150,8 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 10,
+        "certified_complete": 2,
+        "claimed_complete_needs_evidence": 8,
         "ready_for_implementation": 37
       },
       "family": "CTX2"
@@ -628,7 +629,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "1b63336dadaba355db7a3f9265d3071299c7e456834f93f221aab434d06f48c4",
+    "evidence_ledger_sha256": "565a3e26c8edfe3aa2ca15f9cad5a80a398ae6238ad2e44339cb3f23436f51d4",
     "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13"
   },
   "non_claims": [
@@ -636,7 +637,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "ba8a17c943cd43a4d08229bd694ffa44c00fa733bbeb67d4c0cf767dbf5e4a4a",
+  "report_sha256": "4969b508c22cefc190f1c6a89f606f1b5cebe9366918208df5ec1752d6f8cb1b",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2611,34 +2612,22 @@
     {
       "acceptance_units": 9,
       "closure_blockers": [
-        "CTX2-TEST-001",
-        "CTX2-TEST-002",
-        "CTX2-TEST-003"
+        "CTX2-TEST-002"
       ],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 24,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 10,
       "family": "ADDENDUM",
       "id": "ADDENDUM-22",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
         "live:A2",
-        "implementation:A3",
-        "test:A3",
         "implementation:A4",
         "test:A4",
         "live:A4",
-        "implementation:A5",
-        "test:A5",
         "live:A5",
-        "implementation:A6",
-        "test:A6",
         "implementation:A7",
         "test:A7",
         "implementation:A8",
@@ -2869,61 +2858,19 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-TEST-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-TEST-002",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-22",
       "state_claim": "complete",
       "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-TEST-003",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
     },
     {
       "acceptance_units": 1,
@@ -2982,14 +2929,12 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "RESOURCE",
       "id": "RESOURCE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
@@ -7988,6 +7933,40 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "complete",
+      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-003",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "complete",
+      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
       "disposition": "nonmandatory",
       "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
@@ -8019,9 +7998,7 @@
       "CTX2-SHUTDOWN-003",
       "CTX2-SKILL-001",
       "CTX2-SKILL-002",
-      "CTX2-TEST-001",
       "CTX2-TEST-002",
-      "CTX2-TEST-003",
       "LANE-001",
       "LIFECYCLE-001",
       "RESOURCE-001",
@@ -8031,7 +8008,8 @@
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "claimed_complete_needs_evidence": 19,
+      "certified_complete": 2,
+      "claimed_complete_needs_evidence": 17,
       "deferred": 1,
       "in_progress": 79,
       "nonmandatory": 1,

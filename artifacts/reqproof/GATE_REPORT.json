@@ -43,7 +43,7 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 19
+    "unproven-closure": 17
   },
   "defects": [
     {
@@ -243,7 +243,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], live[A2], implementation[A3], test[A3], implementation[A4], test[A4], live[A4], implementation[A5], test[A5], live[A5], implementation[A6], test[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A2], implementation[A4], test[A4], live[A4], live[A5], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
     },
     {
@@ -293,18 +293,8 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-TEST-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "CTX2-TEST-002"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-TEST-003"
     },
     {
       "defect_class": "unproven-closure",
@@ -318,7 +308,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "RESOURCE-001"
     },
     {
@@ -344,15 +334,15 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 58,
-    "current_fingerprints": 58,
+    "baseline_fingerprints": 56,
+    "current_fingerprints": 56,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 8,
-    "evidence_ledger_sha256": "1b63336dadaba355db7a3f9265d3071299c7e456834f93f221aab434d06f48c4",
+    "evidence_ledger_entries": 18,
+    "evidence_ledger_sha256": "565a3e26c8edfe3aa2ca15f9cad5a80a398ae6238ad2e44339cb3f23436f51d4",
     "mandatory_not_closed": 282,
     "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
     "registry_revision": 29,
