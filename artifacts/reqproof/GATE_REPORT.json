@@ -38,9 +38,79 @@
     },
     "unmapped_lines": 0
   },
-  "defect_counts": {},
-  "defects": [],
-  "failures": [],
+  "defect_counts": {
+    "stale-evidence": 11
+  },
+  "defects": [
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "ADDENDUM-21::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "CTX2-LANE-001::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "CTX2-LANE-002::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "CTX2-LANE-003::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "CTX2-LANE-004::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+      "subject": "LANE-001::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json"
+    },
+    {
+      "defect_class": "stale-evidence",
+      "detail": "manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json"
+    }
+  ],
+  "failures": [
+    "stale-evidence::ADDENDUM-21::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json: manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+    "stale-evidence::CTX2-LANE-001::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::CTX2-LANE-002::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::CTX2-LANE-003::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::CTX2-LANE-004::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json: manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json: manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json: manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768",
+    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json: manifested source changed: tests/test_model_lane_contract_audit.py: expected 134c6403485c/1941, current 39f242215f40/4478",
+    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/1186f9c5cf7743cfb5817f4223a19885a60c9be9.json: manifested source changed: selector membership changed: added=['tools/revision_ablation.py'] removed=[]; core/evaluation/matched_budget.py: expected 4e420af887c2/14161, current 5065836e176d/16820; tools/capability_ablation.py: expected fef3f0334b1a/27008, current 3ee2ee127426/24736; tools/closeout/audit_model_lane_contract.py: expected b3c27c7f24d6/10287, current dc92f1cfee6f/11768"
+  ],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
@@ -54,8 +124,8 @@
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 56,
-    "evidence_ledger_sha256": "2471ad45825b121822d18809219a27ac1b710d67be75a4c53d714117fb93d682",
+    "evidence_ledger_entries": 57,
+    "evidence_ledger_sha256": "b574395f88b51cc736bc377bd71a28f26134de2c268a4c5ac777cecab99c2865",
     "mandatory_not_closed": 301,
     "registry_content_sha256": "47670be6b388f8c41c6a61bf8e705a69a9ecb15bf1f28c1c26463bc7bcd13687",
     "registry_revision": 39,
@@ -71,5 +141,5 @@
     },
     "tracker_extraction_sha256": "a903720d4039d901637c2ce812c4b0ebd12b7752a785918e9cbea470933c21ae"
   },
-  "verdict": "pass"
+  "verdict": "fail"
 }
