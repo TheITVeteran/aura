@@ -1,5 +1,5 @@
 {
-  "content_sha256": "f42175c331e8bf8c1e235f338cb84b3c58cf7937ead63109fabb4cb633f46085",
+  "content_sha256": "f784a7c3e4aee0e337fb7102f768b620f1bd5801dddbb6fb7796e3d8b685e38b",
   "schema_version": 1,
   "specs": [
     {
@@ -13,17 +13,6 @@
       ],
       "cwd": ".",
       "evidence_targets": [
-        {
-          "acceptance_ids": [
-            "A1",
-            "A2",
-            "A3",
-            "A4",
-            "A5"
-          ],
-          "evidence_class": "test",
-          "requirement_id": "ADDENDUM-23"
-        },
         {
           "acceptance_ids": [
             "A1"
@@ -631,6 +620,17 @@
       ],
       "cwd": ".",
       "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-23"
+        },
         {
           "acceptance_ids": [
             "A1"
