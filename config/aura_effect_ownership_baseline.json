@@ -14473,6 +14473,14 @@
       "scope": "<module>.SovereignNetworkSkill._check_internet"
     },
     {
+      "callee": "httpx.AsyncClient",
+      "canonical_owner": false,
+      "category": "raw_network",
+      "count": 1,
+      "path": "tools/longevity/run_gauntlet.py",
+      "scope": "<module>._fire_verifiable_pulse"
+    },
+    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -15970,6 +15978,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b192eeac2bde869f2e76391e394b3a0a6c7a11284306a928fbd6251e4f8eb028",
+  "inventory_sha256": "70387ae4202b678e82541bbf1611513ba7e6f04a8559a5346b34ce208bcd54a1",
   "schema_version": 1
 }
