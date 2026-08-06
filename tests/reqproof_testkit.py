@@ -6,7 +6,50 @@ keeps the suite independent of the invoking working directory.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 EXTRACTION_SHA = "a" * 64
+
+
+def write_evidence_receipt(
+    root: Path,
+    ref: str,
+    *,
+    targets: list[tuple[str, str, list[str]]],
+    commit: str = "a" * 40,
+    source_ref: str = "source.py",
+) -> Path:
+    """Write one minimal valid command receipt for external-ledger tests."""
+    source = root / source_ref
+    source.parent.mkdir(parents=True, exist_ok=True)
+    if not source.exists():
+        source.write_text("VALUE = 1\n", encoding="utf-8")
+    artifact = root / ref
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "aura.reqproof.command_receipt.v1",
+        "verdict": "pass",
+        "source_commit": commit,
+        "evidence_targets": [
+            {
+                "requirement_id": requirement_id,
+                "evidence_class": evidence_class,
+                "acceptance_ids": acceptance_ids,
+            }
+            for requirement_id, evidence_class, acceptance_ids in targets
+        ],
+        "source_manifest": [
+            {
+                "path": source_ref,
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "size_bytes": source.stat().st_size,
+            }
+        ],
+    }
+    artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    return artifact
 
 
 def make_requirement(**overrides) -> dict:

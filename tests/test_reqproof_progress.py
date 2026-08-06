@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from reqproof_testkit import make_registry_dict, make_requirement
+from reqproof_testkit import make_registry_dict, make_requirement, write_evidence_receipt
 
 from tools.reqproof.evidence import EvidenceLedger, add_entry
 from tools.reqproof.progress import (
@@ -152,8 +152,12 @@ class TestProgressMath:
         assert report["forecast"]["total_checkpoint_records_high"] == 4
 
     def test_partial_acceptance_evidence_gets_exact_partial_credit(self, tmp_path: Path):
-        artifact = tmp_path / "proof.json"
-        artifact.write_text("exact", encoding="utf-8")
+        artifact = write_evidence_receipt(
+            tmp_path,
+            "proof.json",
+            targets=[("TEST-001", "implementation", ["A1"])],
+            commit=COMMIT,
+        )
         current_registry = registry()
         ledger = add_entry(
             EvidenceLedger.empty_for(current_registry),

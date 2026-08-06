@@ -23,6 +23,8 @@ Defect classes:
                               evidence for a required evidence class.
 * ``impossible-evidence``   — evidence ref whose target is missing, whose
                               hash mismatches, or whose commit is unknown.
+* ``stale-evidence``        — external evidence whose manifested source bytes
+                              no longer match the current checkout.
 * ``contradictory-status``  — complete requirement whose mandatory
                               dependency is still open.
 * ``withdrawn-required``    — withdrawn requirement still required for the
@@ -44,6 +46,7 @@ from pathlib import Path
 from tools.reqproof.evidence import (
     EvidenceLedgerEntry,
     EvidenceLedgerError,
+    load_evidence_receipt,
     resolve_evidence_target,
     sha256_file,
 )
@@ -57,6 +60,7 @@ BLOCKING_ALWAYS = frozenset(
         "parent-mismatch",
         "closure-cycle",
         "impossible-evidence",
+        "stale-evidence",
         "stale-migration",
         "prose-only-token",
         # Coverage classes (tools/reqproof/coverage.py): zero-unmapped is a
@@ -253,6 +257,69 @@ def evidence_ref_is_verified(
     return _sha256_file(target) == evidence.sha256 and commit_exists(evidence.commit)
 
 
+def _verify_ledger_entry(
+    requirement: Requirement,
+    entry: EvidenceLedgerEntry,
+    root: Path,
+    commit_exists: Callable[[str], bool],
+) -> list[Defect]:
+    evidence = entry.evidence
+    subject = f"{requirement.id}::{evidence.ref}"
+    base_defects = _verify_evidence(requirement, (evidence,), root, commit_exists)
+    if base_defects:
+        return base_defects
+    target = resolve_evidence_target(root, evidence.ref)
+    try:
+        receipt = load_evidence_receipt(
+            target,
+            requirement_id=requirement.id,
+            evidence_class=evidence.evidence_class,
+            acceptance_ids=entry.acceptance_ids,
+            commit=evidence.commit,
+        )
+    except EvidenceLedgerError as exc:
+        return [
+            Defect(
+                defect_class="impossible-evidence",
+                subject=subject,
+                detail=str(exc),
+            )
+        ]
+    stale: list[str] = []
+    for item in receipt["source_manifest"]:
+        ref = item["path"]
+        try:
+            source = resolve_evidence_target(root, ref)
+        except EvidenceLedgerError as exc:
+            stale.append(f"{ref}: {exc}")
+            continue
+        actual_size = source.stat().st_size
+        actual_sha = _sha256_file(source)
+        if actual_size != item["size_bytes"] or actual_sha != item["sha256"]:
+            stale.append(
+                f"{ref}: expected {item['sha256'][:12]}/{item['size_bytes']}, "
+                f"current {actual_sha[:12]}/{actual_size}"
+            )
+    if stale:
+        return [
+            Defect(
+                defect_class="stale-evidence",
+                subject=subject,
+                detail="manifested source changed: " + "; ".join(stale),
+            )
+        ]
+    return []
+
+
+def ledger_entry_is_verified(
+    requirement: Requirement,
+    entry: EvidenceLedgerEntry,
+    root: Path,
+    commit_exists: Callable[[str], bool],
+) -> bool:
+    return not _verify_ledger_entry(requirement, entry, root, commit_exists)
+
+
 def verified_acceptance_coverage(
     requirement: Requirement,
     legacy_refs: tuple[EvidenceRef, ...],
@@ -271,7 +338,7 @@ def verified_acceptance_coverage(
         if evidence_ref_is_verified(evidence, root, commit_exists):
             coverage.setdefault(evidence.evidence_class, set()).update(all_acceptance)
     for entry in ledger_entries:
-        if evidence_ref_is_verified(entry.evidence, root, commit_exists):
+        if ledger_entry_is_verified(requirement, entry, root, commit_exists):
             coverage.setdefault(entry.evidence.evidence_class, set()).update(
                 entry.acceptance_ids
             )
@@ -366,12 +433,13 @@ def validate_registry(
         ledger_entries = tuple(
             evidence_entries_by_requirement.get(requirement.id, ())
         )
-        evidence_refs = legacy_refs + tuple(
-            entry.evidence for entry in ledger_entries
-        )
         defects.extend(
-            _verify_evidence(requirement, evidence_refs, root, commit_exists)
+            _verify_evidence(requirement, legacy_refs, root, commit_exists)
         )
+        for entry in ledger_entries:
+            defects.extend(
+                _verify_ledger_entry(requirement, entry, root, commit_exists)
+            )
 
         if requirement.state == "complete":
             for child_id in requirement.closure_requires:

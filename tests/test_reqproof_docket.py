@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reqproof_testkit import make_registry_dict, make_requirement
+from reqproof_testkit import make_registry_dict, make_requirement, write_evidence_receipt
 
 from tools.reqproof.docket import build_docket_report, render_markdown
 from tools.reqproof.evidence import EvidenceLedger, add_entry
@@ -42,8 +42,12 @@ def test_docket_separates_claims_evidence_and_dependency_readiness(tmp_path: Pat
 
 
 def test_exact_evidence_can_certify_without_reclassifying_open_work(tmp_path: Path):
-    artifact = tmp_path / "proof.json"
-    artifact.write_text("proof", encoding="utf-8")
+    write_evidence_receipt(
+        tmp_path,
+        "proof.json",
+        targets=[("DONE-001", "implementation", ["A1"])],
+        commit=COMMIT,
+    )
     current = registry(
         make_requirement(
             id="DONE-001",
@@ -102,8 +106,12 @@ def test_report_and_markdown_are_deterministic(tmp_path: Path):
 
 
 def test_certified_local_evidence_does_not_hide_graph_blockers(tmp_path: Path):
-    artifact = tmp_path / "proof.json"
-    artifact.write_text("proof", encoding="utf-8")
+    write_evidence_receipt(
+        tmp_path,
+        "proof.json",
+        targets=[("PARENT-001", "implementation", ["A1"])],
+        commit=COMMIT,
+    )
     current = registry(
         make_requirement(id="CHILD-001"),
         make_requirement(id="DEP-001"),

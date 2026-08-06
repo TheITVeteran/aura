@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from reqproof_testkit import make_registry_dict, make_requirement
+from reqproof_testkit import make_registry_dict, make_requirement, write_evidence_receipt
 
 from tools.reqproof.evidence import (
     LEDGER_SCHEMA_VERSION,
@@ -116,9 +116,12 @@ class TestEvidenceLocation:
 
 class TestLedgerOperations:
     def test_add_entry_hashes_exact_bytes_and_supplies_overlay(self, tmp_path: Path):
-        artifact = tmp_path / "artifacts" / "proof.json"
-        artifact.parent.mkdir(parents=True)
-        artifact.write_text('{"proved":true}\n', encoding="utf-8")
+        write_evidence_receipt(
+            tmp_path,
+            "artifacts/proof.json",
+            targets=[("TEST-001", "implementation", ["A1"])],
+            commit=COMMIT,
+        )
         current_registry = registry(
             make_requirement(
                 state="complete",
@@ -146,9 +149,71 @@ class TestLedgerOperations:
             evidence_entries_by_requirement=updated.entries_by_requirement(),
         ) == []
 
-    def test_every_acceptance_class_cell_is_required_for_closure(self, tmp_path: Path):
+    def test_manifested_source_change_revokes_ledger_coverage(self, tmp_path: Path):
+        write_evidence_receipt(
+            tmp_path,
+            "proof.json",
+            targets=[("TEST-001", "implementation", ["A1"])],
+            commit=COMMIT,
+        )
+        current_registry = registry(
+            make_requirement(state="complete", evidence_required=["implementation"])
+        )
+        ledger = add_entry(
+            EvidenceLedger.empty_for(current_registry),
+            current_registry,
+            requirement_id="TEST-001",
+            evidence_class="implementation",
+            acceptance_ids=("A1",),
+            ref="proof.json",
+            commit=COMMIT,
+            recorded_at="2026-07-20",
+            root=tmp_path,
+        )
+
+        (tmp_path / "source.py").write_text("VALUE = 2\n", encoding="utf-8")
+        defects = validate_registry(
+            current_registry,
+            root=tmp_path,
+            commit_exists=lambda commit: True,
+            evidence_entries_by_requirement=ledger.entries_by_requirement(),
+        )
+
+        assert {defect.defect_class for defect in defects} == {
+            "stale-evidence",
+            "unproven-closure",
+        }
+
+    def test_external_ledger_rejects_unstructured_artifact(self, tmp_path: Path):
         artifact = tmp_path / "proof.json"
-        artifact.write_text("proof", encoding="utf-8")
+        artifact.write_text('{"proved": true}\n', encoding="utf-8")
+        current_registry = registry(
+            make_requirement(evidence_required=["implementation"])
+        )
+
+        with pytest.raises(EvidenceLedgerError, match="receipt schema"):
+            add_entry(
+                EvidenceLedger.empty_for(current_registry),
+                current_registry,
+                requirement_id="TEST-001",
+                evidence_class="implementation",
+                acceptance_ids=("A1",),
+                ref="proof.json",
+                commit=COMMIT,
+                recorded_at="2026-07-20",
+                root=tmp_path,
+            )
+
+    def test_every_acceptance_class_cell_is_required_for_closure(self, tmp_path: Path):
+        write_evidence_receipt(
+            tmp_path,
+            "proof.json",
+            targets=[
+                ("TEST-001", "implementation", ["A1", "A2"]),
+                ("TEST-001", "test", ["A1", "A2"]),
+            ],
+            commit=COMMIT,
+        )
         current_registry = registry(
             make_requirement(
                 state="complete",
@@ -207,8 +272,12 @@ class TestLedgerOperations:
         ) == []
 
     def test_duplicate_and_unrequired_class_are_rejected(self, tmp_path: Path):
-        artifact = tmp_path / "proof.json"
-        artifact.write_text("proof", encoding="utf-8")
+        write_evidence_receipt(
+            tmp_path,
+            "proof.json",
+            targets=[("TEST-001", "implementation", ["A1", "A2"])],
+            commit=COMMIT,
+        )
         current_registry = registry(
             make_requirement(evidence_required=["implementation"])
         )

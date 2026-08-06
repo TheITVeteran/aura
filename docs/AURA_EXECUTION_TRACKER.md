@@ -37054,3 +37054,25 @@ belong to a separate subsequent checkpoint. The rest of the 302-requirement
 docket, historical evidence review, source-freshness policy, CP810, resident
 training, independent four-arm certificate, full semantic review, release
 gates, and deferred soaks remain open.
+
+#### Evidence source-freshness continuation
+
+Acceptance receipts are no longer permanent green marks after their tested
+implementation changes. The external ledger writer now rejects anything that
+is not a structured passing command receipt, and verifies that its source
+commit and declared requirement/class/acceptance target exactly match the
+ledger insertion. The structural validator, progress engine, and docket then
+rehash every canonical source-manifest path against current `HEAD`. Missing,
+symlinked, resized, or changed files produce a blocking `stale-evidence`
+defect, revoke the affected acceptance cells, and restore them to the current
+docket until a new source-bound proof passes.
+
+This closes the previously stated pushed-ancestry-only freshness gap for
+external-ledger evidence. It does not pretend that a manifest names every
+transitive dependency automatically: checked proof review still owns that
+causal selection, and legacy inline registry evidence remains a compatibility
+path rather than a way to mint new acceptance cells. The first model-lane test
+receipt remains fresh at the current source. Its implementation, live, and
+release cells remain open, as do historical evidence review, independent
+trust-root signatures, CP810, resident training and falsification, semantic
+review, release closure, and final soaks.

@@ -67,6 +67,14 @@ The structural gate also runs inside `tools/release_preflight.py` as
    neither a receipt nor a ledger entry. The capture tool/spec must therefore
    be pushed first; evidence generated from that clean commit lands in a
    subsequent checkpoint.
+7. **Evidence expires when its subject changes**: every external-ledger
+   artifact must be a structured passing receipt whose source commit and
+   acceptance targets exactly cover the ledger entry. Its non-empty canonical
+   source manifest is rehashed against current `HEAD` whenever closure,
+   progress, or the docket is computed. Missing, symlinked, resized, or changed
+   source produces a blocking `stale-evidence` defect and the affected cells
+   receive zero credit until a fresh proof lands. Arbitrary JSON, logs, prose,
+   and manually named files cannot enter the external ledger.
 
 ## Defect taxonomy
 
@@ -104,3 +112,7 @@ closures. Draining this baseline is tracked work, not background noise.
   A passing unit/contract suite is not live, release, soak, portability, or
   implementation evidence unless an independent checked proof establishes that
   distinct class.
+* Source freshness is path-manifest freshness, not a claim that every possible
+  transitive dependency was selected correctly. Proof specifications must name
+  the production and harness files causally material to their claim; review of
+  that manifest remains part of accepting a new checked proof.

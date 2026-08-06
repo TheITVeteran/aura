@@ -33,6 +33,7 @@ from tools.reqproof.schema import (  # noqa: E402
 )
 
 LEDGER_SCHEMA_VERSION = 2
+COMMAND_RECEIPT_SCHEMA = "aura.reqproof.command_receipt.v1"
 DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
 DEFAULT_EVIDENCE_LEDGER_PATH = ROOT / "config" / "requirement_evidence_ledger.json"
 
@@ -83,6 +84,88 @@ def resolve_evidence_target(root: Path, ref: str) -> Path:
         f"evidence ref escapes repository root: {ref!r}",
     )
     return resolved
+
+
+def load_evidence_receipt(
+    target: Path,
+    *,
+    requirement_id: str,
+    evidence_class: str,
+    acceptance_ids: tuple[str, ...],
+    commit: str,
+) -> dict[str, Any]:
+    """Validate the provenance envelope required for external ledger evidence."""
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EvidenceLedgerError(f"evidence receipt is not valid UTF-8 JSON: {exc}") from exc
+    _require(isinstance(data, dict), "evidence receipt must be an object")
+    _require(
+        data.get("schema") == COMMAND_RECEIPT_SCHEMA,
+        f"evidence receipt schema must be {COMMAND_RECEIPT_SCHEMA}",
+    )
+    _require(data.get("verdict") == "pass", "evidence receipt verdict must be pass")
+    _require(
+        data.get("source_commit") == commit,
+        "evidence receipt source_commit does not match ledger commit",
+    )
+    targets = data.get("evidence_targets")
+    _require(isinstance(targets, list) and bool(targets), "evidence_targets must be non-empty")
+    matching_acceptance: set[str] = set()
+    for index, item in enumerate(targets):
+        _require(isinstance(item, dict), f"evidence_targets[{index}] must be an object")
+        _require(
+            set(item) == {"requirement_id", "evidence_class", "acceptance_ids"},
+            f"evidence_targets[{index}] fields are invalid",
+        )
+        values = item.get("acceptance_ids")
+        _require(
+            isinstance(values, list)
+            and bool(values)
+            and all(isinstance(value, str) for value in values),
+            f"evidence_targets[{index}].acceptance_ids is invalid",
+        )
+        if (
+            item.get("requirement_id") == requirement_id
+            and item.get("evidence_class") == evidence_class
+        ):
+            matching_acceptance.update(values)
+    _require(
+        set(acceptance_ids) <= matching_acceptance,
+        "evidence receipt does not declare every ledger acceptance unit",
+    )
+
+    manifest = data.get("source_manifest")
+    _require(isinstance(manifest, list) and bool(manifest), "source_manifest must be non-empty")
+    paths: list[str] = []
+    for index, item in enumerate(manifest):
+        _require(isinstance(item, dict), f"source_manifest[{index}] must be an object")
+        _require(
+            set(item) == {"path", "sha256", "size_bytes"},
+            f"source_manifest[{index}] fields are invalid",
+        )
+        ref = _check_string(item.get("path"), f"source_manifest[{index}].path")
+        posix = PurePosixPath(ref)
+        _require("\\" not in ref and not posix.is_absolute(), f"unsafe source path {ref!r}")
+        _require(
+            bool(posix.parts)
+            and all(part not in ("", ".", "..") for part in posix.parts)
+            and posix.as_posix() == ref,
+            f"non-canonical source path {ref!r}",
+        )
+        digest = item.get("sha256")
+        _require(
+            isinstance(digest, str) and bool(SHA256_RE.match(digest)),
+            f"source_manifest[{index}].sha256 is invalid",
+        )
+        size = item.get("size_bytes")
+        _require(
+            isinstance(size, int) and not isinstance(size, bool) and size >= 0,
+            f"source_manifest[{index}].size_bytes is invalid",
+        )
+        paths.append(ref)
+    _require(paths == sorted(set(paths)), "source_manifest paths must be sorted and unique")
+    return data
 
 
 @dataclass(frozen=True)
@@ -335,6 +418,13 @@ def add_entry(
         f"{requirement_id} does not require evidence class {evidence_class}",
     )
     target = resolve_evidence_target(root, ref)
+    load_evidence_receipt(
+        target,
+        requirement_id=requirement_id,
+        evidence_class=evidence_class,
+        acceptance_ids=acceptance_ids,
+        commit=commit,
+    )
     try:
         evidence = EvidenceRef.from_dict(
             {
