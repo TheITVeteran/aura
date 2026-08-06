@@ -68,6 +68,7 @@ from core.evaluation.matched_budget import (  # noqa: E402
     AttemptLedger,
     ConditionBudget,
     check_budget_parity,
+    paired_separation,
 )
 
 STATELESS = "stateless"
@@ -332,62 +333,6 @@ def run(
     return ledger, parity.to_dict()
 
 
-def _paired_separation(
-    ledger: AttemptLedger, treatment: str, control: str, *, iterations: int = 5000
-) -> dict[str, Any]:
-    """Paired bootstrap over per-task scores. Says when a delta is unresolvable.
-
-    Paired because both arms answer the SAME tasks, so the per-task difference
-    removes task difficulty as a source of variance — the largest one here, and
-    the reason an unpaired comparison over eight items says almost nothing.
-
-    A confidence interval spanning zero is reported as `unresolved`, not as a
-    result. With eight tasks the smallest non-zero delta available is 0.125, so
-    a run of this size can produce a −0.125 that is one task's coin flip and
-    reads like a finding.
-    """
-    import random
-
-    treatment_scores = {a.task_id: a.score for a in ledger.for_condition(treatment)}
-    control_scores = {a.task_id: a.score for a in ledger.for_condition(control)}
-    shared = sorted(set(treatment_scores) & set(control_scores))
-    diffs = [treatment_scores[t] - control_scores[t] for t in shared]
-    if not diffs:
-        return {"resolved": False, "reason": "no shared tasks between the arms"}
-
-    observed = sum(diffs) / len(diffs)
-    rng = random.Random(20260806)
-    means = []
-    for _ in range(iterations):
-        sample = [diffs[rng.randrange(len(diffs))] for _ in diffs]
-        means.append(sum(sample) / len(sample))
-    means.sort()
-    low = means[int(0.025 * len(means))]
-    high = means[min(len(means) - 1, int(0.975 * len(means)))]
-    resolved = low > 0.0 or high < 0.0
-
-    return {
-        "n_tasks": len(diffs),
-        "observed_delta": round(observed, 4),
-        "ci95": [round(low, 4), round(high, 4)],
-        "resolved": resolved,
-        "smallest_resolvable_delta": round(1.0 / len(diffs), 4),
-        "verdict": (
-            ("treatment_better" if observed > 0 else "treatment_worse")
-            if resolved
-            else "unresolved"
-        ),
-        "reason": (
-            ""
-            if resolved
-            else f"the 95% interval [{low:.4f}, {high:.4f}] spans zero; "
-            f"with {len(diffs)} tasks the smallest non-zero delta expressible is "
-            f"{1.0 / len(diffs):.4f}, so this run cannot tell an effect from one "
-            "task changing its mind. Add tasks."
-        ),
-    }
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -454,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     # smallest possible non-zero value IS the effect being reported. Publishing
     # that as "the architecture is worse" would be the same overclaim as the
     # retracted bundle, pointed the other way.
-    separation = _paired_separation(ledger, FULL, LONG_CONTEXT)
+    separation = paired_separation(ledger, FULL, LONG_CONTEXT)
 
     claim = LesionClaim(
         condition="architecture_vs_long_context",

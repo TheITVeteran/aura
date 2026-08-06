@@ -39,7 +39,7 @@ different conclusion.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -163,7 +163,7 @@ class BudgetParityReport:
         )
 
 
-class UnmatchedBudgets(ValueError):
+class UnmatchedBudgetsError(ValueError):
     """Raised instead of returning a verdict the arms did not earn."""
 
     def __init__(self, report: BudgetParityReport):
@@ -206,7 +206,7 @@ def require_budget_parity(budgets: Sequence[ConditionBudget]) -> BudgetParityRep
     """Return the report, or raise rather than let a void comparison proceed."""
     report = check_budget_parity(budgets)
     if not report.matched:
-        raise UnmatchedBudgets(report)
+        raise UnmatchedBudgetsError(report)
     return report
 
 
@@ -354,6 +354,71 @@ def equalise(budgets: Iterable[ConditionBudget]) -> list[ConditionBudget]:
     return [replace(b, **tightest) for b in budgets]
 
 
+def paired_separation(
+    ledger: AttemptLedger,
+    treatment: str,
+    control: str,
+    *,
+    iterations: int = 5000,
+    seed: int = 20260806,
+) -> dict[str, Any]:
+    """Paired bootstrap over per-task scores. Says when a delta is unresolvable.
+
+    Paired because both arms answer the SAME tasks, so the per-task difference
+    removes task difficulty as a source of variance — the largest one in a
+    small battery, and the reason an unpaired comparison over eight items says
+    almost nothing.
+
+    A confidence interval spanning zero is reported as `unresolved`, never as a
+    result. This lives here rather than in one ablation tool because the first
+    version of that tool published a −0.125 delta from eight tasks, where
+    0.125 is the smallest non-zero delta eight tasks can express: the number
+    was one task's coin flip and it read like a finding. Any comparison of two
+    arms over shared tasks needs this guard, so it belongs beside the ledger
+    that holds the scores rather than in whichever tool needed it first.
+    """
+    import random
+
+    treatment_scores = {a.task_id: a.score for a in ledger.for_condition(treatment)}
+    control_scores = {a.task_id: a.score for a in ledger.for_condition(control)}
+    shared = sorted(set(treatment_scores) & set(control_scores))
+    diffs = [treatment_scores[t] - control_scores[t] for t in shared]
+    if not diffs:
+        return {"resolved": False, "reason": "no shared tasks between the arms"}
+
+    observed = sum(diffs) / len(diffs)
+    rng = random.Random(seed)
+    means = []
+    for _ in range(iterations):
+        sample = [diffs[rng.randrange(len(diffs))] for _ in diffs]
+        means.append(sum(sample) / len(sample))
+    means.sort()
+    low = means[int(0.025 * len(means))]
+    high = means[min(len(means) - 1, int(0.975 * len(means)))]
+    resolved = low > 0.0 or high < 0.0
+
+    return {
+        "n_tasks": len(diffs),
+        "observed_delta": round(observed, 4),
+        "ci95": [round(low, 4), round(high, 4)],
+        "resolved": resolved,
+        "smallest_resolvable_delta": round(1.0 / len(diffs), 4),
+        "verdict": (
+            ("treatment_better" if observed > 0 else "treatment_worse")
+            if resolved
+            else "unresolved"
+        ),
+        "reason": (
+            ""
+            if resolved
+            else f"the 95% interval [{low:.4f}, {high:.4f}] spans zero; "
+            f"with {len(diffs)} tasks the smallest non-zero delta expressible is "
+            f"{1.0 / len(diffs):.4f}, so this run cannot tell an effect from one "
+            "task changing its mind. Add tasks."
+        ),
+    }
+
+
 __all__ = [
     "Attempt",
     "AttemptLedger",
@@ -362,9 +427,10 @@ __all__ = [
     "ConditionBudget",
     "OUTCOME_DETERMINING",
     "ParityViolation",
-    "UnmatchedBudgets",
+    "UnmatchedBudgetsError",
     "check_budget_parity",
     "compare",
+    "paired_separation",
     "equalise",
     "require_budget_parity",
 ]

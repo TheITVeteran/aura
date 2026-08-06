@@ -17,7 +17,7 @@ from core.evaluation.matched_budget import (
     Attempt,
     AttemptLedger,
     ConditionBudget,
-    UnmatchedBudgets,
+    UnmatchedBudgetsError,
     check_budget_parity,
     compare,
     equalise,
@@ -135,7 +135,7 @@ def test_unbounded_does_not_match_bounded():
 
 
 def test_require_budget_parity_raises_rather_than_returning():
-    with pytest.raises(UnmatchedBudgets) as excinfo:
+    with pytest.raises(UnmatchedBudgetsError) as excinfo:
         require_budget_parity([_arm("a", max_output_tokens=160), _arm("b")])
     assert "comparison void" in str(excinfo.value)
 
