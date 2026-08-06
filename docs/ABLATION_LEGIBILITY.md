@@ -11,6 +11,57 @@ no clamps, no hardcoded statistics) intact vs lesioned and reports the measured
 metric for both, the delta, and an honest load-bearing verdict. A no-delta
 result is reported as *not* load-bearing — never hidden.
 
+## Read this first: "load-bearing" is not "helps"
+
+Every condition in `ablation_runner.py` is a **wiring check**, and the scorecard
+says so now rather than leaving it to be noticed.
+
+`without_system2` scores 1.000 → 0.000 on `strict_proof_exact_answer_rate`, and
+the lesioned component *is* the strict-proof solver. Removing the only thing
+that can emit an answer in that format, and observing that the format stops
+appearing, is a true statement about wiring. The number is large, real,
+correctly measured and inferentially almost empty — the worst combination
+available, because size reads as strength. `without_verifier` (the verifier is
+the only rejector) and `without_substrate` (policy divergence is the coupler's
+own output) have the same shape.
+
+`core/evaluation/lesion_inference.py` classifies what each delta licenses:
+
+| class | what it establishes |
+| :--- | :--- |
+| `tautological` | the component is wired to the metric it produces |
+| `mechanistic` | the component changes its own output — real, one layer short |
+| `capability` | it changes TASK SUCCESS, on tasks solvable **without** it |
+
+The current scorecard reads: *0 of 3 conditions measure task success on tasks
+solvable without the component.* It previously read `all_conditions_load_bearing:
+true`, which is a different sentence and looks like the same one.
+
+## The capability runner
+
+For the comparison that can support an earns-its-cost claim:
+
+```bash
+.venv/bin/python tools/capability_ablation.py \
+    --responder mlx --model <local-model> --history-turns 40
+```
+
+Three arms at an **identical turn budget** — `stateless` (final turn only),
+`long_context` (the most recent N turns, what every chat client sends), and
+`full_architecture` (the N most *relevant* turns, via Aura's real retrieval).
+Beating `stateless` is nearly definitional; beating `long_context` is the claim.
+
+Measured 2026-08-06, 40 tasks, one local model, paired bootstrap:
+
+- history **exceeds** the window: long_context 0.000, retrieval 1.000,
+  delta **+1.000**, 95% CI [1.000, 1.000]
+- history **fits** the window: delta **0.000**, reported `unresolved`
+
+Both are committed. The second matters as much as the first — the advantage
+exists where history exceeds what a caller can afford to send, and nowhere else.
+A delta whose confidence interval spans zero is reported as `unresolved`, never
+as a finding, and arms whose budgets differ return `void` rather than a number.
+
 ## One command
 
 ```bash
