@@ -1207,24 +1207,56 @@ function toolDomId(name) {
     return `skill-card-${String(name || 'unknown').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
 }
 
+// The status line is the first thing a person reads in this window, and
+// for a long time it could read `RUNTIME_REQUIRED_PROBES, PROBE:KERNEL`
+// — the blocker identifiers joined with a comma. Those identifiers are
+// worth keeping exactly as the runtime said them, so they move to the
+// tooltip and to `data-raw`; the visible line gets the sentence.
 function setConnectionVisual(mode, detail = '') {
     const statusEl = $('hud-status');
     const dotEl = $('brand-status-dot');
     const neuralDot = $('neural-dot');
     const tone = {
-        online: { text: detail || 'online', cls: 'status-ok', color: 'var(--success)' },
-        reconnecting: { text: detail || 'reconnecting', cls: 'status-warn', color: 'var(--warn)' },
-        booting: { text: detail || 'booting', cls: 'status-warn', color: 'var(--warn)' },
-        degraded: { text: detail || 'degraded', cls: 'status-warn', color: 'var(--warn)' },
-        offline: { text: detail || 'offline', cls: 'status-err', color: 'var(--error)' }
-    }[mode] || { text: detail || 'unknown', cls: '', color: 'var(--text-dim)' };
+        online: { text: detail || 'Ready', cls: 'status-ok', color: 'var(--success)' },
+        reconnecting: { text: detail || 'Reconnecting', cls: 'status-warn', color: 'var(--warn)' },
+        booting: { text: detail || 'Starting up', cls: 'status-warn', color: 'var(--warn)' },
+        degraded: { text: detail || 'Not fully ready', cls: 'status-warn', color: 'var(--warn)' },
+        offline: { text: detail || 'Not connected', cls: 'status-err', color: 'var(--error)' }
+    }[mode] || { text: detail || 'Unknown', cls: '', color: 'var(--text-dim)' };
 
     if (statusEl) {
         statusEl.textContent = tone.text;
         statusEl.className = `brand-status-text ${tone.cls}`.trim();
+        // Operators lose nothing: whatever the runtime actually reported
+        // is one hover away, and stays in the DOM for the diagnostics
+        // panels to read back.
+        const raw = state.runtimeHealthBlockers;
+        const rawText = Array.isArray(raw) && raw.length ? raw.join(', ') : '';
+        const explain = statusExplanation(mode, tone.text, rawText);
+        if (explain) statusEl.title = explain; else statusEl.removeAttribute('title');
+        if (rawText) statusEl.dataset.raw = rawText; else delete statusEl.dataset.raw;
     }
     if (dotEl) dotEl.style.background = tone.color;
     if (neuralDot) neuralDot.style.background = tone.color;
+}
+
+// Tooltip body: the sentence, what to do about it when there is
+// something to do, and the untouched runtime tokens on their own line.
+function statusExplanation(mode, visible, rawText) {
+    const lex = window.AuraShellLexicon;
+    const parts = [];
+    let summary = null;
+    if (lex && rawText) {
+        summary = lex.summarize(rawText.split(',').map(s => s.trim()).filter(Boolean));
+    }
+    if (summary) {
+        parts.push(summary.meaning);
+        if (summary.next) parts.push(summary.next);
+    } else if (mode === 'online') {
+        parts.push('Aura is running and can answer.');
+    }
+    if (rawText) parts.push(`Runtime reported: ${rawText}`);
+    return parts.join('\n\n');
 }
 
 function formatFlagLabel(flag) {
@@ -2070,7 +2102,7 @@ function connect() {
         if (wasDisconnected && hadRetried) {
             showConnToast('reconnected'); // Show brief reconnected confirmation
         }
-        setConnectionVisual('reconnecting', 'checking runtime');
+        setConnectionVisual('reconnecting', 'Checking on Aura');
         pollHealth();
         hydrateBootstrap({ hydrateConversationHistory: !state.bootstrapLoaded, quiet: true });
 
@@ -2106,7 +2138,7 @@ function connect() {
         if (state.pingInterval) clearInterval(state.pingInterval);
         const surfacePaused = !!(document.hidden || state.surfaceSuspended || state.resumeInProgress || navigator.onLine === false);
         showConnToast(surfacePaused ? 'paused' : true);
-        setConnectionVisual('reconnecting', surfacePaused ? 'surface paused' : '');
+        setConnectionVisual('reconnecting', surfacePaused ? 'Paused in background' : '');
 
         // ZENITH: Infinite Reconnect with Exponential Backoff + Jitter
         if (!state.retryCount) state.retryCount = 0;
@@ -2133,7 +2165,7 @@ function reconnectLiveSurface(reason = 'resume') {
     state.resumeInProgress = true;
     state.lastSurfaceResumeAt = Date.now();
     showConnToast('resuming');
-    setConnectionVisual('reconnecting', 'resuming live surface');
+    setConnectionVisual('reconnecting', 'Waking this window');
     hydrateBootstrap({ hydrateConversationHistory: !state.bootstrapLoaded, quiet: true });
     if (!state.healthPollInFlight) scheduleHealthPoll(0);
 
@@ -2179,7 +2211,7 @@ function markLiveSurfaceResponsive(reason = 'activity') {
 function pauseLiveSurface(reason = 'hidden') {
     state.surfaceSuspended = true;
     state.lastSurfaceHiddenAt = Date.now();
-    setConnectionVisual('reconnecting', 'surface paused');
+    setConnectionVisual('reconnecting', 'Paused in background');
     showConnToast('paused');
 }
 
@@ -5350,10 +5382,19 @@ function runtimeHealthBlockers(payload) {
     return Array.from(new Set(normalized));
 }
 
+// Was `blockers.slice(0, 2).join(', ')` — the first two internal
+// identifiers, verbatim, as the user-facing status. The blockers are
+// still the input; only the rendering changed. `summarize` picks the
+// most specific one rather than the first, because insertion order put
+// the umbrella token ("runtime_required_probes") ahead of the token that
+// names what is actually still starting ("probe:inference").
 function runtimeHealthStatusText(payload = null) {
     const blockers = payload ? runtimeHealthBlockers(payload) : state.runtimeHealthBlockers;
-    if (!blockers || blockers.length === 0) return 'checking runtime';
-    return blockers.slice(0, 2).join(', ');
+    if (!blockers || blockers.length === 0) return 'Checking on Aura';
+    const lex = window.AuraShellLexicon;
+    if (!lex) return 'Not fully ready';
+    const summary = lex.summarize(blockers);
+    return summary ? summary.title : 'Not fully ready';
 }
 
 function applyRuntimeHeartbeat(payload) {
@@ -5374,20 +5415,51 @@ function applyRuntimeHeartbeat(payload) {
     publishHealthNeuralPulse(payload, 'websocket_heartbeat');
 }
 
-function conversationLaneStatusText(lane) {
-    if (!lane) return 'online';
+// One lane state, three renderings. The tier badge used to recover the
+// state by string-comparing the *display* text
+// (`laneText === 'cortex thinking' ? ...`), so any wording change
+// silently collapsed every state into CORTEX WARMING. The state is a key
+// now and the words hang off it, which is what made rewording these safe
+// at all.
+//
+// `label`  header chip, Title case
+// `inline` completes "Aura is …", lowercase
+// `tier`   the technical badge, where our own vocabulary is fine
+const LANE_STATES = {
+    ready:        { label: 'Ready',              inline: 'ready',                     tier: 'CORTEX READY' },
+    thinking:     { label: 'Thinking',           inline: 'thinking',                  tier: 'CORTEX THINKING' },
+    memory_guard: { label: 'Low on memory',      inline: 'low on memory',             tier: 'CORTEX MEMORY GUARD' },
+    route_blocked:{ label: 'Reply path blocked', inline: 'unable to route a reply',   tier: 'CORTEX ROUTE BLOCKED' },
+    timeout:      { label: 'Took too long',      inline: 'taking longer than usual',  tier: 'CORTEX TIMEOUT' },
+    unreachable:  { label: 'Not reachable',      inline: 'not reachable right now',   tier: 'CORTEX UNAVAILABLE' },
+    preparing:    { label: 'Getting ready',      inline: 'getting ready',             tier: 'CORTEX PREPARING' },
+    recovering:   { label: 'Recovering',         inline: 'recovering',                tier: 'CORTEX RECOVERING' },
+    warming:      { label: 'Warming up',         inline: 'warming up',                tier: 'CORTEX WARMING' },
+};
+
+// "cortex" is our word for the process hosting Aura's model and "lane"
+// is our word for the path a reply travels; both were leaking into the
+// header, where they mean nothing to anyone who has not read the
+// architecture doc. Same states, decided the same way — only the
+// rendering moved.
+function conversationLaneStateKey(lane) {
+    if (!lane) return 'ready';
     const laneState = String(lane.state || 'warming').toLowerCase();
     const failureClass = laneFailureClass(lane);
-    if (lane.conversation_ready) return 'online';
-    if (laneHasActiveGeneration(lane)) return 'cortex thinking';
-    if (failureClass === 'memory_guard') return 'cortex memory guard';
-    if (failureClass === 'cognitive_engine') return 'cortex route blocked';
-    if (failureClass === 'timeout') return 'cortex timeout';
-    if (failureClass === 'runtime_unavailable') return 'cortex unavailable';
-    if (laneIsStandby(lane)) return 'cortex preparing';
-    if (laneState === 'recovering') return 'cortex recovering';
-    if (laneState === 'failed') return 'cortex unavailable';
-    return 'cortex warming';
+    if (lane.conversation_ready) return 'ready';
+    if (laneHasActiveGeneration(lane)) return 'thinking';
+    if (failureClass === 'memory_guard') return 'memory_guard';
+    if (failureClass === 'cognitive_engine') return 'route_blocked';
+    if (failureClass === 'timeout') return 'timeout';
+    if (failureClass === 'runtime_unavailable') return 'unreachable';
+    if (laneIsStandby(lane)) return 'preparing';
+    if (laneState === 'recovering') return 'recovering';
+    if (laneState === 'failed') return 'unreachable';
+    return 'warming';
+}
+
+function conversationLaneStatusText(lane) {
+    return (LANE_STATES[conversationLaneStateKey(lane)] || LANE_STATES.warming).label;
 }
 
 function applyConversationLane(lane, healthStatus = '') {
@@ -5413,7 +5485,9 @@ function applyConversationLane(lane, healthStatus = '') {
     publishSurfaceWorkload('conversation_lane');
     updateLanePlaceholder();
 
-    const laneText = conversationLaneStatusText(effectiveLane);
+    const laneKey = conversationLaneStateKey(effectiveLane);
+    const laneWords = LANE_STATES[laneKey] || LANE_STATES.warming;
+    const laneText = laneWords.label;
     const laneStandby = laneIsStandby(effectiveLane);
     const activeGeneration = laneHasActiveGeneration(effectiveLane);
     if (state.connected) {
@@ -5434,7 +5508,7 @@ function applyConversationLane(lane, healthStatus = '') {
         updateTypingLabel(
             state.conversationReady || activeGeneration
                 ? 'Aura is thinking…'
-                : `Aura is ${laneText}...`
+                : `Aura is ${laneWords.inline}…`
         );
     }
 
@@ -5446,16 +5520,7 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.title = `Foreground: ${endpoint}`;
             tierEl.style.color = 'var(--success)';
         } else {
-            const stateLabel =
-                laneText === 'cortex thinking' ? 'CORTEX THINKING' :
-                laneText === 'cortex preparing' ? 'CORTEX PREPARING' :
-                laneText === 'cortex recovering' ? 'CORTEX RECOVERING' :
-                laneText === 'cortex memory guard' ? 'CORTEX MEMORY GUARD' :
-                laneText === 'cortex route blocked' ? 'CORTEX ROUTE BLOCKED' :
-                laneText === 'cortex timeout' ? 'CORTEX TIMEOUT' :
-                laneText === 'cortex unavailable' ? 'CORTEX UNAVAILABLE' :
-                'CORTEX WARMING';
-            tierEl.textContent = stateLabel;
+            tierEl.textContent = laneWords.tier;
             tierEl.title = laneStandby
                 ? 'Local Cortex is not conversation-ready yet.'
                 : effectiveLane.last_failure_reason || (effectiveLane.desired_model || 'Cortex (32B)');
@@ -8501,7 +8566,7 @@ window.addEventListener('focus', () => {
 window.addEventListener('online', () => reconnectLiveSurface('browser_online'));
 window.addEventListener('offline', () => {
     state.surfaceSuspended = true;
-    setConnectionVisual('reconnecting', 'network paused');
+    setConnectionVisual('reconnecting', 'Waiting for network');
     showConnToast('paused');
 });
 window.addEventListener('pagehide', () => {

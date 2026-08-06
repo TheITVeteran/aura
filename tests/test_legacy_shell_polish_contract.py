@@ -1,6 +1,15 @@
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _code_only(js: str) -> str:
+    """Strip comments so a "we used to do X" note explaining a fix cannot
+    satisfy — or trip — an assertion about what the code still does."""
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    js = re.sub(r"^\s*//.*$", "", js, flags=re.M)
+    return js
 
 
 def test_legacy_shell_keeps_constitutional_health_slots():
@@ -54,7 +63,7 @@ def test_legacy_shell_presents_cold_standby_as_not_ready_shell_state():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 
     assert "function laneIsStandby" in js
-    assert "cortex preparing" in js
+    assert "if (laneIsStandby(lane)) return 'preparing';" in js
     assert "CORTEX PREPARING" in js
     assert "Aura is ready. Cortex will warm on first turn." not in js
     assert "syncSplashState(payload);" in js
@@ -78,8 +87,8 @@ def test_legacy_shell_presents_active_generation_as_working_not_unavailable():
     assert "function laneHasActiveGeneration" in js
     assert "active_generation_in_flight" in js
     assert "Number(lane.active_generations || 0) > 0" in js
-    assert "if (laneHasActiveGeneration(lane)) return 'cortex thinking';" in js
-    assert "laneText === 'cortex thinking' ? 'CORTEX THINKING'" in js
+    assert "if (laneHasActiveGeneration(lane)) return 'thinking';" in js
+    assert "CORTEX THINKING" in js
     assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
     assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
 
@@ -93,9 +102,9 @@ def test_legacy_shell_does_not_hide_lane_failures_as_generic_warming():
     assert "model_load_headroom" in js
     assert "visible_conversation_probe_missing" in js
     assert "endpoint_timeout" in js
-    assert "if (failureClass === 'memory_guard') return 'cortex memory guard';" in js
-    assert "if (failureClass === 'cognitive_engine') return 'cortex route blocked';" in js
-    assert "if (failureClass === 'timeout') return 'cortex timeout';" in js
+    assert "if (failureClass === 'memory_guard') return 'memory_guard';" in js
+    assert "if (failureClass === 'cognitive_engine') return 'route_blocked';" in js
+    assert "if (failureClass === 'timeout') return 'timeout';" in js
     assert "CORTEX MEMORY GUARD" in js
     assert "CORTEX ROUTE BLOCKED" in js
     assert "CORTEX TIMEOUT" in js
@@ -165,6 +174,63 @@ def test_legacy_shell_neural_feed_receives_health_liveness_pulses():
     assert "function recordHealthPollFailure" in js
     assert "health endpoint unavailable; retaining last known state" in js
     assert "endpoint recovered after" in js
+
+
+def test_lane_state_is_a_key_not_the_words_shown_to_the_user():
+    """The tier badge used to recover the lane state by string-comparing the
+    text already rendered in the header (`laneText === 'cortex thinking'`).
+    Any rewording silently collapsed every state into CORTEX WARMING, so the
+    words could not be improved without breaking the badge. State and
+    presentation are separate now, and must stay that way."""
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "function conversationLaneStateKey" in js
+    assert "const LANE_STATES = {" in js
+    assert "tierEl.textContent = laneWords.tier;" in js
+    # No consumer may branch on the rendered label.
+    assert "laneText ===" not in _code_only(js)
+
+
+def test_shell_never_prints_raw_runtime_blocker_tokens_as_status():
+    """`runtimeHealthStatusText` returned `blockers.slice(0, 2).join(', ')`,
+    so the first line a newcomer read could be
+    `RUNTIME_REQUIRED_PROBES, PROBE:KERNEL`. The tokens are still carried —
+    tooltip and data-raw — but the visible line is a sentence."""
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "blockers.slice(0, 2).join(', ')" not in _code_only(js)
+    assert "window.AuraShellLexicon" in js
+    assert "statusEl.dataset.raw = rawText" in js
+    assert "function statusExplanation" in js
+    assert '<script src="/static/shell_lexicon.js"></script>' in html
+    # The lexicon must load before the shell that consumes it.
+    assert html.index("shell_lexicon.js") < html.index("/static/aura.js")
+
+
+def test_shell_lexicon_translates_every_blocker_the_shell_can_raise():
+    """A blocker the shell can push must have an entry, or the lexicon is
+    decorative and the raw token reaches the user anyway."""
+    lex = (PROJECT_ROOT / "interface" / "static" / "shell_lexicon.js").read_text(encoding="utf-8")
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    for token in (
+        "runtime_required_probes",
+        "runtime_health_unavailable",
+        "runtime_transport_only",
+        "conversation_transport",
+    ):
+        assert f"blockers.push('{token}')" in js or f"['{token}']" in js, token
+        assert token in lex, f"lexicon missing {token}"
+
+    # Every probe group the shell requires needs a description.
+    assert "REQUIRED_RUNTIME_PROBES = ['kernel', 'inference', 'memory', 'scheduler', 'tool_governance']" in js
+    for group in ("kernel", "inference", "memory", "scheduler", "tool_governance"):
+        assert f"'probe:{group}'" in lex, f"lexicon missing probe:{group}"
+
+    # Unknown tokens must still degrade to a sentence, never to a bare slug.
+    assert "function fallback" in lex
+    assert "does not have a description for" in lex
 
 
 def test_server_keeps_legacy_shell_as_default_route():
