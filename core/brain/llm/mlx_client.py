@@ -5246,8 +5246,17 @@ class MLXLocalClient:
                     exc,
                     action="kept lane-local degraded state after health event emission failed",
                 )
-            except Exception:  # noqa: BLE001 - the fallback may itself be fail-closed
-                pass
+            except Exception as fallback_exc:  # noqa: BLE001 - fail-closed fallback
+                # Nothing further to try: the primary recorder and its
+                # fallback have both failed. Swallowing it silently would make
+                # a blind observability path indistinguishable from a quiet
+                # one, so the loss is named even though it cannot be acted on.
+                logger.debug(
+                    "MLX degradation fallback also failed (%s: %s); the original "
+                    "event is unrecorded.",
+                    type(fallback_exc).__name__,
+                    fallback_exc,
+                )
             logger.debug("Failed to record MLX degraded event: %s", exc)
 
     def _is_optional_deep_solver_memory_refusal(self, failure: Any) -> bool:
