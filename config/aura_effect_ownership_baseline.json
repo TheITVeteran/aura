@@ -1556,6 +1556,14 @@
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.load_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
       "count": 1,
       "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
       "scope": "<module>.save_checkpoint"
@@ -2351,6 +2359,14 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.open_owned_binary"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.provision_private_bytes"
     },
     {
       "callee": "core.runtime.atomic_writer.durable_replace",
@@ -4159,6 +4175,30 @@
       "count": 1,
       "path": "core/learning/cortex_generation_upgrade.py",
       "scope": "<module>._governed_write"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.__init__"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun._prune"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -8473,30 +8513,6 @@
       "scope": "<module>.TraceLogger.__init__"
     },
     {
-      "callee": "open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/verification/independent_evidence.py",
-      "scope": "<module>._verdict_key"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/verification/independent_evidence.py",
-      "scope": "<module>._verdict_key"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/verification/independent_evidence.py",
-      "scope": "<module>._verdict_key"
-    },
-    {
       "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9057,30 +9073,6 @@
       "scope": "<module>.UnifiedSelf._save_to_disk"
     },
     {
-      "callee": "open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/container.py",
-      "scope": "<module>.ServiceContainer._seal_key"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/container.py",
-      "scope": "<module>.ServiceContainer._seal_key"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/container.py",
-      "scope": "<module>.ServiceContainer._seal_key"
-    },
-    {
       "callee": "project_root.mkdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -9167,30 +9159,6 @@
       "count": 1,
       "path": "core/continuity.py",
       "scope": "<module>.ContinuityEngine.save"
-    },
-    {
-      "callee": "open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/continuity.py",
-      "scope": "<module>._continuity_key"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/continuity.py",
-      "scope": "<module>._continuity_key"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/continuity.py",
-      "scope": "<module>._continuity_key"
     },
     {
       "callee": "self.db_path.replace",
@@ -10057,46 +10025,6 @@
       "scope": "<module>.DomainSpecialistTrainer.train_domain"
     },
     {
-      "callee": "self.run_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.__init__"
-    },
-    {
-      "callee": "stale.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun._prune"
-    },
-    {
-      "callee": "manifest_tmp.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.save"
-    },
-    {
-      "callee": "os.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.save"
-    },
-    {
-      "callee": "tmp.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.save"
-    },
-    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10295,22 +10223,6 @@
       "count": 1,
       "path": "core/learning/recursive_self_improvement.py",
       "scope": "<module>.RecursiveSelfImprovementLoop._run_tool_creation"
-    },
-    {
-      "callee": "adapter_path.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
-      "scope": "<module>.load_checkpoint"
-    },
-    {
-      "callee": "optimizer_path.write_bytes",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
-      "scope": "<module>.load_checkpoint"
     },
     {
       "callee": "<pathlib.Path>.unlink",
@@ -11207,30 +11119,6 @@
       "count": 1,
       "path": "core/mycelium.py",
       "scope": "<module>.MycelialNetwork.vault_sync._sync_worker"
-    },
-    {
-      "callee": "key_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/mycelium.py",
-      "scope": "<module>._vault_mac_key"
-    },
-    {
-      "callee": "open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/mycelium.py",
-      "scope": "<module>._vault_mac_key"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/mycelium.py",
-      "scope": "<module>._vault_mac_key"
     },
     {
       "callee": "candidate.mkdir",
@@ -16098,6 +15986,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3649b56ac4c45c0200335cd0f1cdf981a92225c61bd6305ca5cd0d9875d027fb",
+  "inventory_sha256": "e70fa8f76c03b4192b60fe4b7c8d6f3c256a23f3c8f5cf92fdb187c39dd7b265",
   "schema_version": 1
 }

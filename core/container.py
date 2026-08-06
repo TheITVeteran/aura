@@ -2,10 +2,12 @@ import asyncio
 import contextvars
 import functools
 import hashlib
+import hmac
 import importlib
 import inspect
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -21,14 +23,14 @@ from core.exceptions import (
     LifecycleError,
     ServiceNotFoundError,
 )
+from core.governance_context import local_internal_governed_scope
 from core.health.degraded_events import record_degraded_event
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
-from core.utils.concurrency import RobustLock
-import hmac
-import os
 from core.runtime.state_ownership import state_root
+from core.utils.concurrency import RobustLock
 
 logger = logging.getLogger("Aura.Container")
 
@@ -618,6 +620,39 @@ class ServiceContainer:
         """Bulk-register legacy aliases."""
         for alias, target in aliases.items():
             cls.register_alias(alias, target)
+
+    @classmethod
+    def unregister_instance(
+        cls,
+        name: str,
+        *,
+        expected_instance: Any | None = None,
+    ) -> bool:
+        """Remove one registration without deleting a replacement instance.
+
+        Runtime owners call this during teardown.  The identity precondition is
+        important: a stale owner that closes after a replacement was published
+        must not remove the replacement from the process-wide service graph.
+        """
+
+        with cls._lock:
+            resolved_name = cls._resolve_name(name)
+            descriptor = cls._services.get(resolved_name)
+            if descriptor is None:
+                return False
+            current = descriptor.instance
+            if current is None and not callable(descriptor.factory):
+                current = descriptor.factory
+            if expected_instance is not None and current is not expected_instance:
+                return False
+            cls._services.pop(resolved_name, None)
+            return True
+
+    @classmethod
+    def unregister(cls, name: str) -> bool:
+        """Compatibility wrapper for callers that own the named registration."""
+
+        return cls.unregister_instance(name)
 
     @classmethod
     def clear(cls) -> None:
@@ -1345,18 +1380,19 @@ class ServiceContainer:
             if path.exists():
                 key = path.read_bytes()
                 return key if len(key) == 32 else None
-            path.parent.mkdir(parents=True, exist_ok=True)
             candidate = os.urandom(32)
-            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with open(fd, "wb") as handle:
-                handle.write(candidate)
-            return candidate
-        except FileExistsError:
-            try:
-                key = path.read_bytes()
-                return key if len(key) == 32 else None
-            except OSError:
-                return None
+            with local_internal_governed_scope(
+                "service_container.sovereignty_seal_key",
+                domain="file_write",
+            ):
+                key = get_file_write_gateway().provision_private_bytes(
+                    path,
+                    candidate,
+                    expected_size=32,
+                    mode=0o600,
+                    source="service_container.sovereignty_seal_key",
+                )
+            return key
         except (OSError, ValueError):
             return None
 

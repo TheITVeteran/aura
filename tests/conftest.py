@@ -250,8 +250,13 @@ class HermeticResourceSandbox:
 
 
 @pytest.fixture(autouse=True)
-def hermetic_resource_sandbox(tmp_path):
-    sandbox = HermeticResourceSandbox(root=tmp_path / "resource-sandbox")
+def hermetic_resource_sandbox(tmp_path_factory):
+    # Resource observation is test infrastructure, not test-owned payload. Put
+    # it beside pytest's per-test directory so exact-directory transaction
+    # tests can truthfully assert that no undeclared entry exists.
+    sandbox = HermeticResourceSandbox(
+        root=tmp_path_factory.mktemp("resource-sandbox")
+    )
     try:
         yield sandbox
     finally:

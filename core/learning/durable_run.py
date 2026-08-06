@@ -20,11 +20,13 @@ a torn write leaves the PREVIOUS good checkpoint as the latest valid one.
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from core.governance_context import local_internal_governed_scope
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 DURABLE_RUN_SCHEMA = "aura.durable_run.v1"
 MANIFEST = "checkpoint_manifest.json"
@@ -50,11 +52,23 @@ class Checkpoint:
 class DurableRun:
     """Atomic checkpoint/resume for a long training or eval run."""
 
-    def __init__(self, run_dir: str | Path, *, keep: int = 3) -> None:
+    def __init__(
+        self,
+        run_dir: str | Path,
+        *,
+        keep: int = 3,
+    ) -> None:
         if type(keep) is not int or keep < 1:
             raise ValueError("keep must be a positive integer")
         self.run_dir = Path(run_dir)
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        with local_internal_governed_scope(
+            "durable_run.checkpoint_directory",
+            domain="file_write",
+        ):
+            get_file_write_gateway().ensure_directory(
+                self.run_dir,
+                source="durable_run.checkpoint_directory",
+            )
         self.keep = keep
 
     def _manifest_path(self) -> Path:
@@ -72,17 +86,29 @@ class DurableRun:
         checkpoint = Checkpoint(step=step, payload=payload, created_unix=time.time())
         name = f"checkpoint_{step:08d}.json"
         final = self.run_dir / name
-        tmp = self.run_dir / f".{name}.tmp"
-        tmp.write_text(json.dumps(checkpoint.to_dict(), indent=2))
-        os.replace(tmp, final)  # atomic on POSIX
+        with local_internal_governed_scope(
+            "durable_run.checkpoint",
+            domain="file_write",
+        ):
+            get_file_write_gateway().write_text(
+                final,
+                json.dumps(checkpoint.to_dict(), indent=2),
+                source="durable_run.checkpoint",
+            )
 
         manifest = self._read_manifest()
         manifest["latest"] = name
         manifest["history"] = ([name] + manifest.get("history", []))[: self.keep + 5]
         manifest["updated_unix"] = time.time()
-        manifest_tmp = self.run_dir / f".{MANIFEST}.tmp"
-        manifest_tmp.write_text(json.dumps(manifest, indent=2))
-        os.replace(manifest_tmp, self._manifest_path())
+        with local_internal_governed_scope(
+            "durable_run.manifest",
+            domain="file_write",
+        ):
+            get_file_write_gateway().write_text(
+                self._manifest_path(),
+                json.dumps(manifest, indent=2),
+                source="durable_run.manifest",
+            )
 
         self._prune()
         return final
@@ -142,7 +168,14 @@ class DurableRun:
         )
         for stale in checkpoints[self.keep :]:
             try:
-                stale.unlink()
+                with local_internal_governed_scope(
+                    "durable_run.prune",
+                    domain="file_write",
+                ):
+                    get_file_write_gateway().delete_file(
+                        stale,
+                        source="durable_run.prune",
+                    )
             except OSError:
                 pass
 

@@ -60,12 +60,14 @@ from typing import Any, ClassVar, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.background_policy import foreground_only_runtime
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.flags import FlagKind, declare
+from core.runtime.sqlite_support import connecting
 from core.utils.concurrency import run_io_bound
 from core.utils.exceptions import capture_and_log
-from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Aura.Mycelium")
 
@@ -140,20 +142,18 @@ def _vault_mac_key(base_dir: Path) -> bytes | None:
         import secrets
 
         raw = secrets.token_bytes(_VAULT_MAC_KEY_BYTES)
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        # Create exclusively at 0600 rather than write-then-chmod. The old
-        # sequence left the MAC key world-readable for the window between the
-        # write and the chmod, and a plain write is not exclusive — two
-        # processes racing to initialise could each believe they had authored
-        # the key, leaving one holding a value the other overwrote. Matches how
-        # container.py and continuity.py already mint their key material.
-        fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with open(fd, "wb") as handle:
-            handle.write(raw)
-        return raw
-    except FileExistsError:
-        # Another process won the race and its key is authoritative.
-        return key_path.read_bytes()
+        with local_internal_governed_scope(
+            "mycelium.vault_mac_key",
+            domain="file_write",
+        ):
+            authoritative = get_file_write_gateway().provision_private_bytes(
+                key_path,
+                raw,
+                expected_size=_VAULT_MAC_KEY_BYTES,
+                mode=0o600,
+                source="mycelium.vault_mac_key",
+            )
+        return authoritative
     except (OSError, RuntimeError, ValueError) as exc:
         record_degradation(
             "mycelium",
@@ -371,8 +371,8 @@ from core.governance.durable_learning import (
     admit_learning_update,
     grade_from_evidence,
 )
-from core.runtime.turn_outcome import VerificationGrade
 from core.runtime.lockdep import checked_lock
+from core.runtime.turn_outcome import VerificationGrade
 
 
 def _evidence_identity(evidence: Any) -> str | None:

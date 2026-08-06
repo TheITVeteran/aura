@@ -32,7 +32,6 @@ from core.runtime.atomic_writer import (
     durable_unlink,
     interprocess_file_lock,
 )
-
 from core.runtime.state_ownership import assert_state_path_allowed
 
 logger = logging.getLogger("Aura.FileWriteGateway")
@@ -162,7 +161,12 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         offset += written
 
 
-def _read_regular_at(directory_fd: int, name: str) -> tuple[bytes, int]:
+def _read_regular_at(
+    directory_fd: int,
+    name: str,
+    *,
+    max_bytes: int | None = None,
+) -> tuple[bytes, int]:
     flags = os.O_RDONLY | os.O_CLOEXEC | _required_no_follow_flag()
     descriptor = os.open(name, flags, dir_fd=directory_fd)
     try:
@@ -175,13 +179,51 @@ def _read_regular_at(directory_fd: int, name: str) -> tuple[bytes, int]:
             raise FileWriteTransactionError(
                 f"directory batch target is not a private regular file: {name}"
             )
+        if max_bytes is not None and metadata.st_size > max_bytes:
+            raise FileWriteTransactionError(
+                f"directory batch target exceeds read bound: {name}"
+            )
         chunks: list[bytes] = []
+        remaining = None if max_bytes is None else max_bytes + 1
         while True:
-            chunk = os.read(descriptor, 1024 * 1024)
+            read_size = 1024 * 1024
+            if remaining is not None:
+                if remaining <= 0:
+                    break
+                read_size = min(read_size, remaining)
+            chunk = os.read(descriptor, read_size)
             if not chunk:
                 break
             chunks.append(chunk)
-        return b"".join(chunks), stat.S_IMODE(metadata.st_mode)
+            if remaining is not None:
+                remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        try:
+            entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise FileWriteTransactionError(
+                f"directory batch target disappeared during read: {name}"
+            ) from exc
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            any(getattr(metadata, field) != getattr(after, field) for field in stable_fields)
+            or (after.st_dev, after.st_ino, after.st_nlink)
+            != (entry.st_dev, entry.st_ino, entry.st_nlink)
+            or len(payload) != metadata.st_size
+            or (max_bytes is not None and len(payload) > max_bytes)
+        ):
+            raise FileWriteTransactionError(
+                f"directory batch target changed during read: {name}"
+            )
+        return payload, stat.S_IMODE(metadata.st_mode)
     finally:
         os.close(descriptor)
 
@@ -1077,6 +1119,7 @@ class FileWriteGateway:
         path: PathLike,
         payload: bytes,
         *,
+        mode: int = 0o600,
         source: str = "unknown",
         durable: bool = True,
     ) -> bool:
@@ -1097,13 +1140,80 @@ class FileWriteGateway:
             target,
             bytes(payload),
             durable=durable,
+            mode=mode,
         )
+
+    def provision_private_bytes(
+        self,
+        path: PathLike,
+        candidate: bytes,
+        *,
+        expected_size: int,
+        mode: int = 0o600,
+        source: str = "unknown",
+    ) -> bytes:
+        """Create or adopt one stable, owner-only byte identity.
+
+        The winner is read through an owner-private directory descriptor with
+        ``O_NOFOLLOW`` and stable inode checks.  A competing process may win the
+        create race, but a symlink, hardlink, replacement, wrong mode, or wrong
+        size can never become accepted key material.
+        """
+
+        target = _coerce_target(path)
+        if not isinstance(candidate, (bytes, bytearray, memoryview)):
+            raise TypeError("candidate must be bytes-like")
+        payload = bytes(candidate)
+        if type(expected_size) is not int or expected_size <= 0:
+            raise ValueError("expected_size must be a positive integer")
+        if len(payload) != expected_size:
+            raise ValueError("candidate length does not match expected_size")
+        permissions = _validated_permissions(mode)
+        if permissions & 0o077:
+            raise ValueError("private byte identities must be owner-only")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.provision_private_bytes:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import (
+            atomic_write_bytes_if_absent,
+            ensure_private_directory,
+        )
+
+        ensure_private_directory(target.parent)
+        atomic_write_bytes_if_absent(
+            target,
+            payload,
+            durable=True,
+            mode=permissions,
+        )
+        directory_fd, _lexical = _open_directory_no_follow(target.parent)
+        try:
+            authoritative, observed_mode = _read_regular_at(
+                directory_fd,
+                target.name,
+                max_bytes=expected_size,
+            )
+        finally:
+            os.close(directory_fd)
+        if len(authoritative) != expected_size:
+            raise FileWriteTransactionError(
+                f"private byte identity has invalid size: {target}"
+            )
+        if observed_mode != permissions:
+            raise FileWriteTransactionError(
+                f"private byte identity has invalid permissions: {target}"
+            )
+        return authoritative
 
     async def write_bytes_if_absent_async(
         self,
         path: PathLike,
         payload: bytes,
         *,
+        mode: int = 0o600,
         source: str = "unknown",
         durable: bool = True,
     ) -> bool:
@@ -1124,6 +1234,7 @@ class FileWriteGateway:
             target,
             bytes(payload),
             durable=durable,
+            mode=mode,
         )
 
     def open_owned_binary(

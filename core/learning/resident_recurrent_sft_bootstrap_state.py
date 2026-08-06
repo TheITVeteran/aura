@@ -866,8 +866,8 @@ def load_checkpoint(
         with tempfile.TemporaryDirectory(prefix="aura-resident-sft-load-") as temporary:
             adapter_path = Path(temporary) / "adapter.safetensors"
             optimizer_path = Path(temporary) / "optimizer.safetensors"
-            adapter_path.write_bytes(adapter_payload)
-            optimizer_path.write_bytes(optimizer_payload)
+            atomic_write_bytes(adapter_path, adapter_payload, durable=False)
+            atomic_write_bytes(optimizer_path, optimizer_payload, durable=False)
             adapter = mx.load(str(adapter_path))
             optimizer = mx.load(str(optimizer_path))
     if not isinstance(adapter, dict) or not adapter:

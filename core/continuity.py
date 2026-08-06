@@ -4,6 +4,8 @@ Every shutdown writes a state. Every boot reads it. Gap > 0 means she was
 somewhere else for a while and knows it.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -15,15 +17,14 @@ from types import SimpleNamespace
 from typing import Any
 
 from core.goals.objective_lifecycle import is_ephemeral_conversation_turn
-from core.governance_context import governed_scope_sync
+from core.governance_context import governed_scope_sync, local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.state.aura_state import (
     _is_background_processing_placeholder,
     _is_speculative_autonomy_label,
     _normalize_goal_text,
 )
-import hashlib
-import hmac
 
 logger = logging.getLogger(__name__)
 _CONTINUITY_PATH: Path | None = None
@@ -125,16 +126,18 @@ def _continuity_key() -> bytes | None:
             if len(key) == _CONTINUITY_KEY_BYTES:
                 return key
         candidate = os.urandom(_CONTINUITY_KEY_BYTES)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as handle:
-            handle.write(candidate)
-        return candidate
-    except FileExistsError:
-        try:
-            key = path.read_bytes()
-            return key if len(key) == _CONTINUITY_KEY_BYTES else None
-        except OSError:
-            return None
+        with local_internal_governed_scope(
+            "continuity.hmac_key",
+            domain="file_write",
+        ):
+            key = get_file_write_gateway().provision_private_bytes(
+                path,
+                candidate,
+                expected_size=_CONTINUITY_KEY_BYTES,
+                mode=0o600,
+                source="continuity.hmac_key",
+            )
+        return key
     except (OSError, ValueError) as exc:
         record_degradation("continuity", exc)
         return None

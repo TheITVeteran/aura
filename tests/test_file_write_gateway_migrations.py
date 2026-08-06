@@ -1047,3 +1047,73 @@ def test_file_write_gateway_replace_file_durably_moves_source(tmp_path) -> None:
         gateway.replace_file(new_source, link, source="unit.replace_symlink")
     assert new_source.read_bytes() == b"replacement"
     assert backing.read_bytes() == b"unchanged"
+
+
+def test_write_bytes_if_absent_applies_requested_private_mode(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    target = tmp_path / "identity.key"
+    gateway = FileWriteGateway()
+
+    assert gateway.write_bytes_if_absent(
+        target,
+        b"first",
+        mode=0o640,
+        source="unit.write_once_mode",
+    ) is True
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    assert gateway.write_bytes_if_absent(
+        target,
+        b"second",
+        mode=0o600,
+        source="unit.write_once_mode_existing",
+    ) is False
+    assert target.read_bytes() == b"first"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+
+def test_provision_private_bytes_rejects_unsafe_existing_identity(tmp_path) -> None:
+    from core.runtime.file_write_gateway import (
+        FileWriteGateway,
+        FileWriteTransactionError,
+    )
+
+    gateway = FileWriteGateway()
+    target = tmp_path / "identity.key"
+    winner = b"w" * 32
+
+    assert gateway.provision_private_bytes(
+        target,
+        winner,
+        expected_size=32,
+        source="unit.private_identity",
+    ) == winner
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert gateway.provision_private_bytes(
+        target,
+        b"l" * 32,
+        expected_size=32,
+        source="unit.private_identity_loser",
+    ) == winner
+
+    target.chmod(0o644)
+    with pytest.raises(FileWriteTransactionError, match="permissions"):
+        gateway.provision_private_bytes(
+            target,
+            b"x" * 32,
+            expected_size=32,
+            source="unit.private_identity_world_readable",
+        )
+
+    target.unlink()
+    backing = tmp_path / "backing.key"
+    backing.write_bytes(b"b" * 32)
+    backing.chmod(0o600)
+    target.symlink_to(backing)
+    with pytest.raises((OSError, FileWriteTransactionError)):
+        gateway.provision_private_bytes(
+            target,
+            b"x" * 32,
+            expected_size=32,
+            source="unit.private_identity_symlink",
+        )

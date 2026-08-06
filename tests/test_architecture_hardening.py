@@ -155,20 +155,27 @@ def test_goal_belief_manager_dedupes_normalized_goal_content():
     assert len(matching) == 1
 
 
-def test_service_container_sovereignty_seal_detects_manifest_drift(tmp_path, monkeypatch):
+def test_service_container_sovereignty_seal_detects_manifest_drift(
+    tmp_path,
+    monkeypatch,
+    service_container,
+):
     seal_path = tmp_path / "sovereignty_seal.json"
-    monkeypatch.setattr(ServiceContainer, "_seal_path", classmethod(lambda cls: seal_path))
+    monkeypatch.setattr(
+        service_container,
+        "_seal_path",
+        classmethod(lambda cls: seal_path),
+    )
 
-    ServiceContainer.clear()
-    ServiceContainer.register_instance("alpha", SimpleNamespace(name="alpha"))
-    payload = ServiceContainer.write_sovereignty_seal()
+    service_container.register_instance("alpha", SimpleNamespace(name="alpha"))
+    payload = service_container.write_sovereignty_seal()
 
     assert seal_path.exists()
     assert payload["hash"]
-    assert ServiceContainer.verify_sovereignty_seal() is True
+    assert service_container.verify_sovereignty_seal() is True
 
-    ServiceContainer.register_instance("beta", SimpleNamespace(name="beta"))
-    assert ServiceContainer.verify_sovereignty_seal() is False
+    service_container.register_instance("beta", SimpleNamespace(name="beta"))
+    assert service_container.verify_sovereignty_seal() is False
 
     stored = json.loads(seal_path.read_text())
     assert stored["service_count"] == 1

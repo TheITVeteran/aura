@@ -484,6 +484,20 @@ class FlightRecorder:
             except OSError:
                 pass
             self._lock_file = None
+        try:
+            from core.container import ServiceContainer
+
+            ServiceContainer.unregister_instance(
+                "flight_recorder",
+                expected_instance=self,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+            record_degradation(
+                "flight_recorder",
+                exc,
+                action="closed ring but could not release service registration",
+                severity="debug",
+            )
         self._started = False
 
     def on_stop(self) -> None:

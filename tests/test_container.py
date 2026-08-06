@@ -63,6 +63,23 @@ class TestServiceRegistration:
         clean_container.register_instance("preset", obj)
         assert clean_container.get("preset") is obj
 
+    def test_unregister_instance_cannot_remove_a_replacement(self, clean_container):
+        stale_owner = object()
+        replacement = object()
+        clean_container.register_instance("replaceable", stale_owner)
+        clean_container.register_instance("replaceable", replacement)
+
+        assert clean_container.unregister_instance(
+            "replaceable",
+            expected_instance=stale_owner,
+        ) is False
+        assert clean_container.get("replaceable") is replacement
+        assert clean_container.unregister_instance(
+            "replaceable",
+            expected_instance=replacement,
+        ) is True
+        assert clean_container.get("replaceable", default=None) is None
+
     def test_register_normalizes_legacy_instance_input(self, clean_container):
         """Legacy callers that pass an instance to register() should still resolve cleanly."""
         obj = object()

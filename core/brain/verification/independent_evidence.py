@@ -42,16 +42,17 @@ import hashlib
 import hmac
 import json
 import os
-import threading
 import time
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.lockdep import checked_lock
 from core.runtime.state_ownership import state_root
 from core.runtime.turn_outcome import VerificationGrade
-from core.runtime.lockdep import checked_lock
 
 __all__ = [
     "ClaimClass",
@@ -502,18 +503,19 @@ def _verdict_key() -> bytes | None:
                 material = path.read_bytes()
                 _KEY = material if len(material) == 32 else None
                 return _KEY
-            path.parent.mkdir(parents=True, exist_ok=True)
             candidate = os.urandom(32)
-            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with open(fd, "wb") as handle:
-                handle.write(candidate)
-            _KEY = candidate
-        except FileExistsError:
-            try:
-                material = path.read_bytes()
-                _KEY = material if len(material) == 32 else None
-            except OSError:
-                _KEY = None
+            with local_internal_governed_scope(
+                "independent_evidence.signing_key",
+                domain="file_write",
+            ):
+                material = get_file_write_gateway().provision_private_bytes(
+                    path,
+                    candidate,
+                    expected_size=32,
+                    mode=0o600,
+                    source="independent_evidence.signing_key",
+                )
+            _KEY = material
         except (OSError, ValueError) as exc:
             record_degradation(
                 "independent_evidence",
