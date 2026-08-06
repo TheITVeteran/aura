@@ -1,5 +1,5 @@
 {
-  "content_sha256": "8fa353ec345d9ce0b79667213c23684ddfa6b8ceac8740745df3c949b1256964",
+  "content_sha256": "9432ebaa3fff2863077e18bc34485b056814eb6a7af8a02d835c097fa4352e5e",
   "entries": [
     {
       "acceptance_ids": [
@@ -88,12 +88,12 @@
         "A4",
         "A5"
       ],
-      "commit": "13042cdd2ccb62b36b497822e581463b3a347e6e",
+      "commit": "f5ec6621e1c9e545345430cd695458cbd9cc0566",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/gate-skill-closure-audit/13042cdd2ccb62b36b497822e581463b3a347e6e.json",
+      "ref": "artifacts/reqproof/evidence/gate-skill-closure-audit/f5ec6621e1c9e545345430cd695458cbd9cc0566.json",
       "requirement_id": "ADDENDUM-23",
-      "sha256": "63b3576adf1ec35cc56dbf54506c38527a2e20e7c33578f279ba084ba50d4195"
+      "sha256": "7b2b997a910edeb0e6da89dbc68415cf7e8bfd18d344e9539b37d12001cea089"
     },
     {
       "acceptance_ids": [
@@ -616,12 +616,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "c94ed98e395c1641a08004ac73bd008b0c4fd9d8",
+      "commit": "f5ec6621e1c9e545345430cd695458cbd9cc0566",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/c94ed98e395c1641a08004ac73bd008b0c4fd9d8.json",
+      "ref": "artifacts/reqproof/evidence/gate-skill-closure-audit/f5ec6621e1c9e545345430cd695458cbd9cc0566.json",
       "requirement_id": "SKILLS-001",
-      "sha256": "73398dcb50454870eaa07076b7424b9f8799c45ed5ecba45bce37bf642fee5f9"
+      "sha256": "7b2b997a910edeb0e6da89dbc68415cf7e8bfd18d344e9539b37d12001cea089"
     },
     {
       "acceptance_ids": [
