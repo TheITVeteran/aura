@@ -365,14 +365,45 @@ class TestWorkspaceJail(unittest.TestCase):
     """Tests for the workspace jail."""
 
     def test_allowed_path(self):
+        """A path inside the jail's OWN workspace root is allowed.
+
+        This hardcoded ~/.aura and so passed only when the runtime state root
+        happened to be the live one. Under pytest the profile redirects it to
+        ~/.aura-test — correctly, so a test run cannot write into the live
+        instance's state — and the jail followed it while the test did not.
+        Ask the jail where its workspace is rather than assuming.
+        """
         from core.security.workspace_jail import WorkspaceJail
 
         jail = WorkspaceJail()
-        allowed, resolved, reason = jail.validate_path(
+        roots = getattr(jail, "allowed_roots", None) or getattr(
+            jail, "_allowed_roots", ()
+        )
+        self.assertTrue(roots, "the jail must declare at least one allowed root")
+        allowed, _resolved, reason = jail.validate_path(
+            str(Path(roots[0]) / "test.txt")
+        )
+        self.assertTrue(allowed, f"expected {roots[0]}/test.txt to be inside the jail")
+        self.assertEqual(reason, "allowed")
+
+    def test_the_live_state_root_is_outside_a_test_jail(self):
+        """The reason the hardcoded path failed, asserted deliberately.
+
+        A test run must not be able to write into the live instance's state
+        directory, so when the profile redirects the workspace the live root
+        is correctly refused.
+        """
+        from core.runtime.state_ownership import RuntimeProfile, runtime_profile
+        from core.security.workspace_jail import WorkspaceJail
+
+        if runtime_profile() is RuntimeProfile.LIVE:
+            self.skipTest("running under the live profile; the roots coincide")
+        jail = WorkspaceJail()
+        allowed, _resolved, reason = jail.validate_path(
             str(Path.home() / ".aura" / "test.txt")
         )
-        self.assertTrue(allowed)
-        self.assertEqual(reason, "allowed")
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "outside_jail")
 
     def test_denied_path_traversal(self):
         from core.security.workspace_jail import WorkspaceJail
