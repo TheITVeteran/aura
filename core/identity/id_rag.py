@@ -13,6 +13,7 @@ conversation history.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -21,10 +22,11 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Identity.IDRAG")
@@ -179,11 +181,17 @@ class IdentityChronicle:
     def cleanup(self) -> None:
         self.close()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield one transaction and always release its native file handles."""
         conn = sqlite3.connect(str(self.db_path), timeout=5.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -421,11 +429,23 @@ class IdentityChronicle:
 
 
 _chronicle_singleton: IdentityChronicle | None = None
+_chronicle_singleton_lock = threading.Lock()
 
 
 def get_identity_chronicle() -> IdentityChronicle:
     global _chronicle_singleton
     if _chronicle_singleton is None:
-        _chronicle_singleton = IdentityChronicle()
-        _chronicle_singleton.seed_defaults()
+        with _chronicle_singleton_lock:
+            if _chronicle_singleton is None:
+                _chronicle_singleton = IdentityChronicle()
+                _chronicle_singleton.seed_defaults()
     return _chronicle_singleton
+
+
+def reset_identity_chronicle_for_test() -> None:
+    """Close and forget the process singleton between hermetic tests."""
+    global _chronicle_singleton
+    with _chronicle_singleton_lock:
+        chronicle, _chronicle_singleton = _chronicle_singleton, None
+    if chronicle is not None:
+        chronicle.close()

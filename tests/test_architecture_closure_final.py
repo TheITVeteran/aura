@@ -63,32 +63,59 @@ def test_vector_memory_fallback_uses_persistent_sqlite_vectors(monkeypatch, tmp_
 
 
 def test_memory_vault_sqlite_fallback_persists_across_instances(tmp_path):
-    vault = MemoryVault(str(tmp_path / "vault"))
-    vault._collection = None
-    if vault._sqlite_vectors is None:
-        vault._sqlite_vectors = SQLiteVectorStore(
-            tmp_path / "vault" / "vectors.sqlite3",
-            collection_name=vault.collection_name,
+    with MemoryVault(str(tmp_path / "vault")) as vault:
+        vault._collection = None
+        if vault._sqlite_vectors is None:
+            vault._sqlite_vectors = SQLiteVectorStore(
+                tmp_path / "vault" / "vectors.sqlite3",
+                collection_name=vault.collection_name,
+            )
+        memory = Memory(
+            id="m1",
+            content="persistent vector vault memory",
+            memory_type="episodic",
+            timestamp=1.0,
+            importance=0.7,
         )
-    memory = Memory(
-        id="m1",
-        content="persistent vector vault memory",
-        memory_type="episodic",
-        timestamp=1.0,
-        importance=0.7,
-    )
-    vault.store(memory, np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        vault.store(memory, np.array([1.0, 0.0, 0.0], dtype=np.float32))
 
-    reloaded = MemoryVault(str(tmp_path / "vault"))
-    reloaded._collection = None
-    if reloaded._sqlite_vectors is None:
-        reloaded._sqlite_vectors = SQLiteVectorStore(
-            tmp_path / "vault" / "vectors.sqlite3",
-            collection_name=reloaded.collection_name,
+    with MemoryVault(str(tmp_path / "vault")) as reloaded:
+        reloaded._collection = None
+        if reloaded._sqlite_vectors is None:
+            reloaded._sqlite_vectors = SQLiteVectorStore(
+                tmp_path / "vault" / "vectors.sqlite3",
+                collection_name=reloaded.collection_name,
+            )
+        results = reloaded.query(
+            np.array([1.0, 0.0, 0.0], dtype=np.float32), n_results=1
         )
-    results = reloaded.query(np.array([1.0, 0.0, 0.0], dtype=np.float32), n_results=1)
 
-    assert results[0][0] == "m1"
+        assert results[0][0] == "m1"
+
+
+def test_memory_vault_close_releases_each_owned_backend_once():
+    class _Closable:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    vault = object.__new__(MemoryVault)
+    vault._collection = object()
+    vault._client = _Closable()
+    vault._sqlite_vectors = _Closable()
+
+    client = vault._client
+    sqlite_vectors = vault._sqlite_vectors
+    vault.close()
+    vault.close()
+
+    assert client.close_calls == 1
+    assert sqlite_vectors.close_calls == 1
+    assert vault._collection is None
+    assert vault._client is None
+    assert vault._sqlite_vectors is None
 
 
 @pytest.mark.asyncio

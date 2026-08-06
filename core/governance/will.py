@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -2560,12 +2561,24 @@ class UnifiedWill:
 # ---------------------------------------------------------------------------
 
 _will_instance: UnifiedWill | None = None
+_will_instance_lock = threading.Lock()
 
 
 def get_will() -> UnifiedWill:
     """Get the singleton UnifiedWill instance."""
     global _will_instance
     if _will_instance is None:
-        _will_instance = UnifiedWill()
+        with _will_instance_lock:
+            if _will_instance is None:
+                _will_instance = UnifiedWill()
     _will_instance.ensure_started()
     return _will_instance
+
+
+def reset_unified_will_for_test() -> None:
+    """Deactivate and forget the process singleton between hermetic tests."""
+    global _will_instance
+    with _will_instance_lock:
+        will, _will_instance = _will_instance, None
+    if will is not None:
+        will._started = False

@@ -35,6 +35,7 @@ if not os.environ.get("AURA_PATHS__HOME_DIR", "").strip():
         Path(tempfile.gettempdir()) / f"aura-test-home-{os.getpid()}"
     )
 os.environ.setdefault("AURA_TEST_LIVE_DATA_GUARD", "fail")
+os.environ.setdefault("AURA_TEST_STATE_GUARD", "fail")
 
 # Ledger hermeticity: the latent execution controller learns from live
 # episode outcomes and persists them under the real data dir. Tests running
@@ -88,56 +89,45 @@ class HermeticResourceSandbox:
     """Per-test host leak detector; never used as resource-policy evidence."""
 
     def __init__(self, *, root: Path):
-        from core.runtime.resource_observation import (
-            HostResourceObserver,
-            ObservationSource,
-        )
+        import psutil
 
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
-        self.observer = HostResourceObserver(
-            source=ObservationSource.HOST,
-            scenario_id="pytest-leak-audit-not-proof",
-        )
+        # Tests deliberately monkeypatch psutil's module attributes. Pin the
+        # native constructors before the test body so teardown observation
+        # cannot be redirected through the very double it is auditing.
+        self._native_process = psutil.Process
+        self._native_error = psutil.Error
+        self._native_wait_procs = psutil.wait_procs
         self._leased_sockets: list[socket.socket] = []
         self.baseline = self.snapshot()
 
     def snapshot(self) -> _ResourceLeakSnapshot:
-        process_table = self.observer.process_table()
-        connection_table = self.observer.connection_table(kind="inet", pid=os.getpid())
-        open_files = self.observer.open_file_table(pid=os.getpid())
-        unavailable = [
-            detail
-            for available, detail in (
-                (process_table.available, process_table.error),
-                (connection_table.available, connection_table.error),
-                (open_files.available, open_files.error),
+        try:
+            process = self._native_process(os.getpid())
+            children = frozenset(
+                (child.pid, float(child.create_time()))
+                for child in process.children(recursive=True)
+                if child.status().lower() not in {"dead", "zombie"}
             )
-            if not available
-        ]
-        if unavailable:
-            raise RuntimeError("host leak observation unavailable: " + "; ".join(unavailable))
-        children = frozenset(
-            (process.pid, process.create_time)
-            for process in process_table.processes
-            if os.getpid() in process.ancestor_pids
-            and process.status.lower() not in {"dead", "zombie"}
-        )
+            connections = process.net_connections(kind="inet")
+            open_files = process.open_files()
+        except (self._native_error, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"host leak observation unavailable: {exc}") from exc
         listeners = frozenset(
             (
-                connection.pid,
-                connection.fd,
-                connection.local_host,
-                connection.local_port,
+                os.getpid(),
+                int(connection.fd),
+                str(getattr(connection.laddr, "ip", "") or ""),
+                int(getattr(connection.laddr, "port", 0) or 0),
             )
-            for connection in connection_table.connections
-            if connection.pid == os.getpid()
-            and connection.status.upper() == "LISTEN"
+            for connection in connections
+            if str(connection.status).upper() == "LISTEN"
         )
         return _ResourceLeakSnapshot(
             child_identities=children,
             listening_fds=listeners,
-            open_files=frozenset(open_files.paths),
+            open_files=frozenset(str(item.path) for item in open_files),
         )
 
     def leaks(self) -> dict[str, set[object]]:
@@ -178,18 +168,16 @@ class HermeticResourceSandbox:
 
         child_pids = sorted(int(identity[0]) for identity in leaks["children"])
         if child_pids:
-            import psutil
-
             handles = []
             for pid in child_pids:
-                with contextlib.suppress(psutil.Error):
-                    handles.append(psutil.Process(pid))
+                with contextlib.suppress(self._native_error):
+                    handles.append(self._native_process(pid))
             for handle in handles:
-                with contextlib.suppress(psutil.Error):
+                with contextlib.suppress(self._native_error):
                     handle.terminate()
-            _gone, alive = psutil.wait_procs(handles, timeout=0.5)
+            _gone, alive = self._native_wait_procs(handles, timeout=0.5)
             for handle in alive:
-                with contextlib.suppress(psutil.Error):
+                with contextlib.suppress(self._native_error):
                     handle.kill()
 
         listener_leaks = list(leaks["listeners"])
@@ -205,7 +193,7 @@ class HermeticResourceSandbox:
             )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def hermetic_resource_sandbox(tmp_path):
     sandbox = HermeticResourceSandbox(root=tmp_path / "resource-sandbox")
     try:
@@ -235,8 +223,85 @@ def _live_data_write_guard(request):
         _builtins.open = original
 
 
+_TEST_SCOPED_SERVICE_KEYS = frozenset(
+    {
+        "advanced_cognition",
+        "aura_now",
+        "being_runtime",
+        "dialogue_cognition",
+        "epistemic_reach",
+        "relational_memory",
+        "scheduler",
+        "social_imagination",
+        "substrate_voice_engine",
+        "thought_interoception",
+        "unified_felt_state",
+        "unified_will",
+        "world_state",
+    }
+)
+_TEST_SCOPED_RESET_FUNCTIONS = (
+    ("core.being.runtime", "reset_being_runtime_for_test"),
+    ("core.epistemics.epistemic_reach", "reset_epistemic_reach_for_test"),
+    ("core.identity.id_rag", "reset_identity_chronicle_for_test"),
+    ("core.being.thought_interoception", "reset_thought_interoception_for_test"),
+    ("core.being.unified_felt_state", "reset_unified_felt_state_for_test"),
+    ("core.governance.will", "reset_unified_will_for_test"),
+    ("core.social.dialogue_cognition", "reset_dialogue_cognition_for_test"),
+    ("core.social.relational_memory", "reset_relational_memory_authority"),
+    ("core.social.social_imagination", "reset_social_imagination_for_test"),
+    ("core.voice.substrate_voice_engine", "reset_substrate_voice_engine_for_test"),
+    ("core.world_state", "reset_world_state_for_test"),
+)
+
+
+def _reset_test_scoped_runtime_services() -> None:
+    """Close lazy test-owned organs before comparing process-global state."""
+    for module_name, function_name in _TEST_SCOPED_RESET_FUNCTIONS:
+        module = sys.modules.get(module_name)
+        reset = getattr(module, function_name, None) if module is not None else None
+        if callable(reset):
+            reset()
+
+    scheduler_module = sys.modules.get("core.scheduler")
+    scheduler_type = (
+        getattr(scheduler_module, "Scheduler", None)
+        if scheduler_module is not None
+        else None
+    )
+    scheduler = getattr(scheduler_type, "_instance", None)
+    task = getattr(scheduler, "_main_loop_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+    if scheduler_type is not None:
+        scheduler_type._instance = None
+
+    container_module = sys.modules.get("core.container")
+    container = (
+        getattr(container_module, "ServiceContainer", None)
+        if container_module is not None
+        else None
+    )
+    services = getattr(container, "_services", None)
+    if not isinstance(services, dict):
+        return
+    keys = [
+        key
+        for key in list(services)
+        if key in _TEST_SCOPED_SERVICE_KEYS or key.startswith("environment_kernel:")
+    ]
+    lock = getattr(container, "_lock", None)
+    if lock is None:
+        for key in keys:
+            services.pop(key, None)
+        return
+    with lock:
+        for key in keys:
+            services.pop(key, None)
+
+
 @pytest.fixture(autouse=True)
-def _environment_learning_isolation():
+def _environment_learning_isolation(_global_state_contamination_guard):
     """Evict environment-kernel learning services between tests.
 
     ``EnvironmentKernel`` registers its ``AdvancedCognitionRuntime`` into the
@@ -249,37 +314,19 @@ def _environment_learning_isolation():
     the container is untouched.
     """
 
-    def _evict() -> None:
-        try:
-            from core.container import ServiceContainer
-        except ImportError:
-            return
-        services = getattr(ServiceContainer, "_services", None)
-        if not isinstance(services, dict):
-            return
-        lock = getattr(ServiceContainer, "_lock", None)
-        keys = [
-            key
-            for key in list(services)
-            if key == "advanced_cognition" or key.startswith("environment_kernel:")
-        ]
-        if not keys:
-            return
-        if lock is not None:
-            with lock:
-                for key in keys:
-                    services.pop(key, None)
-        else:
-            for key in keys:
-                services.pop(key, None)
-
-    _evict()
+    _reset_test_scoped_runtime_services()
     yield
-    _evict()
+    _reset_test_scoped_runtime_services()
 
 
 @pytest.fixture(autouse=True)
-def resource_observer(request, monkeypatch, tmp_path):
+def resource_observer(
+    request,
+    monkeypatch,
+    tmp_path,
+    hermetic_resource_sandbox,
+    _global_state_contamination_guard,
+):
     """Keep ordinary tests independent from the developer host's pressure.
 
     Tests that genuinely inspect hardware must opt in with ``host_observation``
@@ -287,6 +334,9 @@ def resource_observer(request, monkeypatch, tmp_path):
     process-wide deterministic observer so worker threads inherit the same
     facts and every pressure result is labelled ``simulated``.
     """
+    # These dependencies establish teardown ordering: resource resets first,
+    # state comparison second, host leak observation last.
+    del hermetic_resource_sandbox, _global_state_contamination_guard
 
     from core.runtime.resource_observation import (
         HostResourceObserver,
@@ -332,6 +382,7 @@ def resource_observer(request, monkeypatch, tmp_path):
         from core.agency.capability_token import reset_token_store
         from core.brain.lane_admission import reset_lane_admission_controller_for_test
         from core.brain.llm.model_registry import reset_model_registry_caches_for_test
+        from core.conversation.surface_delivery import reset_route_delivery
         from core.executive.authority_gateway import reset_authority_gateway
         from core.executive.standing_authority import reset_standing_authority_manager
         from core.memory.memory_write_gateway import reset_memory_write_gateway
@@ -339,7 +390,6 @@ def resource_observer(request, monkeypatch, tmp_path):
         from core.runtime.control_plane import reset_runtime_control_plane
         from core.runtime.model_lane_control import reset_model_lane_controller_for_test
         from core.runtime.receipts import reset_receipt_store
-        from core.conversation.surface_delivery import reset_route_delivery
         from core.runtime.runtime_pressure import reset_unified_runtime_pressure_for_test
         from core.state.state_gateway import reset_state_gateway
 
@@ -1261,18 +1311,22 @@ def _global_state_fingerprint() -> dict[str, object]:
 
 
 @pytest.fixture(autouse=True)
-def _global_state_contamination_guard(request):
+def _global_state_contamination_guard(request, hermetic_resource_sandbox):
     """Name the test that dirtied shared state, not the one that tripped over it."""
     import os
+
+    del hermetic_resource_sandbox  # host leak observation must run after this guard
 
     if request.node.get_closest_marker("mutates_global_state"):
         yield
         return
 
+    _reset_test_scoped_runtime_services()
     before = _global_state_fingerprint()
     try:
         yield
     finally:
+        _reset_test_scoped_runtime_services()
         after = _global_state_fingerprint()
         changes: list[str] = []
         for key in sorted(set(before) | set(after)):

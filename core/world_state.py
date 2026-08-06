@@ -549,3 +549,12 @@ def get_world_state() -> WorldState:
                 failure_policy="degrade_without_environment_initiative",
             )
         return instance
+
+
+def reset_world_state_for_test() -> None:
+    """Deactivate and forget the process singleton between hermetic tests."""
+    global _ws_instance
+    with _ws_instance_lock:
+        instance, _ws_instance = _ws_instance, None
+    if instance is not None:
+        instance._started = False

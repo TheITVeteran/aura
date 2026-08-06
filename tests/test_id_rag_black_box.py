@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+import psutil
+
 from core.brain.llm.context_assembler import ContextAssembler
 from core.identity.id_rag import IdentityChronicle
 from core.state.aura_state import AuraState
@@ -86,3 +90,15 @@ def test_identity_chronicle_closes_access_writer_before_temp_cleanup(tmp_path):
     chronicle.close()
 
     assert not chronicle._writer_thread.is_alive()
+
+
+def test_identity_chronicle_closes_every_sqlite_descriptor(tmp_path):
+    db_path = tmp_path / "identity.db"
+    chronicle = IdentityChronicle(db_path)
+    chronicle.upsert_fact("Aura", "value", "owned lifecycle", confidence=0.9)
+    assert chronicle.count() == 1
+
+    chronicle.close()
+
+    open_paths = {item.path for item in psutil.Process(os.getpid()).open_files()}
+    assert not any(str(path).startswith(str(db_path)) for path in open_paths)

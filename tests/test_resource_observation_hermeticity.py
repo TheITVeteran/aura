@@ -33,6 +33,14 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 GIB = 1024**3
 
 
+def test_resource_and_state_leak_guards_are_enforcing_by_default():
+    from tests import conftest
+
+    marker = conftest.hermetic_resource_sandbox._fixture_function_marker
+    assert marker.autouse is True
+    assert os.environ["AURA_TEST_STATE_GUARD"] == "fail"
+
+
 def _process(
     observer: SimulatedResourceObserver,
     *,

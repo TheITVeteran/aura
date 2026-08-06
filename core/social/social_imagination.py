@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 from core.social.relational_memory import (
     RelationalMemoryAuthority,
     get_relational_memory_authority,
 )
-from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.SocialImagination")
 
@@ -462,3 +462,8 @@ def get_social_imagination() -> SocialImagination:
             record_degradation('social_imagination', exc)
             logger.debug("SocialImagination container registration skipped: %s", exc)
     return _instance
+
+
+def reset_social_imagination_for_test() -> None:
+    global _instance
+    _instance = None

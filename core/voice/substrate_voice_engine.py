@@ -22,22 +22,20 @@ Integration points:
 Registered in ServiceContainer as "substrate_voice_engine".
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-from core.runtime.service_access import optional_service
 
-
-
-import asyncio
 import logging
 import os
 import random
+import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from core.voice.speech_profile import SpeechProfile, SpeechProfileCompiler
-from core.voice.response_shaper import ResponseShaper
+from core.runtime.errors import record_degradation
+from core.runtime.service_access import optional_service
 from core.voice.natural_followup import FollowupDecision, NaturalFollowupEngine
+from core.voice.response_shaper import ResponseShaper
+from core.voice.speech_profile import SpeechProfile, SpeechProfileCompiler
 
 logger = logging.getLogger("Voice.SubstrateVoice")
 
@@ -729,22 +727,32 @@ def _extract_conversation_context(state: Any) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _instance: Optional[SubstrateVoiceEngine] = None
+_instance_lock = threading.Lock()
 
 
 def get_substrate_voice_engine() -> SubstrateVoiceEngine:
     """Get or create the singleton SubstrateVoiceEngine."""
     global _instance
     if _instance is None:
-        _instance = SubstrateVoiceEngine()
-        # Register in ServiceContainer
-        try:
-            from core.container import ServiceContainer
-            from core.exceptions import ContainerError
-            if not getattr(ServiceContainer, "_registration_locked", False):
-                ServiceContainer.register("substrate_voice_engine", _instance)
-            else:
-                logger.warning("⚠️ [SubstrateVoiceEngine] Cannot register 'substrate_voice_engine' because ServiceContainer registration is locked.")
-        except (ImportError, AttributeError, RuntimeError, ContainerError) as exc:
-            logger.warning("⚠️ [SubstrateVoiceEngine] Container registration failed: %s", exc)
-        logger.info("🗣️ [SubstrateVoiceEngine] Initialized — substrate controls the voice.")
+        with _instance_lock:
+            if _instance is None:
+                _instance = SubstrateVoiceEngine()
+                # Register in ServiceContainer
+                try:
+                    from core.container import ServiceContainer
+                    from core.exceptions import ContainerError
+                    if not getattr(ServiceContainer, "_registration_locked", False):
+                        ServiceContainer.register("substrate_voice_engine", _instance)
+                    else:
+                        logger.warning("⚠️ [SubstrateVoiceEngine] Cannot register 'substrate_voice_engine' because ServiceContainer registration is locked.")
+                except (ImportError, AttributeError, RuntimeError, ContainerError) as exc:
+                    logger.warning("⚠️ [SubstrateVoiceEngine] Container registration failed: %s", exc)
+                logger.info("🗣️ [SubstrateVoiceEngine] Initialized — substrate controls the voice.")
     return _instance
+
+
+def reset_substrate_voice_engine_for_test() -> None:
+    """Forget the process singleton between hermetic tests."""
+    global _instance
+    with _instance_lock:
+        _instance = None

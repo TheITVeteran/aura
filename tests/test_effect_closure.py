@@ -161,18 +161,18 @@ def test_effect_sink_registry_lists_critical_sinks():
 
 def test_memory_vault_store_requires_governance_when_runtime_live(service_container, tmp_path):
     _live_runtime(service_container)
-    vault = MemoryVault(str(tmp_path / "vault"))
-    memory = Memory(
-        id="m1",
-        content="hello",
-        memory_type="episodic",
-        timestamp=1.0,
-        importance=0.5,
-    )
-    vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    with MemoryVault(str(tmp_path / "vault")) as vault:
+        memory = Memory(
+            id="m1",
+            content="hello",
+            memory_type="episodic",
+            timestamp=1.0,
+            importance=0.5,
+        )
+        vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
 
-    with pytest.raises(GovernanceViolation):
-        vault.store(memory, vector)
+        with pytest.raises(GovernanceViolation):
+            vault.store(memory, vector)
 
 
 @pytest.mark.asyncio

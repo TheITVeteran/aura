@@ -32,6 +32,7 @@ DENIED_PLASTIC_SUBSTRINGS = _canonical.DENIED_PLASTIC_SUBSTRINGS
 ServiceContainer = _canonical.ServiceContainer
 record_degradation = _canonical.record_degradation
 get_will = _canonical.get_will
+reset_unified_will_for_test = _canonical.reset_unified_will_for_test
 _will_instance = _canonical._will_instance
 
 __all__ = [
@@ -48,6 +49,7 @@ __all__ = [
     "record_degradation",
     "_will_instance",
     "get_will",
+    "reset_unified_will_for_test",
 ]
 
 

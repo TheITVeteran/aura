@@ -775,3 +775,8 @@ def get_dialogue_cognition() -> DialogueCognitionEngine:
             record_degradation('dialogue_cognition', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
     return _dialogue_cognition
+
+
+def reset_dialogue_cognition_for_test() -> None:
+    global _dialogue_cognition
+    _dialogue_cognition = None

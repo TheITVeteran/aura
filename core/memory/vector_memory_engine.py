@@ -53,7 +53,6 @@ import hashlib
 import json
 import logging
 import sqlite3
-import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -446,6 +445,34 @@ class MemoryVault:
                 record_degradation('vector_memory_engine', exc)
                 logger.error("SQLite vector fallback init failed: %s. Using process memory only.", exc)
 
+    def __enter__(self) -> "MemoryVault":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the owned vector backend and its SQLite file handles."""
+        collection, self._collection = self._collection, None
+        del collection
+        client, self._client = self._client, None
+        sqlite_vectors, self._sqlite_vectors = self._sqlite_vectors, None
+        if sqlite_vectors is not None:
+            close_sqlite = getattr(sqlite_vectors, "close", None)
+            if callable(close_sqlite):
+                close_sqlite()
+        if client is not None:
+            close_client = getattr(client, "close", None)
+            if callable(close_client):
+                close_client()
+            else:
+                # Compatibility with older Chroma clients that expose only the
+                # owned System lifecycle. Current clients use refcounted close().
+                system = getattr(client, "_system", None)
+                stop_system = getattr(system, "stop", None)
+                if callable(stop_system):
+                    stop_system()
+
     @effect_sink("memory.vault_store", allowed_domains=("memory_write",))
     def store(self, memory: Memory, vector: np.ndarray):
         """Persist a memory with its embedding."""
@@ -783,7 +810,10 @@ class VectorMemoryEngine:
         logger.info("✅ VectorMemoryEngine initialized. Memories: %d", self.vault.count())
 
     async def on_stop_async(self) -> None:
-        await asyncio.to_thread(self.embedder.close)
+        await asyncio.gather(
+            asyncio.to_thread(self.embedder.close),
+            asyncio.to_thread(self.vault.close),
+        )
 
     def _constitutional_runtime_live(self) -> bool:
         return (
