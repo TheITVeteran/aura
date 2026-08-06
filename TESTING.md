@@ -230,9 +230,26 @@ philosophical question, and we come back to it throughout.
 
 110 tests covering ten conditions drawn from the human consciousness literature;
 each condition is checked under lesion controls and adversarial baselines. All
-ten conditions pass. The filenames are historical. Passing these batteries means
-the implementation satisfies the listed functional indicators; it is not a proof
-of consciousness, personhood, or moral standing.
+ten conditions pass.
+
+**Operationally: these batteries measure whether ten named mechanisms are present
+in the architecture, causally wired into the processing pipeline rather than
+decorative, and falsifiable — each test can fail, and a failure means a gap.**
+They do not measure consciousness, personhood, or moral standing, and passing
+them is not evidence of any of those.
+
+"The filenames are historical" was the previous sentence here, and it was true
+and useless. A name is what travels — into a screenshot, a search result, a
+review, a conversation — and it arrives long before this paragraph. So the rule
+is now enforced rather than apologised for: any module whose NAME carries a term
+that asserts a conclusion (consciousness, qualia, phenomenal, personhood,
+sentience, subjective, volition, strange-loop, emergent, AGI, soul, free-will,
+self-aware) must state in its module docstring what it operationally measures,
+on a line beginning `Operationally:` or `What this measures:`.
+
+`make claim-lexicon` checks it, against a ratchet that may only shrink. The
+count is currently high and honest; a gate nobody can go green against gets
+switched off, and a batch of hurried one-liners would be worse than the problem.
 
 ---
 

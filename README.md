@@ -314,6 +314,22 @@ surface, and they can change the risk profile of that specific machine.
 Reading this repo tells you about this repo. If you're auditing a real
 deployment, read the disk too.
 
+**The reproducibility consequence, stated rather than implied.** Because of the
+above, plus model weights, plus the local vector stores and the 6.5M-document
+corpus, none of which are in git: *the public source is not sufficient to
+reproduce a demonstration from this repository.* A third party cannot verify
+from the tracked tree alone what ran. That is a real limitation of every result
+here, not a caveat on some of them, and it is why every claim in
+`CLAIMS_MATRIX.md` that rests on a local run is classified `locally
+demonstrated` — "passed on this machine, this profile, this project's battery"
+— rather than demonstrated.
+
+Closing it needs a frozen release pinning exact model hashes, vector-store
+hashes and configuration, plus an independent run on a third-party machine.
+Neither exists. Until they do, "external validation" stays `not proven`
+(claim 12), and no amount of local evidence changes that, because local
+evidence is the thing being questioned.
+
 ---
 
 ## Architecture overview
@@ -356,6 +372,23 @@ Lane names map to `core/config.py`: `fast_model` is the Cortex
 (`Qwen2.5-72B-Instruct-4bit`), `chat_model` the Brainstem
 (`Qwen2.5-7B-Instruct-4bit`), and `vision_model` is pinned to the Cortex build
 so vision and conversation share one identity.
+
+**What this ladder costs, stated plainly.** It is good for availability and bad
+for attribution. A visible success can mean the Cortex answered; it can also
+mean the Cortex failed, the cognitive pipeline failed, steering never ran, and
+rung 4 or rung 6 produced the text you are reading. Those are very different
+events and they look identical in a transcript. The same is true of the
+post-generation shaping in the chat route — intent classifiers, canonical
+answer contracts, identity and shape repair, retries — any of which can replace
+what the machinery actually produced.
+
+So: **a transcript without lane and phase provenance is not evidence about the
+architecture**, and no demo in this repository should be read as one. Where a
+comparison is being made rather than a story told, the harness in
+`core/evaluation/matched_budget.py` counts fallbacks, retries and human
+intervention against the denominator and reports a `clean_success_rate`
+alongside the raw one — because a run that needed rescuing is not a run the
+architecture completed.
 
 ### Decisive evidence runner
 
