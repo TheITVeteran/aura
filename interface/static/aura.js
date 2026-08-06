@@ -3416,9 +3416,35 @@ function toggleThoughtCardDetail(button) {
     button.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
+// A card that reports nothing having happened is not information, it is
+// upholstery. The live feed showed "VAD filter removed 00:00.000 of audio"
+// and "Processing audio with duration 00:00.000" between real thoughts in
+// the 2026-07-30 demo — a subprocess narrating that it had no work.
+//
+// Matched on the ZERO, not on the wording, so the same line still appears
+// the moment it carries a real number. Suppressing the message outright
+// would hide the case worth seeing.
+const NO_OP_THOUGHT_PATTERNS = [
+    /\b(?:removed|filtered|trimmed|dropped|skipped|processed|processing)\b[^\n]*?\b00:00[.:]000\b/i,
+    /\b00:00[.:]000\b[^\n]*?\b(?:of audio|of silence)\b/i,
+    /\b(?:removed|filtered|trimmed|dropped)\b[^\n]*?\b0(?:\.0+)?\s*(?:ms|s|samples|frames|bytes)\b/i,
+];
+
+function isNoOpThought(text) {
+    const body = String(text == null ? '' : text).trim();
+    if (!body) return true;
+    return NO_OP_THOUGHT_PATTERNS.some((pattern) => pattern.test(body));
+}
+
 function addThoughtCard(data) {
-    const card = document.createElement('div');
     const level = String(data.level || '').toLowerCase();
+    // Drop no-op chatter before it takes a slot, but never drop something the
+    // runtime considered a fault: a zero-valued error is still an error.
+    if (level !== 'error' && level !== 'critical' && level !== 'warning') {
+        const noOpProbe = data.message || data.content || '';
+        if (isNoOpThought(noOpProbe)) return;
+    }
+    const card = document.createElement('div');
     let cls = 'thought-card';
     if (level === 'error' || level === 'critical') cls += ' error';
     else if (level === 'warning') cls += ' warning';
