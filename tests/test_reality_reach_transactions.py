@@ -28,6 +28,8 @@ from core.reality_reach import (
     RealityReachService,
     Reversibility,
     RollbackReceipt,
+    transaction_store,
+    transactions,
 )
 from core.reality_reach.transactions import (
     RealityActuationCoordinator,
@@ -37,6 +39,13 @@ from core.reality_reach.transactions import (
 NOW_NS = 2_000_000_000_000
 MONOTONIC_NS = 10_000_000_000
 DIGEST = "sha256:" + "a" * 64
+
+
+def test_transaction_facade_reexports_canonical_store_contracts() -> None:
+    assert transactions.RealityActuationError is transaction_store.RealityActuationError
+    assert transactions.TRANSACTION_SCHEMA == transaction_store.TRANSACTION_SCHEMA
+    assert transactions.COMMAND_CAPSULE_SCHEMA == transaction_store.COMMAND_CAPSULE_SCHEMA
+    assert transactions.RECOVERY_REPORT_SCHEMA == transaction_store.RECOVERY_REPORT_SCHEMA
 
 
 def _sensor() -> ChannelDeclaration:
