@@ -1025,7 +1025,8 @@ async def api_reboot(
 
 @router.get("/skills")
 async def api_skills():
-    from interface.routes.system import _collect_tool_catalog
+    from interface.routes.system import _collect_skill_catalog_health, _collect_tool_catalog
+
     catalog = _collect_tool_catalog()
     skills_data = [
         {
@@ -1042,12 +1043,7 @@ async def api_skills():
         }
         for item in catalog
     ]
-    engine = optional_service("capability_engine", default=None)
-    health = (
-        engine.get_catalog_health()
-        if engine is not None and hasattr(engine, "get_catalog_health")
-        else {"ready": False, "reason": "capability_engine_unavailable"}
-    )
+    health = _collect_skill_catalog_health()
     return JSONResponse(
         {"skills": skills_data, "count": len(skills_data), "catalog": catalog, "health": health}
     )

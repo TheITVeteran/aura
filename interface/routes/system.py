@@ -2544,6 +2544,95 @@ def _collect_tool_catalog() -> list[dict[str, Any]]:
     return []
 
 
+def _collect_skill_catalog_health() -> dict[str, Any]:
+    """Return one bounded, deterministic readiness contract for every UI route."""
+
+    unavailable = {
+        "ready": False,
+        "reason": "capability_engine_unavailable",
+        "missing_live": [],
+        "quarantined": [],
+        "quarantined_count": 0,
+        "execution_preflight": {
+            "complete": False,
+            "failed": [],
+            "ok": False,
+            "reason": "capability_engine_unavailable",
+        },
+    }
+    engine = optional_service("capability_engine", default=None)
+    if engine is None or not hasattr(engine, "get_catalog_health"):
+        return unavailable
+
+    try:
+        raw = engine.get_catalog_health()
+        if not isinstance(raw, dict):
+            return {**unavailable, "reason": "catalog_health_invalid"}
+
+        missing_live = sorted(
+            {
+                str(name).strip()
+                for name in raw.get("missing_live") or ()
+                if str(name).strip()
+            }
+        )
+        quarantined = []
+        for item in raw.get("quarantined") or ():
+            if not isinstance(item, dict):
+                continue
+            normalized = {
+                key: str(item.get(key) or "").strip()
+                for key in ("catalog_id", "class_name", "module_path", "name", "stage")
+            }
+            normalized["error"] = str(item.get("error") or item.get("detail") or "").strip()
+            if any(normalized.values()):
+                quarantined.append(normalized)
+        quarantined.sort(
+            key=lambda item: (
+                item.get("name") or item.get("class_name") or item.get("catalog_id") or "",
+                item.get("module_path") or "",
+                item.get("stage") or "",
+            )
+        )
+
+        raw_preflight = raw.get("execution_preflight")
+        preflight = dict(raw_preflight) if isinstance(raw_preflight, dict) else {}
+        preflight["complete"] = preflight.get("complete") is True
+        preflight["ok"] = preflight.get("ok") is True
+        preflight["failed"] = sorted(
+            {
+                str(name).strip()
+                for name in preflight.get("failed") or ()
+                if str(name).strip()
+            }
+        )
+        preflight["reason"] = str(preflight.get("reason") or "not_run")
+
+        health = dict(raw)
+        health.update(
+            {
+                "ready": raw.get("ready") is True,
+                "reason": str(raw.get("reason") or "catalog_health_unverified"),
+                "missing_live": missing_live,
+                "quarantined": quarantined,
+                "quarantined_count": max(
+                    _safe_int(raw.get("quarantined_count"), 0),
+                    len(quarantined),
+                ),
+                "execution_preflight": preflight,
+            }
+        )
+        return health
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Skill catalog health collection failed: %s", exc)
+        return {
+            **unavailable,
+            "reason": "catalog_health_collection_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def _collect_commitment_summary() -> dict[str, Any]:
     try:
         from core.agency.commitment_engine import get_commitment_engine
@@ -3684,6 +3773,7 @@ def _derive_ui_status_flags(
     executive_status: dict[str, Any],
     boot_snapshot: dict[str, Any],
     tool_catalog: list[dict[str, Any]],
+    skill_catalog_health: dict[str, Any],
 ) -> list[str]:
     flags: list[str] = []
     if not bool(boot_snapshot.get("ready", False)):
@@ -3702,6 +3792,12 @@ def _derive_ui_status_flags(
     unavailable_count = sum(1 for tool in tool_catalog if not bool(tool.get("available")))
     if unavailable_count >= 3:
         flags.append("tool_unavailable")
+    if skill_catalog_health.get("ready") is False:
+        flags.append("skill_catalog_blocked")
+    if skill_catalog_health.get("missing_live"):
+        flags.append("skill_missing_live")
+    if _safe_int(skill_catalog_health.get("quarantined_count"), 0) > 0:
+        flags.append("skill_quarantined")
     if str(executive_status.get("last_target") or "").strip().lower() == "secondary":
         flags.append("executive_hold")
     return flags
@@ -5159,12 +5255,7 @@ async def api_health(request: Request):
 @router.get("/tools/catalog")
 async def api_tools_catalog():
     catalog = _collect_tool_catalog()
-    engine = optional_service("capability_engine", default=None)
-    health = (
-        engine.get_catalog_health()
-        if engine is not None and hasattr(engine, "get_catalog_health")
-        else {"ready": False, "reason": "capability_engine_unavailable"}
-    )
+    health = _collect_skill_catalog_health()
     return JSONResponse({"tools": catalog, "count": len(catalog), "health": health})
 
 
@@ -5222,6 +5313,7 @@ async def api_ui_bootstrap(request: Request = None):
         logger.debug("Bootstrap interaction signal snapshot failed: %s", exc)
 
     tool_catalog = _collect_tool_catalog()
+    skill_catalog_health = _collect_skill_catalog_health()
     conversation_lane = _collect_conversation_lane_status_resilient()
     boot_snapshot, _status_code = build_boot_health_snapshot(
         orch,
@@ -5308,6 +5400,7 @@ async def api_ui_bootstrap(request: Request = None):
         "state": state_summary,
         "commitments": _collect_commitment_summary(),
         "tools": tool_catalog,
+        "skill_catalog": skill_catalog_health,
         "capabilities": _collect_runtime_capabilities(conversation_lane),
         "desktop_access": await _collect_desktop_access_summary(allow_probe=False),
         "conversation": {
@@ -5338,6 +5431,7 @@ async def api_ui_bootstrap(request: Request = None):
                 executive_status=executive_status,
                 boot_snapshot=boot_snapshot,
                 tool_catalog=tool_catalog,
+                skill_catalog_health=skill_catalog_health,
             ),
         },
         "timestamp": datetime.now(tz=UTC).isoformat(),

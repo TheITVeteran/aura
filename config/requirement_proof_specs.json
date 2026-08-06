@@ -1,5 +1,5 @@
 {
-  "content_sha256": "49ef8ffaf36a1dc2b8321dbdbbe19386ac1aa69efefb30cc4362081e1462419a",
+  "content_sha256": "5591191107d13582c750b1e159c43464c9cc1add7ccb9b2322178735d5fd1c42",
   "schema_version": 1,
   "specs": [
     {
@@ -271,7 +271,8 @@
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
         "tests/test_skill_portability.py",
-        "tests/test_subsystem_routes_runtime_contract.py"
+        "tests/test_subsystem_routes_runtime_contract.py",
+        "tests/test_ui_bootstrap_contract.py"
       ],
       "cwd": ".",
       "evidence_targets": [
@@ -307,11 +308,18 @@
         "core/capability_engine.py",
         "core/cognitive/router.py",
         "interface/routes/subsystems.py",
+        "interface/routes/system.py",
+        "interface/static/aura.css",
+        "interface/static/aura.js",
+        "interface/static/index.html",
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
         "tests/test_skill_portability.py",
         "tests/test_subsystem_routes_runtime_contract.py",
+        "tests/test_ui_bootstrap_contract.py",
         "tools/closeout/audit_skill_portability.py",
+        "tools/closeout/audit_skill_readiness_surface.py",
+        "tools/closeout/audit_skill_readiness_ui.py",
         "tools/closeout/audit_skill_runtime_route.py"
       ],
       "timeout_seconds": 300
@@ -372,6 +380,61 @@
         "pyproject.toml",
         "tests/test_skill_portability.py",
         "tools/closeout/audit_skill_portability.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_skill_readiness_ui.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "gui",
+          "requirement_id": "CTX2-SKILL-002"
+        }
+      ],
+      "id": "skill-readiness-gui-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "interface/static/aura.css",
+        "interface/static/aura.js",
+        "interface/static/index.html",
+        "tools/closeout/audit_skill_readiness_ui.py"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_skill_readiness_surface.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "live",
+          "requirement_id": "CTX2-SKILL-002"
+        }
+      ],
+      "id": "skill-readiness-live-route-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/skills/**/*.py",
+        "skills/**/*.py"
+      ],
+      "source_paths": [
+        "core/capability_engine.py",
+        "interface/routes/subsystems.py",
+        "interface/routes/system.py",
+        "tools/closeout/audit_skill_readiness_surface.py"
       ],
       "timeout_seconds": 300
     },

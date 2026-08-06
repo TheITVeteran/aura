@@ -1746,15 +1746,42 @@ function renderToolCatalog(catalog, catalogHealth = null) {
     if ($('tool-catalog-detail')) {
         const failed = Array.isArray(preflight.failed) ? preflight.failed.filter(Boolean) : [];
         const missing = Array.isArray(health.missing_live) ? health.missing_live.filter(Boolean) : [];
-        const quarantined = Number(health.quarantined_count || 0);
+        const quarantined = Array.isArray(health.quarantined) ? health.quarantined.filter(Boolean) : [];
+        const quarantinedCount = Math.max(Number(health.quarantined_count || 0), quarantined.length);
         const parts = [
             `source ${health.ready === true ? 'ready' : String(health.reason || 'unverified').replace(/_/g, ' ')}`,
             `execution ${preflight.complete === true ? (preflight.ok === true ? 'verified' : 'failed') : 'not yet verified'}`,
         ];
         if (failed.length) parts.push(`failed: ${failed.slice(0, 4).join(', ')}`);
         if (missing.length) parts.push(`missing: ${missing.slice(0, 4).join(', ')}`);
-        if (quarantined) parts.push(`${quarantined} quarantined`);
+        if (quarantinedCount) parts.push(`${quarantinedCount} quarantined`);
         $('tool-catalog-detail').textContent = parts.join(' · ');
+    }
+
+    const issues = $('tool-catalog-issues');
+    if (issues) {
+        const failed = Array.isArray(preflight.failed) ? preflight.failed.filter(Boolean) : [];
+        const missing = Array.isArray(health.missing_live) ? health.missing_live.filter(Boolean) : [];
+        const quarantined = Array.isArray(health.quarantined) ? health.quarantined.filter(Boolean) : [];
+        const rows = [];
+        if (missing.length) {
+            rows.push(`<div class="tool-catalog-issue"><span class="tool-catalog-issue-kind">MISSING LIVE</span><span>${missing.map(escHtml).join(', ')}</span></div>`);
+        }
+        if (failed.length) {
+            rows.push(`<div class="tool-catalog-issue"><span class="tool-catalog-issue-kind">PREFLIGHT FAILED</span><span>${failed.map(escHtml).join(', ')}</span></div>`);
+        }
+        quarantined.forEach(item => {
+            const entry = item && typeof item === 'object' ? item : {};
+            const name = entry.name || entry.class_name || entry.catalog_id || 'unknown skill';
+            const stage = entry.stage ? ` at ${entry.stage}` : '';
+            const error = entry.error ? `: ${entry.error}` : '';
+            rows.push(`<div class="tool-catalog-issue"><span class="tool-catalog-issue-kind">QUARANTINED</span><span>${escHtml(name)}${escHtml(stage)}${escHtml(error)}</span></div>`);
+        });
+        if (!rows.length && health.ready === false && health.reason) {
+            rows.push(`<div class="tool-catalog-issue"><span class="tool-catalog-issue-kind">BLOCKED</span><span>${escHtml(String(health.reason).replace(/_/g, ' '))}</span></div>`);
+        }
+        issues.innerHTML = rows.join('');
+        issues.hidden = rows.length === 0;
     }
 
     const list = $('skills-list');
@@ -1881,7 +1908,7 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     }
 
     applyStateSummary(payload.state, payload.commitments);
-    renderToolCatalog(payload.tools || []);
+    renderToolCatalog(payload.tools || [], payload.skill_catalog || null);
     applyVoiceSummary(payload.voice || {});
     applyDesktopAccessSummary(payload.desktop_access || {});
     renderStatusFlags(payload.ui && payload.ui.status_flags);
@@ -6875,6 +6902,7 @@ async function loadSkills() {
             }
             const d = await legacyRes.json();
             tools = Array.isArray(d.catalog) ? d.catalog : Array.isArray(d.skills) ? d.skills : [];
+            state.toolCatalogHealth = d.health && typeof d.health === 'object' ? d.health : {};
         }
         renderToolCatalog(tools, state.toolCatalogHealth || null);
     } catch (e) {

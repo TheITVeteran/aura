@@ -30,6 +30,25 @@ def _stub_capability_engine():
     engine.skill_last_errors = {"self_modify": "guard_blocked"}
     engine.active_skills = {"web_search", "self_modify"}
     engine._explicitly_deactivated_skills = set()
+    engine.get_catalog_health = lambda: {
+        "ready": False,
+        "reason": "catalog_incomplete",
+        "missing_live": ["memory_sync"],
+        "quarantined_count": 1,
+        "quarantined": [
+            {
+                "name": "self_modify",
+                "stage": "constructor",
+                "error": "guard_blocked",
+            }
+        ],
+        "execution_preflight": {
+            "complete": True,
+            "failed": ["self_modify"],
+            "ok": False,
+            "reason": "execution_preflight_failed",
+        },
+    }
     return engine
 
 
@@ -217,6 +236,11 @@ async def test_ui_bootstrap_returns_state_and_tool_catalog(service_container, mo
     assert payload["capabilities"]["local_backend"] in {"mlx", "unknown"}
     assert payload["capabilities"]["conversation_model"] == "Cortex (32B)"
     assert payload["tools"][0]["name"] == "web_search"
+    assert payload["skill_catalog"]["missing_live"] == ["memory_sync"]
+    assert payload["skill_catalog"]["quarantined"][0]["name"] == "self_modify"
+    assert "skill_catalog_blocked" in payload["ui"]["status_flags"]
+    assert "skill_missing_live" in payload["ui"]["status_flags"]
+    assert "skill_quarantined" in payload["ui"]["status_flags"]
     assert "conversation" in payload
 
 

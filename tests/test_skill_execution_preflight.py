@@ -206,10 +206,18 @@ async def test_tools_catalog_endpoint_preserves_execution_preflight_health(monke
             return {
                 "ready": False,
                 "reason": "catalog_incomplete",
-                "missing_live": ["missing_fixture"],
+                "missing_live": ["z_fixture", "missing_fixture", "missing_fixture"],
+                "quarantined_count": 1,
+                "quarantined": [
+                    {
+                        "name": "quarantined_fixture",
+                        "stage": "constructor",
+                        "detail": "dependency unavailable",
+                    }
+                ],
                 "execution_preflight": {
                     "complete": True,
-                    "failed": ["broken_fixture"],
+                    "failed": ["z_broken", "broken_fixture", "broken_fixture"],
                     "ok": False,
                 },
             }
@@ -224,8 +232,21 @@ async def test_tools_catalog_endpoint_preserves_execution_preflight_health(monke
     response = await system.api_tools_catalog()
     payload = json.loads(response.body)
 
-    assert payload["health"]["missing_live"] == ["missing_fixture"]
-    assert payload["health"]["execution_preflight"]["failed"] == ["broken_fixture"]
+    assert payload["health"]["missing_live"] == ["missing_fixture", "z_fixture"]
+    assert payload["health"]["quarantined"] == [
+        {
+            "catalog_id": "",
+            "class_name": "",
+            "error": "dependency unavailable",
+            "module_path": "",
+            "name": "quarantined_fixture",
+            "stage": "constructor",
+        }
+    ]
+    assert payload["health"]["execution_preflight"]["failed"] == [
+        "broken_fixture",
+        "z_broken",
+    ]
     assert payload["health"]["execution_preflight"]["ok"] is False
 
 
@@ -239,6 +260,11 @@ def test_skills_ui_renders_catalog_and_preflight_truth():
     assert 'id="tool-catalog-state"' in html
     assert 'id="tool-preflight-state"' in html
     assert 'id="tool-catalog-detail"' in html
+    assert 'id="tool-catalog-issues"' in html
     assert "d.health && typeof d.health === 'object'" in javascript
+    assert "payload.skill_catalog || null" in javascript
     assert "health.execution_preflight" in javascript
+    assert "MISSING LIVE" in javascript
+    assert "PREFLIGHT FAILED" in javascript
+    assert "QUARANTINED" in javascript
     assert "preflight ${escHtml" in javascript
