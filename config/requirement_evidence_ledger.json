@@ -1,5 +1,5 @@
 {
-  "content_sha256": "1b63336dadaba355db7a3f9265d3071299c7e456834f93f221aab434d06f48c4",
+  "content_sha256": "dd0595dc89592fbf2d3196694db006456dc42dacace83827a36f1f42830bf698",
   "entries": [
     {
       "acceptance_ids": [
@@ -28,6 +28,20 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/bf3f46a835bbbb2095b56769ed0d9d146c9feb23.json",
       "requirement_id": "ADDENDUM-21",
       "sha256": "0ee8bd776b4cb6badb049a7516a573a32943ff6a1187877dabd75282e5a70a0c"
+    },
+    {
+      "acceptance_ids": [
+        "A1",
+        "A2",
+        "A5",
+        "A6"
+      ],
+      "commit": "f66fbecc82a1cbb87ce78181caababd86791c1bc",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
+      "requirement_id": "ADDENDUM-22",
+      "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
     },
     {
       "acceptance_ids": [
@@ -77,6 +91,28 @@
       "acceptance_ids": [
         "A1"
       ],
+      "commit": "f66fbecc82a1cbb87ce78181caababd86791c1bc",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
+      "requirement_id": "CTX2-TEST-001",
+      "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "f66fbecc82a1cbb87ce78181caababd86791c1bc",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
+      "requirement_id": "CTX2-TEST-002",
+      "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
       "commit": "e2da9bd7a7d7b1077ffae2e39a2e0054a1686169",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
@@ -94,6 +130,17 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/bf3f46a835bbbb2095b56769ed0d9d146c9feb23.json",
       "requirement_id": "LANE-001",
       "sha256": "0ee8bd776b4cb6badb049a7516a573a32943ff6a1187877dabd75282e5a70a0c"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "f66fbecc82a1cbb87ce78181caababd86791c1bc",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
+      "requirement_id": "RESOURCE-001",
+      "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
     }
   ],
   "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
