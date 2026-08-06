@@ -1,5 +1,5 @@
 {
-  "content_sha256": "c6e8964cffa750d178a1d1994de4019f3ede65fbc7b27dba682651a6687bb9b7",
+  "content_sha256": "a88dfcd9ae47aaf5565f3142a3084bd23b7f3dc7d668dd34c71034a73faae664",
   "schema_version": 1,
   "specs": [
     {
@@ -122,6 +122,136 @@
       "source_paths": [
         "config/model_load_ownership.json"
       ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_resource_observation_hermeticity.py",
+        "tests/test_resource_observation_ownership_audit.py",
+        "tests/test_resource_pressure_correction.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A5",
+            "A6"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-22"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-TEST-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-TEST-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-TEST-003"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "RESOURCE-001"
+        }
+      ],
+      "id": "resource-observation-contract-tests",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "core/brain/lane_admission.py",
+        "core/resilience/memory_governor.py",
+        "core/resilience/memory_watchdog.py",
+        "core/resource/resource_governor.py",
+        "core/runtime/model_lane_control.py",
+        "core/runtime/process_footprint.py",
+        "core/runtime/receipts.py",
+        "core/runtime/resource_observation.py",
+        "core/runtime/resource_psutil.py",
+        "core/runtime/runtime_pressure.py",
+        "core/runtime/thermal.py",
+        "core/utils/memory_monitor.py",
+        "tests/conftest.py",
+        "tests/test_resource_observation_hermeticity.py",
+        "tests/test_resource_observation_ownership_audit.py",
+        "tests/test_resource_pressure_correction.py",
+        "tools/closeout/audit_resource_observation_ownership.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_resource_observation_ownership.py",
+        "--json"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A5",
+            "A6"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "ADDENDUM-22"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-TEST-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-TEST-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "RESOURCE-001"
+        }
+      ],
+      "id": "resource-observation-ownership-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "aura_bench/**/*.py",
+        "benchmarks/**/*.py",
+        "core/**/*.py",
+        "interface/**/*.py",
+        "skills/**/*.py",
+        "tools/**/*.py",
+        "training/**/*.py"
+      ],
+      "source_paths": [],
       "timeout_seconds": 300
     }
   ]

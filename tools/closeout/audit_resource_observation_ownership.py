@@ -46,6 +46,18 @@ CANONICAL_ADAPTERS = frozenset(
         "core/resilience/memory_watchdog.py",
     }
 )
+REQUIRED_OBSERVATION_SYMBOLS = frozenset(
+    {
+        "HostResourceObserver",
+        "ObservationSource",
+        "ResourceObserver",
+        "ObservationProvenance",
+        "SimulatedResourceObserver",
+        "assert_live_pressure_observer",
+        "get_resource_observer",
+        "resource_observer_scope",
+    }
+)
 PSUTIL_RESOURCE_CALLS = frozenset(
     {
         "boot_time",
@@ -418,7 +430,46 @@ def _findings_for_tree(tree: ast.Module, relative_path: str) -> list[AuditFindin
     return findings
 
 
-def run_audit(*, root: Path = ROOT) -> dict[str, Any]:
+def _canonical_contract_findings(root: Path) -> list[AuditFinding]:
+    findings: list[AuditFinding] = []
+    for relative_path in sorted(CANONICAL_ADAPTERS):
+        if not (root / relative_path).is_file():
+            findings.append(
+                AuditFinding(
+                    code="missing_canonical_adapter",
+                    path=relative_path,
+                    line=1,
+                    detail="required canonical resource adapter is absent",
+                )
+            )
+
+    contract_path = root / "core/runtime/resource_observation.py"
+    if not contract_path.is_file():
+        return findings
+    try:
+        tree = ast.parse(contract_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return findings
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for symbol in sorted(REQUIRED_OBSERVATION_SYMBOLS - defined):
+        findings.append(
+            AuditFinding(
+                code="missing_observation_contract_symbol",
+                path="core/runtime/resource_observation.py",
+                line=1,
+                detail=f"required top-level observer symbol is absent: {symbol}",
+            )
+        )
+    return findings
+
+
+def run_audit(
+    *, root: Path = ROOT, require_canonical_contract: bool = False
+) -> dict[str, Any]:
     findings: list[AuditFinding] = []
     scanned = 0
     parse_errors: list[dict[str, Any]] = []
@@ -437,12 +488,16 @@ def run_audit(*, root: Path = ROOT) -> dict[str, Any]:
         scanned += 1
         findings.extend(_findings_for_tree(tree, relative))
 
+    if require_canonical_contract:
+        findings.extend(_canonical_contract_findings(root))
     findings.sort(key=lambda item: (item.path, item.line, item.code))
     return {
         "schema": "aura.resource_observation_ownership.v1",
         "passed": not findings and not parse_errors,
         "scanned_python_files": scanned,
         "canonical_adapters": sorted(CANONICAL_ADAPTERS),
+        "canonical_contract_checked": require_canonical_contract,
+        "required_observation_symbols": sorted(REQUIRED_OBSERVATION_SYMBOLS),
         "finding_count": len(findings),
         "findings": [asdict(finding) for finding in findings],
         "parse_errors": parse_errors,
@@ -454,7 +509,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = run_audit(root=args.root.resolve())
+    root = args.root.resolve()
+    report = run_audit(
+        root=root,
+        require_canonical_contract=root == ROOT.resolve(),
+    )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

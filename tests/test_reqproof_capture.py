@@ -373,3 +373,8 @@ def test_checked_repo_spec_is_valid() -> None:
     validate_spec_targets(specs, registry)
     assert specs.by_id()["model-lane-contract-tests"].command[0] == "{python}"
     assert "core/**/*.py" in specs.by_id()["model-load-ownership-audit"].source_globs
+    assert specs.by_id()["resource-observation-contract-tests"].evidence_targets
+    assert (
+        "core/**/*.py"
+        in specs.by_id()["resource-observation-ownership-audit"].source_globs
+    )
