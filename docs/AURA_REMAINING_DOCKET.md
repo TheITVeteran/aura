@@ -6,10 +6,10 @@
 
 - Requirements: **302** total / **301** mandatory
 - In progress: **79**
-- Claimed complete but missing evidence: **17**
+- Claimed complete but missing evidence: **19**
 - Ready for implementation: **169**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **2**
+- Machine-certified complete: **0**
 
 ## Active Requirements
 
@@ -109,7 +109,9 @@ These requirements carry a historical complete claim but are not machine-certifi
 - `CTX2-SHUTDOWN-003`
 - `CTX2-SKILL-001`
 - `CTX2-SKILL-002`
+- `CTX2-TEST-001`
 - `CTX2-TEST-002`
+- `CTX2-TEST-003`
 - `LANE-001`
 - `LIFECYCLE-001`
 - `RESOURCE-001`
@@ -121,4 +123,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `4969b508c22cefc190f1c6a89f606f1b5cebe9366918208df5ec1752d6f8cb1b`
+Report SHA-256: `1028a562714da003db393900060dfe63984c66b352904fa6f2f8616bc609961b`
