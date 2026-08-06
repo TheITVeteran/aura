@@ -1,5 +1,5 @@
 {
-  "content_sha256": "238aa115c80f8174c0800929f1a8992650ab956a1dd78d3f75b1befb8952a52a",
+  "content_sha256": "85c6dde04b660f0ac4008c4a2d8ccf01b5e90a8f54f0011cf8496e2b28d8a3b7",
   "schema_version": 1,
   "specs": [
     {
@@ -957,7 +957,9 @@
       "max_output_bytes": 1048576,
       "source_globs": [
         "core/skills/**/*.py",
-        "interface/static/**/*",
+        "interface/static/*.css",
+        "interface/static/*.html",
+        "interface/static/*.js",
         "skills/**/*.py"
       ],
       "source_paths": [
