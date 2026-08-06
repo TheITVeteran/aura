@@ -190,16 +190,44 @@ class QualiaSynthesizer:
                 ws_snap = workspace.get_snapshot() if workspace else {}
                 phi = substrate_metrics.get("phi", 0.0)
 
+                # Ground truth for the conceptual axes.
+                #
+                # The engine will not call a substrate direction "valence"
+                # until that direction predicts the affect substrate's own
+                # valence on a chronological holdout. This is where the target
+                # comes from; without it the axes never validate and the engine
+                # correctly reports raw dimensions under neutral names instead.
+                #
+                # There is no dominance target here because the affect engine
+                # does not produce one. Feeding `engagement` in its place would
+                # be the same error the axes exist to prevent, so the dominance
+                # axis stays unvalidated and reports as state_dim_2 — which is
+                # an accurate description of what the system knows about it.
+                affect_target = None
+                affect_engine = _SC.get("affect_engine", default=None)
+                if affect_engine is not None and hasattr(affect_engine, "get_snapshot"):
+                    affect_snapshot = affect_engine.get_snapshot()
+                    if isinstance(affect_snapshot, dict):
+                        affect_target = {
+                            key: affect_snapshot[key]
+                            for key in ("valence", "arousal")
+                            if isinstance(affect_snapshot.get(key), (int, float))
+                        } or None
+
                 descriptor = engine.process(
                     state=state,
                     velocity=velocity,
                     predictive_metrics=predictive_metrics,
                     workspace_snapshot=ws_snap,
                     phi=phi,
+                    affect_target=affect_target,
                 )
-                # Blend the engine's functional richness proxy into PRI
-                if descriptor.phenomenal_richness > 0:
-                    self.pri = 0.6 * self.pri + 0.4 * descriptor.phenomenal_richness
+                # Blend the engine's feature aggregate into PRI. Named for what
+                # it is: a weighted composite of measured features, not a
+                # validated richness measure. `richness_validated` on the
+                # descriptor says so explicitly.
+                if descriptor.feature_aggregate > 0:
+                    self.pri = 0.6 * self.pri + 0.4 * descriptor.feature_aggregate
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('qualia_synthesizer', e)
             logger.debug("QualiaEngine enrichment skipped: %s", e)

@@ -584,10 +584,28 @@ class TestSecondOrderPreferences:
         assert descriptor.subconceptual, "First-order subconceptual should work"
         assert descriptor.conceptual, "First-order conceptual should work"
 
-        # The conceptual layer gives raw values (valence, arousal, dominance, novelty)
-        # -- these are FIRST-ORDER. No "I notice" wrapper.
-        assert "valence" in descriptor.conceptual, "Conceptual layer should report valence"
-        assert "arousal" in descriptor.conceptual, "Conceptual layer should report arousal"
+        # The conceptual layer gives raw values -- these are FIRST-ORDER. No
+        # "I notice" wrapper.
+        #
+        # The affective dimensions are reported under their earned names once
+        # the fitted axis has cleared its holdout and permutation null, and
+        # under neutral state_dim_N names until then. This engine has been fed
+        # no affect targets, so nothing has been validated and the neutral
+        # names are the correct output. What this test cares about either way
+        # is that first-order readings arrive at all.
+        for position, earned_name in enumerate(("valence", "arousal")):
+            assert (
+                earned_name in descriptor.conceptual
+                or f"state_dim_{position}" in descriptor.conceptual
+            ), f"Conceptual layer should report a first-order reading for {earned_name}"
+        assert "novelty" in descriptor.conceptual
+
+        # And the name is never given away for free.
+        for name in ("valence", "arousal", "dominance"):
+            if name in descriptor.conceptual:
+                assert descriptor.axis_fits[name]["validated"], (
+                    f"{name} was reported without a validated fit behind it"
+                )
 
         # Without HOT, there is no target_dim, no feedback_delta, no reflective content
         # The qualia descriptor has no HOT-level metacognitive annotation
