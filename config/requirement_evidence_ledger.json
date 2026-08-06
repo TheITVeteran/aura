@@ -1,5 +1,5 @@
 {
-  "content_sha256": "a5833c5479fe4dc561b5fad26aed23c6338486aaea72be0e75f5545fff63c6f4",
+  "content_sha256": "1cc95b2e118421b9ccbbe16eca84f6a5ac4186b89ef697d5b5dc49435e25189c",
   "entries": [
     {
       "acceptance_ids": [
@@ -289,12 +289,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "a553080e1ee31b506fc2a850e6aebb91efd742ec",
+      "commit": "8697d74d3b01b8817686276eb3888c184d148c2d",
       "evidence_class": "live",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-readiness-live-route-audit/a553080e1ee31b506fc2a850e6aebb91efd742ec.json",
+      "ref": "artifacts/reqproof/evidence/skill-readiness-live-route-audit/8697d74d3b01b8817686276eb3888c184d148c2d.json",
       "requirement_id": "CTX2-SKILL-002",
-      "sha256": "cae0662660a6ffa6f46bd5182f9a73f871046605a22a50e1e29e10c659db2088"
+      "sha256": "ded0c64bb2b8b0d891906e82cc0fe466c6f0f71d26abe7e895b665eb93c12f8b"
     },
     {
       "acceptance_ids": [
