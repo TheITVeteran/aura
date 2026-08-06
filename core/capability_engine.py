@@ -83,6 +83,10 @@ from core.executive.execution_policy import (  # noqa: E402
 from core.executive.standing_authority import (  # noqa: E402
     AUTONOMOUS_AUTHORITY_ORIGINS,
 )
+from core.runtime.idempotency import (  # noqa: E402
+    get_idempotency_ledger,
+    requires_idempotency_key,
+)
 from core.governance.capability_chain import (  # noqa: E402
     CapabilityDenial,
     CapabilityViolation,
@@ -4922,6 +4926,25 @@ class CapabilityEngine(AuraBaseModule):
             ctx = self._augment_execution_context(context)
             exec_source = self._resolve_execution_source(ctx)
 
+            # A receipt proves what happened; it cannot prove it happened
+            # once. A dropped socket, a client timeout, a paired phone
+            # resending — each arrives as a fresh, legitimately authorized
+            # call, and the gate approves it again because on its own terms
+            # it is valid. Work that changes something, arriving from
+            # somewhere that can resend it, has to name itself.
+            if requires_idempotency_key(
+                effect_scope=resolve_execution_effect_scope(skill_name, params),
+                source=exec_source,
+            ) and not str((ctx or {}).get("idempotency_key") or "").strip():
+                return {
+                    "ok": False,
+                    "error": (
+                        "This action changes something and arrived from a source that "
+                        "can resend it, so it must carry an idempotency_key."
+                    ),
+                    "status": "idempotency_key_required",
+                }
+
             # MATURITY GATE. Registration means the import succeeded; it does
             # not mean this skill validates inputs, bounds its timeout, is safe
             # to retry, or reports a usable error. Autonomous use reaches the
@@ -6199,7 +6222,31 @@ class CapabilityEngine(AuraBaseModule):
             return result
 
         try:
-            wrapped_result = await _execute_wrapped()
+            # Two copies of the same request usually arrive concurrently —
+            # that is what a client retrying a call it thinks has stalled
+            # looks like. The ledger single-flights on the key, so the
+            # second caller waits for the first outcome instead of starting
+            # a second execution. A replay never re-enters the body, so the
+            # closure receipt below stays untouched: the original run
+            # already closed it.
+            idempotency_key = str((context or {}).get("idempotency_key") or "").strip()
+            if idempotency_key:
+                outcome = await get_idempotency_ledger().run_once(
+                    f"{skill_name}:{idempotency_key}",
+                    _execute_wrapped,
+                )
+                wrapped_result = outcome.value
+                if outcome.replayed and isinstance(wrapped_result, dict):
+                    # Say so rather than pretending this was a fresh run.
+                    # A caller that cannot tell a replay from an execution
+                    # will double-count it somewhere else.
+                    wrapped_result = {
+                        **wrapped_result,
+                        "idempotent_replay": True,
+                        "idempotency_key": idempotency_key,
+                    }
+            else:
+                wrapped_result = await _execute_wrapped()
             if not isinstance(wrapped_result, dict):
                 result = {
                     "ok": False,
