@@ -30,6 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.latent_cortex.kv_mutation_transaction import KVMutationTransaction
 from core.brain.llm.latent_cortex.recurrence import _cache_matches_snapshot
 from core.brain.llm.recurrent_depth import (
     _restore_recurrent_caches,
@@ -228,124 +229,6 @@ def _node_payload(
 class _NodeRuntime:
     receipt: dict[str, Any]
     snapshots: list
-
-
-class KVMutationTransaction:
-    """One speculative or isolated cache child."""
-
-    def __init__(
-        self,
-        tree: KVStateTree,
-        *,
-        cache: Sequence[Any],
-        start: int,
-        end: int,
-        purpose: str,
-        branch_index: int | None,
-        parent_sha256: str,
-        isolated: bool,
-    ) -> None:
-        self._tree = tree
-        self._cache = cache
-        self.start = start
-        self.end = end
-        self.purpose = purpose
-        self.branch_index = branch_index
-        self.parent_sha256 = parent_sha256
-        self.isolated = isolated
-        self._child_snapshots: list | None = None
-        self._child_cache_sha256 = ""
-        self._child_offsets_sha256 = ""
-        self._mutation_observed = False
-        self._appended_min = 0
-        self._appended_max = 0
-        self._execution_failed = False
-        self._closed = False
-
-    @property
-    def closed(self) -> bool:
-        return self._closed
-
-    def observe_mutation(
-        self,
-        cache: Sequence[Any] | None = None,
-        *,
-        execution_failed: bool = False,
-    ) -> None:
-        if self._closed:
-            raise KVStateTreeError("cannot observe a closed KV transaction")
-        if self._child_snapshots is not None:
-            raise KVStateTreeError("KV transaction mutation was observed twice")
-        target = self._cache if cache is None else cache
-        self._execution_failed = bool(execution_failed)
-        self._child_snapshots = _snapshot_recurrent_caches(
-            target,
-            0,
-            self._tree.n_layers,
-        )
-        self._child_cache_sha256 = _snapshot_commitment(
-            self._child_snapshots,
-            salt=self._tree._salt,
-        )
-        child_offsets = _cache_offsets(target, 0, self._tree.n_layers)
-        parent_offsets = self._tree._node_offsets(self.parent_sha256)
-        self._child_offsets_sha256 = _offsets_sha256(child_offsets)
-        deltas = [
-            child - parent for child, parent in zip(child_offsets, parent_offsets, strict=True)
-        ]
-        if any(delta < 0 for delta in deltas):
-            raise KVStateTreeError("speculative KV child moved before its parent")
-        changed = [
-            child_offsets[index] != parent_offsets[index] for index in range(self._tree.n_layers)
-        ]
-        outside = [
-            index
-            for index, differs in enumerate(changed)
-            if differs and not self.start <= index < self.end
-        ]
-        if outside:
-            raise KVStateTreeError("speculative KV mutation escaped its declared layer window")
-        positive = [delta for delta in deltas if delta > 0]
-        self._mutation_observed = bool(positive)
-        self._appended_min = min(positive, default=0)
-        self._appended_max = max(positive, default=0)
-
-    def reject_after_restore(self, cache: Sequence[Any] | None = None) -> dict[str, Any]:
-        if self.isolated:
-            raise KVStateTreeError("isolated KV transaction must be discarded explicitly")
-        target = self._cache if cache is None else cache
-        return self._tree._close_rejected(self, parent_cache=target, isolated=False)
-
-    def restore_parent(self, cache: Sequence[Any] | None = None) -> None:
-        if self._closed:
-            raise KVStateTreeError("cannot restore a closed KV transaction")
-        target = self._cache if cache is None else cache
-        self._tree.restore_boundary(target, self.parent_sha256)
-
-    def discard_isolated(self, *, parent_cache: Sequence[Any]) -> dict[str, Any]:
-        if not self.isolated:
-            raise KVStateTreeError("non-isolated KV transaction must restore its cache")
-        return self._tree._close_rejected(
-            self,
-            parent_cache=parent_cache,
-            isolated=True,
-        )
-
-    def commit(
-        self,
-        *,
-        label: str,
-        authority: str,
-        latent_sha256: str,
-        final: bool,
-    ) -> str:
-        return self._tree._commit_transaction(
-            self,
-            label=label,
-            authority=authority,
-            latent_sha256=latent_sha256,
-            final=final,
-        )
 
 
 class KVStateTree:
