@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Dependency-light enterprise quality gate for Aura.
 
-The gate is deliberately stdlib-only so it can run before the full development
-environment is installed. It catches obvious enterprise-runtime regressions and
-can compare the current inventory against a checked-in baseline while the repo
-continues retiring older debt.
+The CLI remains a compatibility facade. Shared policy/data contracts, AST
+semantics, and source-text semantics are isolated in dependency-light modules
+so each rule family can be reviewed and tested independently.
 """
 
 from __future__ import annotations
@@ -22,758 +21,180 @@ import sys
 import tempfile
 import time
 import tokenize
-from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-EXCLUDED_DIRS = {
-    ".git",
-    ".agents",
-    ".claude",
-    ".aura_architect",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    ".venv_aura",
-    "__pycache__",
-    "archive",
-    "artifacts",
-    "build",
-    "data",
-    "dist",
-    "htmlcov",
-    "logs",
-    "node_modules",
-    "scratch",
-    "test_vdb",
-    "venv",
-}
-
-DEFAULT_PRODUCTION_DIRS = {
-    "core",
-    "executors",
-    "infrastructure",
-    "interface",
-    "llm",
-    "security",
-    "senses",
-    "skills",
-}
-DEFAULT_PRODUCTION_FILES = {"aura_main.py"}
-
-ALLOW_DYNAMIC_CODE = {
-    # TOCTOU-hardened frozen-source loading: executes EXACTLY the curriculum
-    # bytes it hashed into the training receipt — the exec IS the security
-    # feature (importing the module path again could race a source edit).
-    "tools/recurrence_native_train_v2.py",
-    "core/agency/repl_daemon.py",
-    "core/runtime/dynamic_execution_gateway.py",
-    "core/sandbox/bash_daemon.py",
-    "core/sandbox/runner.py",
-    "core/self_modification/mutation_safety.py",
-    "core/self_modification/shadow_runtime.py",
-    "security/code_sandbox.py",
-    "security/sandbox.py",
-}
-
-#: The organs. Everything the running Aura does with a child process goes
-#: through core/runtime/subprocess_gateway.py, which is what carries the
-#: source label, the accelerator claim, the shutdown interlock and the
-#: read-only assertion. A direct spawn in here has none of that.
-#:
-#: Outside these roots — tests, tools, scripts, the launcher — spawning child
-#: processes IS the job: a containment proof needs a real child to kill, an
-#: operator driver orchestrates the gates it runs, and the out-of-process
-#: sentinels must outlive the runtime they watch. This replaced a
-#: ninety-entry file-name allowlist, most of whose entries no longer had a
-#: subprocess call in them at all; the ones that did were tools and tests.
-GATEWAY_OWNED_ROOTS = ("core/", "interface/")
-SUBPROCESS_GATEWAY_MODULE = "core/runtime/subprocess_gateway.py"
-
-
-def subprocess_must_use_gateway(rel: str) -> bool:
-    return rel.startswith(GATEWAY_OWNED_ROOTS) and rel != SUBPROCESS_GATEWAY_MODULE
-
-ALLOW_BLOCKING_SLEEP_IN_ASYNC = {
-    # This chaos fault deliberately stalls the loop to verify lag detection
-    # and recovery alarms. It is not production request handling.
-    "tools/chaos/injector.py",
-}
-
-
-_TMP_PATH_PREFIX = "/" + "tmp" + "/"
-_USERS_PATH_PREFIX = "/" + "Users" + "/"
-_HOME_PATH_PREFIX = "/" + "home" + "/"
-_WINDOWS_USERS_PREFIX = "C:" + "\\\\" + "Users" + "\\\\"
-
-TEXT_PATTERNS = {
-    # The match extends over the WHOLE path, not just the prefix. Two rules
-    # below compare the matched text against other evidence in the file, and
-    # a match of "/Users/" alone carries none of the information they need.
-    "hardcoded_local_path": re.compile(
-        rf"({re.escape(_USERS_PATH_PREFIX)}|"
-        rf"{re.escape(_HOME_PATH_PREFIX)}[^/\s]+/|"
-        rf"{re.escape(_WINDOWS_USERS_PREFIX)}|"
-        rf"{re.escape(_TMP_PATH_PREFIX)})[^\s\"'`,)\]}}]*"
-    ),
-    # "notimplemented" is deliberately absent. The word boundary means it
-    # never matched NotImplementedError; the only thing it could match was the
-    # bare ``NotImplemented`` singleton, which is Python's binary-operator
-    # protocol — the CORRECT return from __eq__ for an unrelated type — and
-    # every one of its five occurrences in this repo was exactly that.
-    "placeholder_stub_mock": re.compile(
-        r"\b(placeholder|stub|mock|dummy|not implemented)\b",
-        re.IGNORECASE,
-    ),
-    "potential_secret": re.compile(
-        r"(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})"
-    ),
-    # ``pytest.mark.skip`` (no "if") is unconditional. ``skipif`` is excluded
-    # by the word boundary, and a bare ``pytest.skip()`` is filtered below by
-    # whether anything guards it — a precondition is not parked debt.
-    "pytest_skip_xfail": re.compile(
-        r"pytest\.mark\.skip\b|pytest\.skip\b|\bxfail\b", re.IGNORECASE
-    ),
-}
-
-#: Credential-shaped strings that cannot be credentials.
-#:
-#: All ten "potential_secret" findings in the repo are test fixtures: fake
-#: keys written so the redaction code can be tested against them. A scanner
-#: that flags its own fixtures teaches people to ignore it, and an ignored
-#: secret scanner is worse than none — the day it finds a real key, that
-#: finding arrives in a list nobody reads.
-#:
-#: The exclusions are properties of the VALUE, not of the file it sits in, so
-#: a real key pasted into a test is still caught:
-#:   * AKIAIOSFODNN7EXAMPLE is AWS's own published example key.
-#:   * A body that is the alphabet in sequence is not entropy.
-#:   * EXAMPLE/PLACEHOLDER/REDACTED/XXXX bodies announce themselves.
-_NON_SECRET_LITERALS = re.compile(
-    r"""(?x)
-    AKIAIOSFODNN7EXAMPLE
-    | (?:sk-|ghp_|xox[baprs]-)?
-      (?:abcdefghijklmnopqrstuvwxyz|abcdefghijklmnopqrstuvwx)
-    | (?:EXAMPLE|PLACEHOLDER|REDACTED|FAKE|DUMMY|SAMPLE|TESTKEY)
-    | X{8,}
-    """,
-    re.IGNORECASE,
-)
-
-
-def _is_non_secret_literal(text: str) -> bool:
-    """Whether this credential-shaped match is a known non-secret."""
-    return bool(_NON_SECRET_LITERALS.search(str(text or "")))
-TODO_MARKER_PATTERN = re.compile(
-    r"^(TODO|FIXME|XXX|HACK)\b(?:\([^)]*\))?\s*(?::|-|\s|$)",
-    re.IGNORECASE,
-)
-
-FAILURE_KINDS = {
-    "baseline_regression",
-    "compile_failure",
-    "pytest_collect_failure",
-    "pytest_collect_timeout",
-    "syntax_error",
-}
-
-
-@dataclass(frozen=True)
-class Finding:
-    severity: str
-    kind: str
-    file: str
-    line: int = 0
-    detail: str = ""
-
-
-@dataclass
-class GateReport:
-    root: str
-    generated_at_unix: float
-    python_files: int = 0
-    compile_ok: bool | None = None
-    pytest_collect_ok: bool | None = None
-    pytest_collect_seconds: float | None = None
-    pytest_collect_output_tail: str = ""
-    findings: list[Finding] = field(default_factory=list)
-
-    def counts(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for finding in self.findings:
-            out[finding.kind] = out.get(finding.kind, 0) + 1
-        return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
-
-    def severity_counts(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for finding in self.findings:
-            out[finding.severity] = out.get(finding.severity, 0) + 1
-        return dict(sorted(out.items(), key=lambda kv: kv[0]))
-
-    def high_or_critical_count(self) -> int:
-        return sum(1 for finding in self.findings if finding.severity in {"high", "critical"})
-
-    def to_json_dict(self) -> dict:
-        payload = asdict(self)
-        payload["findings"] = [asdict(finding) for finding in self.findings]
-        payload["counts"] = self.counts()
-        payload["severity_counts"] = self.severity_counts()
-        payload["high_or_critical_count"] = self.high_or_critical_count()
-        return payload
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_json_dict(), indent=2, sort_keys=True)
-
-
-def rel_path(path: Path, root: Path) -> str:
-    return path.relative_to(root).as_posix()
-
-
-def iter_py(root: Path) -> Iterable[Path]:
-    for path in root.rglob("*.py"):
-        rel_parts = path.relative_to(root).parts
-        if any(part in EXCLUDED_DIRS for part in rel_parts):
-            continue
-        yield path
-
-
-def is_production(rel: str) -> bool:
-    first = rel.split("/", 1)[0]
-    return first in DEFAULT_PRODUCTION_DIRS or rel in DEFAULT_PRODUCTION_FILES
-
-
-def dotted_call_name(node: ast.Call) -> str:
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id
-    parts: list[str] = []
-    while isinstance(func, ast.Attribute):
-        parts.append(func.attr)
-        func = func.value
-    if isinstance(func, ast.Name):
-        parts.append(func.id)
-        return ".".join(reversed(parts))
-    return ""
-
-
-def body_without_docstring(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.stmt]:
-    body = list(node.body)
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(getattr(body[0], "value", None), ast.Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        return body[1:]
-    return body
-
-
-def decorator_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parts = [node.attr]
-        value = node.value
-        while isinstance(value, ast.Attribute):
-            parts.append(value.attr)
-            value = value.value
-        if isinstance(value, ast.Name):
-            parts.append(value.id)
-        return ".".join(reversed(parts))
-    if isinstance(node, ast.Call):
-        return decorator_name(node.func)
-    return ""
-
-
-def is_abstract_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    names = {decorator_name(item) for item in node.decorator_list}
-    return bool(
-        names
-        & {"abstractmethod", "abc.abstractmethod", "abstractclassmethod", "abstractstaticmethod"}
+try:
+    from tools.aura_enterprise_ast_scan import (
+        AstGate,
+        body_without_docstring,
+        decorator_name,
+        dotted_call_name,
+        handler_always_reraises,
+        handler_answers_with_a_value,
+        handler_records_a_degradation,
+        is_abstract_function,
+        is_deliberate_constructor_override,
+        is_deliberate_refusal,
+        is_not_implemented_only,
+        is_serialization_guard,
+        loop_can_end,
+        raised_exception_name,
+    )
+    from tools.aura_enterprise_contracts import (
+        ALLOW_BLOCKING_SLEEP_IN_ASYNC,
+        ALLOW_DYNAMIC_CODE,
+        DEFAULT_PRODUCTION_DIRS,
+        DEFAULT_PRODUCTION_FILES,
+        EXCLUDED_DIRS,
+        FAILURE_KINDS,
+        GATEWAY_OWNED_ROOTS,
+        SUBPROCESS_GATEWAY_MODULE,
+        TEXT_PATTERNS,
+        TODO_MARKER_PATTERN,
+        Finding,
+        GateReport,
+        _is_non_secret_literal,
+        is_production,
+        iter_py,
+        rel_path,
+        subprocess_must_use_gateway,
+    )
+    from tools.aura_enterprise_text_scan import (
+        _PROSE_SENSITIVE_KINDS,
+        FileTextContext,
+        _call_name,
+        _local_path_is_inert,
+        _marker_is_not_a_claim,
+        _marker_string_lines,
+        _marker_text,
+        _multiline_string_lines,
+        _path_shaped_constants,
+        _quoted_skip_lines,
+        _skip_is_not_parked_debt,
+        _unconditional_skip_lines,
+        _vocabulary_string_lines,
+        docstring_line_numbers,
+        file_text_context,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name not in {
+        "tools",
+        "tools.aura_enterprise_ast_scan",
+        "tools.aura_enterprise_contracts",
+        "tools.aura_enterprise_text_scan",
+    }:
+        raise
+    from aura_enterprise_ast_scan import (
+        AstGate,
+        body_without_docstring,
+        decorator_name,
+        dotted_call_name,
+        handler_always_reraises,
+        handler_answers_with_a_value,
+        handler_records_a_degradation,
+        is_abstract_function,
+        is_deliberate_constructor_override,
+        is_deliberate_refusal,
+        is_not_implemented_only,
+        is_serialization_guard,
+        loop_can_end,
+        raised_exception_name,
+    )
+    from aura_enterprise_contracts import (
+        ALLOW_BLOCKING_SLEEP_IN_ASYNC,
+        ALLOW_DYNAMIC_CODE,
+        DEFAULT_PRODUCTION_DIRS,
+        DEFAULT_PRODUCTION_FILES,
+        EXCLUDED_DIRS,
+        FAILURE_KINDS,
+        GATEWAY_OWNED_ROOTS,
+        SUBPROCESS_GATEWAY_MODULE,
+        TEXT_PATTERNS,
+        TODO_MARKER_PATTERN,
+        Finding,
+        GateReport,
+        _is_non_secret_literal,
+        is_production,
+        iter_py,
+        rel_path,
+        subprocess_must_use_gateway,
+    )
+    from aura_enterprise_text_scan import (
+        _PROSE_SENSITIVE_KINDS,
+        FileTextContext,
+        _call_name,
+        _local_path_is_inert,
+        _marker_is_not_a_claim,
+        _marker_string_lines,
+        _marker_text,
+        _multiline_string_lines,
+        _path_shaped_constants,
+        _quoted_skip_lines,
+        _skip_is_not_parked_debt,
+        _unconditional_skip_lines,
+        _vocabulary_string_lines,
+        docstring_line_numbers,
+        file_text_context,
     )
 
-
-def is_deliberate_constructor_override(
-    node: ast.FunctionDef | ast.AsyncFunctionDef, enclosing: ast.AST | None
-) -> bool:
-    """A no-op __init__ on a class that has real methods is intentional.
-
-    A test double overrides the constructor so the real one does not run, and
-    ``pass`` is the correct implementation of "do not set anything up". All
-    three pass_only_function findings in this repo were exactly that.
-
-    Judged by SHAPE, not by path: the class must define at least one other
-    method with a real body. A class that is nothing but a pass-only __init__
-    is still unimplemented scaffolding and is still reported — which is what
-    keeps this from being "skip tests/" wearing a better name.
-    """
-    if node.name != "__init__":
-        return False
-    if not isinstance(enclosing, ast.ClassDef):
-        return False
-    for item in enclosing.body:
-        if item is node or not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        sibling_body = body_without_docstring(item)
-        if sibling_body and not (
-            len(sibling_body) == 1 and isinstance(sibling_body[0], ast.Pass)
-        ):
-            return True
-    return False
-
-
-def is_not_implemented_only(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    body = body_without_docstring(node)
-    if len(body) != 1 or not isinstance(body[0], ast.Raise):
-        return False
-    exc = body[0].exc
-    if isinstance(exc, ast.Call):
-        exc = exc.func
-    return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
-
-
-# Pickle/serialization guards are a legitimate raise-only idiom: a dunder that
-# raises to declare "this live-runtime object is not serializable identity"
-# (__getstate__/__setstate__/__reduce__/__reduce_ex__/__deepcopy__). These are
-# intentional protection, not unimplemented debt.
-_SERIALIZATION_GUARD_DUNDERS = frozenset({
-    "__getstate__", "__setstate__", "__reduce__", "__reduce_ex__",
-    "__deepcopy__", "__copy__",
-})
-
-
-def is_serialization_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    if node.name not in _SERIALIZATION_GUARD_DUNDERS:
-        return False
-    body = body_without_docstring(node)
-    if len(body) != 1 or not isinstance(body[0], ast.Raise):
-        return False
-    exc = body[0].exc
-    if isinstance(exc, ast.Call):
-        exc = exc.func
-    return isinstance(exc, ast.Name) and exc.id in {"TypeError", "RuntimeError", "PicklingError"}
-
-
-def raised_exception_name(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
-    """The name of the single exception a raise-only function raises."""
-    body = body_without_docstring(node)
-    if len(body) != 1 or not isinstance(body[0], ast.Raise):
-        return None
-    exc = body[0].exc
-    if exc is None:
-        return "<bare>"
-    if isinstance(exc, ast.Call):
-        exc = exc.func
-    if isinstance(exc, ast.Name):
-        return exc.id
-    if isinstance(exc, ast.Attribute):
-        return exc.attr
-    return None
-
-
-def is_deliberate_refusal(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """A raise-only function that refuses on purpose, rather than one nobody
-    finished writing.
-
-    The rule read "in product code a raise-only helper is dead scaffolding",
-    and that premise was wrong here. It reported 118 functions and not one
-    was unwritten: 104 were ``_fail(code)`` helpers, the codebase's standard
-    way to fail closed with a named, greppable code, and the rest were
-    ``reject_constant`` hooks handed to json.loads and protocol methods that
-    exist to refuse a direct call. A rule that fires 118 times for the
-    discipline it is supposed to protect gets read as noise.
-
-    Two things say "deliberate", both machine-checked and neither writable by
-    accident:
-
-    * ``-> Never`` / ``-> NoReturn``. The annotation IS the contract, and a
-      type checker enforces that no caller reads a return value. 103 of the
-      118 already carried it; the other twelve said ``-> None`` while always
-      raising, which is wrong type information, and they are fixed.
-    * The exception raised is a NAMED type — a domain error, ValueError,
-      AssertionError. Choosing which failure this is takes a decision.
-
-    What stays a finding is what the rule was always after: a non-abstract
-    function whose whole body is ``raise NotImplementedError`` (declared and
-    unwritten) or a bare ``raise`` outside a handler.
-    """
-    returns = node.returns
-    if isinstance(returns, ast.Name) and returns.id in {"Never", "NoReturn"}:
-        return True
-    if isinstance(returns, ast.Attribute) and returns.attr in {"Never", "NoReturn"}:
-        return True
-    raised = raised_exception_name(node)
-    if raised is None or raised == "<bare>":
-        return False
-    return raised != "NotImplementedError"
-
-
-_LOOP_STATEMENTS = (ast.While, ast.For, ast.AsyncFor)
-_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
-
-
-def loop_can_end(node: ast.While) -> bool:
-    """Does this ``while True`` have any way out?
-
-    The rule flagged the ``while True:`` line itself, which is not a defect —
-    it is the standard Python idiom for a loop whose exit condition is
-    computed inside the body. 30 of the 31 findings had a ``break`` or a
-    ``return`` a few lines down. Counting those trains people to stop reading
-    the list.
-
-    A loop with none of these cannot end:
-
-    * a ``break`` whose nearest enclosing loop is THIS one — a break inside a
-      nested ``for`` leaves the inner loop and is not an exit from this one;
-    * a ``return`` or ``raise``, which leave the function entirely;
-    * an ``await``, which is a cancellation point: that is how every service
-      loop in this runtime is actually stopped;
-    * a ``yield``, which hands control to the consumer for the same reason —
-      a generator does not run unless somebody pulls from it.
-
-    Bodies of nested functions, lambdas and classes are not searched. Their
-    control flow is their own and says nothing about this loop.
-    """
-    found = False
-
-    def search(nodes: list[ast.AST], *, own_loop: bool) -> None:
-        nonlocal found
-        for child in nodes:
-            if found:
-                return
-            if isinstance(child, _NESTED_SCOPES):
-                continue
-            if isinstance(child, (ast.Return, ast.Raise, ast.Await, ast.Yield, ast.YieldFrom)):
-                found = True
-                return
-            if isinstance(child, ast.Break) and own_loop:
-                found = True
-                return
-            inner_own_loop = own_loop and not isinstance(child, _LOOP_STATEMENTS)
-            for name in ("body", "orelse", "finalbody", "handlers", "cases"):
-                block = getattr(child, name, None)
-                if isinstance(block, list):
-                    search(list(block), own_loop=inner_own_loop)
-            for name in ("value", "test", "iter", "func"):
-                sub = getattr(child, name, None)
-                if isinstance(sub, ast.AST):
-                    search([sub], own_loop=inner_own_loop)
-            if isinstance(child, ast.expr):
-                search(list(ast.iter_child_nodes(child)), own_loop=inner_own_loop)
-
-    search(list(node.body), own_loop=True)
-    return found
-
-
-def handler_answers_with_a_value(handler: ast.ExceptHandler) -> bool:
-    """Did the handler turn the exception into an answer?
-
-    ``except Exception: return False`` in a verification predicate is not a
-    swallow — the caller is told the verification did not hold, and told it
-    in the only vocabulary the predicate has. ``except Exception: pass`` is a
-    swallow: control resumes as though nothing happened and nobody is told
-    anything.
-
-    Thirteen of this rule's twenty-three findings were the first kind.
-    """
-    return any(
-        isinstance(item, ast.Return) and item.value is not None for item in handler.body
-    )
-
-
-#: The sanctioned degradation protocol. CLAUDE.md states the rule this gate is
-#: enforcing a corner of: "never a silent ``except: pass``" — record the
-#: degradation with a subsystem and an action instead.
-_DEGRADATION_RECORDERS = frozenset({"record_degradation", "_record_degradation"})
-
-
-def handler_records_a_degradation(handler: ast.ExceptHandler) -> bool:
-    """Did the handler report the failure through the runtime's own protocol?
-
-    ``# noqa: BLE001`` says a human looked at this handler once. A call to
-    ``record_degradation(subsystem, exc, action=...)`` says the same thing and
-    then keeps saying it at runtime: the record lands in
-    ``runtime_health_report()["integrity"]``, opens an incident, and escalates
-    to CRITICAL for every module on the fail-closed list. One is a comment that
-    cannot be wrong because it cannot be checked; the other is evidence that
-    the boundary actually fired, in production, on real inputs.
-
-    So a handler that records a degradation is reviewed by the stronger of the
-    two mechanisms, and the gate should say so. What stays reported is the
-    handler that does none of the three: does not re-raise, does not record,
-    and carries no annotation — which continues past a failure nobody
-    enumerated and tells nobody it happened.
-    """
-    for node in ast.walk(handler):
-        if isinstance(node, ast.Call) and _call_name(node) in _DEGRADATION_RECORDERS:
-            return True
-    return False
-
-
-def handler_always_reraises(handler: ast.ExceptHandler) -> bool:
-    """Does control leave this handler only by the exception path?
-
-    ``except Exception: rollback(); raise`` catches broadly on purpose. The
-    breadth decides WHICH failures get cleaned up — and the answer should be
-    "all of them", because a KeyError between two SQL statements leaves the
-    transaction just as open as an sqlite3.Error does. The exception then
-    propagates unchanged: the caller learns everything it would have learned
-    without the handler, and nothing has been decided on its behalf.
-
-    That is not the debt this rule exists to surface. The debt is
-    ``except Exception: logger.warning(...)`` with no re-raise — a handler that
-    DECIDES to continue, across a set of failures nobody enumerated, including
-    the ones nobody thought of. Breadth is dangerous exactly when it is paired
-    with a decision, and harmless when it is paired with cleanup.
-
-    Ninety of this rule's one hundred and fifty-four findings re-raise.
-
-    The check is deliberately conservative: the last top-level statement must
-    be a ``raise``, so a handler that re-raises on one branch and falls through
-    on another still counts as a decision and is still reported.
-    """
-    if not handler.body:
-        return False
-    return isinstance(handler.body[-1], ast.Raise)
-
-
-class AstGate(ast.NodeVisitor):
-    def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
-        self.rel = rel
-        self.report = report
-        self.async_depth = 0
-        self.source_lines = source_lines or []
-        #: Innermost enclosing scope, so a no-op ``__init__`` can be told from
-        #: unimplemented scaffolding by looking at its class. This used to be
-        #: an id -> parent map filled by overriding ``visit``, which walked
-        #: every one of the repo's 9.2M nodes a second time and cost the gate
-        #: about a third of its running time. A ``None`` is pushed for a
-        #: function so a nested def does not inherit the class above it.
-        self._scopes: list[ast.AST | None] = []
-        #: Depth inside a ``__del__``. A finalizer runs while the interpreter
-        #: is tearing modules out from under it, so recording a degradation
-        #: there can fail on the way to reporting the failure. Silence is the
-        #: correct behaviour, and the one place it is.
-        self._finalizer_depth = 0
-
-    @property
-    def _in_finalizer(self) -> bool:
-        return self._finalizer_depth > 0
-
-    @property
-    def _enclosing(self) -> ast.AST | None:
-        return self._scopes[-1] if self._scopes else None
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._scopes.append(node)
-        self.generic_visit(node)
-        self._scopes.pop()
-
-    def _line_has_marker(self, node: ast.AST, marker: str) -> bool:
-        lineno = int(getattr(node, "lineno", 0) or 0)
-        if 0 < lineno <= len(self.source_lines):
-            return marker in self.source_lines[lineno - 1]
-        return False
-
-    def _line_has_reviewed_broad_except(self, node: ast.AST) -> bool:
-        """True when the handler line carries an explicit BLE001 review marker.
-
-        `# noqa: BLE001` is the ecosystem-standard annotation for a broad
-        except that a human reviewed and justified (last-resort floors,
-        liveness paths). The gate's job is surfacing UNREVIEWED debt.
-        """
-        return self._line_has_marker(node, "noqa: BLE001")
-
-    def _line_has_reviewed_dynamic_exec(self, node: ast.AST) -> bool:
-        """True when the call line carries an explicit S102 review marker.
-
-        Same principle as BLE001 above, for the same reason: the gate exists to
-        surface UNREVIEWED debt, and `# noqa: S102` is the ecosystem-standard
-        annotation for an exec/eval/compile a human reviewed.
-
-        This is deliberately per-line rather than another ALLOW_DYNAMIC_CODE
-        entry: allowlisting a whole file also blesses every exec added to it
-        later, which is precisely the debt this gate is meant to catch.
-        """
-        return self._line_has_marker(node, "noqa: S102")
-
-    def add(self, severity: str, kind: str, node: ast.AST, detail: str = "") -> None:
-        self.report.findings.append(
-            Finding(severity, kind, self.rel, getattr(node, "lineno", 0), detail)
-        )
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if any(alias.name == "*" for alias in node.names):
-            self.add("medium", "wildcard_import", node, node.module or "")
-        self.generic_visit(node)
-
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        broad = node.type is None or (
-            isinstance(node.type, ast.Name) and node.type.id in {"BaseException", "Exception"}
-        )
-        if broad:
-            severity = "high" if is_production(self.rel) else "medium"
-            if node.type is None:
-                self.add(severity, "bare_except", node)
-            elif (
-                any(isinstance(item, ast.Pass) for item in node.body)
-                or all(
-                    isinstance(item, (ast.Break, ast.Continue, ast.Pass, ast.Return))
-                    for item in node.body
-                )
-            ) and not (
-                handler_answers_with_a_value(node) or self._in_finalizer
-            ):
-                # A silent swallow is debt even when annotated; a swallow that
-                # at least logs (non-trivial body) may be a reviewed floor.
-                self.add(severity, "swallowed_broad_exception", node)
-            elif not (
-                self._line_has_reviewed_broad_except(node)
-                or handler_always_reraises(node)
-                or handler_records_a_degradation(node)
-            ):
-                self.add(
-                    "medium" if is_production(self.rel) else "low",
-                    "broad_exception_review",
-                    node,
-                )
-        self.generic_visit(node)
-
-    def visit_While(self, node: ast.While) -> None:
-        if (
-            isinstance(node.test, ast.Constant)
-            and node.test.value is True
-            and not loop_can_end(node)
-        ):
-            self.add("medium" if is_production(self.rel) else "low", "unbounded_loop_review", node)
-        self.generic_visit(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        body = body_without_docstring(node)
-        if (
-            len(body) == 1
-            and isinstance(body[0], ast.Pass)
-            and not is_abstract_function(node)
-            and not is_deliberate_constructor_override(node, self._enclosing)
-        ):
-            self.add(
-                "high" if is_production(self.rel) else "medium",
-                "pass_only_function",
-                node,
-                node.name,
-            )
-        if (
-            len(body) == 1
-            and isinstance(body[0], ast.Raise)
-            and not (is_abstract_function(node) and is_not_implemented_only(node))
-            and not is_serialization_guard(node)
-            and not is_deliberate_refusal(node)
-            and not self.rel.startswith("tests/")
-        ):
-            self.add(
-                "high" if is_production(self.rel) else "medium",
-                "raise_only_function",
-                node,
-                node.name,
-            )
-        self.async_depth += 1
-        self._scopes.append(None)
-        self.generic_visit(node)
-        self._scopes.pop()
-        self.async_depth -= 1
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        body = body_without_docstring(node)
-        if (
-            len(body) == 1
-            and isinstance(body[0], ast.Pass)
-            and not is_abstract_function(node)
-            and not is_deliberate_constructor_override(node, self._enclosing)
-        ):
-            self.add(
-                "high" if is_production(self.rel) else "medium",
-                "pass_only_function",
-                node,
-                node.name,
-            )
-        if (
-            len(body) == 1
-            and isinstance(body[0], ast.Raise)
-            and not (is_abstract_function(node) and is_not_implemented_only(node))
-            and not is_serialization_guard(node)
-            and not is_deliberate_refusal(node)
-            and not self.rel.startswith("tests/")
-        ):
-            self.add(
-                "high" if is_production(self.rel) else "medium",
-                "raise_only_function",
-                node,
-                node.name,
-            )
-        previous_async_depth = self.async_depth
-        self.async_depth = 0
-        self._scopes.append(None)
-        if node.name == "__del__":
-            self._finalizer_depth += 1
-        try:
-            self.generic_visit(node)
-        finally:
-            if node.name == "__del__":
-                self._finalizer_depth -= 1
-            self._scopes.pop()
-            self.async_depth = previous_async_depth
-
-    def visit_Call(self, node: ast.Call) -> None:
-        name = dotted_call_name(node)
-        if (
-            name in {"compile", "eval", "exec"}
-            and self.rel not in ALLOW_DYNAMIC_CODE
-            and not self._line_has_reviewed_dynamic_exec(node)
-        ):
-            self.add(
-                "critical" if is_production(self.rel) else "medium",
-                "dynamic_code_execution",
-                node,
-                name,
-            )
-        if name in {
-            "os.system",
-            "subprocess.Popen",
-            "subprocess.call",
-            "subprocess.check_call",
-            "subprocess.check_output",
-            "subprocess.run",
-        }:
-            shell_true = any(
-                keyword.arg == "shell"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
-                for keyword in node.keywords
-            )
-            if shell_true:
-                self.add("critical", "subprocess_shell_true", node, name)
-            elif subprocess_must_use_gateway(self.rel) and not self._line_has_marker(
-                node, "noqa: S603"
-            ):
-                # Per-line, like the exec and broad-except markers above, and
-                # for the same reason: blessing a whole file also blesses
-                # every spawn added to it later.
-                self.add("high", "subprocess_usage_review", node, name)
-        if name in {"dill.load", "dill.loads", "pickle.load", "pickle.loads"}:
-            self.add(
-                "critical" if is_production(self.rel) else "high",
-                "unsafe_deserialization",
-                node,
-                name,
-            )
-        if (
-            name == "time.sleep"
-            and self.async_depth
-            and self.rel not in ALLOW_BLOCKING_SLEEP_IN_ASYNC
-        ):
-            self.add("high", "blocking_sleep_in_async", node)
-        self.generic_visit(node)
+__all__ = [
+    "ALLOW_BLOCKING_SLEEP_IN_ASYNC",
+    "ALLOW_DYNAMIC_CODE",
+    "DEFAULT_PRODUCTION_DIRS",
+    "DEFAULT_PRODUCTION_FILES",
+    "EXCLUDED_DIRS",
+    "FAILURE_KINDS",
+    "Finding",
+    "GATEWAY_OWNED_ROOTS",
+    "GateReport",
+    "SUBPROCESS_GATEWAY_MODULE",
+    "TEXT_PATTERNS",
+    "TODO_MARKER_PATTERN",
+    "_is_non_secret_literal",
+    "is_production",
+    "iter_py",
+    "rel_path",
+    "subprocess_must_use_gateway",
+    "AstGate",
+    "body_without_docstring",
+    "decorator_name",
+    "dotted_call_name",
+    "handler_always_reraises",
+    "handler_answers_with_a_value",
+    "handler_records_a_degradation",
+    "is_abstract_function",
+    "is_deliberate_constructor_override",
+    "is_deliberate_refusal",
+    "is_not_implemented_only",
+    "is_serialization_guard",
+    "loop_can_end",
+    "raised_exception_name",
+    "FileTextContext",
+    "_PROSE_SENSITIVE_KINDS",
+    "_call_name",
+    "_local_path_is_inert",
+    "_marker_is_not_a_claim",
+    "_marker_string_lines",
+    "_marker_text",
+    "_multiline_string_lines",
+    "_path_shaped_constants",
+    "_quoted_skip_lines",
+    "_skip_is_not_parked_debt",
+    "_unconditional_skip_lines",
+    "_vocabulary_string_lines",
+    "docstring_line_numbers",
+    "file_text_context",
+    "compare_to_baseline",
+    "compile_gate",
+    "load_baseline",
+    "main",
+    "make_baseline",
+    "parse_args",
+    "pytest_collect_gate",
+    "run_gate",
+    "scan_file",
+    "write_text",
+]
 
 
 def compile_gate(root: Path, report: GateReport, timeout_s: int) -> None:
@@ -835,462 +256,6 @@ def pytest_collect_gate(root: Path, report: GateReport, timeout_s: int) -> None:
         )
     finally:
         report.pytest_collect_seconds = round(time.time() - start, 3)
-
-
-_FILESYSTEM_CALL_NAMES = frozenset(
-    {
-        "open", "makedirs", "mkdir", "rmdir", "remove", "unlink", "rename",
-        "replace", "chdir", "symlink", "touch", "write_text", "write_bytes",
-        "read_text", "read_bytes", "rmtree", "copy", "copy2", "copyfile",
-        "copytree", "move", "listdir", "scandir", "walk", "glob", "rglob",
-        "run", "Popen", "call", "check_call", "check_output",
-        "create_subprocess_exec", "create_subprocess_shell",
-        "NamedTemporaryFile", "TemporaryDirectory", "mkstemp", "mkdtemp",
-    }
-)
-_FILESYSTEM_KEYWORDS = frozenset({"cwd", "dir", "path", "filename", "file"})
-_PASSTHROUGH_CALL_NAMES = frozenset({"Path", "PurePath", "str", "fspath"})
-_DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-#: Rules that describe something written in the file rather than something
-#: the program DOES, and are therefore exempt inside a docstring or comment.
-#:
-#: For paths and keys the argument is direct: a literal quoted in prose is not
-#: a path the program uses, it is usually the verbatim text of the incident
-#: the module exists to prevent.
-#:
-#: placeholder_stub_mock belongs here for a sharper reason. Its three loudest
-#: findings were an enum member documented "Not implemented" so a caller
-#: cannot mistake a digest for a signature, a module docstring that says in
-#: capitals that its discovery step is NOT IMPLEMENTED (with a False flag and
-#: a refusing entry point beneath it), and a ``residual_risk`` line in a
-#: threat register. Every one is the honesty mechanism working. Flagging the
-#: admission puts the gate's weight behind deleting it, which is how a repo
-#: ends up with silent stubs and a clean report — the exact failure this gate
-#: exists to prevent. The defect is code that BEHAVES as though it were
-#: complete, and that is what the rule now looks for.
-#: pytest_skip_xfail is here too: a comment saying "pytest.skip" skips
-#: nothing. It was the last thing keeping the file-name allowlist alive.
-_PROSE_SENSITIVE_KINDS = frozenset(
-    {
-        "hardcoded_local_path",
-        "potential_secret",
-        "placeholder_stub_mock",
-        "pytest_skip_xfail",
-    }
-)
-
-
-@dataclass
-class FileTextContext:
-    """What a file's syntax says about the text the line rules matched.
-
-    Built from a single AST walk, because the gate scans several thousand
-    files and each extra pass over the tree costs real seconds on the clock
-    the pre-commit gate runs against.
-    """
-
-    #: Lines where a path literal is handed to something that touches the
-    #: disk. ``None`` means the file would not parse, so nothing is known.
-    disk_lines: set[int] | None = None
-    #: Strings the file asserts must NOT appear in some output.
-    redaction_evidence: tuple[str, ...] = ()
-    #: Lines carrying a stub/placeholder marker inside a string CONSTANT. A
-    #: line that matches the text rule and is absent here carries the marker
-    #: in an identifier instead.
-    marker_string_lines: set[int] = field(default_factory=set)
-    #: Lines where every such string is used as a NAME, a KEY or a PATTERN —
-    #: a detector's vocabulary rather than a claim about this code.
-    marker_vocabulary_lines: set[int] = field(default_factory=set)
-    #: Lines calling ``pytest.skip()`` with nothing guarding the call.
-    unconditional_skip_lines: set[int] = field(default_factory=set)
-    #: Lines where a skip marker sits INSIDE a string — sample source in a
-    #: test for the rule itself, or the rule's own pattern. Not a skip.
-    quoted_skip_lines: set[int] = field(default_factory=set)
-
-
-def _call_name(node: ast.Call) -> str:
-    func = node.func
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return ""
-
-
-def _path_shaped_constants(node: ast.AST) -> Iterator[ast.Constant]:
-    """String constants inside `node` that look like a local path.
-
-    Descends through the wrappers that do not themselves touch the disk —
-    ``Path(...)``, ``str(...)``, an f-string, a ``/`` join — so that
-    ``open(Path("/tmp/x"))`` is recognised while a bare ``Path("/tmp/x")``
-    assigned to a name is not.
-    """
-    if isinstance(node, ast.Constant):
-        if isinstance(node.value, str) and TEXT_PATTERNS["hardcoded_local_path"].search(
-            node.value
-        ):
-            yield node
-        return
-    if isinstance(node, ast.JoinedStr):
-        for value in node.values:
-            yield from _path_shaped_constants(value)
-        return
-    if isinstance(node, ast.FormattedValue):
-        return
-    if isinstance(node, ast.Call) and _call_name(node) in _PASSTHROUGH_CALL_NAMES:
-        for arg in node.args:
-            yield from _path_shaped_constants(arg)
-        return
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
-        yield from _path_shaped_constants(node.left)
-        yield from _path_shaped_constants(node.right)
-
-
-def docstring_line_numbers(tree: ast.AST | None) -> set[int]:
-    """Lines occupied by docstrings.
-
-    A path or a key quoted inside a docstring is PROSE — usually the verbatim
-    text of the incident the module exists to prevent.
-    ``tests/test_fetched_image_path_is_resolved.py`` opens by quoting the live
-    error, complete with the absolute path that broke. That is the evidence,
-    not a dependency on one machine, and flagging it pressures the next person
-    to delete the record to quiet the gate.
-
-    Walks statement containers only, never expressions: this runs on every
-    file that trips any text rule, and ``ast.walk`` over whole expression
-    trees was costing more than the rule it serves.
-    """
-    lines: set[int] = set()
-    if tree is None:
-        return lines
-    stack: list[ast.AST] = [tree]
-    while stack:
-        node = stack.pop()
-        body = getattr(node, "body", None)
-        if isinstance(node, _DOCSTRING_OWNERS) and isinstance(body, list) and body:
-            first = body[0]
-            if (
-                isinstance(first, ast.Expr)
-                and isinstance(first.value, ast.Constant)
-                and isinstance(first.value.value, str)
-            ):
-                start = int(getattr(first, "lineno", 0) or 0)
-                end = int(getattr(first, "end_lineno", start) or start)
-                lines.update(range(start, end + 1))
-        for child in ast.iter_child_nodes(node):
-            if isinstance(getattr(child, "body", None), list):
-                stack.append(child)
-    lines.update(_multiline_string_lines(tree))
-    return lines
-
-
-def _multiline_string_lines(tree: ast.AST | None) -> set[int]:
-    """Lines inside a string constant that spans more than one line.
-
-    A docstring is a string constant that happens to sit in statement
-    position, so the docstring exemption above was always the special case of
-    a general rule: text inside quotes is data, not something the program
-    does. The general rule matters because the files most likely to quote a
-    forbidden pattern are the tests that prove the rule against it works, and
-    a gate that reports its own fixtures is a gate on its way to a file-name
-    allowlist. ``_quoted_skip_lines`` already reached this conclusion for
-    pytest skips; this is the same conclusion, applied once instead of once
-    per rule.
-
-    Only MULTI-line literals qualify. ``STATE_ROOT = "/Users/bryan/.aura"`` is
-    a single-line constant and stays reported — it is a real path this module
-    would really use.
-    """
-    lines: set[int] = set()
-    if tree is None:
-        return lines
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-            continue
-        start = int(getattr(node, "lineno", 0) or 0)
-        end = int(getattr(node, "end_lineno", start) or start)
-        if end > start:
-            lines.update(range(start, end + 1))
-    return lines
-
-
-_REGEX_CALL_NAMES = frozenset(
-    {"compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "split"}
-)
-_NAME_LOOKUP_CALL_NAMES = frozenset({"getattr", "hasattr", "setattr", "get", "pop"})
-
-
-_GUARDING_STATEMENTS = (ast.If, ast.Try, ast.While, ast.For, ast.AsyncFor, ast.Match)
-
-
-def _quoted_skip_lines(tree: ast.AST) -> set[int]:
-    """Lines where a skip marker is inside a string constant.
-
-    A rule that reports its own pattern, and reports the fixtures of the test
-    that proves the pattern works, is how a file-name allowlist gets born.
-    Sample source quoted in a test is data.
-    """
-    pattern = TEXT_PATTERNS["pytest_skip_xfail"]
-    lines: set[int] = set()
-    for node in ast.walk(tree):
-        text = _marker_text(node)
-        if text and pattern.search(text):
-            lines.add(int(getattr(node, "lineno", 0) or 0))
-            end = int(getattr(node, "end_lineno", 0) or 0)
-            lines.update(range(int(getattr(node, "lineno", 0) or 0), end + 1))
-    return lines
-
-
-def _unconditional_skip_lines(tree: ast.AST) -> set[int]:
-    """Lines where ``pytest.skip()`` runs with nothing deciding whether to.
-
-    A skip guarded by a condition is how pytest spells a precondition, and
-    the suite is full of honest ones: no fork on this platform, no node
-    installed, vm_stat absent, a symlink that would not create. Counting
-    those made the rule grow every time the suite learned to run somewhere
-    new, which is the opposite of a debt signal.
-
-    An UNGUARDED skip is different. It fires every run, so the assertions
-    below it never execute anywhere — a parked failure wearing a precondition
-    as a disguise. Same for ``pytest.mark.skip`` (as opposed to ``skipif``)
-    and for ``xfail``, both of which the line rule still catches on sight.
-    """
-    lines: set[int] = set()
-
-    def is_skip_call(node: ast.AST) -> bool:
-        if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
-            return False
-        func = node.value.func
-        return (
-            isinstance(func, ast.Attribute)
-            and func.attr == "skip"
-            and isinstance(func.value, ast.Name)
-            and func.value.id == "pytest"
-        )
-
-    def walk(body: list[ast.stmt], guarded: bool) -> None:
-        for statement in body:
-            if is_skip_call(statement) and not guarded:
-                lines.add(int(getattr(statement, "lineno", 0) or 0))
-                continue
-            inner_guarded = guarded or isinstance(statement, _GUARDING_STATEMENTS)
-            for name in ("body", "orelse", "finalbody", "handlers", "cases"):
-                child = getattr(statement, name, None)
-                if isinstance(child, list) and child and isinstance(child[0], ast.AST):
-                    if isinstance(child[0], ast.stmt):
-                        walk(child, inner_guarded)
-                    else:
-                        for sub in child:
-                            walk(getattr(sub, "body", []), inner_guarded)
-
-    walk(getattr(tree, "body", []), guarded=False)
-    return lines
-
-
-def _marker_text(node: ast.AST) -> str:
-    """The text of a str or bytes constant, or "" for anything else.
-
-    Bytes count. ``b"placeholder-bytes"`` written as a fixture's file content
-    is a value the program produces, exactly like the str form, and treating
-    it as "not a string" made it look like a bare identifier and slip the
-    rule.
-    """
-    if not isinstance(node, ast.Constant):
-        return ""
-    value = node.value
-    if isinstance(value, str):
-        return value
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    return ""
-
-
-def _vocabulary_string_lines(tree: ast.AST) -> set[int]:
-    """Lines whose marker string is a name, a key or a pattern.
-
-    A scanner has to spell the words it hunts for. ``"placeholder"`` sitting
-    in ``MARKERS = (...)``, inside ``re.compile(...)``, or as the key of a
-    dict is the detector's vocabulary — it says nothing about whether THIS
-    module is finished. Flagging it is how a repo ends up with a file-name
-    allowlist, and a file-name allowlist hides the real thing: two genuine
-    findings were sitting behind this repo's, a "[DUMMY VOICE]" fallback and
-    a "Mock hear" path, both in shipping code.
-
-    A string that carries a ``{slot}`` of its own alongside the word is
-    talking about format-template syntax — "command_template must contain
-    exactly one {value} placeholder" is a name for a brace pair, not an
-    admission. The brace has to be in the SAME literal, so a message that
-    merely happens to be an f-string does not qualify.
-
-    A marker used as a VALUE — returned, assigned, or handed to a message —
-    is not covered here, because that is the module speaking about itself.
-    """
-    marker = TEXT_PATTERNS["placeholder_stub_mock"]
-    lines: set[int] = set()
-
-    def note(node: ast.AST) -> None:
-        if marker.search(_marker_text(node)):
-            lines.add(int(getattr(node, "lineno", 0) or 0))
-
-    template_slot = re.compile(r"\{[A-Za-z_][A-Za-z_0-9]*\}")
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant):
-            text = _marker_text(node)
-            if text and marker.search(text) and template_slot.search(text):
-                lines.add(int(getattr(node, "lineno", 0) or 0))
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            for element in node.elts:
-                note(element)
-        elif isinstance(node, ast.Dict):
-            for key in node.keys:
-                if key is not None:
-                    note(key)
-        elif isinstance(node, ast.Subscript):
-            note(node.slice)
-        elif isinstance(node, ast.Call):
-            name = _call_name(node)
-            if name in _REGEX_CALL_NAMES or name in _NAME_LOOKUP_CALL_NAMES:
-                for arg in node.args:
-                    note(arg)
-    return lines
-
-
-def _marker_string_lines(tree: ast.AST) -> set[int]:
-    marker = TEXT_PATTERNS["placeholder_stub_mock"]
-    lines: set[int] = set()
-    for node in ast.walk(tree):
-        if marker.search(_marker_text(node)):
-            lines.add(int(getattr(node, "lineno", 0) or 0))
-    return lines
-
-
-def file_text_context(tree: ast.AST | None) -> FileTextContext:
-    """Collect, in one walk, everything the path rule needs to know.
-
-    Two questions, one traversal:
-
-    * **What reaches the disk?** A shared-temp path is a hazard because the
-      process WRITES there: a predictable name under a world-writable
-      directory is a symlink-attack surface and a collision between two users
-      on one host. A literal that is only compared against, rejected by a
-      policy, or returned from a monkeypatched stub never becomes a file.
-      Only direct operands are traced — a path bound to a name and opened
-      three lines later is missed; this filters noise, it does not prove
-      absence.
-    * **What is redaction evidence?** A scrubber test has to name the secret
-      it proves gets removed, and both the fixture and its assertion match
-      the path rule. Deleting either destroys the proof.
-    """
-    context = FileTextContext()
-    if tree is None:
-        return context
-    context.disk_lines = set()
-    evidence: list[str] = []
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            name = _call_name(node)
-            if name in _FILESYSTEM_CALL_NAMES:
-                operands: list[ast.AST] = list(node.args)
-                operands.extend(
-                    kw.value for kw in node.keywords if kw.arg in _FILESYSTEM_KEYWORDS
-                )
-                for operand in operands:
-                    for constant in _path_shaped_constants(operand):
-                        context.disk_lines.add(int(getattr(constant, "lineno", 0) or 0))
-            elif name == "assertNotIn" and node.args:
-                first_arg = node.args[0]
-                if isinstance(first_arg, ast.Constant) and isinstance(
-                    first_arg.value, str
-                ):
-                    evidence.append(first_arg.value)
-        elif isinstance(node, ast.Compare):
-            left = node.left
-            if (
-                isinstance(left, ast.Constant)
-                and isinstance(left.value, str)
-                and any(isinstance(op, ast.NotIn) for op in node.ops)
-            ):
-                evidence.append(left.value)
-
-    context.redaction_evidence = tuple(
-        text for text in evidence if len(text) >= 4 and ("/" in text or len(text) >= 6)
-    )
-    context.marker_string_lines = _marker_string_lines(tree)
-    context.marker_vocabulary_lines = _vocabulary_string_lines(tree)
-    context.unconditional_skip_lines = _unconditional_skip_lines(tree)
-    context.quoted_skip_lines = _quoted_skip_lines(tree)
-    return context
-
-
-def _local_path_is_inert(matched: str, line_no: int, context: FileTextContext) -> bool:
-    """Is this path literal data, rather than somewhere the program goes?
-
-    Two different hazards wear one regex here, and they do not have the same
-    answer:
-
-    * ``/Users/<name>``, ``/home/<name>``, ``C:\\Users\\`` name one human's
-      account. That is machine-specific wherever it appears, so it stays a
-      finding unless the file proves it is redaction evidence.
-    * ``/tmp/...`` is portable; what makes it a defect is writing to a
-      predictable name in a world-writable directory. A literal nothing ever
-      opens is not that.
-    """
-    if any(text in matched or matched in text for text in context.redaction_evidence):
-        return True
-    if matched.startswith(_TMP_PATH_PREFIX):
-        # disk_lines is None when the file would not parse: unknown, so report.
-        return context.disk_lines is not None and line_no not in context.disk_lines
-    return False
-
-
-def _marker_is_not_a_claim(line_no: int, rel: str, context: FileTextContext) -> bool:
-    """Does this stub/placeholder marker say this code is unfinished?
-
-    Three ways it does not, all judged by what the line IS rather than by
-    which file it sits in — a file-name allowlist was what hid a "[DUMMY
-    VOICE]" fallback and a "Mock hear" path in shipping code:
-
-    * The marker is a NAME, a KEY or a regex PATTERN. A scanner has to spell
-      the words it hunts for, and ``placeholder_detected`` is a field of the
-      report, not a confession.
-    * The marker is only in an identifier. Naming a variable after the thing
-      you detect is not incompleteness. Class names that ARE the tell —
-      ``Mock*``, ``Stub*``, ``Fake*`` in product code — are reported by
-      tools/integration_debt.py, which matches on the name shape.
-    * The file is under tests/. A stub, a fake and a double are how a unit
-      gets isolated there; in product code they are unfinished work. The same
-      exclusion, for the same reason, as raise_only_function. Test doubles
-      that escape into product paths are caught where it can actually be
-      proven: the sys.modules contamination guard in tests/conftest.py and
-      the production-only sweep in tests/test_semantic_marker_audit.py.
-    """
-    if rel.startswith("tests/"):
-        return True
-    if line_no not in context.marker_string_lines:
-        return True
-    return line_no in context.marker_vocabulary_lines
-
-
-def _skip_is_not_parked_debt(line: str, line_no: int, context: FileTextContext) -> bool:
-    """Is this skip a precondition rather than a test nobody runs?
-
-    Thirty-one findings, every one a conditional skip and not one xfail: no
-    fork on this platform, no node installed, vm_stat absent, a symlink that
-    would not create. The count grew each time the suite learned to run
-    somewhere new, which is the opposite of a debt signal.
-
-    What IS debt is a skip nothing decides — it fires every run, so the
-    assertions below it never execute anywhere. That, ``pytest.mark.skip``
-    (as against ``skipif``), and any xfail still report.
-    """
-    if line_no in context.unconditional_skip_lines:
-        return False
-    if line_no in context.quoted_skip_lines:
-        return True
-    return "pytest.skip" in line and "pytest.mark.skip" not in line
-
 
 def scan_file(path: Path, root: Path, report: GateReport) -> None:
     rel = rel_path(path, root)

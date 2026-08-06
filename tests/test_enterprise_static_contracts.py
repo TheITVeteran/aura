@@ -52,6 +52,22 @@ def _run_static_gate(tmp_path: Path) -> dict:
     return json.loads(report_path.read_text(encoding="utf-8"))
 
 
+def test_enterprise_gate_facade_preserves_scanner_identity():
+    gate = _load_gate_module()
+    from tools import (
+        aura_enterprise_ast_scan,
+        aura_enterprise_contracts,
+        aura_enterprise_text_scan,
+    )
+
+    assert gate.Finding is aura_enterprise_contracts.Finding
+    assert gate.GateReport is aura_enterprise_contracts.GateReport
+    assert gate.AstGate is aura_enterprise_ast_scan.AstGate
+    assert gate.FileTextContext is aura_enterprise_text_scan.FileTextContext
+    assert gate.file_text_context is aura_enterprise_text_scan.file_text_context
+    assert gate.docstring_line_numbers is aura_enterprise_text_scan.docstring_line_numbers
+
+
 def test_enterprise_gate_baseline_blocks_static_regressions(tmp_path: Path):
     report = _run_static_gate(tmp_path)
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))

@@ -571,10 +571,10 @@ def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
     import inspect
 
     from core.brain.llm import mlx_client
-    from tools.aura_enterprise_gate import ALLOW_SUBPROCESS
+    from tools.aura_enterprise_gate import subprocess_must_use_gateway
 
     source = inspect.getsource(mlx_client._probe_mlx_runtime)
-    assert "core/brain/llm/mlx_client.py" in ALLOW_SUBPROCESS
+    assert subprocess_must_use_gateway("core/brain/llm/mlx_client.py") is True
     assert "get_subprocess_gateway().run(" in source
     # The probe timeout became an operator-configurable bound rather than a
     # hardcoded 25.0: on a host whose page cache is thrashing, importing MLX
