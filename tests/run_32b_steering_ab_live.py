@@ -92,6 +92,36 @@ def count_affect(text: str) -> tuple[int, int]:
     return len(words & AFFECT_WORDS_POS), len(words & AFFECT_WORDS_NEG)
 
 
+#: The plan this campaign is answerable to. A directory rather than a filename
+#: because `Preregistration.write` names a plan by its own content hash — the
+#: only naming scheme under which "the plan we registered" and "the plan we are
+#: reporting against" cannot come apart.
+PREREGISTRATION_DIR = ROOT / "artifacts" / "steering" / "preregistrations"
+PREREGISTERED_CAMPAIGN = "caa_steering_live_alpha_0.35_replacement"
+
+
+def _load_preregistration():
+    """The registered plan for this campaign, or None if there is none.
+
+    None is not a soft failure — the caller reports the run as exploratory,
+    because a campaign that cannot point at a plan written before its data is
+    exactly the campaign this module was rebuilt to stop producing.
+    """
+    from core.evaluation.preregistration import load_preregistration
+
+    if not PREREGISTRATION_DIR.is_dir():
+        return None
+    for path in sorted(PREREGISTRATION_DIR.glob("*.json")):
+        try:
+            plan = load_preregistration(path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"⚠️  Unreadable preregistration {path.name}: {exc}")
+            continue
+        if plan.campaign == PREREGISTERED_CAMPAIGN:
+            return plan
+    return None
+
+
 def _resolve_model_path(cli_value: str | None) -> str:
     if cli_value:
         return cli_value
@@ -390,12 +420,65 @@ def main(argv: list[str] | None = None) -> int:
         "max_tokens": MAX_TOKENS,
         "duration_seconds": round(total_time, 1),
         "injection_count": injector.injection_count,
+        "injections_by_arm": dict(injector.injections_by_arm),
+        "control_arms": list(control_arms),
         "analysis": report.to_dict(),
         "affect_stats": affect_stats,
         "passes_adversarial_control": report.passes_adversarial_control,
-        "steered_vs_terse_significant": svt.significant,
-        "steered_vs_rich_significant": svr.significant,
+        "unmet_requirements": list(report.unmet_requirements()),
+        "steered_effect_significant": effect.significant,
+        # How often the injection changed literally nothing. The retracted
+        # campaign's saved samples were all of this kind and nothing counted
+        # them, so the number is recorded here whether it is 0 or 50.
+        "identical_to_baseline_trials": report.identical_to_baseline_trials,
     }
+
+    # Judged against the plan that was registered BEFORE this ran. A campaign
+    # that scores itself against thresholds chosen afterwards is the thing this
+    # whole rebuild exists to stop.
+    preregistration = _load_preregistration()
+    if preregistration is not None:
+        results_data["preregistration"] = preregistration.to_dict()
+        results_data["verdict"] = preregistration.verify_result(
+            {
+                "effect_exceeds_sampling_noise": float(
+                    report.effect_exceeds_sampling_noise
+                ),
+                "effect_is_specific": float(report.effect_is_specific),
+                "beats_text_controls": float(report.beats_text_controls),
+                "direction_established": float(report.direction_established),
+                "steered_effect_size_d": float(effect.effect_size_d),
+            },
+            parameters_used={
+                "alpha": STEERING_ALPHA,
+                "target_layers": sorted(vectors),
+                "trials_per_task": N_TRIALS,
+                "max_tokens": MAX_TOKENS,
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+                # The INJECTOR arm names, which is the vocabulary the plan
+                # declares. Reporting the condition names here made a faithful
+                # run look like parameter drift — a preregistration check that
+                # cries wolf gets ignored, which costs more than it saves.
+                "control_arms": list(control_arms),
+            },
+        )
+        print(
+            "PREREGISTRATION "
+            f"{preregistration.plan_hash[:16]} — confirms_hypothesis="
+            f"{results_data['verdict']['confirms_hypothesis']}"
+        )
+        drift = results_data["verdict"]["parameter_drift"]
+        if drift:
+            print(f"  ⚠️  ran at unregistered parameters: {drift}")
+    else:
+        print(
+            "⚠️  No preregistration found — this run is EXPLORATORY by "
+            "construction, whatever its numbers say."
+        )
+        results_data["verdict"] = {"confirms_hypothesis": False,
+                                   "reason": "no_preregistration"}
+
     output_path = Path(args.output)
     output_path.write_text(json.dumps(results_data, indent=2, default=str) + "\n")
     print(f"Results saved to {output_path}")

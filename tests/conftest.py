@@ -78,6 +78,29 @@ def pytest_collection_modifyitems(config, items):
         items[:] = selected
 
 
+#: Handles a TEST cannot leak, because no test opens or owns them.
+#:
+#: MLX opens its Metal library and the on-disk shader cache once per process,
+#: lazily, the first time a kernel is compiled — and never closes them, because
+#: they are the framework's for the life of the interpreter. The leak detector
+#: blamed whichever test happened to trigger that first compilation, which made
+#: the verdict depend on execution order: the same test passed when something
+#: earlier had already warmed the cache and failed when it ran first.
+#:
+#: That is the same shape as the defects this guard exists to catch — a rule
+#: ("no file opened during this test may still be open after it") that does not
+#: match the contract it stands for ("this test leaked no resource"). Narrow by
+#: construction: framework-owned, process-global, and unclosable from a test.
+_PROCESS_GLOBAL_HANDLE_MARKERS = (
+    "/mlx/lib/mlx.metallib",
+    "/com.apple.metal/",
+)
+
+
+def _is_process_global_runtime_handle(path: str) -> bool:
+    return any(marker in path for marker in _PROCESS_GLOBAL_HANDLE_MARKERS)
+
+
 @dataclass(frozen=True)
 class _ResourceLeakSnapshot:
     child_identities: frozenset[tuple[int, float]]
@@ -151,6 +174,7 @@ class HermeticResourceSandbox:
                 str(item.path)
                 for item in open_files
                 if not _is_process_lifetime_log_sink(item.path)
+                and not _is_process_global_runtime_handle(str(item.path))
             ),
         )
 
