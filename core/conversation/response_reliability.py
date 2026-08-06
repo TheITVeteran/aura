@@ -1736,12 +1736,11 @@ _EXACT_REPLY_ADDITIONAL_ACTION_TAIL_RE = re.compile(
 #:
 #: Membership is deliberate and narrow. A reason belongs here only when a
 #: person would still rather have the reply than the refusal.
-ADVISORY_REASONS: frozenset[str] = frozenset(
-    {
-        # The reply wandered off the thread. Worth repairing, worth logging,
-        # never worth replacing a real answer with an apology.
-        "reply_abandons_thread",
-    }
+#: Imported rather than restated: surface_disposition owns this set, because
+#: disposition_for has to honour it and a second copy here would let the two
+#: disagree about what "advisory" means.
+from core.conversation.surface_disposition import (  # noqa: E402
+    ADVISORY_ONLY_REASONS as ADVISORY_REASONS,
 )
 
 

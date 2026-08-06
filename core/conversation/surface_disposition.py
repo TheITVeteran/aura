@@ -48,6 +48,7 @@ from typing import Any, Iterable
 __all__ = [
     "SurfaceDisposition",
     "SHORTFALL_REASONS",
+    "ADVISORY_ONLY_REASONS",
     "UNSPEAKABLE_REASONS",
     "best_available_reply",
     "raw_model_draft",
@@ -296,6 +297,25 @@ class SurfaceDisposition(Enum):
 #: one. On 2026-07-26 a dozen gates each failing closed on their own heuristic
 #: destroyed six consecutive correct answers to the same question, and every
 #: one of them was reported to the person as though the model had failed.
+#: Objections that DESCRIBE a reply without condemning it.
+#:
+#: An advisory reason is worth logging and worth repairing later; it is never
+#: worth acting on destructively. response_reliability declares the same idea
+#: in ADVISORY_REASONS, whose docstring says these "describe a turn but never
+#: destroy it" — and disposition_for did not know about it, so every advisory
+#: reason came back REPAIR. At the conversation-learning gate REPAIR means
+#: "do not remember this exchange", and a paraphrased reply with low literal
+#: overlap was therefore erased from memory for the crime of not repeating
+#: the user's words.
+#:
+#: Declared HERE, in the lower-level module, so the two definitions cannot
+#: disagree: response_reliability imports this one.
+ADVISORY_ONLY_REASONS: frozenset[str] = frozenset(
+    {
+        "reply_abandons_thread",
+    }
+)
+
 UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
     {
         "empty_reply",
@@ -438,6 +458,11 @@ def disposition_for(reasons: Any) -> SurfaceDisposition:
         return SurfaceDisposition.SERVE
     if found & UNSPEAKABLE_REASONS:
         return SurfaceDisposition.DISCARD
+    if not (found - ADVISORY_ONLY_REASONS):
+        # Nothing here but advisory observations. Serving is the correct
+        # disposition: the reply is fine, and something merely noticed a
+        # property of it worth writing down.
+        return SurfaceDisposition.SERVE
     return SurfaceDisposition.REPAIR
 
 
