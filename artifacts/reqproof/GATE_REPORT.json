@@ -43,7 +43,7 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 8
+    "unproven-closure": 6
   },
   "defects": [
     {
@@ -248,11 +248,6 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], implementation[A3], test[A3], implementation[A4], test[A4]",
-      "subject": "ADDENDUM-32"
-    },
-    {
-      "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "CTX2-TEST-002"
     },
@@ -270,11 +265,6 @@
       "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "RESOURCE-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "SHUTDOWN-001"
     }
   ],
   "failures": [],
@@ -284,15 +274,15 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 46,
-    "current_fingerprints": 46,
+    "baseline_fingerprints": 44,
+    "current_fingerprints": 44,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 39,
-    "evidence_ledger_sha256": "ba9a94314683f9454da9896a8d383e36c9bae87dca0248be49ac3c51d07567b3",
+    "evidence_ledger_entries": 43,
+    "evidence_ledger_sha256": "2a0cde09d50563912792f83bce9d4e92ee2ef3294f501cced54ee8c676e8aac5",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13",
     "registry_revision": 32,

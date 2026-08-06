@@ -40,12 +40,10 @@
     "prose-minted::VOICE-001",
     "unproven-closure::ADDENDUM-22",
     "unproven-closure::ADDENDUM-23",
-    "unproven-closure::ADDENDUM-32",
     "unproven-closure::CTX2-TEST-002",
     "unproven-closure::LANE-001",
     "unproven-closure::LIFECYCLE-001",
-    "unproven-closure::RESOURCE-001",
-    "unproven-closure::SHUTDOWN-001"
+    "unproven-closure::RESOURCE-001"
   ],
   "schema_version": 1
 }
