@@ -55,6 +55,21 @@ What is actually claimed, and what each claim costs:
   Scaffolding is not a result. Unverified self-modification stays out of
   evidence scope until long wall-clock runs, hidden external tasks, and
   independent replication all succeed.
+- **The cognitive layer has not been shown to earn its cost.** This is the
+  largest open gap in the project and it belongs at the top of any honest
+  reading. Two components have now been measured against simpler
+  alternatives under matched or shared budgets — memory retrieval beats a
+  budgeted context window when the fact is out of window (claim 31a), and
+  the revision gate beats both "always keep the first answer" and "always
+  keep the second" over the *same* two generations (claim 31b). Two
+  subsystems on two task families is not the layer. Nothing here yet shows
+  that IIT, qualia metrics, neurochemical simulation, substrate ODEs, dream
+  cycles or theory arbitration make Aura better at a task a user wants
+  done, and a far smaller computer-use agent performs the demo tasks
+  without any of them. Those layers cost latency, memory, tuning surface
+  and failure modes this repository has repeatedly paid for. Complexity is
+  justified by measured advantage; most of it has not been measured. See
+  `CLAIMS_MATRIX.md` claim 31.
 - **Production maturity is bounded.** This is research software being
   hardened. The local monolith, the broad fallback surface, and the runtime
   fragility are all real, and none of them belong under the word

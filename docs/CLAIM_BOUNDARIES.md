@@ -44,8 +44,39 @@ The following claims are classified as **not proven** due to local environment o
 * **Blocker**: Passing a configured local AGI-style battery is evidence for a bounded architecture profile, not proof of unrestricted AGI. Full scientific validation requires independent, adversarial, out-of-distribution evaluation beyond this repository.
 
 ### B. AGI-Candidate Architecture
-* **Status**: `locally demonstrable only when final-proof passes`
-* **Boundary**: The label is allowed only as "proof-bearing AGI-candidate cognitive architecture" and only when the current final-proof profile produces passing DNU, leakage, baseline, ablation, receipt, external validation, unified scenario, artifact-consistency, and Aletheia evidence. It never upgrades the claim to AGI solved.
+* **Status**: `not proven` — and not licensable by anything in this repository.
+* **Boundary**: **The label is not available.** It is not a matter of which
+  local batteries pass.
+
+  This entry previously read: the label is allowed "only when the current
+  final-proof profile produces passing DNU, leakage, baseline, ablation,
+  receipt, external validation, unified scenario, artifact-consistency, and
+  Aletheia evidence." That licensing condition was wrong three times over, and
+  it contradicted the section directly above it.
+
+  1. **It contradicts boundary A.** A's own blocker states that full validation
+     "requires independent, adversarial, out-of-distribution evaluation beyond
+     this repository." B then granted the label on nine batteries that all run
+     inside this repository, written by the same author as the system under
+     test. Aura evaluating Aura is not evidence about Aura, and a document
+     cannot say both.
+  2. **One of the named batteries was retracted for exactly this use.**
+     `docs/DNU_BASELINE_FAIRNESS_AUDIT.md` concludes that the baseline result
+     "is **not** honest as whole-mind or AGI-candidate evidence, and it should
+     not be cited that way." B cited it that way, by name, as a licensing
+     condition.
+  3. **"Ablation" did not mean what the list implied.** Until 2026-08-06 the
+     ablation scorecard's capability classification rested on a hardcoded
+     `tasks_solvable_without_component=True` in the tool that produced it. It
+     is measured now (`CLAIMS_MATRIX.md` 31a/31b), and what it measures is two
+     subsystems on two task families — which is not a cognitive layer, let
+     alone a candidate for general intelligence.
+
+  What would license the label is not a longer local list. It is independent,
+  adversarial, out-of-distribution evaluation by people who did not build this,
+  on tasks this repository has never seen. Until that exists, the honest
+  statement is the one in `CLAIMS_MATRIX.md` claim 31: the cognitive layer has
+  not been shown to earn its cost.
 
 ### C. Indefinite Autonomy
 * **Status**: `not proven`
