@@ -456,8 +456,178 @@ async def test_wedged_eviction_callback_is_bounded_and_cancels_candidate(
     assert time.monotonic() - started < 0.5
     assert cancelled.state is LaneTransactionState.CANCELLED
     assert "eviction_callback_timeout" in cancelled.reason
-    assert cancelled.receipt_id
+    assert cancelled.receipt_id == ""
     assert controller.snapshot()["reserved_gb"] == 0.0
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == decision.request_id
+    )
+    assert reservation["compensation_pending_owner_ids"] == ["trainer:wedged"]
+    assert reservation["eviction_intents"]["trainer:wedged"]["state"] == "invoking"
+
+
+@pytest.mark.asyncio
+async def test_eviction_intent_is_durable_before_callback_and_compensation(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable(455, 456)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 455),
+        _owner("trainer:ambiguous", "/m/trainer", 25.0, 456, purpose="train"),
+    ]
+    decision = await controller.reserve(
+        LaneClaim(
+            owner_id="mlx:reflex",
+            model_path="/m/qwen-1.5b-reflex",
+            request_gb=4.0,
+            request_id="eviction-intent-before-effect",
+        ),
+        observations=observations,
+    )
+    callback_observed_intent = False
+    compensation_observed_pending = False
+
+    async def ambiguous_evict(owner: LaneOwnerObservation, _reason: str) -> bool:
+        nonlocal callback_observed_intent
+        reservation = next(
+            item
+            for item in controller.snapshot()["reservations"]
+            if item["request_id"] == decision.request_id
+        )
+        intent = reservation["eviction_intents"][owner.owner_id]
+        callback_observed_intent = bool(
+            intent["state"] == "invoking"
+            and intent["owner"]["process"] == owner.process.to_dict()
+        )
+        await asyncio.sleep(60.0)
+        return True
+
+    async def compensate(owner: LaneOwnerObservation, _reason: str) -> bool:
+        nonlocal compensation_observed_pending
+        reservation = next(
+            item
+            for item in controller.snapshot()["reservations"]
+            if item["request_id"] == decision.request_id
+        )
+        compensation_observed_pending = owner.owner_id in reservation[
+            "compensation_pending_owner_ids"
+        ]
+        return True
+
+    cancelled = await controller.prepare(
+        decision,
+        evict=ambiguous_evict,
+        observe=lambda: observations,
+        compensate=compensate,
+        timeout_s=0.05,
+    )
+
+    assert callback_observed_intent is True
+    assert compensation_observed_pending is True
+    assert cancelled.receipt_id
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == decision.request_id
+    )
+    assert reservation["compensation_pending_owner_ids"] == []
+    assert reservation["compensation"]["trainer:ambiguous"] is True
+
+
+@pytest.mark.asyncio
+async def test_replayed_ambiguous_eviction_compensates_without_reinvoking_unload(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable(457, 458)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 457),
+        _owner("trainer:crash-window", "/m/trainer", 25.0, 458, purpose="train"),
+    ]
+    decision = await controller.reserve(
+        LaneClaim(
+            owner_id="mlx:reflex",
+            model_path="/m/qwen-1.5b-reflex",
+            request_gb=4.0,
+            request_id="eviction-intent-replay",
+        ),
+        observations=observations,
+    )
+    controller._arm_eviction_intent_sync(decision, "trainer:crash-window")
+    compensation_calls: list[str] = []
+
+    async def compensate(owner: LaneOwnerObservation, _reason: str) -> bool:
+        compensation_calls.append(owner.owner_id)
+        return True
+
+    recovered = await controller.prepare(
+        decision,
+        evict=lambda *_args: pytest.fail("ambiguous unload must not be invoked twice"),
+        observe=lambda: observations,
+        compensate=compensate,
+    )
+
+    assert recovered.state is LaneTransactionState.CANCELLED
+    assert recovered.reason == "ambiguous_eviction_recovered:trainer:crash-window"
+    assert recovered.receipt_id
+    assert compensation_calls == ["trainer:crash-window"]
+
+
+@pytest.mark.asyncio
+async def test_failed_ambiguous_compensation_remains_pending_and_retries(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable(459, 460)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 459),
+        _owner("trainer:retry-restore", "/m/trainer", 25.0, 460, purpose="train"),
+    ]
+    decision = await controller.reserve(
+        LaneClaim(
+            owner_id="mlx:reflex",
+            model_path="/m/qwen-1.5b-reflex",
+            request_gb=4.0,
+            request_id="eviction-compensation-retry",
+        ),
+        observations=observations,
+    )
+
+    async def ambiguous_evict(_owner: LaneOwnerObservation, _reason: str) -> bool:
+        await asyncio.sleep(60.0)
+        return True
+
+    cancelled = await controller.prepare(
+        decision,
+        evict=ambiguous_evict,
+        observe=lambda: observations,
+        compensate=lambda *_args: False,
+        timeout_s=0.05,
+    )
+    assert cancelled.receipt_id == ""
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == decision.request_id
+    )
+    assert reservation["compensation_pending_owner_ids"] == ["trainer:retry-restore"]
+    assert reservation["compensation"]["trainer:retry-restore"] is False
+
+    restored = await controller.reconcile_expired_compensations(
+        compensate=lambda *_args: True,
+    )
+
+    assert restored == 1
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == decision.request_id
+    )
+    assert reservation["compensation_pending_owner_ids"] == []
+    assert reservation["compensation"]["trainer:retry-restore"] is True
+    assert reservation["terminal_receipt_id"]
 
 
 @pytest.mark.asyncio

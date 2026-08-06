@@ -1285,10 +1285,28 @@ class ModelLaneController:
             record["state"] = LaneTransactionState.EXPIRED.value
             record["reason"] = "reservation_owner_dead" if controller_dead else "reservation_ttl_expired"
             record["terminal_at"] = now
-            compensation = dict(record.get("compensation") or {})
+            compensation = {
+                str(owner_id)
+                for owner_id, restored in dict(record.get("compensation") or {}).items()
+                if restored is True
+            }
+            unresolved_intents = {
+                str(owner_id): intent
+                for owner_id, intent in dict(record.get("eviction_intents") or {}).items()
+                if isinstance(intent, Mapping)
+                and str(intent.get("state") or "") == "invoking"
+            }
+            compensation_owners = record.setdefault("compensation_owners", {})
+            for owner_id, intent in unresolved_intents.items():
+                payload = intent.get("owner")
+                if isinstance(payload, Mapping):
+                    compensation_owners[owner_id] = dict(payload)
             pending_compensation = [
                 str(owner_id)
-                for owner_id in record.get("evicted_owner_ids") or ()
+                for owner_id in {
+                    *(str(item) for item in record.get("evicted_owner_ids") or ()),
+                    *unresolved_intents,
+                }
                 if str(owner_id) not in compensation
             ]
             record["compensation_pending_owner_ids"] = pending_compensation
@@ -1796,14 +1814,20 @@ class ModelLaneController:
             state = self._load_locked()
             changed = self._prune_locked(state, now)
             for request_id, record in state["reservations"].items():
-                if str(record.get("state") or "") != LaneTransactionState.EXPIRED.value:
+                if str(record.get("state") or "") not in {
+                    LaneTransactionState.EXPIRED.value,
+                    LaneTransactionState.CANCELLED.value,
+                }:
                     continue
                 pending = [
                     str(owner_id)
                     for owner_id in record.get("compensation_pending_owner_ids") or ()
                 ]
                 claims = record.setdefault("compensation_claims", {})
-                evicted = dict(record.get("evicted_owners") or {})
+                evicted = {
+                    **dict(record.get("evicted_owners") or {}),
+                    **dict(record.get("compensation_owners") or {}),
+                }
                 for owner_id in pending:
                     if owner_id in claims:
                         continue
@@ -1878,11 +1902,12 @@ class ModelLaneController:
             ):
                 raise ModelLaneControlError("expired_compensation_claim_lost")
             record.setdefault("compensation", {})[owner_id] = bool(restored)
-            record["compensation_pending_owner_ids"] = [
-                candidate
-                for candidate in record.get("compensation_pending_owner_ids") or ()
-                if str(candidate) != owner_id
-            ]
+            if restored:
+                record["compensation_pending_owner_ids"] = [
+                    candidate
+                    for candidate in record.get("compensation_pending_owner_ids") or ()
+                    if str(candidate) != owner_id
+                ]
             claims.pop(owner_id, None)
             self._append_event(
                 state,
@@ -1923,7 +1948,7 @@ class ModelLaneController:
         compensate: CompensateCallback = compensate_registered_model_owner,
         max_compensations: int = _TERMINAL_RESERVATION_LIMIT,
     ) -> int:
-        """Recover owners displaced by a reservation that died before commit."""
+        """Recover owners displaced by an expired or cancelled reservation."""
 
         completed = 0
         for _attempt in range(max(0, int(max_compensations))):
@@ -2151,8 +2176,12 @@ class ModelLaneController:
                     "evict_owner_ids": list(evict_owner_ids if admitted else ()),
                     "evicted_owner_ids": [],
                     "evicted_owners": {},
+                    "eviction_intents": {},
                     "eviction_receipt_ids": {},
                     "compensation": {},
+                    "compensation_owners": {},
+                    "compensation_pending_owner_ids": [],
+                    "compensation_claims": {},
                     "controller_process": ProcessIdentity.current(
                         observer=self.resource_observer
                     ).to_dict(),
@@ -2197,6 +2226,115 @@ class ModelLaneController:
     async def _call_bool(callback: Callable[..., Any], *args: Any) -> bool:
         return bool(await _invoke_owned_callback(callback, *args))
 
+    def _arm_eviction_intent_sync(
+        self,
+        decision: LaneTransactionDecision,
+        owner_id: str,
+    ) -> tuple[LaneOwnerObservation, dict[str, Any], bool]:
+        """Persist the exact compensation payload before invoking an unload."""
+
+        now = self._clock()
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            record = state["reservations"].get(decision.request_id)
+            if not isinstance(record, dict):
+                raise ModelLaneControlError("lane_reservation_missing_during_eviction")
+            self._assert_fence(record, decision)
+            intents = record.setdefault("eviction_intents", {})
+            existing_intent = intents.get(owner_id)
+            if isinstance(existing_intent, Mapping):
+                payload = existing_intent.get("owner")
+                if not isinstance(payload, Mapping):
+                    raise ModelLaneControlError("eviction_intent_owner_payload_invalid")
+                return self._record_to_observation(payload), dict(record), True
+            owner_record = state["owners"].get(owner_id)
+            if not isinstance(owner_record, dict):
+                raise ModelLaneControlError("eviction_target_missing_before_intent")
+            owner = self._record_to_observation(owner_record)
+            owner_payload = self._observation_payload(owner)
+            intent_id = hashlib.sha256(
+                f"{decision.transaction_id}:{owner_id}".encode()
+            ).hexdigest()
+            intents[owner_id] = {
+                "intent_id": intent_id,
+                "state": "invoking",
+                "armed_at": now,
+                "owner": owner_payload,
+            }
+            record.setdefault("compensation_owners", {})[owner_id] = owner_payload
+            self._append_event(
+                state,
+                "eviction_intent_armed",
+                at=now,
+                transaction_id=decision.transaction_id,
+                owner_id=owner_id,
+                intent_id=intent_id,
+            )
+            self._save_locked(state)
+            return owner, dict(record), False
+
+    def _resolve_no_effect_eviction_intent_sync(
+        self,
+        decision: LaneTransactionDecision,
+        owner_id: str,
+    ) -> None:
+        """Disarm an intent only after an explicit no-side-effect refusal."""
+
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            record = state["reservations"].get(decision.request_id)
+            if not isinstance(record, dict):
+                raise ModelLaneControlError("lane_reservation_missing_after_eviction_refusal")
+            self._assert_fence(record, decision)
+            record.setdefault("eviction_intents", {}).pop(owner_id, None)
+            record.setdefault("compensation_owners", {}).pop(owner_id, None)
+            self._append_event(
+                state,
+                "eviction_intent_disarmed",
+                at=self._clock(),
+                transaction_id=decision.transaction_id,
+                owner_id=owner_id,
+                reason="callback_refused_without_effect",
+            )
+            self._save_locked(state)
+
+    def _record_verified_eviction_sync(
+        self,
+        decision: LaneTransactionDecision,
+        *,
+        owner: LaneOwnerObservation,
+        receipt_id: str,
+        completed_at: float,
+    ) -> None:
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            record = state["reservations"].get(decision.request_id)
+            if not isinstance(record, dict):
+                raise ModelLaneControlError("lane_reservation_missing_after_eviction")
+            self._assert_fence(record, decision)
+            state["owners"].pop(owner.owner_id, None)
+            evicted_ids = record.setdefault("evicted_owner_ids", [])
+            if owner.owner_id not in evicted_ids:
+                evicted_ids.append(owner.owner_id)
+            payload = self._observation_payload(owner)
+            record.setdefault("evicted_owners", {})[owner.owner_id] = payload
+            record.setdefault("compensation_owners", {})[owner.owner_id] = payload
+            record.setdefault("eviction_receipt_ids", {})[owner.owner_id] = receipt_id
+            intent = record.setdefault("eviction_intents", {}).get(owner.owner_id)
+            if isinstance(intent, dict):
+                intent["state"] = "verified"
+                intent["verified_at"] = completed_at
+                intent["receipt_id"] = receipt_id
+            self._append_event(
+                state,
+                "owner_evicted",
+                at=completed_at,
+                transaction_id=decision.transaction_id,
+                owner_id=owner.owner_id,
+                receipt_id=receipt_id,
+            )
+            self._save_locked(state)
+
     async def prepare(
         self,
         decision: LaneTransactionDecision,
@@ -2216,22 +2354,25 @@ class ModelLaneController:
         evicted: list[LaneOwnerObservation] = []
 
         for owner_id in decision.evict_owner_ids:
-            with self._thread_lock, interprocess_file_lock(self.lock_path):
-                state = self._load_locked()
-                record = state["reservations"].get(decision.request_id)
-                if not isinstance(record, dict):
-                    raise ModelLaneControlError("lane_reservation_missing_during_eviction")
-                self._assert_fence(record, decision)
-                owner_record = state["owners"].get(owner_id)
-                if not isinstance(owner_record, dict):
-                    continue
-                owner = self._record_to_observation(owner_record)
-                reservation_copy = dict(record)
+            owner, reservation_copy, ambiguous_replay = await asyncio.to_thread(
+                self._arm_eviction_intent_sync,
+                decision,
+                owner_id,
+            )
+            if ambiguous_replay:
+                return await self.cancel(
+                    decision,
+                    reason=f"ambiguous_eviction_recovered:{owner_id}",
+                    compensate=compensate,
+                    evicted=[*evicted, owner],
+                )
+            owner_record = self._observation_payload(owner)
 
             reason = f"evicted_for:{decision.transaction_id}:{decision.owner_id}"
             outcome = "eviction_failed"
             detail = "eviction_callback_refused"
             completed_at = self._clock()
+            accepted: bool | None = None
             try:
                 remaining = max(0.0, deadline - time.monotonic())
                 if remaining <= 0.0:
@@ -2280,6 +2421,12 @@ class ModelLaneController:
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 detail = f"eviction_error:{type(exc).__name__}:{exc}"
             completed_at = self._clock()
+            if accepted is False:
+                await asyncio.to_thread(
+                    self._resolve_no_effect_eviction_intent_sync,
+                    decision,
+                    owner_id,
+                )
             receipt_id = await asyncio.to_thread(
                 self._emit_eviction_receipt,
                 reservation_copy,
@@ -2290,7 +2437,7 @@ class ModelLaneController:
             )
             if outcome != "evicted":
                 compensation_candidates = list(evicted)
-                if detail == "eviction_callback_timeout":
+                if accepted is not False:
                     compensation_candidates.append(owner)
                 return await self.cancel(
                     decision,
@@ -2300,27 +2447,13 @@ class ModelLaneController:
                     eviction_receipt=(owner_id, receipt_id),
                 )
             evicted.append(owner)
-            with self._thread_lock, interprocess_file_lock(self.lock_path):
-                state = self._load_locked()
-                record = state["reservations"].get(decision.request_id)
-                if not isinstance(record, dict):
-                    raise ModelLaneControlError("lane_reservation_missing_after_eviction")
-                self._assert_fence(record, decision)
-                state["owners"].pop(owner_id, None)
-                evicted_ids = record.setdefault("evicted_owner_ids", [])
-                if owner_id not in evicted_ids:
-                    evicted_ids.append(owner_id)
-                record.setdefault("evicted_owners", {})[owner_id] = self._observation_payload(owner)
-                record.setdefault("eviction_receipt_ids", {})[owner_id] = receipt_id
-                self._append_event(
-                    state,
-                    "owner_evicted",
-                    at=completed_at,
-                    transaction_id=decision.transaction_id,
-                    owner_id=owner_id,
-                    receipt_id=receipt_id,
-                )
-                self._save_locked(state)
+            await asyncio.to_thread(
+                self._record_verified_eviction_sync,
+                decision,
+                owner=owner,
+                receipt_id=receipt_id,
+                completed_at=completed_at,
+            )
 
         claim = await asyncio.to_thread(self._claim_for_reclamation_sync, decision)
         if reclaim is not None:
@@ -2562,11 +2695,13 @@ class ModelLaneController:
         evicted: Iterable[LaneOwnerObservation] = (),
         eviction_receipt: tuple[str, str] | None = None,
     ) -> LaneTransactionDecision:
+        supplied_evicted = list(evicted)
         terminal, stored_evicted = await asyncio.to_thread(
             self._mark_cancelled_sync,
             decision,
             reason=reason,
             eviction_receipt=eviction_receipt,
+            compensation_candidates=supplied_evicted,
         )
         recovered_receipt = await asyncio.to_thread(
             self._adopt_terminal_receipt_if_present,
@@ -2576,7 +2711,9 @@ class ModelLaneController:
             return LaneTransactionDecision(
                 **{**terminal.__dict__, "receipt_id": recovered_receipt, "replayed": True}
             )
-        evicted_list = list(evicted) or stored_evicted
+        evicted_by_owner = {owner.owner_id: owner for owner in stored_evicted}
+        evicted_by_owner.update({owner.owner_id: owner for owner in supplied_evicted})
+        evicted_list = list(evicted_by_owner.values())
         compensation: dict[str, Any] = {}
         if compensate is not None:
             for owner in reversed(evicted_list):
@@ -2597,10 +2734,18 @@ class ModelLaneController:
                 decision.request_id,
                 compensation,
             )
-        receipt_id = await asyncio.to_thread(
-            self._persist_terminal_receipt,
-            decision.request_id,
-        )
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            pending_record = self._load_locked()["reservations"].get(decision.request_id)
+            pending_compensation = bool(
+                isinstance(pending_record, Mapping)
+                and pending_record.get("compensation_pending_owner_ids")
+            )
+        receipt_id = ""
+        if not pending_compensation:
+            receipt_id = await asyncio.to_thread(
+                self._persist_terminal_receipt,
+                decision.request_id,
+            )
         return LaneTransactionDecision(**{**terminal.__dict__, "receipt_id": receipt_id})
 
     def _mark_cancelled_sync(
@@ -2609,6 +2754,7 @@ class ModelLaneController:
         *,
         reason: str,
         eviction_receipt: tuple[str, str] | None = None,
+        compensation_candidates: Iterable[LaneOwnerObservation] = (),
     ) -> tuple[LaneTransactionDecision, list[LaneOwnerObservation]]:
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
@@ -2626,6 +2772,26 @@ class ModelLaneController:
                 if eviction_receipt is not None:
                     owner_id, receipt_id = eviction_receipt
                     record.setdefault("eviction_receipt_ids", {})[owner_id] = receipt_id
+                compensation_owners = record.setdefault("compensation_owners", {})
+                for owner in compensation_candidates:
+                    compensation_owners[owner.owner_id] = self._observation_payload(owner)
+                for owner_id, intent in dict(record.get("eviction_intents") or {}).items():
+                    if not isinstance(intent, Mapping):
+                        continue
+                    if str(intent.get("state") or "") not in {"invoking", "verified"}:
+                        continue
+                    payload = intent.get("owner")
+                    if isinstance(payload, Mapping):
+                        compensation_owners[str(owner_id)] = dict(payload)
+                compensated = {
+                    str(owner_id)
+                    for owner_id, restored in dict(record.get("compensation") or {}).items()
+                    if restored is True
+                }
+                record["compensation_pending_owner_ids"] = sorted(
+                    set(compensation_owners).difference(compensated)
+                )
+                record.setdefault("compensation_claims", {})
                 for owner in state["owners"].values():
                     if str(owner.get("eviction_requested_by") or "") == decision.transaction_id:
                         owner["eviction_requested_by"] = ""
@@ -2640,7 +2806,10 @@ class ModelLaneController:
                 self._save_locked(state)
             evicted = [
                 self._record_to_observation(payload)
-                for payload in dict(record.get("evicted_owners") or {}).values()
+                for payload in {
+                    **dict(record.get("evicted_owners") or {}),
+                    **dict(record.get("compensation_owners") or {}),
+                }.values()
                 if isinstance(payload, Mapping)
             ]
             return self._record_to_decision(record, replayed=status in _TERMINAL_RESERVATION_STATES), evicted
@@ -2660,7 +2829,18 @@ class ModelLaneController:
                 receipt_id
             ):
                 raise ModelLaneControlError("lane_compensation_after_terminal_receipt")
-            record["compensation"] = _json_metadata(compensation)
+            recorded = record.setdefault("compensation", {})
+            recorded.update(_json_metadata(compensation))
+            restored_owner_ids = {
+                str(owner_id)
+                for owner_id, restored in compensation.items()
+                if restored is True
+            }
+            record["compensation_pending_owner_ids"] = [
+                owner_id
+                for owner_id in record.get("compensation_pending_owner_ids") or ()
+                if str(owner_id) not in restored_owner_ids
+            ]
             self._save_locked(state)
 
     def cancel_sync(
@@ -2683,7 +2863,15 @@ class ModelLaneController:
             )
         if compensation:
             self._record_compensation_sync(decision.request_id, compensation)
-        receipt_id = self._persist_terminal_receipt(decision.request_id)
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            pending_record = self._load_locked()["reservations"].get(decision.request_id)
+            pending_compensation = bool(
+                isinstance(pending_record, Mapping)
+                and pending_record.get("compensation_pending_owner_ids")
+            )
+        receipt_id = ""
+        if not pending_compensation:
+            receipt_id = self._persist_terminal_receipt(decision.request_id)
         return LaneTransactionDecision(**{**terminal.__dict__, "receipt_id": receipt_id})
 
     async def release_owner(

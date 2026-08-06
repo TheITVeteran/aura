@@ -36881,3 +36881,30 @@ gateway, heartbeat, embedding, voice, image, and local-code family passes
 write-ahead eviction, compensation serialization, cumulative inherited
 sublease, or subprocess capability-declaration requirements. CP810 and the
 honest total remain open at 809/920.
+
+#### Model-lane write-ahead eviction continuation
+
+Every external unload now has a durable write-ahead intent containing the
+exact owner/process/claim payload required for restoration. The intent is
+atomically saved before callback entry. A controller replay that finds an
+unresolved intent never invokes the unload twice: it cancels the candidate and
+enters compensation. Verified evictions retain their intent and receipt as
+resolved history, while an explicit callback refusal is the only outcome that
+can disarm the intent without restoration.
+
+Cancellation atomically materializes pending-compensation owner IDs before any
+compensator runs, including caller-supplied displaced owners and ambiguous
+timeout/error outcomes. Terminal receipts and later admissions remain blocked
+while any restoration is pending. A failed compensator no longer clears the
+obligation; the durable claimant expires safely and the next reconciliation
+retries it. Reservation-owner death or TTL expiry likewise converts unresolved
+write-ahead intents into recoverable compensation work.
+
+Focused crash-window and compensation-retry regressions pass 5/5; the complete
+model-lane, subprocess gateway, heartbeat, embedding, voice, image, and
+local-code family passes 127/127; Ruff, compile, scoped production MyPy, and
+smoke pass, with smoke at 103/103. This closes write-ahead eviction intent,
+ambiguous-outcome recovery, and durable pending-compensation state. Concurrent
+claim serialization across direct and recovered compensation paths remains
+open, as do cumulative inherited sublease accounting and fail-closed subprocess
+capability declaration. CP810 and the honest total remain open at 809/920.
