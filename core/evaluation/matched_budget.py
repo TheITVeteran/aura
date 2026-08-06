@@ -272,6 +272,13 @@ class AttemptLedger:
             "success_rate": successes / total,
             # And separately: how often it worked without help of any kind.
             "clean_success_rate": clean / total,
+            # The mean of the graded score, which is NOT success_rate whenever
+            # the grade is continuous. A directional or partial-credit metric
+            # scored 0.0-1.0 has a success_rate of 1.000 across every arm —
+            # "the attempt completed" — while the thing under test lives
+            # entirely in the score. Reporting the first as if it were the
+            # second makes every arm look identical and hides the effect.
+            "mean_score": sum(a.score for a in attempts) / total,
             "fell_back": sum(1 for a in attempts if a.fell_back),
             "needed_human": sum(1 for a in attempts if a.human_intervention),
             "total_retries": sum(a.retries for a in attempts),
