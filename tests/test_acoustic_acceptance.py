@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.x509.oid import NameOID
 
+from core.reality_reach import acoustic_acceptance_contracts
 from core.reality_reach.acceptance import AcceptanceEvidenceClass
 from core.reality_reach.acceptance_mandate import (
     AcceptanceMandateProvisionReceipt,
@@ -59,6 +60,22 @@ from core.runtime.audit_chain import canonical_json, sha256_hex
 from tools.reality_reach import manage_acceptance_transparency as transparency_tool
 from tools.reality_reach import manage_acceptance_witness as witness_tool
 from tools.reality_reach import verify_acceptance as verify_tool
+
+
+def test_acoustic_facade_preserves_public_contract_identity() -> None:
+    assert (
+        AcousticAcceptanceConfig
+        is acoustic_acceptance_contracts.AcousticAcceptanceConfig
+    )
+    assert (
+        AcousticA1AcceptanceReceipt
+        is acoustic_acceptance_contracts.AcousticA1AcceptanceReceipt
+    )
+    assert (
+        AcousticA1CampaignRecord
+        is acoustic_acceptance_contracts.AcousticA1CampaignRecord
+    )
+    assert AcousticTrialArm is acoustic_acceptance_contracts.AcousticTrialArm
 
 
 class _TransferDriver:
