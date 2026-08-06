@@ -2677,7 +2677,7 @@ function queueThought(data) {
     if (!state.pacingActive && !state.neuralFeedPaused) processThoughtQueue();
 }
 
-function queueNeuralLivenessCard(message, { level = 'info', source = 'Aura.Live.Neural', force = false } = {}) {
+function queueNeuralLivenessCard(message, { level = 'info', source = 'Aura.Live.Neural', force = false, fullMessage = '' } = {}) {
     const now = Date.now();
     if (!force && now - Number(state.lastNeuralPulseAt || 0) < NEURAL_LIVENESS_PULSE_MS) return;
     state.lastNeuralPulseAt = now;
@@ -2687,6 +2687,10 @@ function queueNeuralLivenessCard(message, { level = 'info', source = 'Aura.Live.
         name: source,
         level,
         message,
+        // The card already renders a detail toggle off fullMessage, so the
+        // technical line survives one click away instead of being the
+        // headline.
+        fullMessage: fullMessage || message,
         timestamp: now / 1000,
         event_id: `neural_liveness_${now}_${Math.random().toString(36).slice(2, 8)}`
     });
@@ -2752,13 +2756,27 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
         strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'
     ).replace(/_/g, ' ');
     if (!strictHealthy) state.lastHealthWarningPulseAt = now;
-    queueNeuralLivenessCard(
-        `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}${proofText}`,
-        {
-            level: strictHealthy && !proofText ? 'info' : 'warning',
-            force: changed
-        }
-    );
+    // This card sits in the THOUGHTS feed, where everything else reads as
+    // Aura's inner life, so it used to put
+    //   [websocket_heartbeat] health=not ready; probes blocked; conversation
+    //   not ready | blockers: runtime_required_probes, probe:kernel
+    // in among her actual thoughts. The technical line is unchanged and
+    // still exact — it is the card's detail now, and the headline says the
+    // same thing in words.
+    const technical = `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}${proofText}`;
+    const lex = window.AuraShellLexicon;
+    const summary = lex && blockers.length ? lex.summarize(blockers) : null;
+    const headline = strictHealthy && !proofText
+        ? 'Health check passed — ready to talk.'
+        : summary
+        ? `${summary.title} — ${summary.meaning}`
+        : technical;
+
+    queueNeuralLivenessCard(headline, {
+        level: strictHealthy && !proofText ? 'info' : 'warning',
+        force: changed,
+        fullMessage: technical
+    });
 }
 
 function syncNeuralFeedMode() {
