@@ -352,7 +352,7 @@
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 8,
-    "evidence_ledger_sha256": "3291acfe972a2ccec9f029049000eced20fe6ce59de0b6289948fbab28930020",
+    "evidence_ledger_sha256": "1b63336dadaba355db7a3f9265d3071299c7e456834f93f221aab434d06f48c4",
     "mandatory_not_closed": 282,
     "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
     "registry_revision": 29,

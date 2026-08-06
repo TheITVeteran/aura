@@ -1,16 +1,16 @@
 {
-  "content_sha256": "3291acfe972a2ccec9f029049000eced20fe6ce59de0b6289948fbab28930020",
+  "content_sha256": "1b63336dadaba355db7a3f9265d3071299c7e456834f93f221aab434d06f48c4",
   "entries": [
     {
       "acceptance_ids": [
         "A7"
       ],
-      "commit": "f6c99eb7efea07e4f8658fcde89418878fe30118",
+      "commit": "e2da9bd7a7d7b1077ffae2e39a2e0054a1686169",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/f6c99eb7efea07e4f8658fcde89418878fe30118.json",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/e2da9bd7a7d7b1077ffae2e39a2e0054a1686169.json",
       "requirement_id": "ADDENDUM-21",
-      "sha256": "00c33c65af4c0876537d33f4eab2b7c3da9af9e89cc7a46261e62909fa2cc7c0"
+      "sha256": "18f1b4055ed74b74c7456cecbb4038b8439d30b41e476d8fde3e49a1c2d8a6c0"
     },
     {
       "acceptance_ids": [
@@ -77,12 +77,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "f6c99eb7efea07e4f8658fcde89418878fe30118",
+      "commit": "e2da9bd7a7d7b1077ffae2e39a2e0054a1686169",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/f6c99eb7efea07e4f8658fcde89418878fe30118.json",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/e2da9bd7a7d7b1077ffae2e39a2e0054a1686169.json",
       "requirement_id": "LANE-001",
-      "sha256": "00c33c65af4c0876537d33f4eab2b7c3da9af9e89cc7a46261e62909fa2cc7c0"
+      "sha256": "18f1b4055ed74b74c7456cecbb4038b8439d30b41e476d8fde3e49a1c2d8a6c0"
     },
     {
       "acceptance_ids": [
