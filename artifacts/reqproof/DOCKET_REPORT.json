@@ -637,7 +637,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "542913cda4a161919ad6be4737be126cf23d57b59a9a8f5413cbb7b63953def2",
+    "evidence_ledger_sha256": "730dd675d126151f20b03b438143b9d96a990d4f5623f3224ff43836ceff93fe",
     "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
@@ -645,7 +645,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "590262faef4397bb6d8029cdffbcda1a5a200e142837abccafcca90bff6f251d",
+  "report_sha256": "bf0b9ecf7e3c1f39f81ea1146054855574745cf40b438e43af305e96c4fd96d6",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2925,24 +2925,14 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 22,
-      "evidence_cells_verified": 8,
+      "evidence_cells_verified": 18,
       "family": "ADDENDUM",
       "id": "ADDENDUM-21",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "implementation:A2",
-        "implementation:A3",
         "live:A3",
-        "implementation:A4",
-        "implementation:A5",
         "live:A5",
-        "implementation:A6",
-        "implementation:A8",
-        "test:A8",
-        "implementation:A9",
-        "test:A9",
         "live:A9",
         "soak:A9"
       ],
@@ -4036,14 +4026,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-001",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4055,14 +4043,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-002",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4074,13 +4060,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "live:A1"
       ],
       "owner": "unassigned",
@@ -4094,14 +4079,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-004",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
