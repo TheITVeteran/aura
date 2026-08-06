@@ -570,6 +570,33 @@ class SafeSelfModification:
         resolved = self._resolve_target_path(file_path)
         return resolved.relative_to(self.code_base.resolve()).as_posix()
 
+    def _untrusted_context_reason(self) -> str:
+        """Why this turn cannot be trusted to propose a self-modification, or "".
+
+        Fails OPEN with a recorded degradation: a provenance lookup that breaks
+        must not stop Aura repairing herself on a turn that read nothing, and
+        the degradation is how anyone learns the check stopped covering this
+        path. It is the loudest surface to fail open on, which is exactly why
+        the failure is recorded rather than passed over.
+        """
+        try:
+            from core.security.content_provenance import describe_untrusted_context
+            from core.security.rule_of_two import get_rule_of_two_registry
+
+            handler = get_rule_of_two_registry().get("self_modification_apply")
+            if handler is None or not handler.violates_now():
+                return ""
+            return describe_untrusted_context() or "this turn read untrusted content"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "safe_modification",
+                exc,
+                severity="warning",
+                action="proceeded without the untrusted-context check; rule-of-two is not covering self-modification",
+                enforce_failure_policy=False,
+            )
+            return ""
+
     def validate_proposal(self, fix) -> tuple[bool, str]:
         """Gate a modification proposal before it reaches apply_fix.
 
@@ -578,6 +605,22 @@ class SafeSelfModification:
         """
         if not fix.target_file:
             return False, "No target file specified"
+
+        # Rule of Two, asked of THIS turn. `self_modification_apply` declares
+        # TRUSTED input because the patch is model-generated — true until the
+        # model has read a web page, a repository or a tool result, at which
+        # point "model-generated" means "generated after reading something a
+        # stranger wrote". Untrusted input + executes + in-process is three of
+        # three, and this is the surface where three legs means Aura rewrites
+        # her own source at a stranger's suggestion.
+        untrusted = self._untrusted_context_reason()
+        if untrusted:
+            self.stats["blocked_by_policy"] += 1
+            return False, (
+                f"Self-modification refused: {untrusted}. A patch proposed during "
+                "a turn that ingested untrusted content is not a trusted proposal, "
+                "however well it tests."
+            )
 
         try:
             normalized_target = self._relative_target_path(fix.target_file)

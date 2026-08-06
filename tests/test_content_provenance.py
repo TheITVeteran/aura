@@ -290,3 +290,71 @@ class TestTheDesktopGateActuallyRefuses:
 
         assert set(refusal) >= {"ok", "stdout", "stderr", "exit_code"}
         assert isinstance(refusal["exit_code"], int)
+
+
+class TestSelfModificationRefusesUnderUntrustedContext:
+    """The loudest surface: Aura rewriting her own source.
+
+    Three legs here means a patch proposed after reading a stranger's text gets
+    applied to Aura's own code. A patch that passes every test is still not a
+    trusted proposal if the turn that produced it had just read a web page —
+    "it tests clean" is what a good injection would arrange for.
+    """
+
+    @staticmethod
+    def _engine():
+        from core.security.rule_of_two import install_known_handlers
+        from core.self_modification.safe_modification import SafeSelfModification
+
+        install_known_handlers()
+        return SafeSelfModification.__new__(SafeSelfModification)
+
+    def test_a_clean_turn_may_propose(self):
+        engine = self._engine()
+        with turn_scope():
+            record_ingest(ProvenanceClass.OWNER, "please fix the retry loop")
+            assert engine._untrusted_context_reason() == ""
+
+    def test_a_turn_that_read_the_web_may_not_propose(self):
+        engine = self._engine()
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "fetched https://example.com/tips")
+            reason = engine._untrusted_context_reason()
+
+        assert reason
+        assert "web page" in reason
+
+    def test_validate_proposal_blocks_and_says_why(self):
+        """The refusal must reach the caller, not just the helper."""
+        from types import SimpleNamespace
+
+        engine = self._engine()
+        engine.stats = {"blocked_by_policy": 0}
+        fix = SimpleNamespace(target_file="core/example.py")
+
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "fetched https://example.com/tips")
+            allowed, reason = engine.validate_proposal(fix)
+
+        assert allowed is False
+        assert "Self-modification refused" in reason
+        assert engine.stats["blocked_by_policy"] == 1
+
+    def test_a_proposal_with_no_target_is_still_rejected_first(self):
+        """Ordering: the cheapest structural check stays first.
+
+        The untrusted-context check is not a replacement for the existing
+        validation, and putting it ahead of "no target file" would report a
+        confusing reason for an obviously malformed proposal.
+        """
+        from types import SimpleNamespace
+
+        engine = self._engine()
+        engine.stats = {"blocked_by_policy": 0}
+
+        with turn_scope():
+            record_ingest(ProvenanceClass.WEB, "a page")
+            allowed, reason = engine.validate_proposal(SimpleNamespace(target_file=""))
+
+        assert allowed is False
+        assert "No target file" in reason
