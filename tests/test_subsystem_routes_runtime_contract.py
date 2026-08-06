@@ -1,4 +1,8 @@
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -196,6 +200,53 @@ async def test_skill_execute_forwards_scoped_authority_to_router(monkeypatch):
     )
     assert "scoped_authority" not in recorded_context
     assert recorded_context["user_explicitly_authorized"] is True
+
+
+def test_skill_execute_api_uses_real_router_engine_and_discovered_skill(tmp_path):
+    """Prove the production route in an isolated process with real services."""
+    root = Path(__file__).resolve().parent.parent
+    env = dict(os.environ)
+    env["AURA_LOG_DIR"] = str(tmp_path / "logs")
+    completed = subprocess.run(
+        [sys.executable, "tools/closeout/audit_skill_runtime_route.py"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    marker = "AURA_SKILL_RUNTIME_ROUTE_AUDIT="
+    report_line = next(
+        (line for line in completed.stdout.splitlines() if line.startswith(marker)),
+        "",
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert report_line, completed.stdout + completed.stderr
+    report = json.loads(report_line.removeprefix(marker))
+
+    assert report["ok"] is True
+    assert report["failures"] == []
+    assert report["route"] == (
+        "api.skill.execute -> intent_router.route_execution -> capability_engine.execute"
+    )
+    assert report["catalog"]["ready"] is True
+    assert report["catalog"]["parity_status"] == "matched"
+    catalog_id = report["metadata"].pop("catalog_id")
+    assert catalog_id
+    assert report["metadata"] == {
+        "authority_class": "observe",
+        "class_name": "ClockSkill",
+        "effect_scope": "status",
+        "module_path": "core.skills.clock",
+        "validation_state": "valid",
+    }
+    assert report["execution"]["http_status"] == 200
+    assert report["execution"]["instance_class"] == "ClockSkill"
+    assert report["preflight"]["stage"] == "ready"
+    assert report["preflight"]["skill_body_invoked"] is False
+    assert report["authority_closure"]["closed"] is True
+    assert report["authority_closure"]["token_revoked"] is True
 
 
 @pytest.mark.asyncio

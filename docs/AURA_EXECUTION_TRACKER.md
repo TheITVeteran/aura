@@ -37147,3 +37147,34 @@ production route integration proof through `IntentRouter` and the real
 independently preserved at durable step 71 while its supervised terminal-step
 attempt runs; this checkpoint does not claim step 72, reasoning gain,
 promotion, frontier performance, or the `WOW Signal`.
+
+#### Production skill-route proof continuation (2026-08-06)
+
+The remaining production-route gap above is now exercised by a bounded,
+process-isolated audit instead of a fake router or fake capability engine.
+`tools/closeout/audit_skill_runtime_route.py` registers the real
+`IntentRouter` and `CapabilityEngine` in the canonical `ServiceContainer`,
+loads the source-discovered `core.skills.clock.ClockSkill`, and calls the
+authenticated `/api/skill/execute` implementation. The returned evidence
+proves the exact route `api.skill.execute -> intent_router.route_execution ->
+capability_engine.execute`, a ready catalog with matched Rust/Python parity,
+the real prepared implementation class, a body-free execution preflight, a
+successful skill-body result, and authority closure including token revocation.
+
+The audit runs in a child process because complete production catalog import
+legitimately initializes native libraries and stateful services. The parent
+contract test requires that child to terminate, parses only its explicit
+machine-readable receipt, and remains under the existing hermetic resource and
+global-state contamination guards. `make quality` now includes the audit, so a
+catalog that validates but cannot cross the production execution route fails
+the standard quality surface.
+
+Evidence at this checkpoint: the full subsystem-route contract file passes
+`14/14`, the standalone route audit reports no failures, and smoke passes
+`103/103`. This closes the previously named route-integration subgap only. It
+does not close `CTX2-SKILL-001/002`, `SKILLS-001`, or `SKILL-EXECUTION-001`:
+independent Rust filesystem discovery, clean-install/relocation/wheel and
+Rust-absent portability, installed-app GUI evidence, and reviewed requirement
+receipts remain open. Separately, the resident 32B recurrent-SFT campaign has a
+durable step-73 checkpoint and is actively training toward step 104; no
+reasoning-gain, promotion, frontier, fusion, or `WOW Signal` claim is made.
