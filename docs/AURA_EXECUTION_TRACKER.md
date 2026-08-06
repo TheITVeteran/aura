@@ -289,11 +289,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   rebuilt-app, external-frontier, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
-- Current machine forecast: **approximately 505-691 total checkpoint records,
-  with 412 pushed records and approximately 93-279 remaining before final
+- Current machine forecast: **approximately 506-691 total checkpoint records,
+  with 413 pushed records and approximately 93-278 remaining before final
   soak/release closure**. This is a low-confidence policy prior over the
   1,305-cell no-shrink evidence denominator, not a promise or a completion
-  claim; the current machine-certified completion is **6.66%**. The Recursive
+  claim; the current machine-certified completion is **7.06%**. The Recursive
   Latent Cortex / Anima Rationis
   requirement adds **40-56 total checkpoints** for independent foundation
   review; seven-mechanism hardening; exact compute and lifecycle accounting;
