@@ -1,5 +1,5 @@
 {
-  "content_sha256": "1380bbc6e9313fca66ae664f424e0efdbc1e54409c9a78cf0a6ff964958aba11",
+  "content_sha256": "fe27dd1fcdddb17af266aaf408ff6dec34a874128ec5f54322e787f88a064dbd",
   "entries": [
     {
       "acceptance_ids": [
@@ -523,6 +523,17 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/d0338a24933e23c021a87a0a5951f1319c90c716.json",
       "requirement_id": "LANE-001",
       "sha256": "537a8c4a9b87432b17ee719954480cb6cbfeb4a6aeca7f4ebe54d52d319d9c2a"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "6d044056e7eba71f31eb0f292eb14af020172b3e",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/lifecycle-ownership-audit/6d044056e7eba71f31eb0f292eb14af020172b3e.json",
+      "requirement_id": "LIFECYCLE-001",
+      "sha256": "dfdc8885d00cc6a4bd3c0c5f48984314af28d622fa97df21fcf08e01d2a3d4fa"
     },
     {
       "acceptance_ids": [
