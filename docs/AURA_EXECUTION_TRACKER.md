@@ -36988,3 +36988,38 @@ model-lane semantic finding; it does not establish reasoning gain, promotion,
 frontier performance, or the `WOW Signal`. CP810 and the honest total remain
 open at 809/920 pending the complete frozen campaign and independent four-arm
 certificate.
+
+#### Whole-program requirement reconciliation and current docket
+
+The recent CP810 and resident-RLC work had become easier to inspect than the
+older wholesale mandate, while the append-only tracker front retained
+historical milestone text and the machine requirement ledger still contained
+zero evidence entries. That made two bad readings possible: treating 809/920
+as completion of all original obligations, or treating the evidence ledger's
+0.00% as proof that no engineering existed. Neither is true.
+
+`tools/reqproof/docket.py` now joins the generated 302-requirement registry to
+the exact verified evidence ledger and emits every requirement's current claim,
+missing acceptance/evidence cells, direct dependency blockers, closure
+blockers, parent, and mechanically derived disposition. The same verified-cell
+calculation is shared with the progress and closure validators rather than
+being reimplemented. `make reqproof-progress` regenerates both the weighted
+progress view and this current docket; `make reqproof-docket` is the bounded
+standalone command.
+
+The first honest docket contains 301 mandatory requirements: 79 tracker claims
+are in progress, 169 are ready for implementation by direct dependency, 33 are
+direct-dependency blocked, 19 historical complete claims still lack
+acceptance-granular evidence, one requirement is deferred, and zero are yet
+machine-certified complete. The JSON report keeps every row; the generated
+Markdown view highlights active and evidence-backfill work. No source presence,
+test name, checkpoint prose, 809/920 narrative count, or old `complete` label
+receives proof credit.
+
+This is a control-plane reconciliation, not implementation closure. It restores
+the complete original/context/capability/Spark/Reality-Reach docket as the work
+queue so the RLC detour cannot hide memory, identity, unity, conversation,
+agency, coding, IIT, capability-depth, portability, release, semantic-review,
+or final-soak obligations. The resident campaign and CP810 empirical work
+remain open, and the 809/920 checkpoint envelope is retained only as its
+historical program counter rather than an Aura 1.0 percentage.

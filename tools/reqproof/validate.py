@@ -253,7 +253,7 @@ def evidence_ref_is_verified(
     return _sha256_file(target) == evidence.sha256 and commit_exists(evidence.commit)
 
 
-def _verified_acceptance_coverage(
+def verified_acceptance_coverage(
     requirement: Requirement,
     legacy_refs: tuple[EvidenceRef, ...],
     ledger_entries: tuple[EvidenceLedgerEntry, ...],
@@ -387,7 +387,7 @@ def validate_registry(
                             ),
                         )
                     )
-            verified = _verified_acceptance_coverage(
+            verified = verified_acceptance_coverage(
                 requirement,
                 legacy_refs,
                 ledger_entries,

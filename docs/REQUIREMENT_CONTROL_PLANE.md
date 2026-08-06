@@ -10,18 +10,21 @@ document is the operating manual. The exact remaining-work contract lives in
 
 | Artifact | Role |
 |---|---|
-| `config/requirement_registry.json` | The requirement denominator: 301 requirements generated deterministically from the tracker's normative extraction. Tamper-evident (content hash), never hand-edited. |
+| `config/requirement_registry.json` | The requirement denominator: 302 requirements generated deterministically from the tracker's normative extraction. Tamper-evident (content hash), never hand-edited. |
 | `config/requirement_coverage_map.json` | 137 hash-pinned passage→requirement mappings covering every non-blank line of all four source corpora. |
 | `config/requirement_sources/` | Verbatim snapshots of the four authoritative corpora, provenance-hashed in `MANIFEST.json`. |
 | `config/reqproof_defect_baseline.json` | Shrink-only fingerprint ratchet pinning pre-existing tracker debt (58 at seed). |
 | `config/reqproof_prose_token_allowlist.json` | Reviewed ID-like tokens that are deliberately not requirements (FMEA keys, defect-class names). |
 | `artifacts/reqproof/GATE_REPORT.json` | Deterministic gate report (no timestamps; byte-identical for identical state). |
+| `artifacts/reqproof/DOCKET_REPORT.json` | Deterministic current docket joining every requirement to verified evidence, direct dependency blockers, closure blockers, and missing acceptance/evidence cells. |
+| `docs/AURA_REMAINING_DOCKET.md` | Human-readable generated view of active work and historical completion claims that still need evidence. |
 
 ## Commands
 
 ```bash
 make reqproof-gate       # structural gate — required green at every commit
 make reqproof-release    # release gate — blocks until zero open mandatory scope
+make reqproof-docket     # regenerate the current dependency-aware docket
 python tools/reqproof/migrate.py --write     # regenerate registry from tracker
 python tools/reqproof/gate.py --refresh-baseline  # shrink-only ratchet refresh
 ```
@@ -77,9 +80,12 @@ closures. Draining this baseline is tracked work, not background noise.
 
 * A structural pass asserts registry/coverage integrity only — it is not
   evidence that any requirement's engineering work is done.
+* A docket `ready_for_implementation` disposition means only that the
+  requirement has no directly open dependency. It does not waive closure
+  children, required evidence classes, or live/release obligations.
 * Migrated statuses restate what the tracker asserted; the 19
   `unproven-closure` defects mark exactly where those assertions lack
   machine evidence.
-* The registry does not yet ingest checkpoint history, produce burn-up or
-  forecasts, or replace `tools/closeout/remaining_checkpoint_contract.py`;
-  those are Session 2/3 scope per the handoff.
+* The progress report inventories checkpoint history and produces an explicitly
+  provisional forecast. The docket provides the canonical current work view;
+  neither replaces acceptance-granular evidence or the release gate.

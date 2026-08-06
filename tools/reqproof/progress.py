@@ -36,7 +36,7 @@ from tools.reqproof.schema import EVIDENCE_CLASSES, Registry, load_registry  # n
 from tools.reqproof.tracker_parse import TRACKER_RELPATH  # noqa: E402
 from tools.reqproof.validate import (  # noqa: E402
     default_commit_exists,
-    evidence_ref_is_verified,
+    verified_acceptance_coverage,
 )
 
 PROGRESS_SCHEMA_VERSION = 1
@@ -403,17 +403,13 @@ def build_progress_report(
         acceptance_ids = tuple(
             f"A{index}" for index in range(1, len(requirement.acceptance) + 1)
         )
-        coverage: dict[str, set[str]] = {}
-        for evidence in requirement.evidence:
-            if evidence_ref_is_verified(evidence, root, commit_exists):
-                coverage.setdefault(evidence.evidence_class, set()).update(
-                    acceptance_ids
-                )
-        for entry in entries_by_requirement.get(requirement.id, ()):
-            if evidence_ref_is_verified(entry.evidence, root, commit_exists):
-                coverage.setdefault(entry.evidence.evidence_class, set()).update(
-                    entry.acceptance_ids
-                )
+        coverage = verified_acceptance_coverage(
+            requirement,
+            requirement.evidence,
+            entries_by_requirement.get(requirement.id, ()),
+            root,
+            commit_exists,
+        )
 
         row_total = Decimal(0)
         row_verified = Decimal(0)
