@@ -1,0 +1,109 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_cognitive_gate_inventory.py",
+    "tests/test_global_workspace_runtime_contract.py"
+  ],
+  "cwd": ".",
+  "duration_seconds": 2.671231,
+  "environment_policy": {
+    "inherited_names_sha256": "ef6beaed0e8a44e60d33bb5cef8642714a849686f003a6cbb2d277de638c3d41",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-GATE-001"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CTX2-GATE-002"
+    }
+  ],
+  "finished_at": "2026-08-06T07:53:07.714105+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "4917bd2da263122850c3de302942c5e22e9f171e",
+  "output_bytes": 99,
+  "proof_id": "cognitive-gate-contract-tests",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "4917bd2da263122850c3de302942c5e22e9f171e",
+  "source_manifest": [
+    {
+      "path": "core/consciousness/attention_schema.py",
+      "sha256": "2481489250b054dda39b8b230b1189e20e21ed0e2dbf37244c6999cfff3a8149",
+      "size_bytes": 18775
+    },
+    {
+      "path": "core/consciousness/candidate_gate_inventory.py",
+      "sha256": "fe42b5ab2379e5f7e5eda0a19b1f3ea018b4f8f512b9b860e4b11a76bc28b8ac",
+      "size_bytes": 6615
+    },
+    {
+      "path": "core/consciousness/global_workspace.py",
+      "sha256": "a48468c6d50b53faeb6bd600cd3e21866e207f0d02684bb8c196c99d94cbccd6",
+      "size_bytes": 52217
+    },
+    {
+      "path": "core/runtime/receipts.py",
+      "sha256": "9e6c0c92ea72da1685aafaa2fb3eb819c0e434029c2e8301e7dd2fd4856adbf2",
+      "size_bytes": 38413
+    },
+    {
+      "path": "tests/test_cognitive_gate_inventory.py",
+      "sha256": "57300f7461bf20dc1a2d2b2da04fe0872c5be438e5cb0db0f5f8d0a35151a397",
+      "size_bytes": 10639
+    },
+    {
+      "path": "tests/test_global_workspace_runtime_contract.py",
+      "sha256": "a5f70bd33890e9346db4144bab9122d6de15bdfbfb3ec837425f9aae0ff81a74",
+      "size_bytes": 13994
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "core/consciousness/attention_schema.py",
+      "core/consciousness/candidate_gate_inventory.py",
+      "core/consciousness/global_workspace.py",
+      "core/runtime/receipts.py",
+      "tests/test_cognitive_gate_inventory.py",
+      "tests/test_global_workspace_runtime_contract.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "a77a9d0e487bc557e12a89c498c8abbb13e9b7c900aacccc6162c57f20d8e7c1",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T07:53:05.042675+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "...................                                                      [100%]\n19 passed in 1.23s\n",
+  "stdout_sha256": "458e7bf9eee29c6aa9db808c343568820297f5affe381fe4f89ebee5ddec1e79",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}
