@@ -6,10 +6,10 @@
 
 - Requirements: **313** total / **312** mandatory
 - In progress: **83**
-- Claimed complete but missing evidence: **4**
+- Claimed complete but missing evidence: **19**
 - Ready for implementation: **176**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **13**
+- Machine-certified complete: **0**
 
 ## Active Requirements
 
@@ -19,7 +19,7 @@
 | `ADAPT-001` | `in_progress` | 3 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
-| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, CONVERSATION-001 |
+| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | AGENCY-001, EFFECT-001, VALUES-001 |
 | `BOOT-HEALTH-001` | `in_progress` | 3 | RUNTIME-001, HEALTH-SURFACE-001, FOREGROUND-LATENCY-001, CONVERSATION-001, FAULT-001 |
 | `CHAT-DELIVERY-001` | `in_progress` | 4 | CONVERSATION-001, ACTION-SPINE-001, DATA-LIFECYCLE-001, LAUNCH-PROVENANCE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
@@ -104,12 +104,27 @@
 These requirements carry a historical complete claim but are not machine-certified:
 
 - `ADDENDUM-22`
+- `ADDENDUM-23`
+- `ADDENDUM-32`
+- `CTX2-GATE-001`
+- `CTX2-GATE-002`
+- `CTX2-SHUTDOWN-001`
+- `CTX2-SHUTDOWN-002`
+- `CTX2-SHUTDOWN-003`
+- `CTX2-SKILL-001`
+- `CTX2-SKILL-002`
+- `CTX2-TEST-001`
 - `CTX2-TEST-002`
+- `CTX2-TEST-003`
 - `LANE-001`
+- `LIFECYCLE-001`
 - `RESOURCE-001`
+- `SHUTDOWN-001`
+- `SKILLS-001`
+- `STORAGE-GATEWAY-001`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `70067083561c7e500b217d19e5196cf130895494269042dd04da907baaae5f15`
+Report SHA-256: `5960a759add36f7c824eb3e9457da5cf1480b423f8760a721f0569fbffcc05dd`
