@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -65,6 +66,118 @@ def test_uninventoried_model_load_fails_closed(
 
 def test_inventory_path_is_repository_scoped() -> None:
     assert (ROOT / "config" / "model_load_ownership.json").is_file()
+
+
+def test_capability_ablation_retains_lane_until_responder_closes(monkeypatch) -> None:
+    from core.runtime import model_lane_control
+    from tools.capability_ablation_mlx import make_mlx_responder
+
+    events: list[str] = []
+    lease = SimpleNamespace(
+        active=True,
+        release=lambda **kwargs: events.append(f"release:{kwargs['reason']}"),
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_standalone_model_lane",
+        lambda **_kwargs: lease,
+    )
+    fake_mlx_lm = ModuleType("mlx_lm")
+    fake_mlx_lm.load = lambda model_id: (f"model:{model_id}", SimpleNamespace())
+    fake_mlx_lm.generate = lambda *_args, **_kwargs: "answer"
+    fake_mlx = ModuleType("mlx")
+    fake_mlx_core = ModuleType("mlx.core")
+    fake_mlx_core.clear_cache = lambda: events.append("clear_cache")
+    fake_mlx.core = fake_mlx_core
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+
+    responder = make_mlx_responder(
+        model_id="test-model",
+        max_output_tokens=8,
+        budget_turns=2,
+    )
+
+    assert responder.closed is False
+    assert events == []
+    responder.close()
+    assert responder.closed is True
+    assert events == ["clear_cache", "release:capability_ablation_finished"]
+    with pytest.raises(RuntimeError, match="responder is closed"):
+        responder("stateless", SimpleNamespace(turns=["question"]), 0, [])
+
+
+def test_capability_ablation_releases_lane_when_model_load_fails(monkeypatch) -> None:
+    from core.runtime import model_lane_control
+    from tools.capability_ablation_mlx import make_mlx_responder
+
+    events: list[str] = []
+    lease = SimpleNamespace(
+        release=lambda **kwargs: events.append(f"release:{kwargs['reason']}"),
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_standalone_model_lane",
+        lambda **_kwargs: lease,
+    )
+    fake_mlx_lm = ModuleType("mlx_lm")
+
+    def fail_load(_model_id: str):
+        raise RuntimeError("load failed")
+
+    fake_mlx_lm.load = fail_load
+    fake_mlx_lm.generate = lambda *_args, **_kwargs: "unused"
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+
+    with pytest.raises(RuntimeError, match="load failed"):
+        make_mlx_responder(
+            model_id="test-model",
+            max_output_tokens=8,
+            budget_turns=2,
+        )
+    assert events == ["release:capability_ablation_load_failed"]
+
+
+def test_capability_ablation_main_closes_responder_when_run_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from tools import capability_ablation, capability_ablation_mlx
+
+    class FailingRunResponder:
+        closed = False
+
+        def __call__(self, *_args, **_kwargs):
+            return "unused"
+
+        def close(self) -> None:
+            self.closed = True
+
+    responder = FailingRunResponder()
+    monkeypatch.setattr(
+        capability_ablation_mlx,
+        "make_mlx_responder",
+        lambda **_kwargs: responder,
+    )
+
+    def fail_run(*_args, **_kwargs):
+        raise RuntimeError("arm failed")
+
+    monkeypatch.setattr(capability_ablation, "run", fail_run)
+
+    with pytest.raises(RuntimeError, match="arm failed"):
+        capability_ablation.main(
+            [
+                "--responder",
+                "mlx",
+                "--model",
+                "test-model",
+                "--out",
+                str(tmp_path / "scorecard.json"),
+            ]
+        )
+    assert responder.closed is True
 
 
 def test_latent_consolidation_loader_requires_active_model_lane() -> None:

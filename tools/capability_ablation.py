@@ -370,12 +370,17 @@ def main(argv: list[str] | None = None) -> int:
         max_wall_clock_s=args.max_wall_clock_s,
         model_id=model_id,
     )
-    ledger, parity = run(
-        responder,
-        tasks,
-        condition_budgets=condition_budgets,
-        window_turns=args.context_window_turns,
-    )
+    try:
+        ledger, parity = run(
+            responder,
+            tasks,
+            condition_budgets=condition_budgets,
+            window_turns=args.context_window_turns,
+        )
+    finally:
+        close_responder = getattr(responder, "close", None)
+        if callable(close_responder):
+            close_responder()
 
     summaries = {name: ledger.summary(name) for name in CONDITIONS}
     full_rate = summaries[FULL]["success_rate"]

@@ -25,8 +25,9 @@ here is about the machinery rather than about string formatting.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -39,7 +40,7 @@ _SYSTEM = (
 )
 
 
-class MemoryPathUnavailable(RuntimeError):
+class MemoryPathUnavailableError(RuntimeError):
     """Raised rather than falling back to the transcript.
 
     The first version of this function caught ImportError and returned
@@ -84,21 +85,46 @@ def _assembled_by_memory(history: list[str], question: str, *, budget_turns: int
     return "\n".join(str(item.get("content", "")) for item in ranked)
 
 
-def make_mlx_responder(
-    *, model_id: str, max_output_tokens: int, budget_turns: int
-) -> Callable[[str, Any, int, list[str]], str]:
-    """Load once, answer every arm with the same weights and the same budget."""
-    from mlx_lm import generate, load
+class MlxAblationResponder:
+    """Callable model owner whose lane lease spans every ablation arm."""
 
-    model, tokenizer = load(model_id)
+    def __init__(
+        self,
+        *,
+        model: Any,
+        tokenizer: Any,
+        generate: Callable[..., Any],
+        lease: Any,
+        max_output_tokens: int,
+        budget_turns: int,
+    ) -> None:
+        self._model = model
+        self._tokenizer = tokenizer
+        self._generate = generate
+        self._lease = lease
+        self._max_output_tokens = int(max_output_tokens)
+        self._budget_turns = int(budget_turns)
+        self._closed = False
 
-    def respond(condition: str, task: Any, _turn: int, history: list[str]) -> str:
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def __call__(
+        self,
+        condition: str,
+        task: Any,
+        _turn: int,
+        history: list[str],
+    ) -> str:
+        if self._closed or self._model is None or self._tokenizer is None:
+            raise RuntimeError("capability ablation responder is closed")
         question = task.turns[-1]
         if condition == "stateless":
             body = question
         elif condition == "full_architecture":
             body = (
-                f"{_assembled_by_memory(list(history), question, budget_turns=budget_turns)}"
+                f"{_assembled_by_memory(list(history), question, budget_turns=self._budget_turns)}"
                 f"\n\n{question}"
             )
         else:
@@ -108,21 +134,70 @@ def make_mlx_responder(
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": body},
         ]
-        prompt = tokenizer.apply_chat_template(
+        prompt = self._tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        # Identical for every arm: same max_tokens, same (greedy) sampler.
         return str(
-            generate(
-                model,
-                tokenizer,
+            self._generate(
+                self._model,
+                self._tokenizer,
                 prompt=prompt,
-                max_tokens=max_output_tokens,
+                max_tokens=self._max_output_tokens,
                 verbose=False,
             )
         ).strip()
 
-    return respond
+    def close(self) -> None:
+        """Drop model references before relinquishing the exclusive lane."""
+        if self._closed:
+            return
+        self._closed = True
+        self._model = None
+        self._tokenizer = None
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except (AttributeError, ImportError):
+            pass
+        finally:
+            self._lease.release(reason="capability_ablation_finished")
+
+    def __enter__(self) -> MlxAblationResponder:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
 
-__all__ = ["make_mlx_responder"]
+def make_mlx_responder(
+    *, model_id: str, max_output_tokens: int, budget_turns: int
+) -> MlxAblationResponder:
+    """Load once, answer every arm with one owned model and equal budgets."""
+    from mlx_lm import generate, load
+
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
+
+    lease = acquire_standalone_model_lane(
+        owner_id=f"capability-ablation:{Path(model_id).name or 'model'}",
+        model_path=model_id,
+        purpose="evaluation",
+        preemptible=False,
+        metadata={"tool": "capability_ablation", "matched_arms": True},
+    )
+    try:
+        model, tokenizer = load(model_id)
+    except BaseException:
+        lease.release(reason="capability_ablation_load_failed")
+        raise
+    return MlxAblationResponder(
+        model=model,
+        tokenizer=tokenizer,
+        generate=generate,
+        lease=lease,
+        max_output_tokens=max_output_tokens,
+        budget_turns=budget_turns,
+    )
+
+
+__all__ = ["MlxAblationResponder", "make_mlx_responder"]
