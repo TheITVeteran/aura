@@ -69,8 +69,19 @@ class StartupValidator:
                 if handler:
                     await handler(check)
                 else:
-                    check.passed = True
-                    check.message = "Check not implemented (ignored)"
+                    # A declared check with no handler used to set passed=True
+                    # and say "not implemented (ignored)". Every one of the
+                    # eleven checks has a handler today, so nothing was being
+                    # skipped — but "Dangerous Files Purged" is critical, and
+                    # renaming its handler would have turned it green and let
+                    # the boot through. An unrun check is not a passed check.
+                    check.passed = False
+                    check.message = f"NOT VERIFIED: no {handler_name} implemented"
+                    record_degradation(
+                        "startup_validator",
+                        RuntimeError(f"{check.id} declared without {handler_name}"),
+                        action="startup check reported as failed rather than passed",
+                    )
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('startup_validator', e)
                 check.passed = False

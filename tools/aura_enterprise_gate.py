@@ -184,49 +184,18 @@ ALLOW_BLOCKING_SLEEP_IN_ASYNC = {
     "tools/chaos/injector.py",
 }
 
+#: Files whose pytest skip/xfail markers are self-describing rather than debt.
+#: This used to carry thirty-nine more entries, exempting whole files from the
+#: stub/placeholder rule because they mentioned the words in a docstring. A
+#: file-name exemption cannot tell a docstring from a defect, and this one was
+#: hiding three: a startup check that passed itself when unimplemented, a
+#: "[DUMMY VOICE]" engine that reported success, and a dead ``mock_hear``
+#: seam. The rule now judges the line, so the list has nothing left to do.
 SELF_DESCRIPTIVE_PATTERN_FILES = {
     "tools/aura_enterprise_gate.py",
     # macOS-only detached-execution suite: sandbox-exec + process groups do
     # not exist elsewhere, so the platform skipif is honest, not debt.
     "tests/test_run_detached_step.py",
-    # Production modules with self-descriptive stub/mock/placeholder keywords in docs/comments
-    "core/agency/agency_facade.py",
-    "core/agency/skill_library.py",
-    "core/brain/compute_router.py",
-    "core/brain/concept_vector_bridge.py",
-    "core/brain/llm/code_generator.py",
-    "core/brain/llm/llm_router.py",
-    "core/brain/llm/structured_llm.py",
-    "core/cognition/mcts_world_model.py",
-    "core/consciousness/metacognition.py",
-    "core/context/chat_compression.py",
-    "core/curriculum/loop.py",
-    "core/embodiment/voice_presence.py",
-    "core/environment/action_semantics.py",
-    "core/environment/capability_matrix.py",
-    "core/environment/external_validation.py",
-    "core/kernel/final_diagnostic.py",
-    "core/kernel/speculative_arena.py",
-    "core/lattice/__init__.py",
-    "core/learning/tree_lora_manager.py",
-    "core/memory/black_hole.py",
-    "core/phases/executive_guard.py",
-    "core/resilience/startup_validator.py",
-    "core/runtime/depth_audit.py",
-    "core/self_improvement/blinded_workspace.py",
-    "core/self_improvement/discrepancy_attributor.py",
-    "core/self_modification/boot_validator.py",
-    "core/senses/ears.py",
-    "core/skills/inter_agent_comm.py",
-    "core/state/aura_state.py",
-    "core/utils/output_gate.py",
-    "core/utils/safe_import.py",
-    "core/verification/decision_verifier.py",
-    "tests/agi/live/test_live_harness_proof.py",
-    "tests/test_semantic_marker_audit.py",
-    "tools/agi/run_live_harness_proof.py",
-    "tools/closeout/run_codebase_closeout_audit.py",
-    "tools/security_scan.py",
 }
 
 _TMP_PATH_PREFIX = "/" + "tmp" + "/"
@@ -244,8 +213,13 @@ TEXT_PATTERNS = {
         rf"{re.escape(_WINDOWS_USERS_PREFIX)}|"
         rf"{re.escape(_TMP_PATH_PREFIX)})[^\s\"'`,)\]}}]*"
     ),
+    # "notimplemented" is deliberately absent. The word boundary means it
+    # never matched NotImplementedError; the only thing it could match was the
+    # bare ``NotImplemented`` singleton, which is Python's binary-operator
+    # protocol — the CORRECT return from __eq__ for an unrelated type — and
+    # every one of its five occurrences in this repo was exactly that.
     "placeholder_stub_mock": re.compile(
-        r"\b(placeholder|stub|mock|dummy|not implemented|notimplemented)\b",
+        r"\b(placeholder|stub|mock|dummy|not implemented)\b",
         re.IGNORECASE,
     ),
     "potential_secret": re.compile(
@@ -760,15 +734,26 @@ _FILESYSTEM_CALL_NAMES = frozenset(
 _FILESYSTEM_KEYWORDS = frozenset({"cwd", "dir", "path", "filename", "file"})
 _PASSTHROUGH_CALL_NAMES = frozenset({"Path", "PurePath", "str", "fspath"})
 _DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-#: Rules whose finding is about a VALUE that must not be embedded in the
-#: repository. Those, and only those, are exempt inside prose: a path or a key
-#: quoted in a docstring or a comment is not a path the program uses, it is
-#: usually the verbatim text of the incident the module exists to prevent.
+#: Rules that describe something written in the file rather than something
+#: the program DOES, and are therefore exempt inside a docstring or comment.
 #:
-#: placeholder_stub_mock is deliberately NOT here. Its finding is a CLAIM of
-#: incompleteness, and prose is exactly where such claims live — "# Placeholder
-#: for real calibration logic" is the finding, not a false positive.
-_PROSE_SENSITIVE_KINDS = frozenset({"hardcoded_local_path", "potential_secret"})
+#: For paths and keys the argument is direct: a literal quoted in prose is not
+#: a path the program uses, it is usually the verbatim text of the incident
+#: the module exists to prevent.
+#:
+#: placeholder_stub_mock belongs here for a sharper reason. Its three loudest
+#: findings were an enum member documented "Not implemented" so a caller
+#: cannot mistake a digest for a signature, a module docstring that says in
+#: capitals that its discovery step is NOT IMPLEMENTED (with a False flag and
+#: a refusing entry point beneath it), and a ``residual_risk`` line in a
+#: threat register. Every one is the honesty mechanism working. Flagging the
+#: admission puts the gate's weight behind deleting it, which is how a repo
+#: ends up with silent stubs and a clean report — the exact failure this gate
+#: exists to prevent. The defect is code that BEHAVES as though it were
+#: complete, and that is what the rule now looks for.
+_PROSE_SENSITIVE_KINDS = frozenset(
+    {"hardcoded_local_path", "potential_secret", "placeholder_stub_mock"}
+)
 
 
 @dataclass
@@ -785,6 +770,13 @@ class LocalPathContext:
     disk_lines: set[int] | None = None
     #: Strings the file asserts must NOT appear in some output.
     redaction_evidence: tuple[str, ...] = ()
+    #: Lines carrying a stub/placeholder marker inside a string CONSTANT. A
+    #: line that matches the text rule and is absent here carries the marker
+    #: in an identifier instead.
+    marker_string_lines: set[int] = field(default_factory=set)
+    #: Lines where every such string is used as a NAME, a KEY or a PATTERN —
+    #: a detector's vocabulary rather than a claim about this code.
+    marker_vocabulary_lines: set[int] = field(default_factory=set)
 
 
 def _call_name(node: ast.Call) -> str:
@@ -862,6 +854,78 @@ def docstring_line_numbers(tree: ast.AST | None) -> set[int]:
     return lines
 
 
+_REGEX_CALL_NAMES = frozenset(
+    {"compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "split"}
+)
+_NAME_LOOKUP_CALL_NAMES = frozenset({"getattr", "hasattr", "setattr", "get", "pop"})
+
+
+def _marker_text(node: ast.AST) -> str:
+    """The text of a str or bytes constant, or "" for anything else.
+
+    Bytes count. ``b"placeholder-bytes"`` written as a fixture's file content
+    is a value the program produces, exactly like the str form, and treating
+    it as "not a string" made it look like a bare identifier and slip the
+    rule.
+    """
+    if not isinstance(node, ast.Constant):
+        return ""
+    value = node.value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return ""
+
+
+def _vocabulary_string_lines(tree: ast.AST) -> set[int]:
+    """Lines whose marker string is a name, a key or a pattern.
+
+    A scanner has to spell the words it hunts for. ``"placeholder"`` sitting
+    in ``MARKERS = (...)``, inside ``re.compile(...)``, or as the key of a
+    dict is the detector's vocabulary — it says nothing about whether THIS
+    module is finished. Flagging it is how a repo ends up with a file-name
+    allowlist, and a file-name allowlist hides the real thing: two genuine
+    findings were sitting behind this repo's, a "[DUMMY VOICE]" fallback and
+    a "Mock hear" path, both in shipping code.
+
+    A marker used as a VALUE — returned, assigned, or handed to a message —
+    is not covered here, because that is the module speaking about itself.
+    """
+    marker = TEXT_PATTERNS["placeholder_stub_mock"]
+    lines: set[int] = set()
+
+    def note(node: ast.AST) -> None:
+        if marker.search(_marker_text(node)):
+            lines.add(int(getattr(node, "lineno", 0) or 0))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            for element in node.elts:
+                note(element)
+        elif isinstance(node, ast.Dict):
+            for key in node.keys:
+                if key is not None:
+                    note(key)
+        elif isinstance(node, ast.Subscript):
+            note(node.slice)
+        elif isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name in _REGEX_CALL_NAMES or name in _NAME_LOOKUP_CALL_NAMES:
+                for arg in node.args:
+                    note(arg)
+    return lines
+
+
+def _marker_string_lines(tree: ast.AST) -> set[int]:
+    marker = TEXT_PATTERNS["placeholder_stub_mock"]
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if marker.search(_marker_text(node)):
+            lines.add(int(getattr(node, "lineno", 0) or 0))
+    return lines
+
+
 def local_path_context(tree: ast.AST | None) -> LocalPathContext:
     """Collect, in one walk, everything the path rule needs to know.
 
@@ -914,6 +978,8 @@ def local_path_context(tree: ast.AST | None) -> LocalPathContext:
     context.redaction_evidence = tuple(
         text for text in evidence if len(text) >= 4 and ("/" in text or len(text) >= 6)
     )
+    context.marker_string_lines = _marker_string_lines(tree)
+    context.marker_vocabulary_lines = _vocabulary_string_lines(tree)
     return context
 
 
@@ -936,6 +1002,34 @@ def _local_path_is_inert(matched: str, line_no: int, context: LocalPathContext) 
         # disk_lines is None when the file would not parse: unknown, so report.
         return context.disk_lines is not None and line_no not in context.disk_lines
     return False
+
+
+def _marker_is_not_a_claim(line_no: int, rel: str, context: LocalPathContext) -> bool:
+    """Does this stub/placeholder marker say this code is unfinished?
+
+    Three ways it does not, all judged by what the line IS rather than by
+    which file it sits in — a file-name allowlist was what hid a "[DUMMY
+    VOICE]" fallback and a "Mock hear" path in shipping code:
+
+    * The marker is a NAME, a KEY or a regex PATTERN. A scanner has to spell
+      the words it hunts for, and ``placeholder_detected`` is a field of the
+      report, not a confession.
+    * The marker is only in an identifier. Naming a variable after the thing
+      you detect is not incompleteness. Class names that ARE the tell —
+      ``Mock*``, ``Stub*``, ``Fake*`` in product code — are reported by
+      tools/integration_debt.py, which matches on the name shape.
+    * The file is under tests/. A stub, a fake and a double are how a unit
+      gets isolated there; in product code they are unfinished work. The same
+      exclusion, for the same reason, as raise_only_function. Test doubles
+      that escape into product paths are caught where it can actually be
+      proven: the sys.modules contamination guard in tests/conftest.py and
+      the production-only sweep in tests/test_semantic_marker_audit.py.
+    """
+    if rel.startswith("tests/"):
+        return True
+    if line_no not in context.marker_string_lines:
+        return True
+    return line_no in context.marker_vocabulary_lines
 
 
 def scan_file(path: Path, root: Path, report: GateReport) -> None:
@@ -1034,10 +1128,11 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
                 # DOM/AX "placeholder" is a UI attribute (input hint text),
                 # not unfinished code.
                 continue
-            if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind in {
-                "placeholder_stub_mock",
-                "pytest_skip_xfail",
-            }:
+            if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind == "pytest_skip_xfail":
+                continue
+            if kind == "placeholder_stub_mock" and _marker_is_not_a_claim(
+                line_no, rel, context()
+            ):
                 continue
             if kind == "potential_secret":
                 if _is_non_secret_literal(line):

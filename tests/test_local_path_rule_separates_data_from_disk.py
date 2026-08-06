@@ -184,3 +184,93 @@ class TestTheDiscriminatorsAreHonestAboutTheirLimits:
         than as a surprise."""
         source = f'p = "{_TMP}/aura-out.json"\nopen(p, "w")\n'
         assert _scan(source) == set()
+
+
+def _scan_markers(source: str, rel: str = "core/example.py") -> set[int]:
+    """Lines the placeholder/stub rule would report."""
+    from tools.aura_enterprise_gate import TEXT_PATTERNS, _marker_is_not_a_claim
+
+    pattern = TEXT_PATTERNS["placeholder_stub_mock"]
+    tree = _tree(source)
+    prose = docstring_line_numbers(tree)
+    context = local_path_context(tree)
+
+    reported: set[int] = set()
+    for line_no, line in enumerate(source.splitlines(), start=1):
+        if pattern.search(line) is None:
+            continue
+        if line_no in prose or line.lstrip().startswith("#"):
+            continue
+        if _marker_is_not_a_claim(line_no, rel, context):
+            continue
+        reported.add(line_no)
+    return reported
+
+
+class TestAnAdmissionIsNotTheDefect:
+    """The rule's three loudest findings were the honesty mechanism working.
+
+    An enum member documented "Not implemented" so a caller cannot mistake a
+    digest for a signature; a module docstring saying in capitals that its
+    discovery step is unwritten; a residual_risk line in a threat register.
+    Flagging those puts the gate's weight behind deleting them.
+    """
+
+    def test_a_docstring_admitting_a_gap_is_not_a_finding(self) -> None:
+        source = '"""Honest status: the discovery step is NOT IMPLEMENTED."""\n'
+        assert _scan_markers(source) == set()
+
+    def test_a_comment_admitting_a_gap_is_not_a_finding(self) -> None:
+        source = "# Bytes match a digest signed by a trusted key. Not implemented.\n"
+        assert _scan_markers(source) == set()
+
+    def test_code_that_behaves_as_complete_is_still_a_finding(self) -> None:
+        source = 'logger.info("[DUMMY VOICE]: %s", text)\n'
+        assert _scan_markers(source) == {1}
+
+
+class TestADetectorMaySpellWhatItHunts:
+    def test_a_marker_collection_is_vocabulary(self) -> None:
+        source = 'MARKERS = ("not implemented", "placeholder", "stub")\n'
+        assert _scan_markers(source) == set()
+
+    def test_a_regex_of_markers_is_vocabulary(self) -> None:
+        source = 'SCAFFOLD_RE = re.compile(r"\\b(stub|placeholder|dummy)\\b")\n'
+        assert _scan_markers(source) == set()
+
+    def test_a_dict_key_names_a_field(self) -> None:
+        source = 'row = {"placeholder": "missing_operand"}\n'
+        assert _scan_markers(source) == set()
+
+    def test_a_variable_named_after_the_thing_detected_is_not_a_claim(self) -> None:
+        source = "if placeholder:\n    placeholder_detected = True\n"
+        assert _scan_markers(source) == set()
+
+    def test_a_marker_returned_as_a_value_is_still_a_claim(self) -> None:
+        """Vocabulary names things. A returned value asserts one."""
+        source = 'def render():\n    return "placeholder"\n'
+        assert _scan_markers(source) == {2}
+
+
+class TestTestsAreWhereDoublesBelong:
+    def test_a_stub_in_a_test_is_the_implementation(self) -> None:
+        source = 'model_dir.write_bytes(b"placeholder-bytes")\n'
+        assert _scan_markers(source, rel="tests/test_thing.py") == set()
+
+    def test_the_same_line_in_product_code_is_a_finding(self) -> None:
+        source = 'model_dir.write_bytes(b"placeholder-bytes")\n'
+        assert _scan_markers(source, rel="core/thing.py") == {1}
+
+
+class TestNotImplementedIsAProtocolNotAConfession:
+    def test_the_binary_operator_singleton_is_not_matched(self) -> None:
+        """``return NotImplemented`` from __eq__ is the correct answer for an
+        unrelated type. All five occurrences in this repo were exactly that."""
+        from tools.aura_enterprise_gate import TEXT_PATTERNS
+
+        assert TEXT_PATTERNS["placeholder_stub_mock"].search("return NotImplemented") is None
+
+    def test_the_english_phrase_still_is(self) -> None:
+        from tools.aura_enterprise_gate import TEXT_PATTERNS
+
+        assert TEXT_PATTERNS["placeholder_stub_mock"].search('msg = "not implemented"')

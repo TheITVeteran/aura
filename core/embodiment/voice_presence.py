@@ -124,8 +124,30 @@ class WindowsTTS(TTSEngine):
             logger.error("🔊 WindowsTTS: Speak failed: %s", e)
 
 class DummyTTS(TTSEngine):
+    """The platform has no TTS backend. Say so; do not pretend to speak.
+
+    ``speak`` logged the text at info level and returned, exactly like every
+    engine that had just made a sound. Nothing downstream — no caller, no
+    health surface — could tell an utterance from a line in a log file. A
+    voice that cannot make sound is a degradation, and reporting it as
+    success is the same defect this codebase keeps finding elsewhere: the
+    absence of an action recorded as the action.
+    """
+
+    def __init__(self) -> None:
+        self._announced = False
+
     async def speak(self, text: str) -> None:
-        logger.info("🔊 [DUMMY VOICE]: %s", text)
+        if not self._announced:
+            # Once per process. A degradation per utterance would bury the
+            # condition it is trying to report.
+            self._announced = True
+            record_degradation(
+                'voice_presence',
+                RuntimeError(f"no TTS backend for platform {sys.platform!r}"),
+                action="text is written to the log instead of spoken",
+            )
+        logger.info("🔊 [no TTS backend — text only]: %s", text)
 
 class VoicePresence:
     def __init__(self, orchestrator: Any):
@@ -140,7 +162,11 @@ class VoicePresence:
         else:
             logger.warning("🔊 VoicePresence: Unsupported platform '%s'. Using DummyTTS.", sys.platform)
             self._tts = DummyTTS()
-            
+
+        #: Whether this process can actually produce sound. Readable so a
+        #: caller asking for speech can tell it will only get a log line.
+        self.voice_output_available = not isinstance(self._tts, DummyTTS)
+
         self._running = False
         self._voice_enabled = os.environ.get("AURA_VOICE_SILENT", "0") != "1"
         if not self._voice_enabled:

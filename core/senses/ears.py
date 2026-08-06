@@ -99,22 +99,38 @@ class SovereignEars:
         
         return ""
 
-    def mock_hear(self, text: str):
-        """Inject text as if heard (for testing)."""
+    def inject_transcript_for_test(self, text: str) -> bool:
+        """Deliver `text` to the transcript handler as though it were heard.
+
+        Named for what it is. It was ``mock_hear``, which reads as a stub of
+        hearing rather than a test seam into the real transcript path, and
+        which nothing in the repository called — the ``_for_test`` suffix is
+        the convention tools/integration_debt.py already recognises, so a
+        seam that stops being used shows up as debt instead of hiding behind
+        a name that looks like production code.
+
+        Returns whether the transcript was actually dispatched. It used to
+        return None down all four paths, so a caller could not tell a
+        delivered transcript from a missing engine or a dead loop.
+        """
         if not (self._engine and hasattr(self._engine, "_on_transcript") and self._engine._on_transcript):
-            return
+            return False
 
         try:
             loop = asyncio.get_running_loop()
-            if loop.is_running():
-                get_task_tracker().create_task(
-                    self._engine._on_transcript(text),
-                    name="ears.mock_hear_transcript",
-                )
+            if not loop.is_running():
+                return False
+            get_task_tracker().create_task(
+                self._engine._on_transcript(text),
+                name="ears.injected_transcript",
+            )
+            return True
         except RuntimeError:
             # No loop running, but we should not use asyncio.run inside this library
             # as it often collides with the larger service lifecycle.
-            logger.warning("mock_hear: No running event loop. Transcript not dispatched.")
+            logger.warning("inject_transcript_for_test: no running event loop; not dispatched.")
+            return False
         except (AttributeError, TypeError, ValueError) as e:
             record_degradation('ears', e)
-            logger.error("Mock hear failed: %s", e)
+            logger.error("inject_transcript_for_test failed: %s", e)
+            return False
