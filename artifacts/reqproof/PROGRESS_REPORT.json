@@ -10,14 +10,14 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "6.76",
+    "machine_certified_percent": "5.12",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 676
+    "verified_basis_points": 512
   },
   "evidence_classes": [
     {
       "cells_total": 516,
-      "cells_verified": 44,
+      "cells_verified": 21,
       "evidence_class": "implementation",
       "weight": 2
     },
@@ -28,7 +28,7 @@
       "weight": 2
     },
     {
-      "cells_total": 127,
+      "cells_total": 132,
       "cells_verified": 3,
       "evidence_class": "live",
       "weight": 3
@@ -40,25 +40,25 @@
       "weight": 3
     },
     {
-      "cells_total": 47,
+      "cells_total": 51,
       "cells_verified": 0,
       "evidence_class": "security",
       "weight": 4
     },
     {
-      "cells_total": 18,
+      "cells_total": 19,
       "cells_verified": 2,
       "evidence_class": "portability",
       "weight": 4
     },
     {
-      "cells_total": 19,
+      "cells_total": 21,
       "cells_verified": 0,
       "evidence_class": "release",
       "weight": 4
     },
     {
-      "cells_total": 12,
+      "cells_total": 13,
       "cells_verified": 0,
       "evidence_class": "soak",
       "weight": 4
@@ -69,16 +69,16 @@
     "confidence": "low",
     "conservative_weighted_points_per_checkpoint": 10,
     "optimistic_weighted_points_per_checkpoint": 30,
-    "remaining_checkpoint_records_high": 275,
-    "remaining_checkpoint_records_low": 92,
-    "total_checkpoint_records_high": 684,
-    "total_checkpoint_records_low": 501
+    "remaining_checkpoint_records_high": 284,
+    "remaining_checkpoint_records_low": 95,
+    "total_checkpoint_records_high": 693,
+    "total_checkpoint_records_low": 504
   },
   "inputs": {
-    "evidence_ledger_sha256": "2e13a6e6d97108566470148eba3f2fbe72101efb61553eb4ccd7aa549eca89dd",
+    "evidence_ledger_sha256": "e812f0ffe932864925b0b0923f2791a94f0a5186ade87a5a380cca3629df20b5",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13",
-    "scope_baseline_sha256": "4fc286ff70e632ee2d2db184c2fd105e4791bf74ae618fd65e6d32aafebf2049"
+    "registry_sha256": "41b5e0ccf0c3193a9bc9e4e1ac291ed96ea088ed694893e6f4cf061a8620f014",
+    "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336"
   },
   "non_claims": [
     "The 27 percent engineering estimate is not machine-certified and cannot release Aura.",
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "c0f13a14cb5a49a57b795794f6a3f3130c3e8c209a731f536585e60ed0b4696d",
+  "report_sha256": "ee290a5cf06d00b011338ccc0948d47ccdf1aa88089229c716c27a7c4ff419fe",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -331,7 +331,7 @@
       ],
       "acceptance_units": 9,
       "cells_total": 22,
-      "cells_verified": 18,
+      "cells_verified": 9,
       "id": "ADDENDUM-21",
       "kind": "parent",
       "required_evidence_classes": [
@@ -343,7 +343,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "49.00",
-      "weighted_points_verified": "36.00"
+      "weighted_points_verified": "18.00"
     },
     {
       "acceptance_evidence_required": [
@@ -392,7 +392,7 @@
       ],
       "acceptance_units": 9,
       "cells_total": 24,
-      "cells_verified": 10,
+      "cells_verified": 5,
       "id": "ADDENDUM-22",
       "kind": "parent",
       "required_evidence_classes": [
@@ -405,7 +405,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "56.00",
-      "weighted_points_verified": "20.00"
+      "weighted_points_verified": "10.00"
     },
     {
       "acceptance_evidence_required": [
@@ -1058,21 +1058,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "AUTONOMY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -1440,21 +1442,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CHAT-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -1528,21 +1532,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CLOSEOUT-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2034,7 +2040,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-LANE-001",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2044,7 +2050,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2055,7 +2061,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-LANE-002",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2065,7 +2071,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2077,7 +2083,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 3,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2088,7 +2094,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2099,7 +2105,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-LANE-004",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2109,7 +2115,7 @@
       "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2554,7 +2560,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-TEST-001",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2564,7 +2570,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2576,7 +2582,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 3,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-TEST-002",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2587,7 +2593,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -2598,7 +2604,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 2,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "CTX2-TEST-003",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -2608,7 +2614,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -3707,7 +3713,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
@@ -4060,7 +4066,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 4,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "LANE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -4072,7 +4078,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -5429,21 +5435,25 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security",
+          "release"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 4,
       "cells_verified": 0,
       "id": "OBSERVABILITY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security",
+        "release"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "12.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -6013,21 +6023,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "PRIVACY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -6105,21 +6117,29 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security",
+          "portability",
+          "release",
+          "soak"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 6,
       "cells_verified": 0,
       "id": "RELEASE-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security",
+        "portability",
+        "release",
+        "soak"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -6201,7 +6221,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 3,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "RESOURCE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -6212,27 +6232,29 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "RESOURCE-OWNERSHIP-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -6586,7 +6608,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
@@ -7182,7 +7204,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
@@ -7882,21 +7904,25 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 4,
       "cells_verified": 0,
       "id": "VOICE-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live",
+        "security"
       ],
-      "state_claim": "open",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "11.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -7948,14 +7974,14 @@
   ],
   "schema_version": 1,
   "scope": {
-    "acceptance_evidence_cells_total": 1292,
-    "acceptance_evidence_cells_verified": 95,
+    "acceptance_evidence_cells_total": 1305,
+    "acceptance_evidence_cells_verified": 72,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 312,
     "requirements_total": 313,
-    "scope_baseline_cells": 1292,
-    "weighted_points_remaining": "2741.00",
-    "weighted_points_total": "2940.00",
-    "weighted_points_verified": "199.00"
+    "scope_baseline_cells": 1305,
+    "weighted_points_remaining": "2834.00",
+    "weighted_points_total": "2987.00",
+    "weighted_points_verified": "153.00"
   }
 }
