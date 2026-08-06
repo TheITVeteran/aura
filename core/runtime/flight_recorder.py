@@ -62,7 +62,16 @@ _SLOT_PREFIX_LEN = 4 + _SLOT_BODY_LEN
 _PAYLOAD_CAP = _SLOT_SIZE - _SLOT_PREFIX_LEN
 
 _DEFAULT_SLOT_COUNT = 4096
-_DEFAULT_DIR = Path("data/error_logs/flight")
+def _default_flight_dir() -> Path:
+    """Resolved per construction through the shared forensics root.
+
+    A module-level relative Path baked in whatever directory happened to be
+    current at import, which put death reports somewhere the readers of those
+    reports did not look.
+    """
+    from core.utils.paths import forensics_dir
+
+    return forensics_dir("flight")
 _RING_NAME = "flight_ring.bin"
 _PREV_RING_NAME = "flight_ring.prev"
 _LOCK_NAME = "flight_ring.lock"
@@ -247,7 +256,9 @@ class FlightRecorder:
         *,
         slot_count: int | None = None,
     ) -> None:
-        self._flight_dir = Path(flight_dir) if flight_dir is not None else _DEFAULT_DIR
+        self._flight_dir = (
+            Path(flight_dir) if flight_dir is not None else _default_flight_dir()
+        )
         self._ring_path = self._flight_dir / _RING_NAME
         self._prev_ring_path = self._flight_dir / _PREV_RING_NAME
         requested = slot_count if slot_count is not None else int(_SLOTS_FLAG.value())

@@ -118,10 +118,12 @@ def _forensics_root() -> Path:
     honoring it keeps hermetic runs from salting the real forensic record
     (58 test-driver dumps polluted a triage ranking on 2026-07-10).
     """
-    override = str(_FLAG_LOG_DIR.value() or "").strip()
-    if override:
-        return Path(override) / "error_logs"
-    return Path("data/error_logs")
+    # Anchored, not cwd-relative, and the AURA_LOG_DIR override now lives in
+    # one place: forensics_root() applies it for every writer, so this lane
+    # cannot honour the switch differently from the lane that reads it back.
+    from core.utils.paths import forensics_root
+
+    return forensics_root()
 
 
 def _record_watchdog_degradation(

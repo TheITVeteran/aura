@@ -185,6 +185,27 @@ def flag_report() -> list[dict[str, Any]]:
     return report
 
 
+def aura_log_dir_override() -> str:
+    """Return the typed override that redirects logs and the forensic record.
+
+    Declared here rather than in each watchdog: the stall watchdog, the memory
+    watchdog and the crash handler each read this switch, and a lane that
+    interpreted it differently from the lane reading the artifacts back is how
+    forensics end up written where nobody looks for them.
+    """
+
+    return str(
+        declare(
+            "AURA_LOG_DIR",
+            kind=FlagKind.STRING,
+            default="",
+            description="Override root for Aura logs and the forensic record",
+            owner="core.runtime.flags",
+        ).value()
+        or ""
+    ).strip()
+
+
 def aura_root_override() -> str:
     """Return the canonical typed override for Aura's writable runtime root."""
 

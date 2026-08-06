@@ -65,6 +65,12 @@ class SerializedDBWriter:
         # ISSUE 27 fix: Use thread-local for writer connection and reader connections
         self._local = threading.local()
         self._writer_conns: Dict[str, sqlite3.Connection] = {}
+        # Reader connections are thread-local so two threads never share a
+        # cursor, but thread-local also means shutdown — which runs on one
+        # thread — cannot see them, and every reader handle survived the writer
+        # it belonged to. Mirror them here, keyed by (thread, path), so the
+        # owner that opened them is also the owner that can close them.
+        self._reader_conns: Dict[Tuple[int, str], sqlite3.Connection] = {}
         self._lock = threading.Lock()
         self._accepting = True
         self._checkpoint_every = 500
@@ -83,6 +89,8 @@ class SerializedDBWriter:
             conn = configure_connection(db_path)
             conn.row_factory = sqlite3.Row
             self._local.connections[db_path] = conn
+            with self._lock:
+                self._reader_conns[(threading.get_ident(), db_path)] = conn
         return self._local.connections[db_path]
 
     def _get_writer_conn(self, db_path: str) -> sqlite3.Connection:
@@ -306,6 +314,23 @@ class SerializedDBWriter:
             for conn in self._writer_conns.values():
                 conn.close()
             self._writer_conns.clear()
+            # Readers too. These are opened with check_same_thread=False, so
+            # closing them from the shutting-down thread is legal; leaving them
+            # open holds the database file, its -wal and its -shm for the rest
+            # of the process, which is how a "clean shutdown" still ends with
+            # the WAL unreclaimed.
+            for key, conn in list(self._reader_conns.items()):
+                try:
+                    conn.close()
+                except sqlite3.Error as exc:
+                    record_degradation('db_writer_queue', exc)
+                    logger.warning("DBWriter reader close failed for %s: %s", key[1], exc)
+            self._reader_conns.clear()
+        # The calling thread's own local cache must forget them as well, or a
+        # post-shutdown read hands back a closed connection instead of opening
+        # a fresh one.
+        if hasattr(self._local, "connections"):
+            self._local.connections.clear()
         logger.info("📝 SerializedDBWriter shut down")
 
     def flush_and_checkpoint(self) -> None:

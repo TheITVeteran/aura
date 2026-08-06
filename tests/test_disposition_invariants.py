@@ -18,6 +18,7 @@ fail is not a check.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,10 @@ class TestTheyAreDeclared:
             cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0, result.stderr[-2000:]
-        registered = set(eval(result.stdout.strip()))  # noqa: S307 — our own literal
+        # literal_eval, not eval: the probe prints a list literal, and parsing
+        # it as data rather than executing it as code is both the correct tool
+        # and one fewer dynamic-execution site to explain to the gate.
+        registered = set(ast.literal_eval(result.stdout.strip()))
         assert _EXPECTED <= registered, (
             f"importing surface_disposition registered {registered}"
         )

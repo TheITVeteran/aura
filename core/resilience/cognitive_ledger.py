@@ -210,6 +210,24 @@ class CognitiveLedger:
             logger.error("CognitiveLedger initialization failed: %s", e)
             self._conn = None
 
+    def close(self) -> None:
+        """Release the sqlite handle.
+
+        The ledger is a process-global singleton and its connection outlives
+        every caller, which is correct for the live runtime and a leak anywhere
+        the process is meant to be torn down and rebuilt. Idempotent, and it
+        never raises: closing is cleanup, and cleanup that can fail turns one
+        problem into two.
+        """
+        with self._lock:
+            conn, self._conn = self._conn, None
+            if conn is None:
+                return
+            try:
+                conn.close()
+            except sqlite3.Error as exc:
+                logger.debug("CognitiveLedger: close failed: %s", exc)
+
     def recover_storage(self, reason: BaseException | str) -> bool:
         """Quarantine a corrupt ledger database and rebuild an empty ledger.
 
@@ -621,3 +639,18 @@ def get_cognitive_ledger() -> CognitiveLedger:
     if _ledger is None:
         _ledger = CognitiveLedger()
     return _ledger
+
+
+def reset_cognitive_ledger_for_test() -> None:
+    """Close and drop the process-global ledger.
+
+    Anything that records a transition — the transition model, the resource
+    governor, the intention loop — brings this singleton online lazily, so the
+    test that happens to be first to reach one of those paths acquires a sqlite
+    handle for the rest of the process and gets blamed for the leak. Closing it
+    between tests makes the blame land where the work happened.
+    """
+    global _ledger
+    ledger, _ledger = _ledger, None
+    if ledger is not None:
+        ledger.close()

@@ -5205,47 +5205,6 @@ class CapabilityEngine(AuraBaseModule):
                         "status": "blocked_by_self_preservation_unavailable",
                     }
 
-            # Prepare through the same source/import/dependency/constructor
-            # boundary exposed by the catalog audit. This prevents a metadata
-            # "dry run" from passing while first real execution fails later.
-            #
-            # This runs AFTER the metabolic guard above, not before it.
-            # Preparing a skill imports its module and runs its constructor —
-            # that is work, and the guard directly above exists to stop work
-            # when the substrate is already in critical pressure. Preparing
-            # first also meant a load failure was reported in place of the
-            # health reason, contradicting that guard's own contract two
-            # comments up ("should fail closed with the true health reason")
-            # and masking blocked_by_self_preservation_unavailable behind
-            # skill_preflight_failed. `prepared_instance` is not consumed
-            # after this block, so the check is pure validation and moving it
-            # changes ordering only.
-            if not is_forged:
-                preflight, prepared_instance = self._prepare_skill_instance(
-                    skill_name,
-                    meta,
-                )
-                if not preflight.get("ok") or prepared_instance is None:
-                    detail = str(preflight.get("error") or "unknown preflight failure")
-                    failure = RuntimeError(detail)
-                    _record_capability_degradation(
-                        failure,
-                        action="returned skill load failure before execution",
-                        severity="degraded",
-                    )
-                    self.logger.error(
-                        "Failed to prepare %s at %s: %s",
-                        skill_name,
-                        preflight.get("stage"),
-                        detail,
-                    )
-                    return {
-                        "ok": False,
-                        "error": f"Failed to load implementation: {detail}",
-                        "preflight": preflight,
-                        "status": "skill_preflight_failed",
-                    }
-
             # ── PERMISSION RISK MODEL GATE ──────────────────────────────
             try:
                 pm = ServiceContainer.get("permission_model", default=None)
@@ -5790,6 +5749,53 @@ class CapabilityEngine(AuraBaseModule):
                         ),
                         "status": "blocked_by_ungated_risk",
                         "gate_error": f"{type(_gate_exc).__name__}: {_gate_exc}",
+                    }
+
+            # Prepare through the same source/import/dependency/constructor
+            # boundary exposed by the catalog audit. This prevents a metadata
+            # "dry run" from passing while first real execution fails later.
+            #
+            # Position is a security property, not a style choice. Preparing a
+            # skill IMPORTS ITS MODULE AND RUNS ITS CONSTRUCTOR — that is
+            # attacker-reachable work, and for a while it ran before the
+            # permission model, before the constitutional Will/AuthorityGateway
+            # closure and before the derived conscience gates. Naming a skill
+            # was therefore enough to execute its module-level and __init__
+            # code without any authority having approved anything; only the
+            # skill's *call* was gated. It also masked the gates' own verdicts:
+            # a runtime whose executive core was down reported
+            # skill_preflight_failed instead of blocked_by_executive_gate_failure,
+            # so an authorization outage looked like a broken skill.
+            #
+            # It still runs after the metabolic guard, for the reason that put
+            # it there: preparing is work, and the guard exists to stop work
+            # under critical substrate pressure. Every gate has now spoken, so
+            # this is the last thing before execution. `prepared_instance` is
+            # not consumed below — the check is pure validation.
+            if not is_forged:
+                preflight, prepared_instance = self._prepare_skill_instance(
+                    skill_name,
+                    meta,
+                )
+                if not preflight.get("ok") or prepared_instance is None:
+                    detail = str(preflight.get("error") or "unknown preflight failure")
+                    failure = RuntimeError(detail)
+                    _record_capability_degradation(
+                        failure,
+                        action="returned skill load failure before execution",
+                        severity="degraded",
+                    )
+                    self.logger.error(
+                        "Failed to prepare %s at %s: %s",
+                        skill_name,
+                        preflight.get("stage"),
+                        detail,
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"Failed to load implementation: {detail}",
+                        "preflight": preflight,
+                        "status": "skill_preflight_failed",
                     }
 
             # 3. Adaptation & Security (Rosetta Stone / Sandbox)

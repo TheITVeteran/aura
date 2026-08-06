@@ -319,7 +319,10 @@ class SourceBodyAwareness:
         self.boot_id = uuid.uuid4().hex[:12]
         self.source_root = self._resolve_source_root(source_root)
         self.ledger_path = self._resolve_ledger_path(ledger_path)
-        self.crash_evidence_dir = self._resolve_crash_dir(crash_evidence_dir)
+        self.crash_evidence_dirs = self._resolve_crash_dirs(crash_evidence_dir)
+        # Kept for callers and tests that name a single directory; the search
+        # itself walks every root in crash_evidence_dirs.
+        self.crash_evidence_dir = self.crash_evidence_dirs[0]
         self._subprocess_gateway = subprocess_gateway or get_subprocess_gateway()
 
         self._git_available: bool | None = None
@@ -364,13 +367,27 @@ class SourceBodyAwareness:
             return aura_data_dir() / "soma" / "source_body_ledger.jsonl"
 
     @staticmethod
-    def _resolve_crash_dir(explicit: Path | str | None) -> Path:
-        if explicit is not None:
-            return Path(explicit)
-        try:
-            from core.utils.paths import aura_error_logs_dir
+    def _resolve_crash_dirs(explicit: Path | str | None) -> list[Path]:
+        """Every directory that may hold crash evidence, canonical first.
 
-            return aura_error_logs_dir() / "crash"
+        This used to return the canonical directory alone, and on this machine
+        the canonical directory was empty while the faulthandler dumps landed in
+        the checkout-relative tree the launcher's cwd implied. Crash correlation
+        therefore answered "no crash" for every awakening after a real death —
+        it was reading a directory nothing wrote to. An explicit directory still
+        wins outright so a caller (a test, a replay) gets exactly what it named.
+        """
+        if explicit is not None:
+            return [Path(explicit)]
+        try:
+            from core.utils.paths import forensics_search_dirs
+
+            found = forensics_search_dirs("crash")
+            if found:
+                return found
+            from core.utils.paths import forensics_root
+
+            return [forensics_root() / "crash"]
         except _RECOVERABLE_ERRORS + (ImportError,) as exc:
             record_degradation(
                 "source_body",
@@ -378,7 +395,7 @@ class SourceBodyAwareness:
                 severity="warning",
                 action="crash correlation disabled: error-log dir unavailable",
             )
-            return Path("/nonexistent/aura-crash-evidence")
+            return [Path("/nonexistent/aura-crash-evidence")]
 
     # ── git plumbing (sync core; async callers hop through to_thread) ──
 
@@ -602,14 +619,15 @@ class SourceBodyAwareness:
         if previous is None:
             return False
         try:
-            if not self.crash_evidence_dir.is_dir():
-                return False
-            for entry in self.crash_evidence_dir.iterdir():
-                try:
-                    if entry.is_file() and entry.stat().st_mtime > previous.t:
-                        return True
-                except OSError:
+            for crash_dir in self.crash_evidence_dirs:
+                if not crash_dir.is_dir():
                     continue
+                for entry in crash_dir.iterdir():
+                    try:
+                        if entry.is_file() and entry.stat().st_mtime > previous.t:
+                            return True
+                    except OSError:
+                        continue
         except OSError as exc:
             record_degradation(
                 "source_body",

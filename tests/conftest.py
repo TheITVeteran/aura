@@ -342,6 +342,16 @@ _TEST_SCOPED_RESET_FUNCTIONS = (
     ("core.being.thought_interoception", "reset_thought_interoception_for_test"),
     ("core.being.unified_felt_state", "reset_unified_felt_state_for_test"),
     ("core.governance.will", "reset_unified_will_for_test"),
+    ("aura_main", "disarm_fault_forensics"),
+    # A boot test spawns the same detached sentinels a real boot does. Without
+    # this they outlive the test, and the hermetic sandbox blames whichever
+    # test happened to be running when they were noticed.
+    ("aura_main", "reap_spawned_children"),
+    # Every connection opened through the central factory, closed between
+    # tests. This is the general form of the per-component sqlite leaks: the
+    # registry already knows about them, nothing was asking it to let go.
+    ("core.memory.db_config", "close_all_connections"),
+    ("core.resilience.cognitive_ledger", "reset_cognitive_ledger_for_test"),
     ("core.resilience.inhibition_manager", "reset_inhibition_manager_for_test"),
     ("core.unity.runtime", "reset_unity_runtime_for_test"),
     ("core.social.dialogue_cognition", "reset_dialogue_cognition_for_test"),
@@ -353,6 +363,154 @@ _TEST_SCOPED_RESET_FUNCTIONS = (
     ("core.security.permission_guard", "reset_permission_guard_for_test"),
     ("core.memory.associative_entity_memory", "reset_associative_entity_memory_for_test"),
 )
+
+
+# ── Container containment ─────────────────────────────────────────────────
+#
+# _TEST_SCOPED_SERVICE_KEYS above is an ALLOWLIST, and an allowlist is the wrong
+# shape for this problem. It requires someone to enumerate, in advance, every
+# service any code path might lazily register — so the guard blames whichever
+# test happened to be the first to touch a lazy registration, and the list grows
+# by one name per incident forever. Measured on 2026-08-06: 61 of chunk 1's
+# teardown errors were this, in symmetric added/removed pairs (one test registers
+# `belief_graph`, a later test's reset evicts it and is blamed for "removing"
+# shared state it never created).
+#
+# Containment is the general form: snapshot the whole container before the test
+# and put it back afterwards. Then no test can inherit another's registrations,
+# the allowlist stops needing to be complete, and order-dependence through the
+# container becomes structurally impossible rather than reported after the fact.
+# The mutation is still recorded — the ledger is how we know which tests touch
+# global state — it just can no longer reach the next test.
+#
+# Tests that genuinely need a registration to outlive them mark themselves
+# `mutates_global_state`, which already bypasses the guard.
+_CONTAINER_STATE_ATTRS = (
+    "_services",
+    "_aliases",
+    "_init_locks",
+    "_optional_absent_breadcrumbs",
+)
+
+
+def _service_container_type():
+    container_module = sys.modules.get("core.container")
+    if container_module is None:
+        return None
+    return getattr(container_module, "ServiceContainer", None)
+
+
+def _snapshot_service_container() -> dict[str, object] | None:
+    """Copy the container's mutable class-level state, or None if unimported.
+
+    Importing core.container here would be a side effect of its own — a test
+    process that never touches the container should not acquire it because the
+    guard looked. So this only snapshots what is already loaded.
+    """
+    container = _service_container_type()
+    if container is None:
+        return None
+    snapshot: dict[str, object] = {}
+    lock = getattr(container, "_lock", None)
+    with lock if lock is not None else contextlib.nullcontext():
+        for attr in _CONTAINER_STATE_ATTRS:
+            value = getattr(container, attr, None)
+            if isinstance(value, dict):
+                snapshot[attr] = dict(value)
+            elif isinstance(value, set):
+                snapshot[attr] = set(value)
+        snapshot["_registration_locked"] = getattr(
+            container, "_registration_locked", False
+        )
+    return snapshot
+
+
+def _restore_service_container(snapshot: dict[str, object] | None) -> None:
+    """Put the container back exactly as the test found it.
+
+    Restore in place rather than rebinding the attribute: the descriptors are
+    class-level singletons that other modules hold references to, and rebinding
+    would leave those references pointing at the pre-test dict.
+    """
+    if snapshot is None:
+        return
+    container = _service_container_type()
+    if container is None:
+        return
+    lock = getattr(container, "_lock", None)
+    with lock if lock is not None else contextlib.nullcontext():
+        for attr in _CONTAINER_STATE_ATTRS:
+            if attr not in snapshot:
+                continue
+            current = getattr(container, attr, None)
+            saved = snapshot[attr]
+            if isinstance(current, dict) and isinstance(saved, dict):
+                current.clear()
+                current.update(saved)
+            elif isinstance(current, set) and isinstance(saved, set):
+                current.clear()
+                current.update(saved)
+        # A test that sealed registration leaves every later test unable to
+        # register anything, with an error that names the victim's service.
+        container._registration_locked = bool(snapshot["_registration_locked"])
+
+
+def _snapshot_process_globals() -> dict[str, object]:
+    """Copy the process-global surfaces that have a faithful restore.
+
+    Same argument as the container: an AURA_* variable set without monkeypatch,
+    a chdir that never came back, a Mock left in sys.modules under a real module
+    name — each one silently reconfigures every later test, and the guard can
+    only name the polluter after the damage. All three can be put back exactly,
+    so put them back.
+    """
+    return {
+        "aura_env": {
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith("AURA_")
+        },
+        "cwd": os.getcwd(),
+        "mocked_modules": {
+            name: module
+            for name, module in list(sys.modules.items())
+            if name.startswith(("core.", "interface."))
+            and module is not None
+            and not hasattr(module, "__file__")
+        },
+    }
+
+
+def _restore_process_globals(snapshot: dict[str, object]) -> None:
+    saved_env = snapshot["aura_env"]
+    assert isinstance(saved_env, dict)
+    for key in [key for key in os.environ if key.startswith("AURA_")]:
+        if key not in saved_env:
+            os.environ.pop(key, None)
+    for key, value in saved_env.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+
+    saved_cwd = snapshot["cwd"]
+    if isinstance(saved_cwd, str) and os.getcwd() != saved_cwd:
+        # A test that deleted its own cwd cannot be returned to it; the next
+        # test would then fail on an unrelated getcwd(). Land somewhere real.
+        with contextlib.suppress(OSError):
+            os.chdir(saved_cwd)
+
+    saved_mocks = snapshot["mocked_modules"]
+    assert isinstance(saved_mocks, dict)
+    for name, module in list(sys.modules.items()):
+        if not name.startswith(("core.", "interface.")):
+            continue
+        if module is None or hasattr(module, "__file__"):
+            continue
+        if name in saved_mocks:
+            sys.modules[name] = saved_mocks[name]  # type: ignore[assignment]
+        else:
+            # A stand-in the test installed. Dropping it lets the next importer
+            # get the real module back; leaving it rewires every later import.
+            sys.modules.pop(name, None)
 
 
 def _reset_test_scoped_runtime_services() -> None:
@@ -1350,6 +1508,13 @@ def _reset_working_memory_queue_load_between_tests():
 # AURA_TEST_STATE_GUARD=fail makes it enforcing, the same escalation the live
 # data guard uses.
 _STATE_GUARD_LEDGER: list[str] = []
+# Mutations that _restore_service_container() puts back. Recorded, not failed:
+# containment already stops them reaching the next test, so failing would only
+# be asking for another allowlist entry.
+_STATE_GUARD_CONTAINED_LEDGER: list[str] = []
+_CONTAINED_STATE_KEYS = frozenset(
+    {"service_container", "aura_env", "cwd", "mocked_core_modules"}
+)
 
 
 def _global_state_fingerprint() -> dict[str, object]:
@@ -1422,13 +1587,20 @@ def _global_state_contamination_guard(request, hermetic_resource_sandbox):
         return
 
     _reset_test_scoped_runtime_services()
+    container_snapshot = _snapshot_service_container()
+    globals_snapshot = _snapshot_process_globals()
     before = _global_state_fingerprint()
     try:
         yield
     finally:
         _reset_test_scoped_runtime_services()
         after = _global_state_fingerprint()
+        # Measure first, then contain. The ledger still learns which tests touch
+        # global state; the next test does not.
+        _restore_service_container(container_snapshot)
+        _restore_process_globals(globals_snapshot)
         changes: list[str] = []
+        contained: list[str] = []
         for key in sorted(set(before) | set(after)):
             old_value, new_value = before.get(key), after.get(key)
             if old_value == new_value:
@@ -1441,10 +1613,24 @@ def _global_state_contamination_guard(request, hermetic_resource_sandbox):
                     detail.append(f"added {', '.join(map(str, added))}")
                 if removed:
                     detail.append(f"removed {', '.join(map(str, removed))}")
-                if detail:
-                    changes.append(f"{key}: {'; '.join(detail)}")
+                if not detail:
+                    continue
+                rendered = f"{key}: {'; '.join(detail)}"
             else:
-                changes.append(f"{key}: {old_value!r} -> {new_value!r}")
+                rendered = f"{key}: {old_value!r} -> {new_value!r}"
+            # Fail on what we cannot contain; record what we can. The container
+            # was put back above, so a registration the test made is no longer
+            # reachable by the next test and failing over it would only ask for
+            # another allowlist entry. cwd, AURA_* env, mocked sys.modules and
+            # installed resolvers have no restore path here, so they stay hard
+            # failures — those are the ones that still reach the next test.
+            (contained if key in _CONTAINED_STATE_KEYS else changes).append(rendered)
+        if contained:
+            note = (
+                f"{request.node.nodeid} mutated shared state (contained): "
+                + " | ".join(contained)
+            )
+            _STATE_GUARD_CONTAINED_LEDGER.append(note)
         if changes:
             message = (
                 f"{request.node.nodeid} left shared state changed: " + " | ".join(changes)

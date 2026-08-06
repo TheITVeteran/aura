@@ -466,6 +466,22 @@ def loop_can_end(node: ast.While) -> bool:
     return found
 
 
+def handler_answers_with_a_value(handler: ast.ExceptHandler) -> bool:
+    """Did the handler turn the exception into an answer?
+
+    ``except Exception: return False`` in a verification predicate is not a
+    swallow — the caller is told the verification did not hold, and told it
+    in the only vocabulary the predicate has. ``except Exception: pass`` is a
+    swallow: control resumes as though nothing happened and nobody is told
+    anything.
+
+    Thirteen of this rule's twenty-three findings were the first kind.
+    """
+    return any(
+        isinstance(item, ast.Return) and item.value is not None for item in handler.body
+    )
+
+
 class AstGate(ast.NodeVisitor):
     def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
         self.rel = rel
@@ -479,6 +495,15 @@ class AstGate(ast.NodeVisitor):
         #: about a third of its running time. A ``None`` is pushed for a
         #: function so a nested def does not inherit the class above it.
         self._scopes: list[ast.AST | None] = []
+        #: Depth inside a ``__del__``. A finalizer runs while the interpreter
+        #: is tearing modules out from under it, so recording a degradation
+        #: there can fail on the way to reporting the failure. Silence is the
+        #: correct behaviour, and the one place it is.
+        self._finalizer_depth = 0
+
+    @property
+    def _in_finalizer(self) -> bool:
+        return self._finalizer_depth > 0
 
     @property
     def _enclosing(self) -> ast.AST | None:
@@ -535,9 +560,14 @@ class AstGate(ast.NodeVisitor):
             severity = "high" if is_production(self.rel) else "medium"
             if node.type is None:
                 self.add(severity, "bare_except", node)
-            elif any(isinstance(item, ast.Pass) for item in node.body) or all(
-                isinstance(item, (ast.Break, ast.Continue, ast.Pass, ast.Return))
-                for item in node.body
+            elif (
+                any(isinstance(item, ast.Pass) for item in node.body)
+                or all(
+                    isinstance(item, (ast.Break, ast.Continue, ast.Pass, ast.Return))
+                    for item in node.body
+                )
+            ) and not (
+                handler_answers_with_a_value(node) or self._in_finalizer
             ):
                 # A silent swallow is debt even when annotated; a swallow that
                 # at least logs (non-trivial body) may be a reviewed floor.
@@ -624,9 +654,13 @@ class AstGate(ast.NodeVisitor):
         previous_async_depth = self.async_depth
         self.async_depth = 0
         self._scopes.append(None)
+        if node.name == "__del__":
+            self._finalizer_depth += 1
         try:
             self.generic_visit(node)
         finally:
+            if node.name == "__del__":
+                self._finalizer_depth -= 1
             self._scopes.pop()
             self.async_depth = previous_async_depth
 

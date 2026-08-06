@@ -1556,14 +1556,6 @@
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 2,
-      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
-      "scope": "<module>.load_checkpoint"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
       "count": 1,
       "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
       "scope": "<module>.save_checkpoint"
@@ -2359,14 +2351,6 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.open_owned_binary"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.ensure_private_directory",
-      "canonical_owner": true,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>.FileWriteGateway.provision_private_bytes"
     },
     {
       "callee": "core.runtime.atomic_writer.durable_replace",
@@ -4175,30 +4159,6 @@
       "count": 1,
       "path": "core/learning/cortex_generation_upgrade.py",
       "scope": "<module>._governed_write"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.__init__"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun._prune"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 2,
-      "path": "core/learning/durable_run.py",
-      "scope": "<module>.DurableRun.save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -8513,6 +8473,30 @@
       "scope": "<module>.TraceLogger.__init__"
     },
     {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/verification/independent_evidence.py",
+      "scope": "<module>._verdict_key"
+    },
+    {
       "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9073,6 +9057,30 @@
       "scope": "<module>.UnifiedSelf._save_to_disk"
     },
     {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/container.py",
+      "scope": "<module>.ServiceContainer._seal_key"
+    },
+    {
       "callee": "project_root.mkdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -9159,6 +9167,30 @@
       "count": 1,
       "path": "core/continuity.py",
       "scope": "<module>.ContinuityEngine.save"
+    },
+    {
+      "callee": "open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
+    },
+    {
+      "callee": "path.parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/continuity.py",
+      "scope": "<module>._continuity_key"
     },
     {
       "callee": "self.db_path.replace",
@@ -10025,6 +10057,46 @@
       "scope": "<module>.DomainSpecialistTrainer.train_domain"
     },
     {
+      "callee": "self.run_dir.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.__init__"
+    },
+    {
+      "callee": "stale.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun._prune"
+    },
+    {
+      "callee": "manifest_tmp.write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
+      "callee": "tmp.write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/durable_run.py",
+      "scope": "<module>.DurableRun.save"
+    },
+    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10223,6 +10295,22 @@
       "count": 1,
       "path": "core/learning/recursive_self_improvement.py",
       "scope": "<module>.RecursiveSelfImprovementLoop._run_tool_creation"
+    },
+    {
+      "callee": "adapter_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.load_checkpoint"
+    },
+    {
+      "callee": "optimizer_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/resident_recurrent_sft_bootstrap_state.py",
+      "scope": "<module>.load_checkpoint"
     },
     {
       "callee": "<pathlib.Path>.unlink",
@@ -11121,6 +11209,30 @@
       "scope": "<module>.MycelialNetwork.vault_sync._sync_worker"
     },
     {
+      "callee": "key_path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
+      "callee": "open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/mycelium.py",
+      "scope": "<module>._vault_mac_key"
+    },
+    {
       "callee": "candidate.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11641,28 +11753,12 @@
       "scope": "<module>.SignatureRepairRegistry._repair_pid_cleanup"
     },
     {
-      "callee": "<pathlib.Path>.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/memory_watchdog.py",
-      "scope": "<module>.MemoryWatchdog._dump_thread_stacks"
-    },
-    {
       "callee": "open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/resilience/memory_watchdog.py",
       "scope": "<module>.MemoryWatchdog._dump_thread_stacks"
-    },
-    {
-      "callee": "<pathlib.Path>.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/memory_watchdog.py",
-      "scope": "<module>.MemoryWatchdog._write_tombstone"
     },
     {
       "callee": "_TRACE_FILE.parent.mkdir",
@@ -14497,6 +14593,22 @@
       "scope": "<module>.ShadowExecutionPhase._validate_mutation_detailed"
     },
     {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/learning/durable_external_verifier_job.py",
+      "scope": "<module>.DurableExternalVerifierJob._runner_call"
+    },
+    {
+      "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
+    },
+    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -14857,14 +14969,6 @@
       "scope": "<module>.CRSMClosureScheduler._run_training"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/learning/durable_external_verifier_job.py",
-      "scope": "<module>.DurableExternalVerifierJob._runner_call"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -14879,14 +14983,6 @@
       "count": 1,
       "path": "core/learning/recurrent_sft_kernel_probe.py",
       "scope": "<module>.execute_kernel_probe"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/learning/verified_transition_production_factory.py",
-      "scope": "<module>.CommandRoleSignerBroker._execute"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15986,6 +16082,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "af71f50fcb41954acd33f0cdbd7767967a56ce3a20251f9fc9989866f3e4149f",
+  "inventory_sha256": "fd5f59c40a4589fe9a5fbfe0337f3e80831e30c4d9ed672eaf957aae610d7822",
   "schema_version": 1
 }

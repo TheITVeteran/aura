@@ -1359,8 +1359,14 @@ def _install_fault_forensics() -> None:
         import faulthandler
         import signal as _signal
 
-        crash_dir = Path("data/error_logs/crash")
-        crash_dir.mkdir(parents=True, exist_ok=True)
+        # Anchored, not cwd-relative. A relative path put the dumps wherever the
+        # launcher happened to start, which is how the crash-correlation reader
+        # ended up watching an empty directory while the real dumps accumulated
+        # in the checkout. Forensics that depend on the working directory are
+        # forensics you cannot rely on at exactly the moment you need them.
+        from core.utils.paths import forensics_dir
+
+        crash_dir = forensics_dir("crash")
         crash_file = open(crash_dir / "faulthandler.log", "a")
         crash_file.write(
             f"\n===== boot pid={os.getpid()} at={time.time()} =====\n"
@@ -1373,7 +1379,7 @@ def _install_fault_forensics() -> None:
         if hasattr(_signal, "SIGUSR1"):
             faulthandler.register(_signal.SIGUSR1, file=crash_file, all_threads=True, chain=False)
         _FAULT_FORENSICS_HANDLE = crash_file
-        logger.info("🛡️ Fault forensics armed: data/error_logs/crash/faulthandler.log")
+        logger.info("🛡️ Fault forensics armed: %s", crash_dir / "faulthandler.log")
     except (OSError, ValueError, RuntimeError, AttributeError) as exc:
         if crash_file is not None:
             crash_file.close()
@@ -1383,6 +1389,134 @@ def _install_fault_forensics() -> None:
             action="continued boot without fault forensics",
             severity="warning",
         )
+
+
+# Children this process started that will not die with it. Held weakly by role
+# so a respawn replaces its predecessor rather than accumulating entries.
+_SPAWNED_CHILDREN: dict[int, tuple[str, "subprocess.Popen"]] = {}
+_SPAWNED_CHILDREN_LOCK = threading.Lock()
+
+
+def reap_spawned_children(timeout: float = 2.0) -> list[str]:
+    """Terminate every detached child this process started. Returns roles reaped.
+
+    The reaper manifest covers the case where the runtime dies without warning.
+    It does not cover a graceful shutdown, and a graceful shutdown was leaving
+    both external sentinels running: they are spawned with
+    ``start_new_session=True`` so nothing in the process group takes them down,
+    and the manifest is only executed by the reaper on kernel death. The result
+    was a clean exit that left two live watchdogs behind, still watching a PID
+    that no longer existed.
+
+    Terminate, wait, then kill. Idempotent and never raises: this runs during
+    shutdown, where an exception costs more than a surviving child.
+    """
+    with _SPAWNED_CHILDREN_LOCK:
+        children = list(_SPAWNED_CHILDREN.values())
+        _SPAWNED_CHILDREN.clear()
+
+    reaped: list[str] = []
+    for role, proc in children:
+        try:
+            if proc.poll() is not None:
+                continue
+            proc.terminate()
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=timeout)
+            reaped.append(role)
+        # AttributeError is included deliberately. This runs inside shutdown,
+        # where raising costs more than the child it failed to kill, and a
+        # handle that turned out not to be a process is exactly the kind of
+        # surprise that should be recorded rather than propagated.
+        except (AttributeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            record_degradation(
+                _AURA_MAIN_DEGRADATION_KEY,
+                exc,
+                action=f"{role} child pid={proc.pid} survived shutdown reaping",
+                severity="warning",
+            )
+        finally:
+            # Deregister either way: a PID we can no longer signal must not stay
+            # in the manifest, where a later run could match it to a stranger.
+            try:
+                from core.reaper import ReaperManifest
+
+                ReaperManifest().deregister_pid(int(proc.pid))
+            except (AttributeError, ImportError, OSError, ValueError, TypeError) as exc:
+                logger.debug("Reaper deregistration failed for %s: %s", role, exc)
+    if reaped:
+        logger.info("Reaped detached children at shutdown: %s", ", ".join(reaped))
+    return reaped
+
+
+def _register_spawned_child(proc: "subprocess.Popen", *, role: str) -> None:
+    """Put a spawned child in the reaper manifest so something outlives us to kill it.
+
+    Both external sentinels are started with ``start_new_session=True`` — on
+    purpose, because a watchdog that dies with the process it watches is not a
+    watchdog. The consequence is that nothing in the process group reaps them,
+    and neither was ever registered with the reaper, so every boot that did not
+    exit cleanly left two orphans behind holding a log fd. The reaper already
+    verifies process identity (create_time and cwd) before signalling anything,
+    so registering here cannot turn into killing a stranger that inherited the
+    PID.
+
+    Registration failure must never take down the boot that spawned the child:
+    a missing manifest entry costs a leaked process, and raising here would
+    cost the runtime.
+    """
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    with _SPAWNED_CHILDREN_LOCK:
+        _SPAWNED_CHILDREN[int(pid)] = (role, proc)
+    try:
+        from core.reaper import register_reaper_pid
+
+        register_reaper_pid(int(pid))
+        logger.debug("Registered %s child pid=%s with the reaper manifest", role, pid)
+    except (ImportError, OSError, ValueError, TypeError) as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action=f"{role} child pid={pid} is unreaped: manifest registration failed",
+            severity="warning",
+        )
+
+
+def disarm_fault_forensics() -> None:
+    """Disable faulthandler and release the crash-log handle.
+
+    Order matters and is not cosmetic: faulthandler holds the file descriptor,
+    so closing the file first leaves it pointed at a closed fd and the next
+    native fault writes into whatever inherits that number. Disable, unregister,
+    then close.
+
+    Idempotent. In the live runtime this runs at shutdown; in tests it is what
+    stops a boot test from holding the crash log open for the rest of the
+    process and having the leak attributed to whichever test ran last.
+    """
+    global _FAULT_FORENSICS_HANDLE
+
+    handle, _FAULT_FORENSICS_HANDLE = _FAULT_FORENSICS_HANDLE, None
+    if handle is None:
+        return
+    try:
+        import faulthandler
+        import signal as _signal
+
+        if hasattr(_signal, "SIGUSR1"):
+            with contextlib.suppress(RuntimeError, ValueError, OSError):
+                faulthandler.unregister(_signal.SIGUSR1)
+        with contextlib.suppress(RuntimeError, ValueError):
+            faulthandler.disable()
+    except (ImportError, AttributeError) as exc:
+        logger.debug("disarm_fault_forensics: faulthandler teardown failed: %s", exc)
+    with contextlib.suppress(OSError, ValueError):
+        handle.close()
 
 
 class _ExternalMemorySentinelStatus:
@@ -1523,11 +1657,22 @@ def _start_memory_sentinel_supervisor(status: "_ExternalMemorySentinelStatus") -
     try:
         from core.runtime.shutdown_coordinator import get_shutdown_coordinator
 
-        get_shutdown_coordinator().register(
+        coordinator = get_shutdown_coordinator()
+        coordinator.register(
             stop.set,
             phase="task_supervisor",
             name="memory_sentinel_supervisor",
             timeout=2.0,
+        )
+        # Registered after the supervisor's stop in the same phase, so the
+        # thread that respawns a dead sentinel is already stopped when the
+        # sentinels are killed. Reaping first would just be handing the
+        # supervisor a reason to start them again.
+        coordinator.register(
+            reap_spawned_children,
+            phase="task_supervisor",
+            name="reap_detached_children",
+            timeout=6.0,
         )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         record_degradation(
@@ -1660,8 +1805,9 @@ def _install_systemwide_memory_protection() -> None:
                 configured_lethal if configured_lethal else None,
             )
             sentinel_interval_s = float(os.environ.get("AURA_MEMORY_SENTINEL_INTERVAL_S", "1.0") or 1.0)
-            sentinel_log = Path("data/error_logs/memory")
-            sentinel_log.mkdir(parents=True, exist_ok=True)
+            from core.utils.paths import forensics_dir
+
+            sentinel_log = forensics_dir("memory")
             target_pid = os.getpid()
 
             def _spawn_memory_sentinel() -> subprocess.Popen:
@@ -1694,6 +1840,7 @@ def _install_systemwide_memory_protection() -> None:
                         proc.kill()
                         proc.wait(timeout=2.0)
                     raise RuntimeError("runtime_shutdown")
+                _register_spawned_child(proc, role="memory_sentinel")
                 return proc
 
             sentinel_proc = _spawn_memory_sentinel()
@@ -1769,8 +1916,9 @@ def _install_liveness_sentinel() -> None:
         stale_ceiling = os.environ.get("AURA_LIVENESS_STALE_CEILING_S", default_stale_ceiling)
         grace = os.environ.get("AURA_LIVENESS_GRACE_S", default_grace)
         interval = os.environ.get("AURA_LIVENESS_INTERVAL_S", default_interval)
-        log_dir = Path("data/error_logs/liveness")
-        log_dir.mkdir(parents=True, exist_ok=True)
+        from core.utils.paths import forensics_dir
+
+        log_dir = forensics_dir("liveness")
         if is_shutdown_requested():
             return
         with open(log_dir / "liveness_sentinel.log", "a") as log_handle:
@@ -1797,6 +1945,7 @@ def _install_liveness_sentinel() -> None:
                 proc.kill()
                 proc.wait(timeout=2.0)
             return
+        _register_spawned_child(proc, role="liveness_sentinel")
         logger.info(
             "🛡️ External liveness sentinel armed: heartbeat=%s stale_ceiling=%ss "
             "(kills+restarts a GIL-locked/wedged loop from outside).",

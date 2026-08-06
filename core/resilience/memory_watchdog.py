@@ -85,7 +85,18 @@ def _is_spawned_worker(cmd: str) -> bool:
         return False
     return any(marker in cmd for marker in _SPAWNED_WORKER_MARKERS)
 
-_TOMBSTONE_DIR = Path("data/error_logs/memory")
+def _tombstone_dir() -> Path:
+    """Resolved per call, not at import.
+
+    A module-level Path("data/error_logs/memory") froze the working directory
+    as it was at import time and wrote OOM tombstones relative to it. Resolving
+    through the shared forensics root means the reader looks where the writer
+    wrote, and an AURA_LOG_DIR set for a hermetic run is actually honoured
+    rather than baked over.
+    """
+    from core.utils.paths import forensics_dir
+
+    return forensics_dir("memory")
 _DARWIN_CHILD_LIBPROC: Any | None = None
 _DARWIN_CHILD_LIBPROC_UNAVAILABLE = False
 
@@ -844,9 +855,9 @@ class MemoryWatchdog(threading.Thread):
         try:
             import faulthandler
 
-            crash_dir = Path("data/error_logs/crash")
-            crash_dir.mkdir(parents=True, exist_ok=True)
-            spike_log = crash_dir / "memory_spike_stacks.log"
+            from core.utils.paths import forensics_dir
+
+            spike_log = forensics_dir("crash") / "memory_spike_stacks.log"
             try:
                 # Allocation-light rotation: a stat + rename keeps the log
                 # bounded (observed 54MB unrotated growth in live use).
@@ -911,8 +922,8 @@ class MemoryWatchdog(threading.Thread):
         try:
             from core.runtime.atomic_writer import atomic_write_json
 
-            _TOMBSTONE_DIR.mkdir(parents=True, exist_ok=True)
-            path = _TOMBSTONE_DIR / f"oom_tombstone_{int(time.time())}.json"
+            tombstone_dir = _tombstone_dir()
+            path = tombstone_dir / f"oom_tombstone_{int(time.time())}.json"
             # Approved emergency writer: atomic_writer is an audited file
             # sink with no governed-gateway machinery to starve under OOM,
             # and a torn tombstone would be worse than none.

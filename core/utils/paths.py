@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict
 
-from core.runtime.flags import aura_root_override
+from core.runtime.flags import aura_log_dir_override, aura_root_override
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("core.utils.paths")
@@ -72,6 +72,95 @@ def aura_error_logs_dir() -> Path:
 
 def aura_vault_dir() -> Path:
     return _ensure_dir(aura_root() / "vault", cause="aura_vault_dir")
+
+
+# ── Forensics roots ───────────────────────────────────────────────────────
+#
+# Two conventions grew side by side and nobody noticed they disagreed:
+#
+#   canonical   config.paths.data_dir / "error_logs"   ->  ~/.aura/data/error_logs
+#   cwd-relative Path("data/error_logs")               ->  $CWD/data/error_logs
+#
+# The live runtime is launched from the source checkout, so every cwd-relative
+# WRITER (aura_main's faulthandler, the flight recorder, the incident narrator)
+# landed its artifacts in <checkout>/data/error_logs, while every canonical
+# READER — including source_body's crash correlation — looked in
+# ~/.aura/data/error_logs and found an empty directory. Measured 2026-08-06:
+# 502 stall dumps, 5 crash dumps and 25 flight reports on the writer side; zero
+# on the reader side. The crash-correlation path had been reporting "no crashes"
+# because it was reading somewhere nothing was ever written. That is an absence
+# of evidence rendered as evidence of absence, which is the failure mode this
+# codebase is least allowed to have.
+#
+# One resolver now answers "where do forensics go", and readers walk every root
+# that exists so artifacts written under the old convention stay visible instead
+# of being silently orphaned. Nothing is moved: the live instance owns those
+# files while it is running.
+_LEGACY_FORENSICS_RELATIVE = Path("data/error_logs")
+
+
+def forensics_root() -> Path:
+    """The one directory forensics artifacts are written to.
+
+    ``AURA_LOG_DIR`` wins, because that is the switch a hermetic run already
+    sets and forensics written into the live record by a test are worse than no
+    forensics at all — 58 test-driver dumps once polluted a triage ranking.
+    Everything else lands under the canonical data dir.
+    """
+    override = aura_log_dir_override()
+    if override:
+        return _ensure_dir(Path(override) / "error_logs", cause="forensics_root:override")
+    return aura_error_logs_dir()
+
+
+def forensics_dir(kind: str) -> Path:
+    """Canonical directory for one class of forensics artifact.
+
+    ``kind`` is the subdirectory name — "crash", "stalls", "memory", "flight",
+    "bags", "traces". Created on demand, because a forensics writer that fails
+    on a missing directory loses exactly the evidence it exists to keep.
+    """
+    return _ensure_dir(forensics_root() / kind, cause=f"forensics_dir:{kind}")
+
+
+def forensics_search_roots() -> list[Path]:
+    """Every root a reader must consult, canonical first.
+
+    The legacy cwd-relative root is included only when it exists and is not the
+    canonical one, so a reader on a clean machine sees a single root and a
+    reader on this machine still finds the artifacts already on disk.
+    """
+    roots: list[Path] = [forensics_root()]
+    try:
+        legacy = _LEGACY_FORENSICS_RELATIVE.resolve()
+    except OSError:
+        return roots
+    if legacy.is_dir() and legacy not in roots:
+        roots.append(legacy)
+    project_legacy = (PROJECT_ROOT / _LEGACY_FORENSICS_RELATIVE).resolve()
+    if project_legacy.is_dir() and project_legacy not in roots:
+        roots.append(project_legacy)
+    return roots
+
+
+def forensics_search_dirs(kind: str) -> list[Path]:
+    """Every directory that may hold ``kind`` artifacts, canonical first.
+
+    The canonical directory is always included even when it does not exist yet.
+    Filtering it out for being empty is how a reader built before the first
+    crash ends up permanently watching only the legacy tree — the same
+    reader/writer split this resolver exists to close, reintroduced one level
+    down. Callers skip directories that are not there; that is cheap, and it is
+    the caller's business rather than the resolver's.
+    """
+    canonical = forensics_root() / kind
+    dirs = [canonical]
+    dirs.extend(
+        root / kind
+        for root in forensics_search_roots()
+        if (root / kind).is_dir() and root / kind != canonical
+    )
+    return dirs
 
 
 # v1.0.1: Moved to end of file to prevent circular import issues during early boot

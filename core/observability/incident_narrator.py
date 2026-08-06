@@ -101,6 +101,7 @@ class IncidentNarrator:
         # the real machine's history into the sandbox (a boot profile from
         # the live repo once made a hermetic empty-window test narrate an
         # actual 07:18 boot).
+        self._sandboxed = error_log_root is not None
         if error_log_root is not None:
             self._error_log_root = Path(error_log_root)
             self._boot_profile_path = (
@@ -109,7 +110,9 @@ class IncidentNarrator:
                 else self._error_log_root / "boot_profile.json"
             )
         else:
-            self._error_log_root = Path("data/error_logs")
+            from core.utils.paths import forensics_root
+
+            self._error_log_root = forensics_root()
             self._boot_profile_path = (
                 Path(boot_profile_path)
                 if boot_profile_path is not None
@@ -413,7 +416,10 @@ class IncidentNarrator:
         occurrence of a known stall fingerprint", not just describe one
         dump. Sandboxed runs read triage.json under the explicit root.
         """
-        if self._error_log_root != Path("data/error_logs"):
+        # Ask the flag, not the path. Comparing the root against a literal
+        # relative path meant "am I sandboxed?" silently answered yes the
+        # moment the default root stopped being that literal.
+        if self._sandboxed:
             triage_path = self._error_log_root / "triage.json"
         else:
             triage_path = Path("artifacts/reliability/triage.json")

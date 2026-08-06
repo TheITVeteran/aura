@@ -68,28 +68,46 @@ def _read_grace_flag() -> str:
 
 def _read_sentinel_tail(lines: int = 6) -> str:
     try:
-        log = Path("data/error_logs/memory/sentinel.log")
-        tail = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-lines:]
-        return "; ".join(line.split("] ", 1)[-1][:110] for line in tail if line.strip())
-    except OSError:
+        from core.utils.paths import forensics_search_dirs
+
+        for memory_dir in forensics_search_dirs("memory"):
+            log = memory_dir / "sentinel.log"
+            if not log.is_file():
+                continue
+            tail = (
+                log.read_text(encoding="utf-8", errors="replace")
+                .strip()
+                .splitlines()[-lines:]
+            )
+            if tail:
+                return "; ".join(
+                    line.split("] ", 1)[-1][:110] for line in tail if line.strip()
+                )
+        return ""
+    except (OSError, ImportError):
         return ""
 
 
-def _newest_artifacts(directory: str, count: int = 2) -> str:
+def _newest_artifacts(kind: str, count: int = 2) -> str:
+    """Newest artifacts of one forensic class across every root that holds them.
+
+    Reading a single hardcoded relative directory is what made this block report
+    an empty crash history while the dumps sat in the other tree; asking the
+    shared resolver means the reader cannot drift away from the writer again.
+    """
     try:
-        base = Path(directory)
-        if not base.is_dir():
-            return ""
-        entries = sorted(
-            (p for p in base.iterdir() if p.is_file()),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )[:count]
+        from core.utils.paths import forensics_search_dirs
+
+        entries: list[Path] = []
+        for base in forensics_search_dirs(kind):
+            entries.extend(p for p in base.iterdir() if p.is_file())
+        entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         now = time.time()
         return ", ".join(
-            f"{p.name} ({(now - p.stat().st_mtime) / 3600.0:.1f}h old)" for p in entries
+            f"{p.name} ({(now - p.stat().st_mtime) / 3600.0:.1f}h old)"
+            for p in entries[:count]
         )
-    except OSError:
+    except (OSError, ImportError):
         return ""
 
 
@@ -134,8 +152,8 @@ def build_self_forensics_context(max_chars: int = 3200) -> str:
     sections: list[tuple[str, str]] = [
         ("SHUTDOWN", _read_grace_flag()),
         ("MEMORY SENTINEL", _read_sentinel_tail()),
-        ("CRASH ARTIFACTS", _newest_artifacts("data/error_logs/crash")),
-        ("STALL ARTIFACTS", _newest_artifacts("data/error_logs/stalls")),
+        ("CRASH ARTIFACTS", _newest_artifacts("crash")),
+        ("STALL ARTIFACTS", _newest_artifacts("stalls")),
         ("LIVE INCIDENTS", _live_incidents()),
         ("FAULTS", _recent_faults()),
     ]
