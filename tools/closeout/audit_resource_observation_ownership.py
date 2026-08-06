@@ -58,6 +58,42 @@ REQUIRED_OBSERVATION_SYMBOLS = frozenset(
         "resource_observer_scope",
     }
 )
+REQUIRED_HERMETIC_FIXTURES = frozenset(
+    {
+        "_global_state_contamination_guard",
+        "hermetic_resource_sandbox",
+        "resource_observer",
+    }
+)
+REQUIRED_HERMETIC_FUNCTIONS = frozenset(
+    {
+        "_reset_test_scoped_runtime_services",
+    }
+)
+REQUIRED_HERMETIC_RESET_IDENTIFIERS = frozenset(
+    {
+        "reset_lane_admission_controller_for_test",
+        "reset_model_lane_controller_for_test",
+        "reset_model_registry_caches_for_test",
+        "reset_receipt_store",
+    }
+)
+REQUIRED_HERMETIC_ENV_KEYS = frozenset(
+    {
+        "AURA_MODEL_LANE_STATE_PATH",
+        "AURA_RECEIPT_ROOT",
+        "AURA_TEST_RUNTIME_ROOT",
+        "AURA_TEST_STATE_GUARD",
+    }
+)
+REQUIRED_LEAK_SANDBOX_METHODS = frozenset(
+    {
+        "close_and_assert_clean",
+        "leaks",
+        "listening_socket",
+        "snapshot",
+    }
+)
 PSUTIL_RESOURCE_CALLS = frozenset(
     {
         "boot_time",
@@ -467,6 +503,146 @@ def _canonical_contract_findings(root: Path) -> list[AuditFinding]:
     return findings
 
 
+def _autouse_fixture_names(tree: ast.Module) -> set[str]:
+    fixtures: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            if _qualified_name(decorator.func)[-2:] != ("pytest", "fixture"):
+                continue
+            if any(
+                keyword.arg == "autouse"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in decorator.keywords
+            ):
+                fixtures.add(node.name)
+    return fixtures
+
+
+def _hermetic_test_contract_findings(root: Path) -> list[AuditFinding]:
+    relative_path = "tests/conftest.py"
+    contract_path = root / relative_path
+    if not contract_path.is_file():
+        return [
+            AuditFinding(
+                code="missing_hermetic_test_contract",
+                path=relative_path,
+                line=1,
+                detail="required hermetic pytest contract is absent",
+            )
+        ]
+    try:
+        tree = ast.parse(contract_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SyntaxError):
+        return []
+
+    findings: list[AuditFinding] = []
+    functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    autouse = _autouse_fixture_names(tree)
+    for fixture in sorted(REQUIRED_HERMETIC_FIXTURES - autouse):
+        findings.append(
+            AuditFinding(
+                code="hermetic_fixture_not_autouse",
+                path=relative_path,
+                line=1,
+                detail=f"required fixture is not autouse: {fixture}",
+            )
+        )
+    for function in sorted(REQUIRED_HERMETIC_FUNCTIONS - functions):
+        findings.append(
+            AuditFinding(
+                code="missing_hermetic_reset_contract",
+                path=relative_path,
+                line=1,
+                detail=f"required reset coordinator is absent: {function}",
+            )
+        )
+
+    identifiers = {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    }
+    for identifier in sorted(REQUIRED_HERMETIC_RESET_IDENTIFIERS - identifiers):
+        findings.append(
+            AuditFinding(
+                code="missing_hermetic_resource_reset",
+                path=relative_path,
+                line=1,
+                detail=f"required per-test resource reset is absent: {identifier}",
+            )
+        )
+
+    strings = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    for env_key in sorted(REQUIRED_HERMETIC_ENV_KEYS - strings):
+        findings.append(
+            AuditFinding(
+                code="missing_hermetic_environment_scope",
+                path=relative_path,
+                line=1,
+                detail=f"required per-test environment scope is absent: {env_key}",
+            )
+        )
+
+    guard_enforcing = any(
+        isinstance(node, ast.Call)
+        and _qualified_name(node.func)[-3:] == ("os", "environ", "setdefault")
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "AURA_TEST_STATE_GUARD"
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "fail"
+        for node in ast.walk(tree)
+    )
+    if not guard_enforcing:
+        findings.append(
+            AuditFinding(
+                code="state_guard_not_enforcing",
+                path=relative_path,
+                line=1,
+                detail="AURA_TEST_STATE_GUARD must default to fail",
+            )
+        )
+
+    sandbox = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "HermeticResourceSandbox"
+        ),
+        None,
+    )
+    methods = (
+        {
+            node.name
+            for node in sandbox.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if sandbox is not None
+        else set()
+    )
+    for method in sorted(REQUIRED_LEAK_SANDBOX_METHODS - methods):
+        findings.append(
+            AuditFinding(
+                code="missing_host_leak_assertion",
+                path=relative_path,
+                line=1,
+                detail=f"required host leak sandbox method is absent: {method}",
+            )
+        )
+    return findings
+
+
 def run_audit(
     *, root: Path = ROOT, require_canonical_contract: bool = False
 ) -> dict[str, Any]:
@@ -490,6 +666,7 @@ def run_audit(
 
     if require_canonical_contract:
         findings.extend(_canonical_contract_findings(root))
+        findings.extend(_hermetic_test_contract_findings(root))
     findings.sort(key=lambda item: (item.path, item.line, item.code))
     return {
         "schema": "aura.resource_observation_ownership.v1",
@@ -497,6 +674,7 @@ def run_audit(
         "scanned_python_files": scanned,
         "canonical_adapters": sorted(CANONICAL_ADAPTERS),
         "canonical_contract_checked": require_canonical_contract,
+        "hermetic_test_contract_checked": require_canonical_contract,
         "required_observation_symbols": sorted(REQUIRED_OBSERVATION_SYMBOLS),
         "finding_count": len(findings),
         "findings": [asdict(finding) for finding in findings],

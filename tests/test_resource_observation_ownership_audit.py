@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.closeout.audit_resource_observation_ownership import run_audit
+from tools.closeout.audit_resource_observation_ownership import (
+    _hermetic_test_contract_findings,
+    run_audit,
+)
 
 
 def _write(path: Path, source: str) -> None:
@@ -85,6 +88,7 @@ def test_repository_contract_requires_canonical_adapters_and_observer_symbols(
     assert report["canonical_contract_checked"] is True
     codes = {finding["code"] for finding in report["findings"]}
     assert codes == {
+        "missing_hermetic_test_contract",
         "missing_canonical_adapter",
         "missing_observation_contract_symbol",
     }
@@ -95,3 +99,30 @@ def test_repository_contract_requires_canonical_adapters_and_observer_symbols(
     }
     assert "HostResourceObserver" in missing_symbols
     assert "ObservationSource" not in missing_symbols
+
+
+def test_repository_contract_rejects_shallow_opt_in_test_isolation(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "tests" / "conftest.py",
+        "import os\nimport pytest\n"
+        "os.environ.setdefault('AURA_TEST_STATE_GUARD', 'report')\n"
+        "@pytest.fixture\n"
+        "def hermetic_resource_sandbox(): yield\n"
+        "@pytest.fixture\n"
+        "def resource_observer(): yield\n"
+        "@pytest.fixture\n"
+        "def _global_state_contamination_guard(): yield\n",
+    )
+
+    findings = _hermetic_test_contract_findings(tmp_path)
+
+    assert {finding.code for finding in findings} == {
+        "hermetic_fixture_not_autouse",
+        "missing_hermetic_environment_scope",
+        "missing_hermetic_reset_contract",
+        "missing_hermetic_resource_reset",
+        "missing_host_leak_assertion",
+        "state_guard_not_enforcing",
+    }

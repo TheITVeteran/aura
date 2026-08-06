@@ -1,5 +1,5 @@
 {
-  "content_sha256": "17827ff6bb289b8c8ab6d386322f0b2392da7c5a6a7ab81ca38803cbcf8b7a89",
+  "content_sha256": "031edd2599b196accc8004b7c52f3564b9dda82913bc843a24b6f38aedc9890d",
   "schema_version": 1,
   "specs": [
     {
@@ -140,6 +140,7 @@
           "acceptance_ids": [
             "A1",
             "A2",
+            "A3",
             "A5",
             "A6"
           ],
@@ -159,6 +160,13 @@
           ],
           "evidence_class": "test",
           "requirement_id": "CTX2-TEST-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-TEST-003"
         },
         {
           "acceptance_ids": [
@@ -204,6 +212,7 @@
           "acceptance_ids": [
             "A1",
             "A2",
+            "A3",
             "A5",
             "A6"
           ],
@@ -223,6 +232,13 @@
           ],
           "evidence_class": "implementation",
           "requirement_id": "CTX2-TEST-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-TEST-003"
         },
         {
           "acceptance_ids": [
