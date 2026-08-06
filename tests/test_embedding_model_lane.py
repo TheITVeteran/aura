@@ -16,6 +16,24 @@ from core.runtime.receipts import ReceiptStore
 from core.runtime.shutdown_coordinator import clear_shutdown_request
 
 
+@pytest.fixture(autouse=True)
+def _owned_receipt_stores(monkeypatch: pytest.MonkeyPatch):
+    constructor = ReceiptStore
+    stores: list[ReceiptStore] = []
+
+    def _tracked_receipt_store(*args, **kwargs) -> ReceiptStore:
+        store = constructor(*args, **kwargs)
+        stores.append(store)
+        return store
+
+    monkeypatch.setattr(sys.modules[__name__], "ReceiptStore", _tracked_receipt_store)
+    try:
+        yield
+    finally:
+        for store in reversed(stores):
+            store.close()
+
+
 def _controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModelLaneController:
     monkeypatch.setenv("AURA_LANE_BUDGET_GB", "46")
     return ModelLaneController(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +30,24 @@ def _shutdown_state() -> None:
     clear_shutdown_request()
     yield
     clear_shutdown_request()
+
+
+@pytest.fixture(autouse=True)
+def _owned_receipt_stores(monkeypatch: pytest.MonkeyPatch):
+    constructor = ReceiptStore
+    stores: list[ReceiptStore] = []
+
+    def _tracked_receipt_store(*args, **kwargs) -> ReceiptStore:
+        store = constructor(*args, **kwargs)
+        stores.append(store)
+        return store
+
+    monkeypatch.setattr(sys.modules[__name__], "ReceiptStore", _tracked_receipt_store)
+    try:
+        yield
+    finally:
+        for store in reversed(stores):
+            store.close()
 
 
 def test_whisper_model_holds_and_releases_process_identified_lane(

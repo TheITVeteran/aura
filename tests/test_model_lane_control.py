@@ -91,6 +91,24 @@ def _fixed_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AURA_LANE_BUDGET_GB", "46")
 
 
+@pytest.fixture(autouse=True)
+def _owned_receipt_stores(monkeypatch: pytest.MonkeyPatch):
+    constructor = ReceiptStore
+    stores: list[ReceiptStore] = []
+
+    def _tracked_receipt_store(*args, **kwargs) -> ReceiptStore:
+        store = constructor(*args, **kwargs)
+        stores.append(store)
+        return store
+
+    monkeypatch.setattr(sys.modules[__name__], "ReceiptStore", _tracked_receipt_store)
+    try:
+        yield
+    finally:
+        for store in reversed(stores):
+            store.close()
+
+
 def test_commit_persists_fenced_process_owner_and_one_terminal_receipt(tmp_path: Path) -> None:
     alive = AliveTable(101)
     controller = _controller(tmp_path, alive)

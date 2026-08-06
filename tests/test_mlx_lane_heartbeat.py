@@ -143,6 +143,7 @@ def test_forced_abort_releases_exact_durable_lane_owner(
     client._model_lane_owner_id = "mlx:test:forced-abort"
     client._model_lane_fencing_token = 101
     client._model_lane_terminal_receipt_id = "receipt-101"
+    monkeypatch.setattr(client, "_replace_ipc_queues", lambda: None)
 
     assert client.force_abort_active_generation("foreground_deadline") is True
 
