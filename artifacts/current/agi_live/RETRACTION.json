@@ -1,0 +1,35 @@
+{
+  "schema": "aura.evidence_retraction.v1",
+  "retracted_at_unix": 1786013000.0,
+  "artifact": "artifacts/current/agi_live",
+  "status": "retracted",
+  "retracted_files": [
+    "BASELINES.json",
+    "ABLATIONS.json",
+    "SCORECARD.json",
+    "DNU_AGI_PROOF.json",
+    "DNU_AGI_PROOF.md",
+    "FINAL_VERDICT.txt"
+  ],
+  "reason": "The baseline comparison was not a comparison. Baselines ran under DNU_BASELINE_MAX_TOKENS=160 while full_aura ran the same prompts through the live message path with a 240s budget and effectively unbounded tokens, on tasks (coding, planning, self-debug, transfer) that cannot be answered inside 160 tokens at all. The baselines ran out of tokens before emitting an <answer> tag and were scored no_answer. full_aura additionally had a deterministic symbolic solver the baselines did not. The identical 0.1667 across three structurally different baselines is the signature of the handicap, not of three independent measurements agreeing.",
+  "scope": [
+    "Every baseline-relative number in this bundle: raw_llm, llm_with_tools and react_agent pass rates, and any full_aura-versus-baseline gap derived from them.",
+    "The ablation set, which isolates System 2 only. Removing persistent memory, volition, Will authority, self-repair or affect-steering each left the score at 1.0, so this bundle measures the contribution of System 2 and says nothing about the contribution of the rest of the architecture.",
+    "Any AGI-candidate classification resting on the above."
+  ],
+  "what_remains_valid": [
+    "The grader itself is condition-independent (salted hash of the normalized answer), so full_aura's own 100/100 on the 100-task battery stands as a record of what full_aura scored on that battery.",
+    "That number is an absolute score against a project-authored battery. It is not evidence of superiority over anything, because nothing was fairly compared against it."
+  ],
+  "superseded_by": null,
+  "replacement_requirements": [
+    "Identical token and wall-clock budget for every condition.",
+    "Identical tool access, or an explicitly declared and separately reported tool-access arm.",
+    "The solver available to every condition or to none.",
+    "Ablations that remove each subsystem in turn, not System 2 alone.",
+    "Every attempt counted, including crashes, retries, fallbacks and human intervention.",
+    "The battery authored or administered by someone other than this project, or clearly labelled as self-authored."
+  ],
+  "audit": "docs/DNU_BASELINE_FAIRNESS_AUDIT.md",
+  "note": "The measured files are deliberately left byte-identical. What was measured is a fact and stays on the record; this sidecar states what that measurement does and does not support. Editing the numbers would destroy the evidence that the handicap existed."
+}

@@ -4,6 +4,46 @@ This document defines the formal claims matrix for the Aura cognitive agent runt
 
 Final closure statement: Aura passed the configured local final-proof gates for this profile. Claims are limited to the evidence in CLAIMS_MATRIX.md.
 
+## Read this before the table
+
+Several claim names in this repository are heavier than what they name. "Operational
+Volition", "Synthetic Cognitive Entity", "Experience-Adjacent Indicators",
+"Qualia Engine", "Phenomenal Richness", "Consciousness Guarantee", "Personhood
+Proof Battery", "Strange-Loop Detection" — a reader who meets these as module
+names, test names or dashboard labels will infer far more than the tests behind
+them establish, and disclaiming it further down was never going to undo that.
+
+So every extraordinary label in the table below now carries its **operational
+definition in the same cell as the claim**, in bold, stating what the term means
+*here* in plain engineering vocabulary. If a term cannot be cashed out that way,
+it does not belong in a claim. The general translation:
+
+| Reads as | Is |
+| :--- | :--- |
+| Volition / Will | action selection over weighted parameters, with a signed receipt |
+| Cognitive entity | several locally defined batteries passing in one profile |
+| Experience-adjacent | state variables that measurably reach prompts, memory and self-reports |
+| Qualia / phenomenal | named scalar features of activations (entropy, novelty, change) |
+| Φ / integrated information | a custom integration statistic over selected state variables |
+| Neurochemical | hand-designed scalar controls with biologically borrowed names |
+| Guarantee / proof battery | a set of tests this project wrote and this project runs |
+| Locally demonstrated | passed on this machine, this profile, this project's battery |
+
+Two rules follow, and both are enforced rather than promised:
+
+1. **Retracted evidence cannot support a claim.** An artifact whose validity has
+   been withdrawn carries a machine-readable `RETRACTION.json` beside it, and
+   `make evidence-integrity` fails if any claim above `not proven` cites one.
+   This exists because claim 14 sat at `locally demonstrated` for a month while
+   the same cell explained that its primary evidence was unfair.
+2. **The measurement is never edited.** A retraction is a sidecar. What was
+   measured stays byte-identical on the record, because deleting the numbers
+   would also delete the evidence that the flaw was there.
+
+The most accurate reading of this repository is the unsupported-claims ledger
+(`CLAIMS_NOT_SUPPORTED.md`) and the falsification ledger below — not the names
+of the modules.
+
 ## Claims Classification Summary
 
 | Claim | Classification | Evidence Path / Blocker |
@@ -15,21 +55,21 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 | **5. System 2 Planning/Search** | `locally demonstrated` | `core/cognition/mcts_world_model.py`, tree planning and counterfactual search tests |
 | **6. Self-Repair** | `locally demonstrated` | `core/runtime/self_repair_ladder.py`, diagnostic self-healing loops |
 | **7. Self-Modification** | `locally demonstrated` | `core/self_modification/mutation_safety.py`, sandboxed patch proposals |
-| **8. Operational Volition** | `causally demonstrated` | `core/governance/will.py` (`UnifiedWill.decide` → `WillDecision` with cryptographic receipt IDs), `core/executive/authority_gateway.py`, `UnifiedWill` decision logs in `RECEIPTS.jsonl` |
+| **8. Operational Volition** | `causally demonstrated` | **Operationally: an algorithm scores candidate actions against weighted parameters, selects one, and signs a receipt naming the decision, the authority that approved it and the evidence expected.** That is deterministic/probabilistic action selection with an audit trail. Counterfactual evaluation, a decision object, an authorisation signature and a receipt id do not make action selection a different KIND of thing — they make it reviewable, which is the actual and useful claim. Nothing here is evidence of willing in any richer sense; see claim 19. `core/governance/will.py` (`UnifiedWill.decide` → `WillDecision` with cryptographic receipt IDs), `core/executive/authority_gateway.py`, `UnifiedWill` decision logs in `RECEIPTS.jsonl`. A receipt proves a pathway RAN; it cannot prove the goal was appropriate, the environment was understood, the success criterion was adequate, or the outcome was useful |
 | **9. Autonomous Agency** | `locally demonstrated` | `core/autonomy/autonomous_research_orchestrator.py`, multi-step goal decomposition |
 | **10. Emergent Intelligence** | `not proven` | Blocker: Requires large-scale out-of-distribution model evaluations beyond local compute limits |
 | **11. Entity-in-a-Box Behavior** | `locally demonstrated` | `tests/test_sandbox_hardening.py`, confinement boundary recognition tests |
 | **12. External Real-World Validation** | `not proven` | Blocker: Requires independent, external third-party evaluation and live production network |
-| **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` passed the configured local 100-task battery, but AGI itself remains unproven |
-| **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence. **⚠️ Scope (2026-07-06): the `agi_live` baseline comparison was token-handicapped (160-token baseline vs solver-assisted full_aura) and its ablations isolate System 2 only — see [docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md). That bundle demonstrates System 2 symbolic reasoning, NOT the whole architecture; baseline numbers are superseded pending an honest re-run.** |
+| **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` recorded 100/100 on a project-authored 100-task battery. The grader is condition-independent, so that score stands as a record of what `full_aura` scored. It is an ABSOLUTE score against a self-authored battery and is not evidence of superiority over anything, because the comparison arms were handicapped — see `artifacts/current/agi_live/RETRACTION.json`. AGI itself remains unproven |
+| **14. AGI-Candidate** | `not proven` | **Retracted 2026-08-06.** This was classified `locally demonstrated` while carrying a warning that its own primary evidence was unfair — a classification and its retraction held in the same cell. The `agi_live` baselines ran at 160 tokens against an effectively unbounded, solver-assisted `full_aura`, on tasks that cannot be answered in 160 tokens; the identical 0.1667 across three structurally different baselines is the handicap's signature, not three measurements agreeing. Its ablations isolate System 2 only. A comparison that unfair is not weakened evidence, it is no evidence, and an asterisk is not a classification. Machine-readable retraction: `artifacts/current/agi_live/RETRACTION.json`; audit: [docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md). Blocker: a budget-matched re-run meeting `replacement_requirements` in that retraction. `make evidence-integrity` now refuses to let any claim cite retracted evidence as support. |
 | **15. Local Production Gate Readiness** | `locally demonstrated` | Pass status of configured local readiness gates, production surface lint, and artifact consistency |
 | **16. Mature RSI** | `not proven` | Blocker: the compounding loop (claim 23) runs unsupervised, but no run has yet produced a strictly-increasing held-out capability curve — the ledger's own verdict is `BOUNDED_SELF_OPTIMIZATION`, not capability gain |
 | **17. Subjective Consciousness** | `not proven` | Strictly unsupported. Qualitative experience, qualia, and personhood are not scientifically provable |
 | **18. Personhood** | `not proven` | Strictly unsupported. Aura is a software runtime, not a legal or moral person |
 | **19. Metaphysical Free Will** | `not proven` | Strictly unsupported. Aura operates on deterministic/probabilistic computational volition only |
 | **20. Indefinite Autonomy** | `not proven` | Blocker: Bounded by short proof longevity soak limits (needs 72h+ soak runs) |
-| **21. Synthetic Cognitive Entity** | `locally demonstrated` | Boxed agency, operational volition, unified scenario, memory continuity, and receipt coverage pass under the configured local profile |
-| **22. Experience-Adjacent Indicators**| `locally demonstrated` | Introspective state tracking, affect-memory interaction, and self-report checks |
+| **21. Synthetic Cognitive Entity** | `locally demonstrated` | **Operationally: five locally defined test batteries — boxed agency, operational volition, unified scenario, memory continuity, receipt coverage — pass together in one profile.** "Entity" here names that conjunction and nothing else. It is a label this project defined for a set of tests this project wrote; it is not a finding about what Aura is, and a reader should not have to reach a ledger to learn that. The interesting engineering content is that the batteries pass TOGETHER rather than separately, which is a real integration result and a much smaller claim than the phrase suggests |
+| **22. Experience-Adjacent Indicators**| `locally demonstrated` | **Operationally: state variables measurably influence prompt assembly, memory writes and self-reports.** The coupling is causal and tested. It is also close to guaranteed by construction: the state is serialised into the prompt and the model is instructed to answer consistently with it, so "I feel curious" is a state-to-language pipeline working as built. That demonstrates the pipeline is connected — which was worth proving, and was once NOT true (see the disconnected-hook history in claim 4's row). It is not evidence of introspective access, and "experience-adjacent" should be read as naming the pipeline, not the experience |
 | **23. Compounding Weight-Learning Loop (mechanism)** | `locally demonstrated` | `core/learning/weight_compounding.py` + `artifacts/learning_compounding/2026-07-07-1p5b-2cycle/` — two unsupervised cycles: self-play verifier-graded DPO harvest → train → sealed held-out gate → promote → generation N+1 trains on N's published artifact (manifest-chained, hash-chained ledger). Mechanism only; capability GROWTH is claim 16 and remains `not proven` |
 | **24. One-Example Behavior Change (one-shot non-parametric recall)** | `locally demonstrated` | `artifacts/nonparametric/proof-20260712-113503.json` — three session-random facts (provably not in weights), ONE ingestion each via real hidden-state keys, recalled verbatim on the real reflex model with an anisotropy-corrected confidence gate; an unrelated control generation stays byte-identical with the datastore loaded. `make nonparametric-proof` reproduces |
 | **25. Semantic Memory Retrieval** | `locally demonstrated` | `core/memory/rag.py` hybrid dense+lexical scoring (real MiniLM backend, verified initialization); the Invisible RAG Bridge wired into every substantive live turn with recall telemetry (`tests/test_rag_bridge_integration.py`) |
@@ -64,8 +104,8 @@ yet (the failure-mode column says why).
 | 10 | Emergent intelligence | OOD reasoning beats simple prompting at scale under strict controls | — | none runnable locally | blocked | No local compute for wide-distribution eval; claim stays not-proven until independent benchmark |
 | 11 | Entity-in-a-box | Sandboxed execution cannot escape directory/host bounds | `tests/test_sandbox_hardening.py` | `pytest tests/test_sandbox_hardening.py -q` | pass | Escape found → hardening tests fail (that is the point of them) |
 | 12 | External validation | Independent third party reproduces headline results | — | `make demo-learning` is the designated reproduction artifact | blocked | Nobody outside this machine has run it yet; blocked on external actors, not code |
-| 13 | DNU AGI | >85% on the 100-task battery with honest baselines | `artifacts/current/agi_live/` | `make decisive` (full battery re-run; hours) | pass* | *Baseline was token-handicapped (see DNU fairness audit) — bundle demonstrates System 2 reasoning, NOT AGI; re-run pending |
-| 14 | AGI-candidate | DNU + agency emergence + external-validation criteria met under local profile | `artifacts/current/` bundles | `make final-proof` (full profile; hours) | pass | Any gate in the profile fails → final-proof exits nonzero naming the gate |
+| 13 | DNU AGI | >85% on the 100-task battery **with honest baselines** | `artifacts/current/agi_live/` + `RETRACTION.json` | `make decisive` (full battery re-run; hours) | blocked | The criterion says "with honest baselines" and the baselines were handicapped, so the criterion was never met. It was carried as `pass*` with the disqualifying fact in the footnote. A footnote is not a verdict. The 100/100 stands as an absolute score on a self-authored battery |
+| 14 | AGI-candidate | DNU + agency emergence + external-validation criteria met under local profile | `artifacts/current/` bundles, minus every bundle carrying a `RETRACTION.json` | `make final-proof` (full profile; hours); `make evidence-integrity` (seconds) | blocked | Depends on claim 13, which is blocked. `make evidence-integrity` fails while any claim above `not proven` cites retracted evidence — so this row cannot silently return to `pass` without a budget-matched re-run replacing the retraction |
 | 15 | Production gate readiness | Local compile/readiness/enterprise/production gates green | gate reports in `/tmp` + `artifacts/` | `make quality` | pass | Any ratchet regression → the specific gate fails with the offending file |
 | 16 | Mature RSI (capability growth) | Strictly-increasing held-out capability curve across promoted generations | `data/learning/compounding/lineage.jsonl` | `python tools/compounding_cycle.py --status` (verdict from ledger) | blocked | Curve not increasing → ledger verdict stays BOUNDED_SELF_OPTIMIZATION (current honest state) |
 | 17 | Subjective consciousness | Phenomenal experience demonstrated | — | none possible | blocked | Not scientifically testable; permanently out of claim scope |

@@ -1,4 +1,4 @@
-.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot evidence-integrity
 
 
 PYTHON ?= python
@@ -217,6 +217,10 @@ integration-liveness:
 security:
 	@echo "🔐 Running local security scan..."
 	@$(PYTHON) tools/security_scan.py
+
+evidence-integrity:
+	@echo "🧾 Checking that no claim outranks its evidence..."
+	@$(PYTHON) tools/check_evidence_integrity.py --json /tmp/aura_evidence_integrity.json
 
 enterprise-gate:
 	@echo "🏢 Running enterprise static ratchet gate..."
