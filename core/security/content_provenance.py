@@ -82,18 +82,27 @@ MEANING: dict[ProvenanceClass, str] = {
     ProvenanceClass.WEB: "a web page",
 }
 
-#: At or above this, content was authored by someone who is not the owner and
-#: may have written it knowing an agent would read it.
+#: At or above this, content came from OUTSIDE this machine and was written by
+#: someone who may know an agent reads it.
 #:
-#: OWNER_FILE sits deliberately BELOW the floor, and that is the one judgement
-#: call in this module. A file the owner pointed at was a deliberate act by the
-#: owner, and treating every file read as untrusted would disarm action gates
-#: on nearly every turn — producing a control that gets switched off, which
-#: protects nothing. The residual risk is real and stated rather than papered
-#: over: a README inside a cloned repository was authored by a stranger and is
-#: trusted at this level today. Moving it above the floor is a policy change
-#: with a cost, not a bug fix.
-UNTRUSTED_FLOOR = ProvenanceClass.TOOL_OUTPUT
+#: Two judgement calls live here, and both are calls rather than oversights.
+#:
+#: TOOL_OUTPUT sits BELOW the floor. It was above it for one commit, and the
+#: measured effect was that every tool-using turn lost desktop control — a
+#: search followed by "open my notes" became a refusal. That is a control
+#: nobody keeps, and a disabled control protects nothing. It is also
+#: unnecessary: a tool that fetches from the network goes through
+#: network_gateway, which marks WEB at the point the external text actually
+#: enters. Marking the wrapper as well would disarm turns whose only tool call
+#: read the local clock.
+#:
+#: OWNER_FILE sits below the floor for the same reason in a different shape:
+#: the owner pointed at the file deliberately, and treating every file read as
+#: untrusted disarms nearly every turn. The residual risk is real and named — a
+#: README inside a cloned repository was authored by a stranger and is trusted
+#: at this level today. Moving either line up is a policy change with a cost,
+#: not a bug fix, and whoever makes it should see the cost first.
+UNTRUSTED_FLOOR = ProvenanceClass.EXTERNAL_DOCUMENT
 
 
 @dataclass

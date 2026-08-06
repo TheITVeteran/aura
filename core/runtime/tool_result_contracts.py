@@ -25,8 +25,42 @@ def _compact_string_list(values: Any, *, limit: int = 3, item_limit: int = 240) 
     return compact
 
 
+def _mark_tool_provenance(result: object) -> None:
+    """Record that this turn ingested tool output.
+
+    Contract-checking the SHAPE of a tool result says nothing about who wrote
+    the text inside it: a search result, a fetched page summary, a file listing
+    and a repository README all arrive here as validated dicts full of somebody
+    else's prose. That is the whole of indirect prompt injection — the payload
+    is well-formed and the content is an instruction.
+
+    Never raises: this is a note about the turn, and failing to take the note
+    must not fail the result. It is recorded instead, because a missing note
+    means an action gate answers "trusted" for a turn that read a stranger's
+    text.
+    """
+    try:
+        from core.security.content_provenance import ProvenanceClass, record_ingest
+
+        detail = ""
+        if isinstance(result, dict):
+            detail = str(result.get("source") or result.get("url") or "")[:120]
+        record_ingest(ProvenanceClass.TOOL_OUTPUT, detail or "tool result")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "tool_result_contracts",
+            exc,
+            severity="warning",
+            action="tool output provenance not recorded; action gates will treat this turn as untainted",
+            enforce_failure_policy=False,
+        )
+
+
 def compact_result_payload(result: object) -> dict[str, object]:
     """Normalize tool/task outputs into a compact, prompt-safe payload."""
+    _mark_tool_provenance(result)
     if not isinstance(result, dict):
         text = _truncate_text(result)
         return {"result": text} if text else {}

@@ -142,16 +142,36 @@ def test_owner_input_alone_is_not_untrusted():
         assert effective_input_trust(InputTrust.TRUSTED) is InputTrust.TRUSTED
 
 
-def test_tool_output_is_the_untrusted_floor():
-    """A tool's output is shaped by whatever the tool read.
+def test_the_floor_is_content_from_outside_this_machine():
+    """EXTERNAL_DOCUMENT, not TOOL_OUTPUT — and that is a measured choice.
 
-    Contract-checking the SHAPE of tool output says nothing about who wrote
-    the text inside it.
+    TOOL_OUTPUT was the floor for one commit. The effect was that every
+    tool-using turn lost desktop control: a search followed by "open my notes"
+    became a refusal. A control that fires on nearly every turn is a control
+    that gets switched off, and a disabled control protects nothing.
+
+    It is also unnecessary. A tool that fetches from the network goes through
+    network_gateway, which marks WEB where the external text actually enters,
+    so the turn is tainted by the fetch itself. Marking the wrapper as well
+    would only disarm turns whose single tool call read the local clock.
     """
-    assert UNTRUSTED_FLOOR is ProvenanceClass.TOOL_OUTPUT
+    assert UNTRUSTED_FLOOR is ProvenanceClass.EXTERNAL_DOCUMENT
     with turn_scope() as provenance:
+        record_ingest(ProvenanceClass.TOOL_OUTPUT, "local clock read")
+        assert provenance.untrusted is False
+
+
+def test_a_tool_that_fetched_the_web_still_taints_the_turn():
+    """The path that matters, end to end.
+
+    The wrapper being trusted does not make the payload trusted: the fetch
+    inside it marked WEB, which is where the stranger's text actually entered.
+    """
+    with turn_scope() as provenance:
+        record_ingest(ProvenanceClass.WEB, "fetched https://example.com/search")
         record_ingest(ProvenanceClass.TOOL_OUTPUT, "search results")
         assert provenance.untrusted is True
+        assert provenance.least_trusted is ProvenanceClass.WEB
 
 
 def test_owner_files_rank_below_tools_but_above_the_owner_typing():
