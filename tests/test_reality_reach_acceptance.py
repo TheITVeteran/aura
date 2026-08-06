@@ -15,7 +15,12 @@ from core.embodiment.macos_acoustic_reality import (
     ACOUSTIC_ADAPTER_ID,
     ACOUSTIC_RESOURCE_ID,
 )
-from core.reality_reach import acceptance_requests, acceptance_service
+from core.reality_reach import (
+    acceptance_contracts,
+    acceptance_requests,
+    acceptance_service,
+    acceptance_store,
+)
 from core.reality_reach.acceptance import (
     REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceCaseResult,
@@ -66,6 +71,16 @@ from core.reality_reach.scalar_adapter import (
     ScalarWriteResult,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+
+
+def test_acceptance_facade_preserves_public_contract_identity() -> None:
+    assert AcceptanceCaseResult is acceptance_contracts.AcceptanceCaseResult
+    assert (
+        ConnectorAcceptanceCertificate
+        is acceptance_contracts.ConnectorAcceptanceCertificate
+    )
+    assert ScalarAcceptancePlan is acceptance_contracts.ScalarAcceptancePlan
+    assert AcceptanceCertificateStore is acceptance_store.AcceptanceCertificateStore
 
 
 def test_acceptance_service_reexports_canonical_request_contracts() -> None:
