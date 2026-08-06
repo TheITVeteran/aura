@@ -43,7 +43,7 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 5
+    "unproven-closure": 4
   },
   "defects": [
     {
@@ -253,11 +253,6 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "LIFECYCLE-001"
-    },
-    {
-      "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "RESOURCE-001"
     }
@@ -269,15 +264,15 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 43,
-    "current_fingerprints": 43,
+    "baseline_fingerprints": 42,
+    "current_fingerprints": 42,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 52,
-    "evidence_ledger_sha256": "1380bbc6e9313fca66ae664f424e0efdbc1e54409c9a78cf0a6ff964958aba11",
+    "evidence_ledger_entries": 54,
+    "evidence_ledger_sha256": "d6f91fa4a77190ec2b606107b63ac1384c9c6abbd3d4e999908bd7c583af4563",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13",
     "registry_revision": 32,
