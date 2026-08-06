@@ -43,7 +43,6 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "stale-evidence": 1,
     "unproven-closure": 19
   },
   "defects": [
@@ -243,11 +242,6 @@
       "subject": "VOICE-001"
     },
     {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tools/aura_enterprise_gate.py: expected 1a3f82e16b23/54327, current c348fbd61e18/58875; tools/reqproof/capture.py: expected 9fc592f5a654/20876, current 9b35589859aa/21363; tools/reqproof/docket.py: expected d13844f50ac5/11709, current 42bbd36c1af2/11591; tools/reqproof/evidence.py: expected 161c302c1c22/24164, current f0bedb14123c/25935; tools/reqproof/migrate.py: expected d2259d04daa1/18312, current 1790ea7fef5f/20531; tools/reqproof/progress.py: expected ebd0fdd84f83/27753, current b60a1e03f1ac/31084; tools/reqproof/schema.py: expected 26260ada1c46/21804, current 5e772f020c45/25199; tools/reqproof/validate.py: expected 0662316ca901/21613, current 592fc8fc0043/22439",
-      "subject": "LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/9a86bfa22f084f84f1e06802a56948b91794eb51.json"
-    },
-    {
       "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], live[A2], implementation[A3], test[A3], implementation[A4], test[A4], live[A4], implementation[A5], test[A5], live[A5], implementation[A6], test[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
@@ -314,7 +308,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
@@ -343,9 +337,7 @@
       "subject": "STORAGE-GATEWAY-001"
     }
   ],
-  "failures": [
-    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/9a86bfa22f084f84f1e06802a56948b91794eb51.json: manifested source changed: tools/aura_enterprise_gate.py: expected 1a3f82e16b23/54327, current c348fbd61e18/58875; tools/reqproof/capture.py: expected 9fc592f5a654/20876, current 9b35589859aa/21363; tools/reqproof/docket.py: expected d13844f50ac5/11709, current 42bbd36c1af2/11591; tools/reqproof/evidence.py: expected 161c302c1c22/24164, current f0bedb14123c/25935; tools/reqproof/migrate.py: expected d2259d04daa1/18312, current 1790ea7fef5f/20531; tools/reqproof/progress.py: expected ebd0fdd84f83/27753, current b60a1e03f1ac/31084; tools/reqproof/schema.py: expected 26260ada1c46/21804, current 5e772f020c45/25199; tools/reqproof/validate.py: expected 0662316ca901/21613, current 592fc8fc0043/22439"
-  ],
+  "failures": [],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
@@ -360,7 +352,7 @@
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 2,
-    "evidence_ledger_sha256": "6c5bfd75ba08bab18722b55973212e3a5333b03430f57ebfb05070c98094c4d1",
+    "evidence_ledger_sha256": "fcb437c30b66cae83782a529bf84a03d6b1d8e65927dd72fda80c5715dcb55de",
     "mandatory_not_closed": 282,
     "registry_content_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f",
     "registry_revision": 28,
@@ -376,5 +368,5 @@
     },
     "tracker_extraction_sha256": "38737382c106efa14d6e4d9b4795ac88ef8de5b3da24decc13e117df2e8b10ae"
   },
-  "verdict": "fail"
+  "verdict": "pass"
 }

@@ -1,16 +1,16 @@
 {
-  "content_sha256": "6c5bfd75ba08bab18722b55973212e3a5333b03430f57ebfb05070c98094c4d1",
+  "content_sha256": "fcb437c30b66cae83782a529bf84a03d6b1d8e65927dd72fda80c5715dcb55de",
   "entries": [
     {
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a86bfa22f084f84f1e06802a56948b91794eb51",
+      "commit": "3c9f262917e14e3a687d474d373bbd71d65997d7",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/9a86bfa22f084f84f1e06802a56948b91794eb51.json",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/3c9f262917e14e3a687d474d373bbd71d65997d7.json",
       "requirement_id": "LANE-001",
-      "sha256": "767b1bc0629a3d947c2e8653ed8387aa28f7e80a47fb7090fdf2fca5377b85f5"
+      "sha256": "3d50c5d1fc8e6e398f4d31ccef760a5f05eb7aa05ce791989876648f8942450a"
     },
     {
       "acceptance_ids": [

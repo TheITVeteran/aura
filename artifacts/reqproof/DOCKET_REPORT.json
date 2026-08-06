@@ -628,7 +628,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "6c5bfd75ba08bab18722b55973212e3a5333b03430f57ebfb05070c98094c4d1",
+    "evidence_ledger_sha256": "fcb437c30b66cae83782a529bf84a03d6b1d8e65927dd72fda80c5715dcb55de",
     "registry_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f"
   },
   "non_claims": [
@@ -636,7 +636,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "e573a11e91e8839fb3e6df9c6ed7e3f5c83bd61021442d987c600fbfa2e97cab",
+  "report_sha256": "068aef611a482c447babc1ea6a219fae1b393109bb6f473c6a5fbc73631fd53d",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2921,13 +2921,12 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 4,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "LANE",
       "id": "LANE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "live:A1",
         "release:A1"
       ],
