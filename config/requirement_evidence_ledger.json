@@ -1,5 +1,5 @@
 {
-  "content_sha256": "7560bf8efecbb5bf5e836e77588f8f13b23209ed1906649b5a24c9bd9ab19d44",
+  "content_sha256": "14ab8432c51791b31068d0efb24cb3c1ee00f98c027a1a7c1c619e872e6ac769",
   "entries": [
     {
       "acceptance_ids": [
@@ -52,12 +52,12 @@
         "A5",
         "A6"
       ],
-      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "commit": "f6403eed316fa362d5ed7e47d79f5b1e016f6120",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/f6403eed316fa362d5ed7e47d79f5b1e016f6120.json",
       "requirement_id": "ADDENDUM-22",
-      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+      "sha256": "8d2b2917b2d07657d225db44050ef6eb1605a8f4164d30eebc299a37cf0d8e59"
     },
     {
       "acceptance_ids": [
@@ -118,12 +118,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "commit": "f6403eed316fa362d5ed7e47d79f5b1e016f6120",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/f6403eed316fa362d5ed7e47d79f5b1e016f6120.json",
       "requirement_id": "CTX2-TEST-001",
-      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+      "sha256": "8d2b2917b2d07657d225db44050ef6eb1605a8f4164d30eebc299a37cf0d8e59"
     },
     {
       "acceptance_ids": [
@@ -140,12 +140,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "commit": "f6403eed316fa362d5ed7e47d79f5b1e016f6120",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/f6403eed316fa362d5ed7e47d79f5b1e016f6120.json",
       "requirement_id": "CTX2-TEST-002",
-      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+      "sha256": "8d2b2917b2d07657d225db44050ef6eb1605a8f4164d30eebc299a37cf0d8e59"
     },
     {
       "acceptance_ids": [
@@ -162,12 +162,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "commit": "f6403eed316fa362d5ed7e47d79f5b1e016f6120",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/f6403eed316fa362d5ed7e47d79f5b1e016f6120.json",
       "requirement_id": "CTX2-TEST-003",
-      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+      "sha256": "8d2b2917b2d07657d225db44050ef6eb1605a8f4164d30eebc299a37cf0d8e59"
     },
     {
       "acceptance_ids": [
@@ -206,12 +206,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "commit": "f6403eed316fa362d5ed7e47d79f5b1e016f6120",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/f6403eed316fa362d5ed7e47d79f5b1e016f6120.json",
       "requirement_id": "RESOURCE-001",
-      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+      "sha256": "8d2b2917b2d07657d225db44050ef6eb1605a8f4164d30eebc299a37cf0d8e59"
     }
   ],
   "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
