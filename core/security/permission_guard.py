@@ -684,6 +684,18 @@ class PermissionGuard(AuraBaseModule):
 _SHARED_PERMISSION_GUARD: PermissionGuard | None = None
 
 
+def reset_permission_guard_for_test() -> None:
+    """Drop the shared guard so it is not carried between tests.
+
+    Registered into the container as a side effect of the first call, so the
+    test that happens to trigger it is recorded as having changed shared state
+    it never asked for.
+    """
+
+    global _SHARED_PERMISSION_GUARD
+    _SHARED_PERMISSION_GUARD = None
+
+
 def get_permission_guard() -> PermissionGuard:
     """Return a shared permission guard so passive probes can reuse cache state."""
     global _SHARED_PERMISSION_GUARD

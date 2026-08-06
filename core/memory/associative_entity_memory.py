@@ -1088,6 +1088,28 @@ _INSTANCE: AssociativeEntityMemory | None = None
 _INSTANCE_LOCK = checked_lock("associative_entity_memory")
 
 
+def reset_associative_entity_memory_for_test() -> None:
+    """Close the process-wide entity memory and drop it.
+
+    The instance opens its sqlite connection on construction and keeps it for
+    the life of the process, which is correct for the runtime. In a suite it
+    means the first test to touch entity memory leaves the handle open, and the
+    hermetic guard then fails whichever test is running when it notices —
+    reporting associative_entity_memory.sqlite, -wal and -shm against tests that
+    never went near a memory.
+    """
+
+    global _INSTANCE
+    with _INSTANCE_LOCK:
+        instance, _INSTANCE = _INSTANCE, None
+    if instance is None:
+        return
+    try:
+        instance.close()
+    except (sqlite3.Error, OSError, AttributeError) as exc:
+        logger.debug("entity memory test reset close failed: %s", exc)
+
+
 def get_associative_entity_memory() -> AssociativeEntityMemory:
     """Process-wide entity memory, constructed once.
 
@@ -1131,5 +1153,6 @@ __all__ = [
     "Stance",
     "StanceCause",
     "get_associative_entity_memory",
+    "reset_associative_entity_memory_for_test",
     "normalize_name",
 ]

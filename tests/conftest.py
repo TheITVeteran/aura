@@ -305,6 +305,25 @@ _TEST_SCOPED_SERVICE_KEYS = frozenset(
         "unity_runtime",
         "unity_workspace_frame",
         "world_state",
+        # Both are registered lazily on first use, by whichever test
+        # first reaches for them, and intention_loop holds a sqlite
+        # handle open for the life of the process while it is there.
+        "intention_loop",
+        "permission_guard",
+        # Registered as a side effect of building a cognitive turn, so the
+        # first test to run one is recorded as having added them.
+        "associative_entity_memory",
+        "bicameral_advisory",
+        "cognitive_situation",
+        "executive_authority",
+        "imagination_engine",
+        "spiking_active_inference",
+        # Registered by constructing a StateRepository.
+        "authority_gateway",
+        "belief_authority",
+        "constitutional_core",
+        "executive_core",
+        "standing_authority",
     }
 )
 _TEST_SCOPED_RESET_FUNCTIONS = (
@@ -321,6 +340,9 @@ _TEST_SCOPED_RESET_FUNCTIONS = (
     ("core.social.social_imagination", "reset_social_imagination_for_test"),
     ("core.voice.substrate_voice_engine", "reset_substrate_voice_engine_for_test"),
     ("core.world_state", "reset_world_state_for_test"),
+    ("core.agency.intention_loop", "reset_intention_loop_for_test"),
+    ("core.security.permission_guard", "reset_permission_guard_for_test"),
+    ("core.memory.associative_entity_memory", "reset_associative_entity_memory_for_test"),
 )
 
 

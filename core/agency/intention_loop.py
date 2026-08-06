@@ -850,6 +850,28 @@ def _safe_serialize(obj: Any) -> Any:
 _instance: Optional[IntentionLoop] = None
 
 
+def reset_intention_loop_for_test() -> None:
+    """Close the singleton's sqlite handle and drop it.
+
+    The connection is opened once and held for the life of the process, which
+    is right for the runtime and wrong for a test suite: the handle outlives
+    the test that created it, and the hermetic guard then blames whichever test
+    happened to be running when it noticed the open file. Observed as
+    intention_loop.db, -wal and -shm leaking across six tests in two files that
+    never touched an intention.
+    """
+
+    global _instance
+    instance, _instance = _instance, None
+    if instance is None:
+        return
+    try:
+        instance.close()
+    except (sqlite3.Error, OSError, AttributeError) as exc:
+        record_degradation("intention_loop", exc)
+        logger.debug("IntentionLoop test reset close failed: %s", exc)
+
+
 def get_intention_loop() -> IntentionLoop:
     """Return the global IntentionLoop singleton."""
     global _instance
