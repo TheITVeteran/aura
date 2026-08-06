@@ -1,5 +1,5 @@
 {
-  "content_sha256": "ebb8a146b1e07076935aa2d82772b5df5ec43483875e8c5ea3eacd49c4bb5133",
+  "content_sha256": "44ccee4e23aa4da7a71a7fc6339faa04a4372d763b6759ecdcc47d91ac19608c",
   "schema_version": 1,
   "specs": [
     {
@@ -270,6 +270,7 @@
         "-q",
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
+        "tests/test_skill_portability.py",
         "tests/test_subsystem_routes_runtime_contract.py"
       ],
       "cwd": ".",
@@ -301,8 +302,39 @@
         "interface/routes/subsystems.py",
         "tests/test_skill_discovery_contract.py",
         "tests/test_skill_execution_preflight.py",
+        "tests/test_skill_portability.py",
         "tests/test_subsystem_routes_runtime_contract.py",
+        "tools/closeout/audit_skill_portability.py",
         "tools/closeout/audit_skill_runtime_route.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_skill_portability.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "portability",
+          "requirement_id": "CTX2-SKILL-002"
+        }
+      ],
+      "id": "skill-portability-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/skills/**/*.py",
+        "interface/static/**/*",
+        "skills/**/*.py"
+      ],
+      "source_paths": [
+        "pyproject.toml",
+        "tests/test_skill_portability.py",
+        "tools/closeout/audit_skill_portability.py"
       ],
       "timeout_seconds": 300
     },

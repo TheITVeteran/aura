@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "aura-zenith"
 version = "2026.4.20"
@@ -47,6 +51,55 @@ dependencies = [
 
 [project.scripts]
 aura = "aura_main:main"
+
+[tool.setuptools]
+include-package-data = false
+py-modules = ["aura_main", "aura_cleanup", "main_daemon"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+namespaces = true
+include = [
+    "aura_bench*",
+    "autonomy_engine*",
+    "benchmarks*",
+    "cloud*",
+    "core*",
+    "environments*",
+    "evals*",
+    "executors*",
+    "infrastructure*",
+    "integration*",
+    "interface*",
+    "llm*",
+    "optimizer*",
+    "proof_kernel*",
+    "research*",
+    "security*",
+    "senses*",
+    "skills*",
+    "slo*",
+    "storage*",
+    "tools*",
+    "training*",
+]
+exclude = [
+    "*.tests*",
+    "*.test*",
+    "aura_bench.property_tests*",
+    "aura_bench.results*",
+    "interface.static*",
+    "training.adapters.aura-personality*",
+    "training.raw_data*",
+    "training.vectors*",
+]
+
+[tool.setuptools.package-data]
+core = ["*.json", "*.txt", "*/DEPS", "*/*.json", "*/*.txt"]
+interface = ["static/*", "static/**/*", "static/**/**/*"]
+
+[tool.setuptools.exclude-package-data]
+interface = ["static/shell/tests/*.cjs"]
 
 [project.optional-dependencies]
 # Coverage + mutation tooling for the quality gates (make coverage,
