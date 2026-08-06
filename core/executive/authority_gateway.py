@@ -876,6 +876,94 @@ class AuthorityGateway:
         )
 
     @staticmethod
+    def _standing_directive_gate(
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        source: str,
+        effect_scope: str,
+        domain: str,
+    ) -> AuthorityDecision | None:
+        """Enforce the user's own written prohibitions, read from disk.
+
+        This is the durable half of a constraint. OpenClaw deleted a user's
+        whole inbox after context compression evicted their "do not delete
+        any emails" (arXiv:2603.12644); the instruction had no existence
+        outside the context window. Here the gate reads the store on every
+        consequential action, so the model is never asked to remember the
+        rule and cannot be argued out of it.
+
+        Deny-only by construction — see core/governance/standing_directives.
+        """
+        try:
+            from core.governance.standing_directives import get_standing_directives
+
+            match, loaded = get_standing_directives().check(
+                tool_name=tool_name,
+                args=args,
+                effect_scope=effect_scope,
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            # The store itself failed in a way it could not report. Treat it
+            # like an unreadable store rather than an absent one.
+            record_degradation("governance", exc, action="standing_directive_gate")
+            if str(effect_scope or "").strip().lower() in {"read_only", "status"}:
+                return None
+            return AuthorityDecision(
+                approved=False,
+                outcome="rejected",
+                reason="standing_directives_unavailable",
+                constraints={"blocked": True, "effect_scope": effect_scope},
+                domain=domain,
+                source=source,
+            )
+
+        if loaded.unreadable:
+            # We know prohibitions were written and cannot tell what they
+            # said. Reads still pass; anything that changes the world does
+            # not. Assuming "probably nothing relevant" would defeat the
+            # only reason to write a prohibition down.
+            if str(effect_scope or "").strip().lower() in {"read_only", "status"}:
+                return None
+            return AuthorityDecision(
+                approved=False,
+                outcome="rejected",
+                reason="standing_directives_unreadable",
+                constraints={
+                    "blocked": True,
+                    "effect_scope": effect_scope,
+                    "detail": loaded.detail,
+                    "recovery_required": True,
+                },
+                domain=domain,
+                source=source,
+            )
+
+        if match is None:
+            return None
+
+        directive = match.directive
+        return AuthorityDecision(
+            approved=False,
+            outcome="rejected",
+            reason="standing_directive",
+            constraints={
+                "blocked": True,
+                "effect_scope": effect_scope,
+                "directive_id": directive.directive_id,
+                "directive_kind": directive.kind,
+                "directive_value": directive.value,
+                "directive_scope": directive.scope,
+                # The user's own words, so the refusal can quote the reason
+                # they gave rather than inventing one.
+                "directive_reason": directive.reason,
+                "matched_on": match.matched_on,
+            },
+            domain=domain,
+            source=source,
+        )
+
+    @staticmethod
     def _runtime_confirmation_gate(
         *,
         tool_name: str,
@@ -992,6 +1080,15 @@ class AuthorityGateway:
         )
         if containment_block is not None:
             return containment_block
+        directive_block = self._standing_directive_gate(
+            tool_name=tool_name,
+            args=args,
+            source=source,
+            effect_scope=effect_scope,
+            domain="tool_execution",
+        )
+        if directive_block is not None:
+            return directive_block
         autonomy_block = self._runtime_autonomous_action_gate(
             source=source,
             context=runtime_context,
@@ -1189,6 +1286,15 @@ class AuthorityGateway:
                 "forbidden": "privileged_mutation",
             }.get(declared_risk, "unknown")
         ).strip().lower()
+        directive_block = self._standing_directive_gate(
+            tool_name=f"environment:{intent_name}",
+            args=runtime_payload,
+            source=source,
+            effect_scope=effect_scope,
+            domain="environment_action",
+        )
+        if directive_block is not None:
+            return directive_block
         confirmation_block = self._runtime_confirmation_gate(
             tool_name=f"environment:{intent_name}",
             args=runtime_payload,

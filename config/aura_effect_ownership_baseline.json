@@ -4025,6 +4025,30 @@
       "scope": "<module>.FeatureFlags.save"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/governance/standing_directives.py",
+      "scope": "<module>.add_directive"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/governance/standing_directives.py",
+      "scope": "<module>.add_directive"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/governance/standing_directives.py",
+      "scope": "<module>.remove_directive"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -16074,6 +16098,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "85ac3746d235f2edea1f4c4140d555eb35f7f040e5e7c6300dac136f76263887",
+  "inventory_sha256": "3649b56ac4c45c0200335cd0f1cdf981a92225c61bd6305ca5cd0d9875d027fb",
   "schema_version": 1
 }
