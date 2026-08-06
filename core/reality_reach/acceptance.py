@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Never, cast
 
 from core.reality_reach.actuation import ActuationLease, ActuationState
 from core.reality_reach.live import ReadingStatus, RealityReachService
@@ -166,7 +166,7 @@ def _strict_json_loads(payload: bytes, *, max_bytes: int = _MAX_CERTIFICATE_BYTE
             result[key] = value
         return result
 
-    def reject_constant(_value: str) -> None:
+    def reject_constant(_value: str) -> Never:
         raise AcceptanceError("acceptance_certificate_non_finite_number")
 
     try:

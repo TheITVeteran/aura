@@ -17,7 +17,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 STOP_POLICY_SCHEMA = "aura.rlc.stop_policy.v1"
 STOP_POLICY_FEATURE_SCHEMA = "aura.rlc.stop_policy_features.v1"
@@ -526,7 +526,7 @@ class StopPolicyHead:
         if hashlib.sha256(raw).hexdigest() != expected_sha256:
             raise ValueError("stop-policy artifact digest mismatch")
 
-        def reject_constant(value: str) -> None:
+        def reject_constant(value: str) -> Never:
             raise ValueError(f"stop-policy JSON constant is invalid: {value}")
 
         try:

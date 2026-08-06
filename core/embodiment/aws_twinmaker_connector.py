@@ -20,7 +20,7 @@ import urllib.parse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Never, Protocol, runtime_checkable
 
 from core.governance_context import (
     get_active_governance,
@@ -111,7 +111,7 @@ def _strict_json(payload: bytes, *, role: str) -> Any:
             result[key] = value
         return result
 
-    def reject_constant(_value: str) -> None:
+    def reject_constant(_value: str) -> Never:
         raise ValueError("non-finite JSON number")
 
     try:

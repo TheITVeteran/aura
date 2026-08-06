@@ -487,3 +487,72 @@ class TestTheOrgansGoThroughTheGateway:
         )
         kinds = {(f.kind, f.severity) for f in report.findings}
         assert ("subprocess_shell_true", "critical") in kinds
+
+
+def _scan_raise_only(source: str, rel: str = "core/thing.py") -> set[str]:
+    """Function names the raise-only rule would report."""
+    import ast
+
+    from tools.aura_enterprise_gate import AstGate, GateReport
+
+    report = GateReport(root=".", generated_at_unix=0.0)
+    AstGate(rel, report, source_lines=source.splitlines()).visit(ast.parse(source))
+    return {f.detail for f in report.findings if f.kind == "raise_only_function"}
+
+
+class TestARefusalIsNotUnfinishedWork:
+    """118 findings and not one unwritten function.
+
+    104 were ``_fail(code)`` helpers — the standard way to fail closed with a
+    named, greppable code — and the rest were json.loads reject hooks and
+    protocol methods that exist to refuse a direct call. The rule was firing
+    at the discipline it is supposed to protect.
+    """
+
+    def test_a_never_annotated_helper_is_a_declared_contract(self) -> None:
+        source = (
+            "def _fail(code: str) -> Never:\n"
+            "    raise ResumeVerifierError(str(code))\n"
+        )
+        assert _scan_raise_only(source) == set()
+
+    def test_noreturn_counts_too(self) -> None:
+        source = "def _fail(code: str) -> NoReturn:\n    raise VerifierError(code)\n"
+        assert _scan_raise_only(source) == set()
+
+    def test_a_named_domain_error_is_a_decision(self) -> None:
+        """No annotation, but choosing WHICH failure this is takes a decision.
+        The json.loads reject hooks look like this."""
+        source = 'def reject_constant(value: str):\n    raise RealityActuationError(value)\n'
+        assert _scan_raise_only(source) == set()
+
+    def test_an_unwritten_function_is_still_reported(self) -> None:
+        """What the rule was always after."""
+        source = "def compute(self):\n    raise NotImplementedError\n"
+        assert _scan_raise_only(source) == {"compute"}
+
+    def test_an_abstract_method_may_raise_notimplemented(self) -> None:
+        source = (
+            "class A:\n"
+            "    @abstractmethod\n"
+            "    def compute(self):\n"
+            "        raise NotImplementedError\n"
+        )
+        assert _scan_raise_only(source) == set()
+
+    def test_a_bare_reraise_body_is_still_reported(self) -> None:
+        """Nothing named, nothing declared: it raises whatever is in flight,
+        and outside a handler there is nothing in flight."""
+        source = "def guard(self):\n    raise\n"
+        assert _scan_raise_only(source) == {"guard"}
+
+    def test_an_async_refusal_is_treated_the_same(self) -> None:
+        source = (
+            "async def apply(self, effect) -> dict[str, Any]:\n"
+            "    raise HomeAssistantRealityError('use the transaction')\n"
+        )
+        assert _scan_raise_only(source) == set()
+
+    def test_an_async_unwritten_method_is_still_reported(self) -> None:
+        source = "async def apply(self, effect):\n    raise NotImplementedError\n"
+        assert _scan_raise_only(source) == {"apply"}

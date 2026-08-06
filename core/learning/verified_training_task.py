@@ -432,7 +432,7 @@ def _extract_json_value(response: str) -> Any:
             result[key] = value
         return result
 
-    def reject_constant(_text: str) -> None:
+    def reject_constant(_text: str) -> Never:
         raise ValueError("non-finite number")
 
     try:

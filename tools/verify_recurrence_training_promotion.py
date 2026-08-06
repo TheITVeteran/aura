@@ -17,7 +17,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Never
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -79,7 +79,7 @@ class TrainingPromotionError(RuntimeError):
         self.code = code
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> Never:
     raise TrainingPromotionError(code)
 
 
@@ -245,7 +245,7 @@ def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _reject_nonfinite_json(value: str) -> None:
+def _reject_nonfinite_json(value: str) -> Never:
     raise ValueError(f"non-finite JSON value: {value}")
 
 

@@ -11,7 +11,7 @@ import secrets
 import stat
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 MARKER_SCHEMA = "aura.resource_stage.marker.v1"
 ACK_SCHEMA = "aura.resource_stage.ack.v1"
@@ -59,7 +59,7 @@ def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _reject_nonfinite(value: str) -> None:
+def _reject_nonfinite(value: str) -> Never:
     raise ResourceStageGuardError(f"non-finite JSON value: {value}")
 
 

@@ -34,7 +34,7 @@ import sys
 from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -489,7 +489,7 @@ def _canonical_artifact(path: Path, *, role: str) -> dict[str, Any]:
             result[key] = value
         return result
 
-    def reject_constant(value: str) -> None:
+    def reject_constant(value: str) -> Never:
         raise ValueError(f"{role} contains non-finite number {value}")
 
     try:

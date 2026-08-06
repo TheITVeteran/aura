@@ -14,7 +14,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 from core.config import DATA_DIR
 from core.governance.will import ActionDomain
@@ -125,7 +125,7 @@ def _strict_json_mapping(payload: bytes, *, role: str) -> dict[str, Any]:
             result[key] = value
         return result
 
-    def reject_constant(_value: str) -> None:
+    def reject_constant(_value: str) -> Never:
         raise RealityActuationError(f"reality_actuation_{role}_non_finite_number")
 
     try:

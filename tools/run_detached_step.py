@@ -33,7 +33,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Never
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -946,7 +946,7 @@ def _read_canonical_private_json(
 ) -> dict[str, Any]:
     payload = _read_stable_private_bytes(path, max_bytes=max_bytes, role=role)
 
-    def reject_constant(_value: str) -> None:
+    def reject_constant(_value: str) -> Never:
         raise DetachedStepError(f"{role} contains a non-finite number")
 
     try:

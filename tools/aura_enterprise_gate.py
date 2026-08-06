@@ -355,6 +355,60 @@ def is_serialization_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
     return isinstance(exc, ast.Name) and exc.id in {"TypeError", "RuntimeError", "PicklingError"}
 
 
+def raised_exception_name(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+    """The name of the single exception a raise-only function raises."""
+    body = body_without_docstring(node)
+    if len(body) != 1 or not isinstance(body[0], ast.Raise):
+        return None
+    exc = body[0].exc
+    if exc is None:
+        return "<bare>"
+    if isinstance(exc, ast.Call):
+        exc = exc.func
+    if isinstance(exc, ast.Name):
+        return exc.id
+    if isinstance(exc, ast.Attribute):
+        return exc.attr
+    return None
+
+
+def is_deliberate_refusal(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A raise-only function that refuses on purpose, rather than one nobody
+    finished writing.
+
+    The rule read "in product code a raise-only helper is dead scaffolding",
+    and that premise was wrong here. It reported 118 functions and not one
+    was unwritten: 104 were ``_fail(code)`` helpers, the codebase's standard
+    way to fail closed with a named, greppable code, and the rest were
+    ``reject_constant`` hooks handed to json.loads and protocol methods that
+    exist to refuse a direct call. A rule that fires 118 times for the
+    discipline it is supposed to protect gets read as noise.
+
+    Two things say "deliberate", both machine-checked and neither writable by
+    accident:
+
+    * ``-> Never`` / ``-> NoReturn``. The annotation IS the contract, and a
+      type checker enforces that no caller reads a return value. 103 of the
+      118 already carried it; the other twelve said ``-> None`` while always
+      raising, which is wrong type information, and they are fixed.
+    * The exception raised is a NAMED type — a domain error, ValueError,
+      AssertionError. Choosing which failure this is takes a decision.
+
+    What stays a finding is what the rule was always after: a non-abstract
+    function whose whole body is ``raise NotImplementedError`` (declared and
+    unwritten) or a bare ``raise`` outside a handler.
+    """
+    returns = node.returns
+    if isinstance(returns, ast.Name) and returns.id in {"Never", "NoReturn"}:
+        return True
+    if isinstance(returns, ast.Attribute) and returns.attr in {"Never", "NoReturn"}:
+        return True
+    raised = raised_exception_name(node)
+    if raised is None or raised == "<bare>":
+        return False
+    return raised != "NotImplementedError"
+
+
 class AstGate(ast.NodeVisitor):
     def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
         self.rel = rel
@@ -463,10 +517,9 @@ class AstGate(ast.NodeVisitor):
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
             and not is_serialization_guard(node)
+            and not is_deliberate_refusal(node)
             and not self.rel.startswith("tests/")
         ):
-            # tests/ excluded: a raise-only local helper is the standard way
-            # to build failure fixtures; in product code it is dead scaffolding.
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "raise_only_function",
@@ -498,9 +551,9 @@ class AstGate(ast.NodeVisitor):
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
             and not is_serialization_guard(node)
+            and not is_deliberate_refusal(node)
             and not self.rel.startswith("tests/")
         ):
-            # tests/ excluded: raise-only helpers are failure fixtures there.
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "raise_only_function",

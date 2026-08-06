@@ -22,7 +22,7 @@ import traceback
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 import httpx
 
@@ -173,7 +173,7 @@ class CandidateSpec(dict):
         super().__init__(raw)
         self._world_id = world_id
 
-    def _refuse(self, key: str):
+    def _refuse(self, key: str) -> Never:
         raise HiddenAnswerAccess(
             f"{self._world_id or 'world'}: handler read hidden grader field "
             f"{key!r}. The artifact must be derived from candidate-visible "

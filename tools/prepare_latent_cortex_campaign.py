@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Never
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -104,7 +104,7 @@ class CampaignPreparationError(RuntimeError):
         self.code = code
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> Never:
     raise CampaignPreparationError(code)
 
 
