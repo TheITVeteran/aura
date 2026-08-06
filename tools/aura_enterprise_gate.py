@@ -77,106 +77,23 @@ ALLOW_DYNAMIC_CODE = {
     "security/sandbox.py",
 }
 
-ALLOW_SUBPROCESS = {
-    "_gen_icons.py",
-    "aura_main.py",
-    "core/agency/agency_orchestrator.py",
-    "core/brain/llm/mlx_client.py",
-    "core/runtime/consequential_primitives.py",
-    "core/sandbox/bash_daemon.py",
-    "core/security/integrity_guardian.py",
-    "core/skills/sovereign_terminal.py",
-    "security/sandbox.py",
-    "scripts/build_app.py",
-    "skills/shell.py",
-    "tools/aura_enterprise_gate.py",
-    "tools/box/parent_controller.py",
-    # Operator/CI drivers that orchestrate child processes by design:
-    "tools/run_test_chunks.py",
-    # Detached-execution supervisor: its entire job is spawning, sandboxing,
-    # and reaping a real child process tree with crash-observable receipts.
-    "tools/run_detached_step.py",
-    # Campaign driver: spawns one worker process per resumable cell so a
-    # crash kills the cell, never the journal.
-    "tools/run_latent_cortex_paired_campaign.py",
-    # Detached-execution proofs: real child processes and real SIGKILLs are
-    # the only honest way to test supervisor containment.
-    "tests/test_run_detached_step.py",
-    "tests/test_latent_cortex_campaign_journal.py",
-    # The release checklist runner spawns the make gates it enforces:
-    "tools/release_preflight.py",
-    "tests/test_architecture_quality_gate.py",
-    # Flight-recorder SIGKILL proof: crash-survivability can only be proven
-    # by really killing a separate child process mid-write and reading the
-    # ring it left behind — an in-process simulation would prove nothing.
-    "tests/test_flight_recorder.py",
-    "tools/live_boot_proof.py",
-    # Shutdown matrix: owns a fresh root process per case so real OS signals,
-    # process trees, locks, ports, and terminal receipts are independently observed.
-    "tools/shutdown_signal_matrix.py",
-    "tools/build_release_manifest.py",
-    "tools/run_proof_step.py",
-    "tools/memory_sentinel.py",
-    # Demo proof driver: reads back the wallpaper via osascript OUTSIDE
-    # Aura's gateways on purpose — independent verification must not route
-    # through the runtime it is verifying.
-    "tools/browser_research_demo_proof.py",
-    # Vision proof driver: places a unique marker on screen (open -a
-    # TextEdit) and reads it back via osascript — the scene setup and
-    # independent verification must sit outside Aura's gateways.
-    "tools/vision_screen_proof.py",
-    # Benchmark grader: executes candidate snippets in isolated temporary
-    # interpreters so untrusted answers cannot mutate the evaluator process.
-    "aura_bench/hard_suite.py",
-    # Operator migration utility: invokes the official mlx_lm fuse CLI only
-    # after explicit --execute confirmation.
-    "scripts/migrate_to_qwen3.py",
-    # Clean-env install proof: drives git archive, venv, pip, and a
-    # sub-interpreter to verify a pristine clone installs — subprocess
-    # orchestration is the whole point.
-    "tools/clean_env_install_proof.py",
-    # Recovery test: spawns a sub-interpreter that deliberately wedges its own
-    # event loop to prove the StallWatchdog force-exits the process with the
-    # supervisor-restart code. A real os._exit in a child is the only way to
-    # prove the end-to-end recovery mechanism; subprocess is the point.
-    "tests/test_stall_watchdog_hard_exit.py",
-    # Recovery test: spawns the external liveness sentinel + a victim process to
-    # prove the out-of-process kill path (a GIL-locked deadlock can only be
-    # broken from outside). Subprocess IS the point.
-    "tests/test_liveness_sentinel.py",
-    # Regression isolation: the former unbounded Queue.get worker pinned
-    # asyncio.run() forever, so the proof needs an externally bounded child.
-    "tests/test_state_registry_shutdown.py",
-    # Legitimate production modules requiring OS/subprocess interface
-    "core/architect/safety_gate.py",
-    "core/architect/shadow_workspace.py",
-    "core/brain/llm/retired_external_runtime.py",
-    "core/brain/llm/mlx_worker.py",
-    "core/learning/autonomous_rsi.py",
-    "core/learning/live_learner.py",
-    "core/morphogenesis/native_compiler.py",
-    "core/resilience/antibody.py",
-    "core/resilience/diagnostic_hub.py",
-    "core/resilience/immunity_hyphae.py",
-    "core/resilience/substrate_monitor.py",
-    "core/resource/resource_governor.py",
-    "core/runtime/flagship_doctor.py",
-    "core/runtime/subprocess_gateway.py",
-    "core/sandbox/macos_sandbox.py",
-    "core/self_improvement/deterministic_comparator.py",
-    "core/self_modification/mutation_safety.py",
-    "core/self_modification/safe_modification.py",
-    "core/self_modification/structural_improver.py",
-    "core/senses/notifications.py",
-    "core/senses/voice_engine.py",
-    "core/senses/voice_engine_decoupled.py",
-    "core/skills/computer_use.py",
-    "core/skills/memory_sync.py",
-    "core/skills/toggle_senses.py",
-    "core/sovereign/platform_root.py",
-    "core/utils/sandbox_selfmod.py",
-    "core/voice/stable_voice_pipeline.py",
-}
+#: The organs. Everything the running Aura does with a child process goes
+#: through core/runtime/subprocess_gateway.py, which is what carries the
+#: source label, the accelerator claim, the shutdown interlock and the
+#: read-only assertion. A direct spawn in here has none of that.
+#:
+#: Outside these roots — tests, tools, scripts, the launcher — spawning child
+#: processes IS the job: a containment proof needs a real child to kill, an
+#: operator driver orchestrates the gates it runs, and the out-of-process
+#: sentinels must outlive the runtime they watch. This replaced a
+#: ninety-entry file-name allowlist, most of whose entries no longer had a
+#: subprocess call in them at all; the ones that did were tools and tests.
+GATEWAY_OWNED_ROOTS = ("core/", "interface/")
+SUBPROCESS_GATEWAY_MODULE = "core/runtime/subprocess_gateway.py"
+
+
+def subprocess_must_use_gateway(rel: str) -> bool:
+    return rel.startswith(GATEWAY_OWNED_ROOTS) and rel != SUBPROCESS_GATEWAY_MODULE
 
 ALLOW_BLOCKING_SLEEP_IN_ASYNC = {
     # This chaos fault deliberately stalls the loop to verify lag detection
@@ -628,13 +545,13 @@ class AstGate(ast.NodeVisitor):
             )
             if shell_true:
                 self.add("critical", "subprocess_shell_true", node, name)
-            elif self.rel not in ALLOW_SUBPROCESS:
-                self.add(
-                    "high" if is_production(self.rel) else "medium",
-                    "subprocess_usage_review",
-                    node,
-                    name,
-                )
+            elif subprocess_must_use_gateway(self.rel) and not self._line_has_marker(
+                node, "noqa: S603"
+            ):
+                # Per-line, like the exec and broad-except markers above, and
+                # for the same reason: blessing a whole file also blesses
+                # every spawn added to it later.
+                self.add("high", "subprocess_usage_review", node, name)
         if name in {"dill.load", "dill.loads", "pickle.load", "pickle.loads"}:
             self.add(
                 "critical" if is_production(self.rel) else "high",

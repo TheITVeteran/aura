@@ -156,9 +156,9 @@ def _probe_accessibility_permission() -> PreconditionState:
             "accessibility_permission", True, "permission state is unknown", unknown=True
         )
     try:
-        import subprocess
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
 
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             [
                 "osascript",
                 "-e",
@@ -166,8 +166,11 @@ def _probe_accessibility_permission() -> PreconditionState:
                 "application process whose frontmost is true",
             ],
             capture_output=True,
+            read_only=True,
             text=True,
             timeout=_PROBE_TIMEOUT_SECONDS * 4,
+            source="conversation.capability_preconditions.accessibility_probe",
+            accelerator_capability="none",
         )
         output = (result.stdout or "").strip()
         granted = bool(output) and "not allowed" not in (result.stderr or "").lower()

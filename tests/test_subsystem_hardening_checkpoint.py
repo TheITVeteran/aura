@@ -32,6 +32,9 @@ def test_local_command_sandbox_uses_subprocess_gateway(monkeypatch, tmp_path):
             "capture_output": True,
             "timeout": 10.0,
             "source": "security.sandbox",
+            # The sandbox runs whatever it is handed, so the lane claim has
+            # to be inferred from the command rather than asserted here.
+            "accelerator_capability": "auto",
         }
     ]
 

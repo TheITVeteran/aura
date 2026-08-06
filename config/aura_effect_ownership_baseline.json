@@ -14577,14 +14577,6 @@
       "scope": "<module>.SovereignNetworkSkill._check_internet"
     },
     {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/conversation/capability_preconditions.py",
-      "scope": "<module>._probe_accessibility_permission"
-    },
-    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -14615,38 +14607,6 @@
       "count": 1,
       "path": "core/ops/process_manager.py",
       "scope": "<module>.ManagedProcess.start"
-    },
-    {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/perception/app_dictionary.py",
-      "scope": "<module>._run_sdef"
-    },
-    {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/perception/screen_blueprint.py",
-      "scope": "<module>.read_browser_document"
-    },
-    {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/perception/screen_blueprint.py",
-      "scope": "<module>.read_window_elements"
-    },
-    {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/runtime/release_certificate.py",
-      "scope": "<module>.current_commit"
     },
     {
       "callee": "subprocess.run",
@@ -14921,6 +14881,14 @@
       "scope": "<module>.Shell.run"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/conversation/capability_preconditions.py",
+      "scope": "<module>._probe_accessibility_permission"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15033,6 +15001,14 @@
       "scope": "<module>.AmbientDeveloperStream._collect_git_status"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/app_dictionary.py",
+      "scope": "<module>._run_sdef"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15063,6 +15039,22 @@
       "count": 2,
       "path": "core/perception/perceptual_pump.py",
       "scope": "<module>._collect_screen_state"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_blueprint.py",
+      "scope": "<module>.read_browser_document"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/perception/screen_blueprint.py",
+      "scope": "<module>.read_window_elements"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15207,6 +15199,14 @@
       "count": 2,
       "path": "core/runtime/mlx_memory_guard.py",
       "scope": "<module>.host_pressure"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/release_certificate.py",
+      "scope": "<module>.current_commit"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -16074,6 +16074,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "1a8a2ba2b594034849ab0ab705cb07006e1fcce6092696836c5a0a02ec41f719",
+  "inventory_sha256": "85ac3746d235f2edea1f4c4140d555eb35f7f040e5e7c6300dac136f76263887",
   "schema_version": 1
 }

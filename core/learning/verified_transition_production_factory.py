@@ -471,7 +471,12 @@ class CommandRoleSignerBroker:
         else:
             try:
                 with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-                    completed = subprocess.run(
+                    # Deliberately outside the subprocess gateway: this is the
+                    # external signer broker, and stdin/stdout are byte-exact
+                    # through real temporary files because the signature is
+                    # over those bytes. The executable's identity is asserted
+                    # immediately after the call returns.
+                    completed = subprocess.run(  # noqa: S603 - signer broker, identity-asserted
                         [str(self._executable), *self._arguments],
                         input=request_bytes,
                         stdout=stdout,

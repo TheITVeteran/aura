@@ -89,6 +89,7 @@ def test_keep_awake_default_launcher_uses_subprocess_gateway(monkeypatch):
                 "stderr_path": os.devnull,
                 "start_new_session": True,
                 "source": "core.runtime.keep_awake.caffeinate_assertion",
+                "accelerator_capability": "auto",
             },
         )
     ]

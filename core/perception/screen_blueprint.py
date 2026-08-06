@@ -44,6 +44,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.ScreenBlueprint")
@@ -492,11 +493,14 @@ def read_window_elements(app: str, *, timeout: float = _ELEMENT_READ_TIMEOUT_S) 
     osascript = shutil.which("osascript") or "/usr/bin/osascript"
     script = _ELEMENT_SCRIPT % {"app": name.replace('"', '\\"')}
     try:
-        result = subprocess.run(  # noqa: S603 - fixed interpreter, bounded
+        result = get_subprocess_gateway().run(
             [osascript, "-e", script],
             capture_output=True,
+            read_only=True,
             text=True,
             timeout=timeout,
+            source="perception.screen_blueprint.accessibility_read",
+            accelerator_capability="none",
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "the accessibility read timed out"}
@@ -565,11 +569,14 @@ def read_browser_document(
     osascript = shutil.which("osascript") or "/usr/bin/osascript"
     script = template % {"limit": max(0, int(text_limit)), "html": max(0, int(html_limit))}
     try:
-        result = subprocess.run(  # noqa: S603 - fixed interpreter, bounded
+        result = get_subprocess_gateway().run(
             [osascript, "-e", script],
             capture_output=True,
+            read_only=True,
             text=True,
             timeout=timeout,
+            source="perception.screen_blueprint.browser_document_read",
+            accelerator_capability="none",
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "the page read timed out"}

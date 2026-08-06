@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.AppDictionary")
@@ -268,11 +269,14 @@ def _bundle_declares_scripting(app_path: str) -> bool:
 def _run_sdef(app_path: str) -> str:
     sdef = shutil.which("sdef") or "/usr/bin/sdef"
     try:
-        result = subprocess.run(  # noqa: S603 - fixed interpreter, bounded
+        result = get_subprocess_gateway().run(
             [sdef, app_path],
             capture_output=True,
+            read_only=True,
             text=True,
             timeout=_SDEF_TIMEOUT_S,
+            source="perception.app_dictionary.sdef",
+            accelerator_capability="none",
         )
     except subprocess.TimeoutExpired:
         return ""

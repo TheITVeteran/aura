@@ -9,7 +9,7 @@
     "potential_secret": 0,
     "pytest_skip_xfail": 0,
     "raise_only_function": 44,
-    "subprocess_usage_review": 24,
+    "subprocess_usage_review": 0,
     "swallowed_broad_exception": 11,
     "unbounded_loop_review": 15
   },

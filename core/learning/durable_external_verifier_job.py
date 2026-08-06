@@ -506,7 +506,13 @@ class DurableExternalVerifierJob:
     ) -> dict[str, Any]:
         self._assert_source_identities()
         try:
-            completed = subprocess.run(
+            # Deliberately outside the subprocess gateway. This runner is the
+            # detached verifier: its independence from the runtime is the
+            # property being relied on, and routing the spawn through the
+            # runtime's own accounting would put the thing under test inside
+            # the thing verifying it. Byte-exact (text=False) because the
+            # receipt hashes stdout; identities are asserted above.
+            completed = subprocess.run(  # noqa: S603 - detached verifier, identity-asserted
                 [sys.executable, str(self._runner), *arguments],
                 check=False,
                 capture_output=True,

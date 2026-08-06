@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import runtime_identity, state_root
 
@@ -191,12 +192,15 @@ def current_commit() -> str:
     for a build nobody can identify.
     """
     try:
-        result = subprocess.run(
+        result = get_subprocess_gateway().run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,
+            read_only=True,
             text=True,
             timeout=10,
             check=False,
+            source="runtime.release_certificate.current_commit",
+            accelerator_capability="none",
         )
         commit = result.stdout.strip()
         return commit if commit else "unknown"

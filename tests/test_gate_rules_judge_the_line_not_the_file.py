@@ -416,3 +416,74 @@ class TestTheFileNameAllowlistIsGone:
 
         noisy = [f for f in report.findings if f.kind != "syntax_error"]
         assert noisy == [], [(f.kind, f.line, f.detail) for f in noisy]
+
+
+def _scan_subprocess(source: str, rel: str) -> set[int]:
+    """Lines the subprocess rule would report."""
+    import ast
+
+    from tools.aura_enterprise_gate import AstGate, GateReport
+
+    report = GateReport(root=".", generated_at_unix=0.0)
+    AstGate(rel, report, source_lines=source.splitlines()).visit(ast.parse(source))
+    return {f.line for f in report.findings if f.kind == "subprocess_usage_review"}
+
+
+class TestTheOrgansGoThroughTheGateway:
+    """A ninety-entry allowlist, and most of its files had no spawn left in
+    them at all. What it was really encoding is that core/ and interface/ must
+    route through core/runtime/subprocess_gateway.py — which carries the
+    source label, the accelerator claim, the shutdown interlock and the
+    read-only assertion — and that everything else spawns by design.
+    """
+
+    def test_a_direct_spawn_in_core_is_reported(self) -> None:
+        source = 'subprocess.run(["git", "status"])\n'
+        assert _scan_subprocess(source, "core/thing.py") == {1}
+
+    def test_a_direct_spawn_in_the_interface_is_reported(self) -> None:
+        source = 'subprocess.Popen(["node", "x.js"])\n'
+        assert _scan_subprocess(source, "interface/thing.py") == {1}
+
+    def test_the_gateway_itself_may_spawn(self) -> None:
+        source = 'subprocess.run(command)\n'
+        assert _scan_subprocess(source, "core/runtime/subprocess_gateway.py") == set()
+
+    def test_a_test_spawning_a_real_child_is_not_reported(self) -> None:
+        """Containment can only be proven against a process you can kill."""
+        source = 'subprocess.run([sys.executable, "-c", "import os; os._exit(9)"])\n'
+        assert _scan_subprocess(source, "tests/test_containment.py") == set()
+
+    def test_an_operator_driver_is_not_reported(self) -> None:
+        source = 'subprocess.run(["make", "smoke"])\n'
+        assert _scan_subprocess(source, "tools/release_preflight.py") == set()
+
+    def test_the_launcher_may_spawn_the_sentinels_that_outlive_it(self) -> None:
+        source = 'subprocess.Popen([sys.executable, "tools/memory_sentinel.py"])\n'
+        assert _scan_subprocess(source, "aura_main.py") == set()
+
+    def test_a_reviewed_line_in_core_is_not_reported(self) -> None:
+        """Per-line, like the exec and broad-except markers: blessing a whole
+        file also blesses every spawn added to it later."""
+        source = 'subprocess.run(argv)  # noqa: S603 - detached verifier, identity-asserted\n'
+        assert _scan_subprocess(source, "core/learning/thing.py") == set()
+
+    def test_the_marker_does_not_bless_the_rest_of_the_file(self) -> None:
+        source = (
+            'subprocess.run(argv)  # noqa: S603 - reviewed\n'
+            'subprocess.run(other)\n'
+        )
+        assert _scan_subprocess(source, "core/learning/thing.py") == {2}
+
+    def test_shell_true_is_still_critical_everywhere(self) -> None:
+        import ast
+
+        from tools.aura_enterprise_gate import AstGate, GateReport
+
+        source = 'subprocess.run("rm -rf /", shell=True)  # noqa: S603 - reviewed\n'
+        report = GateReport(root=".", generated_at_unix=0.0)
+        AstGate("tests/test_x.py", report, source_lines=source.splitlines()).visit(
+            ast.parse(source)
+        )
+        kinds = {(f.kind, f.severity) for f in report.findings}
+        assert ("subprocess_shell_true", "critical") in kinds

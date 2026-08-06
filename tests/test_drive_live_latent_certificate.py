@@ -32,6 +32,7 @@ def test_git_head_uses_bounded_read_only_subprocess_gateway(monkeypatch) -> None
                 "timeout": 10,
                 "read_only": True,
                 "source": "proof_tooling:live_latent_certificate_git_head",
+                "accelerator_capability": "none",
             },
         )
     ]
