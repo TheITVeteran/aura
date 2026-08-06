@@ -15,6 +15,7 @@ from core.embodiment.macos_acoustic_reality import (
     ACOUSTIC_ADAPTER_ID,
     ACOUSTIC_RESOURCE_ID,
 )
+from core.reality_reach import acceptance_requests, acceptance_service
 from core.reality_reach.acceptance import (
     REQUIRED_SCALAR_ACCEPTANCE_CASES,
     AcceptanceCaseResult,
@@ -65,6 +66,25 @@ from core.reality_reach.scalar_adapter import (
     ScalarWriteResult,
 )
 from core.runtime.audit_chain import canonical_json, sha256_hex
+
+
+def test_acceptance_service_reexports_canonical_request_contracts() -> None:
+    assert (
+        acceptance_service.ScalarAcceptanceRequest
+        is acceptance_requests.ScalarAcceptanceRequest
+    )
+    assert (
+        acceptance_service.ScalarAcceptanceMandateRequest
+        is acceptance_requests.ScalarAcceptanceMandateRequest
+    )
+    assert (
+        acceptance_service.AcousticA1MandateRequest
+        is acceptance_requests.AcousticA1MandateRequest
+    )
+    assert (
+        acceptance_service.AcousticA1Request
+        is acceptance_requests.AcousticA1Request
+    )
 
 
 def _digest(value: Any) -> str:
