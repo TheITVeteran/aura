@@ -48,13 +48,11 @@ _FLAG_LIVENESS_HEARTBEAT_FILE = _declare_flag(
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
-_FLAG_LOG_DIR = _declare_flag(
-    "AURA_LOG_DIR",
-    kind=_FlagKind.STRING,
-    default="",
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
-)
+# AURA_LOG_DIR is declared once, in core.runtime.flags.aura_log_dir_override(),
+# and read through forensics_root() below. The declaration that used to sit here
+# survived after this module stopped reading it, and two declarations of one
+# name with different specs make declare() raise — correctly: a knob must have
+# exactly one meaning, and the flag registry is the thing that enforces it.
 _FLAG_SAFE_BOOT_DESKTOP = _declare_flag(
     "AURA_SAFE_BOOT_DESKTOP",
     kind=_FlagKind.STRING,
