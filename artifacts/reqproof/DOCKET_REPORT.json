@@ -634,15 +634,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "b38d81fa4aea8207bc22fbf818a91de9fec2d98c9f319ef7db1fb250d8602bd9",
-    "registry_sha256": "953ba56ab5ad0809453358a1718f8a6ca2c208b265ee631e9441a20ba30832a3"
+    "evidence_ledger_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
+    "registry_sha256": "37e747feea25bda7a94a0bf6a7907d87690a204c2be00e874d65f4a670da521a"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "1e62d473f366b7978b3518eeb8e7bbbd1e51602dc37e222f6dbc629fba7b7a5d",
+  "report_sha256": "f39f947642860d5d89dd188d905084d7f3d3cc4e430278123e5f27ff566a4f00",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -794,7 +794,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "AGENCY-001",
         "EFFECT-001",
         "VALUES-001"
       ],
@@ -1270,7 +1269,6 @@
         "PASSF-14"
       ],
       "direct_dependency_blockers": [
-        "ACTION-SPINE-001",
         "FOREGROUND-LATENCY-001"
       ],
       "disposition": "in_progress",
@@ -1317,7 +1315,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "PERF-001",
         "RUNTIME-001",
         "FAULT-001",
         "SUBSTRATE-001",
@@ -1396,10 +1393,8 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "RUNTIME-001",
-        "FOREGROUND-LATENCY-001",
         "OBSERVE-001",
-        "UI-001",
-        "PERF-001"
+        "UI-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 4,
@@ -1428,8 +1423,7 @@
         "INTELLIGENCE-001",
         "CLAIMS-001",
         "PROOF-001",
-        "TEST-DEPTH-001",
-        "FOREGROUND-LATENCY-001"
+        "TEST-DEPTH-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 3,
@@ -1452,7 +1446,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "CONVERSATION-001",
         "LANE-001",
         "RUNTIME-001",
         "FAULT-001",
@@ -1483,7 +1476,6 @@
         "OPERATIONS-001",
         "RUNTIME-001",
         "DESKTOP-ACCESS-001",
-        "UI-001",
         "VALIDATE-001"
       ],
       "disposition": "in_progress",
@@ -1938,8 +1930,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "RLC-LIFECYCLE-001",
-        "PERF-001",
-        "RLC-FRONTIER-001"
+        "PERF-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 2,
@@ -1985,7 +1976,8 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RLC-FRONTIER-001",
+        "RLC-BASELINES-001",
+        "RLC-FRESH-TASKS-001",
         "TEST-DEPTH-001"
       ],
       "disposition": "in_progress",
@@ -2008,8 +2000,7 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RLC-LIFECYCLE-001",
-        "RLC-CONSOLIDATION-001"
+        "RLC-LIFECYCLE-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 2,
@@ -2031,7 +2022,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RLC-EXPERIMENTS-001",
         "CAPABILITY-CERT-001"
       ],
       "disposition": "in_progress",
@@ -2055,6 +2045,8 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "RLC-BASELINES-001",
+        "RLC-COMPUTE-001",
+        "RLC-EXPERIMENTS-001",
         "RLC-FRESH-TASKS-001",
         "RLC-LIVE32B-001"
       ],
@@ -2130,8 +2122,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "RUNTIME-001",
-        "FOREGROUND-LATENCY-001",
-        "RLC-MECHANICS-001"
+        "FOREGROUND-LATENCY-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 2,
@@ -2247,6 +2238,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "RLC-LIFECYCLE-001",
+        "RLC-MECHANICS-001",
         "RUNTIME-001",
         "CHAT-001"
       ],
@@ -2345,7 +2337,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RLC-CAUSAL-INGRESS-001",
         "MEMORY-001",
         "SUBSTRATE-001"
       ],
@@ -2682,8 +2673,7 @@
       ],
       "direct_dependency_blockers": [
         "STATE-001",
-        "MIND-001",
-        "FOREGROUND-LATENCY-001"
+        "MIND-001"
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 3,
@@ -7047,7 +7037,6 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RELEASE-CONTRACT-001",
         "EXPECT-001",
         "EFFECT-001",
         "TOOLS-001",
@@ -7079,7 +7068,6 @@
         "ARCH-001",
         "TOOLS-001",
         "DATA-LIFECYCLE-001",
-        "OPERATIONS-001",
         "REPO-001"
       ],
       "disposition": "blocked_by_dependency",
@@ -7134,8 +7122,7 @@
       "direct_dependency_blockers": [
         "MEMORY-001",
         "STATE-001",
-        "SECURITY-001",
-        "OPERATIONS-001"
+        "SECURITY-001"
       ],
       "disposition": "blocked_by_dependency",
       "evidence_cells_total": 2,
@@ -7246,8 +7233,6 @@
       "direct_dependency_blockers": [
         "IIT-SYSTEM-001",
         "IIT-GRAPH-001",
-        "IIT-LIVE-001",
-        "IIT-CONCLUSION-001",
         "CLAIMS-001"
       ],
       "disposition": "blocked_by_dependency",
@@ -7427,7 +7412,6 @@
       "direct_dependency_blockers": [
         "IIT-ABSTRACTION-001",
         "IIT-CERT-001",
-        "IIT-LIVE-001",
         "PROOF-001",
         "REPLICATION-001"
       ],
@@ -7545,8 +7529,7 @@
         "RELEASE-CONTRACT-001",
         "DESKTOP-001",
         "RESOURCE-001",
-        "OPERATIONS-001",
-        "REPLICATION-001"
+        "OPERATIONS-001"
       ],
       "disposition": "blocked_by_dependency",
       "evidence_cells_total": 3,
@@ -7623,8 +7606,7 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
-        "RLC-COMPUTE-001",
-        "RLC-EXPERIMENTS-001"
+        "RLC-COMPUTE-001"
       ],
       "disposition": "blocked_by_dependency",
       "evidence_cells_total": 2,

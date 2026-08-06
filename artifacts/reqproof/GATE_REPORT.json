@@ -40,7 +40,6 @@
   },
   "defect_counts": {
     "contradictory-status": 2,
-    "dependency-cycle": 23,
     "false-closure": 2,
     "unproven-closure": 4
   },
@@ -54,121 +53,6 @@
       "defect_class": "contradictory-status",
       "detail": "complete requirement depends on VALIDATE-001 which is still open",
       "subject": "LIFECYCLE-001::VALIDATE-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: ACTION-SPINE-001 -> AUTONOMY-AUTHORITY-001 -> AGENCY-001 -> ACTION-SPINE-001",
-      "subject": "ACTION-SPINE-001+AGENCY-001+AUTONOMY-AUTHORITY-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: EXPECT-001 -> ACTION-SPINE-001 -> EXPECT-001",
-      "subject": "ACTION-SPINE-001+EXPECT-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: CAPABILITY-CERT-001 -> RELEASE-CONTRACT-001 -> CAPABILITY-CERT-001",
-      "subject": "CAPABILITY-CERT-001+RELEASE-CONTRACT-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: OPERATIONS-001 -> COMPATIBILITY-001 -> OPERATIONS-001",
-      "subject": "COMPATIBILITY-001+OPERATIONS-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: CONVERSATION-001 -> INFERENCE-RELIABILITY-001 -> CONVERSATION-001",
-      "subject": "CONVERSATION-001+INFERENCE-RELIABILITY-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: OPERATIONS-001 -> DATA-LIFECYCLE-001 -> OPERATIONS-001",
-      "subject": "DATA-LIFECYCLE-001+OPERATIONS-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: FOREGROUND-LATENCY-001 -> PERF-001 -> HEALTH-SURFACE-001 -> FOREGROUND-LATENCY-001",
-      "subject": "FOREGROUND-LATENCY-001+HEALTH-SURFACE-001+PERF-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: FOREGROUND-LATENCY-001 -> IIT-SYSTEM-001 -> FOREGROUND-LATENCY-001",
-      "subject": "FOREGROUND-LATENCY-001+IIT-SYSTEM-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: SUBSTRATE-001 -> FOREGROUND-LATENCY-001 -> IIT-SYSTEM-001 -> SUBSTRATE-001",
-      "subject": "FOREGROUND-LATENCY-001+IIT-SYSTEM-001+SUBSTRATE-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: FOREGROUND-LATENCY-001 -> PERF-001 -> FOREGROUND-LATENCY-001",
-      "subject": "FOREGROUND-LATENCY-001+PERF-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: SUBSTRATE-001 -> FOREGROUND-LATENCY-001 -> SUBSTRATE-001",
-      "subject": "FOREGROUND-LATENCY-001+SUBSTRATE-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: PERF-001 -> HEALTH-SURFACE-001 -> PERF-001",
-      "subject": "HEALTH-SURFACE-001+PERF-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: IIT-BASELINE-INTEGRITY-001 -> IIT-LIVE-001 -> IIT-BASELINE-INTEGRITY-001",
-      "subject": "IIT-BASELINE-INTEGRITY-001+IIT-LIVE-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: IIT-LIVE-001 -> IIT-STATISTICS-001 -> IIT-LIVE-001",
-      "subject": "IIT-LIVE-001+IIT-STATISTICS-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: UI-001 -> LAUNCH-PROVENANCE-001 -> UI-001",
-      "subject": "LAUNCH-PROVENANCE-001+UI-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: REPLICATION-001 -> PORTABILITY-001 -> REPLICATION-001",
-      "subject": "PORTABILITY-001+REPLICATION-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-COMPUTE-001 -> RLC-FRONTIER-001 -> RLC-BASELINES-001 -> RLC-COMPUTE-001",
-      "subject": "RLC-BASELINES-001+RLC-COMPUTE-001+RLC-FRONTIER-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-FRONTIER-001 -> RLC-BASELINES-001 -> RLC-EXPERIMENTS-001 -> RLC-FRONTIER-001",
-      "subject": "RLC-BASELINES-001+RLC-EXPERIMENTS-001+RLC-FRONTIER-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-CAUSAL-INGRESS-001 -> RLC-WORKSPACE-001 -> RLC-CAUSAL-INGRESS-001",
-      "subject": "RLC-CAUSAL-INGRESS-001+RLC-WORKSPACE-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-COMPUTE-001 -> RLC-FRONTIER-001 -> RLC-LIVE32B-001 -> RLC-RUNTIME-001 -> RLC-LIFECYCLE-001",
-      "subject": "RLC-COMPUTE-001+RLC-FRONTIER-001+RLC-LIFECYCLE-001+RLC-LIVE32B-001+RLC-MECHANICS-001+RLC-RUNTIME-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-COMPUTE-001 -> RLC-LIFECYCLE-001",
-      "subject": "RLC-COMPUTE-001+RLC-LIFECYCLE-001+RLC-MECHANICS-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-CONSOLIDATION-001 -> RLC-FAST-WEIGHTS-001 -> RLC-CONSOLIDATION-001",
-      "subject": "RLC-CONSOLIDATION-001+RLC-FAST-WEIGHTS-001"
-    },
-    {
-      "defect_class": "dependency-cycle",
-      "detail": "cycle: RLC-LIFECYCLE-001 -> RLC-MECHANICS-001 -> RLC-LIFECYCLE-001",
-      "subject": "RLC-LIFECYCLE-001+RLC-MECHANICS-001"
     },
     {
       "defect_class": "false-closure",
@@ -208,18 +92,18 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 31,
-    "current_fingerprints": 31,
+    "baseline_fingerprints": 8,
+    "current_fingerprints": 8,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 56,
-    "evidence_ledger_sha256": "b38d81fa4aea8207bc22fbf818a91de9fec2d98c9f319ef7db1fb250d8602bd9",
+    "evidence_ledger_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
     "mandatory_not_closed": 293,
-    "registry_content_sha256": "953ba56ab5ad0809453358a1718f8a6ca2c208b265ee631e9441a20ba30832a3",
-    "registry_revision": 35,
+    "registry_content_sha256": "37e747feea25bda7a94a0bf6a7907d87690a204c2be00e874d65f4a670da521a",
+    "registry_revision": 37,
     "requirements": 313,
     "scope_baseline_cells": 1305,
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336",
@@ -230,7 +114,7 @@
       "open": 200,
       "withdrawn": 1
     },
-    "tracker_extraction_sha256": "1ca4f4671e7cc1d10bebf6d8dd08bc34c7768ee762380d5152ca9c8f4c9466d8"
+    "tracker_extraction_sha256": "c7d7224fad1474a18b35ed7b69ab3d1caaff489cbcd1aa27e584683720a7bec4"
   },
   "verdict": "pass"
 }
