@@ -17,6 +17,7 @@ Design:
 from __future__ import annotations
 
 import logging
+import re
 import math
 import threading
 import time
@@ -480,10 +481,30 @@ class BodyStateService:
 
     @staticmethod
     def _charge_source(receipt_id: str) -> str:
-        """Reduce a receipt to the caller family that issued it."""
+        """Reduce a receipt to the caller family that issued it.
+
+        The reduction only handled ``family:instance``. Real receipt ids are
+        ``will_d6f534a1c077`` — family and instance joined by an underscore —
+        so every single call became its own "family". The 2026-07-30 demo
+        showed the result in the live feed: sixteen entries reading
+        ``'will_d6f534a1c077': 0.0294, 'will_7c62f0b8bb87': 0.0294, ...``,
+        all the same value because they were all the same source counted
+        under sixteen names.
+
+        That is not a cosmetic problem. An attribution ledger exists to say
+        WHICH caller is burning the budget, and one keyed by instance can
+        never say that — it fills its cap with singletons and evicts the
+        history that would have answered the question.
+        """
         text = str(receipt_id or "unattributed").strip() or "unattributed"
         head = text.split(":", 1)[0]
-        return head[:48] or "unattributed"
+        # Strip trailing instance suffixes: will_d6f534a1c077 -> will.
+        family = re.sub(r"(?:[-_][0-9a-fA-F]{6,})+$", "", head)
+        # An id that is nothing BUT a hex blob has no family to report; say so
+        # rather than inventing one from its first characters.
+        if not family or re.fullmatch(r"[0-9a-fA-F]{6,}", family):
+            return "unattributed"
+        return family[:48]
 
     def _note_charge(
         self, ledger: dict[str, float], receipt_id: str, amount: float
