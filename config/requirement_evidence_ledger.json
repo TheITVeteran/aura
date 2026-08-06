@@ -1,5 +1,5 @@
 {
-  "content_sha256": "b734b0ecceb52b96154c757694d1d340c15b9ee8aad8e94f287daeaf6670bf07",
+  "content_sha256": "7ee44ada9e3378dda2f15034e43a5e6bdb4ea360b2061d4721b809942cbf09d7",
   "entries": [
     {
       "acceptance_ids": [
@@ -550,12 +550,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d044056e7eba71f31eb0f292eb14af020172b3e",
+      "commit": "88dc3b67faf2c769d0054c7e79e011e2e9afc256",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/lifecycle-ownership-audit/6d044056e7eba71f31eb0f292eb14af020172b3e.json",
+      "ref": "artifacts/reqproof/evidence/lifecycle-ownership-audit/88dc3b67faf2c769d0054c7e79e011e2e9afc256.json",
       "requirement_id": "LIFECYCLE-001",
-      "sha256": "dfdc8885d00cc6a4bd3c0c5f48984314af28d622fa97df21fcf08e01d2a3d4fa"
+      "sha256": "0d15e0ed346e079f66df371192efa60697b54cd54c45d6a07dc808bca36f57cd"
     },
     {
       "acceptance_ids": [

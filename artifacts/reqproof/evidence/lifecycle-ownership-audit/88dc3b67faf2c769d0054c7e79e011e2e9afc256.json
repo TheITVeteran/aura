@@ -1,0 +1,105 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "tools/closeout/audit_lifecycle_ownership.py",
+    "--json"
+  ],
+  "cwd": ".",
+  "duration_seconds": 0.060706,
+  "environment_policy": {
+    "inherited_names_sha256": "d12f8af3945b55076bdd76a2cdf3cc66e07d258036c0de5dacd66c8eb8d92f27",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "LIFECYCLE-001"
+    }
+  ],
+  "finished_at": "2026-08-06T18:41:10.951538+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "88dc3b67faf2c769d0054c7e79e011e2e9afc256",
+  "output_bytes": 503,
+  "proof_id": "lifecycle-ownership-audit",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "88dc3b67faf2c769d0054c7e79e011e2e9afc256",
+  "source_manifest": [
+    {
+      "path": "core/container.py",
+      "sha256": "a7489dc00a37a67cdc4f916739c0a3ea8ac02e3db16e0f48861a22365ec60554",
+      "size_bytes": 67953
+    },
+    {
+      "path": "core/runtime/process_identity.py",
+      "sha256": "540630d1c47d8bbca015139bea931c2720a134026a77469583cb06b4cc7564c1",
+      "size_bytes": 10488
+    },
+    {
+      "path": "core/runtime/service_registry.py",
+      "sha256": "6a9adccef98da82fac7b8fc57ba80ce4573962fb4ed82d456046380eb2d1cb63",
+      "size_bytes": 9510
+    },
+    {
+      "path": "core/state/state_repository.py",
+      "sha256": "3adf67f45fcb7796c0e7ab17925925119107d4dcd80b254070f3a8152ef1eae8",
+      "size_bytes": 86522
+    },
+    {
+      "path": "core/tasks/managed_command.py",
+      "sha256": "f61c66a3dbffbef17fd9f07d61f7e6d5148028126897acf62214595b5549e801",
+      "size_bytes": 6482
+    },
+    {
+      "path": "scripts/one_off/aura_cleanup.py",
+      "sha256": "1628246361313d74b198abed81bfaa827c41ce8126f5f2fbc295191c22a9c629",
+      "size_bytes": 8698
+    },
+    {
+      "path": "tools/closeout/audit_lifecycle_ownership.py",
+      "sha256": "e7e57856e784773c49cb799308c0cadab64bc9c9d8b03bec79e4212ccb692daf",
+      "size_bytes": 11053
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "core/container.py",
+      "core/runtime/process_identity.py",
+      "core/runtime/service_registry.py",
+      "core/state/state_repository.py",
+      "core/tasks/managed_command.py",
+      "scripts/one_off/aura_cleanup.py",
+      "tools/closeout/audit_lifecycle_ownership.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "238aa115c80f8174c0800929f1a8992650ab956a1dd78d3f75b1befb8952a52a",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T18:41:10.890680+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "{\n  \"checked_functions\": 13,\n  \"contract_surfaces\": [\n    \"core/container.py\",\n    \"core/runtime/process_identity.py\",\n    \"core/runtime/service_registry.py\",\n    \"core/state/state_repository.py\",\n    \"core/tasks/managed_command.py\",\n    \"scripts/one_off/aura_cleanup.py\"\n  ],\n  \"issues\": [],\n  \"natural_interpreter_exit_required_by_test\": true,\n  \"owned_resources_cleared\": [\n    \"_consumer_task\",\n    \"_db\",\n    \"_shm\"\n  ],\n  \"passed\": true,\n  \"schema\": \"aura.closeout.lifecycle_ownership_audit.v1\"\n}\n",
+  "stdout_sha256": "46df7fc7d603780631cef8f5ec97cea8a3721c838f0939ed5dea5ba1e4aac90c",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}
