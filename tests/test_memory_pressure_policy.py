@@ -5,6 +5,23 @@ from types import SimpleNamespace
 import pytest
 
 
+def _clear_proof_run_signals(monkeypatch):
+    """Clear every variable that makes proof_run_active() true, not just one.
+
+    These call sites cleared AURA_PROOF_RUN and inherited AURA_TESTING from the
+    tooling that ran them, so the proof signal they meant to remove was still
+    on. The list comes from proof_policy so a fourth variable cannot silently
+    reopen the hole.
+    """
+
+    from core.runtime.proof_policy import proof_active_env_names
+
+    for name in proof_active_env_names():
+        monkeypatch.delenv(name, raising=False)
+
+
+
+
 def _vm(*, total_gb: float, available_gb: float, percent: float) -> SimpleNamespace:
     gib = 1024**3
     return SimpleNamespace(
@@ -268,7 +285,7 @@ def test_background_policy_defers_optional_work_under_cpu_pressure(
 ):
     import core.runtime.background_policy as background_policy
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
@@ -302,7 +319,7 @@ def test_constitutive_compute_budget_throttles_under_cpu_pressure(
 ):
     import core.runtime.background_policy as background_policy
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)

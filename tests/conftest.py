@@ -1470,3 +1470,27 @@ def _mlx_clients_do_not_outlive_their_test(request):
                     pass
         registry.clear()
     gc.collect()
+
+
+@pytest.fixture
+def not_a_proof_run(monkeypatch):
+    """Clear every signal that makes ``proof_run_active()`` true.
+
+    Several subsystems refuse to do anything under a proof or eval run — the
+    background policy defers structured generation, the entropy bridge will not
+    reach an external API, the flagship doctor takes the lightweight recovery
+    branch. All of that is correct, and all of it is keyed on
+    ``proof_run_active()``, which is true for any of AURA_PROOF_RUN,
+    AURA_AGI_MAX_TASKS or AURA_TESTING.
+
+    Tests that need the non-proof branch were clearing AURA_PROOF_RUN alone and
+    inheriting AURA_TESTING from the tooling that ran them, so they exercised
+    the proof branch while asserting against the other one. The list comes from
+    proof_policy rather than being repeated here, so a fourth variable does not
+    silently reopen the same hole.
+    """
+
+    from core.runtime.proof_policy import proof_active_env_names
+
+    for name in proof_active_env_names():
+        monkeypatch.delenv(name, raising=False)

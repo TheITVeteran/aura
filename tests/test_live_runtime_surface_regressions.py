@@ -9,6 +9,23 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+
+def _clear_proof_run_signals(monkeypatch):
+    """Clear every variable that makes proof_run_active() true, not just one.
+
+    These call sites cleared AURA_PROOF_RUN and inherited AURA_TESTING from the
+    tooling that ran them, so the proof signal they meant to remove was still
+    on. The list comes from proof_policy so a fourth variable cannot silently
+    reopen the hole.
+    """
+
+    from core.runtime.proof_policy import proof_active_env_names
+
+    for name in proof_active_env_names():
+        monkeypatch.delenv(name, raising=False)
+
+
+
 BANNED_LIVE_FALLBACKS = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
     r"give me a moment|i'?m with you|could you repeat|repeat your question|"
@@ -338,7 +355,7 @@ def test_final_boot_health_names_cortex_prewarm_as_pending_readiness():
 def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     from core.runtime import background_policy
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
@@ -355,7 +372,7 @@ def test_background_policy_defers_until_first_visible_conversation_probe(monkeyp
     from core.container import ServiceContainer
     from core.runtime import background_policy
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
@@ -396,7 +413,7 @@ def test_background_policy_resumes_after_visible_conversation_probe(monkeypatch)
     from core.container import ServiceContainer
     from core.runtime import background_policy
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
@@ -432,7 +449,7 @@ def test_background_policy_resumes_after_visible_conversation_probe(monkeypatch)
 def test_research_background_policy_requires_long_desktop_quiet_window(monkeypatch):
     from core.runtime import background_policy, foreground_guard
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
@@ -458,7 +475,7 @@ def test_research_background_policy_requires_long_desktop_quiet_window(monkeypat
 def test_maintenance_background_policy_requires_user_anchor(monkeypatch):
     from core.runtime import background_policy, foreground_guard
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
@@ -498,7 +515,7 @@ def test_background_policy_blocks_loop_starts_during_proof_and_foreground(monkey
 
     assert background_loop_start_reason("joy_social") == "proof_run_active"
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
@@ -1269,7 +1286,7 @@ def test_dream_coordinator_defers_dream_work_during_boot_grace(monkeypatch):
             nonlocal ran
             ran = True
 
-        monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+        _clear_proof_run_signals(monkeypatch)
         monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
         monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
         orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
@@ -1391,7 +1408,7 @@ def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypa
     assert reason == "proof_run_active"
 
 
-def test_event_loop_monitor_treats_dict_lane_generation_as_active(monkeypatch):
+def test_event_loop_monitor_treats_dict_lane_generation_as_active(not_a_proof_run, monkeypatch):
     from core.utils.concurrency import EventLoopMonitor
 
     class _Gate:

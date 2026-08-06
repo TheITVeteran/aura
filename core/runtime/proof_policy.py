@@ -86,6 +86,20 @@ _PRIMARY_ALIASES = frozenset({"", "primary", "cortex", "32b", "live", "productio
 _TERTIARY_ALIASES = frozenset({"tertiary", "brainstem", "7b", "fast", "diagnostic"})
 
 
+def proof_active_env_names() -> tuple[str, ...]:
+    """Every environment variable that makes :func:`proof_run_active` true.
+
+    Published because callers kept guessing. Tests that mean "this is not a
+    proof run" were clearing AURA_PROOF_RUN alone and inheriting AURA_TESTING
+    from the tooling that ran them, so the signal they thought they had
+    neutralized was still on and they failed on a deferral that had nothing to
+    do with what they were checking. Ask here instead of hardcoding a list that
+    goes stale the next time one is added.
+    """
+
+    return tuple(_PROOF_ACTIVE_ENV)
+
+
 def proof_run_active(origin: Any = None) -> bool:
     """Return True when the current turn is part of a proof/eval run."""
 

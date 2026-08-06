@@ -19,6 +19,23 @@ from types import SimpleNamespace
 import pytest
 
 
+def _clear_proof_run_signals(monkeypatch):
+    """Clear every variable that makes proof_run_active() true, not just one.
+
+    These call sites cleared AURA_PROOF_RUN and inherited AURA_TESTING from the
+    tooling that ran them, so the proof signal they meant to remove was still
+    on. The list comes from proof_policy so a fourth variable cannot silently
+    reopen the hole.
+    """
+
+    from core.runtime.proof_policy import proof_active_env_names
+
+    for name in proof_active_env_names():
+        monkeypatch.delenv(name, raising=False)
+
+
+
+
 def test_task_tracker_singleton_is_not_split_brain():
     from core.utils.task_tracker import get_task_tracker, task_tracker
 
@@ -106,7 +123,7 @@ def test_flagship_doctor_defers_lag_only_healing_during_proof(monkeypatch, tmp_p
 def test_flagship_doctor_never_heals_lag_only_without_ram_pressure(monkeypatch, tmp_path: Path):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0, ram_threshold=80.0)
 
     should_heal, context, ram_pressure = daemon._should_self_heal(
@@ -120,7 +137,9 @@ def test_flagship_doctor_never_heals_lag_only_without_ram_pressure(monkeypatch, 
     assert ram_pressure is False
 
 
-def test_flagship_doctor_detects_dict_foreground_generation(service_container, tmp_path: Path):
+def test_flagship_doctor_detects_dict_foreground_generation(
+    not_a_proof_run, service_container, tmp_path: Path
+):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
     service_container.register_instance(
@@ -148,6 +167,7 @@ def test_flagship_doctor_detects_dict_foreground_generation(service_container, t
 
 
 def test_flagship_doctor_recovers_sustained_foreground_lag_without_heavy_heal(
+    not_a_proof_run,
     monkeypatch,
     service_container,
     tmp_path: Path,
@@ -214,7 +234,7 @@ def test_flagship_doctor_recovers_sustained_foreground_lag_without_heavy_heal(
 def test_flagship_doctor_does_not_abort_idle_lag_only(monkeypatch, tmp_path: Path):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.setattr(
         "core.brain.llm.mlx_client.force_clear_foreground_owner",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("idle lag must not clear owners")),
@@ -280,7 +300,7 @@ def test_flagship_doctor_ram_pressure_healing_is_bounded(monkeypatch, tmp_path: 
 def test_flagship_doctor_self_healing_has_cooldown(monkeypatch, tmp_path: Path):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=5.0)
     now = time.time()
     daemon._last_heal_at = now - 1.0
@@ -1936,7 +1956,7 @@ def test_mlx_client_refuses_lower_lane_during_primary_proof(monkeypatch):
 def test_canonical_proof_boot_activates_proof_runtime_policy(monkeypatch):
     import aura_main
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_PROOF_MODEL_TIER", raising=False)
 
     try:
@@ -2918,7 +2938,7 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
         structured_proof_solver_enabled,
     )
 
-    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    _clear_proof_run_signals(monkeypatch)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.delenv("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", raising=False)

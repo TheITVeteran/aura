@@ -30,6 +30,15 @@ class TestQuantumEntropyBridge:
     def test_init_seeds_fallback_pool_and_schedules_async_refill(self, monkeypatch):
         from core.consciousness.quantum_entropy import QuantumEntropyBridge
 
+        # _external_entropy_allowed() refuses outright under AURA_PROOF_RUN,
+        # AURA_AGI_MAX_TASKS or AURA_TESTING, whatever AURA_ALLOW_EXTERNAL_ENTROPY
+        # says — a proof or test run must never reach an external entropy API.
+        # That is correct, and it is also why this test failed: it opted in
+        # without clearing the refusal, so the refill it asserts on was never
+        # scheduled. Clearing them here is safe because _schedule_refill is
+        # replaced below and no request leaves the process.
+        for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING"):
+            monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv("AURA_ALLOW_EXTERNAL_ENTROPY", "1")
         scheduled = []
         monkeypatch.setattr(
