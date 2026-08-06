@@ -1,5 +1,5 @@
 {
-  "content_sha256": "054f9d4bb7392a5e2c38dce993e701889b71e7841d2746b9bac27c3d01593c3b",
+  "content_sha256": "39a9409bba5a9a5c02279b9b9353d82f918ab2f3c2ab4ed118812c4540443f42",
   "schema_version": 1,
   "specs": [
     {
@@ -195,6 +195,78 @@
       ],
       "source_paths": [
         "config/model_load_ownership.json"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/production_surface_lint.py",
+        "--scope",
+        "production"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "STORAGE-GATEWAY-001"
+        }
+      ],
+      "id": "production-surface-ownership-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "core/actuators/actuator_registry.py",
+        "core/brain/cognitive_ingress.py",
+        "core/brain/inference_gate.py",
+        "core/brain/llm/mlx_client.py",
+        "core/brain/reasoning_queue.py",
+        "core/communication/messages_transport.py",
+        "core/embodiment/ros2_connector.py",
+        "core/fsw/rate_groups.py",
+        "core/reality_reach/attachments.py",
+        "core/reality_reach/metrology.py",
+        "core/runtime/action_executor.py",
+        "core/runtime/foundations.py",
+        "core/runtime/lease.py",
+        "core/runtime/reconcile.py",
+        "core/voice/duplex/mind_bridge.py",
+        "core/voice/duplex/session.py",
+        "core/voice/duplex/tts_stream.py",
+        "interface/routes/chat.py",
+        "interface/routes/voice_duplex.py",
+        "interface/server.py",
+        "tools/production_surface_lint.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_production_surface_lint_contract.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "STORAGE-GATEWAY-001"
+        }
+      ],
+      "id": "production-surface-ownership-contract-tests",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "tests/test_production_surface_lint_contract.py",
+        "tools/production_surface_lint.py"
       ],
       "timeout_seconds": 300
     },
