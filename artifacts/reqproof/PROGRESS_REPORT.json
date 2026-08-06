@@ -10,9 +10,9 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "0.00",
+    "machine_certified_percent": "0.04",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 0
+    "verified_basis_points": 4
   },
   "evidence_classes": [
     {
@@ -23,7 +23,7 @@
     },
     {
       "cells_total": 505,
-      "cells_verified": 0,
+      "cells_verified": 1,
       "evidence_class": "test",
       "weight": 2
     },
@@ -75,7 +75,7 @@
     "total_checkpoint_records_low": 543
   },
   "inputs": {
-    "evidence_ledger_sha256": "a9c3f12c6e9d8f0f8c02fcfd225041bdad5ea60f053515bd0b7bdf398b37b03c",
+    "evidence_ledger_sha256": "0e39581359445d196504e85dc0885020826d5de4cf85db97ab9b5747d735bfab",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
     "registry_sha256": "2f0227a157fd62dcef0e02aad3fd944ba8b1b1318aaaa840cb7f43c98b4d3d99",
     "scope_baseline_sha256": "f492fa86035eba2c3982a5ba18c13a2e22e7f0e2faca07d6c25fa2349cd23f86"
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "5464baf7aca76b438fef405eea7055f62ecb7d9cb02ca0af5e1b5899bb584aaa",
+  "report_sha256": "04a80b8989e8a66fbeec318fc34e6fe3162b8c530f54ac03410f0ec2cc137cf4",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2550,7 +2550,7 @@
     {
       "acceptance_units": 1,
       "cells_total": 4,
-      "cells_verified": 0,
+      "cells_verified": 1,
       "id": "LANE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -2562,7 +2562,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_units": 1,
@@ -4820,13 +4820,13 @@
   "schema_version": 1,
   "scope": {
     "acceptance_evidence_cells_total": 1584,
-    "acceptance_evidence_cells_verified": 0,
+    "acceptance_evidence_cells_verified": 1,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 301,
     "requirements_total": 302,
     "scope_baseline_cells": 1584,
-    "weighted_points_remaining": "4014.00",
+    "weighted_points_remaining": "4012.00",
     "weighted_points_total": "4014.00",
-    "weighted_points_verified": "0.00"
+    "weighted_points_verified": "2.00"
   }
 }

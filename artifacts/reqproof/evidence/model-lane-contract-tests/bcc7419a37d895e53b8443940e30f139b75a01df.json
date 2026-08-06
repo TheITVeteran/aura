@@ -1,0 +1,117 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_model_lane_control.py",
+    "tests/test_subprocess_gateway_contract.py",
+    "tests/test_embedding_model_lane.py",
+    "tests/test_image_gen_model_lane.py",
+    "tests/test_local_code_model_lane.py",
+    "tests/test_mlx_lane_heartbeat.py",
+    "tests/test_model_load_ownership_audit.py",
+    "tests/test_voice_model_lane.py"
+  ],
+  "cwd": ".",
+  "duration_seconds": 34.405747,
+  "environment_policy": {
+    "inherited_names_sha256": "53e9f28c81964a0f7bab7503bac0191802cf126997b5191db9fe4245b52e7c29",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "LANE-001"
+    }
+  ],
+  "finished_at": "2026-08-06T02:44:25.867435+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "bcc7419a37d895e53b8443940e30f139b75a01df",
+  "output_bytes": 181,
+  "proof_id": "model-lane-contract-tests",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v1",
+  "source_commit": "bcc7419a37d895e53b8443940e30f139b75a01df",
+  "source_manifest": [
+    {
+      "path": "core/runtime/model_lane_control.py",
+      "sha256": "8f140d3266ebbdaaef97e6dfab89e0a43c25d95e130cd9a2d86f3e40f8b56eb7",
+      "size_bytes": 172842
+    },
+    {
+      "path": "core/runtime/subprocess_gateway.py",
+      "sha256": "e5d5cee31ef96a12bf179e396677c22fc92a61c44ef2bb2679b38671bf59ddd2",
+      "size_bytes": 62364
+    },
+    {
+      "path": "tests/test_embedding_model_lane.py",
+      "sha256": "b9705089fe33903e09c7db068a7e754499dc6fb785a2a5a858f95bcb2fd1024f",
+      "size_bytes": 5727
+    },
+    {
+      "path": "tests/test_image_gen_model_lane.py",
+      "sha256": "a53f7ad6425e05845e135f70903de70e97c8ad6c7d7bbf6a54bf5694b6c2a59f",
+      "size_bytes": 4599
+    },
+    {
+      "path": "tests/test_local_code_model_lane.py",
+      "sha256": "200360d6811bdf297fee3bfdab99130aef43d3627bf1228ada4a96dcec761c98",
+      "size_bytes": 6271
+    },
+    {
+      "path": "tests/test_mlx_lane_heartbeat.py",
+      "sha256": "49bf82df50af890f8259e9709c7a8138b4425812008b4113feedd3590df805b8",
+      "size_bytes": 10027
+    },
+    {
+      "path": "tests/test_model_lane_control.py",
+      "sha256": "5486e5ad473f80ac3f36fc8ed50b239c5647530a9ed15be634fc95de297740b8",
+      "size_bytes": 66790
+    },
+    {
+      "path": "tests/test_model_load_ownership_audit.py",
+      "sha256": "b54122d451c237eecf915dca3bfe0da525ba307b92e50ce85ff4d09e3aa6750d",
+      "size_bytes": 4275
+    },
+    {
+      "path": "tests/test_subprocess_gateway_contract.py",
+      "sha256": "a9234e322b0494c37fc5c6022159a61d016679bc1a20f080d20719be646c0c37",
+      "size_bytes": 48595
+    },
+    {
+      "path": "tests/test_voice_model_lane.py",
+      "sha256": "2381444a4dae32f99d4c8051e0f2a6946d53dfc3fee057e3192dbdc6b666fefd",
+      "size_bytes": 10076
+    }
+  ],
+  "spec_registry": {
+    "content_sha256": "80730c2be89f00f454933b4ea4e6279623724d3cbcdd394b880cdffb1b3ba21c",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T02:43:51.461374+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "........................................................................ [ 50%]\n......................................................................   [100%]\n142 passed in 33.19s\n",
+  "stdout_sha256": "5a90efba6465e38c055097fc0261818eef766e25fc119ab3891440eebede2c35",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}

@@ -1,6 +1,18 @@
 {
-  "content_sha256": "a9c3f12c6e9d8f0f8c02fcfd225041bdad5ea60f053515bd0b7bdf398b37b03c",
-  "entries": [],
+  "content_sha256": "0e39581359445d196504e85dc0885020826d5de4cf85db97ab9b5747d735bfab",
+  "entries": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "bcc7419a37d895e53b8443940e30f139b75a01df",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/bcc7419a37d895e53b8443940e30f139b75a01df.json",
+      "requirement_id": "LANE-001",
+      "sha256": "eb9ade3b4a5e6fc185c2f77c903df3e8d5b7036d33aba8367e9d671f20b8708c"
+    }
+  ],
   "registry_content_sha256": "2f0227a157fd62dcef0e02aad3fd944ba8b1b1318aaaa840cb7f43c98b4d3d99",
   "schema_version": 2
 }
