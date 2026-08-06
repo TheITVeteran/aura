@@ -1,5 +1,5 @@
 {
-  "content_sha256": "44ccee4e23aa4da7a71a7fc6339faa04a4372d763b6759ecdcc47d91ac19608c",
+  "content_sha256": "49ef8ffaf36a1dc2b8321dbdbbe19386ac1aa69efefb30cc4362081e1462419a",
   "schema_version": 1,
   "specs": [
     {
@@ -280,6 +280,13 @@
             "A1"
           ],
           "evidence_class": "test",
+          "requirement_id": "CTX2-SKILL-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
           "requirement_id": "CTX2-SKILL-002"
         },
         {
@@ -306,6 +313,36 @@
         "tests/test_subsystem_routes_runtime_contract.py",
         "tools/closeout/audit_skill_portability.py",
         "tools/closeout/audit_skill_runtime_route.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_skill_catalog.py",
+        "--require-rust"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "CTX2-SKILL-001"
+        }
+      ],
+      "id": "skill-filesystem-parity-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "core/skills/**/*.py",
+        "rust_extensions/aura_m1_ext/src/**/*.rs",
+        "skills/**/*.py"
+      ],
+      "source_paths": [
+        "rust_extensions/aura_m1_ext/Cargo.lock",
+        "rust_extensions/aura_m1_ext/Cargo.toml",
+        "tools/closeout/audit_skill_catalog.py"
       ],
       "timeout_seconds": 300
     },
