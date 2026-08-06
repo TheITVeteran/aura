@@ -60,6 +60,10 @@
             color: #d8d1ea;
             line-height: 1.5;
         }
+        .aura-hard-recovery-said {
+            font-size: 16px;
+            font-weight: 600;
+        }
         .aura-hard-recovery pre {
             max-height: 180px;
             overflow: auto;
@@ -130,10 +134,23 @@
                     root.setAttribute("aria-live", "assertive");
                     var safeReason = String(reason || "legacy_shell_fault");
                     var safeDetail = String(detail || "The desktop shell did not finish installing its runtime controls.");
+                    // This guard has to survive aura.js failing to load, so it
+                    // cannot reach for shell_lexicon.js — hence the inline
+                    // table. It only ever raises these three, plus the default.
+                    // The <pre> below still carries the reason and detail
+                    // verbatim; this is the line that goes first.
+                    var SAID_PLAINLY = {
+                        legacy_shell_load_timeout: "The interface did not finish loading. Aura herself may be fine — this is the window, not the runtime.",
+                        legacy_shell_runtime_error: "Something in this window hit an error while starting up.",
+                        legacy_shell_unhandled_rejection: "A background request in this window failed and was not handled.",
+                        legacy_shell_fault: "This window did not finish installing its controls."
+                    };
+                    var plainly = SAID_PLAINLY[safeReason] || SAID_PLAINLY.legacy_shell_fault;
                     root.innerHTML =
                         '<section class="aura-hard-recovery-card">' +
                         '<div class="aura-hard-recovery-kicker">Aura desktop recovery</div>' +
                         '<h1>The shell stayed alive instead of going blank.</h1>' +
+                        '<p class="aura-hard-recovery-said"></p>' +
                         '<p>The backend may still be running. Use these controls to reload the UI, inspect boot health, or open logs while the runtime reports the exact blocker.</p>' +
                         '<pre></pre>' +
                         '<div class="aura-hard-recovery-actions">' +
@@ -143,6 +160,7 @@
                         '<a href="/api/dashboard/snapshot" target="_blank" rel="noopener">Diagnostics snapshot</a>' +
                         '</div>' +
                         '</section>';
+                    root.querySelector(".aura-hard-recovery-said").textContent = plainly;
                     root.querySelector("pre").textContent = safeReason + "\n" + safeDetail;
                     root.addEventListener("click", function (event) {
                         var button = event.target && event.target.closest && event.target.closest("button[data-action='reload']");

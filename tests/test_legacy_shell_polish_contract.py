@@ -208,6 +208,38 @@ def test_shell_never_prints_raw_runtime_blocker_tokens_as_status():
     assert html.index("shell_lexicon.js") < html.index("/static/aura.js")
 
 
+def test_hard_recovery_panel_leads_with_a_sentence_not_a_token():
+    """The recovery panel is what a person sees when the window has already
+    failed — the worst moment to hand them `legacy_shell_load_timeout` as the
+    first line. It gets a sentence first and keeps the reason verbatim in the
+    <pre> below.
+
+    The table is inline on purpose: this guard has to work when aura.js and
+    shell_lexicon.js never loaded, so it cannot depend on either."""
+    html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+
+    guard = _code_only(
+        html[html.index("window.__auraLegacyShellGuardInstalled") : html.index("</script>")]
+    )
+    assert "SAID_PLAINLY" in guard
+    assert "shell_lexicon" not in guard, "the boot guard must not depend on a later script"
+    assert "AuraShellLexicon" not in guard
+
+    # Every reason showRecovery can raise needs an entry.
+    for reason in (
+        "legacy_shell_load_timeout",
+        "legacy_shell_runtime_error",
+        "legacy_shell_unhandled_rejection",
+        "legacy_shell_fault",
+    ):
+        assert f'showRecovery("{reason}"' in html or f"{reason}:" in html, reason
+        assert f"{reason}:" in html, f"SAID_PLAINLY missing {reason}"
+
+    # The raw reason and detail still reach the panel unchanged.
+    assert 'root.querySelector("pre").textContent = safeReason + "\\n" + safeDetail;' in html
+    assert 'root.querySelector(".aura-hard-recovery-said").textContent = plainly;' in html
+
+
 def test_shell_lexicon_translates_every_blocker_the_shell_can_raise():
     """A blocker the shell can push must have an entry, or the lexicon is
     decorative and the raw token reaches the user anyway."""
