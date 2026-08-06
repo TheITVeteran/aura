@@ -22,7 +22,12 @@ MASTER = "test-master-token"
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(tmp_path, monkeypatch, service_container):
+    # service_container: driving real routes lazily registers belief_authority,
+    # constitutional_core and executive_core into the process-global container.
+    # Without a cleared registry the first test through here is blamed for
+    # leaving them behind — which is why the teardown error kept moving to
+    # whichever test happened to run first.
     monkeypatch.setattr(auth.config, "api_token", MASTER, raising=False)
     monkeypatch.setattr(auth.config.security, "internal_only_mode", False, raising=False)
     monkeypatch.setattr(dp, "registry_path", lambda: tmp_path / "paired_devices.json")

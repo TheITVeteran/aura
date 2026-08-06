@@ -47,8 +47,11 @@ TOKEN_PREFIX = "adt1"
 _CODE_TTL_SECONDS = 180.0
 _MAX_ATTEMPTS = 5
 _CODE_DIGITS = 8
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _LAST_SEEN_PERSIST_INTERVAL = 300.0
+# A connect nonce is single-use; the window only has to cover one round
+# trip on a LAN, not a human typing a code.
+_CONNECT_NONCE_TTL_SECONDS = 60.0
 
 _REGISTRY_ERRORS = (OSError, RuntimeError, TypeError, ValueError, KeyError)
 
@@ -79,6 +82,22 @@ class PairedDevice:
     last_seen: float
     principal_id: str = ""
     revoked: bool = False
+    # What the device said it can serve, pinned at pairing. A declaration,
+    # never a grant: scopes still decide what Aura may *use*. This only
+    # narrows — a device cannot be asked for something it never claimed.
+    capabilities: tuple[str, ...] = ()
+    # Pinned identity. A token replayed from a different kind of device
+    # fails the connect signature rather than being honoured.
+    platform: str = ""
+    device_family: str = ""
+
+    @property
+    def manifest_sha256(self) -> str:
+        return _manifest_digest(self.capabilities)
+
+    @property
+    def metadata_pinned(self) -> bool:
+        return bool(self.platform or self.device_family or self.capabilities)
 
     def public_view(self) -> dict[str, Any]:
         return {
@@ -89,6 +108,11 @@ class PairedDevice:
             "last_seen": self.last_seen,
             "principal_bound": bool(self.principal_id),
             "revoked": self.revoked,
+            "capabilities": list(self.capabilities),
+            "platform": self.platform,
+            "device_family": self.device_family,
+            "manifest_sha256": self.manifest_sha256,
+            "metadata_pinned": self.metadata_pinned,
         }
 
 
@@ -112,6 +136,10 @@ class DevicePairingRegistry:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _last_seen_dirty_since: float = 0.0
     _presence_noted_at: dict[str, float] = field(default_factory=dict)
+    # device_id -> (nonce, expires_at). One outstanding challenge per
+    # device; a new begin_connect replaces the old one, so a nonce cannot
+    # be banked for later.
+    _connect_nonces: dict[str, tuple[str, float]] = field(default_factory=dict)
 
     # ── construction ────────────────────────────────────────────
 
@@ -135,6 +163,9 @@ class DevicePairingRegistry:
                         last_seen=float(row.get("last_seen", 0.0)),
                         principal_id=_sanitize_principal_id(row.get("principal_id")),
                         revoked=bool(row.get("revoked", False)),
+                        capabilities=_sanitize_capabilities(row.get("capabilities", ())),
+                        platform=_sanitize_identity_field(row.get("platform")),
+                        device_family=_sanitize_identity_field(row.get("device_family")),
                     )
                     registry.devices[device.device_id] = device
         except _REGISTRY_ERRORS as exc:
@@ -177,7 +208,15 @@ class DevicePairingRegistry:
         with self._lock:
             self._challenge = None
 
-    async def complete_pairing(self, code: str, device_name: str) -> dict[str, Any]:
+    async def complete_pairing(
+        self,
+        code: str,
+        device_name: str,
+        *,
+        platform: str = "",
+        device_family: str = "",
+        capabilities: Any = (),
+    ) -> dict[str, Any]:
         """Exchange a pairing code for a device token. The token is returned
         exactly once and never persisted in the clear."""
         if not self._pairing_enabled():
@@ -211,12 +250,192 @@ class DevicePairingRegistry:
                 created_at=now,
                 last_seen=now,
                 principal_id=challenge.principal_id,
+                capabilities=_sanitize_capabilities(capabilities),
+                platform=_sanitize_identity_field(platform),
+                device_family=_sanitize_identity_field(device_family),
             )
             self.devices[device_id] = device
             snapshot = self._snapshot_locked()
         await self._persist(snapshot)
-        await self._audit("device_paired", {"device_id": device_id, "name": device.name})
-        return {"device_id": device_id, "token": token, "name": device.name}
+        await self._audit(
+            "device_paired",
+            {
+                "device_id": device_id,
+                "name": device.name,
+                "platform": device.platform,
+                "device_family": device.device_family,
+                "capabilities": list(device.capabilities),
+                "manifest_sha256": device.manifest_sha256,
+            },
+        )
+        return {
+            "device_id": device_id,
+            "token": token,
+            "name": device.name,
+            "capabilities": list(device.capabilities),
+            "manifest_sha256": device.manifest_sha256,
+        }
+
+    # ── connect handshake ───────────────────────────────────────
+    #
+    # The bearer token alone is possession-is-authentication, and this
+    # module's own threat model admits the wire is plain HTTP on the LAN.
+    # A connect that replays a captured token from anywhere would be
+    # honoured. OpenClaw signs a gateway-chosen nonce and binds platform
+    # and deviceFamily into the signed payload, pinning the metadata so a
+    # change forces re-pairing; same idea here.
+    #
+    # The HMAC key is the stored token digest, not the token secret. The
+    # device can derive it (it holds the secret), the server already has
+    # it, and the secret itself never crosses the wire on connect. The
+    # honest limit: the registry file therefore holds material equivalent
+    # to a connect credential, exactly as it already held a verifier for
+    # the bearer token.
+
+    def begin_connect(self, device_id: str) -> dict[str, Any]:
+        """Issue a single-use nonce for this device to sign."""
+        with self._lock:
+            device = self.devices.get(str(device_id or ""))
+            if device is None or device.revoked:
+                raise PairingError("Unknown device")
+            nonce = secrets.token_urlsafe(24)
+            expires_at = time.time() + _CONNECT_NONCE_TTL_SECONDS
+            self._connect_nonces[device.device_id] = (nonce, expires_at)
+            return {"nonce": nonce, "expires_at": expires_at, "ttl_seconds": _CONNECT_NONCE_TTL_SECONDS}
+
+    @staticmethod
+    def connect_signature(
+        *,
+        token_sha256: str,
+        nonce: str,
+        device_id: str,
+        platform: str,
+        device_family: str,
+        manifest_sha256: str,
+    ) -> str:
+        """The canonical signature both sides compute independently."""
+        payload = _FIELD_SEPARATOR.join(
+            (
+                "aura-connect-v1",
+                str(device_id or ""),
+                str(nonce or ""),
+                _sanitize_identity_field(platform),
+                _sanitize_identity_field(device_family),
+                str(manifest_sha256 or ""),
+            )
+        )
+        return hmac.new(
+            str(token_sha256 or "").encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    async def verify_connect(
+        self,
+        device_id: str,
+        *,
+        nonce: str,
+        signature: str,
+        platform: str = "",
+        device_family: str = "",
+        capabilities: Any = (),
+    ) -> PairedDevice:
+        """Verify a signed connect, enforcing pinned identity.
+
+        Raises PairingError on anything unverified. Returns the device on
+        success.
+        """
+        declared_platform = _sanitize_identity_field(platform)
+        declared_family = _sanitize_identity_field(device_family)
+        declared_caps = _sanitize_capabilities(capabilities)
+        persist_snapshot: dict[str, Any] | None = None
+        pinned_now = False
+
+        with self._lock:
+            device = self.devices.get(str(device_id or ""))
+            if device is None or device.revoked:
+                raise PairingError("Unknown device")
+
+            issued = self._connect_nonces.pop(device.device_id, None)
+            if issued is None:
+                raise PairingError("No connect challenge outstanding for this device")
+            issued_nonce, expires_at = issued
+            if time.time() > expires_at:
+                raise PairingError("Connect challenge expired")
+            if not hmac.compare_digest(str(nonce or ""), issued_nonce):
+                raise PairingError("Connect challenge mismatch")
+
+            # A device paired before metadata existed has nothing pinned.
+            # Pin what it declares on this connect rather than locking the
+            # owner out of a device that was legitimately paired earlier;
+            # every connect after this one is enforced.
+            if not device.metadata_pinned:
+                device.platform = declared_platform
+                device.device_family = declared_family
+                device.capabilities = declared_caps
+                pinned_now = True
+            else:
+                if (
+                    declared_platform != device.platform
+                    or declared_family != device.device_family
+                ):
+                    raise PairingError(
+                        "Device identity changed since pairing — pair this device again"
+                    )
+                if declared_caps and declared_caps != device.capabilities:
+                    raise PairingError(
+                        "Device capability manifest changed since pairing — pair this device again"
+                    )
+
+            expected = self.connect_signature(
+                token_sha256=device.token_sha256,
+                nonce=issued_nonce,
+                device_id=device.device_id,
+                platform=device.platform,
+                device_family=device.device_family,
+                manifest_sha256=device.manifest_sha256,
+            )
+            if not hmac.compare_digest(str(signature or ""), expected):
+                if pinned_now:
+                    # Do not keep metadata a failed signature "declared".
+                    device.platform = ""
+                    device.device_family = ""
+                    device.capabilities = ()
+                raise PairingError("Connect signature invalid")
+
+            device.last_seen = time.time()
+            if pinned_now:
+                persist_snapshot = self._snapshot_locked()
+
+        if persist_snapshot is not None:
+            await self._persist(persist_snapshot)
+            await self._audit(
+                "device_metadata_pinned",
+                {
+                    "device_id": device.device_id,
+                    "platform": device.platform,
+                    "device_family": device.device_family,
+                    "manifest_sha256": device.manifest_sha256,
+                },
+            )
+        return device
+
+    def device_can_serve(self, device_id: str, capability: str) -> bool:
+        """Whether this device declared it can serve this capability.
+
+        A declaration is not permission — scopes still decide what Aura
+        may use. This only narrows: a device cannot be asked for something
+        it never claimed to have. A device with no manifest declares
+        nothing, so it can serve nothing through this path.
+        """
+        wanted = _sanitize_capability(capability)
+        if not wanted:
+            return False
+        with self._lock:
+            device = self.devices.get(str(device_id or ""))
+            if device is None or device.revoked:
+                return False
+            return wanted in device.capabilities
 
     # ── verification ────────────────────────────────────────────
 
@@ -339,6 +558,9 @@ class DevicePairingRegistry:
                     "last_seen": d.last_seen,
                     "principal_id": d.principal_id,
                     "revoked": d.revoked,
+                    "capabilities": list(d.capabilities),
+                    "platform": d.platform,
+                    "device_family": d.device_family,
                 }
                 for d in self.devices.values()
             ],
@@ -378,6 +600,51 @@ class DevicePairingRegistry:
 def _sanitize_device_name(raw: str) -> str:
     cleaned = "".join(ch for ch in str(raw or "") if ch.isprintable()).strip()
     return (cleaned or "device")[:64]
+
+
+# Signed fields are joined with the unit separator, so they must not be
+# able to contain one — otherwise a device could shift the boundary
+# between two fields and make one signature satisfy two different claims.
+_FIELD_SEPARATOR = "\x1f"
+
+
+def _sanitize_identity_field(raw: Any) -> str:
+    cleaned = "".join(
+        ch for ch in str(raw or "") if ch.isprintable() and ch != _FIELD_SEPARATOR
+    ).strip()
+    return cleaned.casefold()[:48]
+
+
+def _sanitize_capability(raw: Any) -> str:
+    """A capability is a dotted lowercase token: ``camera.capture``."""
+    cleaned = "".join(
+        ch
+        for ch in str(raw or "").strip().casefold()
+        if ch.isalnum() or ch in {".", "_", "-"}
+    )
+    return cleaned[:64]
+
+
+def _sanitize_capabilities(raw: Any) -> tuple[str, ...]:
+    if isinstance(raw, (str, bytes)):
+        return ()
+    try:
+        items = list(raw or [])
+    except TypeError:
+        return ()
+    seen: list[str] = []
+    for item in items[:64]:
+        capability = _sanitize_capability(item)
+        if capability and capability not in seen:
+            seen.append(capability)
+    # Sorted so the digest is a property of the SET, not of the order the
+    # device happened to list them in.
+    return tuple(sorted(seen))
+
+
+def _manifest_digest(capabilities: tuple[str, ...]) -> str:
+    payload = _FIELD_SEPARATOR.join(capabilities)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _sanitize_principal_id(raw: Any) -> str:

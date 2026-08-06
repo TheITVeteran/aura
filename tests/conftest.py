@@ -85,16 +85,24 @@ class _ResourceLeakSnapshot:
     open_files: frozenset[str]
 
 
-# setup_logging() installs one RotatingFileHandler on aura_json.log and keeps
-# it for the life of the process — that is the design, and this same conftest
-# points it at a PID-scoped temp dir a few lines above so it never touches the
-# live instance's log. A test that happens to trigger the first Aura import
-# therefore "opens" a file it must not close, which the leak detector counted
-# as a leak: test_ui_bootstrap_returns_state_and_tool_catalog failed in
-# teardown for a handler working exactly as intended. Exempt that one sink by
-# name, and nothing else, so a genuinely leaked file still fails.
+# Two kinds of open file are not leaks, and counting them as such blamed
+# tests for handles they never opened and could not close.
+#
+# 1. aura_json.log — setup_logging() installs one RotatingFileHandler and
+#    holds it for the life of the process by design, and this same conftest
+#    points it at a PID-scoped temp dir above so it never touches the live
+#    instance's log. Whichever test triggers the first Aura import "opens"
+#    a file it must not close.
+# 2. __pycache__/*.pyc — CPython's import machinery, not the test. Which
+#    test gets blamed depends only on which one imported a module first,
+#    which is why these errors wandered between runs.
+#
+# Everything else still fails, which is the point of the check.
 def _is_process_lifetime_log_sink(path) -> bool:
-    return os.path.basename(str(path)) == "aura_json.log"
+    text = str(path)
+    if os.path.basename(text) == "aura_json.log":
+        return True
+    return text.endswith(".pyc") and f"{os.sep}__pycache__{os.sep}" in text
 
 
 class HermeticResourceSandbox:
@@ -176,9 +184,17 @@ class HermeticResourceSandbox:
                 listener.close()
         self._leased_sockets.clear()
 
+        # Settle before judging. Children already got this grace; open
+        # files need it for the same reason. A process-global service with
+        # a daemon writer (ontogeny's experience flusher, for one) holds a
+        # sqlite handle for the length of one flush, so whether a test is
+        # blamed depends only on whether teardown landed mid-write — which
+        # is why these errors wandered between runs and between tests. A
+        # handle that closes on its own was never a leak; a real one is
+        # still open when the deadline passes.
         deadline = time.monotonic() + 0.75
         leaks = self.leaks()
-        while leaks["children"] and time.monotonic() < deadline:
+        while (leaks["children"] or leaks["open_files"]) and time.monotonic() < deadline:
             time.sleep(0.05)
             leaks = self.leaks()
 

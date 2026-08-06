@@ -87,6 +87,26 @@ def _lan_addresses() -> list[str]:
 class PairCompleteRequest(BaseModel):
     code: str = Field(min_length=1, max_length=32)
     device_name: str = Field(default="device", max_length=64)
+    # Declared at pairing and pinned. A declaration is not a grant —
+    # scopes still decide what Aura may use — but a device cannot later be
+    # asked for a capability it never claimed, and changing platform or
+    # device family invalidates the connect signature.
+    platform: str = Field(default="", max_length=48)
+    device_family: str = Field(default="", max_length=48)
+    capabilities: list[str] = Field(default_factory=list, max_length=64)
+
+
+class ConnectBeginRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=64)
+
+
+class ConnectVerifyRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=64)
+    nonce: str = Field(min_length=1, max_length=128)
+    signature: str = Field(min_length=1, max_length=128)
+    platform: str = Field(default="", max_length=48)
+    device_family: str = Field(default="", max_length=48)
+    capabilities: list[str] = Field(default_factory=list, max_length=64)
 
 
 @router.post("/devices/pair/begin")
@@ -127,7 +147,13 @@ async def pair_cancel(request: Request) -> dict[str, Any]:
 async def pair_complete(body: PairCompleteRequest, request: Request) -> JSONResponse:
     _check_rate_limit(request)
     try:
-        issued = await get_device_registry().complete_pairing(body.code, body.device_name)
+        issued = await get_device_registry().complete_pairing(
+            body.code,
+            body.device_name,
+            platform=body.platform,
+            device_family=body.device_family,
+            capabilities=body.capabilities,
+        )
     except PairingDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except PairingError as exc:
@@ -143,6 +169,47 @@ async def pair_complete(body: PairCompleteRequest, request: Request) -> JSONResp
         path="/",
     )
     return response
+
+
+@router.post("/devices/connect/begin")
+async def connect_begin(body: ConnectBeginRequest, request: Request) -> dict[str, Any]:
+    """Issue a single-use nonce for a paired device to sign.
+
+    Rate-limited like pair/complete: this is reachable from the LAN, and
+    an unauthenticated caller learning that a device_id exists is the only
+    thing it can get out of it.
+    """
+    _check_rate_limit(request)
+    try:
+        return {"ok": True, **get_device_registry().begin_connect(body.device_id)}
+    except PairingError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@router.post("/devices/connect/verify")
+async def connect_verify(body: ConnectVerifyRequest, request: Request) -> JSONResponse:
+    """Verify a signed connect and pin/enforce the device's identity.
+
+    The bearer token alone is possession-is-authentication, and this wire
+    is plain HTTP on the LAN. Signing a server-chosen nonce means the
+    connect carries no reusable credential, and binding platform and
+    device family means a token replayed from a different kind of device
+    fails here rather than being honoured.
+    """
+    _check_rate_limit(request)
+    try:
+        device = await get_device_registry().verify_connect(
+            body.device_id,
+            nonce=body.nonce,
+            signature=body.signature,
+            platform=body.platform,
+            device_family=body.device_family,
+            capabilities=body.capabilities,
+        )
+    except PairingError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    logger.info("Device %s completed a signed connect", device.device_id)
+    return JSONResponse({"ok": True, "device": device.public_view()})
 
 
 @router.get("/devices")
