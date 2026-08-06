@@ -20,18 +20,20 @@ act and must not be used to normalize unexplained growth.
 
 from __future__ import annotations
 
-import argparse
 import ast
-import hashlib
-import json
-import os
 import sys
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tools.lint_governance_compat import (  # noqa: E402,F401
+    ALLOW_LIST,
+    CONSEQUENTIAL_CALLS,
+)
+
 DEFAULT_BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 BASELINE_SCHEMA_VERSION = 1
 
@@ -50,69 +52,8 @@ SKIP_DIR_PARTS = {
     "tests",
 }
 
-# Kept as compatibility exports for older proof tooling. The new scanner does
-# not depend on these narrow suffixes or skip files in this list.
-CONSEQUENTIAL_CALLS = (
-    "memory_facade.write",
-    "memory_facade.add",
-    "memory_facade.persist_unsafe",
-    "execute_tool",
-    "shell_exec",
-    "run_shell",
-    "post_external",
-    "modify_code",
-    "fine_tune",
-    "self_modify",
-    "social_post",
-    "structural_mutator.apply_patch",
-    "shadow_ast_healer.repair",
-    "wallet.execute",
-)
-ALLOW_LIST = {
-    "core/agency/agency_orchestrator.py",
-    "core/agency/autonomous_task_engine.py",
-    "core/agency/capability_token.py",
-    "core/agency/skill_library.py",
-    # curiosity_daemon calls orchestrator.execute_tool — the CANONICAL
-    # governed chain (origin, standing authority, Will, capability,
-    # execution, closure), not a bypass of it (e593f5f2).
-    "core/agi/curiosity_daemon.py",
-    "core/agi/curiosity_explorer.py",
-    "core/autonomy/behavior_controller.py",
-    "core/autonomy/proactive_presence.py",
-    "core/autonomy/research_cycle.py",
-    "core/brain/llm/local_agent_client.py",
-    "core/brain/react_loop.py",
-    "core/cognitive/state_machine.py",
-    "core/collective/delegator.py",
-    "core/coordinators/cognitive_coordinator.py",
-    "core/coordinators/metabolic_coordinator.py",
-    "core/coordinators/tool_executor.py",
-    "core/curiosity_engine.py",
-    "core/embodiment/world_bridge.py",
-    "core/executive/authority_gateway.py",
-    "core/kernel/upgrades_10x.py",
-    "core/orchestrator/main.py",
-    "core/orchestrator/mixins/autonomy.py",
-    "core/orchestrator/mixins/incoming_logic.py",
-    "core/orchestrator/mixins/message_pipeline.py",
-    "core/orchestrator/mixins/response_processing.py",
-    "core/orchestrator/mixins/tool_execution.py",
-    "core/phases/response_generation_unitary.py",
-    "core/self_modification/safe_pipeline.py",
-    "core/self_modification/self_modification_engine.py",
-    "core/self_modification/shadow_ast_healer.py",
-    "core/self_modification/structural_mutator.py",
-    "core/soul.py",
-    "core/sovereignty/migration.py",
-    "core/sovereignty/wallet.py",
-    "core/will.py",
-    # /api/imagination/visualize renders Aura's own mental canvas via
-    # execute_tool("image_gen", ...) — the CANONICAL governed chain
-    # (owner-authenticated route, desktop execution contract, standing
-    # authority, Will, constitution, capability token), not a bypass.
-    "interface/routes/system.py",
-}
+# Compatibility exports for older proof tooling. The scanner does not depend
+# on the narrow CONSEQUENTIAL_CALLS or skip-file ALLOW_LIST.
 
 CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
     "raw_subprocess": frozenset({"core/runtime/subprocess_gateway.py"}),
@@ -946,6 +887,27 @@ def audit_subprocess_accelerator_declarations(
     return sorted(violations, key=lambda problem: (problem.path, problem.problem))
 
 
+class _ScopedEffectVisitor(EffectVisitor):
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast API
+        for category, callee in self._classified_effect_calls(node):
+            self.calls.append((category, f"{self.scope}\0{callee}", node.lineno))
+        self.generic_visit(node)
+
+
+def _scan_tree_scoped(
+    tree: ast.AST,
+    relative_path: str,
+) -> dict[tuple[str, str, str, str], int]:
+    visitor = _ScopedEffectVisitor(relative_path=relative_path)
+    visitor.visit(tree)
+    counts: dict[tuple[str, str, str, str], int] = {}
+    for category, encoded, _line in visitor.calls:
+        scope, callee = encoded.split("\0", 1)
+        key = (category, relative_path, scope, callee)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def scan_repository(root: Path = ROOT) -> tuple[list[EffectBucket], list[ScanProblem]]:
     counts: dict[tuple[str, str, str, str], int] = {}
     problems: list[ScanProblem] = []
@@ -981,226 +943,21 @@ def scan_repository(root: Path = ROOT) -> tuple[list[EffectBucket], list[ScanPro
     return sorted(buckets), sorted(problems, key=lambda problem: problem.path)
 
 
-class _ScopedEffectVisitor(EffectVisitor):
-    def visit_Call(self, node: ast.Call) -> None:
-        for category, callee in self._classified_effect_calls(node):
-            self.calls.append((category, f"{self.scope}\0{callee}", node.lineno))
-        self.generic_visit(node)
+sys.modules.setdefault("tools.lint_governance", sys.modules[__name__])
+_CLI_EXPORTS = frozenset(
+    {"compare_inventory", "load_baseline", "main", "write_baseline"}
+)
 
 
-def _scan_tree_scoped(
-    tree: ast.AST,
-    relative_path: str,
-) -> dict[tuple[str, str, str, str], int]:
-    visitor = _ScopedEffectVisitor(relative_path=relative_path)
-    visitor.visit(tree)
-    counts: dict[tuple[str, str, str, str], int] = {}
-    for category, encoded, _line in visitor.calls:
-        scope, callee = encoded.split("\0", 1)
-        key = (category, relative_path, scope, callee)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
+def __getattr__(name: str) -> Any:
+    if name not in _CLI_EXPORTS:
+        raise AttributeError(name)
+    from tools import lint_governance_cli
 
-
-def _baseline_payload(buckets: Sequence[EffectBucket]) -> dict[str, Any]:
-    rows = [asdict(bucket) for bucket in buckets]
-    canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return {
-        "schema_version": BASELINE_SCHEMA_VERSION,
-        "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-        "inventory_sha256": hashlib.sha256(canonical).hexdigest(),
-        "buckets": rows,
-    }
-
-
-def write_baseline(path: Path, buckets: Sequence[EffectBucket]) -> None:
-    payload = _baseline_payload(buckets)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def load_baseline(path: Path) -> list[EffectBucket]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ValueError(f"effect ownership baseline is missing: {path}") from exc
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"effect ownership baseline is unreadable: {path}: {exc}") from exc
-    if not isinstance(payload, Mapping) or payload.get("schema_version") != BASELINE_SCHEMA_VERSION:
-        raise ValueError("effect ownership baseline schema_version is invalid")
-    raw_rows = payload.get("buckets")
-    if not isinstance(raw_rows, list):
-        raise ValueError("effect ownership baseline buckets must be a list")
-    buckets: list[EffectBucket] = []
-    for index, row in enumerate(raw_rows):
-        if not isinstance(row, Mapping):
-            raise ValueError(f"effect ownership baseline bucket {index} is not a mapping")
-        try:
-            buckets.append(
-                EffectBucket(
-                    category=str(row["category"]),
-                    path=str(row["path"]),
-                    scope=str(row["scope"]),
-                    callee=str(row["callee"]),
-                    count=int(row["count"]),
-                    canonical_owner=bool(row["canonical_owner"]),
-                )
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"effect ownership baseline bucket {index} is invalid: {exc}") from exc
-    expected = str(payload.get("inventory_sha256") or "")
-    actual = _baseline_payload(sorted(buckets))["inventory_sha256"]
-    if expected != actual:
-        raise ValueError("effect ownership baseline inventory_sha256 does not match its buckets")
-    return sorted(buckets)
-
-
-def compare_inventory(
-    current: Sequence[EffectBucket],
-    baseline: Sequence[EffectBucket],
-) -> tuple[list[str], list[str]]:
-    current_by_key = {bucket.key(): bucket for bucket in current}
-    baseline_by_key = {bucket.key(): bucket for bucket in baseline}
-    regressions: list[str] = []
-    stale: list[str] = []
-    for key in sorted(set(current_by_key) | set(baseline_by_key)):
-        observed = current_by_key.get(key)
-        expected = baseline_by_key.get(key)
-        label = " | ".join(key)
-        if expected is None and observed is not None:
-            regressions.append(f"NEW {label} count={observed.count}")
-        elif observed is None and expected is not None:
-            stale.append(f"REMOVED {label} baseline={expected.count}")
-        elif observed is not None and expected is not None:
-            if observed.count > expected.count:
-                regressions.append(
-                    f"INCREASED {label} baseline={expected.count} current={observed.count}"
-                )
-            elif observed.count < expected.count:
-                stale.append(
-                    f"DECREASED {label} baseline={expected.count} current={observed.count}"
-                )
-            if expected.canonical_owner and not observed.canonical_owner:
-                regressions.append(f"OWNER_DEMOTED {label} baseline=True current=False")
-            elif observed.canonical_owner and not expected.canonical_owner:
-                stale.append(f"OWNER_PROMOTED {label} baseline=False current=True")
-    return regressions, stale
-
-
-def _summary(buckets: Sequence[EffectBucket]) -> dict[str, dict[str, int]]:
-    summary: dict[str, dict[str, int]] = {}
-    for bucket in buckets:
-        row = summary.setdefault(bucket.category, {"calls": 0, "buckets": 0, "debt_calls": 0})
-        row["calls"] += bucket.count
-        row["buckets"] += 1
-        if not bucket.canonical_owner:
-            row["debt_calls"] += bucket.count
-    return summary
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    parser.add_argument(
-        "--write-baseline",
-        action="store_true",
-        help="Replace the baseline with the current reviewed inventory",
-    )
-    parser.add_argument("--json-out", type=Path, default=None)
-    return parser
-
-
-def main(argv: Iterable[str] = ()) -> int:
-    args = _parser().parse_args(list(argv))
-    root = args.root.expanduser().resolve()
-    baseline_path = args.baseline.expanduser()
-    if not baseline_path.is_absolute():
-        baseline_path = root / baseline_path
-
-    buckets, problems = scan_repository(root)
-    declaration_violations = audit_subprocess_accelerator_declarations(root)
-    problems.extend(declaration_violations)
-    report: dict[str, Any] = {
-        "ok": False,
-        "root": str(root),
-        "baseline": str(baseline_path),
-        "summary": _summary(buckets),
-        "bucket_count": len(buckets),
-        "problems": [asdict(problem) for problem in problems],
-        "regressions": [],
-        "stale_baseline": [],
-    }
-    if problems:
-        print(f"governance effect ownership: analyzer failed on {len(problems)} file(s)")
-        for problem in problems[:40]:
-            print(f"  {problem.path}: {problem.problem}")
-        _write_report(args.json_out, report)
-        return 2
-
-    if args.write_baseline:
-        write_baseline(baseline_path, buckets)
-        report["ok"] = True
-        report["baseline_written"] = True
-        _write_report(args.json_out, report)
-        debt_calls = sum(bucket.count for bucket in buckets if not bucket.canonical_owner)
-        print(
-            "governance effect ownership baseline written: "
-            f"{len(buckets)} buckets, {debt_calls} migration-debt calls"
-        )
-        return 0
-
-    try:
-        baseline = load_baseline(baseline_path)
-    except ValueError as exc:
-        print(f"governance effect ownership: configuration error: {exc}")
-        _write_report(args.json_out, report)
-        return 2
-
-    regressions, stale = compare_inventory(buckets, baseline)
-    report["regressions"] = regressions
-    report["stale_baseline"] = stale
-    report["ok"] = not regressions and not stale
-    _write_report(args.json_out, report)
-
-    summary = _summary(buckets)
-    debt_calls = sum(row["debt_calls"] for row in summary.values())
-    total_calls = sum(row["calls"] for row in summary.values())
-    if regressions or stale:
-        print(
-            "governance effect ownership: baseline drift "
-            f"({len(regressions)} regression(s), {len(stale)} stale bucket(s))"
-        )
-        for issue in (regressions + stale)[:80]:
-            print(f"  {issue}")
-        print(
-            "Review the call-site changes. After debt reductions or approved canonical-owner "
-            "changes, refresh with tools/lint_governance.py --write-baseline."
-        )
-        return 1
-
-    print(
-        "governance effect ownership: baseline matched; "
-        f"{total_calls} recognized calls in {len(buckets)} buckets, "
-        f"{debt_calls} calls remain migration debt"
-    )
-    for category, row in sorted(summary.items()):
-        print(
-            f"  {category}: calls={row['calls']} buckets={row['buckets']} "
-            f"debt_calls={row['debt_calls']}"
-        )
-    return 0
-
-
-def _write_report(path: Path | None, report: Mapping[str, Any]) -> None:
-    if path is None:
-        return
-    path = path.expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(dict(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return getattr(lint_governance_cli, name)
 
 
 if __name__ == "__main__":
+    from tools.lint_governance_cli import main
+
     raise SystemExit(main(sys.argv[1:]))

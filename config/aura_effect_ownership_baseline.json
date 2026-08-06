@@ -2069,23 +2069,23 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/reality_reach/transactions.py",
-      "scope": "<module>.RealityActuationCoordinator._create"
+      "path": "core/reality_reach/transaction_store.py",
+      "scope": "<module>.RealityActuationTransactionStore.create"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/reality_reach/transactions.py",
-      "scope": "<module>.RealityActuationCoordinator._transition"
+      "path": "core/reality_reach/transaction_store.py",
+      "scope": "<module>.RealityActuationTransactionStore.transition"
     },
     {
       "callee": "core.runtime.atomic_writer.ensure_private_directory",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/reality_reach/transactions.py",
+      "path": "core/reality_reach/transaction_store.py",
       "scope": "<module>._private_root"
     },
     {
@@ -15970,6 +15970,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "9865c697ba88983adeaae1e84499425bdcd439b26b5d70f5d02f13af0449c52b",
+  "inventory_sha256": "7e420ffdc6f59cc89a45a912b3174c9417b7d308f01c621144a5f7d1dea8f053",
   "schema_version": 1
 }
