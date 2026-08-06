@@ -4,10 +4,10 @@
 
 ## Current Truth
 
-- Requirements: **302** total / **301** mandatory
-- In progress: **79**
+- Requirements: **313** total / **312** mandatory
+- In progress: **83**
 - Claimed complete but missing evidence: **16**
-- Ready for implementation: **169**
+- Ready for implementation: **176**
 - Blocked by direct dependency: **33**
 - Machine-certified complete: **2**
 
@@ -79,6 +79,10 @@
 | `RLC-SCOPE-001` | `in_progress` | 3 | SCOPE-001, PROGRESS-CONTROL-001 |
 | `RLC-VIRTUAL-QUANTA-001` | `in_progress` | 3 | RLC-WORKSPACE-001, RLC-FAST-WEIGHTS-001, RLC-COMPUTE-001, RLC-EXPERIMENTS-001, RLC-FRONTIER-001 |
 | `RLC-WORKSPACE-001` | `in_progress` | 2 | RLC-CAUSAL-INGRESS-001, MEMORY-001, SUBSTRATE-001 |
+| `RR-01` | `in_progress` | 2 | none |
+| `RR-02` | `in_progress` | 3 | none |
+| `RR-06` | `in_progress` | 3 | none |
+| `RR-09` | `in_progress` | 3 | none |
 | `RUNTIME-001` | `in_progress` | 3 | none |
 | `RUNTIME-SETTINGS-001` | `in_progress` | 5 | UI-001, AUTONOMY-AUTHORITY-001, ENTERPRISE-CONTROL-001, VOICE-001, ADAPTATION-STATE-AUTHORITY-001, DATA-LIFECYCLE-001, COMPATIBILITY-001 |
 | `SCOPE-001` | `in_progress` | 3 | none |
@@ -120,4 +124,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `aa9df499fda9edca3f49a6c91bfcb2315d43f9f13fd3615dd36c11376d14a329`
+Report SHA-256: `7dc927800fe6c0e9c397795d32ccdb53577e7972a7ac504fdf7960c4827b1a97`

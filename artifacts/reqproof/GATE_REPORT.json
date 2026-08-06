@@ -337,21 +337,21 @@
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 22,
-    "evidence_ledger_sha256": "3e09a5b2096d175734ac5bcaccd05222c7bdd0bff24802ab1a109a94e18a4e03",
-    "mandatory_not_closed": 282,
-    "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
-    "registry_revision": 29,
-    "requirements": 302,
-    "scope_baseline_cells": 1259,
-    "scope_baseline_sha256": "4f9b736b41d16d657bf213871e6f3768bbd05dfb8e91f331269cdc075792b7cc",
+    "evidence_ledger_sha256": "905788b2c2d073b9d02601aaf0afe80afd49391642aba2cd406744a60e7c0a30",
+    "mandatory_not_closed": 293,
+    "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
+    "registry_revision": 30,
+    "requirements": 313,
+    "scope_baseline_cells": 1292,
+    "scope_baseline_sha256": "4fc286ff70e632ee2d2db184c2fd105e4791bf74ae618fd65e6d32aafebf2049",
     "states": {
       "complete": 19,
       "deferred": 1,
-      "in_progress": 79,
-      "open": 202,
+      "in_progress": 83,
+      "open": 209,
       "withdrawn": 1
     },
-    "tracker_extraction_sha256": "b586f35869378ac91cc03cd13b4bc51cc82589a3b2d86c81aa5edad3ef604b58"
+    "tracker_extraction_sha256": "be31f37d109c67f97636e27a174c730a10a488a8084c8c5e8716f829283e6e45"
   },
   "verdict": "pass"
 }

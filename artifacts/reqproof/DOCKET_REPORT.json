@@ -460,6 +460,13 @@
     },
     {
       "counts": {
+        "in_progress": 4,
+        "ready_for_implementation": 7
+      },
+      "family": "RR"
+    },
+    {
+      "counts": {
         "in_progress": 2
       },
       "family": "RUNTIME"
@@ -629,15 +636,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "3e09a5b2096d175734ac5bcaccd05222c7bdd0bff24802ab1a109a94e18a4e03",
-    "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13"
+    "evidence_ledger_sha256": "905788b2c2d073b9d02601aaf0afe80afd49391642aba2cd406744a60e7c0a30",
+    "registry_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "aa9df499fda9edca3f49a6c91bfcb2315d43f9f13fd3615dd36c11376d14a329",
+  "report_sha256": "7dc927800fe6c0e9c397795d32ccdb53577e7972a7ac504fdf7960c4827b1a97",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2217,6 +2224,89 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Replace prompt-mean-only slot seeding with a causally typed shared workspace that can admit and distinguish language, memory, perception, body, world, tool-res\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-01",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Complete the Reality Reach contract and reachability foundation: strict numeric `RealityIR`, immutable typed channel declarations, deterministic inventory and\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-02",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Converge every live sensor and actuator behind one compatibility-preserving registry with canonical readings, monotonic time and sequence lineage, owners, unit\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-06",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Complete governed physical experiment execution from the existing bidirectional adapter and transaction foundations through typed reversible schedules, one can\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-09",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Finish boot, health and operations for one lifecycle-owned Reality Reach service with lazy hardware acquisition, bounded initialization, nonblocking inventory\u2026"
     },
     {
       "acceptance_units": 1,
@@ -6600,6 +6690,154 @@
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
       "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-03",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Build production digital twins whose predictions derive from measured, versioned, calibrated models rather than source strings or objective length."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-04",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "security:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Build metrology and residual learning with synchronized immutable acquisition, monotonic timestamps, clock/reference lineage, quality and missingness, calibrat\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-05",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Build a preregistered weakpoint miner and causal-discovery system that separates discovery from blind confirmation and heldout prediction; corrects multiple te\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-07",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "portability:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Implement monotonic P0-P6 evidence promotion bound to contracts, source, channels, calibration, raw custody, analysis, seeds, assignments, controls, models and\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-08",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Make Reality Reach a live autonomous reasoning capability for feasibility Q&A, experiment design, execution, status, cancellation, evidence inspection and expo\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 5,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-10",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1",
+        "security:A1",
+        "soak:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Pass the complete Reality Reach acceptance program: blind heldout acoustic, optical, thermal and cross-channel control; weakpoint null and injected-signal reco\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 4,
+      "evidence_cells_verified": 0,
+      "family": "RR",
+      "id": "RR-11",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "implementation:A1",
+        "test:A1",
+        "live:A1",
+        "gui:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "open",
+      "title": "Make Reality Reach universally causal across Aura: publish one-provenance observations/effects into world model, embodiment, twins, science, memory, belief rev\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "ready_for_implementation",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 0,
       "family": "SEMANTIC",
       "id": "SEMANTIC-REVIEW-001",
       "kind": "atomic",
@@ -8006,9 +8244,9 @@
       "claimed_complete_needs_children": 1,
       "claimed_complete_needs_evidence": 16,
       "deferred": 1,
-      "in_progress": 79,
+      "in_progress": 83,
       "nonmandatory": 1,
-      "ready_for_implementation": 169
+      "ready_for_implementation": 176
     },
     "in_progress_ids": [
       "ACTION-SPINE-001",
@@ -8075,6 +8313,10 @@
       "RLC-SCOPE-001",
       "RLC-VIRTUAL-QUANTA-001",
       "RLC-WORKSPACE-001",
+      "RR-01",
+      "RR-02",
+      "RR-06",
+      "RR-09",
       "RUNTIME-001",
       "RUNTIME-SETTINGS-001",
       "SCOPE-001",
@@ -8091,7 +8333,7 @@
       "UI-LONG-CONTENT-001",
       "WORKSPACE-INGRESS-001"
     ],
-    "mandatory_requirements": 301,
+    "mandatory_requirements": 312,
     "ready_for_implementation_ids": [
       "ADDENDUM-19",
       "ADDENDUM-20",
@@ -8244,6 +8486,13 @@
       "REPO-001",
       "RESOURCE-OWNERSHIP-001",
       "RLC-MECH-006",
+      "RR-03",
+      "RR-04",
+      "RR-05",
+      "RR-07",
+      "RR-08",
+      "RR-10",
+      "RR-11",
       "SEMANTIC-REVIEW-001",
       "SM-01-CANONICAL-SELF",
       "SM-02-EMBODIMENT-LOCATION",
@@ -8263,6 +8512,6 @@
       "VOICE-001",
       "WELFARE-001"
     ],
-    "requirements_total": 302
+    "requirements_total": 313
   }
 }

@@ -4,11 +4,11 @@
 
 ## Current Truth
 
-- Machine-certified completion: **2.51%**
+- Machine-certified completion: **2.44%**
 - Legacy engineering estimate: **27.00%** (legacy_uncertified_not_used_for_release)
-- Verified acceptance/evidence cells: **36 / 1259**
-- Mandatory requirements: **301**
-- Weight calibration: **0 assigned / 301**
+- Verified acceptance/evidence cells: **36 / 1292**
+- Mandatory requirements: **312**
+- Weight calibration: **0 assigned / 312**
 
 ## Checkpoints
 
@@ -16,21 +16,21 @@
 - Distinct pushed commits: **391**
 - Records on shared commits: **31**
 - Unpushed checkpoint records: **0**
-- Forecast total: **502-688 records** (low confidence; policy_prior_only)
-- Forecast remaining: **93-279 records**
+- Forecast total: **505-696 records** (low confidence; policy_prior_only)
+- Forecast remaining: **96-287 records**
 
 ## Evidence Burden
 
 | Class | Weight | Verified | Total |
 |---|---:|---:|---:|
-| `implementation` | 2 | 13 | 505 |
-| `test` | 2 | 23 | 505 |
-| `live` | 3 | 0 | 121 |
-| `gui` | 3 | 0 | 36 |
-| `security` | 4 | 0 | 45 |
-| `portability` | 4 | 0 | 17 |
+| `implementation` | 2 | 13 | 516 |
+| `test` | 2 | 23 | 516 |
+| `live` | 3 | 0 | 127 |
+| `gui` | 3 | 0 | 37 |
+| `security` | 4 | 0 | 47 |
+| `portability` | 4 | 0 | 18 |
 | `release` | 4 | 0 | 19 |
-| `soak` | 4 | 0 | 11 |
+| `soak` | 4 | 0 | 12 |
 
 ## Interpretation
 
@@ -38,4 +38,4 @@ The certified percentage starts at zero until reviewed historical artifacts are 
 
 The forecast is conservative while evidence and weight calibration are incomplete. It will narrow from observed verified points per pushed checkpoint without changing the denominator or dropping open scope.
 
-Report SHA-256: `fc015acbdddb2f82256d936bedeb7828c89819d2f210e16b64ba9df8bf4d47d0`
+Report SHA-256: `eb226958808c443cebe05d073c0dbc14620582f32a1e9e4df6a22ea161ee8477`
