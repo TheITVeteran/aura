@@ -1,5 +1,5 @@
 {
-  "content_sha256": "a8c097f471621e73a6f655de0201db622df45e6c4bd4c2398fdf90e20172b356",
+  "content_sha256": "1fb29432c780497fbffb650df189f663e0ea0fdf818a534ed81c539da2802687",
   "entries": [
     {
       "acceptance_ids": [
@@ -118,12 +118,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "df0cf063f5d9033d78113f2f561121c919b9eb10",
+      "commit": "fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/df0cf063f5d9033d78113f2f561121c919b9eb10.json",
+      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5.json",
       "requirement_id": "CTX2-SKILL-001",
-      "sha256": "7f0ce527b23a4fcbf25d7ebeded0c26e1a48e15c5a1728d1e23fc3daa2efc0e7"
+      "sha256": "339f16b9011ee38fdb4600b9b76ca685865ae7ba0723c103cb233570e065eb06"
     },
     {
       "acceptance_ids": [
@@ -151,12 +151,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "df0cf063f5d9033d78113f2f561121c919b9eb10",
+      "commit": "fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/df0cf063f5d9033d78113f2f561121c919b9eb10.json",
+      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5.json",
       "requirement_id": "CTX2-SKILL-002",
-      "sha256": "7f0ce527b23a4fcbf25d7ebeded0c26e1a48e15c5a1728d1e23fc3daa2efc0e7"
+      "sha256": "339f16b9011ee38fdb4600b9b76ca685865ae7ba0723c103cb233570e065eb06"
     },
     {
       "acceptance_ids": [
@@ -283,12 +283,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "df0cf063f5d9033d78113f2f561121c919b9eb10",
+      "commit": "fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/df0cf063f5d9033d78113f2f561121c919b9eb10.json",
+      "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5.json",
       "requirement_id": "SKILLS-001",
-      "sha256": "7f0ce527b23a4fcbf25d7ebeded0c26e1a48e15c5a1728d1e23fc3daa2efc0e7"
+      "sha256": "339f16b9011ee38fdb4600b9b76ca685865ae7ba0723c103cb233570e065eb06"
     }
   ],
   "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
