@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import config
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Security.AuditTrail")
 
@@ -43,7 +44,7 @@ class AuditTrail:
         return conn
 
     def _init_schema(self):
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS audit_log (
                 id TEXT PRIMARY KEY,
                 timestamp REAL NOT NULL,
@@ -110,7 +111,7 @@ class AuditTrail:
 
         with self._lock:
             try:
-                with self._get_conn() as conn:
+                with connecting(self._get_conn()) as conn:
                     conn.execute(
                         """INSERT INTO audit_log 
                            (id, timestamp, category, action, actor, target, params, 
@@ -144,7 +145,7 @@ class AuditTrail:
 
     def get_recent(self, limit: int = 50, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """Retrieve recent audit entries."""
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             conn.row_factory = sqlite3.Row
             if category:
                 rows = conn.execute(
@@ -160,7 +161,7 @@ class AuditTrail:
 
     def get_by_target(self, target: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Get all audit entries for a specific target (e.g., a file path)."""
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM audit_log WHERE target = ? ORDER BY timestamp DESC LIMIT ?",
@@ -171,7 +172,7 @@ class AuditTrail:
     def mark_reversed(self, entry_id: str, reverse_entry_id: str):
         """Mark an action as reversed/rolled back."""
         with self._lock:
-            with self._get_conn() as conn:
+            with connecting(self._get_conn()) as conn:
                 conn.execute(
                     "UPDATE audit_log SET reversed = 1, reverse_id = ? WHERE id = ?",
                     (reverse_entry_id, entry_id),
@@ -180,7 +181,7 @@ class AuditTrail:
 
     def get_stats(self) -> Dict[str, Any]:
         """Audit trail statistics."""
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             total = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
             by_category = {}
             for row in conn.execute(
@@ -199,7 +200,7 @@ class AuditTrail:
             }
 
     def count(self) -> int:
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             return conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
 
 

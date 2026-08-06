@@ -81,12 +81,21 @@ def test_a_real_will_refusal_cannot_be_turned_into_a_capability():
 
 
 @pytest.mark.asyncio
-async def test_authority_gateway_attaches_a_signed_capability_to_approved_tools():
+async def test_authority_gateway_attaches_a_signed_capability_to_approved_tools(
+    service_container,
+):
     """The gateway must mint, not just allocate an opaque token id.
 
     This is the specific gap that made sinks unable to authenticate the Will:
     ``capability_token_id`` was a uuid anyone could produce. An approved
     decision must now also carry ``signed_capability``.
+
+    Takes ``service_container`` because exercising the real gateway registers
+    authority_gateway, belief_authority, constitutional_core, executive_core
+    and standing_authority into the process-global container. Restoring
+    ``_standing_authority`` by hand (below) put back the one attribute this
+    test set and left those five behind, which the shared-state guard
+    reported at teardown.
     """
     from types import SimpleNamespace
 

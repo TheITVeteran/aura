@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import config
+from core.runtime.sqlite_support import connecting
 
 logger = logging.getLogger("Learning.Outcomes")
 
@@ -47,7 +48,7 @@ class OutcomeLearner:
         return conn
 
     def _init_schema(self):
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS outcomes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp REAL NOT NULL,
@@ -103,7 +104,7 @@ class OutcomeLearner:
         """
         with self._lock:
             try:
-                with self._get_conn() as conn:
+                with connecting(self._get_conn()) as conn:
                     conn.execute(
                         """INSERT INTO outcomes 
                            (timestamp, category, action, success, confidence_before,
@@ -143,7 +144,7 @@ class OutcomeLearner:
         """Track which reasoning strategies work best."""
         with self._lock:
             try:
-                with self._get_conn() as conn:
+                with connecting(self._get_conn()) as conn:
                     row = conn.execute(
                         "SELECT total_uses, successes, avg_duration_ms FROM strategy_scores WHERE strategy = ?",
                         (strategy,),
@@ -177,7 +178,7 @@ class OutcomeLearner:
         """Record a performance metric data point."""
         with self._lock:
             try:
-                with self._get_conn() as conn:
+                with connecting(self._get_conn()) as conn:
                     conn.execute(
                         """INSERT INTO performance_metrics (timestamp, metric_name, metric_value, window_minutes)
                            VALUES (?, ?, ?, ?)""",
@@ -197,7 +198,7 @@ class OutcomeLearner:
     def get_success_rate(self, category: Optional[str] = None, hours: int = 24) -> float:
         """Get success rate over a time window."""
         cutoff = time.time() - (hours * 3600)
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             if category:
                 row = conn.execute(
                     """SELECT COUNT(*) as total, SUM(success) as wins 
@@ -217,7 +218,7 @@ class OutcomeLearner:
 
     def get_best_strategy(self) -> Optional[str]:
         """Get the highest-performing reasoning strategy."""
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             row = conn.execute(
                 """SELECT strategy, 
                           CAST(successes AS REAL) / MAX(1, total_uses) as win_rate
@@ -243,7 +244,7 @@ class OutcomeLearner:
 
     def get_stats(self) -> Dict[str, Any]:
         """Overall learning statistics."""
-        with self._get_conn() as conn:
+        with connecting(self._get_conn()) as conn:
             total = conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
             wins = conn.execute("SELECT SUM(success) FROM outcomes").fetchone()[0] or 0
             strategies = conn.execute(

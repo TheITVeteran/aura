@@ -5073,35 +5073,6 @@ class CapabilityEngine(AuraBaseModule):
                 }
             is_forged = meta.module_path and "skills/" in meta.module_path
 
-            # Prepare through the same source/import/dependency/constructor
-            # boundary exposed by the catalog audit. This prevents a metadata
-            # "dry run" from passing while first real execution fails later.
-            if not is_forged:
-                preflight, prepared_instance = self._prepare_skill_instance(
-                    skill_name,
-                    meta,
-                )
-                if not preflight.get("ok") or prepared_instance is None:
-                    detail = str(preflight.get("error") or "unknown preflight failure")
-                    failure = RuntimeError(detail)
-                    _record_capability_degradation(
-                        failure,
-                        action="returned skill load failure before execution",
-                        severity="degraded",
-                    )
-                    self.logger.error(
-                        "Failed to prepare %s at %s: %s",
-                        skill_name,
-                        preflight.get("stage"),
-                        detail,
-                    )
-                    return {
-                        "ok": False,
-                        "error": f"Failed to load implementation: {detail}",
-                        "preflight": preflight,
-                        "status": "skill_preflight_failed",
-                    }
-
             # Harmonize and self-heal parameters before gates and execution
             if meta.input_model and isinstance(params, dict):
                 params = _coerce_and_harmonize_params(params, meta.input_model)
@@ -5209,6 +5180,47 @@ class CapabilityEngine(AuraBaseModule):
                         # path uses the same one; two spellings for one
                         # condition broke caller classification.
                         "status": "blocked_by_self_preservation_unavailable",
+                    }
+
+            # Prepare through the same source/import/dependency/constructor
+            # boundary exposed by the catalog audit. This prevents a metadata
+            # "dry run" from passing while first real execution fails later.
+            #
+            # This runs AFTER the metabolic guard above, not before it.
+            # Preparing a skill imports its module and runs its constructor —
+            # that is work, and the guard directly above exists to stop work
+            # when the substrate is already in critical pressure. Preparing
+            # first also meant a load failure was reported in place of the
+            # health reason, contradicting that guard's own contract two
+            # comments up ("should fail closed with the true health reason")
+            # and masking blocked_by_self_preservation_unavailable behind
+            # skill_preflight_failed. `prepared_instance` is not consumed
+            # after this block, so the check is pure validation and moving it
+            # changes ordering only.
+            if not is_forged:
+                preflight, prepared_instance = self._prepare_skill_instance(
+                    skill_name,
+                    meta,
+                )
+                if not preflight.get("ok") or prepared_instance is None:
+                    detail = str(preflight.get("error") or "unknown preflight failure")
+                    failure = RuntimeError(detail)
+                    _record_capability_degradation(
+                        failure,
+                        action="returned skill load failure before execution",
+                        severity="degraded",
+                    )
+                    self.logger.error(
+                        "Failed to prepare %s at %s: %s",
+                        skill_name,
+                        preflight.get("stage"),
+                        detail,
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"Failed to load implementation: {detail}",
+                        "preflight": preflight,
+                        "status": "skill_preflight_failed",
                     }
 
             # ── PERMISSION RISK MODEL GATE ──────────────────────────────
