@@ -43,7 +43,7 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "unproven-closure": 14
+    "unproven-closure": 12
   },
   "defects": [
     {
@@ -259,16 +259,6 @@
     {
       "defect_class": "unproven-closure",
       "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-GATE-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-GATE-002"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
       "subject": "CTX2-SHUTDOWN-001"
     },
     {
@@ -319,15 +309,15 @@
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 53,
-    "current_fingerprints": 53,
+    "baseline_fingerprints": 51,
+    "current_fingerprints": 51,
     "fixed_pending_refresh": [],
     "new": []
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 27,
-    "evidence_ledger_sha256": "83def680afa2ea0742393944a96b36fe3acc2b900f740175e18048e65ea7b4f5",
+    "evidence_ledger_entries": 31,
+    "evidence_ledger_sha256": "81956d79cbd65a9baf61333945d51e7cb97534e2794d112b77aa1ff2f0190629",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
     "registry_revision": 30,
