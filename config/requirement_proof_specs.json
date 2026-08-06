@@ -1,5 +1,5 @@
 {
-  "content_sha256": "80730c2be89f00f454933b4ea4e6279623724d3cbcdd394b880cdffb1b3ba21c",
+  "content_sha256": "f8ab063a236805edaee26043f7950408c87dbbb23b38aebac24035e51a84d047",
   "schema_version": 1,
   "specs": [
     {
@@ -29,6 +29,7 @@
       ],
       "id": "model-lane-contract-tests",
       "max_output_bytes": 1048576,
+      "source_globs": [],
       "source_paths": [
         "core/runtime/model_lane_control.py",
         "core/runtime/subprocess_gateway.py",
@@ -40,6 +41,38 @@
         "tests/test_model_load_ownership_audit.py",
         "tests/test_subprocess_gateway_contract.py",
         "tests/test_voice_model_lane.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/closeout/audit_model_load_ownership.py",
+        "--json"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "LANE-001"
+        }
+      ],
+      "id": "model-load-ownership-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "aura_bench/**/*.py",
+        "benchmarks/**/*.py",
+        "core/**/*.py",
+        "interface/**/*.py",
+        "skills/**/*.py",
+        "tools/**/*.py",
+        "training/**/*.py"
+      ],
+      "source_paths": [
+        "config/model_load_ownership.json"
       ],
       "timeout_seconds": 300
     }

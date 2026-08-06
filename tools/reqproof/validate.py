@@ -44,11 +44,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.reqproof.evidence import (
+    COMMAND_RECEIPT_SCHEMA_V2,
     EvidenceLedgerEntry,
     EvidenceLedgerError,
+    expand_source_selectors,
     load_evidence_receipt,
     resolve_evidence_target,
     sha256_file,
+    validate_source_selectors,
 )
 from tools.reqproof.schema import CLOSED_STATES, EvidenceRef, Registry, Requirement
 from tools.reqproof.tracker_parse import TrackerExtraction
@@ -286,6 +289,20 @@ def _verify_ledger_entry(
             )
         ]
     stale: list[str] = []
+    manifested_paths = tuple(item["path"] for item in receipt["source_manifest"])
+    if receipt["schema"] == COMMAND_RECEIPT_SCHEMA_V2:
+        selectors = validate_source_selectors(receipt["source_selectors"])
+        try:
+            current_paths = expand_source_selectors(root, selectors)
+        except EvidenceLedgerError as exc:
+            stale.append(f"selector expansion: {exc}")
+            current_paths = ()
+        if current_paths != manifested_paths:
+            added = sorted(set(current_paths) - set(manifested_paths))
+            removed = sorted(set(manifested_paths) - set(current_paths))
+            stale.append(
+                f"selector membership changed: added={added[:20]} removed={removed[:20]}"
+            )
     for item in receipt["source_manifest"]:
         ref = item["path"]
         try:

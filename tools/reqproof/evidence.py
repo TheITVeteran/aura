@@ -33,7 +33,11 @@ from tools.reqproof.schema import (  # noqa: E402
 )
 
 LEDGER_SCHEMA_VERSION = 2
-COMMAND_RECEIPT_SCHEMA = "aura.reqproof.command_receipt.v1"
+COMMAND_RECEIPT_SCHEMA_V1 = "aura.reqproof.command_receipt.v1"
+COMMAND_RECEIPT_SCHEMA_V2 = "aura.reqproof.command_receipt.v2"
+COMMAND_RECEIPT_SCHEMAS = frozenset(
+    {COMMAND_RECEIPT_SCHEMA_V1, COMMAND_RECEIPT_SCHEMA_V2}
+)
 DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
 DEFAULT_EVIDENCE_LEDGER_PATH = ROOT / "config" / "requirement_evidence_ledger.json"
 
@@ -86,6 +90,76 @@ def resolve_evidence_target(root: Path, ref: str) -> Path:
     return resolved
 
 
+def validate_source_selectors(data: Any) -> dict[str, tuple[str, ...]]:
+    _require(isinstance(data, dict), "source_selectors must be an object")
+    _require(
+        set(data) == {"paths", "globs"},
+        "source_selectors fields must be exactly paths and globs",
+    )
+    validated: dict[str, tuple[str, ...]] = {}
+    for key in ("paths", "globs"):
+        values = data.get(key)
+        _require(isinstance(values, list), f"source_selectors.{key} must be a list")
+        items: list[str] = []
+        for index, value in enumerate(values):
+            text = _check_string(value, f"source_selectors.{key}[{index}]")
+            posix = PurePosixPath(text)
+            _require(
+                "\\" not in text and not posix.is_absolute(),
+                f"unsafe source selector {text!r}",
+            )
+            _require(
+                bool(posix.parts)
+                and all(part not in ("", ".", "..") for part in posix.parts)
+                and posix.as_posix() == text,
+                f"non-canonical source selector {text!r}",
+            )
+            if key == "paths":
+                _require(
+                    not any(char in text for char in "*?["),
+                    f"exact source path contains glob syntax: {text!r}",
+                )
+            else:
+                _require(
+                    any(char in text for char in "*?["),
+                    f"source glob has no pattern syntax: {text!r}",
+                )
+            items.append(text)
+        _require(items == sorted(set(items)), f"source_selectors.{key} must be sorted and unique")
+        validated[key] = tuple(items)
+    _require(
+        bool(validated["paths"] or validated["globs"]),
+        "source_selectors must declare at least one path or glob",
+    )
+    return validated
+
+
+def expand_source_selectors(
+    root: Path,
+    selectors: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Expand exact paths and repo-relative globs without symlink traversal."""
+    root_resolved = root.resolve()
+    refs = set(selectors["paths"])
+    for pattern in selectors["globs"]:
+        for candidate in root.glob(pattern):
+            if candidate.is_symlink():
+                raise EvidenceLedgerError(
+                    f"source selector matched a symlink: {candidate.relative_to(root)}"
+                )
+            if candidate.is_file():
+                resolved = candidate.resolve()
+                _require(
+                    resolved.is_relative_to(root_resolved),
+                    f"source selector escaped repository root: {pattern!r}",
+                )
+                refs.add(resolved.relative_to(root_resolved).as_posix())
+    _require(bool(refs), "source selectors matched no files")
+    for ref in sorted(refs):
+        resolve_evidence_target(root, ref)
+    return tuple(sorted(refs))
+
+
 def load_evidence_receipt(
     target: Path,
     *,
@@ -100,9 +174,10 @@ def load_evidence_receipt(
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise EvidenceLedgerError(f"evidence receipt is not valid UTF-8 JSON: {exc}") from exc
     _require(isinstance(data, dict), "evidence receipt must be an object")
+    schema = data.get("schema")
     _require(
-        data.get("schema") == COMMAND_RECEIPT_SCHEMA,
-        f"evidence receipt schema must be {COMMAND_RECEIPT_SCHEMA}",
+        schema in COMMAND_RECEIPT_SCHEMAS,
+        "evidence receipt schema must be a supported command receipt schema",
     )
     _require(data.get("verdict") == "pass", "evidence receipt verdict must be pass")
     _require(
@@ -165,6 +240,8 @@ def load_evidence_receipt(
         )
         paths.append(ref)
     _require(paths == sorted(set(paths)), "source_manifest paths must be sorted and unique")
+    if schema == COMMAND_RECEIPT_SCHEMA_V2:
+        validate_source_selectors(data.get("source_selectors"))
     return data
 
 

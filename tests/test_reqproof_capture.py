@@ -23,6 +23,7 @@ from tools.reqproof.evidence import (
     write_evidence_ledger_atomic,
 )
 from tools.reqproof.schema import Registry
+from tools.reqproof.validate import validate_registry
 
 
 def _hashed_specs(specs: list[dict]) -> dict:
@@ -41,6 +42,7 @@ def _spec(**overrides) -> dict:
         "cwd": ".",
         "timeout_seconds": 30,
         "max_output_bytes": 4096,
+        "source_globs": [],
         "source_paths": ["core/a.py", "tests/test_one.py"],
         "evidence_targets": [
             {
@@ -166,7 +168,7 @@ def test_spec_hash_tampering_and_shell_placeholders_fail_closed() -> None:
 
 
 def test_specs_reject_unsorted_sources_targets_and_unknown_cells() -> None:
-    with pytest.raises(ProofCaptureError, match="source_paths must be sorted"):
+    with pytest.raises(ProofCaptureError, match="paths must be sorted"):
         ProofSpecRegistry.from_dict(
             _hashed_specs([_spec(source_paths=["tests/z.py", "core/a.py"])])
         )
@@ -206,6 +208,11 @@ def test_capture_writes_hash_bound_receipt_and_ledger_cell(tmp_path: Path) -> No
     ledger = load_evidence_ledger(ledger_path)
     assert receipt["verdict"] == "pass"
     assert receipt["source_commit"] == "a" * 40
+    assert receipt["schema"] == "aura.reqproof.command_receipt.v2"
+    assert receipt["source_selectors"] == {
+        "paths": ["core/a.py", "tests/test_one.py"],
+        "globs": [],
+    }
     assert receipt["stdout"] == "2 passed in 0.01s\n"
     assert [item["path"] for item in receipt["source_manifest"]] == [
         "core/a.py",
@@ -236,6 +243,39 @@ def test_failed_command_leaves_no_receipt_or_ledger_entry(tmp_path: Path) -> Non
 
     assert ledger_path.read_bytes() == before
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_new_file_matching_source_glob_revokes_captured_evidence(tmp_path: Path) -> None:
+    spec_path, registry_path, ledger_path = _capture_fixture(tmp_path)
+    (tmp_path / "plugins").mkdir()
+    (tmp_path / "plugins" / "first.py").write_text("FIRST = 1\n", encoding="utf-8")
+    spec_path.write_text(
+        json.dumps(_hashed_specs([_spec(source_globs=["plugins/**/*.py"])])),
+        encoding="utf-8",
+    )
+    capture_proof(
+        root=tmp_path,
+        spec_registry_path=spec_path,
+        registry_path=registry_path,
+        ledger_path=ledger_path,
+        artifact_root=tmp_path / "artifacts" / "reqproof" / "evidence",
+        proof_id="bounded-proof",
+        record=True,
+        gateway=CaptureGateway(),
+    )
+    registry = Registry.from_dict(json.loads(registry_path.read_text()))
+    ledger = load_evidence_ledger(ledger_path)
+    (tmp_path / "plugins" / "second.py").write_text("SECOND = 2\n", encoding="utf-8")
+
+    defects = validate_registry(
+        registry,
+        root=tmp_path,
+        commit_exists=lambda commit: True,
+        evidence_entries_by_requirement=ledger.entries_by_requirement(),
+    )
+
+    assert [defect.defect_class for defect in defects] == ["stale-evidence"]
+    assert "added=['plugins/second.py']" in defects[0].detail
 
 
 @pytest.mark.parametrize(
@@ -277,3 +317,4 @@ def test_checked_repo_spec_is_valid() -> None:
     )
     validate_spec_targets(specs, registry)
     assert specs.by_id()["model-lane-contract-tests"].command[0] == "{python}"
+    assert "core/**/*.py" in specs.by_id()["model-load-ownership-audit"].source_globs

@@ -29,16 +29,18 @@ if str(ROOT) not in sys.path:
 
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 from tools.reqproof.evidence import (  # noqa: E402
+    COMMAND_RECEIPT_SCHEMA_V2,
     EvidenceLedgerError,
     add_entry,
+    expand_source_selectors,
     load_evidence_ledger,
     sha256_file,
+    validate_source_selectors,
     write_evidence_ledger_atomic,
 )
 from tools.reqproof.schema import SHA256_RE, Registry, load_registry  # noqa: E402
 
 SPEC_SCHEMA_VERSION = 1
-RECEIPT_SCHEMA = "aura.reqproof.command_receipt.v1"
 PROOF_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 DEFAULT_SPEC_PATH = ROOT / "config" / "requirement_proof_specs.json"
 DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
@@ -128,6 +130,7 @@ class ProofSpec:
     timeout_seconds: int
     max_output_bytes: int
     source_paths: tuple[str, ...]
+    source_globs: tuple[str, ...]
     evidence_targets: tuple[EvidenceTarget, ...]
 
     @classmethod
@@ -140,6 +143,7 @@ class ProofSpec:
             "timeout_seconds",
             "max_output_bytes",
             "source_paths",
+            "source_globs",
             "evidence_targets",
         }
         _require(set(data) == allowed, f"{name} fields must be exactly {sorted(allowed)}")
@@ -174,19 +178,12 @@ class ProofSpec:
             isinstance(output_limit, int) and 1024 <= output_limit <= _OUTPUT_LIMIT_MAX,
             f"{name}.max_output_bytes out of range",
         )
-        source_paths_raw = data["source_paths"]
-        _require(
-            isinstance(source_paths_raw, list) and bool(source_paths_raw),
-            f"{name}.source_paths must be non-empty",
-        )
-        source_paths = tuple(
-            _safe_relative_path(item, f"{name}.source_paths")
-            for item in source_paths_raw
-        )
-        _require(
-            source_paths == tuple(sorted(set(source_paths))),
-            f"{name}.source_paths must be sorted and unique",
-        )
+        try:
+            selectors = validate_source_selectors(
+                {"paths": data["source_paths"], "globs": data["source_globs"]}
+            )
+        except EvidenceLedgerError as exc:
+            raise ProofCaptureError(f"{name} has invalid source selectors: {exc}") from exc
         targets_raw = data["evidence_targets"]
         _require(
             isinstance(targets_raw, list) and bool(targets_raw),
@@ -213,7 +210,8 @@ class ProofSpec:
             cwd=cwd,
             timeout_seconds=timeout,
             max_output_bytes=output_limit,
-            source_paths=source_paths,
+            source_paths=selectors["paths"],
+            source_globs=selectors["globs"],
             evidence_targets=targets,
         )
 
@@ -401,7 +399,12 @@ def capture_proof(
     _require(proof_id in specs.by_id(), f"unknown proof ID {proof_id}")
     spec = specs.by_id()[proof_id]
     source_commit = assert_pushed_clean_source(gateway, root)
-    source_manifest = _resolve_sources(root, spec.source_paths)
+    source_selectors = {
+        "paths": spec.source_paths,
+        "globs": spec.source_globs,
+    }
+    expanded_sources = expand_source_selectors(root, source_selectors)
+    source_manifest = _resolve_sources(root, expanded_sources)
     command = tuple(
         sys.executable if item == "{python}" else item for item in spec.command
     )
@@ -466,7 +469,7 @@ def capture_proof(
     )
 
     receipt = {
-        "schema": RECEIPT_SCHEMA,
+        "schema": COMMAND_RECEIPT_SCHEMA_V2,
         "proof_id": proof_id,
         "verdict": "pass",
         "source_commit": source_commit,
@@ -483,6 +486,10 @@ def capture_proof(
         "finished_at": finished.isoformat(),
         "duration_seconds": round(duration, 6),
         "environment_policy": env_policy,
+        "source_selectors": {
+            "paths": list(spec.source_paths),
+            "globs": list(spec.source_globs),
+        },
         "source_manifest": source_manifest,
         "evidence_targets": [
             {

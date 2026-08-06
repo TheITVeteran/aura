@@ -37067,6 +37067,13 @@ symlinked, resized, or changed files produce a blocking `stale-evidence`
 defect, revoke the affected acceptance cells, and restore them to the current
 docket until a new source-bound proof passes.
 
+Version-2 receipts also preserve the checked exact-path and repo-relative glob
+selectors that produced the manifest. Validation re-expands those selectors,
+so adding a new matching production file or removing a formerly matched file
+also revokes the receipt. This closes the false-green case where a new model
+loader could appear after an ownership proof simply because it did not exist
+in the old manifest.
+
 This closes the previously stated pushed-ancestry-only freshness gap for
 external-ledger evidence. It does not pretend that a manifest names every
 transitive dependency automatically: checked proof review still owns that
@@ -37076,3 +37083,22 @@ receipt remains fresh at the current source. Its implementation, live, and
 release cells remain open, as do historical evidence review, independent
 trust-root signatures, CP810, resident training and falsification, semantic
 review, release closure, and final soaks.
+
+#### Model-lane implementation-proof staging
+
+The checked proof registry now includes `model-load-ownership-audit`, which
+runs the production AST ownership audit rather than a unit-test alias. Its
+source selectors cover every Python file under the production model-capable
+roots (`aura_bench`, `benchmarks`, `core`, `interface`, `skills`, `tools`, and
+`training`) plus the exact model-load inventory. A pass may credit only
+`LANE-001 implementation[A1]`; the independent 142-contract receipt remains
+the separate `test[A1]` evidence. The producer emits a version-2 manifest, so
+any later matching production-file addition, removal, or byte change revokes
+this implementation cell.
+
+The new specification cannot become evidence in the same commit that defines
+it. It must first pass control-plane/static gates and reach pushed `main`; the
+ownership audit then runs from that exact clean source and its receipt lands in
+a subsequent checkpoint. Live pressure/release evidence remains a distinct
+future proof and will not be inferred from either static audit or contract
+tests.
