@@ -23,7 +23,7 @@
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | AGENCY-001, EFFECT-001, VALUES-001 |
 | `BOOT-HEALTH-001` | `in_progress` | 3 | RUNTIME-001, HEALTH-SURFACE-001, FOREGROUND-LATENCY-001, CONVERSATION-001, FAULT-001 |
 | `CHAT-DELIVERY-001` | `in_progress` | 4 | CONVERSATION-001, ACTION-SPINE-001, DATA-LIFECYCLE-001, LAUNCH-PROVENANCE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
-| `CHECKPOINT-001` | `in_progress` | 2 | none |
+| `CHECKPOINT-001` | `in_progress` | 0 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
 | `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
@@ -112,4 +112,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `e62e5c61d75486ee98386cd8ab3156e63c3cd6bec1cb198a73c2e949140000f9`
+Report SHA-256: `70067083561c7e500b217d19e5196cf130895494269042dd04da907baaae5f15`

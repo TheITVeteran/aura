@@ -637,7 +637,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "d6f91fa4a77190ec2b606107b63ac1384c9c6abbd3d4e999908bd7c583af4563",
+    "evidence_ledger_sha256": "2e13a6e6d97108566470148eba3f2fbe72101efb61553eb4ccd7aa549eca89dd",
     "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
@@ -645,7 +645,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "e62e5c61d75486ee98386cd8ab3156e63c3cd6bec1cb198a73c2e949140000f9",
+  "report_sha256": "70067083561c7e500b217d19e5196cf130895494269042dd04da907baaae5f15",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -860,15 +860,12 @@
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CHECKPOINT",
       "id": "CHECKPOINT-001",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": null,
       "state_claim": "in_progress",
