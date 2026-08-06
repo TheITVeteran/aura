@@ -86,6 +86,97 @@ def test_calling_convention_actually_intercepts():
     assert installed == 1
 
 
+# ── Specificity control arms ──────────────────────────────────────────────
+#
+# A divergence result can be right that something changed and wrong that THESE
+# vectors changed it. Each arm removes one alternative explanation, and each
+# runs through the identical hook on the identical model — switching arms must
+# not require a reinstall, because a reinstall is itself a difference between
+# conditions.
+
+
+def test_the_zero_arm_runs_the_hook_and_injects_nothing():
+    """The control that catches a harness perturbing its own decode."""
+    model = _Model(n_layers=4)
+    vec = np.zeros(8, dtype=np.float32)
+    vec[0] = 1.0
+    injector = ResidualSteeringInjector(model, {2: vec}, alpha=5.0)
+    h = mx.ones((1, 3, 8))
+
+    with injector:
+        baseline = model.forward_through(h)
+        injector.active = True
+        injector.arm = "zero"
+        zeroed = model.forward_through(h)
+
+    assert injector.injections_by_arm["zero"] > 0, "the hook must still run"
+    assert bool(mx.allclose(baseline, zeroed).item()), (
+        "a zero vector at the same alpha must leave the hidden state alone"
+    )
+
+
+def test_the_random_arm_is_norm_matched_and_a_different_direction():
+    from core.evaluation.steering_injection import derive_control_vectors
+
+    vec = np.zeros(8, dtype=np.float32)
+    vec[0] = 1.0
+    control = derive_control_vectors({2: vec}, "random", seed=5)
+
+    assert np.linalg.norm(control[2]) == pytest.approx(np.linalg.norm(vec), rel=1e-4)
+    cosine = float(control[2] @ vec / (np.linalg.norm(control[2]) * np.linalg.norm(vec)))
+    assert abs(cosine) < 0.95, "a 'random' control aligned with the vector controls nothing"
+
+
+def test_the_shuffled_arm_moves_every_vector_off_its_own_layer():
+    """A partial shuffle would leave part of the treatment inside the control."""
+    from core.evaluation.steering_injection import derive_control_vectors
+
+    vectors = {
+        layer: np.eye(4, dtype=np.float32)[index]
+        for index, layer in enumerate((1, 2, 3, 5))
+    }
+    shuffled = derive_control_vectors(vectors, "shuffled_layers", seed=1)
+
+    assert set(shuffled) == set(vectors)
+    for layer in vectors:
+        assert not np.array_equal(shuffled[layer], vectors[layer]), (
+            f"layer {layer} kept its own vector"
+        )
+
+
+def test_a_single_steered_layer_offers_no_shuffled_arm():
+    """Absent controls are reported absent, never assumed benign."""
+    model = _Model(n_layers=4)
+    vec = np.ones(4, dtype=np.float32)
+    injector = ResidualSteeringInjector(model, {1: vec}, alpha=1.0)
+
+    assert "shuffled_layers" not in injector.available_arms
+    assert {"production", "zero", "random"} <= set(injector.available_arms)
+    with pytest.raises(ValueError, match="unavailable"):
+        injector.arm = "shuffled_layers"
+
+
+def test_switching_arms_needs_no_reinstall():
+    model = _Model(n_layers=4)
+    vec = np.zeros(8, dtype=np.float32)
+    vec[0] = 1.0
+    injector = ResidualSteeringInjector(model, {2: vec}, alpha=5.0, control_seed=3)
+    h = mx.ones((1, 3, 8))
+
+    with injector:
+        injector.active = True
+        production = model.forward_through(h)
+        injector.arm = "random"
+        randomized = model.forward_through(h)
+        injector.arm = "production"
+        again = model.forward_through(h)
+
+    assert bool(mx.allclose(production, again).item())
+    assert not bool(mx.allclose(production, randomized).item())
+    assert injector.injections_by_arm["production"] == 2
+    assert injector.injections_by_arm["random"] == 1
+
+
 def test_load_production_vectors_filters_and_normalizes(tmp_path):
     def _write(name, dimension, layer, vec, extracted=True):
         np.savez(
@@ -129,14 +220,54 @@ def _live_ab_artifact(**overrides) -> dict:
         "injection_count": 480,
         "analysis": {
             "n_trials": 30,
-            "steered_vs_rich": {"effect_size_d": 0.4, "observed_delta": 0.2},
-            "steered_vs_terse": {"effect_size_d": 0.5, "observed_delta": 0.25},
+            # Null-calibrated schema. `steered_effect` present is what marks an
+            # artifact as produced by a statistic whose null sits at zero; its
+            # absence is what voids the pre-2026-08-05 files.
+            "steered_effect": {"effect_size_d": 0.9, "observed_delta": 0.31},
+            "terse_effect": {"effect_size_d": 0.3, "observed_delta": 0.10},
+            "rich_effect": {"effect_size_d": 0.4, "observed_delta": 0.15},
             "steered_vs_baseline_mean_distance": 0.3,
+            "baseline_self_distance": 0.12,
             "passes_adversarial_control": True,
         },
     }
     base.update(overrides)
     return base
+
+
+def test_validator_voids_the_pre_null_calibration_schema():
+    """An artifact whose analysis predates the null fix cannot be credited.
+
+    Detected by ABSENCE of `steered_effect`, so an old file cannot normalize
+    into a pass by accident. Its numbers came from a statistic under which
+    "steering did nothing" scored a decisive win.
+    """
+    from training.caa_32b_validation import CAA32BValidator
+
+    legacy = _live_ab_artifact()
+    legacy["analysis"] = {
+        "n_trials": 30,
+        "steered_vs_rich": {"effect_size_d": 2.5, "observed_delta": 0.52},
+        "steered_vs_terse": {"effect_size_d": 1.9, "observed_delta": 0.42},
+        "steered_vs_baseline_mean_distance": 0.24,
+        "passes_adversarial_control": True,
+    }
+
+    normalized = CAA32BValidator._normalize_behavioral_results(legacy)
+
+    assert normalized["source_schema"] == "live_32b_ab_voided"
+    assert not _validator_credits(legacy)
+
+
+def test_validator_refuses_an_effect_smaller_than_its_control():
+    """`abs()` used to turn a control BEATING the treatment into a pass."""
+    beaten = _live_ab_artifact()
+    beaten["analysis"] = {
+        **beaten["analysis"],
+        "steered_effect": {"effect_size_d": 0.2, "observed_delta": 0.05},
+        "rich_effect": {"effect_size_d": 1.4, "observed_delta": 0.60},
+    }
+    assert not _validator_credits(beaten)
 
 
 def test_validator_refuses_legacy_uninjected_artifact():

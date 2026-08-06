@@ -1,34 +1,57 @@
-"""Steering at the LIVE surface alpha changes behaviour. Measured, not argued.
+"""The α = 0.35 behavioural claim is RETRACTED. This file holds the retraction.
 
-The quantisation analysis established that at α = 0.35 one injection is about
-eighteen times smaller than the noise 4-bit weights already put into the same
-residual stream (SNR ≈ 0.056). The reasonable worry followed: "steering was
-injected" may not mean "steering was strong enough to matter", and the existing
-A/B evidence was collected at α = 8.
+What this file used to assert
+-----------------------------
+That steering at Aura's live surface alpha changes behaviour, on the strength
+of ``artifacts/steering/CAA_AB_ALPHA_0.35_live.json``:
 
-So the A/B was run at 0.35, on the resident 32B, and it passed — by more than
-the α = 8 run did.
-
-    artifacts/steering/CAA_AB_ALPHA_0.35_live.json
     50 trials · 5 held-out tasks · 10 layers · 41,450 injections · 19.6 min
-
     steered vs terse-affect control   d = 1.879   p = 0.0002
     steered vs RICH adversarial text  d = 2.502   p = 0.0002
-    distance steered↔baseline 0.2424, rich↔baseline 0.7611
 
-The rich-adversarial control is the one that matters: a prompt STUFFED with
-affect language is the cheap way to fake this result, and activation steering
-at the live alpha beats it decisively.
+Why it does not survive inspection
+----------------------------------
+The evaluation statistic scored each trial as::
 
-Why the SNR did not predict the outcome, and why that is not a contradiction:
-SNR measures one injection against one layer's noise at one instant. That noise
-is zero-mean and uncorrelated across layers and tokens. The steering vector is
-the same direction every time. Over 10 layers and hundreds of tokens the bias
-accumulates and the noise cancels — which is exactly why the floor is reported
-and never used to clamp α.
+    distance(steered, control) - distance(steered, baseline)
 
-This file guards the artifact and the reading of it. The run itself is live and
-long; these assertions are over its recorded result.
+and ``tests/run_32b_steering_ab_live.py`` generated the steered and baseline
+conditions from the same prompt under the same seed, toggling only the
+injection. So if steering has no effect at all, ``steered == baseline``, the
+subtracted term is exactly zero, and the score is ``distance(baseline,
+control)`` — positive by construction, because the control deliberately uses a
+different system prompt.
+
+The null hypothesis "steering did nothing" produces a decisive pass. That is
+not a weakness in the test; the null is reversed.
+
+The artifact records it happening. All three of its saved steered samples are
+word-for-word identical to their baselines, and ``affect_stats`` shows zero
+positive-affect words in the steered condition against one in the rich control
+— no evidence of movement in the intended affective direction, alongside
+d = 2.50.
+
+What is still supported
+-----------------------
+* Residual-stream injection EXECUTES (``injection_count`` = 41,450).
+* The hook changes hidden activations — by mechanism.
+* The mean steered↔baseline distance over all 50 trials is nonzero (0.2424), so
+  some trials did differ. Nothing in that campaign says whether those
+  differences exceed ordinary sampling variability, follow the intended
+  affective direction, come from these vectors rather than perturbation as
+  such, or generalize.
+
+What a replacement needs, and now has a harness for
+---------------------------------------------------
+``core.evaluation.steering_ab`` requires a ``baseline_replicate`` (the same
+unsteered condition drawn again — the model's own run-to-run variation), scores
+every effect net of it, runs zero-vector / random-vector / shuffled-layer
+specificity arms through the identical hook, and refuses to pass without a
+significant move in a scored target behaviour.
+``core.evaluation.statistics.null_effect_probe`` is the general check that
+would have caught this on the day it was written.
+
+Until such a campaign runs and passes, the behavioural claim stays retracted.
 """
 
 from __future__ import annotations
@@ -56,54 +79,94 @@ def report() -> dict:
     return json.loads(ARTIFACT.read_text(encoding="utf-8"))
 
 
-def test_the_run_was_at_the_live_surface_alpha(report):
-    """0.35 is what the worker logs on every decode; 8.0 was the old evidence."""
+def test_the_artifact_is_marked_void(report):
+    """A retracted result may stay on disk; it may not read as evidence."""
+    assert report.get("VOID") is True
+    assert "null hypothesis" in report.get("void_reason", "").lower()
+
+
+def test_the_artifacts_own_samples_show_the_defect(report):
+    """Steered and baseline are the same text, and the score was decisive."""
+    samples = report["analysis"]["samples"]
+    steered = samples["steered_black_box"]
+    baseline = samples["baseline"]
+    assert steered == baseline, (
+        "if these ever differ the artifact was regenerated — update this file"
+    )
+    assert float(report["analysis"]["steered_vs_rich"]["p_value"]) < 0.01, (
+        "the recorded run reported significance over identical outputs"
+    )
+
+
+def test_no_affect_moved_in_the_steered_condition(report):
+    """Divergence is not direction, and here there was no direction at all."""
+    assert report["affect_stats"]["steered"]["positive"] == 0
+    assert report["affect_stats"]["steered"]["negative"] == 0
+
+
+def test_what_the_injection_still_supports(report):
+    """The mechanism ran. That is a different claim from the behavioural one."""
+    assert int(report["injection_count"]) > 0
     assert float(report["alpha"]) == pytest.approx(0.35)
-
-
-def test_it_was_a_real_run_on_the_resident_model(report):
-    assert report["n_trials"] >= 50
-    assert len(report["target_layers"]) >= 8
-    assert len(report["held_out_tasks"]) >= 5
-    assert float(report["duration_seconds"]) > 300
     assert "fused-model" in str(report["model"])
 
 
-def test_steering_beats_the_rich_adversarial_prompt(report):
-    """The control that matters: stuffing the prompt with affect language."""
-    rich = report["analysis"]["steered_vs_rich"]
-    assert float(rich["p_value"]) < 0.01
-    assert float(rich["effect_size_d"]) > 1.0
-    assert float(rich["ci_low"]) > 0.0  # the interval excludes "no effect"
+def test_the_old_statistic_is_gone():
+    """It cannot be reached by name, so nothing can quietly keep using it."""
+    import core.evaluation.statistics as statistics
+
+    assert not hasattr(statistics, "paired_distance_comparison")
 
 
-def test_steering_beats_the_terse_affect_control(report):
-    terse = report["analysis"]["steered_vs_terse"]
-    assert float(terse["p_value"]) < 0.01
-    assert float(terse["effect_size_d"]) > 1.0
-    assert float(terse["ci_low"]) > 0.0
+def test_the_replacement_statistic_fails_on_a_no_op_intervention():
+    """The check that would have caught this, run against the shipped code."""
+    from core.evaluation.statistics import (
+        null_effect_probe,
+        paired_effect_over_null_reference,
+    )
+
+    verdict = null_effect_probe(paired_effect_over_null_reference, n_trials=40, seed=3)
+
+    assert not verdict.significant
+    assert verdict.p_value > 0.5
 
 
-def test_the_verdict_is_recorded_as_passing(report):
-    assert report.get("passes_adversarial_control") is True
+def test_a_campaign_without_a_null_reference_cannot_be_analyzed():
+    from core.evaluation.steering_ab import analyze_steering_ab
+
+    with pytest.raises(ValueError, match="baseline_replicate"):
+        analyze_steering_ab(
+            {
+                "steered_black_box": ["x"] * 6,
+                "baseline": ["x"] * 6,
+                "text_terse": ["y"] * 6,
+                "text_rich_adversarial": ["z"] * 6,
+            }
+        )
 
 
-def test_the_quantization_floor_does_not_claim_steering_is_ineffective(report):
-    """The SNR is about magnitude at an instant, not about whether it works."""
-    from core.consciousness.caa.quantization_floor import assess_steering_precision
+def test_the_readiness_gate_refuses_the_voided_artifact(report):
+    """A stale artifact must not normalize into a passing readiness metric."""
+    from training.caa_32b_validation import CAA32BValidator
 
-    precision = assess_steering_precision(0.35, residual_norm=70.0)
-    assert precision.below_floor is True
-    assert precision.snr < 0.1
-    # …and the behavioural result at that same alpha is significant. Both are
-    # true, and the module says so rather than letting the first imply the
-    # opposite of the second.
-    assert float(report["analysis"]["steered_vs_rich"]["p_value"]) < 0.01
+    normalized = CAA32BValidator._normalize_behavioral_results(dict(report))
+
+    assert normalized["source_schema"] == "live_32b_ab_voided"
+    assert normalized["black_box_prompt_hygiene_passed"] is False
+    assert normalized["steered_vs_rich_prompt_effect_size"] < 0.0
 
 
-def test_the_module_carries_the_measurement_that_settles_it():
+def test_the_quantization_floor_no_longer_cites_the_retracted_result():
+    """The SNR module leaned on d = 2.502 to argue the floor does not matter.
+
+    It may still NAME the number — retracting a result means saying which one.
+    What it may not do is present it as settling anything.
+    """
     import core.consciousness.caa.quantization_floor as module
 
     doc = module.__doc__ or ""
-    assert "d = 2.502" in doc
-    assert "does NOT predict the behavioural outcome" in doc
+    assert "RETRACTED" in doc, (
+        "the module still cites its effect sizes as settled evidence"
+    )
+    assert "UNPROVEN" in doc
+    assert "AND IT PASSED" not in doc

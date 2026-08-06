@@ -304,10 +304,15 @@ class Evidence(StrEnum):
       null-subtracted estimator separates cleanly — 0.000 / 0.049 / 0.563 — but
       only on SYNTHETIC systems. No live null-corrected result exists yet.
 
-    * CAA steering. The A/B supports causal capacity at high strength
-      (significant at α=8, d≈0.90 against one control). The live surface runs
-      at α=0.35, where measured steering-to-quantisation-noise is ~0.056.
-      "Steering was injected" is not "steering changed the answer".
+    * CAA steering. RETRACTED, both alphas. Every A/B behind those numbers ran
+      through a statistic scoring d(steered, control) − d(steered, baseline)
+      over a runner that gave steered and baseline the same prompt and the same
+      seed. Steering with no effect makes them identical, zeroes the subtracted
+      term, and leaves the control distance — positive by construction. The
+      null hypothesis passed decisively, and the α=0.35 artifact records it
+      doing so: identical steered/baseline samples, zero affect words, d=2.502.
+      "Steering was injected" (supported, 41,450 injections) is not "steering
+      changed the answer" (unmeasured).
 
     In both cases the honest position is not zero and not proven. It is
     UNMEASURED, and a registry that cannot say that will keep implying proof.

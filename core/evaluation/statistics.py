@@ -162,37 +162,80 @@ class ABComparison:
     ci_low: float
     ci_high: float
     effect_size_d: float
+    #: Mean of the term this statistic subtracts — what the score reads when
+    #: the intervention did nothing. Recorded so a reader can see the null
+    #: rather than take it on faith.
+    null_reference_mean: float = 0.0
+    #: Mean of the term measuring the intervention itself.
+    treatment_mean: float = 0.0
 
     @property
     def significant(self) -> bool:
         return self.p_value < 0.01 and not (self.ci_low <= 0.0 <= self.ci_high)
 
 
-def paired_distance_comparison(
+def paired_effect_over_null_reference(
     treatment_outputs: Sequence[str],
-    control_outputs: Sequence[str],
     baseline_outputs: Sequence[str],
+    null_reference_outputs: Sequence[str],
     *,
+    distance: Callable[[str, str], float] | None = None,
     n_resamples: int = 2000,
     seed: int = 0,
 ) -> ABComparison:
-    """Compare treatment-vs-control text divergence against baseline.
+    """How far an intervention moved the output, minus how far it moves anyway.
 
-    The score for each trial is:
+    ::
+
+        score_i = distance(treatment_i, baseline_i)
+                - distance(baseline_i, null_reference_i)
+
+    ``null_reference_i`` is an independent REDRAW of the baseline condition:
+    same prompt, no intervention, a different sampling seed. It measures the
+    system's own run-to-run variation.
+
+    That is what puts the null at zero. Under "the intervention did nothing"
+    the treated output is just another such redraw, so both terms estimate the
+    same quantity and ``E[score] = 0``. A positive, significant score means the
+    intervention moved the output further than the system moves on its own —
+    which is the only thing a divergence measurement can establish.
+
+    It cannot establish that the movement is in an intended direction. Use a
+    scored target behaviour (``paired_score_shift``) for that; divergence and
+    direction are different claims and one does not imply the other.
+
+    Why this function exists in this shape
+    --------------------------------------
+    It replaces ``paired_distance_comparison``, which scored::
+
         distance(treatment, control) - distance(treatment, baseline)
 
-    Positive values mean the control is farther from the treatment than the
-    baseline is. That is a conservative check used by the steering A/B harness.
+    Its callers ran the treatment and the baseline from the same prompt under
+    the same seed, toggling only the intervention. So an intervention with NO
+    effect made ``treatment == baseline``, the subtracted term exactly zero,
+    and the score equal to ``distance(baseline, control)`` — which is positive
+    by construction, because the control deliberately uses a different prompt.
+    The null hypothesis produced a decisive pass, and did: the checked-in
+    steering artifact reported d = 2.50, p = 0.0002 with steered and baseline
+    samples that are word-for-word identical.
+
+    ``null_effect_probe`` below turns that into a check any effect statistic
+    can be held to.
     """
-    if not (len(treatment_outputs) == len(control_outputs) == len(baseline_outputs)):
+    if not (
+        len(treatment_outputs) == len(baseline_outputs) == len(null_reference_outputs)
+    ):
         raise ValueError("all output lists must have the same length")
-    deltas = np.array(
-        [
-            jaccard_distance(a, b) - jaccard_distance(a, c)
-            for a, b, c in zip(treatment_outputs, control_outputs, baseline_outputs)
-        ],
+    metric = distance or jaccard_distance
+    treated = np.array(
+        [metric(t, b) for t, b in zip(treatment_outputs, baseline_outputs)],
         dtype=np.float64,
     )
+    reference = np.array(
+        [metric(b, r) for b, r in zip(baseline_outputs, null_reference_outputs)],
+        dtype=np.float64,
+    )
+    deltas = treated - reference
     observed, p = permutation_test(
         deltas,
         np.zeros_like(deltas),
@@ -202,4 +245,86 @@ def paired_distance_comparison(
     )
     ci_low, ci_high = bootstrap_ci(deltas, n_resamples=n_resamples, seed=seed)
     d = cohens_d(deltas, np.zeros_like(deltas))
-    return ABComparison(observed, p, ci_low, ci_high, d)
+    return ABComparison(
+        observed,
+        p,
+        ci_low,
+        ci_high,
+        d,
+        null_reference_mean=float(np.mean(reference)),
+        treatment_mean=float(np.mean(treated)),
+    )
+
+
+def paired_score_shift(
+    treatment_scores: Sequence[float],
+    baseline_scores: Sequence[float],
+    *,
+    n_resamples: int = 2000,
+    seed: int = 0,
+) -> ABComparison:
+    """Did the intervention move a SCORED target behaviour, and which way?
+
+    Divergence says an output changed. This says it changed toward the thing
+    the intervention was supposed to produce, which is a separate claim and the
+    one an affect-steering result actually needs. ``significant`` here is a
+    two-sided question turned one-sided by the caller's choice of sign: pass
+    the scores so that "more of the intended behaviour" is larger.
+    """
+    if len(treatment_scores) != len(baseline_scores):
+        raise ValueError("all score lists must have the same length")
+    deltas = _as_1d(treatment_scores) - _as_1d(baseline_scores)
+    observed, p = permutation_test(
+        deltas,
+        np.zeros_like(deltas),
+        n_permutations=n_resamples,
+        alternative="greater",
+        seed=seed,
+    )
+    ci_low, ci_high = bootstrap_ci(deltas, n_resamples=n_resamples, seed=seed)
+    d = cohens_d(deltas, np.zeros_like(deltas))
+    return ABComparison(
+        observed,
+        p,
+        ci_low,
+        ci_high,
+        d,
+        null_reference_mean=float(np.mean(_as_1d(baseline_scores))),
+        treatment_mean=float(np.mean(_as_1d(treatment_scores))),
+    )
+
+
+def null_effect_probe(
+    build_comparison: Callable[[list[str], list[str], list[str]], ABComparison],
+    *,
+    n_trials: int = 40,
+    seed: int = 0,
+) -> ABComparison:
+    """Run an effect statistic on data where the intervention did NOTHING.
+
+    Generic by design: hand it anything that turns
+    ``(treatment, baseline, null_reference)`` into an ``ABComparison`` and it
+    supplies a world in which the treatment is byte-identical to the baseline
+    and the null reference is an ordinary redraw. Whatever comes back is what
+    the statistic reports when there is nothing to report.
+
+    A statistic is fit to publish only if this comes back NOT significant. The
+    steering A/B shipped for months without anyone running its equivalent, and
+    it would have returned d ≈ 2.5, p ≈ 0.0002 — the same numbers the live
+    campaign produced, from data containing no effect whatsoever.
+
+    This is a probe, not an assertion: callers decide what to do with the
+    verdict, and evaluation suites should assert ``not result.significant``.
+    """
+    rng = np.random.default_rng(seed)
+    vocabulary = [f"w{i}" for i in range(60)]
+
+    def _draw() -> str:
+        return " ".join(rng.choice(vocabulary, size=18, replace=True).tolist())
+
+    baseline = [_draw() for _ in range(int(n_trials))]
+    # The intervention changed nothing: the treated run IS the baseline run.
+    treatment = list(baseline)
+    # An honest null reference: the same condition sampled again.
+    null_reference = [_draw() for _ in range(int(n_trials))]
+    return build_comparison(treatment, baseline, null_reference)

@@ -31,6 +31,7 @@ from core.actuators.actuator_registry import (
     BaseActuator,
     SandboxedSynthesizedActuator,
 )
+from tests.support.authority_capability import bound_authority_decision
 
 
 class _Simple(BaseActuator):
@@ -535,6 +536,107 @@ def test_a_presented_capability_that_does_not_verify_refuses(registry, monkeypat
     assert "refused" in result.message
 
 
+def test_an_absent_capability_refuses_just_like_a_rejected_one(registry, monkeypatch):
+    """Absence was the cheap way past the binding check.
+
+    A capability that verified badly was refused; a decision carrying NO
+    capability proceeded on the legacy opaque token with a log line. The two
+    differ only in whether a bad capability has to be produced or none does,
+    and producing none is strictly easier — so the weaker branch was the one
+    an attacker or a mint bug would take, on exactly the actuators that
+    declared ``requires_authority``.
+    """
+
+    class _Decision:
+        approved = True
+        capability_token_id = "cap-1"
+        signed_capability = None
+
+    class _Gateway:
+        async def authorize_tool_execution(self, *a, **k):
+            return _Decision()
+
+        def verify_tool_access(self, *a, **k):
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            return {}
+
+    class _Needs(_Simple):
+        requires_authority = True
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway", lambda: _Gateway()
+    )
+    actuator = _Needs(name="unminted")
+    registry.register(actuator)
+
+    result = _run(registry.execute_action_async("unminted", {"x": 1}))
+
+    assert result.success is False
+    assert "refused" in result.message
+    assert actuator.seen_params is None, "an unbound actuator must not have run"
+
+
+def test_a_really_bound_capability_is_what_lets_the_actuator_run(registry, monkeypatch):
+    """The other half: the real chain verifying is what admits the effect."""
+
+    class _Gateway:
+        async def authorize_tool_execution(self, name, params, *a, **k):
+            return bound_authority_decision(name, params)
+
+        def verify_tool_access(self, *a, **k):
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            return {}
+
+    class _Needs(_Simple):
+        requires_authority = True
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway", lambda: _Gateway()
+    )
+    actuator = _Needs(name="bound")
+    registry.register(actuator)
+
+    result = _run(registry.execute_action_async("bound", {"x": 1}))
+
+    assert result.success is True
+    assert actuator.seen_params is not None
+
+
+def test_a_capability_bound_to_other_parameters_does_not_admit_this_call(
+    registry, monkeypatch
+):
+    """Non-transferability, exercised rather than asserted about."""
+
+    class _Gateway:
+        async def authorize_tool_execution(self, name, params, *a, **k):
+            # Minted for a DIFFERENT payload than the one about to execute.
+            return bound_authority_decision(name, {"x": 999})
+
+        def verify_tool_access(self, *a, **k):
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            return {}
+
+    class _Needs(_Simple):
+        requires_authority = True
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway", lambda: _Gateway()
+    )
+    actuator = _Needs(name="mismatched")
+    registry.register(actuator)
+
+    result = _run(registry.execute_action_async("mismatched", {"x": 1}))
+
+    assert result.success is False
+    assert actuator.seen_params is None
+
+
 def test_the_digest_matches_what_the_gateway_binds():
     """The registry must digest exactly what authorize_tool_execution sent."""
     from core.governance.capability_chain import compute_action_digest
@@ -733,16 +835,15 @@ def test_an_honest_nonblocking_actuator_keeps_its_exemption(registry):
 def test_the_receipt_carries_digest_duration_and_certainty(registry, monkeypatch):
     captured = {}
 
-    class _Decision:
-        approved = True
-        capability_token_id = "cap-1"
-        signed_capability = None
-        executive_intent_id = "i-1"
-        standing_authority_token = None
-
     class _Gateway:
-        async def authorize_tool_execution(self, *a, **k):
-            return _Decision()
+        async def authorize_tool_execution(self, name, params, *a, **k):
+            return bound_authority_decision(
+                name,
+                params,
+                capability_token_id="cap-1",
+                executive_intent_id="i-1",
+                standing_authority_token=None,
+            )
 
         def verify_tool_access(self, *a, **k):
             return True
@@ -772,16 +873,15 @@ def test_the_receipt_carries_digest_duration_and_certainty(registry, monkeypatch
 def test_an_uncertain_outcome_is_recorded_as_uncertain(registry, monkeypatch):
     captured = {}
 
-    class _Decision:
-        approved = True
-        capability_token_id = "cap-1"
-        signed_capability = None
-        executive_intent_id = "i-1"
-        standing_authority_token = None
-
     class _Gateway:
-        async def authorize_tool_execution(self, *a, **k):
-            return _Decision()
+        async def authorize_tool_execution(self, name, params, *a, **k):
+            return bound_authority_decision(
+                name,
+                params,
+                capability_token_id="cap-1",
+                executive_intent_id="i-1",
+                standing_authority_token=None,
+            )
 
         def verify_tool_access(self, *a, **k):
             return True

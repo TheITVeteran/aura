@@ -1440,16 +1440,34 @@ class ActuatorRegistry:
                     authority_decision, name, params_digest
                 )
                 if not bound:
-                    if getattr(authority_decision, "signed_capability", None) is not None:
-                        # A capability was presented and did NOT verify. That is
-                        # a refusal, not a degraded path.
-                        return ActuatorResult(False, f"Actuator '{name}' refused: {why}", {})
-                    # No capability was minted at all. Record the weaker
-                    # guarantee rather than pretending the strong one held.
-                    logger.warning(
-                        "Actuator '%s' proceeding on the legacy opaque token only: %s",
-                        name,
-                        why,
+                    # Absence is not a lesser failure than rejection.
+                    #
+                    # This used to refuse a capability that verified badly and
+                    # PROCEED when none had been minted at all, on the reasoning
+                    # that recording the weaker guarantee beats pretending the
+                    # strong one held. But the two branches differ only in
+                    # whether an attacker (or a mint bug) has to produce a bad
+                    # capability or none — and producing none is strictly
+                    # easier. The absent-capability branch was therefore the
+                    # cheapest way past the binding check, on exactly the
+                    # actuators that declared `requires_authority`.
+                    #
+                    # AuthorityGateway._mint_signed_capability already documents
+                    # the intended contract — "a mint failure fails the action
+                    # closed rather than degrading it into an unauthenticated
+                    # execution". This is the sink that has to hold it. Every
+                    # approving path in the gateway mints, so a missing
+                    # capability means the mint FAILED, which is a governance
+                    # fault to surface rather than a mode to run in.
+                    return ActuatorResult(
+                        False,
+                        f"Actuator '{name}' refused: {why}",
+                        {
+                            "authority": "unbound",
+                            "capability_present": bool(
+                                getattr(authority_decision, "signed_capability", None)
+                            ),
+                        },
                     )
                 exec_params["_aura_authorized"] = True
                 exec_params["_capability_token_id"] = capability_token_id

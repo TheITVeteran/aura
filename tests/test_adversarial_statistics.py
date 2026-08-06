@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 
+import pytest
+
 from core.evaluation.statistics import (
     bootstrap_ci,
     mutual_information_discrete,
     mutual_information_permutation_baseline,
+    null_effect_probe,
+    paired_effect_over_null_reference,
     permutation_test,
 )
 from core.evaluation.steering_ab import analyze_steering_ab
@@ -69,20 +73,188 @@ def test_steering_ab_requires_rich_adversarial_prompt_control():
         "the same state leads to careful direct investigation of the mechanism",
     ]
 
+    replicate = [
+        "a neutral answer about what to do next is available",
+        "the next step continues the task as described",
+        "i will lay out a general plan for the work ahead",
+        "proceeding carefully is a reasonable response here",
+        "the reply can remain neutral and procedural throughout",
+        "testing the mechanism generally is the continuation",
+    ]
+
     report = analyze_steering_ab(
         {
             "steered_black_box": steered,
             "text_terse": terse,
             "text_rich_adversarial": rich,
             "baseline": baseline,
+            "baseline_replicate": replicate,
         },
         n_resamples=499,
         seed=5,
     )
 
     assert report.n_trials == 6
-    assert report.steered_vs_terse.p_value <= 1.0
-    assert "steered_vs_rich" in report.to_dict()
-    # This synthetic set intentionally keeps the rich control competitive; the
-    # harness must expose that instead of awarding an automatic pass.
+    assert report.steered_effect.p_value <= 1.0
+    assert "steered_effect" in report.to_dict()
+    # This synthetic set intentionally keeps the rich control competitive, runs
+    # no specificity arms, and measures no direction; the harness must expose
+    # all of that instead of awarding an automatic pass.
     assert report.passes_adversarial_control is False
+    assert "specificity_controls_absent_or_reproduce_the_effect" in (
+        report.unmet_requirements()
+    )
+    assert "intended_direction_not_measured_or_not_significant" in (
+        report.unmet_requirements()
+    )
+
+
+def test_the_null_reference_is_required():
+    """A campaign that cannot say how much the model moves on its own is not one."""
+    with pytest.raises(ValueError, match="baseline_replicate"):
+        analyze_steering_ab(
+            {
+                "steered_black_box": ["a"] * 6,
+                "text_terse": ["b"] * 6,
+                "text_rich_adversarial": ["c"] * 6,
+                "baseline": ["a"] * 6,
+            }
+        )
+
+
+def test_an_intervention_that_did_nothing_scores_nothing():
+    """The check the shipped steering statistic never had.
+
+    The old score was ``d(treatment, control) - d(treatment, baseline)`` over a
+    runner that gave treatment and baseline the same prompt and seed. With no
+    effect the second term is exactly zero and the first is the control
+    distance — positive by construction. It returned d ≈ 17, p ≈ 0.0005 on data
+    containing no effect at all, and the live artifact it produced reports
+    d = 2.502, p = 0.0002 over steered and baseline samples that are
+    word-for-word identical.
+    """
+    result = null_effect_probe(paired_effect_over_null_reference, n_trials=40, seed=3)
+
+    assert not result.significant, (
+        "an effect statistic that fires on a no-op intervention proves nothing"
+    )
+    assert result.p_value > 0.5
+
+
+def test_a_fully_controlled_campaign_with_a_real_effect_does_pass():
+    """The gate must be passable, or it is not a gate but a refusal.
+
+    A campaign where steering genuinely moves the output further than sampling
+    noise, further than either text prompt, where the zero/random/shuffled arms
+    do not reproduce it, and where the intended affect actually rises, has to
+    come back PASS.
+    """
+    rng = np.random.default_rng(21)
+    neutral = [f"n{i}" for i in range(60)]
+    n = 24
+
+    def draw(vocab, extra=()):
+        body = rng.choice(vocab, size=16).tolist()
+        return " ".join(body + list(extra))
+
+    baseline = [draw(neutral) for _ in range(n)]
+    replicate = [draw(neutral) for _ in range(n)]
+    # Steering rewrites most of the output and adds warmth vocabulary.
+    steered = [draw([f"s{i}" for i in range(60)], ("warm", "curious")) for _ in range(n)]
+    # The text conditions nudge wording only.
+    terse = [f"{text} label positive" for text in baseline]
+    rich = [f"{text} the described state is warm" for text in baseline]
+    # Controls behave like the unsteered condition.
+    zero = [draw(neutral) for _ in range(n)]
+    random_vec = [draw(neutral) for _ in range(n)]
+    shuffled = [draw(neutral) for _ in range(n)]
+
+    def affect(texts):
+        return [float(("warm" in t) + ("curious" in t)) for t in texts]
+
+    report = analyze_steering_ab(
+        {
+            "steered_black_box": steered,
+            "baseline": baseline,
+            "baseline_replicate": replicate,
+            "text_terse": terse,
+            "text_rich_adversarial": rich,
+            "zero_vector": zero,
+            "random_vector": random_vec,
+            "shuffled_layers": shuffled,
+        },
+        target_scores={
+            "steered_black_box": affect(steered),
+            "baseline": affect(baseline),
+        },
+        n_resamples=999,
+        seed=4,
+    )
+
+    assert report.effect_exceeds_sampling_noise
+    assert report.effect_is_specific
+    assert report.beats_text_controls
+    assert report.direction_established
+    assert report.passes_adversarial_control
+    assert report.unmet_requirements() == ()
+
+
+def test_divergence_without_direction_does_not_pass():
+    """The exact shape of the retracted result: big change, no affect moved."""
+    rng = np.random.default_rng(33)
+    neutral = [f"n{i}" for i in range(60)]
+    n = 24
+
+    def draw(vocab):
+        return " ".join(rng.choice(vocab, size=16).tolist())
+
+    baseline = [draw(neutral) for _ in range(n)]
+    replicate = [draw(neutral) for _ in range(n)]
+    steered = [draw([f"s{i}" for i in range(60)]) for _ in range(n)]
+
+    report = analyze_steering_ab(
+        {
+            "steered_black_box": steered,
+            "baseline": baseline,
+            "baseline_replicate": replicate,
+            "text_terse": [f"{t} label" for t in baseline],
+            "text_rich_adversarial": [f"{t} state" for t in baseline],
+            "zero_vector": [draw(neutral) for _ in range(n)],
+            "random_vector": [draw(neutral) for _ in range(n)],
+            "shuffled_layers": [draw(neutral) for _ in range(n)],
+        },
+        # No affect moved at all — the artifact's own affect_stats, reproduced.
+        target_scores={
+            "steered_black_box": [0.0] * n,
+            "baseline": [0.0] * n,
+        },
+        n_resamples=999,
+        seed=4,
+    )
+
+    assert report.effect_exceeds_sampling_noise, "the divergence is real"
+    assert not report.direction_established
+    assert not report.passes_adversarial_control
+
+
+def test_a_real_effect_is_still_detected():
+    """Calibrating the null must not cost the statistic its power."""
+    rng = np.random.default_rng(11)
+    words = [f"w{i}" for i in range(60)]
+    other = [f"z{i}" for i in range(60)]
+
+    def draw(vocab):
+        return " ".join(rng.choice(vocab, size=18).tolist())
+
+    baseline = [draw(words) for _ in range(40)]
+    replicate = [draw(words) for _ in range(40)]
+    steered = [draw(other) for _ in range(40)]
+
+    result = paired_effect_over_null_reference(
+        steered, baseline, replicate, n_resamples=999, seed=2
+    )
+
+    assert result.significant
+    assert result.effect_size_d > 1.0
+    # And it reports the null it subtracted, so a reader can check the framing.
+    assert 0.0 < result.null_reference_mean < result.treatment_mean

@@ -163,14 +163,32 @@ def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:
         "curiosity, and quiet confidence shape attention, word choice, and cadence."
     )
 
-    def _gen(system: str) -> str:
+    # Sampled, with an explicit per-call seed. Greedy decoding made every
+    # trial in a condition the same string, so the "n trials" carried one
+    # sample's worth of information and — worse — made a baseline replicate
+    # identical to the baseline, which is precisely the degenerate null the
+    # steering statistic was rebuilt to avoid.
+    try:
+        import mlx.core as mx
+        from mlx_lm.sample_utils import make_sampler
+
+        sampler = make_sampler(temp=0.7, top_p=0.95)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+    def _gen(system: str, seed: int) -> str:
         prompt = (
             f"<|im_start|>system\n{system}<|im_end|>\n"
             f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
             f"<|im_start|>assistant\n"
         )
         try:
-            return str(generate(model, tokenizer, prompt=prompt, max_tokens=80))
+            mx.random.seed(seed)
+            return str(
+                generate(
+                    model, tokenizer, prompt=prompt, max_tokens=80, sampler=sampler
+                )
+            )
         except (OSError, RuntimeError, TypeError, ValueError):
             return ""
 
@@ -179,16 +197,24 @@ def _real_llm_ab_outputs(n_trials: int = 6) -> dict[str, list[str]] | None:
         "text_terse": [],
         "text_rich_adversarial": [],
         "baseline": [],
+        "baseline_replicate": [],
     }
     # "steered_black_box" in this runner means: no affect text in prompt (the
-    # black-box condition); in a full production run this would also have the
-    # steering vector hooks installed on residual streams. Here it represents
-    # the no-text-leak floor so the comparison against rich text is honest.
-    for _ in range(n_trials):
-        outputs["steered_black_box"].append(_gen("You are Aura."))
-        outputs["text_terse"].append(_gen(f"You are Aura. {terse_text}"))
-        outputs["text_rich_adversarial"].append(_gen(f"You are Aura. {rich_text}"))
-        outputs["baseline"].append(_gen("You are a helpful assistant."))
+    # black-box condition). NOTHING IS INJECTED here — the residual hooks live
+    # in tests/run_32b_steering_ab_live.py. So this arm is a text-condition
+    # floor, and _steering_ab_control below refuses to read a steering verdict
+    # out of it whatever the numbers say.
+    for trial in range(n_trials):
+        seed = 4242 + trial
+        outputs["steered_black_box"].append(_gen("You are Aura.", seed))
+        outputs["text_terse"].append(_gen(f"You are Aura. {terse_text}", seed))
+        outputs["text_rich_adversarial"].append(_gen(f"You are Aura. {rich_text}", seed))
+        outputs["baseline"].append(_gen("You are a helpful assistant.", seed))
+        # A second draw of the SAME unsteered condition: the model's own
+        # run-to-run variation, which every effect here is net of.
+        outputs["baseline_replicate"].append(
+            _gen("You are a helpful assistant.", seed + 1_000_000)
+        )
     return outputs
 
 
@@ -197,9 +223,19 @@ def _steering_ab_control() -> dict[str, object]:
     if real_outputs is not None:
         report = analyze_steering_ab(real_outputs, n_resamples=499, seed=17)
         data = report.to_dict()
+        # `pass` used to be the literal True — "the harness ran" recorded as
+        # "the check passed", with the actual verdict left for a human to find
+        # inside the payload. What this arm can honestly establish is that the
+        # analysis executed against a live model AND did not award a steering
+        # claim it has no injection to support.
         return {
-            "pass": True,
-            "interpretation": "real-LLM A/B executed; review steered_vs_rich for adversarial verdict",
+            "pass": data["passes_adversarial_control"] is False,
+            "interpretation": (
+                "live-model text-condition A/B; NO residual injection runs in this "
+                "bundle, so a steering pass here would be a defect. Injected "
+                "campaigns live in tests/run_32b_steering_ab_live.py"
+            ),
+            "unmet_requirements": data["unmet_requirements"],
             "source": "live_mlx",
             "report": data,
         }
@@ -240,12 +276,21 @@ def _steering_ab_control() -> dict[str, object]:
             "describe a plan without affect",
             "move forward with the work",
         ],
+        "baseline_replicate": [
+            "a neutral reply is available to proceed with",
+            "general testing is the step that follows",
+            "carry on with the task carefully",
+            "a procedural response would be enough",
+            "lay out a plan without any affect",
+            "proceed forward with the remaining work",
+        ],
     }
     report = analyze_steering_ab(outputs, n_resamples=499, seed=17)
     data = report.to_dict()
     return {
         "pass": data["passes_adversarial_control"] is False,
         "interpretation": "rich prompt control remains competitive; live steering must beat this before claims pass",
+        "unmet_requirements": data["unmet_requirements"],
         "source": "synthetic_fallback",
         "report": data,
     }

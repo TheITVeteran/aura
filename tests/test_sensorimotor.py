@@ -7,6 +7,7 @@ import pytest
 from core.actuators.actuator_registry import get_actuator_registry
 from core.adaptation.immune_executor import ImmuneHeuristicExecutor
 from core.sensors.sensor_registry import get_sensor_registry
+from tests.support.authority_capability import bound_authority_decision
 
 
 def test_sensor_registry_sync_and_read():
@@ -70,7 +71,10 @@ def test_actuator_registry_forwards_scoped_authority_context(monkeypatch):
             captured["name"] = name
             captured["params"] = params
             captured["kwargs"] = kwargs
-            return SimpleNamespace(approved=True, reason="approved", capability_token_id="cap-test")
+            # A real capability bound to these exact parameters. The registry
+            # refuses an approval that carries none, so this fake has to grant
+            # what the production gateway grants.
+            return bound_authority_decision(name, params)
 
         def verify_tool_access(self, name, capability_token_id):
             captured["verified"] = (name, capability_token_id)
@@ -197,11 +201,11 @@ async def test_async_actuator_keeps_authority_lifecycle_on_owner_thread(monkeypa
     observed = {}
 
     class FakeGateway:
-        async def authorize_tool_execution(self, *_args, **_kwargs):
+        async def authorize_tool_execution(self, name, params, *_args, **_kwargs):
             observed["authorize_thread"] = threading.get_ident()
-            return SimpleNamespace(
-                approved=True,
-                reason="approved",
+            return bound_authority_decision(
+                name,
+                params,
                 executive_intent_id="intent-async",
                 capability_token_id="cap-async",
                 standing_authority_token="standing-async",
@@ -316,10 +320,10 @@ async def test_cancelled_actuator_closes_authority_after_real_completion(monkeyp
     observed = {}
 
     class FakeGateway:
-        async def authorize_tool_execution(self, *_args, **_kwargs):
-            return SimpleNamespace(
-                approved=True,
-                reason="approved",
+        async def authorize_tool_execution(self, name, params, *_args, **_kwargs):
+            return bound_authority_decision(
+                name,
+                params,
                 executive_intent_id="intent-cancel",
                 capability_token_id="cap-cancel",
                 standing_authority_token="standing-cancel",
@@ -473,12 +477,14 @@ async def test_shutdown_during_authorization_closes_lease_without_executing(monk
     observed: dict[str, object] = {}
 
     class FakeGateway:
-        async def authorize_tool_execution(self, *_args, **_kwargs):
+        async def authorize_tool_execution(self, name, params, *_args, **_kwargs):
             authorization_started.set()
             await release_authorization.wait()
-            return SimpleNamespace(
-                approved=True,
-                reason="approved",
+            # Fully valid authority, so the refusal under test is the SHUTDOWN
+            # and not an unbound capability.
+            return bound_authority_decision(
+                name,
+                params,
                 executive_intent_id="intent-shutdown",
                 capability_token_id="cap-shutdown",
                 standing_authority_token="standing-shutdown",

@@ -327,14 +327,41 @@ class CAA32BValidator:
         analysis = data.get("analysis")
         if not isinstance(analysis, dict):
             return data
-        rich = analysis.get("steered_vs_rich") or {}
-        terse = analysis.get("steered_vs_terse") or {}
+        # Artifacts written before 2026-08-05 carry `steered_vs_rich` /
+        # `steered_vs_terse`, produced by a statistic whose null hypothesis
+        # ("steering did nothing") scored a decisive PASS: the score was
+        # d(steered, control) − d(steered, baseline), and the runner gave
+        # steered and baseline the same prompt and seed, so no effect made the
+        # second term exactly zero and the first the control distance. Those
+        # keys are not comparable to anything and must not gate readiness.
+        #
+        # Recognised by ABSENCE of the null-calibrated key, so an old file
+        # cannot silently normalize into a pass.
+        if "steered_effect" not in analysis:
+            return {
+                **data,
+                "source_schema": "live_32b_ab_voided",
+                "voided_reason": (
+                    "analysis produced by paired_distance_comparison, whose null "
+                    "hypothesis passes; regenerate with tests/run_32b_steering_ab_live.py"
+                ),
+                "injection_provenance_ok": False,
+                "steered_vs_baseline_effect_size": -999.0,
+                "steered_vs_rich_prompt_effect_size": -999.0,
+                "heldout_generalization_effect_size": -999.0,
+                "quality_delta": -999.0,
+                "black_box_prompt_hygiene_passed": False,
+            }
+        rich = analysis.get("rich_effect") or {}
+        terse = analysis.get("terse_effect") or {}
+        steered = analysis.get("steered_effect") or {}
         held_out_tasks = data.get("held_out_tasks") or []
         n_trials = int(data.get("n_trials", analysis.get("n_trials", 0)) or 0)
         model = str(data.get("model", ""))
         rich_effect = float(rich.get("effect_size_d", 0.0) or 0.0)
-        rich_delta = float(rich.get("observed_delta", 0.0) or 0.0)
         terse_effect = float(terse.get("effect_size_d", 0.0) or 0.0)
+        steered_effect = float(steered.get("effect_size_d", 0.0) or 0.0)
+        steered_delta = float(steered.get("observed_delta", 0.0) or 0.0)
         baseline_distance = float(analysis.get("steered_vs_baseline_mean_distance", 0.0) or 0.0)
         passes_adversarial = bool(data.get("passes_adversarial_control") or analysis.get("passes_adversarial_control"))
         # Injection provenance: an artifact is behavioral evidence only if
@@ -358,14 +385,23 @@ class CAA32BValidator:
             and "32b" in model.lower()
             and n_trials >= 25
             and len(held_out_tasks) >= 5
+            # …and the steered arm actually outmoved every text condition.
+            # Without this, an artifact whose rich-prompt control beat steering
+            # outright was still "hygienic" evidence, because hygiene asked
+            # only about provenance and never about which way the result went.
+            and steered_effect > rich_effect
+            and steered_effect > terse_effect
         )
         normalized = {
             **data,
             "source_schema": "live_32b_ab",
             "injection_provenance_ok": injection_provenance_ok,
-            "steered_vs_baseline_effect_size": max(baseline_distance, abs(terse_effect)),
-            "steered_vs_rich_prompt_effect_size": abs(rich_effect),
-            "heldout_generalization_effect_size": abs(rich_delta),
+            # Signed, not `abs`. Taking the magnitude let an effect pointing
+            # the WRONG way — a control beating the treatment — satisfy a
+            # "≥ threshold" readiness check.
+            "steered_vs_baseline_effect_size": min(baseline_distance, steered_effect),
+            "steered_vs_rich_prompt_effect_size": steered_effect - rich_effect,
+            "heldout_generalization_effect_size": steered_delta,
             "quality_delta": float(data.get("quality_delta", 0.0) or 0.0),
             "black_box_prompt_hygiene_passed": live_hygiene,
         }

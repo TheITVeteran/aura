@@ -118,5 +118,9 @@
   },
   "passes_adversarial_control": true,
   "steered_vs_terse_significant": true,
-  "steered_vs_rich_significant": true
+  "steered_vs_rich_significant": true,
+  "VOID": true,
+  "void_reason": "The statistic behind every number in `analysis` scored distance(steered, control) - distance(steered, baseline). This runner gave the steered and baseline conditions the same prompt and the same seed and toggled only the injection, so steering with NO effect makes them identical, makes the subtracted term exactly zero, and makes the score equal to distance(baseline, control) -- positive by construction, because the control uses a different system prompt. The null hypothesis 'steering did nothing' therefore produced a decisive pass. The recorded samples show it happening: all three steered samples are word-for-word identical to their baselines, and the steered condition contains zero positive-affect words. Retained as the record of a retracted result; regenerate with tests/run_32b_steering_ab_live.py, which now collects a baseline replicate, zero/random/shuffled-layer controls, and a directional target-behaviour score.",
+  "void_recorded": "2026-08-05",
+  "superseded_claim": "Routine alpha=0.35 meaningfully changes behaviour: UNPROVEN. Residual-stream injection executes and the hook changes hidden activations (injection_count=41450) remain supported."
 }

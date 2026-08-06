@@ -22,26 +22,36 @@ into the same residual stream, and the cosine between intended and realised
 direction is 0.056. The live engine α of ~6 is, not coincidentally, about where
 the two become comparable.
 
-AND THEN THE BEHAVIOURAL A/B WAS RUN AT 0.35, AND IT PASSED — LARGELY.
-Measured 2026-08-04 on the resident 32B, 50 trials over 5 held-out tasks, 10
-layers, 41,450 injections (artifacts/steering/CAA_AB_ALPHA_0.35_live.json):
+A behavioural A/B at 0.35 was run on 2026-08-04 and reported very large effects
+(d = 1.879 vs terse text, d = 2.502 vs a rich affect prompt, p = 0.0002, 50
+trials, 5 held-out tasks, 10 layers, 41,450 injections). This docstring cited
+those numbers as settling the question. THEY ARE RETRACTED.
 
-    steered vs terse-affect control   d = 1.879  p = 0.0002
-    steered vs RICH adversarial text  d = 2.502  p = 0.0002
-    distance steered↔baseline 0.2424, rich↔baseline 0.7611
+The statistic scored ``distance(steered, control) - distance(steered,
+baseline)``, and the runner drew the steered and baseline conditions from the
+same prompt under the same seed, toggling only the injection. Steering with no
+effect therefore makes them identical, zeroes the subtracted term, and leaves
+the score equal to ``distance(baseline, control)`` — positive by construction.
+The null hypothesis passed decisively, and the artifact shows it: its recorded
+steered samples are word-for-word identical to their baselines and its steered
+condition contains zero affect words. See
+``tests/test_steering_works_at_the_live_alpha.py``.
 
-Larger effects than the α=8 run, at an SNR of 0.056.
+So the standing position is narrower and honest:
 
-So the SNR is real and does NOT predict the behavioural outcome. It measures
-the instantaneous magnitude of one injection against one layer's quantisation
-noise; the noise is zero-mean and uncorrelated across layers and tokens, while
-the steering vector is the SAME DIRECTION every time. Over 10 layers and
-hundreds of tokens the bias accumulates and the noise cancels. That is why the
-number below is reported and deliberately not used to clamp α.
+* The SNR below is a real, measured quantity.
+* Whether α = 0.35 changes behaviour is UNPROVEN. Not refuted — unmeasured.
+* The reason not to clamp α on this number is unchanged and does not depend on
+  the retracted result: the SNR is the instantaneous magnitude of one injection
+  against one layer's quantisation noise, and that noise is zero-mean and
+  uncorrelated across layers and tokens while the steering vector is the SAME
+  DIRECTION every time. Over 10 layers and hundreds of tokens a bias of this
+  size can accumulate where the noise cancels. That is a mechanism argument for
+  why a low SNR need not mean no effect — it is not evidence of one.
 
 Read it as "how loud is this injection right now", never as "is steering
-working" — the A/B answers the second question, and at the live surface α its
-answer is yes.
+working". The second question is open, and
+``tests/run_32b_steering_ab_live.py`` is the harness built to answer it.
 """
 
 from __future__ import annotations

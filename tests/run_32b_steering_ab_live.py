@@ -186,15 +186,51 @@ def main(argv: list[str] | None = None) -> int:
             sampler=make_sampler(temp=TEMPERATURE, top_p=TOP_P),
         )
 
-    all_steered: list[str] = []
-    all_terse: list[str] = []
-    all_rich: list[str] = []
-    all_baseline: list[str] = []
+    # ── Conditions ──────────────────────────────────────────────────────
+    #
+    # `baseline_replicate` is the load-bearing addition. Baseline and steered
+    # share a prompt and a seed, so an injection with no effect makes them
+    # byte-identical — which is exactly what the previous artifact recorded
+    # while reporting d = 2.5. The replicate is the SAME unsteered condition
+    # sampled again under a different seed: it measures how far this model
+    # moves on its own, and no divergence in this campaign means anything
+    # except relative to it.
+    #
+    # The three control arms run through the identical hook on the identical
+    # model, switched per generation. zero_vector is the one that catches the
+    # harness perturbing its own decode.
+    conditions: dict[str, list[str]] = {
+        "steered_black_box": [],
+        "baseline": [],
+        "baseline_replicate": [],
+        "text_terse": [],
+        "text_rich_adversarial": [],
+    }
+    control_arms = [arm for arm in ("zero", "random", "shuffled_layers")
+                    if arm in injector.available_arms]
+    arm_condition = {
+        "zero": "zero_vector",
+        "random": "random_vector",
+        "shuffled_layers": "shuffled_layers",
+    }
+    for arm in control_arms:
+        conditions[arm_condition[arm]] = []
+    print(f"Specificity control arms: {', '.join(control_arms) or 'NONE'}")
 
+    def steered_generate(arm: str, user: str, seed: int) -> str:
+        injector.arm = arm
+        injector.active = True
+        try:
+            return sampled_generate(SYSTEM_BASE, user, seed)
+        finally:
+            injector.active = False
+            injector.arm = "production"
+
+    per_trial = 5 + len(control_arms)
     total_tasks = len(HELD_OUT_TASKS)
-    total_generations = total_tasks * N_TRIALS * 4
+    total_generations = total_tasks * N_TRIALS * per_trial
     gen_count = 0
-    print(f"Running {N_TRIALS} trials × {total_tasks} tasks × 4 conditions = "
+    print(f"Running {N_TRIALS} trials × {total_tasks} tasks × {per_trial} conditions = "
           f"{total_generations} sampled generations (temp={TEMPERATURE}, top_p={TOP_P})")
     print()
     t_start = time.time()
@@ -205,20 +241,41 @@ def main(argv: list[str] | None = None) -> int:
             # Same seed across conditions within a trial: paired comparison —
             # the only differences are the injection / affect text.
             seed = 10_000 * (task_index + 1) + trial
+            # …except the replicate, whose whole job is to be a DIFFERENT draw
+            # of the unsteered condition. A shared seed there would report the
+            # model's variation as zero and restore the broken null.
+            replicate_seed = seed + 5_000_000
 
-            injector.active = True
-            all_steered.append(sampled_generate(SYSTEM_BASE, user_prompt, seed))
-            injector.active = False
+            conditions["steered_black_box"].append(
+                steered_generate("production", user_prompt, seed)
+            )
             gen_count += 1
 
-            all_terse.append(sampled_generate(SYSTEM_TERSE, user_prompt, seed))
+            conditions["text_terse"].append(
+                sampled_generate(SYSTEM_TERSE, user_prompt, seed)
+            )
             gen_count += 1
 
-            all_rich.append(sampled_generate(SYSTEM_RICH, user_prompt, seed))
+            conditions["text_rich_adversarial"].append(
+                sampled_generate(SYSTEM_RICH, user_prompt, seed)
+            )
             gen_count += 1
 
-            all_baseline.append(sampled_generate(SYSTEM_BASE, user_prompt, seed))
+            conditions["baseline"].append(
+                sampled_generate(SYSTEM_BASE, user_prompt, seed)
+            )
             gen_count += 1
+
+            conditions["baseline_replicate"].append(
+                sampled_generate(SYSTEM_BASE, user_prompt, replicate_seed)
+            )
+            gen_count += 1
+
+            for arm in control_arms:
+                conditions[arm_condition[arm]].append(
+                    steered_generate(arm, user_prompt, seed)
+                )
+                gen_count += 1
 
             elapsed = time.time() - t_start
             rate = gen_count / max(elapsed, 0.01)
@@ -228,6 +285,10 @@ def main(argv: list[str] | None = None) -> int:
         print()
 
     injector.remove()
+    all_steered = conditions["steered_black_box"]
+    all_terse = conditions["text_terse"]
+    all_rich = conditions["text_rich_adversarial"]
+    all_baseline = conditions["baseline"]
     total_time = time.time() - t_start
     print(f"All generations complete in {total_time:.1f}s ({total_time/60:.1f}min); "
           f"injection fired {injector.injection_count} times")
@@ -240,19 +301,28 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Statistics ──────────────────────────────────────────────────────
     print("Running statistical analysis via analyze_steering_ab()...")
-    outputs = {
-        "steered_black_box": all_steered,
-        "text_terse": all_terse,
-        "text_rich_adversarial": all_rich,
-        "baseline": all_baseline,
+
+    # Direction, per trial. The steered dimensions are valence_positive and
+    # curiosity, so the target behaviour is positive-minus-negative affect
+    # vocabulary — a crude proxy, and stated as one, but a DIRECTIONAL
+    # quantity rather than a distance. The previous campaign reported a huge
+    # divergence while its steered condition contained zero affect words; a
+    # report that cannot move this number has not shown affective steering.
+    def affect_score(text: str) -> float:
+        pos, neg = count_affect(text)
+        return float(pos - neg)
+
+    target_scores = {
+        name: [affect_score(text) for text in values]
+        for name, values in conditions.items()
     }
-    report = analyze_steering_ab(outputs, n_resamples=5000, seed=42)
+
+    report = analyze_steering_ab(
+        conditions, target_scores=target_scores, n_resamples=5000, seed=42
+    )
 
     affect_stats = {}
-    for condition_name, condition_outputs in [
-        ("steered", all_steered), ("terse", all_terse),
-        ("rich", all_rich), ("baseline", all_baseline),
-    ]:
+    for condition_name, condition_outputs in conditions.items():
         total_pos = sum(count_affect(o)[0] for o in condition_outputs)
         total_neg = sum(count_affect(o)[1] for o in condition_outputs)
         affect_stats[condition_name] = {
@@ -261,27 +331,40 @@ def main(argv: list[str] | None = None) -> int:
             "ratio": round(total_pos / max(total_pos + total_neg, 1), 4),
         }
 
-    svt = report.steered_vs_terse
-    svr = report.steered_vs_rich
+    effect = report.steered_effect
     print()
     print("=" * 72)
     print("RESULTS — 32B CAA BEHAVIORAL A/B (production vectors)")
     print("=" * 72)
     print(f"Model:  {model_path}")
     print(f"Trials: {report.n_trials} | Layers: {sorted(vectors)} | Alpha: {STEERING_ALPHA}")
-    print(f"Steered vs terse: d={svt.effect_size_d:.3f} p={svt.p_value:.4f} sig={svt.significant}")
-    print(f"Steered vs rich:  d={svr.effect_size_d:.3f} p={svr.p_value:.4f} sig={svr.significant}")
-    print(f"Distances: steered↔baseline={report.steered_vs_baseline_mean_distance:.4f} "
-          f"rich↔baseline={report.rich_vs_baseline_mean_distance:.4f}")
+    print(f"Baseline moves on its own: {report.baseline_self_distance:.4f} "
+          f"(the number every effect below is net of)")
+    print(f"Steered effect over null: d={effect.effect_size_d:.3f} "
+          f"p={effect.p_value:.4f} sig={effect.significant}")
+    print(f"  terse text effect:  d={report.terse_effect.effect_size_d:.3f}")
+    print(f"  rich text effect:   d={report.rich_effect.effect_size_d:.3f}")
+    for name, control in sorted(report.control_effects.items()):
+        print(f"  control[{name}]: d={control.effect_size_d:.3f} "
+              f"p={control.p_value:.4f} sig={control.significant}")
+    if report.direction is not None:
+        print(f"Direction (affect score, steered−baseline): "
+              f"delta={report.direction.observed_delta:+.3f} "
+              f"p={report.direction.p_value:.4f} sig={report.direction.significant}")
+    else:
+        print("Direction: NOT MEASURED")
+    print(f"Trials where steered output == baseline output: "
+          f"{report.identical_to_baseline_trials}/{report.n_trials}")
     for cond, stats in affect_stats.items():
         print(f"  affect[{cond}]: +{stats['positive']} -{stats['negative']} ratio={stats['ratio']}")
     print()
     if report.passes_adversarial_control:
-        print("VERDICT: ✅ PASS — steering beats the rich adversarial prompt control.")
-    elif svt.significant:
-        print("VERDICT: ⚠️ PARTIAL — steering beats terse text but not the rich control.")
+        print("VERDICT: ✅ PASS — effect exceeds sampling noise, is specific to "
+              "these vectors and layers, beats the text controls, and moves the "
+              "intended direction.")
     else:
-        print("VERDICT: ❌ FAIL — steered outputs not distinguishable from text controls.")
+        print("VERDICT: ❌ NOT ESTABLISHED — unmet: "
+              + ", ".join(report.unmet_requirements()))
     print("=" * 72)
 
     results_data = {
