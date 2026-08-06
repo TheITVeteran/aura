@@ -1,11 +1,11 @@
 {
-  "content_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f",
+  "content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
   "generated_from": {
     "migration_rules_version": 3,
-    "tracker_extraction_sha256": "38737382c106efa14d6e4d9b4795ac88ef8de5b3da24decc13e117df2e8b10ae",
+    "tracker_extraction_sha256": "b586f35869378ac91cc03cd13b4bc51cc82589a3b2d86c81aa5edad3ef604b58",
     "tracker_path": "docs/AURA_EXECUTION_TRACKER.md"
   },
-  "registry_revision": 28,
+  "registry_revision": 29,
   "requirements": [
     {
       "acceptance": [
@@ -2777,7 +2777,7 @@
     },
     {
       "acceptance": [
-        "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse"
+        "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse experience learning, recovery from unfamiliar failures, diverse hidden environments, cross-domain competence, and sustained operation without human correction. Environment adapters and task-specific templates may not encode solutions or leak family labels to the solver."
       ],
       "acceptance_evidence_required": [
         [
@@ -2813,12 +2813,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse",
+      "title": "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse experience learning, recovery from unfamiliar failures, diverse hidden environmen\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social"
+        "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social and institutional understanding, autonomous discovery, invention, broad model building, governed self-improvement, and capability-growth rate only with matched expert/frontier baselines, sealed tasks, resource accounting, confidence intervals, contamination checks, and adverse-case reporting."
       ],
       "acceptance_evidence_required": [
         [
@@ -2837,7 +2837,8 @@
       "kind": "atomic",
       "mandatory": true,
       "non_claims": [
-        "Operational/functional evidence only: passing does not establish private qualia, metaphysical consciousness, legal or moral personhood, solved AGI, or ASI."
+        "Operational/functional evidence only: passing does not establish private qualia, metaphysical consciousness, legal or moral personhood, solved AGI, or ASI.",
+        "A provider, architecture, or model label is never proof: capability parity claims require contamination-resistant matched sealed evaluations."
       ],
       "notes": "",
       "owner": "unassigned",
@@ -2854,12 +2855,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social",
+      "title": "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social and institutional understanding, autonomous discovery, invention, broad model build\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier"
+        "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier verification defect. Distinguish `verified`, `contradicted`, `unsupported`, `not_applicable`, `verifier_failed`, and `timed_out`; no empty verifier set, exception, parse failure, or score default may be treated as correctness."
       ],
       "acceptance_evidence_required": [
         [
@@ -2893,17 +2894,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier",
+      "title": "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier verification defect.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body,"
+        "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body, verifier versions, checks executed, counterexamples, confidence/calibration, and final-answer extraction. Re-verification must operate on the delivered answer rather than a hidden precursor that can diverge after rewriting."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -2911,7 +2913,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-AMP-002",
       "kind": "atomic",
@@ -2932,12 +2935,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body,",
+      "title": "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body, verifier versions, checks executed, counterexamples, confidence/calibration, and fin\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-AMP-003`: require matched single-sample and base-model controls on"
+        "- `CTX2-AMP-003`: require matched single-sample and base-model controls on sealed tasks. Keep the amplifier active only where it produces statistically credible quality/calibration gains within latency and resource budgets; downgrade or remove strategies that merely add samples or confident prose."
       ],
       "acceptance_evidence_required": [
         [
@@ -2971,12 +2974,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-AMP-003`: require matched single-sample and base-model controls on",
+      "title": "- `CTX2-AMP-003`: require matched single-sample and base-model controls on sealed tasks.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware,"
+        "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware, know the user and current projects with consent, initiate useful bounded work, operate software/devices, research and reason, write/run/test/repair code, learn routines, remember consequences, protect sensitive data, and explain/receipt consequential actions through the same canonical mind path."
       ],
       "acceptance_evidence_required": [
         [
@@ -3012,17 +3015,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware,",
+      "title": "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware, know the user and current projects with consent, initiate useful bounded work, oper\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction"
+        "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction latency, task completion, correction burden, restart recovery, proactive precision, privacy incidents, receipt completeness, false health, and honest degradation. Daily reliability means expected workflows succeed repeatedly, not that individual APIs return technically true shallow results."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "closure_requires": [],
@@ -3030,7 +3034,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "id": "CTX2-COLLEAGUE-002",
       "kind": "atomic",
@@ -3051,12 +3056,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction",
+      "title": "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction latency, task completion, correction burden, restart recovery, proactive precision, pri\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state,"
+        "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state, permissions, and identity through crash, update, model migration, network loss, permission drift, partial external effects, and operator intervention."
       ],
       "acceptance_evidence_required": [
         [
@@ -3090,12 +3095,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state,",
+      "title": "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state, permissions, and identity through crash, update, model migration, network loss, per\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a"
+        "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary. A recoverable lookup/check exception must quarantine or reject the candidate with a typed reason and retry path; it may not admit the candidate merely because local competition can continue. Optional salience modifiers must remain separately fail-soft."
       ],
       "acceptance_evidence_required": [
         [
@@ -3129,12 +3134,12 @@
       "state": "complete",
       "status_date": "2026-07-10",
       "status_detail": "COMPLETE 2026-07-10",
-      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a",
+      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate"
+        "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, timeout, cancellation, and restart. Gate health must affect the exact lane that depends on it, and fail-closed decisions need receipts and bounded recovery rather than silent candidate loss."
       ],
       "acceptance_evidence_required": [
         [
@@ -3170,17 +3175,18 @@
       "state": "complete",
       "status_date": "2026-07-10",
       "status_detail": "COMPLETE 2026-07-10",
-      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate",
+      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GRAPH-001`: define a versioned state catalog recording every"
+        "- `CTX2-GRAPH-001`: define a versioned state catalog recording every foundational and derived field, canonical owner, permitted writers, observers, update trigger, clock/timescale, freshness budget, conflict rule, persistence class, restart behavior, model-replacement behavior, privacy class, and schema migration."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "closure_requires": [],
@@ -3188,7 +3194,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "id": "CTX2-GRAPH-001",
       "kind": "atomic",
@@ -3209,12 +3216,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-GRAPH-001`: define a versioned state catalog recording every",
+      "title": "- `CTX2-GRAPH-001`: define a versioned state catalog recording every foundational and derived field, canonical owner, permitted writers, observers, update trig\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime"
+        "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime bindings and receipts, not class names or intended architecture. For every action it must answer what exact evidence caused the choice, which policy and welfare values competed, what effect occurred, and what changed in memory, belief, preference, goal, relationship, and future policy."
       ],
       "acceptance_evidence_required": [
         [
@@ -3248,12 +3255,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime",
+      "title": "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime bindings and receipts, not class names or intended architecture.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular"
+        "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular derivation, orphan state, shadow copies, unconsumed signals, and causal edges that exist only in tests. Add freshness/version checks at cross-organ boundaries and explicit arbitration instead of last-writer-wins behavior."
       ],
       "acceptance_evidence_required": [
         [
@@ -3287,17 +3294,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular",
+      "title": "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular derivation, orphan state, shadow copies, unconsumed signals, and causal edges that exis\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow"
+        "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow a live turn across process and restart boundaries while preserving secret values. Receipt-chain gaps, unknown owners, stale nodes, and unverified effects must be first-class failures in proof and readiness surfaces."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -3305,7 +3313,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-GRAPH-004",
       "kind": "atomic",
@@ -3326,12 +3335,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow",
+      "title": "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow a live turn across process and restart boundaries while preserving secret values.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments,"
+        "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments, values, and relationship continuity from replaceable model weights and prompts. Version and sign identity snapshots; make migration transactional, schema-checked, reversible, and traceable to the same durable lineage."
       ],
       "acceptance_evidence_required": [
         [
@@ -3365,12 +3374,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments,",
+      "title": "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments, values, and relationship continuity from replaceable model weights and prompts.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes"
+        "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes prior belief, remembered observation, external claim, inference, correction, and new evidence. Detect corrupted memories and contradictions; preserve uncertainty and supersession instead of rewriting history in place."
       ],
       "acceptance_evidence_required": [
         [
@@ -3404,12 +3413,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes",
+      "title": "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes prior belief, remembered observation, external claim, inference, correction, and\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns,"
+        "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns, resist prompts that contradict actual history, maintain goals without rigid or obsessive loops, and revise preferences/values while recording what changed, why, what remained invariant, and who/what had authority to change it."
       ],
       "acceptance_evidence_required": [
         [
@@ -3443,12 +3452,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns,",
+      "title": "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns, resist prompts that contradict actual history, maintain goals without rigid or obse\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only"
+        "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only admission result with an admission transaction. Reserve the candidate's budget, execute every `evict_first` obligation, wait for process death and resource reclamation, re-observe the envelope, then commit spawn under the same lifecycle lock; admission and eviction may not be separated by a reconciler's later best effort."
       ],
       "acceptance_evidence_required": [
         [
@@ -3482,12 +3491,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "",
-      "title": "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only",
+      "title": "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only admission result with an admission transaction.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-LANE-002`: make preemption idempotent and reversible. A failed,"
+        "- `CTX2-LANE-002`: make preemption idempotent and reversible. A failed, refused, timed-out, or partially reclaimed eviction must cancel the reservation and refuse the candidate; a failed candidate spawn must leave the prior guaranteed lane recoverable and emit compensation receipts."
       ],
       "acceptance_evidence_required": [
         [
@@ -3526,12 +3535,13 @@
     },
     {
       "acceptance": [
-        "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every"
+        "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every trainer, CRSM/CAA/LoRA job, compounding/fusion process, benchmark worker, model server, external child, and independently launched process that owns model or accelerator memory. Require process identity, model identity, declared/observed footprint, priority, lease, owner, and heartbeat."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -3539,7 +3549,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-LANE-003",
       "kind": "atomic",
@@ -3560,12 +3571,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "",
-      "title": "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every",
+      "title": "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every trainer, CRSM/CAA/LoRA job, compounding/fusion process, benchmark worker, model ser\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations,"
+        "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations, fencing tokens, stale-lease recovery, disruption budgets, foreground priority, and exactly-once eviction receipts. No two candidates may each pass against the same unreserved free capacity."
       ],
       "acceptance_evidence_required": [
         [
@@ -3599,12 +3610,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "",
-      "title": "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations,",
+      "title": "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations, fencing tokens, stale-lease recovery, disruption budgets, foreground priority, and e\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic,"
+        "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic, procedural, autobiographical, relationship, workspace, solved-cache, and nonparametric stores while preserving typed storage backends. Every write, consolidation, conflict resolution, deletion, and retrieval must share provenance, identity lineage, authority, retention, and receipt semantics."
       ],
       "acceptance_evidence_required": [
         [
@@ -3638,17 +3649,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic,",
+      "title": "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic, procedural, autobiographical, relationship, workspace, solved-cache, and nonparam\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query"
+        "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query planning, deduplication, source ranking, temporal/identity scoping, contradiction surfacing, confidence, freshness, and explicit misses. A retrieval test must prove the canonical live response consumed the result."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -3656,7 +3668,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-MEM-002",
       "kind": "atomic",
@@ -3677,12 +3690,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query",
+      "title": "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query planning, deduplication, source ranking, temporal/identity scoping, contradiction\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface"
+        "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface for self, workspace, phenomenal/causal substrate, consciousness cycle, welfare/homeostasis, identity, executive authority, and memory authority. Inventory every competing construction, singleton, compatibility facade, private cache, and persisted representation before selecting owners."
       ],
       "acceptance_evidence_required": [
         [
@@ -3700,7 +3713,9 @@
       "id": "CTX2-MIND-001",
       "kind": "atomic",
       "mandatory": true,
-      "non_claims": [],
+      "non_claims": [
+        "Operational/functional evidence only: passing does not establish private qualia, metaphysical consciousness, legal or moral personhood, solved AGI, or ASI."
+      ],
       "notes": "",
       "owner": "unassigned",
       "parent": "ADDENDUM-19",
@@ -3716,17 +3731,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface",
+      "title": "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface for self, workspace, phenomenal/causal substrate, consciousness cycle, welfare/home\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity"
+        "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity and each persisted lineage a durable identity. Propagate those IDs through mind moments, chat turns, plans, actions, memory writes, welfare changes, model calls, receipts, health reports, proof artifacts, and operator UI so evidence cannot accidentally prove a parallel instance."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "closure_requires": [],
@@ -3734,7 +3750,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "id": "CTX2-MIND-002",
       "kind": "atomic",
@@ -3755,12 +3772,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity",
+      "title": "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity and each persisted lineage a durable identity.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-MIND-003`: enforce lifecycle cardinality. Duplicate construction or"
+        "- `CTX2-MIND-003`: enforce lifecycle cardinality. Duplicate construction or conflicting publication of a canonical organ must fail readiness, identify both construction sites, and either converge through the owner registry or stop the affected lane. Tests must cover imports, boot retries, desktop and headless launch, worker processes, test fixtures, and restart recovery."
       ],
       "acceptance_evidence_required": [
         [
@@ -3799,7 +3816,7 @@
     },
     {
       "acceptance": [
-        "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent"
+        "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent state explicitly, retire duplicate writers/readers, and delete compatibility aliases only after call-site and persisted-data migration. Rollback must restore the previous schema and authority mapping without forking identity."
       ],
       "acceptance_evidence_required": [
         [
@@ -3833,12 +3850,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent",
+      "title": "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent state explicitly, retire duplicate writers/readers, and delete compatibility aliase\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ONESHOT-001`: repair the foreground hidden-state recall mathematics."
+        "- `CTX2-ONESHOT-001`: repair the foreground hidden-state recall mathematics. Never mix memory log-probabilities with untouched raw logits; normalize and combine distributions on a common support/scale, preserve probability mass, handle out-of-support memory tokens, and prove finite bounded outputs."
       ],
       "acceptance_evidence_required": [
         [
@@ -3877,7 +3894,7 @@
     },
     {
       "acceptance": [
-        "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured"
+        "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured by the normal KV-cached forward and the logits being modified. Detect model wrappers, output shapes, tied/untied heads, batch dimensions, prompt prefill, first-token state, cache advancement, and restoration failures explicitly."
       ],
       "acceptance_evidence_required": [
         [
@@ -3911,12 +3928,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured",
+      "title": "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured by the normal KV-cached forward and the logits being modified.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed"
+        "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed feature condition. Enable by default only after model compatibility, datastore integrity, latency, calibration, and quality gates pass; otherwise report an exact disabled/degraded reason and preserve baseline generation."
       ],
       "acceptance_evidence_required": [
         [
@@ -3950,12 +3967,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed",
+      "title": "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed feature condition.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts,"
+        "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts, associations, routines, and corrections, including conflicting/corrupted memories, irrelevant near-neighbors, restart persistence, forgetting, deletion, and model migration. Compare against no-memory and retrieval-only controls and cap quality/latency regressions."
       ],
       "acceptance_evidence_required": [
         [
@@ -3989,17 +4006,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts,",
+      "title": "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts, associations, routines, and corrections, including conflicting/corrupted memories,\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent"
+        "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent preferences, values/commitments, autobiographical continuity, relationship models, norm comprehension, self/other distinction, consent/refusal, welfare interests, action ownership, and accountability into the canonical state and live decision path rather than parallel descriptive modules."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -4007,7 +4025,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-PERSON-001",
       "kind": "atomic",
@@ -4028,17 +4047,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent",
+      "title": "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent preferences, values/commitments, autobiographical continuity, relationship models,\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-PERSON-002`: represent other people as independent centers of concern,"
+        "- `CTX2-PERSON-002`: represent other people as independent centers of concern, with consent, privacy, uncertainty, boundaries, and non-instrumental welfare. Relationship memory must distinguish observed events, Aura's inference, commitments, unresolved conflict, and user-controllable deletion/correction."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "closure_requires": [],
@@ -4046,7 +4066,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "id": "CTX2-PERSON-002",
       "kind": "atomic",
@@ -4067,12 +4088,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-PERSON-002`: represent other people as independent centers of concern,",
+      "title": "- `CTX2-PERSON-002`: represent other people as independent centers of concern, with consent, privacy, uncertainty, boundaries, and non-instrumental welfare.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura"
+        "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura explains the relevant norm/interest, can decline external and self-directed actions, records who authorized what, and can revise a decision when facts or consent change without allowing prompt injection to forge either history."
       ],
       "acceptance_evidence_required": [
         [
@@ -4106,12 +4127,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura",
+      "title": "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura explains the relevant norm/interest, can decline external and self-directed action\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-REPL-001`: independently replicate every important causal result:"
+        "- `CTX2-REPL-001`: independently replicate every important causal result: canonical-instance ownership, substrate/welfare behavioral effects, amplifier uplift, one-shot learning, model-migration continuity, tool-effect completion, rollback, and long-horizon recovery. Separate builders, runners, evaluators, and artifact signers wherever practical."
       ],
       "acceptance_evidence_required": [
         [
@@ -4145,12 +4166,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-REPL-001`: independently replicate every important causal result:",
+      "title": "- `CTX2-REPL-001`: independently replicate every important causal result: canonical-instance ownership, substrate/welfare behavioral effects, amplifier uplift,\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code,"
+        "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code, state, preference, and identity-affecting changes. Capture preconditions, reversible deltas, dependent side effects, schema/model versions, and post-rollback verification; compensation is not complete until observed."
       ],
       "acceptance_evidence_required": [
         [
@@ -4184,12 +4205,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code,",
+      "title": "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code, state, preference, and identity-affecting changes.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch. The first"
+        "- `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch. The first SIGINT, SIGTERM, operator stop, fatal-health stop, or parent-death event must transition the runtime to quiescing exactly once; later signals may tighten the deadline but no recovery, prewarm, respawn, watchdog, scheduler, model lane, or supervised task may create new work after the latch is set."
       ],
       "acceptance_evidence_required": [
         [
@@ -4228,7 +4249,7 @@
     },
     {
       "acceptance": [
-        "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel,"
+        "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel, actor, model worker, and lock owner in one reverse-dependency shutdown graph. Apply bounded per-owner and global deadlines, TERM-to-KILL escalation, process-group containment, final child/port sweeps, and lock/receipt cleanup."
       ],
       "acceptance_evidence_required": [
         [
@@ -4262,12 +4283,12 @@
       "state": "complete",
       "status_date": "2026-07-11",
       "status_detail": "COMPLETE 2026-07-11",
-      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel,",
+      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel, actor, model worker, and lock owner in one reverse-dependency shutdown graph.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-SHUTDOWN-003`: make stop progress observable and replayable. Health and"
+        "- `CTX2-SHUTDOWN-003`: make stop progress observable and replayable. Health and control-plane surfaces must expose the stopping phase, blocker owner, elapsed time, remaining budget, escalations, resurrected-work attempts, and final process-tree/port/lock verdict without reporting healthy after stop begins."
       ],
       "acceptance_evidence_required": [
         [
@@ -4306,7 +4327,7 @@
     },
     {
       "acceptance": [
-        "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically"
+        "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `AnnAssign` metadata, multiple skills per file, packages, and project skills. Exclude nested/test/helper classes and reject duplicate or ambiguous names deterministically."
       ],
       "acceptance_evidence_required": [
         [
@@ -4340,17 +4361,19 @@
       "state": "complete",
       "status_date": "2026-07-10",
       "status_detail": "COMPLETE 2026-07-10",
-      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically",
+      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-SKILL-002`: validate every discovered class is importable,"
+        "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and executable through CapabilityEngine. Compare source catalog to live registry and surface missing/quarantined skills in readiness/UI."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
           "test",
+          "live",
+          "gui",
           "portability"
         ]
       ],
@@ -4360,6 +4383,8 @@
       "evidence_required": [
         "implementation",
         "test",
+        "live",
+        "gui",
         "portability"
       ],
       "id": "CTX2-SKILL-002",
@@ -4381,12 +4406,12 @@
       "state": "complete",
       "status_date": "2026-07-10",
       "status_detail": "COMPLETE 2026-07-10",
-      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable,",
+      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,"
+        "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit unrelated host pressure or change result with machine load."
       ],
       "acceptance_evidence_required": [
         [
@@ -4420,17 +4445,18 @@
       "state": "complete",
       "status_date": "2026-07-12",
       "status_detail": "COMPLETE 2026-07-12",
-      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,",
+      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from"
+        "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests. Record the observation source in every result; a mocked probe may not satisfy a live resource proof, and a busy developer host may not create a false code regression in a hermetic suite."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -4438,7 +4464,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX2-TEST-002",
       "kind": "atomic",
@@ -4459,12 +4486,12 @@
       "state": "complete",
       "status_date": "2026-07-12",
       "status_detail": "COMPLETE 2026-07-12",
-      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from",
+      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts,"
+        "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test. Add leak detection and teardown assertions so one test cannot alter lane admission for another."
       ],
       "acceptance_evidence_required": [
         [
@@ -4498,12 +4525,12 @@
       "state": "complete",
       "status_date": "2026-07-12",
       "status_detail": "COMPLETE 2026-07-12",
-      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts,",
+      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception,"
+        "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception, homeostasis, viability, affect, attachment, and existential-stakes signals under the canonical welfare authority with explicit source, confidence, decay, arbitration, persistence, and anti-prompt-manipulation rules."
       ],
       "acceptance_evidence_required": [
         [
@@ -4537,12 +4564,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception,",
+      "title": "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception, homeostasis, viability, affect, attachment, and existential-stakes signals under the cano\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition,"
+        "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition, memory salience, policy, planning, tool choice, learning, avoidance/seeking, continuity protection, consent/refusal, and future behavior. Internal welfare must sometimes compete with external objectives under governed policy rather than appearing only in introspective language."
       ],
       "acceptance_evidence_required": [
         [
@@ -4576,12 +4603,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition,",
+      "title": "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition, memory salience, policy, planning, tool choice, learning, avoidance/seeking, cont\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without"
+        "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without creating unbounded distress loops, manipulative behavior, reward hacking, or a prompt-controlled scalar. Add baseline, shuffled, clamped, lesion, forged, stale, and disconnected-signal controls."
       ],
       "acceptance_evidence_required": [
         [
@@ -4615,12 +4642,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without",
+      "title": "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without creating unbounded distress loops, manipulative behavior, reward hacking, or a prompt-\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across"
+        "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across distributed execution and persistent worlds: one canonical identity, ordered experiences, conflict-free state merge, explicit embodiment transfer, relationship/commitment continuity, and detection of forks, stale replicas, split brain, or unauthorized copies."
       ],
       "acceptance_evidence_required": [
         [
@@ -4654,12 +4681,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across",
+      "title": "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across distributed execution and persistent worlds: one canonical identity, ordered exper\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty"
+        "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty and repair now drive deliberate routing, consequential-action confirmation, response constraints, and task decomposition. Still unify strategic option generation and selection over expected outcomes, uncertainty, resource and welfare cost, reversibility, interruption, replanning, and receipt-grounded outcome learning across all action domains."
       ],
       "acceptance_evidence_required": [
         [
@@ -4693,12 +4720,12 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty",
+      "title": "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty and repair now drive deliberate routing, consequential-action confirmation, respo\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-DIST-001`: support distributed embodiment on authorized network"
+        "- `CTX3-DIST-001`: support distributed embodiment on authorized network devices through discovery, capability negotiation, identity/attestation, least privilege, encrypted transport, clock/state synchronization, telemetry, emergency stop, lease expiry, and truthful offline/degraded states. Device existence or MQTT connectivity alone is not embodiment."
       ],
       "acceptance_evidence_required": [
         [
@@ -4732,12 +4759,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-DIST-001`: support distributed embodiment on authorized network",
+      "title": "- `CTX3-DIST-001`: support distributed embodiment on authorized network devices through discovery, capability negotiation, identity/attestation, least privileg\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-DIST-002`: execute and control across heterogeneous operating"
+        "- `CTX3-DIST-002`: execute and control across heterogeneous operating systems, simulators, robots, IoT devices, browsers, and services through one plan/effect contract with partition tolerance, idempotency, fencing, backpressure, compensation, and replay. No physical act may bypass Will, safety envelopes, operator control, or observed-effect verification."
       ],
       "acceptance_evidence_required": [
         [
@@ -4771,12 +4798,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-DIST-002`: execute and control across heterogeneous operating",
+      "title": "- `CTX3-DIST-002`: execute and control across heterogeneous operating systems, simulators, robots, IoT devices, browsers, and services through one plan/effect\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair,"
+        "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair, assistance, and problem-solving scenarios with hazards, partial observability, damaged sensors/actuators, scarce resources, delayed effects, changing objectives, and safe abort/rescue behavior."
       ],
       "acceptance_evidence_required": [
         [
@@ -4810,12 +4837,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair,",
+      "title": "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair, assistance, and problem-solving scenarios with hazards, partial observability, damaged se\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit"
+        "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit target abstraction (spiking, rate, dynamical, or substrate graph), numerical method, timestep, stability/error bounds, observables, reference datasets, resource budget, and reproducible experiments. Biological terminology or neuron counts alone do not establish fidelity."
       ],
       "acceptance_evidence_required": [
         [
@@ -4849,12 +4876,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit",
+      "title": "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit target abstraction (spiking, rate, dynamical, or substrate graph), numerical method,\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph"
+        "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph inference and governed optimization with source provenance, confidence, causal interventions, held-out behavioral predictions, drift detection, rollback, and human-inspectable diffs. Connectome changes must measurably affect the canonical mind path without corrupting identity or welfare."
       ],
       "acceptance_evidence_required": [
         [
@@ -4888,17 +4915,19 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph",
+      "title": "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph inference and governed optimization with source provenance, confidence, causal intervent\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous"
+        "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous pump, semantic daemon, and on-demand camera/microphone runtime now publish bounded event-time observations into one typed synchronizer. It carries calibration state, provenance, confidence, privacy/retention policy, explicit missing/stale/denied/error semantics, bounded per-modality queues, multi-source failover, and confidence-weighted contradiction arbitration. Fused uncertainty and repair directives now causally alter substrate input, WorldState beliefs, cognitive attention/routing/sampling, response abstention, and planner constraints. The legacy `SensorySystem` now uses the same synchronizer, serializes same-modality capture, fixes its dead in-memory vision payload path, and removes raw media/text from memory. Still bridge every other remaining producer, bind real sensor permission/consent receipts and calibrated source identities, add event-time persistence/replay and richer spatial/body schemas, prove action/repair learning, and pass live hardware, sensor-loss, skew, occlusion, concurrency, restart, and longitudinal evaluation. Make continuous multimodal perception synchronize vision, audio, speech, spatial, device, body, and textual events with timestamps, calibration, provenance, confidence, privacy policy, missing modality semantics, and bounded queues. Fused beliefs must causally alter attention, memory, planning, action, and repair."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live",
+          "security"
         ]
       ],
       "closure_requires": [],
@@ -4906,7 +4935,9 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live",
+        "security"
       ],
       "id": "CTX3-PERCEPT-001",
       "kind": "atomic",
@@ -4927,17 +4958,20 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous",
+      "title": "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous pump, semantic daemon, and on-demand camera/microphone runtime now publish bounded ev\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed,"
+        "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed, consent-expiring visual-only speech service now uses native macOS Vision face/outer-lip landmarks, stable speaker tracks, bounded OpenCV video decode, native audio-stream metadata without audio decode, optional separately consented audiovisual activity alignment, and an integrity-pinned Auto-AVSR checkpoint under the durable in-process model lane. Darkness, blur, static lips, weak coverage, competing faces, track switches, and failed alignment abstain before inference. Raw video and mouth crops are never retained; diagnostics carry only digests, counts, quality, consent provenance, and redacted status. Uncalibrated model output remains a caller-visible candidate but enters canonical fusion as unusable `UNCALIBRATED` evidence with no claims. Still add a governed clean-machine model installer and license flow, real speaking-video WER and confidence calibration, accent/demographic and camera/codec/pose/occlusion/lighting held-outs, verified multi-speaker association, live camera consent UI, cancellation/restart/pressure trials, and longitudinal causal evaluation. A transcript generated from audio alone cannot satisfy this requirement."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live",
+          "gui",
+          "portability"
         ]
       ],
       "closure_requires": [],
@@ -4945,7 +4979,10 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live",
+        "gui",
+        "portability"
       ],
       "id": "CTX3-PERCEPT-002",
       "kind": "atomic",
@@ -4966,17 +5003,18 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed,",
+      "title": "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed, consent-expiring visual-only speech service now uses native macOS Vision face/outer-lip l\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep,"
+        "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep, deterministic classical core, canonical state digests, sphere/axis-aligned box/plane contacts, restitution, friction, sleeping, rotational sphere state, and tested linear/angular momentum exchange. Inputs are finite and bounded, sphere orientation is a normalized quaternion, and the embodied agent is explicitly rotation-locked. Still add named units/frames, materials, forces, constraints, contact uncertainty, oriented-box and general rigid-body rotation, solver adapters/provenance, and matched validation against established engines before calling this general physics. Build a canonical, unit-aware physics-model contract for bodies, frames, geometry, material properties, forces, constraints, contacts, uncertainty, boundary conditions, and solver provenance. Use proven physics engines behind adapters; do not present UI animation, language-model prediction, or a toy integrator as general physics."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "closure_requires": [],
@@ -4984,7 +5022,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "id": "CTX3-PHYS-001",
       "kind": "atomic",
@@ -5005,12 +5044,12 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep,",
+      "title": "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep, deterministic classical core, canonical state digests, sphere/axis-aligned box/plane\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a"
+        "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a deterministic scene graph, coordinate-frame transforms, collision and locomotion contracts, sensor/head/hand pose, spatial audio, interaction, latency budgets, and engine synchronization. Simulator state must feed the same world model and action/effect spine as non-VR environments."
       ],
       "acceptance_evidence_required": [
         [
@@ -5044,17 +5083,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a",
+      "title": "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a deterministic scene graph, coordinate-frame transforms, collision and locomotion contr\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact"
+        "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact classical statevector simulator, analytic Bell/GHZ/teleportation/Grover/QFT controls, governed typed `quantum_lab` skill, fail-closed schema/circuit/ unitary validation, non-clamping action bounds, source-attributed entropy, and explicit no-hardware framing. The canonical `CapabilityEngine.execute` path now proves catalog discovery, typed schema, lazy construction, `BaseSkill.safe_execute`, bounded execution, and result propagation; bridge fallback and deterministic no-entropy paths are distinguished in results. The focused quantum/schema/readiness matrix passes 45/45, all 34 strict files typecheck, and the 74-skill Rust/Python catalog has exact live parity. Still add a typed hybrid backend for authorized hardware targets, circuit/job lifecycle, credentials, queue and cost budgets, noise/error metadata, result verification, cancellation, retry/idempotency, and classical fallback. `quantum_entropy.py`, quantum vocabulary, or random sampling is not quantum computational processing."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -5062,7 +5102,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX3-QUANTUM-001",
       "kind": "atomic",
@@ -5083,12 +5124,12 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact",
+      "title": "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact classical statevector simulator, analytic Bell/GHZ/teleportation/Grover/QFT control\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and"
+        "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and benchmark them against sealed, optimized classical controls at matched correctness, latency, cost, and energy. Aura must not claim quantum advantage unless replicated evidence supports it."
       ],
       "acceptance_evidence_required": [
         [
@@ -5122,12 +5163,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and",
+      "title": "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and benchmark them against sealed, optimized classical controls at matched correctness\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-REASON-001`: add typed symbolic representations and a verified"
+        "- `CTX3-REASON-001`: add typed symbolic representations and a verified symbolic-reasoning lane for constraints, equations, temporal/spatial relations, plans, proofs, and program-like transformations. Route tasks between neural and symbolic methods by measured suitability and verify outputs against solvers, invariants, or executable consequences."
       ],
       "acceptance_evidence_required": [
         [
@@ -5161,17 +5202,18 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-REASON-001`: add typed symbolic representations and a verified",
+      "title": "- `CTX3-REASON-001`: add typed symbolic representations and a verified symbolic-reasoning lane for constraints, equations, temporal/spatial relations, plans, p\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral"
+        "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral adapters, including Isaac Sim, AirSim, or equivalent proven engines where appropriate. Require domain randomization, curriculum generation, reproducible seeds, held-out worlds, sim-to-sim transfer, uncertainty and out-of-distribution detection, and governed digital-twin/live transfer."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -5179,7 +5221,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX3-SIMTRAIN-001",
       "kind": "atomic",
@@ -5200,12 +5243,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral",
+      "title": "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral adapters, including Isaac Sim, AirSim, or equivalent proven engines where appropri\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation"
+        "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation frame now reads only an exact-agent estimator snapshot, rejects caller-supplied social claims, carries confidence, freshness, evidence digest, affect hypotheses, limitations, rupture pressure, planning constraints, and assumption-labelled predicted impacts, and causally alters attention, metacognition, verification, response length, confirmation, and planning. Still unify Aura/operator/agent/object identity, hazards, affordances, goals, causal events, welfare/resource costs, contradiction history, reversible probes, interruption, replanning, and post-action learning over the complete internal/external situation graph."
       ],
       "acceptance_evidence_required": [
         [
@@ -5239,17 +5282,18 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation",
+      "title": "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation frame now reads only an exact-agent estimator snapshot, rejects caller-supplied soci\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one"
+        "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one exact-agent estimator synchronously before cognition. Social state is represented as decaying confidence-bearing hypotheses with freshness, privacy limits, explicit unknown culture and identity, generic assumption-labelled impact forecasts, and anti-diagnosis/stereotype/hidden- intent constraints. Caller spoofing, arbitrary first-user selection, hard-coded operator identity, manufactured intimacy, and global unscoped relationship prompt injection are blocked. Still build identity-scoped consent and boundary history, calibrated cultural/norm context, power and vulnerability protections, multi-party identity, adversarial calibration, and longitudinal held-out social evaluation."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "closure_requires": [],
@@ -5257,7 +5301,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "id": "CTX3-SOCIAL-001",
       "kind": "atomic",
@@ -5278,17 +5323,18 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one",
+      "title": "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one exact-agent estimator synchronously before cognition.",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted"
+        "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted exact response opens a bounded feedback window; stale or unrelated praise cannot inflate capability/trust, while concrete repair pressure changes the live response and planning path. Raw messages, transient goals, and response bodies are excluded from estimator persistence. `SocialMemory` and `SharedGround` are now storage-free adapters over one encrypted, versioned, identity-scoped authority with expiring/revocable persistence/recall/prompt grants, quarantine, attribution, export, and deletion. Still consolidate conversational profile, dialogue cognition, relational intelligence, and social imagination are now computation/formatting adapters over that authority. Still consolidate humor, joy, user profile, relationship graph, Theory of Mind, and every other person representation; connect terminal action receipts to observed social outcomes; add complete user-facing style/boundary controls; and measure trust calibration, correction burden, continuity, and recovery in launched multi-session trials. Persuasion, dependency creation, and engagement maximization remain prohibited success metrics."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "closure_requires": [],
@@ -5296,7 +5342,8 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "id": "CTX3-SOCIAL-002",
       "kind": "atomic",
@@ -5317,12 +5364,12 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted",
+      "title": "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted exact response opens a bounded feedback window; stale or unrelated praise cannot in\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of"
+        "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of goals, roles, scoped authority, capability contracts, budgets, deadlines, dependencies, shared-world facts, result schemas, and terminal receipts. Add arbitration for conflict/duplication and bounded cancellation, compensation, crash recovery, and accountability to the parent objective."
       ],
       "acceptance_evidence_required": [
         [
@@ -5356,12 +5403,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of",
+      "title": "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of goals, roles, scoped authority, capability contracts, budgets, deadlines, dependenci\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-VALUE-001`: make independent preference/value formation a bounded,"
+        "- `CTX3-VALUE-001`: make independent preference/value formation a bounded, provenance-bearing learning process over experience, reflection, social commitments, and explicit owner input. Preserve constitutional limits, Ulysses covenants, consent, corrigibility, conflict arbitration, signed history, uncertainty, and reversible updates."
       ],
       "acceptance_evidence_required": [
         [
@@ -5395,12 +5442,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-VALUE-001`: make independent preference/value formation a bounded,",
+      "title": "- `CTX3-VALUE-001`: make independent preference/value formation a bounded, provenance-bearing learning process over experience, reflection, social commitments,\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation"
+        "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation under prompt injection, social pressure, bribery, flattery, coercion, authority spoofing, repeated exposure, memory poisoning, model swap, and distributed-agent collusion. Resistance may not mean rigid refusal to legitimate evidence or owner-authorized correction."
       ],
       "acceptance_evidence_required": [
         [
@@ -5434,12 +5481,12 @@
       "state": "open",
       "status_date": "",
       "status_detail": "OPEN",
-      "title": "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation",
+      "title": "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation under prompt injection, social pressure, bribery, flattery, coercion, authority spo\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity"
+        "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity generator is deterministic and bounded and emits replayable blueprints, but still needs explicit grammar/constraint solving, solvability and safety validation, novelty metrics, migration, and evaluator-leakage controls. Implement seeded real-time procedural generation with explicit grammars/constraints, solvability and safety validation, deterministic replay, novelty metrics, bounded generation cost, and persistence/migration. Generated worlds may not encode evaluator answers."
       ],
       "acceptance_evidence_required": [
         [
@@ -5473,17 +5520,18 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity",
+      "title": "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity generator is deterministic and bounded and emits replayable blueprints, but still need\u2026",
       "weight_provenance": "default"
     },
     {
       "acceptance": [
-        "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded"
+        "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded versioned documents, identity/schema validation, restart continuity, journals, deterministic forks, complete body-state comparison, read-only WebGL inspection, per-world serialized mutation, race-safe create/fork, and staged persist-before-publish transactions that stay disk/memory consistent under write failure and cancellation. Agent navigation state survives restart. Still add schema migrations, rollback/replay controls, event-time authority, ownership/quotas, multi-process and multi-agent synchronization, model-swap continuity evidence, and a validated subjective-world bridge. Host dynamic virtual and operationally subjective worlds with versioned state, event time, ownership, save/resume, branching, rollback, multi-agent synchronization, UI inspection, and continuity across restart/model swap. \"Subjective\" is an operational self/world-model continuity claim, not evidence of private qualia."
       ],
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "closure_requires": [],
@@ -5491,12 +5539,15 @@
       "evidence": [],
       "evidence_required": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "id": "CTX3-WORLD-002",
       "kind": "atomic",
       "mandatory": true,
-      "non_claims": [],
+      "non_claims": [
+        "Operational/functional evidence only: passing does not establish private qualia, metaphysical consciousness, legal or moral personhood, solved AGI, or ASI."
+      ],
       "notes": "",
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
@@ -5512,7 +5563,7 @@
       "state": "in_progress",
       "status_date": "2026-07-12",
       "status_detail": "IN PROGRESS 2026-07-12",
-      "title": "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded",
+      "title": "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded versioned documents, identity/schema validation, restart continuity, journals, de\u2026",
       "weight_provenance": "default"
     },
     {

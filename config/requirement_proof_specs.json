@@ -1,5 +1,5 @@
 {
-  "content_sha256": "f8ab063a236805edaee26043f7950408c87dbbb23b38aebac24035e51a84d047",
+  "content_sha256": "c6e8964cffa750d178a1d1994de4019f3ede65fbc7b27dba682651a6687bb9b7",
   "schema_version": 1,
   "specs": [
     {
@@ -19,6 +19,47 @@
       ],
       "cwd": ".",
       "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5",
+            "A6",
+            "A7"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "ADDENDUM-21"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-LANE-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-LANE-002"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-LANE-003"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "CTX2-LANE-004"
+        },
         {
           "acceptance_ids": [
             "A1"
@@ -52,6 +93,13 @@
       ],
       "cwd": ".",
       "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A7"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "ADDENDUM-21"
+        },
         {
           "acceptance_ids": [
             "A1"

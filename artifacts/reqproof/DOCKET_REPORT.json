@@ -628,15 +628,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "fcb437c30b66cae83782a529bf84a03d6b1d8e65927dd72fda80c5715dcb55de",
-    "registry_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f"
+    "evidence_ledger_sha256": "c7a1c59ccc1ae8f3d6470024c24d1b7c1ea05e1e8918f210c95e1a1adde8fb6c",
+    "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "068aef611a482c447babc1ea6a219fae1b393109bb6f473c6a5fbc73631fd53d",
+  "report_sha256": "30de42c11b9533c22840d0b4d6d94339afa1e08908452d9b04af47797e7039bd",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -911,14 +911,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty"
+      "title": "- `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty and repair now drive deliberate routing, consequential-action confirmation, respo\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 4,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-PERCEPT-001",
@@ -926,19 +926,21 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous"
+      "title": "- `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous pump, semantic daemon, and on-demand camera/microphone runtime now publish bounded ev\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 5,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-PERCEPT-002",
@@ -946,19 +948,22 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1",
+        "gui:A1",
+        "portability:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed,"
+      "title": "- `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed, consent-expiring visual-only speech service now uses native macOS Vision face/outer-lip l\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-PHYS-001",
@@ -966,19 +971,20 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "gui:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep,"
+      "title": "- `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep, deterministic classical core, canonical state digests, sphere/axis-aligned box/plane\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-QUANTUM-001",
@@ -986,12 +992,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact"
+      "title": "- `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact classical statevector simulator, analytic Bell/GHZ/teleportation/Grover/QFT control\u2026"
     },
     {
       "acceptance_units": 1,
@@ -1011,14 +1018,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation"
+      "title": "- `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation frame now reads only an exact-agent estimator snapshot, rejects caller-supplied soci\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-SOCIAL-001",
@@ -1026,19 +1033,20 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one"
+      "title": "- `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one exact-agent estimator synchronously before cognition."
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-SOCIAL-002",
@@ -1046,12 +1054,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted"
+      "title": "- `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted exact response opens a bounded feedback window; stale or unrelated praise cannot in\u2026"
     },
     {
       "acceptance_units": 1,
@@ -1071,14 +1080,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity"
+      "title": "- `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity generator is deterministic and bounded and emits replayable blueprints, but still need\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-WORLD-002",
@@ -1086,12 +1095,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "gui:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "in_progress",
-      "title": "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded"
+      "title": "- `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded versioned documents, identity/schema validation, restart continuity, journals, de\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2729,7 +2739,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-23",
       "state_claim": "complete",
-      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a"
+      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
     },
     {
       "acceptance_units": 1,
@@ -2749,7 +2759,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-23",
       "state_claim": "complete",
-      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate"
+      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2789,7 +2799,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-32",
       "state_claim": "complete",
-      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel,"
+      "title": "- `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel, actor, model worker, and lock owner in one reverse-dependency shutdown graph."
     },
     {
       "acceptance_units": 1,
@@ -2829,14 +2839,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-23",
       "state_claim": "complete",
-      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically"
+      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 3,
+      "evidence_cells_total": 5,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-SKILL-002",
@@ -2845,12 +2855,14 @@
       "missing_evidence_cells": [
         "implementation:A1",
         "test:A1",
+        "live:A1",
+        "gui:A1",
         "portability:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-23",
       "state_claim": "complete",
-      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable,"
+      "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2870,14 +2882,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-22",
       "state_claim": "complete",
-      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,"
+      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-TEST-002",
@@ -2885,12 +2897,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-22",
       "state_claim": "complete",
-      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from"
+      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests."
     },
     {
       "acceptance_units": 1,
@@ -2910,7 +2923,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-22",
       "state_claim": "complete",
-      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts,"
+      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
     },
     {
       "acceptance_units": 1,
@@ -2921,12 +2934,13 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 4,
-      "evidence_cells_verified": 2,
+      "evidence_cells_verified": 1,
       "family": "LANE",
       "id": "LANE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
+        "implementation:A1",
         "live:A1",
         "release:A1"
       ],
@@ -3960,7 +3974,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-31",
       "state_claim": "open",
-      "title": "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse"
+      "title": "- `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse experience learning, recovery from unfamiliar failures, diverse hidden environmen\u2026"
     },
     {
       "acceptance_units": 1,
@@ -3980,7 +3994,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-31",
       "state_claim": "open",
-      "title": "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social"
+      "title": "- `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social and institutional understanding, autonomous discovery, invention, broad model build\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4000,14 +4014,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-24",
       "state_claim": "open",
-      "title": "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier"
+      "title": "- `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier verification defect."
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-AMP-002",
@@ -4015,12 +4029,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-24",
       "state_claim": "open",
-      "title": "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body,"
+      "title": "- `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body, verifier versions, checks executed, counterexamples, confidence/calibration, and fin\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4040,7 +4055,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-24",
       "state_claim": "open",
-      "title": "- `CTX2-AMP-003`: require matched single-sample and base-model controls on"
+      "title": "- `CTX2-AMP-003`: require matched single-sample and base-model controls on sealed tasks."
     },
     {
       "acceptance_units": 1,
@@ -4061,14 +4076,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-30",
       "state_claim": "open",
-      "title": "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware,"
+      "title": "- `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware, know the user and current projects with consent, initiate useful bounded work, oper\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-COLLEAGUE-002",
@@ -4076,12 +4091,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-30",
       "state_claim": "open",
-      "title": "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction"
+      "title": "- `CTX2-COLLEAGUE-002`: define service-level objectives for interaction latency, task completion, correction burden, restart recovery, proactive precision, pri\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4101,14 +4117,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-30",
       "state_claim": "open",
-      "title": "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state,"
+      "title": "- `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state, permissions, and identity through crash, update, model migration, network loss, per\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-GRAPH-001",
@@ -4116,12 +4132,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-20",
       "state_claim": "open",
-      "title": "- `CTX2-GRAPH-001`: define a versioned state catalog recording every"
+      "title": "- `CTX2-GRAPH-001`: define a versioned state catalog recording every foundational and derived field, canonical owner, permitted writers, observers, update trig\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4141,7 +4158,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-20",
       "state_claim": "open",
-      "title": "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime"
+      "title": "- `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime bindings and receipts, not class names or intended architecture."
     },
     {
       "acceptance_units": 1,
@@ -4161,14 +4178,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-20",
       "state_claim": "open",
-      "title": "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular"
+      "title": "- `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular derivation, orphan state, shadow copies, unconsumed signals, and causal edges that exis\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-GRAPH-004",
@@ -4176,12 +4193,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-20",
       "state_claim": "open",
-      "title": "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow"
+      "title": "- `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow a live turn across process and restart boundaries while preserving secret values."
     },
     {
       "acceptance_units": 1,
@@ -4201,7 +4219,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-28",
       "state_claim": "open",
-      "title": "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments,"
+      "title": "- `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments, values, and relationship continuity from replaceable model weights and prompts."
     },
     {
       "acceptance_units": 1,
@@ -4221,7 +4239,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-28",
       "state_claim": "open",
-      "title": "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes"
+      "title": "- `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes prior belief, remembered observation, external claim, inference, correction, and\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4241,7 +4259,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-28",
       "state_claim": "open",
-      "title": "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns,"
+      "title": "- `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns, resist prompts that contradict actual history, maintain goals without rigid or obse\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4261,7 +4279,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
-      "title": "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only"
+      "title": "- `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only admission result with an admission transaction."
     },
     {
       "acceptance_units": 1,
@@ -4288,7 +4306,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-LANE-003",
@@ -4296,12 +4314,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
-      "title": "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every"
+      "title": "- `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every trainer, CRSM/CAA/LoRA job, compounding/fusion process, benchmark worker, model ser\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4321,7 +4340,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
-      "title": "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations,"
+      "title": "- `CTX2-LANE-004`: handle concurrent admissions with durable reservations, fencing tokens, stale-lease recovery, disruption budgets, foreground priority, and e\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4341,14 +4360,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-26",
       "state_claim": "open",
-      "title": "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic,"
+      "title": "- `CTX2-MEM-001`: establish one write/read authority over episodic, semantic, procedural, autobiographical, relationship, workspace, solved-cache, and nonparam\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-MEM-002",
@@ -4356,12 +4375,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-26",
       "state_claim": "open",
-      "title": "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query"
+      "title": "- `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query planning, deduplication, source ranking, temporal/identity scoping, contradiction\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4381,14 +4401,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-19",
       "state_claim": "open",
-      "title": "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface"
+      "title": "- `CTX2-MIND-001`: name one authoritative runtime owner and typed interface for self, workspace, phenomenal/causal substrate, consciousness cycle, welfare/home\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-MIND-002",
@@ -4396,12 +4416,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "gui:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-19",
       "state_claim": "open",
-      "title": "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity"
+      "title": "- `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity and each persisted lineage a durable identity."
     },
     {
       "acceptance_units": 1,
@@ -4441,7 +4462,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-19",
       "state_claim": "open",
-      "title": "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent"
+      "title": "- `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent state explicitly, retire duplicate writers/readers, and delete compatibility aliase\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4481,7 +4502,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-25",
       "state_claim": "open",
-      "title": "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured"
+      "title": "- `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured by the normal KV-cached forward and the logits being modified."
     },
     {
       "acceptance_units": 1,
@@ -4501,7 +4522,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-25",
       "state_claim": "open",
-      "title": "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed"
+      "title": "- `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed feature condition."
     },
     {
       "acceptance_units": 1,
@@ -4521,14 +4542,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-25",
       "state_claim": "open",
-      "title": "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts,"
+      "title": "- `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts, associations, routines, and corrections, including conflicting/corrupted memories,\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-PERSON-001",
@@ -4536,19 +4557,20 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-27",
       "state_claim": "open",
-      "title": "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent"
+      "title": "- `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent preferences, values/commitments, autobiographical continuity, relationship models,\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX2",
       "id": "CTX2-PERSON-002",
@@ -4556,12 +4578,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "security:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-27",
       "state_claim": "open",
-      "title": "- `CTX2-PERSON-002`: represent other people as independent centers of concern,"
+      "title": "- `CTX2-PERSON-002`: represent other people as independent centers of concern, with consent, privacy, uncertainty, boundaries, and non-instrumental welfare."
     },
     {
       "acceptance_units": 1,
@@ -4581,7 +4604,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-27",
       "state_claim": "open",
-      "title": "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura"
+      "title": "- `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura explains the relevant norm/interest, can decline external and self-directed action\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4601,7 +4624,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-31",
       "state_claim": "open",
-      "title": "- `CTX2-REPL-001`: independently replicate every important causal result:"
+      "title": "- `CTX2-REPL-001`: independently replicate every important causal result: canonical-instance ownership, substrate/welfare behavioral effects, amplifier uplift,\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4621,7 +4644,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-26",
       "state_claim": "open",
-      "title": "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code,"
+      "title": "- `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code, state, preference, and identity-affecting changes."
     },
     {
       "acceptance_units": 1,
@@ -4641,7 +4664,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-29",
       "state_claim": "open",
-      "title": "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception,"
+      "title": "- `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception, homeostasis, viability, affect, attachment, and existential-stakes signals under the cano\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4661,7 +4684,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-29",
       "state_claim": "open",
-      "title": "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition,"
+      "title": "- `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition, memory salience, policy, planning, tool choice, learning, avoidance/seeking, cont\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4681,7 +4704,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-29",
       "state_claim": "open",
-      "title": "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without"
+      "title": "- `CTX2-WELFARE-003`: test longitudinal persistence and recovery without creating unbounded distress loops, manipulative behavior, reward hacking, or a prompt-\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4701,7 +4724,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across"
+      "title": "- `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across distributed execution and persistent worlds: one canonical identity, ordered exper\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4721,7 +4744,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-DIST-001`: support distributed embodiment on authorized network"
+      "title": "- `CTX3-DIST-001`: support distributed embodiment on authorized network devices through discovery, capability negotiation, identity/attestation, least privileg\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4741,7 +4764,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-DIST-002`: execute and control across heterogeneous operating"
+      "title": "- `CTX3-DIST-002`: execute and control across heterogeneous operating systems, simulators, robots, IoT devices, browsers, and services through one plan/effect\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4761,7 +4784,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair,"
+      "title": "- `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair, assistance, and problem-solving scenarios with hazards, partial observability, damaged se\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4781,7 +4804,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit"
+      "title": "- `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit target abstraction (spiking, rate, dynamical, or substrate graph), numerical method,\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4801,7 +4824,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph"
+      "title": "- `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph inference and governed optimization with source provenance, confidence, causal intervent\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4821,7 +4844,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a"
+      "title": "- `CTX3-PHYS-002`: support full spatial/VR environment physics through a deterministic scene graph, coordinate-frame transforms, collision and locomotion contr\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4841,7 +4864,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and"
+      "title": "- `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and benchmark them against sealed, optimized classical controls at matched correctness\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4861,14 +4884,14 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-REASON-001`: add typed symbolic representations and a verified"
+      "title": "- `CTX3-REASON-001`: add typed symbolic representations and a verified symbolic-reasoning lane for constraints, equations, temporal/spatial relations, plans, p\u2026"
     },
     {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
-      "evidence_cells_total": 2,
+      "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
       "family": "CTX3",
       "id": "CTX3-SIMTRAIN-001",
@@ -4876,12 +4899,13 @@
       "mandatory": true,
       "missing_evidence_cells": [
         "implementation:A1",
-        "test:A1"
+        "test:A1",
+        "live:A1"
       ],
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral"
+      "title": "- `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral adapters, including Isaac Sim, AirSim, or equivalent proven engines where appropri\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4901,7 +4925,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of"
+      "title": "- `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of goals, roles, scoped authority, capability contracts, budgets, deadlines, dependenci\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4921,7 +4945,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-VALUE-001`: make independent preference/value formation a bounded,"
+      "title": "- `CTX3-VALUE-001`: make independent preference/value formation a bounded, provenance-bearing learning process over experience, reflection, social commitments,\u2026"
     },
     {
       "acceptance_units": 1,
@@ -4941,7 +4965,7 @@
       "owner": "unassigned",
       "parent": "ADDENDUM-33",
       "state_claim": "open",
-      "title": "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation"
+      "title": "- `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation under prompt injection, social pressure, bribery, flattery, coercion, authority spo\u2026"
     },
     {
       "acceptance_units": 1,

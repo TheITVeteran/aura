@@ -10,14 +10,14 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "0.14",
+    "machine_certified_percent": "0.06",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 14
+    "verified_basis_points": 6
   },
   "evidence_classes": [
     {
       "cells_total": 505,
-      "cells_verified": 1,
+      "cells_verified": 0,
       "evidence_class": "implementation",
       "weight": 2
     },
@@ -28,25 +28,25 @@
       "weight": 2
     },
     {
-      "cells_total": 109,
+      "cells_total": 121,
       "cells_verified": 0,
       "evidence_class": "live",
       "weight": 3
     },
     {
-      "cells_total": 31,
+      "cells_total": 36,
       "cells_verified": 0,
       "evidence_class": "gui",
       "weight": 3
     },
     {
-      "cells_total": 40,
+      "cells_total": 45,
       "cells_verified": 0,
       "evidence_class": "security",
       "weight": 4
     },
     {
-      "cells_total": 16,
+      "cells_total": 17,
       "cells_verified": 0,
       "evidence_class": "portability",
       "weight": 4
@@ -69,16 +69,16 @@
     "confidence": "low",
     "conservative_weighted_points_per_checkpoint": 10,
     "optimistic_weighted_points_per_checkpoint": 30,
-    "remaining_checkpoint_records_high": 278,
-    "remaining_checkpoint_records_low": 93,
-    "total_checkpoint_records_high": 687,
-    "total_checkpoint_records_low": 502
+    "remaining_checkpoint_records_high": 286,
+    "remaining_checkpoint_records_low": 96,
+    "total_checkpoint_records_high": 695,
+    "total_checkpoint_records_low": 505
   },
   "inputs": {
-    "evidence_ledger_sha256": "fcb437c30b66cae83782a529bf84a03d6b1d8e65927dd72fda80c5715dcb55de",
+    "evidence_ledger_sha256": "c7a1c59ccc1ae8f3d6470024c24d1b7c1ea05e1e8918f210c95e1a1adde8fb6c",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f",
-    "scope_baseline_sha256": "41eeda02fe01d345b1dbf0a8206a4833cfe90db4e1d3e1a2258689a01afe2777"
+    "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
+    "scope_baseline_sha256": "4f9b736b41d16d657bf213871e6f3768bbd05dfb8e91f331269cdc075792b7cc"
   },
   "non_claims": [
     "The 27 percent engineering estimate is not machine-certified and cannot release Aura.",
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "0bfc4a8285b5a5f107a57a8f284881bd629badface98aea89ef9fae44bae5254",
+  "report_sha256": "336be4dc23e9cec0fd263020a83abd47ce227a301d498d28aaf0027b41999727",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -1725,21 +1725,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-AMP-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -1790,21 +1792,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-COLLEAGUE-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -1874,21 +1878,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-GRAPH-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -1937,21 +1943,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-GRAPH-004",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2063,21 +2071,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2126,21 +2136,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-MEM-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2168,21 +2180,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-MIND-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2315,42 +2329,46 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-PERSON-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-PERSON-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2505,22 +2523,26 @@
         [
           "implementation",
           "test",
+          "live",
+          "gui",
           "portability"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 3,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "CTX2-SKILL-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
+        "live",
+        "gui",
         "portability"
       ],
       "state_claim": "complete",
       "weight_provenance": "default",
-      "weighted_points_total": "8.00",
+      "weighted_points_total": "14.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2548,21 +2570,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX2-TEST-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "complete",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2800,63 +2824,75 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 4,
       "cells_verified": 0,
       "id": "CTX3-PERCEPT-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live",
+        "security"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "11.00",
       "weighted_points_verified": "0.00"
     },
     {
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live",
+          "gui",
+          "portability"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "CTX3-PERCEPT-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live",
+        "gui",
+        "portability"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "14.00",
       "weighted_points_verified": "0.00"
     },
     {
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-PHYS-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2884,21 +2920,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-QUANTUM-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2947,21 +2985,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-SIMTRAIN-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -2989,42 +3029,46 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "security"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-SOCIAL-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "security"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "live"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-SOCIAL-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -3115,21 +3159,23 @@
       "acceptance_evidence_required": [
         [
           "implementation",
-          "test"
+          "test",
+          "gui"
         ]
       ],
       "acceptance_units": 1,
-      "cells_total": 2,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "CTX3-WORLD-002",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test"
+        "test",
+        "gui"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "4.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
@@ -4014,7 +4060,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 4,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "LANE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -4026,7 +4072,7 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -7649,14 +7695,14 @@
   ],
   "schema_version": 1,
   "scope": {
-    "acceptance_evidence_cells_total": 1236,
-    "acceptance_evidence_cells_verified": 2,
+    "acceptance_evidence_cells_total": 1259,
+    "acceptance_evidence_cells_verified": 1,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 301,
     "requirements_total": 302,
-    "scope_baseline_cells": 1236,
-    "weighted_points_remaining": "2780.00",
-    "weighted_points_total": "2784.00",
-    "weighted_points_verified": "4.00"
+    "scope_baseline_cells": 1259,
+    "weighted_points_remaining": "2857.00",
+    "weighted_points_total": "2859.00",
+    "weighted_points_verified": "2.00"
   }
 }

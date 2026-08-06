@@ -26,15 +26,15 @@
 | `CHECKPOINT-001` | `in_progress` | 2 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
-| `CTX3-PERCEPT-001` | `in_progress` | 2 | none |
-| `CTX3-PERCEPT-002` | `in_progress` | 2 | none |
-| `CTX3-PHYS-001` | `in_progress` | 2 | none |
-| `CTX3-QUANTUM-001` | `in_progress` | 2 | none |
+| `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
+| `CTX3-PERCEPT-002` | `in_progress` | 5 | none |
+| `CTX3-PHYS-001` | `in_progress` | 3 | none |
+| `CTX3-QUANTUM-001` | `in_progress` | 3 | none |
 | `CTX3-SITUATION-001` | `in_progress` | 2 | none |
-| `CTX3-SOCIAL-001` | `in_progress` | 2 | none |
-| `CTX3-SOCIAL-002` | `in_progress` | 2 | none |
+| `CTX3-SOCIAL-001` | `in_progress` | 3 | none |
+| `CTX3-SOCIAL-002` | `in_progress` | 3 | none |
 | `CTX3-WORLD-001` | `in_progress` | 2 | none |
-| `CTX3-WORLD-002` | `in_progress` | 2 | none |
+| `CTX3-WORLD-002` | `in_progress` | 3 | none |
 | `DESKTOP-001` | `in_progress` | 2 | none |
 | `DESKTOP-ACCESS-001` | `in_progress` | 3 | DESKTOP-001, FAULT-001, RUNTIME-001 |
 | `DISTRIBUTED-001` | `in_progress` | 2 | none |
@@ -123,4 +123,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `068aef611a482c447babc1ea6a219fae1b393109bb6f473c6a5fbc73631fd53d`
+Report SHA-256: `30de42c11b9533c22840d0b4d6d94339afa1e08908452d9b04af47797e7039bd`

@@ -163,6 +163,28 @@ class TestDeterminismAndStaleness:
 
 
 class TestMigrationSemantics:
+    def test_nested_units_capture_wrapped_burden_and_stop_at_peer_bullet(self, tmp_path):
+        content = mini_tracker().replace(
+            "   - `CTX9-UNIT-001`: do the nested unit work.",
+            "   - `CTX9-UNIT-001`: do the nested unit work.\n"
+            "     Preserve the continuation and its acceptance detail.\n"
+            "   - Closure proof: this belongs only to the parent.",
+        )
+        path = tmp_path / "t.md"
+        path.write_text(content, encoding="utf-8")
+        extraction = parse_tracker(path)
+        unit = next(
+            unit
+            for item in extraction.items
+            for unit in item.nested
+            if unit.unit_id == "CTX9-UNIT-001"
+        )
+        assert unit.text.endswith("continuation and its acceptance detail.")
+        assert "Closure proof" not in unit.text
+
+        requirement = build_registry(extraction, allowlist={}).by_id()["CTX9-UNIT-001"]
+        assert requirement.acceptance == (unit.text,)
+
     def test_modalities_are_derived_per_acceptance_not_cross_multiplied(self):
         assert derive_acceptance_evidence_required(
             (

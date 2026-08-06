@@ -265,6 +265,33 @@ def _parse_item_status(trailing: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _parse_nested_units(body_lines: list[str], *, first_body_line: int) -> list[NestedUnit]:
+    """Parse ID-bearing bullets with every indented continuation line."""
+    nested: list[NestedUnit] = []
+    for offset, body_line in enumerate(body_lines):
+        nested_match = NESTED_ID_RE.match(body_line)
+        if nested_match is None:
+            continue
+        bullet_indent = len(body_line) - len(body_line.lstrip())
+        text_lines = [body_line.strip()]
+        for continuation in body_lines[offset + 1 :]:
+            if not continuation.strip():
+                break
+            continuation_indent = len(continuation) - len(continuation.lstrip())
+            if continuation_indent <= bullet_indent:
+                break
+            text_lines.append(continuation.strip())
+        nested.append(
+            NestedUnit(
+                unit_id=nested_match.group(1),
+                status_raw=(nested_match.group(2) or "").strip(),
+                text=" ".join(text_lines),
+                line=first_body_line + offset,
+            )
+        )
+    return nested
+
+
 def _parse_numbered_lists(
     lines: list[str], start: int, end: int, region: str
 ) -> list[NumberedItem]:
@@ -312,18 +339,7 @@ def _parse_numbered_lists(
                     f"expected {expected}, found {number}"
                 )
         body = "\n".join(body_lines).rstrip()
-        nested: list[NestedUnit] = []
-        for offset, body_line in enumerate(body_lines):
-            nested_match = NESTED_ID_RE.match(body_line)
-            if nested_match:
-                nested.append(
-                    NestedUnit(
-                        unit_id=nested_match.group(1),
-                        status_raw=(nested_match.group(2) or "").strip(),
-                        text=body_line.strip(),
-                        line=line_no + 1 + offset,
-                    )
-                )
+        nested = _parse_nested_units(body_lines, first_body_line=line_no + 1)
         items.append(
             NumberedItem(
                 list_key=list_keys[list_index],
