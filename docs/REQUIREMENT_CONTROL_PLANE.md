@@ -12,11 +12,13 @@ document is the operating manual. The exact remaining-work contract lives in
 |---|---|
 | `config/requirement_registry.json` | The requirement denominator: 302 requirements generated deterministically from the tracker's normative extraction. Tamper-evident (content hash), never hand-edited. |
 | `config/requirement_coverage_map.json` | 137 hash-pinned passage→requirement mappings covering every non-blank line of all four source corpora. |
+| `config/requirement_proof_specs.json` | Content-hashed, reviewable argv-only proof specifications. Each spec names exact source files and acceptance/evidence cells; shell and inline-code commands are rejected. |
 | `config/requirement_sources/` | Verbatim snapshots of the four authoritative corpora, provenance-hashed in `MANIFEST.json`. |
 | `config/reqproof_defect_baseline.json` | Shrink-only fingerprint ratchet pinning pre-existing tracker debt (58 at seed). |
 | `config/reqproof_prose_token_allowlist.json` | Reviewed ID-like tokens that are deliberately not requirements (FMEA keys, defect-class names). |
 | `artifacts/reqproof/GATE_REPORT.json` | Deterministic gate report (no timestamps; byte-identical for identical state). |
 | `artifacts/reqproof/DOCKET_REPORT.json` | Deterministic current docket joining every requirement to verified evidence, direct dependency blockers, closure blockers, and missing acceptance/evidence cells. |
+| `artifacts/reqproof/evidence/<proof-id>/<source-commit>.json` | Immutable command receipts captured only from a clean checkout whose `HEAD` exactly equals pushed `origin/main`. |
 | `docs/AURA_REMAINING_DOCKET.md` | Human-readable generated view of active work and historical completion claims that still need evidence. |
 
 ## Commands
@@ -25,6 +27,7 @@ document is the operating manual. The exact remaining-work contract lives in
 make reqproof-gate       # structural gate — required green at every commit
 make reqproof-release    # release gate — blocks until zero open mandatory scope
 make reqproof-docket     # regenerate the current dependency-aware docket
+make reqproof-capture SPEC=<checked-proof-id>  # run and record one checked proof
 python tools/reqproof/migrate.py --write     # regenerate registry from tracker
 python tools/reqproof/gate.py --refresh-baseline  # shrink-only ratchet refresh
 ```
@@ -56,6 +59,14 @@ The structural gate also runs inside `tools/release_preflight.py` as
    completion percentage until the evidence-weighted progress engine exists
    (Session 2); the tracker's manual estimate is explicitly superseded by
    `summary.mandatory_not_closed` (281 at seed) as the honest denominator.
+6. **Proof capture is source-bound**: `tools/reqproof/capture.py` rejects a
+   dirty checkout, a local commit not equal to `origin/main`, shell/inline-code
+   specifications, undeclared accelerator use, timeouts, non-zero exits,
+   oversized output, source mutation, and invalid acceptance cells. It records
+   the complete output and a source-file hash manifest. Failed capture leaves
+   neither a receipt nor a ledger entry. The capture tool/spec must therefore
+   be pushed first; evidence generated from that clean commit lands in a
+   subsequent checkpoint.
 
 ## Defect taxonomy
 
@@ -89,3 +100,7 @@ closures. Draining this baseline is tracked work, not background noise.
 * The progress report inventories checkpoint history and produces an explicitly
   provisional forecast. The docket provides the canonical current work view;
   neither replaces acceptance-granular evidence or the release gate.
+* A command receipt proves only the evidence cells named by its checked spec.
+  A passing unit/contract suite is not live, release, soak, portability, or
+  implementation evidence unless an independent checked proof establishes that
+  distinct class.

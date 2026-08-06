@@ -37023,3 +37023,34 @@ agency, coding, IIT, capability-depth, portability, release, semantic-review,
 or final-soak obligations. The resident campaign and CP810 empirical work
 remain open, and the 809/920 checkpoint envelope is retained only as its
 historical program counter rather than an Aura 1.0 percentage.
+
+#### Acceptance-proof capture continuation
+
+The reconciled docket exposed a second control-plane gap: the evidence ledger
+could verify artifacts but there was no governed producer that made a passing
+command into a source-bound acceptance receipt. That encouraged either a
+permanent zero ledger or manual backfill whose execution conditions could not
+be reconstructed.
+
+`tools/reqproof/capture.py` now accepts only content-hashed specifications from
+`config/requirement_proof_specs.json`. It requires a clean checkout whose
+`HEAD` exactly equals pushed `origin/main`, invokes an argv vector without a
+shell through the canonical subprocess gateway, declares no accelerator
+ownership, sanitizes inherited Aura/test state, uses an isolated log root and
+bounded timeout, captures complete bounded output, verifies source did not
+change during execution, and emits an immutable receipt named by proof ID and
+source commit. Each receipt includes the exact command, source-file hashes,
+spec hash, environment policy, output hashes, explicit evidence targets, and
+non-claims. A failed command, timeout, oversized output, dirty tree, unpushed
+source, or invalid acceptance cell records no evidence; ledger update failure
+removes the new receipt.
+
+The first checked specification is deliberately narrow: the model-lane
+contract family may satisfy only the `LANE-001` `test[A1]` cell. It does not
+infer implementation, live, release, or soak evidence from test names or
+historical tracker prose. The producer and specification must be committed and
+pushed before that proof can run, so the first real receipt and ledger entry
+belong to a separate subsequent checkpoint. The rest of the 302-requirement
+docket, historical evidence review, source-freshness policy, CP810, resident
+training, independent four-arm certificate, full semantic review, release
+gates, and deferred soaks remain open.
