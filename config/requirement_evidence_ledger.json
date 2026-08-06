@@ -1,5 +1,5 @@
 {
-  "content_sha256": "7e481372bf420171f8552598ad7495da5e9ad3a47e0ec4cc82c93052bd93e813",
+  "content_sha256": "fcc16e51f6f2f8af5300d24d7a029f301a0e3ed801c1ac5c2403a7da32052652",
   "entries": [
     {
       "acceptance_ids": [
@@ -432,6 +432,17 @@
       "ref": "artifacts/reqproof/evidence/production-surface-ownership-audit/9ec4ff4689b2e45719bafbafb659ee0c6fae4fbe.json",
       "requirement_id": "STORAGE-GATEWAY-001",
       "sha256": "0520b017d836706383905c7a4dbab517b1c45dff572a20c72f2cf48337cd0cad"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "5255a20ab522804f595bb2d73f30d1258eee99e3",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/production-surface-ownership-contract-tests/5255a20ab522804f595bb2d73f30d1258eee99e3.json",
+      "requirement_id": "STORAGE-GATEWAY-001",
+      "sha256": "22d7fe6c49776b2d970b7a7bb38836fd62e4838d07ab611c1d7816b1f7e1e067"
     }
   ],
   "registry_content_sha256": "e56739c31e40a892d787fe4989fa224c142a07605df18ebc608cfbbef3fb568e",
