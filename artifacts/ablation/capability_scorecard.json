@@ -1,0 +1,164 @@
+{
+  "attempts": {
+    "conditions": {
+      "full_architecture": {
+        "attempts": 40,
+        "clean_success_rate": 1.0,
+        "condition": "full_architecture",
+        "fell_back": 0,
+        "lanes": [
+          "full_architecture"
+        ],
+        "needed_human": 0,
+        "outcomes": {
+          "success": 40
+        },
+        "success_rate": 1.0,
+        "total_retries": 0
+      },
+      "long_context": {
+        "attempts": 40,
+        "clean_success_rate": 0.0,
+        "condition": "long_context",
+        "fell_back": 0,
+        "lanes": [
+          "long_context"
+        ],
+        "needed_human": 0,
+        "outcomes": {
+          "failure": 40
+        },
+        "success_rate": 0.0,
+        "total_retries": 0
+      },
+      "stateless": {
+        "attempts": 40,
+        "clean_success_rate": 0.0,
+        "condition": "stateless",
+        "fell_back": 0,
+        "lanes": [
+          "stateless"
+        ],
+        "needed_human": 0,
+        "outcomes": {
+          "failure": 40
+        },
+        "success_rate": 0.0,
+        "total_retries": 0
+      }
+    },
+    "schema": "aura.attempt_ledger.v1",
+    "total_attempts": 120
+  },
+  "budget_parity": {
+    "conditions": [
+      "stateless",
+      "long_context",
+      "full_architecture"
+    ],
+    "declared_varied": [
+      "memory_available"
+    ],
+    "matched": true,
+    "schema": "aura.budget_parity.v1",
+    "violations": []
+  },
+  "caveat": "STUB RESPONDER. This run exercises the harness \u2014 that the arms see different information and that the refusals fire. It says nothing whatsoever about Aura and must not be cited as if it did.",
+  "claims": [
+    {
+      "condition": "architecture_vs_long_context",
+      "delta": 1.0,
+      "inference_class": "capability",
+      "licenses": "the component measurably changes TASK SUCCESS, scored against an answer key it did not write, on tasks that are solvable without it. This is the only class that supports an earns-its-cost claim.",
+      "metric": "multi_turn_recall_success_rate",
+      "subsystem": "core.memory (context assembly)",
+      "supports_earns_its_cost": true
+    }
+  ],
+  "comparisons": {
+    "full_vs_long_context": 1.0,
+    "full_vs_stateless": 1.0
+  },
+  "conditions": {
+    "full_architecture": {
+      "attempts": 40,
+      "clean_success_rate": 1.0,
+      "condition": "full_architecture",
+      "fell_back": 0,
+      "lanes": [
+        "full_architecture"
+      ],
+      "needed_human": 0,
+      "outcomes": {
+        "success": 40
+      },
+      "success_rate": 1.0,
+      "total_retries": 0
+    },
+    "long_context": {
+      "attempts": 40,
+      "clean_success_rate": 0.0,
+      "condition": "long_context",
+      "fell_back": 0,
+      "lanes": [
+        "long_context"
+      ],
+      "needed_human": 0,
+      "outcomes": {
+        "failure": 40
+      },
+      "success_rate": 0.0,
+      "total_retries": 0
+    },
+    "stateless": {
+      "attempts": 40,
+      "clean_success_rate": 0.0,
+      "condition": "stateless",
+      "fell_back": 0,
+      "lanes": [
+        "stateless"
+      ],
+      "needed_human": 0,
+      "outcomes": {
+        "failure": 40
+      },
+      "success_rate": 0.0,
+      "total_retries": 0
+    }
+  },
+  "generated_at_unix": 1786027827.911554,
+  "inference": {
+    "by_inference_class": {
+      "capability": 1,
+      "mechanistic": 0,
+      "tautological": 0
+    },
+    "capability_claims": 1,
+    "conditions": 1,
+    "earns_its_cost_supported_by": [
+      "architecture_vs_long_context"
+    ],
+    "honest_summary": "1 of 1 conditions measure task success on tasks solvable without the component; the rest establish wiring or mechanism and cannot support a capability claim.",
+    "schema": "aura.lesion_inference.v1"
+  },
+  "is_evidence_about_aura": false,
+  "regime": {
+    "context_window_turns": 12,
+    "history_exceeds_window": true,
+    "history_turns": 40
+  },
+  "responder": "stub",
+  "schema": "aura.capability_scorecard.v1",
+  "separation": {
+    "ci95": [
+      1.0,
+      1.0
+    ],
+    "n_tasks": 40,
+    "observed_delta": 1.0,
+    "reason": "",
+    "resolved": true,
+    "smallest_resolvable_delta": 0.025,
+    "verdict": "treatment_better"
+  }
+}

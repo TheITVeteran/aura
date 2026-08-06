@@ -274,6 +274,20 @@ def _idf_weights(doc_token_sets: list[set[str]]) -> dict[str, float]:
     return {tok: math.log(1.0 + n_docs / (1.0 + count)) for tok, count in df.items()}
 
 
+def _memory_text(memory: dict[str, Any]) -> str:
+    """The memory's text, under whichever key the caller's store uses.
+
+    `text` and `content` are both canonical in this codebase — the vault
+    stores one and returns the other — so reading only one silently produced
+    empty documents for half the callers.
+    """
+    for key in ("text", "content"):
+        value = memory.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def retrieve_memories(
     query: str,
     memories: list[dict[str, Any]],
@@ -300,7 +314,22 @@ def retrieve_memories(
     if not query_tokens or not memories:
         return []
 
-    doc_tokens = [tokenize(str(m.get("text", ""))) for m in memories]
+    # Memories arrive under both keys. The vault stores `text` and hands
+    # callers `content` (black_hole_vault maps one to the other on the way
+    # out), and most stores in core/memory use `content` throughout. Reading
+    # only `text` meant a caller passing the other shape got every document
+    # tokenized to nothing — and NOT an empty result, because the dense layer
+    # still embedded the empty strings and returned small positive cosines
+    # that cleared the 0.01 threshold. Confident retrieval over documents that
+    # were never read. Measured 2026-08-06: 36 of 40 queries returned "hits"
+    # whose text the scorer had never seen.
+    texts = [_memory_text(m) for m in memories]
+    if not any(texts):
+        # Nothing readable. Returning [] is the honest answer; scoring blanks
+        # is how an empty corpus produces a ranked list.
+        return []
+
+    doc_tokens = [tokenize(text) for text in texts]
     idf = _idf_weights([set(toks) for toks in doc_tokens])
     # unseen query terms get max-rarity weight instead of vanishing
     default_idf = math.log(1.0 + len(doc_tokens))
@@ -313,11 +342,15 @@ def retrieve_memories(
 
     # Semantic layer: dense-embedding cosine per memory when the real
     # backend is up and the cache admits this query's texts (bounded work).
-    texts = [str(m.get("text", "")) for m in memories]
     dense = _semantic_scores(query, texts)
 
     scored: list[dict[str, Any]] = []
     for position, (memory, tokens) in enumerate(zip(memories, doc_tokens)):
+        if not tokens:
+            # An unreadable memory is not a weak match, it is not a match. The
+            # dense layer will happily return a small positive cosine for the
+            # empty string, and 0.6 * that clears the default threshold.
+            continue
         doc_vec = weigh(compute_term_freq(tokens))
         lexical = compute_cosine_similarity(query_vec, doc_vec)
         if dense is not None:
@@ -326,7 +359,7 @@ def retrieve_memories(
             score = 0.6 * max(0.0, dense[position]) + 0.4 * lexical
         else:
             score = lexical
-        if query_lower and query_lower in str(memory.get("text", "")).lower():
+        if query_lower and query_lower in texts[position].lower():
             score = min(1.0, score + 0.25)
         if score >= threshold:
             item = dict(memory)
