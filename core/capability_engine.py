@@ -3057,14 +3057,29 @@ class CapabilityEngine(AuraBaseModule):
             dependencies = cls._resolve_constructor_dependencies(metadata)
         return skill_class(**dependencies)
 
+    def _preflight_store(self) -> dict[str, dict[str, Any]]:
+        """The preflight receipts, guaranteed to exist.
+
+        ``__init__`` sets ``_skill_preflight_results``, but not every
+        CapabilityEngine in this codebase has run it — the UI bootstrap
+        contract builds one with ``__new__`` and populates only the fields
+        the catalog needs. One reader already worked around that with an
+        inline ``hasattr`` check while two others read the attribute
+        directly and raised. One accessor, so a new reader cannot pick the
+        unguarded spelling by accident.
+        """
+        store = getattr(self, "_skill_preflight_results", None)
+        if store is None:
+            store = {}
+            self._skill_preflight_results = store
+        return store
+
     def _record_skill_preflight(self, receipt: dict[str, Any]) -> dict[str, Any]:
         stored = dict(receipt)
         name = str(stored.get("name") or "")
         with self._catalog_guard():
             if name:
-                if not hasattr(self, "_skill_preflight_results"):
-                    self._skill_preflight_results = {}
-                self._skill_preflight_results[name] = stored
+                self._preflight_store()[name] = stored
                 if stored.get("ok"):
                     self.skill_last_errors.pop(name, None)
                 else:
@@ -3227,7 +3242,7 @@ class CapabilityEngine(AuraBaseModule):
         self._ensure_catalog_loaded()
         with self._catalog_guard():
             metadata = self._skills.get(skill_name)
-            cached = dict(self._skill_preflight_results.get(skill_name) or {})
+            cached = dict(self._preflight_store().get(skill_name) or {})
             catalog_digest = self._catalog_digest
         if metadata is None:
             return {
@@ -3916,7 +3931,7 @@ class CapabilityEngine(AuraBaseModule):
     def _catalog_item_for_skill(self, skill_name: str, meta: SkillMetadata) -> dict[str, Any]:
         state = self.skill_states.get(skill_name, "READY")
         active = skill_name in self.active_skills
-        preflight = dict(self._skill_preflight_results.get(skill_name) or {})
+        preflight = dict(self._preflight_store().get(skill_name) or {})
         preflight_failed = bool(preflight) and not bool(preflight.get("ok"))
         available = bool(
             meta.enabled

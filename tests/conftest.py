@@ -85,6 +85,18 @@ class _ResourceLeakSnapshot:
     open_files: frozenset[str]
 
 
+# setup_logging() installs one RotatingFileHandler on aura_json.log and keeps
+# it for the life of the process — that is the design, and this same conftest
+# points it at a PID-scoped temp dir a few lines above so it never touches the
+# live instance's log. A test that happens to trigger the first Aura import
+# therefore "opens" a file it must not close, which the leak detector counted
+# as a leak: test_ui_bootstrap_returns_state_and_tool_catalog failed in
+# teardown for a handler working exactly as intended. Exempt that one sink by
+# name, and nothing else, so a genuinely leaked file still fails.
+def _is_process_lifetime_log_sink(path) -> bool:
+    return os.path.basename(str(path)) == "aura_json.log"
+
+
 class HermeticResourceSandbox:
     """Per-test host leak detector; never used as resource-policy evidence."""
 
@@ -127,7 +139,11 @@ class HermeticResourceSandbox:
         return _ResourceLeakSnapshot(
             child_identities=children,
             listening_fds=listeners,
-            open_files=frozenset(str(item.path) for item in open_files),
+            open_files=frozenset(
+                str(item.path)
+                for item in open_files
+                if not _is_process_lifetime_log_sink(item.path)
+            ),
         )
 
     def leaks(self) -> dict[str, set[object]]:
