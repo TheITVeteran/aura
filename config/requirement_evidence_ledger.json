@@ -1,5 +1,5 @@
 {
-  "content_sha256": "b574395f88b51cc736bc377bd71a28f26134de2c268a4c5ac777cecab99c2865",
+  "content_sha256": "d4b55ba910b6ee45df1e199c7d84c5c4e1294a1a432d87cecc5668be4665fad6",
   "entries": [
     {
       "acceptance_ids": [
@@ -32,12 +32,12 @@
         "A8",
         "A9"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "ADDENDUM-21",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -242,12 +242,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "CTX2-LANE-001",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -264,12 +264,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "CTX2-LANE-002",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -286,12 +286,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "CTX2-LANE-003",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -308,12 +308,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "CTX2-LANE-004",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -539,12 +539,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de",
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/9a912f85bc8ada8be1e7e5ef28ae48771ee8a6de.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
       "requirement_id": "LANE-001",
-      "sha256": "d34ff363cbcaaca2cf7cd08f6e1b81b69251eb62008df4c8357fa86b5806256b"
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
@@ -580,6 +580,19 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
       "requirement_id": "PASSF-03",
       "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+    },
+    {
+      "acceptance_ids": [
+        "A1",
+        "A2",
+        "A3"
+      ],
+      "commit": "5f3f08942941a80b4a2ded78a6c5625a8ca73617",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/5f3f08942941a80b4a2ded78a6c5625a8ca73617.json",
+      "requirement_id": "PASSF-03",
+      "sha256": "255ecedbbd3aeb83de6e6b664ceb553964399d172cf70720b5d40de8efa77df2"
     },
     {
       "acceptance_ids": [
