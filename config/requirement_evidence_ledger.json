@@ -1,5 +1,5 @@
 {
-  "content_sha256": "905788b2c2d073b9d02601aaf0afe80afd49391642aba2cd406744a60e7c0a30",
+  "content_sha256": "bf815112696cf563ef476d86232b4ead77c0be47d46fb70d868459b3cb22f443",
   "entries": [
     {
       "acceptance_ids": [
@@ -113,6 +113,17 @@
       "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/d2869d9637796296eb199eee3609c3aed89d2751.json",
       "requirement_id": "CTX2-SKILL-002",
       "sha256": "ad6c94dd73be9b0c0274f0e048daaa9ddda9e04da32a342d48b6c2f1a494e24e"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "1761ea997e3414d3243cf3f9bf1272a2ee4cf0d9",
+      "evidence_class": "portability",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/skill-portability-audit/1761ea997e3414d3243cf3f9bf1272a2ee4cf0d9.json",
+      "requirement_id": "CTX2-SKILL-002",
+      "sha256": "a35349294189d9205ca53c5c077d0f7f7cceb233ab9a9b889826d555d5a3ea21"
     },
     {
       "acceptance_ids": [
