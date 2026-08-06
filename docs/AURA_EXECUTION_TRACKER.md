@@ -36908,3 +36908,27 @@ ambiguous-outcome recovery, and durable pending-compensation state. Concurrent
 claim serialization across direct and recovered compensation paths remains
 open, as do cumulative inherited sublease accounting and fail-closed subprocess
 capability declaration. CP810 and the honest total remain open at 809/920.
+
+#### Model-lane compensation serialization continuation
+
+Direct cancellation and restart/expiry recovery now use the same durable
+per-owner compensation claim. The claim stores a random token, exact claimant
+process identity, and a deadline longer than the bounded restoration callback.
+A competing process cannot invoke the same compensator while that claim is
+live. Cancellation, timeout, or failure releases only the claimant token and
+keeps the restoration obligation pending; success atomically records the
+outcome, clears pending state, and permits the terminal receipt.
+
+The bounded callback distinguishes ordinary cancellation recovery from expiry
+recovery in its causal reason while sharing the same fencing machinery. A
+concurrency regression starts direct cancellation, holds its restorer in
+flight, and proves a simultaneous recovered-compensation pass performs zero
+duplicate calls before the first claimant commits success.
+
+Focused compensation regressions pass 9/9; the complete model-lane,
+subprocess-gateway, heartbeat, embedding, voice, image, and local-code family
+passes 128/128; Ruff, compile, scoped production MyPy, and smoke pass, with
+smoke at 103/103. This closes compensation claim serialization across direct
+and recovered paths. Cumulative inherited sublease accounting and fail-closed
+subprocess capability declaration remain open. CP810 and the honest total
+remain open at 809/920.

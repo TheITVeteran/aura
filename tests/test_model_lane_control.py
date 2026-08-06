@@ -631,6 +631,66 @@ async def test_failed_ambiguous_compensation_remains_pending_and_retries(
 
 
 @pytest.mark.asyncio
+async def test_direct_and_recovered_compensation_share_one_durable_claim(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="candidate:serialized-restore",
+            model_path="/models/candidate-1.5b",
+            request_gb=0.1,
+            request_id="serialized-compensation-claim",
+        )
+    )
+    displaced = _owner(
+        "owner:serialized-restore",
+        "/models/displaced-1.5b",
+        0.1,
+        os.getpid(),
+    )
+    callback_started = asyncio.Event()
+    finish_callback = asyncio.Event()
+    calls: list[str] = []
+
+    async def compensate(owner: LaneOwnerObservation, _reason: str) -> bool:
+        calls.append(owner.owner_id)
+        callback_started.set()
+        await finish_callback.wait()
+        return True
+
+    direct_cancel = asyncio.create_task(
+        controller.cancel(
+            decision,
+            reason="candidate_failed",
+            compensate=compensate,
+            evicted=[displaced],
+        )
+    )
+    await callback_started.wait()
+
+    concurrent_recovery = await controller.reconcile_expired_compensations(
+        compensate=compensate,
+        request_id=decision.request_id,
+    )
+    assert concurrent_recovery == 0
+    assert calls == [displaced.owner_id]
+
+    finish_callback.set()
+    cancelled = await direct_cancel
+    assert cancelled.receipt_id
+    assert calls == [displaced.owner_id]
+    reservation = next(
+        item
+        for item in controller.snapshot()["reservations"]
+        if item["request_id"] == decision.request_id
+    )
+    assert reservation["compensation_claims"] == {}
+    assert reservation["compensation_pending_owner_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_blocking_sync_eviction_runs_off_loop_and_drains_before_timeout_returns(
     tmp_path: Path,
 ) -> None:

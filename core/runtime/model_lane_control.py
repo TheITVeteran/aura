@@ -73,6 +73,13 @@ _EVICTION_TIMEOUT_FLAG = declare(
     description="Bound for required model-lane eviction and process reclamation",
     owner=_OWNER,
 )
+_COMPENSATION_TIMEOUT_FLAG = declare(
+    "AURA_MODEL_LANE_COMPENSATION_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=60.0,
+    description="Bound for one model-lane restoration callback",
+    owner=_OWNER,
+)
 
 
 class LaneTransactionState(StrEnum):
@@ -1808,12 +1815,16 @@ class ModelLaneController:
 
     def _claim_expired_compensation_sync(
         self,
-    ) -> tuple[str, str, str, LaneOwnerObservation] | None:
+        *,
+        request_id_filter: str = "",
+    ) -> tuple[str, str, str, str, LaneOwnerObservation] | None:
         now = self._clock()
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             state = self._load_locked()
             changed = self._prune_locked(state, now)
             for request_id, record in state["reservations"].items():
+                if request_id_filter and str(request_id) != str(request_id_filter):
+                    continue
                 if str(record.get("state") or "") not in {
                     LaneTransactionState.EXPIRED.value,
                     LaneTransactionState.CANCELLED.value,
@@ -1856,7 +1867,9 @@ class ModelLaneController:
                     claims[owner_id] = {
                         "token": claim_token,
                         "claimed_at": now,
-                        "expires_at": now + 30.0,
+                        "expires_at": now
+                        + max(5.0, float(_COMPENSATION_TIMEOUT_FLAG.value()))
+                        + 30.0,
                         "claimant_process": ProcessIdentity.current(
                             observer=self.resource_observer
                         ).to_dict(),
@@ -1872,6 +1885,7 @@ class ModelLaneController:
                     return (
                         str(request_id),
                         str(record.get("transaction_id") or ""),
+                        str(record.get("state") or ""),
                         claim_token,
                         self._record_to_observation(payload),
                     )
@@ -1947,20 +1961,32 @@ class ModelLaneController:
         *,
         compensate: CompensateCallback = compensate_registered_model_owner,
         max_compensations: int = _TERMINAL_RESERVATION_LIMIT,
+        request_id: str = "",
     ) -> int:
         """Recover owners displaced by an expired or cancelled reservation."""
 
         completed = 0
         for _attempt in range(max(0, int(max_compensations))):
-            claimed = await asyncio.to_thread(self._claim_expired_compensation_sync)
+            claimed = await asyncio.to_thread(
+                self._claim_expired_compensation_sync,
+                request_id_filter=str(request_id or ""),
+            )
             if claimed is None:
                 break
-            request_id, transaction_id, claim_token, owner = claimed
+            request_id, transaction_id, transaction_state, claim_token, owner = claimed
+            compensation_reason = (
+                "compensate_expired_candidate"
+                if transaction_state == LaneTransactionState.EXPIRED.value
+                else "compensate_failed_candidate"
+            )
             try:
-                restored = await self._call_bool(
-                    compensate,
-                    owner,
-                    f"compensate_expired_candidate:{transaction_id}",
+                restored = await asyncio.wait_for(
+                    self._call_bool(
+                        compensate,
+                        owner,
+                        f"{compensation_reason}:{transaction_id}",
+                    ),
+                    timeout=max(0.1, float(_COMPENSATION_TIMEOUT_FLAG.value())),
                 )
             except asyncio.CancelledError:
                 await asyncio.shield(
@@ -1972,7 +1998,14 @@ class ModelLaneController:
                     )
                 )
                 raise
-            except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            except (
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ):
                 restored = False
             await asyncio.shield(
                 asyncio.to_thread(
@@ -2696,7 +2729,7 @@ class ModelLaneController:
         eviction_receipt: tuple[str, str] | None = None,
     ) -> LaneTransactionDecision:
         supplied_evicted = list(evicted)
-        terminal, stored_evicted = await asyncio.to_thread(
+        terminal, _stored_evicted = await asyncio.to_thread(
             self._mark_cancelled_sync,
             decision,
             reason=reason,
@@ -2711,28 +2744,10 @@ class ModelLaneController:
             return LaneTransactionDecision(
                 **{**terminal.__dict__, "receipt_id": recovered_receipt, "replayed": True}
             )
-        evicted_by_owner = {owner.owner_id: owner for owner in stored_evicted}
-        evicted_by_owner.update({owner.owner_id: owner for owner in supplied_evicted})
-        evicted_list = list(evicted_by_owner.values())
-        compensation: dict[str, Any] = {}
         if compensate is not None:
-            for owner in reversed(evicted_list):
-                try:
-                    compensation[owner.owner_id] = await self._call_bool(
-                        compensate,
-                        owner,
-                        f"compensate_failed_candidate:{decision.transaction_id}",
-                    )
-                except asyncio.CancelledError:
-                    compensation[owner.owner_id] = False
-                    raise
-                except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
-                    compensation[owner.owner_id] = False
-        if compensation:
-            await asyncio.to_thread(
-                self._record_compensation_sync,
-                decision.request_id,
-                compensation,
+            await self.reconcile_expired_compensations(
+                compensate=compensate,
+                request_id=decision.request_id,
             )
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             pending_record = self._load_locked()["reservations"].get(decision.request_id)
