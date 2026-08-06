@@ -26,7 +26,18 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
         self._old_supervised_selfmod = os.environ.get("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION")
         os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = "1"
         self.engine = AutonomousSelfModificationEngine(CognitiveEngineDouble())
+        # This path is load-bearing and cannot move. The safe-modification
+        # harness derives the validating test from the target's name, so a fix
+        # to core/temp_fix_test.py is validated by tests/test_temp_fix_test.py —
+        # move the fixture and the harness looks for a test that is not there.
+        #
+        # Registered with addCleanup rather than deleted in tearDown, which is
+        # the actual defect here: a run that died between setUp and tearDown
+        # left the fixture behind in its pre-fix state, and the validating test
+        # then failed against that debris on every subsequent suite run.
+        # addCleanup fires even when setUp itself raises after the write.
         self.test_file = Path("core/temp_fix_test.py")
+        self.addCleanup(self._remove_fixture)
         self.test_file.write_text("def old_function():\n    return 'old'")
         self.sepsis_registry = config.paths.data_dir / "sepsis_registry.json"
         if self.sepsis_registry.exists():
@@ -38,13 +49,17 @@ class TestFixPersistence(unittest.IsolatedAsyncioTestCase):
             except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 self.fail(f"failed to prepare sepsis registry fixture: {exc}")
 
+    def _remove_fixture(self):
+        try:
+            self.test_file.unlink()
+        except FileNotFoundError:
+            pass
+
     def tearDown(self):
         if self._old_supervised_selfmod is None:
             os.environ.pop("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", None)
         else:
             os.environ["AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"] = self._old_supervised_selfmod
-        if self.test_file.exists():
-            self.test_file.unlink()
 
     async def test_permanent_fix_application(self):
         # Create a concrete fix proposal and force it through the supervised path.
