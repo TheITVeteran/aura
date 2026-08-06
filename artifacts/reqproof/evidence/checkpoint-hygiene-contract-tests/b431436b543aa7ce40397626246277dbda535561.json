@@ -1,0 +1,77 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_checkpoint_hygiene_audit.py"
+  ],
+  "cwd": ".",
+  "duration_seconds": 3.66897,
+  "environment_policy": {
+    "inherited_names_sha256": "53e9f28c81964a0f7bab7503bac0191802cf126997b5191db9fe4245b52e7c29",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "test",
+      "requirement_id": "CHECKPOINT-001"
+    }
+  ],
+  "finished_at": "2026-08-06T15:37:12.392110+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "b431436b543aa7ce40397626246277dbda535561",
+  "output_bytes": 98,
+  "proof_id": "checkpoint-hygiene-contract-tests",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "b431436b543aa7ce40397626246277dbda535561",
+  "source_manifest": [
+    {
+      "path": "tests/test_checkpoint_hygiene_audit.py",
+      "sha256": "4a3f6685ec7c8e5fcc07ad2d59f18cee45e8121ec53a7d2318a3b6b8afeccc78",
+      "size_bytes": 3492
+    },
+    {
+      "path": "tools/closeout/audit_checkpoint_hygiene.py",
+      "sha256": "c8082aa68cd2d2a27928a0712c3c5dab72560dbf08022dc703233909ab8c98e5",
+      "size_bytes": 5566
+    }
+  ],
+  "source_selectors": {
+    "globs": [],
+    "paths": [
+      "tests/test_checkpoint_hygiene_audit.py",
+      "tools/closeout/audit_checkpoint_hygiene.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "238aa115c80f8174c0800929f1a8992650ab956a1dd78d3f75b1befb8952a52a",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-06T15:37:08.722983+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "......                                                                   [100%]\n6 passed in 2.48s\n",
+  "stdout_sha256": "efd5ccc2d727cdfdbf1cf982f9a8a7a4714c708be45eb95186d7f616a0caaaf9",
+  "timeout_seconds": 120,
+  "verdict": "pass"
+}

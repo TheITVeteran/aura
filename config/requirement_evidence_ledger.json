@@ -1,5 +1,5 @@
 {
-  "content_sha256": "48c2bc6b218f5f68467e38329767a68d355c2bedbfdd270081625440f028daa2",
+  "content_sha256": "06e151dc000982853198b8de045ca7e3203a13b0bf3db1a0ad95f41947deb7d0",
   "entries": [
     {
       "acceptance_ids": [
@@ -171,6 +171,17 @@
       "ref": "artifacts/reqproof/evidence/checkpoint-hygiene-audit/1b4319047ac8b932fb60880c39950650face7ca2.json",
       "requirement_id": "CHECKPOINT-001",
       "sha256": "deb7bbcf8c33647dbab3087dde24e5cf88c6f4bca492326391cc9ef4de641f9d"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "b431436b543aa7ce40397626246277dbda535561",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/checkpoint-hygiene-contract-tests/b431436b543aa7ce40397626246277dbda535561.json",
+      "requirement_id": "CHECKPOINT-001",
+      "sha256": "a1a68079ab05e24389678df3420d2bffe3180c9ce9d2b4b08080d5d413ec7e57"
     },
     {
       "acceptance_ids": [
