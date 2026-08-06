@@ -409,6 +409,63 @@ def is_deliberate_refusal(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return raised != "NotImplementedError"
 
 
+_LOOP_STATEMENTS = (ast.While, ast.For, ast.AsyncFor)
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def loop_can_end(node: ast.While) -> bool:
+    """Does this ``while True`` have any way out?
+
+    The rule flagged the ``while True:`` line itself, which is not a defect —
+    it is the standard Python idiom for a loop whose exit condition is
+    computed inside the body. 30 of the 31 findings had a ``break`` or a
+    ``return`` a few lines down. Counting those trains people to stop reading
+    the list.
+
+    A loop with none of these cannot end:
+
+    * a ``break`` whose nearest enclosing loop is THIS one — a break inside a
+      nested ``for`` leaves the inner loop and is not an exit from this one;
+    * a ``return`` or ``raise``, which leave the function entirely;
+    * an ``await``, which is a cancellation point: that is how every service
+      loop in this runtime is actually stopped;
+    * a ``yield``, which hands control to the consumer for the same reason —
+      a generator does not run unless somebody pulls from it.
+
+    Bodies of nested functions, lambdas and classes are not searched. Their
+    control flow is their own and says nothing about this loop.
+    """
+    found = False
+
+    def search(nodes: list[ast.AST], *, own_loop: bool) -> None:
+        nonlocal found
+        for child in nodes:
+            if found:
+                return
+            if isinstance(child, _NESTED_SCOPES):
+                continue
+            if isinstance(child, (ast.Return, ast.Raise, ast.Await, ast.Yield, ast.YieldFrom)):
+                found = True
+                return
+            if isinstance(child, ast.Break) and own_loop:
+                found = True
+                return
+            inner_own_loop = own_loop and not isinstance(child, _LOOP_STATEMENTS)
+            for name in ("body", "orelse", "finalbody", "handlers", "cases"):
+                block = getattr(child, name, None)
+                if isinstance(block, list):
+                    search(list(block), own_loop=inner_own_loop)
+            for name in ("value", "test", "iter", "func"):
+                sub = getattr(child, name, None)
+                if isinstance(sub, ast.AST):
+                    search([sub], own_loop=inner_own_loop)
+            if isinstance(child, ast.expr):
+                search(list(ast.iter_child_nodes(child)), own_loop=inner_own_loop)
+
+    search(list(node.body), own_loop=True)
+    return found
+
+
 class AstGate(ast.NodeVisitor):
     def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
         self.rel = rel
@@ -494,7 +551,11 @@ class AstGate(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_While(self, node: ast.While) -> None:
-        if isinstance(node.test, ast.Constant) and node.test.value is True:
+        if (
+            isinstance(node.test, ast.Constant)
+            and node.test.value is True
+            and not loop_can_end(node)
+        ):
             self.add("medium" if is_production(self.rel) else "low", "unbounded_loop_review", node)
         self.generic_visit(node)
 

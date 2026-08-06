@@ -11,7 +11,7 @@
     "raise_only_function": 0,
     "subprocess_usage_review": 0,
     "swallowed_broad_exception": 11,
-    "unbounded_loop_review": 15
+    "unbounded_loop_review": 0
   },
   "max_high_or_critical_count": 39,
   "python_files": 4472

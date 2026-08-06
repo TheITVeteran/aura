@@ -556,3 +556,60 @@ class TestARefusalIsNotUnfinishedWork:
     def test_an_async_unwritten_method_is_still_reported(self) -> None:
         source = "async def apply(self, effect):\n    raise NotImplementedError\n"
         assert _scan_raise_only(source) == {"apply"}
+
+
+def _scan_loops(source: str, rel: str = "core/thing.py") -> set[int]:
+    """Lines the unbounded-loop rule would report."""
+    import ast
+
+    from tools.aura_enterprise_gate import AstGate, GateReport
+
+    report = GateReport(root=".", generated_at_unix=0.0)
+    AstGate(rel, report, source_lines=source.splitlines()).visit(ast.parse(source))
+    return {f.line for f in report.findings if f.kind == "unbounded_loop_review"}
+
+
+class TestWhileTrueIsAnIdiomNotADefect:
+    """30 of 31 findings had a break or a return a few lines down.
+
+    ``while True`` is how Python spells a loop whose exit condition is
+    computed inside the body. The defect is a loop with no way out at all.
+    """
+
+    def test_a_loop_with_a_break_is_bounded(self) -> None:
+        source = "while True:\n    if done():\n        break\n"
+        assert _scan_loops(source) == set()
+
+    def test_a_loop_that_returns_is_bounded(self) -> None:
+        source = "def f():\n    while True:\n        if done():\n            return 1\n"
+        assert _scan_loops(source) == set()
+
+    def test_a_loop_that_raises_is_bounded(self) -> None:
+        source = "while True:\n    raise Timeout()\n"
+        assert _scan_loops(source) == set()
+
+    def test_an_awaiting_service_loop_is_bounded_by_cancellation(self) -> None:
+        """How every service loop in this runtime is actually stopped."""
+        source = "async def f():\n    while True:\n        item = await queue.get()\n"
+        assert _scan_loops(source) == set()
+
+    def test_a_generator_is_bounded_by_its_consumer(self) -> None:
+        source = "def f():\n    while True:\n        yield next_value()\n"
+        assert _scan_loops(source) == set()
+
+    def test_a_spin_is_reported(self) -> None:
+        source = "while True:\n    counter += 1\n"
+        assert _scan_loops(source) == {1}
+
+    def test_a_break_from_a_NESTED_loop_does_not_bound_the_outer_one(self) -> None:
+        """The subtlety that makes this an AST question and not a grep."""
+        source = "while True:\n    for item in items:\n        break\n"
+        assert _scan_loops(source) == {1}
+
+    def test_a_return_inside_a_nested_function_does_not_bound_it(self) -> None:
+        source = "while True:\n    def helper():\n        return 1\n    helper()\n"
+        assert _scan_loops(source) == {1}
+
+    def test_an_exit_inside_a_handler_still_counts(self) -> None:
+        source = "while True:\n    try:\n        work()\n    except OSError:\n        break\n"
+        assert _scan_loops(source) == set()
