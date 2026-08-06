@@ -6,7 +6,7 @@
 
 - Requirements: **302** total / **301** mandatory
 - In progress: **79**
-- Claimed complete but missing evidence: **17**
+- Claimed complete but missing evidence: **16**
 - Ready for implementation: **169**
 - Blocked by direct dependency: **33**
 - Machine-certified complete: **2**
@@ -114,11 +114,10 @@ These requirements carry a historical complete claim but are not machine-certifi
 - `LIFECYCLE-001`
 - `RESOURCE-001`
 - `SHUTDOWN-001`
-- `SKILLS-001`
 - `STORAGE-GATEWAY-001`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `78fe9c8e40cdd61828d61c15f1abb600786a2107c6d6a77926c047b2dc69b1ba`
+Report SHA-256: `aa9df499fda9edca3f49a6c91bfcb2315d43f9f13fd3615dd36c11376d14a329`

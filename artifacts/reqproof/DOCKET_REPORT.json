@@ -509,7 +509,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "claimed_complete_needs_children": 1
       },
       "family": "SKILLS"
     },
@@ -629,7 +629,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "2206001079f4f5b089af504837911cd363ade5564934efb5deacdc47cb619f51",
+    "evidence_ledger_sha256": "3e09a5b2096d175734ac5bcaccd05222c7bdd0bff24802ab1a109a94e18a4e03",
     "registry_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13"
   },
   "non_claims": [
@@ -637,7 +637,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "78fe9c8e40cdd61828d61c15f1abb600786a2107c6d6a77926c047b2dc69b1ba",
+  "report_sha256": "aa9df499fda9edca3f49a6c91bfcb2315d43f9f13fd3615dd36c11376d14a329",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2836,14 +2836,12 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 5,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-SKILL-002",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
         "live:A1",
         "gui:A1",
         "portability:A1"
@@ -2966,28 +2964,6 @@
     },
     {
       "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-23"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "SKILLS",
-      "id": "SKILLS-001",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
-    },
-    {
-      "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "EFFECT-001",
@@ -3009,6 +2985,25 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA stag\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [
+        "ADDENDUM-23"
+      ],
+      "direct_dependency_blockers": [],
+      "disposition": "claimed_complete_needs_children",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "SKILLS",
+      "id": "SKILLS-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
     },
     {
       "acceptance_units": 5,
@@ -8003,13 +7998,13 @@
       "LIFECYCLE-001",
       "RESOURCE-001",
       "SHUTDOWN-001",
-      "SKILLS-001",
       "STORAGE-GATEWAY-001"
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
       "certified_complete": 2,
-      "claimed_complete_needs_evidence": 17,
+      "claimed_complete_needs_children": 1,
+      "claimed_complete_needs_evidence": 16,
       "deferred": 1,
       "in_progress": 79,
       "nonmandatory": 1,
