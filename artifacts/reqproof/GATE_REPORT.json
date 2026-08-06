@@ -43,8 +43,7 @@
     "dependency-cycle": 23,
     "false-closure": 2,
     "prose-minted": 11,
-    "stale-evidence": 12,
-    "unproven-closure": 17
+    "unproven-closure": 15
   },
   "defects": [
     {
@@ -243,68 +242,8 @@
       "subject": "VOICE-001"
     },
     {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "ADDENDUM-21::artifacts/reqproof/evidence/model-load-ownership-audit/047a357c000f15833f97931346f5725051a83449.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/047a357c000f15833f97931346f5725051a83449.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json"
-    },
-    {
-      "defect_class": "stale-evidence",
-      "detail": "manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-      "subject": "RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json"
-    },
-    {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], implementation[A2], test[A2], live[A2], implementation[A3], test[A3], implementation[A4], test[A4], live[A4], implementation[A5], test[A5], live[A5], implementation[A6], test[A6], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A2], implementation[A4], test[A4], live[A4], live[A5], implementation[A7], test[A7], implementation[A8], test[A8], implementation[A9], test[A9], live[A9], release[A9], soak[A9]",
       "subject": "ADDENDUM-22"
     },
     {
@@ -349,22 +288,12 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-TEST-001"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "CTX2-TEST-002"
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-      "subject": "CTX2-TEST-003"
-    },
-    {
-      "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], live[A1], release[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1], release[A1]",
       "subject": "LANE-001"
     },
     {
@@ -374,7 +303,7 @@
     },
     {
       "defect_class": "unproven-closure",
-      "detail": "complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1], live[A1]",
+      "detail": "complete without acceptance-granular verifiable evidence for: live[A1]",
       "subject": "RESOURCE-001"
     },
     {
@@ -388,43 +317,22 @@
       "subject": "STORAGE-GATEWAY-001"
     }
   ],
-  "failures": [
-    "stale-evidence::ADDENDUM-21::artifacts/reqproof/evidence/model-load-ownership-audit/047a357c000f15833f97931346f5725051a83449.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json: manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-    "stale-evidence::ADDENDUM-22::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json: manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-    "stale-evidence::CTX2-TEST-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json: manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-    "stale-evidence::CTX2-TEST-002::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json: manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-    "stale-evidence::CTX2-TEST-003::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::LANE-001::artifacts/reqproof/evidence/model-load-ownership-audit/047a357c000f15833f97931346f5725051a83449.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-contract-tests/aa7777b216866291bb4b33e504d68d997d3434a7.json: manifested source changed: tests/conftest.py: expected 1c9f2c8280e9/55099, current 3794af72294d/55925",
-    "stale-evidence::RESOURCE-001::artifacts/reqproof/evidence/resource-observation-ownership-audit/e55440567785d1166c9fbe54825d03c6b59c59a0.json: manifested source changed: core/security/device_pairing.py: expected 8da2f1fc3a93/17070, current 70caca3f0276/27882; interface/routes/devices.py: expected 4f611800d7f1/7319, current bed25a4e4d1d/10149",
-    "NEW ratcheted defect unproven-closure::CTX2-TEST-001: complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-    "NEW ratcheted defect unproven-closure::CTX2-TEST-003: complete without acceptance-granular verifiable evidence for: implementation[A1], test[A1]",
-    "defect baseline is STALE (defects were fixed \u2014 good): run tools/reqproof/gate.py --refresh-baseline to shrink it; fixed: ['unproven-closure::CTX2-SKILL-001']"
-  ],
+  "failures": [],
   "mode": "structural",
   "non_claims": [
     "No completion percentage or checkpoint forecast is published by this gate yet; only raw counts are honest at this stage.",
     "A structural pass asserts registry/coverage integrity only \u2014 it is not evidence that any requirement's engineering work is done."
   ],
   "ratchet": {
-    "baseline_fingerprints": 55,
-    "current_fingerprints": 56,
-    "fixed_pending_refresh": [
-      "unproven-closure::CTX2-SKILL-001"
-    ],
-    "new": [
-      "unproven-closure::CTX2-TEST-001",
-      "unproven-closure::CTX2-TEST-003"
-    ]
+    "baseline_fingerprints": 54,
+    "current_fingerprints": 54,
+    "fixed_pending_refresh": [],
+    "new": []
   },
   "schema_version": 1,
   "summary": {
     "evidence_ledger_entries": 25,
-    "evidence_ledger_sha256": "c3342e3b0aa9e5cb944628e106730eacaef8e3175843a7f2f5ff290cc976976e",
+    "evidence_ledger_sha256": "a8c097f471621e73a6f655de0201db622df45e6c4bd4c2398fdf90e20172b356",
     "mandatory_not_closed": 293,
     "registry_content_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039",
     "registry_revision": 30,
@@ -440,5 +348,5 @@
     },
     "tracker_extraction_sha256": "be31f37d109c67f97636e27a174c730a10a488a8084c8c5e8716f829283e6e45"
   },
-  "verdict": "fail"
+  "verdict": "pass"
 }

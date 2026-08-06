@@ -150,8 +150,8 @@
     },
     {
       "counts": {
-        "certified_complete": 2,
-        "claimed_complete_needs_evidence": 8,
+        "certified_complete": 3,
+        "claimed_complete_needs_evidence": 7,
         "ready_for_implementation": 37
       },
       "family": "CTX2"
@@ -636,7 +636,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "1eb14b8277fcf41cfcd1c30ae40e73ed02a16368f4ebe8b9bc828f223e420cab",
+    "evidence_ledger_sha256": "a8c097f471621e73a6f655de0201db622df45e6c4bd4c2398fdf90e20172b356",
     "registry_sha256": "4fb6216f2fe03859169cd6ab9e70d5d644f3790225740f1c24b99470ef883039"
   },
   "non_claims": [
@@ -644,7 +644,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "42e6bf1c4015b644762e33a0593622bcedc7cca0c6b81ca00920dcaafe0e296f",
+  "report_sha256": "80d25756fb81b945ab7c950ef37a6c52b84fb66044b0126b6987d0abbf304731",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2738,7 +2738,6 @@
       "closure_blockers": [
         "CTX2-GATE-001",
         "CTX2-GATE-002",
-        "CTX2-SKILL-001",
         "CTX2-SKILL-002"
       ],
       "direct_dependency_blockers": [],
@@ -2899,26 +2898,6 @@
       "parent": "ADDENDUM-32",
       "state_claim": "complete",
       "title": "- `CTX2-SHUTDOWN-003`: make stop progress observable and replayable."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
-      "family": "CTX2",
-      "id": "CTX2-SKILL-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026"
     },
     {
       "acceptance_units": 1,
@@ -8169,6 +8148,23 @@
       "evidence_cells_total": 2,
       "evidence_cells_verified": 2,
       "family": "CTX2",
+      "id": "CTX2-SKILL-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically equivalent for module-level skill classes, inherited/decorated skills, `Assign` and `\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
       "id": "CTX2-TEST-001",
       "kind": "atomic",
       "mandatory": true,
@@ -8228,7 +8224,6 @@
       "CTX2-SHUTDOWN-001",
       "CTX2-SHUTDOWN-002",
       "CTX2-SHUTDOWN-003",
-      "CTX2-SKILL-001",
       "CTX2-SKILL-002",
       "CTX2-TEST-002",
       "LANE-001",
@@ -8239,9 +8234,9 @@
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 2,
+      "certified_complete": 3,
       "claimed_complete_needs_children": 1,
-      "claimed_complete_needs_evidence": 16,
+      "claimed_complete_needs_evidence": 15,
       "deferred": 1,
       "in_progress": 83,
       "nonmandatory": 1,
