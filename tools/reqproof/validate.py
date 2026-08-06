@@ -53,7 +53,13 @@ from tools.reqproof.evidence import (
     sha256_file,
     validate_source_selectors,
 )
-from tools.reqproof.schema import CLOSED_STATES, EvidenceRef, Registry, Requirement
+from tools.reqproof.schema import (
+    CLOSED_STATES,
+    EvidenceRef,
+    Registry,
+    RegistrySchemaError,
+    Requirement,
+)
 from tools.reqproof.tracker_parse import TrackerExtraction
 
 BLOCKING_ALWAYS = frozenset(
@@ -268,6 +274,26 @@ def _verify_ledger_entry(
 ) -> list[Defect]:
     evidence = entry.evidence
     subject = f"{requirement.id}::{evidence.ref}"
+    invalid_modalities: list[str] = []
+    for acceptance_id in entry.acceptance_ids:
+        try:
+            required = requirement.required_evidence_for(acceptance_id)
+        except RegistrySchemaError:
+            invalid_modalities.append(acceptance_id)
+            continue
+        if evidence.evidence_class not in required:
+            invalid_modalities.append(acceptance_id)
+    if invalid_modalities:
+        return [
+            Defect(
+                defect_class="impossible-evidence",
+                subject=subject,
+                detail=(
+                    f"evidence class {evidence.evidence_class} is not required "
+                    f"for acceptance units {invalid_modalities}"
+                ),
+            )
+        ]
     base_defects = _verify_evidence(requirement, (evidence,), root, commit_exists)
     if base_defects:
         return base_defects
@@ -345,15 +371,18 @@ def verified_acceptance_coverage(
     commit_exists: Callable[[str], bool],
 ) -> dict[str, set[str]]:
     coverage: dict[str, set[str]] = {}
-    all_acceptance = {
-        f"A{index}" for index in range(1, len(requirement.acceptance) + 1)
-    }
     # Inline registry evidence is retained only as a compatibility path. The
     # generated production registry is always empty; all new evidence uses the
     # acceptance-granular external ledger.
     for evidence in legacy_refs:
         if evidence_ref_is_verified(evidence, root, commit_exists):
-            coverage.setdefault(evidence.evidence_class, set()).update(all_acceptance)
+            eligible = {
+                acceptance_id
+                for acceptance_id in requirement.acceptance_ids()
+                if evidence.evidence_class
+                in requirement.required_evidence_for(acceptance_id)
+            }
+            coverage.setdefault(evidence.evidence_class, set()).update(eligible)
     for entry in ledger_entries:
         if ledger_entry_is_verified(requirement, entry, root, commit_exists):
             coverage.setdefault(entry.evidence.evidence_class, set()).update(
@@ -480,12 +509,10 @@ def validate_registry(
                 commit_exists,
             )
             missing = []
-            for class_name in requirement.evidence_required:
+            for acceptance_id, class_name in requirement.required_evidence_cells():
                 covered = verified.get(class_name, set())
-                for index in range(1, len(requirement.acceptance) + 1):
-                    acceptance_id = f"A{index}"
-                    if acceptance_id not in covered:
-                        missing.append(f"{class_name}[{acceptance_id}]")
+                if acceptance_id not in covered:
+                    missing.append(f"{class_name}[{acceptance_id}]")
             if missing:
                 defects.append(
                     Defect(

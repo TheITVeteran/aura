@@ -29,9 +29,9 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 STATES: tuple[str, ...] = (
     "open",
@@ -79,7 +79,7 @@ def _check_str(value: Any, name: str, *, allow_empty: bool = False) -> str:
     _require(isinstance(value, str), f"{name} must be a string, got {type(value).__name__}")
     if not allow_empty:
         _require(bool(value), f"{name} must be non-empty")
-    return value
+    return cast(str, value)
 
 
 def _check_str_list(value: Any, name: str) -> list[str]:
@@ -184,9 +184,9 @@ class Requirement:
     Closure semantics (enforced by validate.py, restated here as contract):
 
     * ``state == "complete"`` is a claim, not a fact. It is only accepted when
-      every class in ``evidence_required`` has at least one verifiable
-      ``EvidenceRef`` AND every requirement in ``closure_requires`` is itself
-      closed. Otherwise the validator reports FALSE-CLOSURE defects.
+      every acceptance/class pair in ``acceptance_evidence_required`` has
+      verifiable evidence AND every requirement in ``closure_requires`` is
+      itself closed. Otherwise the validator reports FALSE-CLOSURE defects.
     * A ``parent`` cannot be more closed than its children: any non-closed
       member of ``closure_requires`` blocks the parent.
     * ``mandatory`` requirements in a non-closed state block release.
@@ -208,6 +208,7 @@ class Requirement:
     closure_requires: tuple[str, ...]
     parent: str | None
     acceptance: tuple[str, ...]
+    acceptance_evidence_required: tuple[tuple[str, ...], ...]
     evidence_required: tuple[str, ...]
     evidence: tuple[EvidenceRef, ...]
     non_claims: tuple[str, ...]
@@ -231,6 +232,7 @@ class Requirement:
             "closure_requires",
             "parent",
             "acceptance",
+            "acceptance_evidence_required",
             "evidence_required",
             "evidence",
             "non_claims",
@@ -311,6 +313,50 @@ class Requirement:
             _require(parent != req_id, f"{name}.parent references the requirement itself")
 
         acceptance = tuple(_check_str_list(data.get("acceptance"), f"{name}.acceptance"))
+        if kind == "atomic":
+            _require(
+                bool(acceptance),
+                f"{name} is atomic and must declare at least one acceptance criterion",
+            )
+        acceptance_evidence_raw = data.get("acceptance_evidence_required")
+        _require(
+            isinstance(acceptance_evidence_raw, list),
+            f"{name}.acceptance_evidence_required must be a list",
+        )
+        _require(
+            len(acceptance_evidence_raw) == len(acceptance),
+            f"{name}.acceptance_evidence_required must align one-to-one with acceptance",
+        )
+        acceptance_evidence_required: list[tuple[str, ...]] = []
+        for index, raw_classes in enumerate(acceptance_evidence_raw):
+            classes = tuple(
+                _check_str_list(
+                    raw_classes,
+                    f"{name}.acceptance_evidence_required[{index}]",
+                )
+            )
+            _require(
+                bool(classes),
+                f"{name}.acceptance_evidence_required[{index}] must be non-empty",
+            )
+            _require(
+                len(set(classes)) == len(classes),
+                f"{name}.acceptance_evidence_required[{index}] contains duplicates",
+            )
+            for cls_name in classes:
+                _require(
+                    cls_name in EVIDENCE_CLASSES,
+                    f"{name}.acceptance_evidence_required[{index}] entry "
+                    f"{cls_name!r} not in {EVIDENCE_CLASSES}",
+                )
+            expected_order = tuple(
+                cls_name for cls_name in EVIDENCE_CLASSES if cls_name in classes
+            )
+            _require(
+                classes == expected_order,
+                f"{name}.acceptance_evidence_required[{index}] is not in canonical order",
+            )
+            acceptance_evidence_required.append(classes)
         evidence_required = tuple(
             _check_str_list(data.get("evidence_required"), f"{name}.evidence_required")
         )
@@ -324,6 +370,16 @@ class Requirement:
             len(set(evidence_required)) == len(evidence_required),
             f"{name}.evidence_required contains duplicates",
         )
+        expected_union = tuple(
+            cls_name
+            for cls_name in EVIDENCE_CLASSES
+            if any(cls_name in classes for classes in acceptance_evidence_required)
+        )
+        _require(
+            evidence_required == expected_union,
+            f"{name}.evidence_required must equal the canonical union of "
+            "acceptance_evidence_required",
+        )
 
         evidence_raw = data.get("evidence")
         _require(isinstance(evidence_raw, list), f"{name}.evidence must be a list")
@@ -335,12 +391,6 @@ class Requirement:
         non_claims = tuple(_check_str_list(data.get("non_claims"), f"{name}.non_claims"))
         notes = data.get("notes", "")
         _require(isinstance(notes, str), f"{name}.notes must be a string")
-
-        if kind == "atomic":
-            _require(
-                bool(acceptance),
-                f"{name} is atomic and must declare at least one acceptance criterion",
-            )
 
         return cls(
             id=req_id,
@@ -359,6 +409,7 @@ class Requirement:
             closure_requires=closure_requires,
             parent=parent,
             acceptance=acceptance,
+            acceptance_evidence_required=tuple(acceptance_evidence_required),
             evidence_required=evidence_required,
             evidence=evidence,
             non_claims=non_claims,
@@ -383,11 +434,38 @@ class Requirement:
             "closure_requires": list(self.closure_requires),
             "parent": self.parent,
             "acceptance": list(self.acceptance),
+            "acceptance_evidence_required": [
+                list(classes) for classes in self.acceptance_evidence_required
+            ],
             "evidence_required": list(self.evidence_required),
             "evidence": [ref.to_dict() for ref in self.evidence],
             "non_claims": list(self.non_claims),
             "notes": self.notes,
         }
+
+    def acceptance_ids(self) -> tuple[str, ...]:
+        return tuple(f"A{index}" for index in range(1, len(self.acceptance) + 1))
+
+    def required_evidence_for(self, acceptance_id: str) -> tuple[str, ...]:
+        if not re.fullmatch(r"A[1-9][0-9]*", acceptance_id):
+            raise RegistrySchemaError(f"invalid acceptance ID {acceptance_id!r}")
+        index = int(acceptance_id[1:]) - 1
+        if index >= len(self.acceptance_evidence_required):
+            raise RegistrySchemaError(
+                f"{self.id} has no acceptance unit {acceptance_id}"
+            )
+        return self.acceptance_evidence_required[index]
+
+    def required_evidence_cells(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (acceptance_id, class_name)
+            for acceptance_id, classes in zip(
+                self.acceptance_ids(),
+                self.acceptance_evidence_required,
+                strict=True,
+            )
+            for class_name in classes
+        )
 
 
 @dataclass(frozen=True)

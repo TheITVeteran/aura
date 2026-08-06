@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -66,7 +66,7 @@ def _require(condition: bool, message: str) -> None:
 
 def _string(value: Any, name: str) -> str:
     _require(isinstance(value, str) and bool(value), f"{name} must be a non-empty string")
-    return value
+    return cast(str, value)
 
 
 def _canonical_sha256(body: dict[str, Any]) -> str:
@@ -281,6 +281,17 @@ def validate_spec_targets(specs: ProofSpecRegistry, registry: Registry) -> None:
                 set(target.acceptance_ids) <= valid,
                 f"{spec.proof_id} targets unknown acceptance units",
             )
+            invalid_modalities = [
+                acceptance_id
+                for acceptance_id in target.acceptance_ids
+                if target.evidence_class
+                not in requirement.required_evidence_for(acceptance_id)
+            ]
+            _require(
+                not invalid_modalities,
+                f"{spec.proof_id} targets class {target.evidence_class} for "
+                f"acceptance units that do not require it: {invalid_modalities}",
+            )
 
 
 def _git(gateway: Gateway, root: Path, *args: str) -> str:
@@ -296,7 +307,7 @@ def _git(gateway: Gateway, root: Path, *args: str) -> str:
         result.returncode == 0,
         f"git {' '.join(args)} failed: {result.stderr.strip()}",
     )
-    return result.stdout.strip()
+    return cast(str, result.stdout.strip())
 
 
 def assert_pushed_clean_source(gateway: Gateway, root: Path) -> str:

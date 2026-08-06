@@ -158,3 +158,26 @@ def test_mandatory_withdrawn_requirement_is_not_returned_to_work_queue(tmp_path:
     )
 
     assert report["requirements"][0]["disposition"] == "withdrawn"
+
+
+def test_docket_counts_acceptance_specific_cells_not_cartesian_product(tmp_path: Path):
+    current = registry(
+        make_requirement(
+            acceptance=["static", "live"],
+            acceptance_evidence_required=[
+                ["implementation", "test"],
+                ["implementation", "test", "live"],
+            ],
+            evidence_required=["implementation", "test", "live"],
+        )
+    )
+    report = build_docket_report(
+        root=tmp_path,
+        registry=current,
+        ledger=EvidenceLedger.empty_for(current),
+        commit_exists=lambda commit: True,
+    )
+    row = report["requirements"][0]
+    assert row["evidence_cells_total"] == 5
+    assert "live:A1" not in row["missing_evidence_cells"]
+    assert "live:A2" in row["missing_evidence_cells"]

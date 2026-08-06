@@ -15,6 +15,7 @@ import os
 import re
 import sys
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 from pathlib import Path
@@ -43,6 +44,9 @@ PROGRESS_SCHEMA_VERSION = 1
 POLICY_SCHEMA_VERSION = 1
 DEFAULT_POLICY_PATH = ROOT / "config" / "reqproof_progress_policy.json"
 DEFAULT_SCOPE_BASELINE_PATH = ROOT / "config" / "reqproof_scope_baseline.json"
+DEFAULT_SCOPE_MIGRATION_PATH = (
+    ROOT / "artifacts" / "reqproof" / "SCOPE_DENOMINATOR_MIGRATION.json"
+)
 DEFAULT_REPORT_PATH = ROOT / "artifacts" / "reqproof" / "PROGRESS_REPORT.json"
 DEFAULT_MARKDOWN_PATH = ROOT / "docs" / "AURA_PROGRESS.md"
 CHECKPOINT_RE = re.compile(
@@ -139,10 +143,65 @@ def scope_fingerprints(registry: Registry) -> tuple[str, ...]:
     for requirement in registry.requirements:
         if not requirement.mandatory:
             continue
-        for index in range(1, len(requirement.acceptance) + 1):
-            for class_name in requirement.evidence_required:
-                fingerprints.append(f"{requirement.id}::A{index}::{class_name}")
+        for acceptance_id, class_name in requirement.required_evidence_cells():
+            fingerprints.append(f"{requirement.id}::{acceptance_id}::{class_name}")
     return tuple(sorted(fingerprints))
+
+
+def acceptance_fingerprints_from_cells(
+    fingerprints: tuple[str, ...],
+) -> tuple[str, ...]:
+    acceptance_units: set[str] = set()
+    for fingerprint in fingerprints:
+        parts = fingerprint.split("::")
+        _require(
+            len(parts) == 3 and re.fullmatch(r"A[1-9][0-9]*", parts[1]) is not None,
+            f"malformed scope fingerprint {fingerprint!r}",
+        )
+        acceptance_units.add("::".join(parts[:2]))
+    return tuple(sorted(acceptance_units))
+
+
+def build_scope_migration_receipt(
+    previous: ScopeBaseline,
+    registry: Registry,
+    *,
+    reason: str,
+) -> tuple[ScopeBaseline, dict[str, Any]]:
+    """Authorize a modality correction without permitting scope-unit loss."""
+    _require(bool(reason.strip()), "scope migration reason must be non-empty")
+    current = ScopeBaseline.from_registry(registry)
+    previous_acceptance = set(
+        acceptance_fingerprints_from_cells(previous.fingerprints)
+    )
+    current_acceptance = set(
+        acceptance_fingerprints_from_cells(current.fingerprints)
+    )
+    removed_acceptance = sorted(previous_acceptance - current_acceptance)
+    _require(
+        not removed_acceptance,
+        "scope migration refuses acceptance-obligation shrink: "
+        f"{removed_acceptance[:10]}",
+    )
+    removed = sorted(set(previous.fingerprints) - set(current.fingerprints))
+    added = sorted(set(current.fingerprints) - set(previous.fingerprints))
+    body: dict[str, Any] = {
+        "schema": "aura.reqproof.scope_denominator_migration.v1",
+        "previous_baseline_sha256": previous.compute_content_sha256(),
+        "next_baseline_sha256": current.compute_content_sha256(),
+        "registry_sha256": registry.compute_content_sha256(),
+        "reason": reason.strip(),
+        "invariants": {
+            "acceptance_units_before": len(previous_acceptance),
+            "acceptance_units_after": len(current_acceptance),
+            "acceptance_units_removed": removed_acceptance,
+            "acceptance_obligation_shrink": False,
+        },
+        "removed_cells": removed,
+        "added_cells": added,
+    }
+    body["receipt_sha256"] = _content_sha256(body)
+    return current, body
 
 
 def verify_scope_baseline(baseline: ScopeBaseline, registry: Registry) -> None:
@@ -375,7 +434,7 @@ def build_progress_report(
     policy: ProgressPolicy,
     scope_baseline: ScopeBaseline,
     checkpoint_records: tuple[CheckpointRecord, ...],
-    commit_exists=None,
+    commit_exists: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     try:
         verify_ledger_binding(ledger, registry)
@@ -400,9 +459,7 @@ def build_progress_report(
             continue
         if requirement.weight_provenance == "assigned":
             assigned_weights += 1
-        acceptance_ids = tuple(
-            f"A{index}" for index in range(1, len(requirement.acceptance) + 1)
-        )
+        acceptance_ids = requirement.acceptance_ids()
         coverage = verified_acceptance_coverage(
             requirement,
             requirement.evidence,
@@ -418,20 +475,19 @@ def build_progress_report(
         weight_base = Decimal(str(requirement.risk_weight)) * Decimal(
             str(requirement.proof_weight)
         )
-        for class_name in requirement.evidence_required:
+        for acceptance_id, class_name in requirement.required_evidence_cells():
             point_weight = weight_base * Decimal(policy.class_weights[class_name])
-            for acceptance_id in acceptance_ids:
-                total_cells += 1
-                row_cells += 1
-                class_totals[class_name] += 1
-                total_points += point_weight
-                row_total += point_weight
-                if acceptance_id in coverage.get(class_name, set()):
-                    verified_cells += 1
-                    row_verified_cells += 1
-                    class_verified[class_name] += 1
-                    verified_points += point_weight
-                    row_verified += point_weight
+            total_cells += 1
+            row_cells += 1
+            class_totals[class_name] += 1
+            total_points += point_weight
+            row_total += point_weight
+            if acceptance_id in coverage.get(class_name, set()):
+                verified_cells += 1
+                row_verified_cells += 1
+                class_verified[class_name] += 1
+                verified_points += point_weight
+                row_verified += point_weight
         requirement_rows.append(
             {
                 "id": requirement.id,
@@ -440,6 +496,10 @@ def build_progress_report(
                 "weight_provenance": requirement.weight_provenance,
                 "acceptance_units": len(acceptance_ids),
                 "required_evidence_classes": list(requirement.evidence_required),
+                "acceptance_evidence_required": [
+                    list(classes)
+                    for classes in requirement.acceptance_evidence_required
+                ],
                 "cells_total": row_cells,
                 "cells_verified": row_verified_cells,
                 "weighted_points_total": _decimal_text(row_total),
@@ -625,13 +685,42 @@ def main() -> int:
         action="store_true",
         help="add new scope cells; refuses any denominator shrink",
     )
+    parser.add_argument(
+        "--migrate-scope-baseline",
+        action="store_true",
+        help="replace an invalid Cartesian denominator without dropping acceptance units",
+    )
+    parser.add_argument(
+        "--scope-migration-report",
+        default=str(DEFAULT_SCOPE_MIGRATION_PATH),
+    )
+    parser.add_argument(
+        "--scope-migration-reason",
+        default="",
+    )
     args = parser.parse_args()
 
     registry = load_registry(Path(args.registry))
     ledger = load_evidence_ledger(Path(args.evidence_ledger))
     policy = load_policy(Path(args.policy))
     scope_baseline_path = Path(args.scope_baseline)
-    if args.refresh_scope_baseline:
+    _require(
+        not (args.refresh_scope_baseline and args.migrate_scope_baseline),
+        "scope baseline refresh and migration are mutually exclusive",
+    )
+    if args.migrate_scope_baseline:
+        previous = load_scope_baseline(scope_baseline_path)
+        scope_baseline, receipt = build_scope_migration_receipt(
+            previous,
+            registry,
+            reason=args.scope_migration_reason,
+        )
+        _atomic_write(
+            Path(args.scope_migration_report),
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        )
+        write_scope_baseline_atomic(scope_baseline, scope_baseline_path)
+    elif args.refresh_scope_baseline:
         previous = load_scope_baseline(scope_baseline_path)
         current_fingerprints = scope_fingerprints(registry)
         removed = sorted(set(previous.fingerprints) - set(current_fingerprints))

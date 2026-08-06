@@ -66,7 +66,7 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _acceptance_ids(requirement: Requirement) -> tuple[str, ...]:
-    return tuple(f"A{index}" for index in range(1, len(requirement.acceptance) + 1))
+    return requirement.acceptance_ids()
 
 
 def _missing_cells(
@@ -75,8 +75,7 @@ def _missing_cells(
 ) -> tuple[str, ...]:
     return tuple(
         f"{evidence_class}:{acceptance_id}"
-        for evidence_class in requirement.evidence_required
-        for acceptance_id in _acceptance_ids(requirement)
+        for acceptance_id, evidence_class in requirement.required_evidence_cells()
         if acceptance_id not in coverage.get(evidence_class, set())
     )
 
@@ -163,8 +162,7 @@ def build_docket_report(
                 "disposition": disposition,
                 "owner": requirement.owner,
                 "acceptance_units": len(requirement.acceptance),
-                "evidence_cells_total": len(requirement.acceptance)
-                * len(requirement.evidence_required),
+                "evidence_cells_total": len(requirement.required_evidence_cells()),
                 "evidence_cells_verified": sum(
                     len(values) for values in coverages[requirement.id].values()
                 ),

@@ -15,9 +15,9 @@
 
 | ID | Claim | Missing cells | Direct blockers |
 |---|---|---:|---|
-| `ACTION-SPINE-001` | `in_progress` | 3 | EXPECT-001, EFFECT-001, ARCH-001, SUBSTRATE-001, FOREGROUND-LATENCY-001, AUTONOMY-AUTHORITY-001 |
+| `ACTION-SPINE-001` | `in_progress` | 2 | EXPECT-001, EFFECT-001, ARCH-001, SUBSTRATE-001, FOREGROUND-LATENCY-001, AUTONOMY-AUTHORITY-001 |
 | `ADAPT-001` | `in_progress` | 3 | none |
-| `AGENCY-001` | `in_progress` | 4 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
+| `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
 | `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | AGENCY-001, EFFECT-001, VALUES-001 |
@@ -47,10 +47,10 @@
 | `IIT-SYSTEM-001` | `in_progress` | 3 | STATE-001, SUBSTRATE-001, INTELLIGENCE-001, CLAIMS-001, PROOF-001, TEST-DEPTH-001, FOREGROUND-LATENCY-001 |
 | `INFERENCE-RELIABILITY-001` | `in_progress` | 3 | CONVERSATION-001, LANE-001, RUNTIME-001, FAULT-001, CAPABILITY-CERT-001, FRONTIER-COGNITION-001 |
 | `LAUNCH-PROVENANCE-001` | `in_progress` | 4 | OPERATIONS-001, RUNTIME-001, DESKTOP-ACCESS-001, UI-001, VALIDATE-001 |
-| `MATRIX-09` | `in_progress` | 12 | none |
-| `MATRIX-11` | `in_progress` | 12 | none |
+| `MATRIX-09` | `in_progress` | 10 | none |
+| `MATRIX-11` | `in_progress` | 9 | none |
 | `MATRIX-12` | `in_progress` | 8 | none |
-| `MATRIX-13` | `in_progress` | 16 | none |
+| `MATRIX-13` | `in_progress` | 10 | none |
 | `MEMORY-001` | `in_progress` | 3 | none |
 | `MEMORY-LEAK-001` | `in_progress` | 3 | RESOURCE-001, RUNTIME-001, FAULT-001, PERF-001 |
 | `MULTIMODAL-001` | `in_progress` | 3 | none |
@@ -65,15 +65,15 @@
 | `RLC-COMPUTE-001` | `in_progress` | 2 | RLC-LIFECYCLE-001, PERF-001, RLC-FRONTIER-001 |
 | `RLC-CONSOLIDATION-001` | `in_progress` | 2 | RLC-FAST-WEIGHTS-001, ADAPT-001, EFFECT-001 |
 | `RLC-EXPERIMENTS-001` | `in_progress` | 2 | RLC-FRONTIER-001, TEST-DEPTH-001 |
-| `RLC-FAST-WEIGHTS-001` | `in_progress` | 3 | RLC-LIFECYCLE-001, RLC-CONSOLIDATION-001 |
+| `RLC-FAST-WEIGHTS-001` | `in_progress` | 2 | RLC-LIFECYCLE-001, RLC-CONSOLIDATION-001 |
 | `RLC-FRESH-TASKS-001` | `in_progress` | 2 | RLC-EXPERIMENTS-001, CAPABILITY-CERT-001 |
-| `RLC-FRONTIER-001` | `in_progress` | 4 | RLC-BASELINES-001, RLC-FRESH-TASKS-001, RLC-LIVE32B-001 |
-| `RLC-INDEPENDENT-001` | `in_progress` | 6 | RLC-FRONTIER-001, RELEASE-CONTRACT-001 |
+| `RLC-FRONTIER-001` | `in_progress` | 3 | RLC-BASELINES-001, RLC-FRESH-TASKS-001, RLC-LIVE32B-001 |
+| `RLC-INDEPENDENT-001` | `in_progress` | 5 | RLC-FRONTIER-001, RELEASE-CONTRACT-001 |
 | `RLC-LATENT-OPT-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-COMPUTE-001, RLC-EXPERIMENTS-001 |
 | `RLC-LIFECYCLE-001` | `in_progress` | 2 | RUNTIME-001, FOREGROUND-LATENCY-001, RLC-MECHANICS-001 |
-| `RLC-LIVE32B-001` | `in_progress` | 4 | RLC-RUNTIME-001, GUI-001, VALIDATE-001 |
+| `RLC-LIVE32B-001` | `in_progress` | 3 | RLC-RUNTIME-001, GUI-001, VALIDATE-001 |
 | `RLC-MECHANICS-001` | `in_progress` | 2 | RLC-SCOPE-001, RLC-LIFECYCLE-001, RLC-COMPUTE-001 |
-| `RLC-RECURRENCE-001` | `in_progress` | 4 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
+| `RLC-RECURRENCE-001` | `in_progress` | 3 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
 | `RLC-RUNTIME-001` | `in_progress` | 3 | RLC-LIFECYCLE-001, RUNTIME-001, CHAT-001 |
 | `RLC-SCHEDULE-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-FRONTIER-001 |
 | `RLC-SCOPE-001` | `in_progress` | 3 | SCOPE-001, PROGRESS-CONTROL-001 |
@@ -88,11 +88,11 @@
 | `SKILL-EXECUTION-001` | `in_progress` | 3 | CAPABILITY-CERT-001, TOOLS-001, EFFECT-001, FAULT-001, TEST-DEPTH-001 |
 | `SOCIAL-001` | `in_progress` | 3 | none |
 | `SUBSTRATE-001` | `in_progress` | 3 | STATE-001, MIND-001, FOREGROUND-LATENCY-001 |
-| `TOOL-DISPOSITION-001` | `in_progress` | 4 | OBSERVE-001, EXPECT-001, FAULT-001, UI-001, AUTONOMY-AUTHORITY-001 |
+| `TOOL-DISPOSITION-001` | `in_progress` | 3 | OBSERVE-001, EXPECT-001, FAULT-001, UI-001, AUTONOMY-AUTHORITY-001 |
 | `TOOLS-001` | `in_progress` | 2 | none |
 | `TOPOLOGY-CONSISTENCY-001` | `in_progress` | 4 | ARCH-001, ASYNC-TASK-001, HEALTH-SURFACE-001, UI-001, FAULT-001, TEST-DEPTH-001 |
 | `UI-001` | `in_progress` | 4 | LAUNCH-PROVENANCE-001 |
-| `UI-LONG-CONTENT-001` | `in_progress` | 4 | UI-001, CONVERSATION-001, CHAT-DELIVERY-001, RLC-RUNTIME-001 |
+| `UI-LONG-CONTENT-001` | `in_progress` | 3 | UI-001, CONVERSATION-001, CHAT-DELIVERY-001, RLC-RUNTIME-001 |
 | `WORKSPACE-INGRESS-001` | `in_progress` | 3 | ARCH-001, SUBSTRATE-001, MULTIAGENT-001, FAULT-001 |
 
 ## Evidence Backfill
@@ -123,4 +123,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `493109872e1c5a806863350acea621846b9483d1bdee8df632f6ec6b2152d940`
+Report SHA-256: `e573a11e91e8839fb3e6df9c6ed7e3f5c83bd61021442d987c600fbfa2e97cab`

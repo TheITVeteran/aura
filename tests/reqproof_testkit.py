@@ -53,6 +53,8 @@ def write_evidence_receipt(
 
 
 def make_requirement(**overrides) -> dict:
+    from tools.reqproof.schema import EVIDENCE_CLASSES
+
     base = {
         "id": "TEST-001",
         "title": "A test requirement",
@@ -70,20 +72,38 @@ def make_requirement(**overrides) -> dict:
         "closure_requires": [],
         "parent": None,
         "acceptance": ["Do the thing and prove it."],
+        "acceptance_evidence_required": [["implementation", "test"]],
         "evidence_required": ["implementation", "test"],
         "evidence": [],
         "non_claims": [],
         "notes": "",
     }
     base.update(overrides)
+    if "acceptance_evidence_required" not in overrides:
+        raw_classes = list(base["evidence_required"])
+        if len(raw_classes) == len(set(raw_classes)) and set(raw_classes) <= set(
+            EVIDENCE_CLASSES
+        ):
+            matrix_classes = [
+                class_name for class_name in EVIDENCE_CLASSES if class_name in raw_classes
+            ]
+        else:
+            matrix_classes = raw_classes
+        base["acceptance_evidence_required"] = [
+            list(matrix_classes) for _ in base["acceptance"]
+        ]
+        if set(raw_classes) <= set(EVIDENCE_CLASSES) and len(raw_classes) == len(
+            set(raw_classes)
+        ):
+            base["evidence_required"] = matrix_classes
     return base
 
 
 def make_registry_dict(requirements: list[dict]) -> dict:
-    from tools.reqproof.schema import GeneratedFrom, Registry, Requirement
+    from tools.reqproof.schema import SCHEMA_VERSION, GeneratedFrom, Registry, Requirement
 
     registry = Registry(
-        schema_version=1,
+        schema_version=SCHEMA_VERSION,
         registry_revision=1,
         generated_from=GeneratedFrom(
             tracker_path="docs/X.md",

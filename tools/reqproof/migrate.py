@@ -24,16 +24,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.reqproof.schema import (  # noqa: E402
+    EVIDENCE_CLASSES,
+    SCHEMA_VERSION,
     GeneratedFrom,
     Registry,
     Requirement,
@@ -46,7 +50,7 @@ from tools.reqproof.tracker_parse import (  # noqa: E402
     parse_tracker,
 )
 
-MIGRATION_RULES_VERSION = 2
+MIGRATION_RULES_VERSION = 3
 
 DEFAULT_REGISTRY_PATH = ROOT / "config" / "requirement_registry.json"
 DEFAULT_ALLOWLIST_PATH = ROOT / "config" / "reqproof_prose_token_allowlist.json"
@@ -104,6 +108,33 @@ class MigrationError(ValueError):
     """Migration could not proceed deterministically."""
 
 
+def _previous_registry_identity(path: Path) -> tuple[int, str]:
+    """Read a hash-verified previous registry, including schema v1 upgrades."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MigrationError(f"cannot read previous registry {path}: {exc}") from exc
+    if data.get("schema_version") == SCHEMA_VERSION:
+        current = load_registry(path)
+        return current.registry_revision, current.compute_content_sha256()
+    if data.get("schema_version") != 1:
+        raise MigrationError(
+            f"unsupported previous registry schema {data.get('schema_version')!r}"
+        )
+    recorded = data.get("content_sha256")
+    revision = data.get("registry_revision")
+    if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
+        raise MigrationError("legacy registry content hash is missing or malformed")
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+        raise MigrationError("legacy registry revision is invalid")
+    body = {key: value for key, value in data.items() if key != "content_sha256"}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    actual = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if actual != recorded:
+        raise MigrationError("legacy registry content hash does not match content")
+    return revision, recorded
+
+
 def parse_state(status_raw: str, *, context: str) -> tuple[str, str]:
     """Map a raw tracker status string to (state, iso_date)."""
     text = status_raw.strip()
@@ -123,6 +154,23 @@ def derive_evidence_required(text: str) -> tuple[str, ...]:
         if pattern.search(text):
             classes.append(class_name)
     return tuple(classes)
+
+
+def derive_acceptance_evidence_required(
+    acceptance: tuple[str, ...],
+) -> tuple[tuple[str, ...], ...]:
+    """Derive proof modalities from each criterion, never from its siblings."""
+    return tuple(derive_evidence_required(criterion) for criterion in acceptance)
+
+
+def evidence_union(
+    acceptance_evidence_required: tuple[tuple[str, ...], ...],
+) -> tuple[str, ...]:
+    return tuple(
+        class_name
+        for class_name in EVIDENCE_CLASSES
+        if any(class_name in classes for classes in acceptance_evidence_required)
+    )
 
 
 def derive_non_claims(text: str) -> tuple[str, ...]:
@@ -248,9 +296,9 @@ def build_registry(
     registry_revision: int = 1,
 ) -> Registry:
     """Build the registry deterministically from a tracker extraction."""
-    draft: dict[str, dict] = {}
+    draft: dict[str, dict[str, Any]] = {}
 
-    def add(record: dict) -> None:
+    def add(record: dict[str, Any]) -> None:
         req_id = record["id"]
         if req_id in draft:
             raise MigrationError(f"duplicate requirement id during migration: {req_id}")
@@ -266,8 +314,9 @@ def build_registry(
         locator: str,
         acceptance: tuple[str, ...],
         notes: str = "",
-    ) -> dict:
+    ) -> dict[str, Any]:
         derivation_text = " ".join((burden_text, status_detail))
+        acceptance_evidence_required = derive_acceptance_evidence_required(acceptance)
         return {
             "id": req_id,
             "title": title,
@@ -287,7 +336,10 @@ def build_registry(
             "closure_requires": [],
             "parent": None,
             "acceptance": list(acceptance),
-            "evidence_required": list(derive_evidence_required(derivation_text)),
+            "acceptance_evidence_required": [
+                list(classes) for classes in acceptance_evidence_required
+            ],
+            "evidence_required": list(evidence_union(acceptance_evidence_required)),
             "evidence": [],
             "non_claims": list(derive_non_claims(derivation_text)),
             "notes": notes,
@@ -417,7 +469,7 @@ def build_registry(
         Requirement.from_dict(draft[req_id]) for req_id in sorted(draft)
     )
     return Registry(
-        schema_version=1,
+        schema_version=SCHEMA_VERSION,
         registry_revision=registry_revision,
         generated_from=GeneratedFrom(
             tracker_path=TRACKER_RELPATH,
@@ -434,15 +486,13 @@ def migrate(
     registry_path: Path,
     allowlist_path: Path,
     write: bool,
-) -> dict:
+) -> dict[str, Any]:
     extraction = parse_tracker(tracker_path)
     allowlist = load_prose_allowlist(allowlist_path)
     revision = 1
     previous_hash = ""
     if registry_path.exists():
-        previous = load_registry(registry_path)
-        previous_hash = previous.compute_content_sha256()
-        revision = previous.registry_revision
+        revision, previous_hash = _previous_registry_identity(registry_path)
     registry = build_registry(
         extraction, allowlist=allowlist, registry_revision=revision
     )

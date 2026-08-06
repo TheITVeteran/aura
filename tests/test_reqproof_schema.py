@@ -16,6 +16,7 @@ from tools.reqproof.schema import (
     write_registry_atomic,
 )
 
+
 class TestStrictParsing:
     def test_round_trip_is_canonical_and_deterministic(self):
         data = make_registry_dict([make_requirement()])
@@ -67,6 +68,48 @@ class TestStrictParsing:
     def test_atomic_requires_acceptance(self):
         with pytest.raises(RegistrySchemaError, match="acceptance criterion"):
             Requirement.from_dict(make_requirement(acceptance=[]))
+
+    def test_acceptance_modalities_are_aligned_and_union_is_derived(self):
+        requirement = Requirement.from_dict(
+            make_requirement(
+                acceptance=["Static proof.", "Live soak proof."],
+                acceptance_evidence_required=[
+                    ["implementation", "test"],
+                    ["implementation", "test", "live", "soak"],
+                ],
+                evidence_required=["implementation", "test", "live", "soak"],
+            )
+        )
+        assert requirement.required_evidence_for("A1") == (
+            "implementation",
+            "test",
+        )
+        assert requirement.required_evidence_for("A2") == (
+            "implementation",
+            "test",
+            "live",
+            "soak",
+        )
+        assert len(requirement.required_evidence_cells()) == 6
+
+        with pytest.raises(RegistrySchemaError, match="align one-to-one"):
+            Requirement.from_dict(
+                make_requirement(
+                    acceptance=["first", "second"],
+                    acceptance_evidence_required=[["implementation", "test"]],
+                )
+            )
+        with pytest.raises(RegistrySchemaError, match="canonical union"):
+            Requirement.from_dict(
+                make_requirement(
+                    acceptance=["static", "live"],
+                    acceptance_evidence_required=[
+                        ["implementation", "test"],
+                        ["implementation", "test", "live"],
+                    ],
+                    evidence_required=["implementation", "test"],
+                )
+            )
 
     def test_self_reference_rejected(self):
         with pytest.raises(RegistrySchemaError, match="itself"):

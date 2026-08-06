@@ -10,14 +10,14 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "0.09",
+    "machine_certified_percent": "0.07",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 9
+    "verified_basis_points": 7
   },
   "evidence_classes": [
     {
       "cells_total": 505,
-      "cells_verified": 1,
+      "cells_verified": 0,
       "evidence_class": "implementation",
       "weight": 2
     },
@@ -28,37 +28,37 @@
       "weight": 2
     },
     {
-      "cells_total": 222,
+      "cells_total": 109,
       "cells_verified": 0,
       "evidence_class": "live",
       "weight": 3
     },
     {
-      "cells_total": 80,
+      "cells_total": 31,
       "cells_verified": 0,
       "evidence_class": "gui",
       "weight": 3
     },
     {
-      "cells_total": 102,
+      "cells_total": 40,
       "cells_verified": 0,
       "evidence_class": "security",
       "weight": 4
     },
     {
-      "cells_total": 61,
+      "cells_total": 16,
       "cells_verified": 0,
       "evidence_class": "portability",
       "weight": 4
     },
     {
-      "cells_total": 43,
+      "cells_total": 19,
       "cells_verified": 0,
       "evidence_class": "release",
       "weight": 4
     },
     {
-      "cells_total": 66,
+      "cells_total": 11,
       "cells_verified": 0,
       "evidence_class": "soak",
       "weight": 4
@@ -69,16 +69,16 @@
     "confidence": "low",
     "conservative_weighted_points_per_checkpoint": 10,
     "optimistic_weighted_points_per_checkpoint": 30,
-    "remaining_checkpoint_records_high": 401,
-    "remaining_checkpoint_records_low": 134,
-    "total_checkpoint_records_high": 810,
-    "total_checkpoint_records_low": 543
+    "remaining_checkpoint_records_high": 279,
+    "remaining_checkpoint_records_low": 93,
+    "total_checkpoint_records_high": 688,
+    "total_checkpoint_records_low": 502
   },
   "inputs": {
-    "evidence_ledger_sha256": "c5e6f33dfb0f6247d1b7e6b4da674f7e59c57c359140c7c025b1fa2c7721299f",
+    "evidence_ledger_sha256": "6c5bfd75ba08bab18722b55973212e3a5333b03430f57ebfb05070c98094c4d1",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "2f0227a157fd62dcef0e02aad3fd944ba8b1b1318aaaa840cb7f43c98b4d3d99",
-    "scope_baseline_sha256": "f492fa86035eba2c3982a5ba18c13a2e22e7f0e2faca07d6c25fa2349cd23f86"
+    "registry_sha256": "07ffb4d559b2c3ef5a130fe2f86ec992bdece1fc1aa7074e031b15ab06545f1f",
+    "scope_baseline_sha256": "41eeda02fe01d345b1dbf0a8206a4833cfe90db4e1d3e1a2258689a01afe2777"
   },
   "non_claims": [
     "The 27 percent engineering estimate is not machine-certified and cannot release Aura.",
@@ -86,11 +86,19 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "d914e0102efe3bfe32117c9baa5fd66ee88615a6f12b6c85ad5aba26294e5e25",
+  "report_sha256": "64f3ebfc8bf1480d19248498238a9648ba5e8d76a37bfb4f7c1d356eb981ef01",
   "requirements": [
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 5,
+      "cells_total": 4,
       "cells_verified": 0,
       "id": "ACCESSIBILITY-I18N-001",
       "kind": "atomic",
@@ -98,25 +106,7 @@
         "implementation",
         "test",
         "gui",
-        "portability",
-        "release"
-      ],
-      "state_claim": "open",
-      "weight_provenance": "default",
-      "weighted_points_total": "15.00",
-      "weighted_points_verified": "0.00"
-    },
-    {
-      "acceptance_units": 1,
-      "cells_total": 4,
-      "cells_verified": 0,
-      "id": "ACCOUNT-AUTHORITY-001",
-      "kind": "atomic",
-      "required_evidence_classes": [
-        "implementation",
-        "test",
-        "live",
-        "security"
+        "portability"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
@@ -124,22 +114,57 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
-      "id": "ACTION-SPINE-001",
+      "id": "ACCOUNT-AUTHORITY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
         "live"
       ],
-      "state_claim": "in_progress",
+      "state_claim": "open",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
+      "acceptance_units": 1,
+      "cells_total": 2,
+      "cells_verified": 0,
+      "id": "ACTION-SPINE-001",
+      "kind": "atomic",
+      "required_evidence_classes": [
+        "implementation",
+        "test"
+      ],
+      "state_claim": "in_progress",
+      "weight_provenance": "default",
+      "weighted_points_total": "4.00",
+      "weighted_points_verified": "0.00"
+    },
+    {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -156,6 +181,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -172,8 +204,32 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 5,
-      "cells_total": 20,
+      "cells_total": 12,
       "cells_verified": 0,
       "id": "ADDENDUM-19",
       "kind": "parent",
@@ -185,12 +241,37 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "50.00",
+      "weighted_points_total": "26.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 5,
-      "cells_total": 20,
+      "cells_total": 13,
       "cells_verified": 0,
       "id": "ADDENDUM-20",
       "kind": "parent",
@@ -202,12 +283,54 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "55.00",
+      "weighted_points_total": "30.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "soak"
+        ]
+      ],
       "acceptance_units": 9,
-      "cells_total": 36,
+      "cells_total": 22,
       "cells_verified": 0,
       "id": "ADDENDUM-21",
       "kind": "parent",
@@ -219,12 +342,56 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "99.00",
+      "weighted_points_total": "49.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "release",
+          "soak"
+        ]
+      ],
       "acceptance_units": 9,
-      "cells_total": 45,
+      "cells_total": 24,
       "cells_verified": 0,
       "id": "ADDENDUM-22",
       "kind": "parent",
@@ -237,12 +404,38 @@
       ],
       "state_claim": "complete",
       "weight_provenance": "default",
-      "weighted_points_total": "135.00",
+      "weighted_points_total": "56.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "portability"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 5,
-      "cells_total": 25,
+      "cells_total": 14,
       "cells_verified": 0,
       "id": "ADDENDUM-23",
       "kind": "parent",
@@ -255,12 +448,32 @@
       ],
       "state_claim": "complete",
       "weight_provenance": "default",
-      "weighted_points_total": "70.00",
+      "weighted_points_total": "33.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 16,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "ADDENDUM-24",
       "kind": "parent",
@@ -272,10 +485,28 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "44.00",
+      "weighted_points_total": "23.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -291,8 +522,27 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "ADDENDUM-26",
       "kind": "parent",
@@ -303,12 +553,32 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 16,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "ADDENDUM-27",
       "kind": "parent",
@@ -320,12 +590,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "44.00",
+      "weighted_points_total": "23.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "ADDENDUM-28",
       "kind": "parent",
@@ -336,10 +625,28 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "32.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -355,8 +662,29 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "soak"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 20,
+      "cells_total": 11,
       "cells_verified": 0,
       "id": "ADDENDUM-30",
       "kind": "parent",
@@ -369,12 +697,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "60.00",
+      "weighted_points_total": "27.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "ADDENDUM-31",
       "kind": "parent",
@@ -385,10 +732,28 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "32.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -404,8 +769,144 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "portability"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "security",
+          "soak"
+        ]
+      ],
       "acceptance_units": 29,
-      "cells_total": 203,
+      "cells_total": 76,
       "cells_verified": 0,
       "id": "ADDENDUM-33",
       "kind": "parent",
@@ -420,27 +921,39 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "638.00",
+      "weighted_points_total": "177.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "AGENCY-001",
       "kind": "parent",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
-        "security"
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "11.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -456,6 +969,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -471,6 +990,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -486,6 +1011,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -502,6 +1034,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -517,6 +1055,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -532,6 +1076,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -548,6 +1099,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -564,6 +1122,15 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui",
+          "security",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 5,
       "cells_verified": 0,
@@ -582,8 +1149,68 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 14,
-      "cells_total": 42,
+      "cells_total": 30,
       "cells_verified": 0,
       "id": "CARRYOVER-01",
       "kind": "atomic",
@@ -594,12 +1221,23 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "98.00",
+      "weighted_points_total": "62.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "CARRYOVER-02",
       "kind": "atomic",
@@ -610,12 +1248,25 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "16.00",
+      "weighted_points_total": "12.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 8,
+      "cells_total": 7,
       "cells_verified": 0,
       "id": "CARRYOVER-03",
       "kind": "atomic",
@@ -627,10 +1278,20 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "20.00",
+      "weighted_points_total": "17.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -646,8 +1307,23 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 9,
+      "cells_total": 7,
       "cells_verified": 0,
       "id": "CARRYOVER-05",
       "kind": "atomic",
@@ -658,10 +1334,20 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "21.00",
+      "weighted_points_total": "15.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -677,6 +1363,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -692,6 +1384,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "soak"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -709,6 +1409,18 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 6,
       "cells_verified": 0,
@@ -725,6 +1437,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -740,6 +1458,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -757,6 +1483,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -772,6 +1504,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -787,6 +1525,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -802,6 +1546,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -817,6 +1567,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -833,22 +1590,35 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 3,
+      "cells_total": 2,
       "cells_verified": 0,
       "id": "COMPATIBILITY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test",
-        "release"
+        "test"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "8.00",
+      "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -866,6 +1636,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -882,6 +1659,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -897,6 +1680,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -912,6 +1701,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -927,6 +1722,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -942,6 +1743,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -957,6 +1764,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -973,6 +1787,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -988,6 +1808,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1003,6 +1829,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1018,6 +1850,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1033,6 +1871,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1048,6 +1892,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1063,6 +1913,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1078,6 +1934,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1093,6 +1955,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1108,6 +1976,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1123,6 +1997,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1138,6 +2018,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1153,6 +2039,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1168,6 +2060,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1183,6 +2081,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1198,6 +2102,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1213,6 +2123,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1228,6 +2144,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1243,6 +2165,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1258,6 +2186,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1273,6 +2207,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1288,6 +2228,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1303,6 +2249,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1318,6 +2270,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1333,6 +2291,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1348,6 +2312,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1363,6 +2333,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1378,6 +2354,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1393,6 +2375,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1408,6 +2396,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1423,6 +2417,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1438,6 +2438,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1453,6 +2459,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1468,6 +2480,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1483,6 +2501,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -1499,6 +2524,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1514,6 +2545,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1529,6 +2566,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1544,6 +2587,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1559,6 +2608,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1574,6 +2629,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1589,6 +2650,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1604,6 +2671,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1619,6 +2692,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1634,6 +2713,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1649,6 +2734,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1664,6 +2755,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1679,6 +2776,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1694,6 +2797,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1709,6 +2818,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1724,6 +2839,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1739,6 +2860,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1754,6 +2881,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1769,6 +2902,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1784,6 +2923,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1799,6 +2944,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1814,6 +2965,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1829,6 +2986,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1844,6 +3007,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1859,6 +3028,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1874,6 +3049,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1889,6 +3070,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1904,6 +3091,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1919,6 +3112,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1934,23 +3133,33 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 2,
       "cells_verified": 0,
       "id": "DATA-LIFECYCLE-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test",
-        "security",
-        "release"
+        "test"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "12.00",
+      "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1966,6 +3175,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -1982,6 +3198,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -1997,6 +3219,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2012,22 +3240,34 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 3,
+      "cells_total": 2,
       "cells_verified": 0,
       "id": "ENTERPRISE-CONTROL-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test",
-        "security"
+        "test"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "8.00",
+      "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2044,6 +3284,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2059,6 +3305,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2074,6 +3326,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2090,6 +3349,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2105,6 +3370,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2120,6 +3391,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2136,6 +3414,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2151,6 +3435,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2166,6 +3456,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2182,6 +3479,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2198,6 +3502,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2215,6 +3527,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "soak"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2231,6 +3550,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2248,6 +3575,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2265,6 +3600,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2280,6 +3621,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2297,6 +3646,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2312,6 +3667,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2329,6 +3692,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2344,6 +3713,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2359,6 +3734,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2375,6 +3757,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2390,6 +3778,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2405,6 +3799,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2421,6 +3822,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2436,6 +3843,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2452,6 +3866,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2467,6 +3887,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2483,6 +3910,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2499,6 +3933,15 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 5,
       "cells_verified": 0,
@@ -2517,6 +3960,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2533,6 +3983,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2548,9 +4004,17 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
-      "cells_verified": 2,
+      "cells_verified": 1,
       "id": "LANE-001",
       "kind": "parent",
       "required_evidence_classes": [
@@ -2562,9 +4026,17 @@
       "state_claim": "complete",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
-      "weighted_points_verified": "4.00"
+      "weighted_points_verified": "2.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2582,6 +4054,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -2597,6 +4075,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2613,8 +4098,27 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-01",
       "kind": "atomic",
@@ -2625,12 +4129,33 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui",
+          "release"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 20,
+      "cells_total": 11,
       "cells_verified": 0,
       "id": "MATRIX-02",
       "kind": "atomic",
@@ -2643,12 +4168,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "56.00",
+      "weighted_points_total": "26.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-03",
       "kind": "atomic",
@@ -2659,10 +4203,28 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -2678,8 +4240,27 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-05",
       "kind": "atomic",
@@ -2690,12 +4271,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "32.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-06",
       "kind": "atomic",
@@ -2706,12 +4306,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-07",
       "kind": "atomic",
@@ -2722,12 +4341,32 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 16,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "MATRIX-08",
       "kind": "atomic",
@@ -2739,12 +4378,32 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "48.00",
+      "weighted_points_total": "24.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "MATRIX-09",
       "kind": "atomic",
@@ -2755,10 +4414,28 @@
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "22.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -2774,8 +4451,27 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "gui"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-11",
       "kind": "atomic",
@@ -2786,10 +4482,28 @@
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
       "cells_total": 8,
       "cells_verified": 0,
@@ -2805,8 +4519,28 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "soak"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 16,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "MATRIX-13",
       "kind": "atomic",
@@ -2818,12 +4552,34 @@
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "44.00",
+      "weighted_points_total": "23.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 16,
+      "cells_total": 12,
       "cells_verified": 0,
       "id": "MATRIX-14",
       "kind": "atomic",
@@ -2835,12 +4591,34 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "40.00",
+      "weighted_points_total": "28.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security",
+          "release"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "portability",
+          "release"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 20,
+      "cells_total": 12,
       "cells_verified": 0,
       "id": "MATRIX-15",
       "kind": "atomic",
@@ -2853,12 +4631,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "64.00",
+      "weighted_points_total": "32.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-16",
       "kind": "atomic",
@@ -2869,12 +4666,31 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "32.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "MATRIX-17",
       "kind": "atomic",
@@ -2885,12 +4701,33 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "32.00",
+      "weighted_points_total": "20.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live",
+          "portability",
+          "soak"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 20,
+      "cells_total": 11,
       "cells_verified": 0,
       "id": "MATRIX-18",
       "kind": "atomic",
@@ -2903,10 +4740,17 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "60.00",
+      "weighted_points_total": "27.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2923,6 +4767,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2939,6 +4790,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -2955,6 +4813,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2972,6 +4838,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -2987,6 +4863,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3002,6 +4888,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3017,6 +4913,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3032,6 +4938,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3047,6 +4963,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3062,6 +4988,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3077,6 +5013,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3092,6 +5038,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3107,6 +5063,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3122,6 +5088,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3137,6 +5113,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3152,8 +5138,19 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "MQ-13",
       "kind": "atomic",
@@ -3164,10 +5161,20 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "16.00",
+      "weighted_points_total": "12.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3183,6 +5190,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3198,6 +5215,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3213,6 +5240,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3228,8 +5265,19 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "MQ-18",
       "kind": "atomic",
@@ -3240,10 +5288,16 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "16.00",
+      "weighted_points_total": "12.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3259,6 +5313,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3275,6 +5336,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3290,6 +5357,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3306,6 +5380,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3321,6 +5401,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3337,6 +5424,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3353,6 +5447,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3369,8 +5470,32 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 5,
-      "cells_total": 15,
+      "cells_total": 12,
       "cells_verified": 0,
       "id": "PASSF-01",
       "kind": "atomic",
@@ -3381,12 +5506,32 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "35.00",
+      "weighted_points_total": "26.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "PASSF-02",
       "kind": "atomic",
@@ -3397,10 +5542,24 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "22.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 3,
       "cells_total": 6,
       "cells_verified": 0,
@@ -3416,8 +5575,24 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 9,
+      "cells_total": 8,
       "cells_verified": 0,
       "id": "PASSF-04",
       "kind": "atomic",
@@ -3428,10 +5603,24 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "21.00",
+      "weighted_points_total": "18.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 3,
       "cells_total": 6,
       "cells_verified": 0,
@@ -3447,8 +5636,23 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 9,
+      "cells_total": 7,
       "cells_verified": 0,
       "id": "PASSF-06",
       "kind": "atomic",
@@ -3459,10 +5663,24 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "21.00",
+      "weighted_points_total": "15.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 3,
       "cells_total": 6,
       "cells_verified": 0,
@@ -3478,8 +5696,23 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 9,
+      "cells_total": 7,
       "cells_verified": 0,
       "id": "PASSF-08",
       "kind": "atomic",
@@ -3490,12 +5723,28 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "21.00",
+      "weighted_points_total": "15.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 12,
+      "cells_total": 8,
       "cells_verified": 0,
       "id": "PASSF-09",
       "kind": "atomic",
@@ -3507,12 +5756,24 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "33.00",
+      "weighted_points_total": "19.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security",
+          "release"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 8,
+      "cells_total": 6,
       "cells_verified": 0,
       "id": "PASSF-10",
       "kind": "atomic",
@@ -3524,12 +5785,23 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "24.00",
+      "weighted_points_total": "16.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui"
+        ],
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "PASSF-11",
       "kind": "atomic",
@@ -3540,12 +5812,23 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "14.00",
+      "weighted_points_total": "11.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 2,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "PASSF-12",
       "kind": "atomic",
@@ -3556,12 +5839,29 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "14.00",
+      "weighted_points_total": "11.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test",
+          "portability",
+          "soak"
+        ]
+      ],
       "acceptance_units": 3,
-      "cells_total": 15,
+      "cells_total": 9,
       "cells_verified": 0,
       "id": "PASSF-13",
       "kind": "atomic",
@@ -3574,12 +5874,32 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "45.00",
+      "weighted_points_total": "23.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ],
+        [
+          "implementation",
+          "test"
+        ],
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 4,
-      "cells_total": 12,
+      "cells_total": 10,
       "cells_verified": 0,
       "id": "PASSF-14",
       "kind": "atomic",
@@ -3590,10 +5910,19 @@
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "28.00",
+      "weighted_points_total": "22.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 5,
       "cells_verified": 0,
@@ -3612,23 +5941,35 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "PORTABILITY-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "portability",
-        "release"
+        "portability"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "12.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3644,6 +5985,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "portability",
+          "release",
+          "soak"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 6,
       "cells_verified": 0,
@@ -3663,6 +6014,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3678,6 +6035,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3693,6 +6056,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3708,6 +6077,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3725,6 +6102,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3741,6 +6125,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3756,6 +6146,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3772,6 +6169,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3787,6 +6190,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -3803,6 +6213,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3818,6 +6234,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3833,6 +6255,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3850,6 +6280,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -3867,6 +6305,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3882,6 +6326,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3897,6 +6347,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3912,22 +6368,33 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 3,
+      "cells_total": 2,
       "cells_verified": 0,
       "id": "RLC-FAST-WEIGHTS-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
-        "test",
-        "live"
+        "test"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "7.00",
+      "weighted_points_total": "4.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3943,25 +6410,40 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "RLC-FRONTIER-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
         "release"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "11.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 6,
+      "cells_total": 5,
       "cells_verified": 0,
       "id": "RLC-INDEPENDENT-001",
       "kind": "atomic",
@@ -3970,15 +6452,20 @@
         "test",
         "live",
         "security",
-        "portability",
-        "release"
+        "portability"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "19.00",
+      "weighted_points_total": "15.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -3994,6 +6481,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4009,23 +6502,35 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "RLC-LIVE32B-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
-        "gui"
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "10.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4041,6 +6546,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4056,23 +6567,36 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "RLC-RECURRENCE-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
         "portability"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "11.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4089,23 +6613,35 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "RLC-SCALING-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
         "release"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "11.00",
+      "weighted_points_total": "8.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4121,6 +6657,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4137,6 +6680,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4153,6 +6703,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4168,6 +6724,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4184,6 +6747,15 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 5,
       "cells_verified": 0,
@@ -4202,6 +6774,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4218,6 +6797,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4234,6 +6820,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -4251,6 +6845,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4267,6 +6868,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4282,6 +6889,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4297,6 +6910,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4313,6 +6933,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4329,6 +6956,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4344,6 +6977,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4359,6 +6998,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4374,6 +7019,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4389,6 +7040,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4404,6 +7061,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4419,6 +7082,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4434,6 +7103,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4449,6 +7124,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4464,6 +7145,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4479,6 +7166,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4494,6 +7187,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4510,6 +7210,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4525,6 +7231,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "soak"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4541,6 +7254,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4557,6 +7277,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4572,6 +7298,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4587,6 +7319,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4603,8 +7342,16 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "gui",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 5,
+      "cells_total": 4,
       "cells_verified": 0,
       "id": "SUPPORTABILITY-001",
       "kind": "atomic",
@@ -4612,15 +7359,22 @@
         "implementation",
         "test",
         "gui",
-        "security",
-        "release"
+        "security"
       ],
       "state_claim": "open",
       "weight_provenance": "default",
-      "weighted_points_total": "15.00",
+      "weighted_points_total": "11.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security",
+          "release"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -4638,6 +7392,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4653,23 +7413,35 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "TOOL-DISPOSITION-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
-        "gui"
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "10.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4685,6 +7457,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -4702,6 +7482,14 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 4,
       "cells_verified": 0,
@@ -4719,23 +7507,39 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
-      "cells_total": 4,
+      "cells_total": 3,
       "cells_verified": 0,
       "id": "UI-LONG-CONTENT-001",
       "kind": "atomic",
       "required_evidence_classes": [
         "implementation",
         "test",
-        "live",
-        "gui"
+        "live"
       ],
       "state_claim": "in_progress",
       "weight_provenance": "default",
-      "weighted_points_total": "10.00",
+      "weighted_points_total": "7.00",
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live",
+          "gui",
+          "security",
+          "portability"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 6,
       "cells_verified": 0,
@@ -4755,6 +7559,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4770,6 +7580,12 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 2,
       "cells_verified": 0,
@@ -4785,6 +7601,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "security"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4801,6 +7624,13 @@
       "weighted_points_verified": "0.00"
     },
     {
+      "acceptance_evidence_required": [
+        [
+          "implementation",
+          "test",
+          "live"
+        ]
+      ],
       "acceptance_units": 1,
       "cells_total": 3,
       "cells_verified": 0,
@@ -4819,14 +7649,14 @@
   ],
   "schema_version": 1,
   "scope": {
-    "acceptance_evidence_cells_total": 1584,
-    "acceptance_evidence_cells_verified": 2,
+    "acceptance_evidence_cells_total": 1236,
+    "acceptance_evidence_cells_verified": 1,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 301,
     "requirements_total": 302,
-    "scope_baseline_cells": 1584,
-    "weighted_points_remaining": "4010.00",
-    "weighted_points_total": "4014.00",
-    "weighted_points_verified": "4.00"
+    "scope_baseline_cells": 1236,
+    "weighted_points_remaining": "2782.00",
+    "weighted_points_total": "2784.00",
+    "weighted_points_verified": "2.00"
   }
 }

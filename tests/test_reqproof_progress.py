@@ -14,6 +14,7 @@ from tools.reqproof.progress import (
     ProgressPolicy,
     ScopeBaseline,
     build_progress_report,
+    build_scope_migration_receipt,
     parse_checkpoint_blame,
     render_markdown,
 )
@@ -97,6 +98,45 @@ class TestPolicy:
                 commit_exists=lambda commit: True,
             )
 
+    def test_scope_migration_removes_only_cross_modal_cells(self):
+        corrected = registry(
+            acceptance=["static", "live"],
+            acceptance_evidence_required=[
+                ["implementation", "test"],
+                ["implementation", "test", "live"],
+            ],
+            evidence_required=["implementation", "test", "live"],
+        )
+        cartesian = ScopeBaseline(
+            fingerprints=tuple(
+                sorted(
+                    f"TEST-001::A{index}::{class_name}"
+                    for index in (1, 2)
+                    for class_name in ("implementation", "test", "live")
+                )
+            )
+        )
+        baseline, receipt = build_scope_migration_receipt(
+            cartesian,
+            corrected,
+            reason="remove cross-modality cells",
+        )
+        assert len(baseline.fingerprints) == 5
+        assert receipt["removed_cells"] == ["TEST-001::A1::live"]
+        assert receipt["invariants"]["acceptance_units_before"] == 2
+        assert receipt["invariants"]["acceptance_units_after"] == 2
+        assert not receipt["invariants"]["acceptance_obligation_shrink"]
+
+        shrunk = registry(
+            acceptance=["static"],
+            evidence_required=["implementation", "test"],
+        )
+        with pytest.raises(ProgressError, match="acceptance-obligation shrink"):
+            build_scope_migration_receipt(
+                cartesian,
+                shrunk,
+                reason="invalid shrink",
+            )
 
 class TestCheckpointInventory:
     def test_blame_parser_counts_records_and_push_state(self):

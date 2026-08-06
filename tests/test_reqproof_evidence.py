@@ -115,6 +115,36 @@ class TestEvidenceLocation:
 
 
 class TestLedgerOperations:
+    def test_globally_required_class_cannot_cover_wrong_acceptance(self, tmp_path: Path):
+        write_evidence_receipt(
+            tmp_path,
+            "live-proof.json",
+            targets=[("TEST-001", "live", ["A1"])],
+            commit=COMMIT,
+        )
+        current_registry = registry(
+            make_requirement(
+                acceptance=["static", "live"],
+                acceptance_evidence_required=[
+                    ["implementation", "test"],
+                    ["implementation", "test", "live"],
+                ],
+                evidence_required=["implementation", "test", "live"],
+            )
+        )
+        with pytest.raises(EvidenceLedgerError, match="for acceptance IDs"):
+            add_entry(
+                EvidenceLedger.empty_for(current_registry),
+                current_registry,
+                requirement_id="TEST-001",
+                evidence_class="live",
+                acceptance_ids=("A1",),
+                ref="live-proof.json",
+                commit=COMMIT,
+                recorded_at="2026-08-05",
+                root=tmp_path,
+            )
+
     def test_add_entry_hashes_exact_bytes_and_supplies_overlay(self, tmp_path: Path):
         write_evidence_receipt(
             tmp_path,

@@ -9,6 +9,7 @@ from reqproof_testkit import mini_tracker
 from tools.reqproof.migrate import (
     MigrationError,
     build_registry,
+    derive_acceptance_evidence_required,
     migrate,
     parse_scope_refs,
     parse_state,
@@ -162,6 +163,17 @@ class TestDeterminismAndStaleness:
 
 
 class TestMigrationSemantics:
+    def test_modalities_are_derived_per_acceptance_not_cross_multiplied(self):
+        assert derive_acceptance_evidence_required(
+            (
+                "Static ownership evidence from an AST audit.",
+                "Bounded live pressure proof plus multi-hour soak.",
+            )
+        ) == (
+            ("implementation", "test"),
+            ("implementation", "test", "live", "soak"),
+        )
+
     def test_structure_parent_children_and_minting(self, tmp_path):
         path = tmp_path / "t.md"
         path.write_text(mini_tracker(), encoding="utf-8")

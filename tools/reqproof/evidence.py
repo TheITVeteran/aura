@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -53,7 +53,7 @@ def _require(condition: bool, message: str) -> None:
 
 def _check_string(value: Any, name: str) -> str:
     _require(isinstance(value, str) and bool(value), f"{name} must be a non-empty string")
-    return value
+    return cast(str, value)
 
 
 def sha256_file(path: Path) -> str:
@@ -242,7 +242,7 @@ def load_evidence_receipt(
     _require(paths == sorted(set(paths)), "source_manifest paths must be sorted and unique")
     if schema == COMMAND_RECEIPT_SCHEMA_V2:
         validate_source_selectors(data.get("source_selectors"))
-    return data
+    return cast(dict[str, Any], data)
 
 
 @dataclass(frozen=True)
@@ -473,6 +473,18 @@ def verify_ledger_binding(ledger: EvidenceLedger, registry: Registry) -> None:
             f"{entry.requirement_id} has unknown acceptance IDs "
             f"{unknown_acceptance_ids}",
         )
+        invalid_modalities = [
+            acceptance_id
+            for acceptance_id in entry.acceptance_ids
+            if entry.evidence.evidence_class
+            not in requirement.required_evidence_for(acceptance_id)
+        ]
+        _require(
+            not invalid_modalities,
+            f"{entry.requirement_id} does not require evidence class "
+            f"{entry.evidence.evidence_class} for acceptance IDs "
+            f"{invalid_modalities}",
+        )
 
 
 def add_entry(
@@ -493,6 +505,23 @@ def add_entry(
     _require(
         evidence_class in known[requirement_id].evidence_required,
         f"{requirement_id} does not require evidence class {evidence_class}",
+    )
+    requirement = known[requirement_id]
+    valid_acceptance_ids = set(requirement.acceptance_ids())
+    unknown_acceptance_ids = sorted(set(acceptance_ids) - valid_acceptance_ids)
+    _require(
+        not unknown_acceptance_ids,
+        f"{requirement_id} has unknown acceptance IDs {unknown_acceptance_ids}",
+    )
+    invalid_modalities = [
+        acceptance_id
+        for acceptance_id in acceptance_ids
+        if evidence_class not in requirement.required_evidence_for(acceptance_id)
+    ]
+    _require(
+        not invalid_modalities,
+        f"{requirement_id} does not require evidence class {evidence_class} "
+        f"for acceptance IDs {invalid_modalities}",
     )
     target = resolve_evidence_target(root, ref)
     load_evidence_receipt(
@@ -557,7 +586,7 @@ def _resolve_commit(root: Path, revision: str) -> str:
     _require(result.returncode == 0, f"unknown git commit {revision!r}")
     commit = result.stdout.strip()
     _require(bool(commit) and len(commit) == 40, f"git returned invalid commit for {revision!r}")
-    return commit
+    return cast(str, commit)
 
 
 def main() -> int:
@@ -600,6 +629,19 @@ def main() -> int:
                     entry.evidence.evidence_class
                     in known[entry.requirement_id].evidence_required,
                     f"cannot rebind obsolete evidence class for {entry.requirement_id}",
+                )
+                requirement = known[entry.requirement_id]
+                invalid_modalities = [
+                    acceptance_id
+                    for acceptance_id in entry.acceptance_ids
+                    if entry.evidence.evidence_class
+                    not in requirement.required_evidence_for(acceptance_id)
+                ]
+                _require(
+                    not invalid_modalities,
+                    "cannot rebind evidence to acceptance units that do not "
+                    f"require its class: {entry.requirement_id} "
+                    f"{invalid_modalities}",
                 )
             ledger = EvidenceLedger(
                 schema_version=LEDGER_SCHEMA_VERSION,
