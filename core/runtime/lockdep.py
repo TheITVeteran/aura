@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import sys
 import threading
 import time
@@ -882,8 +883,42 @@ class CheckedAsyncCondition:
     async def __aexit__(self, *exc: Any) -> None:
         await self._condition.__aexit__(*exc)
 
-    async def wait(self) -> bool:
-        return await self._condition.wait()
+    async def wait(self, *, timeout_s: float) -> bool:
+        """Wait for a notify, with a budget the caller must name.
+
+        The timeout is keyword-only and mandatory rather than defaulted. An
+        unbounded `await condition.wait()` is the exact shape that wedges an
+        event loop when the notifier dies, and lockdep is the worst place in
+        the tree for that: it is the machinery that watches for wedges, and it
+        has already wedged a boot once from inside its own reporting path.
+
+        There is no default because any default I picked would be an invented
+        constant, and a wrong one silently becomes the wedge budget for every
+        future caller. The one production user of this class already wraps
+        `wait_for` in an explicit `asyncio.wait_for` with a caller-supplied
+        timeout; this makes the plain form obey the same rule instead of
+        offering an unbounded alternative beside it.
+        """
+        budget = float(timeout_s)
+        if not math.isfinite(budget) or budget <= 0:
+            raise ValueError("timeout_s must be finite and positive")
+        try:
+            return await asyncio.wait_for(self._condition.wait(), timeout=budget)
+        except TimeoutError:
+            # Imported here, matching every other degradation site in this
+            # module: core.runtime.errors imports back into the lockdep
+            # surface, and a module-level import closes the cycle.
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "lockdep",
+                TimeoutError(
+                    f"condition {self._name!r} was not notified within {budget}s"
+                ),
+                severity="warning",
+                action="condition wait timed out; caller resumes without the notify",
+            )
+            raise
 
     async def wait_for(self, predicate: Callable[[], bool]) -> bool:
         return await self._condition.wait_for(predicate)

@@ -245,7 +245,21 @@ class ArchitectureQualityGate:
             reasons.append(f"new high-severity architecture finding(s): {sample}")
 
         if policy.block_growth_of_existing_large_files:
-            for path in changed_tuple:
+            # An empty `changed_paths` means "no narrowing supplied", NOT
+            # "nothing to check". It used to mean the latter by accident, and
+            # the accident disabled this entire block in the only place it
+            # runs: tools/closeout/architecture_quality_gate.py calls
+            # evaluate_reports(baseline, current) with no changed_paths, so
+            # changed_tuple was () and the loop below iterated over nothing.
+            # A fully-implemented, policy-configurable growth ratchet examined
+            # zero files on every CI run, and interface/routes/chat.py reached
+            # 24,658 lines under a gate whose default config forbids exactly
+            # that.
+            #
+            # Narrowing is an optimisation for diff-scoped runs. Absent it,
+            # the honest scope is every file the candidate report measured.
+            scope = changed_tuple or tuple(sorted(after.line_counts))
+            for path in scope:
                 before_lines = before.line_counts.get(path, 0)
                 after_lines = after.line_counts.get(path, 0)
                 if after_lines <= self.god_file_threshold:
