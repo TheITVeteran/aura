@@ -1399,10 +1399,64 @@ class StateRepository:
             "status": self.get_runtime_status(),
         }
 
+    #: Progressively tighter budgets for the bounded hot snapshot, tried in
+    #: order until one fits the transport. Text shrinks faster than list
+    #: lengths: a shorter narrative costs a reader far less than a lost goal.
+    _TRANSPORT_FIT_LADDER: tuple[tuple[int, int], ...] = (
+        (1024, 12),
+        (512, 8),
+        (256, 4),
+        (128, 2),
+        (64, 1),
+    )
+    #: Set only for the duration of a fit attempt. A ceiling, never a floor —
+    #: it can tighten a call site's own limit and never loosen it, so no
+    #: individual bound can be widened by turning this on.
+    _transport_budget: tuple[int, int] | None = None
+
+    def _transport_text_ceiling(self, limit: int | None) -> int:
+        base = int(limit or self.TRANSPORT_SNAPSHOT_MAX_TEXT)
+        budget = self._transport_budget
+        return min(base, budget[0]) if budget else base
+
+    def _transport_item_ceiling(self, limit: int | None) -> int:
+        base = int(limit or self.TRANSPORT_SNAPSHOT_MAX_ITEMS)
+        budget = self._transport_budget
+        return min(base, budget[1]) if budget else base
+
+    def _fit_transport_snapshot(self, state: AuraState, capacity: int) -> bytes | None:
+        """Shrink the hot snapshot until it fits ``capacity``, or give up.
+
+        The fixed TRANSPORT_* limits produce a snapshot that is small, not one
+        that is small ENOUGH — they know nothing about the transport it has to
+        cross. Measured 2026-08-06: 4098 bytes against a 4096-byte capacity.
+        Over by two, and the caller fell back to an overflow marker, which
+        carries a state id, a version and no state at all. Every reader on the
+        other side goes blind for a reason that has nothing to do with how much
+        state there actually is.
+
+        Returns None when even the tightest budget will not fit — which is the
+        honest case for the marker, and the only one.
+        """
+        previous = self._transport_budget
+        try:
+            for budget in self._TRANSPORT_FIT_LADDER:
+                self._transport_budget = budget
+                try:
+                    candidate = self._serialize_transport_snapshot(state).encode("utf-8")
+                except _STATE_BOUNDARY_ERRORS as exc:
+                    _record_state_degradation(exc)
+                    return None
+                if len(candidate) <= capacity:
+                    return candidate
+            return None
+        finally:
+            self._transport_budget = previous
+
     def _truncate_transport_text(self, value: Any, *, limit: int | None = None) -> Any:
         if not isinstance(value, str):
             return value
-        max_len = int(limit or self.TRANSPORT_SNAPSHOT_MAX_TEXT)
+        max_len = self._transport_text_ceiling(limit)
         if len(value) <= max_len:
             return value
         return value[: max(0, max_len - 3)] + "..."
@@ -1416,8 +1470,8 @@ class StateRepository:
         depth: int = 0,
         prefer_tail: bool = False,
     ) -> Any:
-        item_limit = int(max_items or self.TRANSPORT_SNAPSHOT_MAX_ITEMS)
-        text_limit = int(max_text or self.TRANSPORT_SNAPSHOT_MAX_TEXT)
+        item_limit = self._transport_item_ceiling(max_items)
+        text_limit = self._transport_text_ceiling(max_text)
 
         if depth >= 6:
             return f"<TRUNCATED:{type(value).__name__}>"
@@ -1579,6 +1633,14 @@ class StateRepository:
             except _STATE_BOUNDARY_ERRORS as exc:
                 _record_state_degradation(exc)
                 logger.warning("⚠️ [STATE] Failed to build bounded SHM hot snapshot: %s", exc)
+
+            # Bounded is not the same as bounded ENOUGH. If the fixed limits
+            # still overflow the transport, tighten until it fits rather than
+            # dropping to a marker that carries no state.
+            if hot_snapshot_payload and len(hot_snapshot_payload) > shm.payload_capacity:
+                hot_snapshot_payload = self._fit_transport_snapshot(
+                    state, shm.payload_capacity
+                )
 
             if hot_snapshot_payload and len(hot_snapshot_payload) <= shm.payload_capacity:
                 if self._last_shm_write_mode != "hot":

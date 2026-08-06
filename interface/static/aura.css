@@ -5726,7 +5726,48 @@ header {
     will-change: transform, opacity;
 }
 
+/* ── Lean mode ───────────────────────────────────────────────────────────
+   Set by auraFrameGovernor when frames are being dropped. A recorder, a slow
+   machine and a busy generation all look identical from inside the page, and
+   all three deserve the same answer: stop paying for the ambient work first.
+
+   The blur is the expensive part — three 120px-blurred radial gradients over
+   the full viewport, composited every frame — so lean mode drops the blur and
+   the animation and keeps the colour. The surface stays itself; it just stops
+   moving. Subtraction, not a different design. */
+body.perf-lean .aurora-layer {
+    animation: none !important;
+    filter: none !important;
+    opacity: 0.05;
+    will-change: auto;
+}
+
+body.perf-lean .cosmos,
+body.perf-lean .voice-orb,
+body.perf-lean .splash-orb {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+body.perf-lean .voice-orb,
+body.perf-lean .voice-orb::after,
+body.perf-lean .splash-orb-ring {
+    animation: none !important;
+}
+
+/* Unconditional, and first in the block on purpose. An animation squeezed to
+   0.001ms still runs; `animation: none` is the only thing that actually stops
+   the drift, and the aurora layers are exactly the ambient movement this
+   request is about. Whether or not the frame governor has ever fired. */
 @media (prefers-reduced-motion: reduce) {
+    .aurora-layer,
+    .aurora-1,
+    .aurora-2,
+    .aurora-3 {
+        animation: none !important;
+        transform: none !important;
+    }
+
     *,
     *::before,
     *::after {

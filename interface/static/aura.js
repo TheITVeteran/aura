@@ -9381,3 +9381,118 @@ function markLegacyShellReady() {
 }
 
 markLegacyShellReady();
+
+/* ── Frame governor ──────────────────────────────────────────────────────
+   Measures the symptom, not the cause.
+
+   A screen recorder, an older machine, a 32B generation saturating the GPU
+   and a browser throttling a background tab all produce the same observable
+   thing from inside the page: frames arriving late. None of them is
+   diagnosable from here and none of them needs to be — the response is the
+   same either way, which is to stop paying for the ambient work.
+
+   Hysteresis is not a nicety. Shedding on a single bad frame makes the
+   background flicker between blurred and flat, which reads as a fault and
+   looks worse than the lag it is answering. So: shed only after
+   BAD_SAMPLES_TO_SHED consecutive slow frames, restore only after
+   GOOD_SAMPLES_TO_RESTORE consecutive fast ones, and require more evidence to
+   restore than to shed — coming back too eagerly is how you get the flicker
+   from the other side.
+
+   A hidden tab is not rescued. requestAnimationFrame is throttled or stopped
+   outright when the document is hidden, so every sample looks catastrophic;
+   treating that as lag would leave every backgrounded surface permanently
+   lean for no reason. Samples are discarded while hidden and the run is
+   restarted clean on the way back. */
+const auraFrameGovernor = (() => {
+    // 60fps is 16.7ms. The threshold sits at two missed frames rather than
+    // one, because one late frame is normal on any machine doing anything.
+    const SLOW_FRAME_MS = 34;
+    const BAD_SAMPLES_TO_SHED = 12;
+    const GOOD_SAMPLES_TO_RESTORE = 45;
+    // A gap this large is a tab switch, a sleep, or a breakpoint — not lag.
+    const IMPLAUSIBLE_GAP_MS = 500;
+
+    let badSamples = 0;
+    let goodSamples = 0;
+    let lean = false;
+    let lastFrame = 0;
+    let running = false;
+
+    function setLean(next) {
+        if (next === lean) return;
+        lean = next;
+        document.body.classList.toggle('perf-lean', lean);
+        document.body.dataset.auraPerf = lean ? 'lean' : 'full';
+    }
+
+    function sample(now) {
+        if (!running) return;
+        window.requestAnimationFrame(sample);
+
+        if (document.hidden) {
+            lastFrame = 0;
+            badSamples = 0;
+            goodSamples = 0;
+            return;
+        }
+        if (!lastFrame) {
+            lastFrame = now;
+            return;
+        }
+
+        const delta = now - lastFrame;
+        lastFrame = now;
+        if (delta > IMPLAUSIBLE_GAP_MS) {
+            badSamples = 0;
+            goodSamples = 0;
+            return;
+        }
+
+        if (delta > SLOW_FRAME_MS) {
+            goodSamples = 0;
+            badSamples += 1;
+            if (badSamples >= BAD_SAMPLES_TO_SHED) setLean(true);
+        } else {
+            badSamples = 0;
+            goodSamples += 1;
+            if (goodSamples >= GOOD_SAMPLES_TO_RESTORE) setLean(false);
+        }
+    }
+
+    function start() {
+        if (running) return;
+        // Someone who asked the OS for less motion has already had the
+        // expensive layers stopped by CSS, unconditionally. Sampling frames to
+        // decide whether to stop them again would be measuring nothing.
+        const reduced = window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduced) return;
+        running = true;
+        lastFrame = 0;
+        window.requestAnimationFrame(sample);
+    }
+
+    function stop() {
+        running = false;
+        setLean(false);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        lastFrame = 0;
+        badSamples = 0;
+        goodSamples = 0;
+    });
+
+    return {
+        start,
+        stop,
+        get lean() { return lean; },
+        get thresholds() {
+            return { SLOW_FRAME_MS, BAD_SAMPLES_TO_SHED, GOOD_SAMPLES_TO_RESTORE };
+        },
+    };
+})();
+
+window.auraFrameGovernor = auraFrameGovernor;
+auraFrameGovernor.start();

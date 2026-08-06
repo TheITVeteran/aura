@@ -237,6 +237,33 @@ class HermeticResourceSandbox:
         self._leased_sockets: list[socket.socket] = []
         self.baseline = self.snapshot()
 
+    #: Children the INTERPRETER owns, which no test opened and none can close.
+    #:
+    #: `multiprocessing.resource_tracker` is the one that bit: creating a single
+    #: SharedMemory anywhere spawns it, it is a daemon for the life of the
+    #: interpreter by design, and it is what stops shared segments leaking when
+    #: a process dies. So the first test to touch shared memory was reported as
+    #: leaking a child — and every later test that did the same inherited the
+    #: blame, because the baseline was taken after it already existed. Measured
+    #: 2026-08-06: 13 errors across shared_mem_bus, rlc_action_state_capture
+    #: and shadow_kernel, none of them a leak.
+    #:
+    #: Matched on the child's own command line rather than its pid, so this
+    #: cannot be widened by accident into "ignore children we do not like".
+    _RUNTIME_OWNED_CHILD_MARKERS = (
+        "multiprocessing.resource_tracker",
+        "multiprocessing.semaphore_tracker",
+        "multiprocessing.forkserver",
+    )
+
+    @classmethod
+    def _is_runtime_owned_child(cls, child: object) -> bool:
+        try:
+            command = " ".join(child.cmdline())
+        except Exception:  # noqa: BLE001 — a child that vanished mid-probe is not ours to judge
+            return False
+        return any(marker in command for marker in cls._RUNTIME_OWNED_CHILD_MARKERS)
+
     def snapshot(self) -> _ResourceLeakSnapshot:
         try:
             process = self._native_process(os.getpid())
@@ -244,6 +271,7 @@ class HermeticResourceSandbox:
                 (child.pid, float(child.create_time()))
                 for child in process.children(recursive=True)
                 if child.status().lower() not in {"dead", "zombie"}
+                and not self._is_runtime_owned_child(child)
             )
             connections = process.net_connections(kind="inet")
             open_files = process.open_files()

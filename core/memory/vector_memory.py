@@ -563,21 +563,43 @@ class VectorMemory:
         neutral_expiry_seconds = max(expiry_seconds, min(45 * 86400, expiry_seconds * 2))
         ids_to_prune = []
 
+        def _is_stale(meta: dict) -> bool:
+            """The forgetting rule, in one place.
+
+            Two clocks: something actively unpleasant (valence below
+            min_salience) expires at the normal threshold, while something
+            merely neutral gets roughly twice as long before it goes. Defined
+            once because it is applied by three different storage paths, and a
+            rule that drifts between them means memories that survive in one
+            configuration and vanish in another.
+            """
+            last_access = meta.get("last_accessed", meta.get("timestamp", 0)) or 0
+            valence = meta.get("valence", 0.0) or 0.0
+            age = now - float(last_access)
+            return (age > expiry_seconds and float(valence) < min_salience) or (
+                age > neutral_expiry_seconds and float(valence) <= 0.05
+            )
+
         if self._fallback_mode:
             if self._sqlite_vectors is None:
-                return 0
+                # No durable fallback store means the in-memory list IS the
+                # store. Returning 0 here reported "nothing needed pruning"
+                # for a configuration that could never prune anything, so this
+                # VectorMemory grew without bound and said it was fine.
+                with self._mutation_lock:
+                    before = len(self._store)
+                    self._store = [
+                        item
+                        for item in self._store
+                        if not _is_stale(dict(item.get("metadata") or {}))
+                    ]
+                    return before - len(self._store)
             try:
                 with self._mutation_lock:
                     rows = list(self._sqlite_vectors.iter_records())
                     expected_revisions: dict[str, float] = {}
                     for row in rows:
-                        meta = dict(row.get("metadata") or {})
-                        last_access = meta.get("last_accessed", meta.get("timestamp", 0))
-                        valence = meta.get("valence", 0.0)
-                        if (
-                            ((now - last_access > expiry_seconds) and (valence < min_salience))
-                            or ((now - last_access > neutral_expiry_seconds) and (valence <= 0.05))
-                        ):
+                        if _is_stale(dict(row.get("metadata") or {})):
                             expected_revisions[str(row["id"])] = float(row["updated_at"])
                     if expected_revisions:
                         self._sqlite_vectors.delete_records_atomic(

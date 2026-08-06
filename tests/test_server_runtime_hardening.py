@@ -3154,26 +3154,26 @@ def test_vector_memory_prunes_stale_neutral_entries_after_hard_expiry(monkeypatc
     memory.db = SimpleNamespace(get_connection=lambda: _FakeConn())
 
     now = time.time()
-    memory._store = [
-        {
-            "id": "stale-neutral",
-            "content": "old neutral memory",
-            "metadata": {
-                "timestamp": now - (46 * 86400),
-                "last_accessed": now - (46 * 86400),
+    # Written through the store the implementation actually reads. This used
+    # to assign `memory._store` directly, which stopped being the store when
+    # the fallback became sqlite-backed — `_store` is now a cache the prune
+    # REBUILDS from sqlite, so the fixture was invisible to the code under
+    # test and the assertion was measuring an empty database.
+    for doc_id, age_days in (("stale-neutral", 46), ("recent-neutral", 5)):
+        assert memory._upsert_fallback(
+            doc_id,
+            f"{doc_id} content",
+            {
+                "timestamp": now - (age_days * 86400),
+                "last_accessed": now - (age_days * 86400),
                 "valence": 0.0,
             },
-        },
-        {
-            "id": "recent-neutral",
-            "content": "recent neutral memory",
-            "metadata": {
-                "timestamp": now - (5 * 86400),
-                "last_accessed": now - (5 * 86400),
-                "valence": 0.0,
-            },
-        },
-    ]
+        ), f"fixture {doc_id} did not reach the fallback store"
+
+    assert {item["id"] for item in memory._sqlite_vectors.list_records()} == {
+        "stale-neutral",
+        "recent-neutral",
+    }
 
     pruned = memory.prune_low_salience(threshold_days=30, min_salience=-0.2)
 
