@@ -401,3 +401,75 @@ async def test_directive_actually_fires_through_authorize_tool_execution(
     assert decision.reason == "standing_directive"
     assert decision.constraints["directive_reason"] == "my thesis lives here"
     assert not lease_calls, "prohibited action reached the standing-authority lease"
+
+
+# ── Nothing may write a rule on Aura's behalf ────────────────────────
+
+
+def test_no_code_path_creates_a_directive_automatically():
+    """A rule exists only because someone explicitly asked for it.
+
+    The danger this pins shut: if anything ever inferred a directive from
+    text — "she noticed you said don't touch X" — then a web page, an
+    email, or a document she merely READS becomes a persistent rule, and
+    the store turns into a prompt-injection sink that survives restarts.
+    Directive-shaped wording is the single easiest thing for an attacker
+    to put in front of her.
+
+    So `add_directive` has exactly one legitimate kind of caller: an
+    explicit owner action. Not the chat lane, not memory consolidation,
+    not the model's output path, not a reflex. If this test fails, someone
+    wired an inference path — that is the thing to reconsider, not this
+    assertion.
+    """
+    import re
+    from pathlib import Path
+
+    # Modules allowed to call it. Empty today: the only entry point is a
+    # human at a Python prompt. Adding an owner-driven UI route here is
+    # fine; adding anything that derives a rule from text is not.
+    ALLOWED = set()
+
+    offenders = []
+    for path in list(Path("core").rglob("*.py")) + list(Path("interface").rglob("*.py")):
+        rel = str(path)
+        if rel == "core/governance/standing_directives.py":
+            continue
+        source = path.read_text(encoding="utf-8", errors="replace")
+        if "standing_directives" not in source:
+            continue
+        # Reading the store to enforce it is the point; writing is not.
+        if re.search(r"\badd_directive\s*\(", source) and rel not in ALLOWED:
+            offenders.append(rel)
+
+    assert not offenders, (
+        "these modules write standing directives without being allowlisted: "
+        f"{offenders}. A rule must come from an explicit owner action, never "
+        "from text Aura read."
+    )
+
+
+def test_the_store_does_not_parse_language():
+    """No matcher may interpret prose. Exact paths and tool names only.
+
+    A semantic matcher would mean the rule's meaning depends on a model's
+    reading of it, which is both unpinnable and attackable. It would also
+    fail silently in the direction that matters — quietly not matching.
+    """
+    import re as _re
+
+    source = open(sd.__file__, encoding="utf-8").read()
+
+    assert sd._KINDS == frozenset({"path", "tool"}), (
+        "a new directive kind appeared; if it interprets language, it does not belong here"
+    )
+    # Whole-word, so `from core.runtime.errors import record_degradation`
+    # does not read as `import re`.
+    for forbidden in ("nlp", "embed", "embedding", "llm", "similarity", "classify", "regex"):
+        assert not _re.search(rf"\b{forbidden}\b", source, _re.I), (
+            f"the store grew a {forbidden} path"
+        )
+    # No regex engine either: a pattern language is still a matcher whose
+    # behaviour is hard to reason about at a security boundary.
+    assert not _re.search(r"^\s*import\s+re\s*$", source, _re.M)
+    assert not _re.search(r"^\s*from\s+re\s+import\b", source, _re.M)
