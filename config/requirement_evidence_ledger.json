@@ -1,5 +1,5 @@
 {
-  "content_sha256": "b1a1c65ee21a8ef89429daa85b01179504fe8186bd9765232484746e0011f141",
+  "content_sha256": "be200a3f52345c8111a35df65f86159add5d109472fba9fc0d6b0663fc8ed73d",
   "entries": [
     {
       "acceptance_ids": [
@@ -72,6 +72,20 @@
       "ref": "artifacts/reqproof/evidence/shutdown-contract-audit/6f3ab718958a1268d16c85937fea4b941493534e.json",
       "requirement_id": "ADDENDUM-32",
       "sha256": "933ebbf31e61d6f808c221e09f569b07b61c913796799fa9517e69e255e29886"
+    },
+    {
+      "acceptance_ids": [
+        "A1",
+        "A2",
+        "A3",
+        "A4"
+      ],
+      "commit": "c59487de56e8e8e0f918a0aec90affe6de534d8c",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c59487de56e8e8e0f918a0aec90affe6de534d8c.json",
+      "requirement_id": "ADDENDUM-32",
+      "sha256": "7003f2bd8f113b78b23325c500b4b64fb894956ece42d4dd8cd7647475e69d43"
     },
     {
       "acceptance_ids": [
@@ -176,12 +190,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
+      "commit": "c59487de56e8e8e0f918a0aec90affe6de534d8c",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c59487de56e8e8e0f918a0aec90affe6de534d8c.json",
       "requirement_id": "CTX2-SHUTDOWN-001",
-      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
+      "sha256": "7003f2bd8f113b78b23325c500b4b64fb894956ece42d4dd8cd7647475e69d43"
     },
     {
       "acceptance_ids": [
@@ -198,12 +212,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
+      "commit": "c59487de56e8e8e0f918a0aec90affe6de534d8c",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c59487de56e8e8e0f918a0aec90affe6de534d8c.json",
       "requirement_id": "CTX2-SHUTDOWN-002",
-      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
+      "sha256": "7003f2bd8f113b78b23325c500b4b64fb894956ece42d4dd8cd7647475e69d43"
     },
     {
       "acceptance_ids": [
@@ -220,12 +234,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "58f42377e980d54d0b244aafb183ba107cd6d2cd",
+      "commit": "c59487de56e8e8e0f918a0aec90affe6de534d8c",
       "evidence_class": "test",
       "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/58f42377e980d54d0b244aafb183ba107cd6d2cd.json",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c59487de56e8e8e0f918a0aec90affe6de534d8c.json",
       "requirement_id": "CTX2-SHUTDOWN-003",
-      "sha256": "c12ce6d40914b9ef17d5b856fd7c711271a7f3cf58baa7a44c1cadb37db7508f"
+      "sha256": "7003f2bd8f113b78b23325c500b4b64fb894956ece42d4dd8cd7647475e69d43"
     },
     {
       "acceptance_ids": [
@@ -424,6 +438,17 @@
       "ref": "artifacts/reqproof/evidence/shutdown-contract-audit/6f3ab718958a1268d16c85937fea4b941493534e.json",
       "requirement_id": "SHUTDOWN-001",
       "sha256": "933ebbf31e61d6f808c221e09f569b07b61c913796799fa9517e69e255e29886"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "c59487de56e8e8e0f918a0aec90affe6de534d8c",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/shutdown-contract-tests/c59487de56e8e8e0f918a0aec90affe6de534d8c.json",
+      "requirement_id": "SHUTDOWN-001",
+      "sha256": "7003f2bd8f113b78b23325c500b4b64fb894956ece42d4dd8cd7647475e69d43"
     },
     {
       "acceptance_ids": [
