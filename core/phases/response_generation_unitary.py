@@ -27,13 +27,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import re
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 from core.brain.llm.context_assembler import ContextAssembler
+from core.brain.reasoning_amplifier_flags import reasoning_amplifier_v2_enabled
 from core.container import ServiceContainer
 from core.kernel.bridge import Phase
 from core.phases.dialogue_policy import enforce_dialogue_contract, validate_dialogue_response
@@ -44,6 +44,15 @@ from core.phases.response_contract import (
 )
 from core.runtime import background_policy, response_policy
 from core.runtime.errors import record_degradation
+from core.runtime.flags import (
+    FlagKind as _FlagKind,
+)
+from core.runtime.flags import (
+    declare as _declare_flag,
+)
+from core.runtime.flags import (
+    env_present,
+)
 from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
     mlx_strict_answer_contract_enabled,
@@ -58,7 +67,6 @@ from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.prompt_compression import compress_system_prompt
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -105,13 +113,6 @@ _FLAG_EMBODIED_CHALLENGE = _declare_flag(
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
-_FLAG_REASONING_AMPLIFIER_V2 = _declare_flag(
-    "AURA_REASONING_AMPLIFIER_V2",
-    kind=_FlagKind.STRING,
-    default="1",
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
-)
 _FLAG_STRICT_PROOF_TIMEOUT_SECONDS = _declare_flag(
     "AURA_STRICT_PROOF_TIMEOUT_SECONDS",
     kind=_FlagKind.STRING,
@@ -119,15 +120,6 @@ _FLAG_STRICT_PROOF_TIMEOUT_SECONDS = _declare_flag(
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
-_FLAG_TESTING = _declare_flag(
-    "AURA_TESTING",
-    kind=_FlagKind.STRING,
-    default=None,
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
-)
-
-
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
 
@@ -2043,7 +2035,7 @@ class UnitaryResponsePhase(Phase):
         """
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
-        if str(_FLAG_REASONING_AMPLIFIER_V2.value()).strip().lower() in {"0", "false", "off", "no"}:
+        if not reasoning_amplifier_v2_enabled():
             return draft
         try:
             from core.brain.reasoning_amplifier_v2 import amplify_turn, is_amplifiable
@@ -5129,8 +5121,16 @@ class UnitaryResponsePhase(Phase):
                     routing_origin == "test"
                     or routing_origin == "benchmark"
                     or _FLAG_AGI_MAX_TASKS.value() is not None
-                    or _FLAG_TESTING.value() is not None
-                    or os.environ.get("AURA_PROOF_RUN") is not None
+                    or env_present(
+                        "AURA_TESTING",
+                        description="Mark a hermetic test runtime",
+                        owner="core.runtime.state_ownership",
+                    )
+                    or env_present(
+                        "AURA_PROOF_RUN",
+                        description="Mark a hermetic proof runtime",
+                        owner="core.runtime.state_ownership",
+                    )
                 )
                 background_reason = None if is_test_run else response_policy.background_response_suppression_reason(
                     objective,

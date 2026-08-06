@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from typing import Any
@@ -16,6 +15,7 @@ from core.brain.live_mind_contract import (
 )
 from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
+from core.brain.reasoning_amplifier_flags import reasoning_amplifier_v2_enabled
 from core.container import ServiceContainer
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
@@ -34,11 +34,11 @@ from core.runtime.conversation_support import (
 )
 from core.runtime.desktop_task_contract import desktop_task_action_sentence
 from core.runtime.errors import record_degradation
+from core.runtime.flags import env_present
 from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
 
 from ..state.aura_state import AuraState, CognitiveMode
 from . import BasePhase
-from core.runtime.flags import env_present, env_str
 
 logger = logging.getLogger(__name__)
 
@@ -886,14 +886,7 @@ class ResponseGenerationPhase(BasePhase):
 
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
-        if env_str("AURA_REASONING_AMPLIFIER_V2", default="1",
-                description="reasoning amplifier v2; 0/false/off disables it",
-                owner="core.phases.response_generation").strip().lower() in {
-            "0",
-            "false",
-            "off",
-            "no",
-        }:
+        if not reasoning_amplifier_v2_enabled():
             return draft
         try:
             from core.brain.reasoning_amplifier_v2 import amplify_turn, is_amplifiable

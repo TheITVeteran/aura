@@ -5,6 +5,10 @@ and an enumerable live value — instead of 686 scattered untyped env reads.
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from core.runtime.flags import (
@@ -107,6 +111,48 @@ class TestRegistryDiscipline:
         with pytest.raises(ValueError, match="AURA_"):
             declare("NOT_NAMESPACED", kind=FlagKind.BOOL, default=True,
                     description="d", owner="tests")
+
+    @pytest.mark.parametrize(
+        "modules",
+        [
+            (
+                "core.brain.inference_gate",
+                "core.phases.response_generation",
+                "core.phases.response_generation_unitary",
+            ),
+            (
+                "core.phases.response_generation_unitary",
+                "core.phases.response_generation",
+                "core.brain.inference_gate",
+            ),
+        ],
+    )
+    def test_reasoning_amplifier_flag_has_one_owner_in_any_import_order(
+        self,
+        modules: tuple[str, ...],
+    ) -> None:
+        script = "\n".join(
+            [
+                "import importlib, json",
+                *(f"importlib.import_module({module!r})" for module in modules),
+                "from core.runtime.flags import declared_flags",
+                "spec = declared_flags()['AURA_REASONING_AMPLIFIER_V2']",
+                "print(json.dumps({'owner': spec.owner, 'default': spec.default}))",
+            ]
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == {
+            "owner": "core.brain.reasoning_amplifier_v2",
+            "default": "1",
+        }
 
 
 class TestEnumeration:

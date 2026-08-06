@@ -284,9 +284,15 @@ def reset_registry_for_test() -> None:
 
 def env_str(name: str, *, default: str = "", description: str, owner: str) -> str:
     """A declared string knob, read through. Empty string when unset."""
-    value = declare(
-        name, kind=FlagKind.STRING, default=default, description=description, owner=owner
-    ).value()
+    bootstrap = _bootstrap_flags().get(name)
+    flag = bootstrap or declare(
+        name,
+        kind=FlagKind.STRING,
+        default=default,
+        description=description,
+        owner=owner,
+    )
+    value = flag.value()
     return str(default if value is None else value)
 
 
@@ -331,18 +337,15 @@ def env_present(name: str, *, description: str, owner: str) -> bool:
     it: some checked `is not None`, others checked truthiness, on the same
     three variables in the same file.
     """
-    return bool(
-        str(
-            declare(
-                name,
-                kind=FlagKind.STRING,
-                default="",
-                description=description,
-                owner=owner,
-            ).value()
-            or ""
-        ).strip()
+    bootstrap = _bootstrap_flags().get(name)
+    flag = bootstrap or declare(
+        name,
+        kind=FlagKind.STRING,
+        default="",
+        description=description,
+        owner=owner,
     )
+    return bool(str(flag.value() or "").strip())
 
 
 def env_bool(name: str, *, default: bool = False, description: str, owner: str) -> bool:

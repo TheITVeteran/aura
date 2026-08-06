@@ -60,6 +60,7 @@ from core.runtime.desktop_boot_safety import (
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind as _FlagKind
 from core.runtime.flags import declare as _declare_flag
+from core.runtime.flags import env_str
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.process_identity import assert_owned, capture_identity
 from core.runtime.proof_policy import (
@@ -186,13 +187,6 @@ _FLAG_LOCAL_RECYCLE_MIN_IDLE_S = _declare_flag(
     "AURA_LOCAL_RECYCLE_MIN_IDLE_S",
     kind=_FlagKind.STRING,
     default="900",
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
-)
-_FLAG_PROOF_RUN = _declare_flag(
-    "AURA_PROOF_RUN",
-    kind=_FlagKind.STRING,
-    default="",
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
@@ -7412,7 +7406,11 @@ class InferenceGate:
             is_background = False
         strict_primary_proof_lane = False
         try:
-            proof_run_enabled = str(_FLAG_PROOF_RUN.value() or "").strip().lower() in {
+            proof_run_enabled = env_str(
+                "AURA_PROOF_RUN",
+                description="Mark a hermetic proof runtime",
+                owner="core.runtime.state_ownership",
+            ).strip().lower() in {
                 "1",
                 "true",
                 "yes",
