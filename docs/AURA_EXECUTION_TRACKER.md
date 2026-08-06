@@ -290,8 +290,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   rebuilt-app, external-frontier, portability,
   release, or soak credit yet and therefore does not move the rounded
   percentage.
-- Current machine forecast: **approximately 504-690 total checkpoint records,
-  with 411 pushed records and approximately 93-279 remaining before final
+- Current machine forecast: **approximately 505-691 total checkpoint records,
+  with 412 pushed records and approximately 93-279 remaining before final
   soak/release closure**. This is a low-confidence policy prior over the
   1,305-cell no-shrink evidence denominator, not a promise or a completion
   claim; the current machine-certified completion is **6.66%**. The Recursive

@@ -12,11 +12,11 @@
 
 ## Checkpoints
 
-- Pushed checkpoint records: **411**
-- Distinct pushed commits: **393**
+- Pushed checkpoint records: **412**
+- Distinct pushed commits: **394**
 - Records on shared commits: **31**
 - Unpushed checkpoint records: **0**
-- Forecast total: **504-690 records** (low confidence; policy_prior_only)
+- Forecast total: **505-691 records** (low confidence; policy_prior_only)
 - Forecast remaining: **93-279 records**
 
 ## Evidence Burden
@@ -38,4 +38,4 @@ The certified percentage starts at zero until reviewed historical artifacts are 
 
 The forecast is conservative while evidence and weight calibration are incomplete. It will narrow from observed verified points per pushed checkpoint without changing the denominator or dropping open scope.
 
-Report SHA-256: `721b2b6b06a19e129abe42e59a9d2ff27687e965e86737685e8484e411ff3b2b`
+Report SHA-256: `f678579e5b8769a3d59f464aa4f870c56cead87313c8d48f1ce0fd2df6268486`
