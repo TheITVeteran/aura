@@ -6,8 +6,8 @@ out while still receiving consistent validation and logging behavior.
 """
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import importlib.util
 import logging
 import os
@@ -737,7 +737,7 @@ class SubprocessGateway:
         offline_tooling: bool = False,
         allow_during_shutdown: bool = False,
         capture_output: bool = True,
-        input: str | None = None,
+        input: str | bytes | None = None,
         check: bool = False,
         source: str = "unknown",
         # Byte-exact callers exist and must not be forced through a decode.
@@ -749,6 +749,11 @@ class SubprocessGateway:
         # A containment probe must not inherit the parent's stdin. Without
         # this the only way to close it was to bypass the gateway.
         stdin_devnull: bool = False,
+        # File-backed stdout/stderr keep externally supplied tools from forcing
+        # their entire output into Aura's memory. Callers must disable
+        # capture_output when either stream is supplied, matching subprocess.run.
+        stdout: int | IO[Any] | None = None,
+        stderr: int | IO[Any] | None = None,
         accelerator_capability: AcceleratorCapability | str | None = None,
     ) -> subprocess.CompletedProcess[Any]:
         command = _coerce_argv(argv)
@@ -790,6 +795,8 @@ class SubprocessGateway:
                 capture_output=bool(capture_output),
                 input=input,
                 stdin=subprocess.DEVNULL if (stdin_devnull and input is None) else None,
+                stdout=stdout,
+                stderr=stderr,
                 text=bool(text),
                 check=bool(check),
                 shell=False,

@@ -67,6 +67,8 @@ ROOT_EXCLUDED_DIRS = EXCLUDED_DIRS - ALWAYS_EXCLUDED_DIRS
 # deliberately introduced with compensating evidence.
 EXEMPT_FILES: dict[str, dict[str, str]] = {}
 
+_HARDCODED_LOCAL_PATH = re.compile(r"/(Users|home|tmp)/[a-zA-Z0-9_-]+")
+
 
 @dataclass
 class LintFinding:
@@ -75,6 +77,54 @@ class LintFinding:
     file: str
     line: int
     message: str
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """Return identities of AST constants that are structural docstrings."""
+
+    identities: set[int] = set()
+    owners = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    for owner in ast.walk(tree):
+        if not isinstance(owner, owners) or not owner.body:
+            continue
+        first = owner.body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            identities.add(id(first.value))
+    return identities
+
+
+def hardcoded_local_path_findings(tree: ast.AST, rel: str) -> list[LintFinding]:
+    """Find machine-specific paths in executable string literals only.
+
+    Comments and docstrings often document hostile examples or expected error
+    messages. Treating them as runtime configuration creates false closure work
+    while allowing the actual risky form, a string consumed by code, to hide in
+    the same noise.
+    """
+
+    docstrings = _docstring_nodes(tree)
+    findings: list[LintFinding] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+            and _HARDCODED_LOCAL_PATH.search(node.value)
+        ):
+            findings.append(
+                LintFinding(
+                    "high",
+                    "hardcoded_local_path",
+                    rel,
+                    int(getattr(node, "lineno", 0) or 0),
+                    "Hardcoded local path detected in executable string literal.",
+                )
+            )
+    return findings
 
 
 def iter_files(scope: str) -> Iterable[Path]:
@@ -463,23 +513,10 @@ def scan_file(path: Path) -> list[LintFinding]:
             )
         ]
 
-    # Line-level checks
-    local_path_pattern = re.compile(r"/(Users|home|tmp)/[a-zA-Z0-9_-]+")
-    for line_no, line in enumerate(source.splitlines(), start=1):
-        if rel not in EXEMPT_FILES:
-            if local_path_pattern.search(line):
-                findings.append(
-                    LintFinding(
-                        "high",
-                        "hardcoded_local_path",
-                        rel,
-                        line_no,
-                        "Hardcoded local path detected.",
-                    )
-                )
-
     try:
         tree = ast.parse(source, filename=rel)
+        if rel not in EXEMPT_FILES:
+            findings.extend(hardcoded_local_path_findings(tree, rel))
         visitor = AstLinter(rel)
         visitor.visit(tree)
         findings.extend(visitor.findings)

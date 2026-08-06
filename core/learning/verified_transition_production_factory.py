@@ -87,6 +87,7 @@ from core.runtime.detached_subprocess_broker import (
     run_brokered_process,
 )
 from core.runtime.file_read_gateway import read_stable_bytes
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 JIT_PROVIDER_CONFIG_SCHEMA = "aura.verified_transition.jit_provider_config.v1"
 JIT_PLAN_PACKAGE_SCHEMA = "aura.verified_transition.jit_plan_package.v1"
@@ -471,20 +472,23 @@ class CommandRoleSignerBroker:
         else:
             try:
                 with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-                    # Deliberately outside the subprocess gateway: this is the
-                    # external signer broker, and stdin/stdout are byte-exact
-                    # through real temporary files because the signature is
-                    # over those bytes. The executable's identity is asserted
-                    # immediately after the call returns.
-                    completed = subprocess.run(  # noqa: S603 - signer broker, identity-asserted
+                    # Process ownership and signer independence are separate
+                    # properties. The gateway owns admission and shutdown;
+                    # pinned executable identity and the signed byte protocol
+                    # preserve the broker's external trust boundary.
+                    completed = get_subprocess_gateway().run(
                         [str(self._executable), *self._arguments],
                         input=request_bytes,
+                        capture_output=False,
                         stdout=stdout,
                         stderr=stderr,
                         check=False,
                         timeout=self._timeout_seconds,
                         env=environment,
-                        shell=False,
+                        text=False,
+                        offline_tooling=True,
+                        source="training_tooling:verified_transition_external_signer",
+                        accelerator_capability="none",
                     )
                     stdout.seek(0)
                     stdout_bytes = stdout.read(64 * 1024 + 1)

@@ -14497,22 +14497,6 @@
       "scope": "<module>.ShadowExecutionPhase._validate_mutation_detailed"
     },
     {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/learning/durable_external_verifier_job.py",
-      "scope": "<module>.DurableExternalVerifierJob._runner_call"
-    },
-    {
-      "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/learning/verified_transition_production_factory.py",
-      "scope": "<module>.CommandRoleSignerBroker._execute"
-    },
-    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -14873,6 +14857,14 @@
       "scope": "<module>.CRSMClosureScheduler._run_training"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/learning/durable_external_verifier_job.py",
+      "scope": "<module>.DurableExternalVerifierJob._runner_call"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -14887,6 +14879,14 @@
       "count": 1,
       "path": "core/learning/recurrent_sft_kernel_probe.py",
       "scope": "<module>.execute_kernel_probe"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/learning/verified_transition_production_factory.py",
+      "scope": "<module>.CommandRoleSignerBroker._execute"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15986,6 +15986,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e70fa8f76c03b4192b60fe4b7c8d6f3c256a23f3c8f5cf92fdb187c39dd7b265",
+  "inventory_sha256": "af71f50fcb41954acd33f0cdbd7767967a56ce3a20251f9fc9989866f3e4149f",
   "schema_version": 1
 }

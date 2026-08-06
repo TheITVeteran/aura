@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import ast
 
-from tools.production_surface_lint import EXEMPT_FILES, AstLinter
+from tools.production_surface_lint import (
+    EXEMPT_FILES,
+    AstLinter,
+    hardcoded_local_path_findings,
+)
 
 
 def _findings(source: str) -> list[str]:
@@ -244,6 +248,36 @@ def save(path):
 
 def test_lint_has_no_audited_production_exemptions() -> None:
     assert EXEMPT_FILES == {}
+
+
+def test_hardcoded_path_lint_ignores_comments_and_docstrings() -> None:
+    tree = ast.parse(
+        '''
+"""Reject examples such as /Users/attacker/project and /tmp/attacker/git."""
+
+def validate(path):
+    """A caller may submit /home/example/state; it must not be trusted."""
+    # Never assume /Users/bryan exists on another host.
+    return path
+'''
+    )
+
+    assert hardcoded_local_path_findings(tree, "core/example.py") == []
+
+
+def test_hardcoded_path_lint_blocks_runtime_string_constants() -> None:
+    tree = ast.parse(
+        '''
+STATE_ROOT = "/Users/bryan/.aura/state"
+
+def temporary_path(name):
+    return f"/tmp/aura/{name}"
+'''
+    )
+
+    findings = hardcoded_local_path_findings(tree, "core/example.py")
+    assert [finding.line for finding in findings] == [2, 5]
+    assert {finding.kind for finding in findings} == {"hardcoded_local_path"}
 
 
 def test_lint_blocks_builtin_dynamic_code_execution() -> None:

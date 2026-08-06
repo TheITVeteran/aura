@@ -29,6 +29,7 @@ from core.runtime.atomic_writer import (
     interprocess_file_lock,
 )
 from core.runtime.file_read_gateway import read_stable_bytes
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 DURABLE_EXTERNAL_VERIFIER_JOB_SCHEMA = "aura.verified_transition.durable_external_verifier_job.v1"
 _DETACHED_PLAN_SCHEMA = "aura.detached_step.plan.v2"
@@ -506,20 +507,20 @@ class DurableExternalVerifierJob:
     ) -> dict[str, Any]:
         self._assert_source_identities()
         try:
-            # Deliberately outside the subprocess gateway. This runner is the
-            # detached verifier: its independence from the runtime is the
-            # property being relied on, and routing the spawn through the
-            # runtime's own accounting would put the thing under test inside
-            # the thing verifying it. Byte-exact (text=False) because the
-            # receipt hashes stdout; identities are asserted above.
-            completed = subprocess.run(  # noqa: S603 - detached verifier, identity-asserted
+            # The verifier remains independent through its pinned source,
+            # detached protocol, and externally checkable receipt. Routing the
+            # spawn through Aura's process owner adds admission and shutdown
+            # accounting without moving verification into the runtime under test.
+            completed = get_subprocess_gateway().run(
                 [sys.executable, str(self._runner), *arguments],
                 check=False,
                 capture_output=True,
                 text=False,
                 timeout=self._runner_call_timeout_seconds,
-                shell=False,
                 env=dict(environment) if environment is not None else None,
+                offline_tooling=True,
+                source="certification_tooling:durable_external_verifier_job",
+                accelerator_capability="none",
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise DurableExternalVerifierJobError(
