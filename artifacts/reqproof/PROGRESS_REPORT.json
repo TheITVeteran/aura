@@ -75,9 +75,9 @@
     "total_checkpoint_records_low": 504
   },
   "inputs": {
-    "evidence_ledger_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
+    "evidence_ledger_sha256": "2471ad45825b121822d18809219a27ac1b710d67be75a4c53d714117fb93d682",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
-    "registry_sha256": "37e747feea25bda7a94a0bf6a7907d87690a204c2be00e874d65f4a670da521a",
+    "registry_sha256": "47670be6b388f8c41c6a61bf8e705a69a9ecb15bf1f28c1c26463bc7bcd13687",
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336"
   },
   "non_claims": [
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "fb0dafc93477ecec1f53746c6059f9ddc2108367a6865eac9fa93d2c90eb833f",
+  "report_sha256": "721b2b6b06a19e129abe42e59a9d2ff27687e965e86737685e8484e411ff3b2b",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -402,7 +402,7 @@
         "release",
         "soak"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "56.00",
       "weighted_points_verified": "20.00"
@@ -2567,7 +2567,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "4.00"
@@ -2590,7 +2590,7 @@
         "test",
         "live"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
       "weighted_points_verified": "4.00"
@@ -2611,7 +2611,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "4.00"
@@ -4075,7 +4075,7 @@
         "live",
         "release"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "11.00",
       "weighted_points_verified": "4.00"
@@ -4121,7 +4121,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "4.00"
@@ -6229,7 +6229,7 @@
         "test",
         "live"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "7.00",
       "weighted_points_verified": "4.00"
@@ -7634,7 +7634,7 @@
         "implementation",
         "test"
       ],
-      "state_claim": "complete",
+      "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "4.00",
       "weighted_points_verified": "4.00"

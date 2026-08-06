@@ -1,13 +1,4 @@
 {
-  "fingerprints": [
-    "contradictory-status::LIFECYCLE-001::REPO-001",
-    "contradictory-status::LIFECYCLE-001::VALIDATE-001",
-    "false-closure::LANE-001::ADDENDUM-21",
-    "false-closure::RESOURCE-001::PASSF-03",
-    "unproven-closure::ADDENDUM-22",
-    "unproven-closure::CTX2-TEST-002",
-    "unproven-closure::LANE-001",
-    "unproven-closure::RESOURCE-001"
-  ],
+  "fingerprints": [],
   "schema_version": 1
 }

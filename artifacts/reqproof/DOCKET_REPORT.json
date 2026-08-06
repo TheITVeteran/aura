@@ -33,7 +33,7 @@
     {
       "counts": {
         "certified_complete": 2,
-        "claimed_complete_needs_evidence": 1,
+        "in_progress": 1,
         "ready_for_implementation": 12
       },
       "family": "ADDENDUM"
@@ -149,8 +149,8 @@
     },
     {
       "counts": {
-        "certified_complete": 9,
-        "claimed_complete_needs_evidence": 1,
+        "certified_complete": 7,
+        "in_progress": 3,
         "ready_for_implementation": 37
       },
       "family": "CTX2"
@@ -280,7 +280,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1
+        "in_progress": 1
       },
       "family": "LANE"
     },
@@ -292,7 +292,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_dependencies": 1
+        "in_progress": 1
       },
       "family": "LIFECYCLE"
     },
@@ -444,8 +444,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1,
-        "in_progress": 1
+        "in_progress": 2
       },
       "family": "RESOURCE"
     },
@@ -550,7 +549,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_dependencies": 1
+        "in_progress": 1
       },
       "family": "STORAGE"
     },
@@ -634,15 +633,15 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
-    "registry_sha256": "37e747feea25bda7a94a0bf6a7907d87690a204c2be00e874d65f4a670da521a"
+    "evidence_ledger_sha256": "2471ad45825b121822d18809219a27ac1b710d67be75a4c53d714117fb93d682",
+    "registry_sha256": "47670be6b388f8c41c6a61bf8e705a69a9ecb15bf1f28c1c26463bc7bcd13687"
   },
   "non_claims": [
     "A state_claim is historical tracker metadata, not certified completion.",
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "f39f947642860d5d89dd188d905084d7f3d3cc4e430278123e5f27ff566a4f00",
+  "report_sha256": "c572b608eb0ecb94d9b3856f00f13f3a925628965a2dcca510a3ddec87309dc5",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -694,6 +693,42 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback,\u2026"
+    },
+    {
+      "acceptance_units": 9,
+      "closure_blockers": [
+        "CTX2-TEST-001",
+        "CTX2-TEST-002",
+        "CTX2-TEST-003"
+      ],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 24,
+      "evidence_cells_verified": 10,
+      "family": "ADDENDUM",
+      "id": "ADDENDUM-22",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "live:A2",
+        "implementation:A4",
+        "test:A4",
+        "live:A4",
+        "live:A5",
+        "implementation:A7",
+        "test:A7",
+        "implementation:A8",
+        "test:A8",
+        "implementation:A9",
+        "test:A9",
+        "live:A9",
+        "release:A9",
+        "soak:A9"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Hermetic resource and pressure testing"
     },
     {
       "acceptance_units": 1,
@@ -750,6 +785,7 @@
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "FAULT-001",
+        "LIFECYCLE-001",
         "CONVERSATION-001"
       ],
       "disposition": "in_progress",
@@ -956,6 +992,59 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "in_progress",
+      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "in_progress",
+      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-TEST-003",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-22",
+      "state_claim": "in_progress",
+      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
     },
     {
       "acceptance_units": 1,
@@ -1471,6 +1560,29 @@
     },
     {
       "acceptance_units": 1,
+      "closure_blockers": [
+        "ADDENDUM-21",
+        "ADDENDUM-22"
+      ],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 4,
+      "evidence_cells_verified": 2,
+      "family": "LANE",
+      "id": "LANE-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "live:A1",
+        "release:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusi\u2026"
+    },
+    {
+      "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [
         "OPERATIONS-001",
@@ -1495,6 +1607,28 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the na\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [
+        "FAULT-001",
+        "ARCH-001",
+        "REPO-001",
+        "VALIDATE-001"
+      ],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "LIFECYCLE",
+      "id": "LIFECYCLE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
     },
     {
       "acceptance_units": 4,
@@ -1855,6 +1989,28 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Preserve the bounded exact simulator and governed typed skill while adding a real quantum-compute backend abstraction, simulator/hardware capability negotiatio\u2026"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [
+        "ADDENDUM-22",
+        "PASSF-03"
+      ],
+      "direct_dependency_blockers": [],
+      "disposition": "in_progress",
+      "evidence_cells_total": 3,
+      "evidence_cells_verified": 2,
+      "family": "RESOURCE",
+      "id": "RESOURCE-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [
+        "live:A1"
+      ],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests\u2026"
     },
     {
       "acceptance_units": 1,
@@ -2665,6 +2821,26 @@
     },
     {
       "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [
+        "EFFECT-001",
+        "FAULT-001"
+      ],
+      "disposition": "in_progress",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "STORAGE",
+      "id": "STORAGE-GATEWAY-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "in_progress",
+      "title": "Keep the authoritative production-surface scanner at zero findings and zero exemptions across direct writes, raw subprocesses, raw asynchronous tasks, swallowe\u2026"
+    },
+    {
+      "acceptance_units": 1,
       "closure_blockers": [
         "ADDENDUM-20",
         "ADDENDUM-29",
@@ -2870,146 +3046,6 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Give every structured subsystem, swarm, and distributed signal one typed, attributed, bounded ingress into the canonical GlobalWorkspace."
-    },
-    {
-      "acceptance_units": 9,
-      "closure_blockers": [
-        "CTX2-TEST-002"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 24,
-      "evidence_cells_verified": 10,
-      "family": "ADDENDUM",
-      "id": "ADDENDUM-22",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "live:A2",
-        "implementation:A4",
-        "test:A4",
-        "live:A4",
-        "live:A5",
-        "implementation:A7",
-        "test:A7",
-        "implementation:A8",
-        "test:A8",
-        "implementation:A9",
-        "test:A9",
-        "live:A9",
-        "release:A9",
-        "soak:A9"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Hermetic resource and pressure testing"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 3,
-      "evidence_cells_verified": 2,
-      "family": "CTX2",
-      "id": "CTX2-TEST-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "live:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-002`: separate deterministic simulated-pressure tests from explicitly labelled host-observation and live-pressure tests."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-21",
-        "ADDENDUM-22"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 4,
-      "evidence_cells_verified": 2,
-      "family": "LANE",
-      "id": "LANE-001",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "live:A1",
-        "release:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusi\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-22",
-        "PASSF-03"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 3,
-      "evidence_cells_verified": 2,
-      "family": "RESOURCE",
-      "id": "RESOURCE-001",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "live:A1"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [
-        "FAULT-001",
-        "ARCH-001",
-        "REPO-001",
-        "VALIDATE-001"
-      ],
-      "disposition": "claimed_complete_needs_dependencies",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 2,
-      "family": "LIFECYCLE",
-      "id": "LIFECYCLE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [
-        "EFFECT-001",
-        "FAULT-001"
-      ],
-      "disposition": "claimed_complete_needs_dependencies",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 2,
-      "family": "STORAGE",
-      "id": "STORAGE-GATEWAY-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Keep the authoritative production-surface scanner at zero findings and zero exemptions across direct writes, raw subprocesses, raw asynchronous tasks, swallowe\u2026"
     },
     {
       "acceptance_units": 5,
@@ -6988,6 +7024,7 @@
       "direct_dependency_blockers": [
         "IMMUNE-CODING-001",
         "ADAPT-001",
+        "STORAGE-GATEWAY-001",
         "FAULT-001",
         "ACTION-SPINE-001"
       ],
@@ -7122,6 +7159,7 @@
       "direct_dependency_blockers": [
         "MEMORY-001",
         "STATE-001",
+        "STORAGE-GATEWAY-001",
         "SECURITY-001"
       ],
       "disposition": "blocked_by_dependency",
@@ -8036,40 +8074,6 @@
       "disposition": "certified_complete",
       "evidence_cells_total": 2,
       "evidence_cells_verified": 2,
-      "family": "CTX2",
-      "id": "CTX2-TEST-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk, accelerator, and process-table observations so unit/integration tests do not inherit\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "certified_complete",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 2,
-      "family": "CTX2",
-      "id": "CTX2-TEST-003",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-22",
-      "state_claim": "complete",
-      "title": "- `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts, model registries, and environment flags per test."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "certified_complete",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 2,
       "family": "SHUTDOWN",
       "id": "SHUTDOWN-001",
       "kind": "parent",
@@ -8121,25 +8125,19 @@
   ],
   "schema_version": 1,
   "summary": {
-    "claimed_complete_needs_evidence_ids": [
-      "ADDENDUM-22",
-      "CTX2-TEST-002",
-      "LANE-001",
-      "RESOURCE-001"
-    ],
+    "claimed_complete_needs_evidence_ids": [],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 13,
-      "claimed_complete_needs_dependencies": 2,
-      "claimed_complete_needs_evidence": 4,
+      "certified_complete": 11,
       "deferred": 1,
-      "in_progress": 92,
+      "in_progress": 100,
       "nonmandatory": 1,
       "ready_for_implementation": 167
     },
     "in_progress_ids": [
       "ACTION-SPINE-001",
       "ADAPT-001",
+      "ADDENDUM-22",
       "AGENCY-001",
       "ARCH-001",
       "ASYNC-TASK-001",
@@ -8151,6 +8149,9 @@
       "CHECKPOINT-001",
       "CLOSEOUT-001",
       "CONVERSATION-001",
+      "CTX2-TEST-001",
+      "CTX2-TEST-002",
+      "CTX2-TEST-003",
       "CTX3-DECIDE-001",
       "CTX3-PERCEPT-001",
       "CTX3-PERCEPT-002",
@@ -8173,7 +8174,9 @@
       "HEALTH-SURFACE-001",
       "IIT-SYSTEM-001",
       "INFERENCE-RELIABILITY-001",
+      "LANE-001",
       "LAUNCH-PROVENANCE-001",
+      "LIFECYCLE-001",
       "MATRIX-09",
       "MATRIX-11",
       "MATRIX-12",
@@ -8188,6 +8191,7 @@
       "PERF-001",
       "PROGRESS-CONTROL-001",
       "QUANTUM-001",
+      "RESOURCE-001",
       "RESOURCE-OWNERSHIP-001",
       "RLC-ANTI-INTERFERENCE-001",
       "RLC-BRANCHES-001",
@@ -8222,6 +8226,7 @@
       "SIMWORLD-001",
       "SKILL-EXECUTION-001",
       "SOCIAL-001",
+      "STORAGE-GATEWAY-001",
       "SUBSTRATE-001",
       "TOOL-DISPOSITION-001",
       "TOOLS-001",

@@ -5,11 +5,11 @@
 ## Current Truth
 
 - Requirements: **313** total / **312** mandatory
-- In progress: **92**
-- Claimed complete but missing evidence: **4**
+- In progress: **100**
+- Claimed complete but missing evidence: **0**
 - Ready for implementation: **167**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **13**
+- Machine-certified complete: **11**
 
 ## Active Requirements
 
@@ -17,9 +17,10 @@
 |---|---|---:|---|
 | `ACTION-SPINE-001` | `in_progress` | 2 | EXPECT-001, EFFECT-001, ARCH-001, SUBSTRATE-001, FOREGROUND-LATENCY-001, AUTONOMY-AUTHORITY-001 |
 | `ADAPT-001` | `in_progress` | 3 | none |
+| `ADDENDUM-22` | `in_progress` | 14 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
-| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, CONVERSATION-001 |
+| `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
 | `AUTONOMY-001` | `in_progress` | 3 | none |
 | `AUTONOMY-AUTHORITY-001` | `in_progress` | 3 | EFFECT-001, VALUES-001 |
 | `BOOT-HEALTH-001` | `in_progress` | 3 | RUNTIME-001, HEALTH-SURFACE-001, FOREGROUND-LATENCY-001, CONVERSATION-001, FAULT-001 |
@@ -28,6 +29,9 @@
 | `CHECKPOINT-001` | `in_progress` | 0 | none |
 | `CLOSEOUT-001` | `in_progress` | 3 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
+| `CTX2-TEST-001` | `in_progress` | 0 | none |
+| `CTX2-TEST-002` | `in_progress` | 1 | none |
+| `CTX2-TEST-003` | `in_progress` | 0 | none |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
 | `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
 | `CTX3-PERCEPT-002` | `in_progress` | 5 | none |
@@ -50,7 +54,9 @@
 | `HEALTH-SURFACE-001` | `in_progress` | 4 | RUNTIME-001, OBSERVE-001, UI-001 |
 | `IIT-SYSTEM-001` | `in_progress` | 3 | STATE-001, SUBSTRATE-001, INTELLIGENCE-001, CLAIMS-001, PROOF-001, TEST-DEPTH-001 |
 | `INFERENCE-RELIABILITY-001` | `in_progress` | 3 | LANE-001, RUNTIME-001, FAULT-001, CAPABILITY-CERT-001, FRONTIER-COGNITION-001 |
+| `LANE-001` | `in_progress` | 2 | none |
 | `LAUNCH-PROVENANCE-001` | `in_progress` | 4 | OPERATIONS-001, RUNTIME-001, DESKTOP-ACCESS-001, VALIDATE-001 |
+| `LIFECYCLE-001` | `in_progress` | 0 | FAULT-001, ARCH-001, REPO-001, VALIDATE-001 |
 | `MATRIX-09` | `in_progress` | 10 | none |
 | `MATRIX-11` | `in_progress` | 9 | none |
 | `MATRIX-12` | `in_progress` | 8 | none |
@@ -65,6 +71,7 @@
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
 | `PROGRESS-CONTROL-001` | `in_progress` | 6 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
+| `RESOURCE-001` | `in_progress` | 1 | none |
 | `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
 | `RLC-ANTI-INTERFERENCE-001` | `in_progress` | 3 | RLC-CONSOLIDATION-001, CAPABILITY-CERT-001, IDENTITY-001 |
 | `RLC-BRANCHES-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
@@ -99,6 +106,7 @@
 | `SIMWORLD-001` | `in_progress` | 3 | none |
 | `SKILL-EXECUTION-001` | `in_progress` | 3 | CAPABILITY-CERT-001, TOOLS-001, EFFECT-001, FAULT-001, TEST-DEPTH-001 |
 | `SOCIAL-001` | `in_progress` | 3 | none |
+| `STORAGE-GATEWAY-001` | `in_progress` | 0 | EFFECT-001, FAULT-001 |
 | `SUBSTRATE-001` | `in_progress` | 3 | STATE-001, MIND-001 |
 | `TOOL-DISPOSITION-001` | `in_progress` | 3 | OBSERVE-001, EXPECT-001, FAULT-001, UI-001, AUTONOMY-AUTHORITY-001 |
 | `TOOLS-001` | `in_progress` | 2 | none |
@@ -112,13 +120,9 @@
 
 These requirements carry a historical complete claim but are not machine-certified:
 
-- `ADDENDUM-22`
-- `CTX2-TEST-002`
-- `LANE-001`
-- `RESOURCE-001`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `f39f947642860d5d89dd188d905084d7f3d3cc4e430278123e5f27ff566a4f00`
+Report SHA-256: `c572b608eb0ecb94d9b3856f00f13f3a925628965a2dcca510a3ddec87309dc5`

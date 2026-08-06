@@ -1,5 +1,5 @@
 {
-  "content_sha256": "981e1aad373e2ad5fb11f5c5f53d3d356b759b9fe6285da6ee5369adb1d7ef5a",
+  "content_sha256": "2471ad45825b121822d18809219a27ac1b710d67be75a4c53d714117fb93d682",
   "entries": [
     {
       "acceptance_ids": [
@@ -657,6 +657,6 @@
       "sha256": "22d7fe6c49776b2d970b7a7bb38836fd62e4838d07ab611c1d7816b1f7e1e067"
     }
   ],
-  "registry_content_sha256": "37e747feea25bda7a94a0bf6a7907d87690a204c2be00e874d65f4a670da521a",
+  "registry_content_sha256": "47670be6b388f8c41c6a61bf8e705a69a9ecb15bf1f28c1c26463bc7bcd13687",
   "schema_version": 2
 }
