@@ -1,5 +1,5 @@
 {
-  "content_sha256": "1e474dd1ce957eff54a48ba0fed33e6eedc8e99b2f82995a3f02a06356bdca93",
+  "content_sha256": "a5ffdde46b9eb258d4ec6c8fddbe2221822901abc68d8e87faa889a7aa70756c",
   "entries": [
     {
       "acceptance_ids": [
@@ -135,6 +135,17 @@
       "ref": "artifacts/reqproof/evidence/skill-runtime-route-audit/9fb335ef68b2e0a56b9f299d00db641740ecbde8.json",
       "requirement_id": "CTX2-SKILL-002",
       "sha256": "bab81d24f6a0c582eafcf0a77a9feade99f59fc8c51c1f42a0a8ee42849bb34f"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "a553080e1ee31b506fc2a850e6aebb91efd742ec",
+      "evidence_class": "live",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/skill-readiness-live-route-audit/a553080e1ee31b506fc2a850e6aebb91efd742ec.json",
+      "requirement_id": "CTX2-SKILL-002",
+      "sha256": "cae0662660a6ffa6f46bd5182f9a73f871046605a22a50e1e29e10c659db2088"
     },
     {
       "acceptance_ids": [
