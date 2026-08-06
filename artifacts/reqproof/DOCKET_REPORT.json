@@ -637,7 +637,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "730dd675d126151f20b03b438143b9d96a990d4f5623f3224ff43836ceff93fe",
+    "evidence_ledger_sha256": "1380bbc6e9313fca66ae664f424e0efdbc1e54409c9a78cf0a6ff964958aba11",
     "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
@@ -645,7 +645,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "bf0b9ecf7e3c1f39f81ea1146054855574745cf40b438e43af305e96c4fd96d6",
+  "report_sha256": "54187af3dcc90da4235331c6091b3b76d64816208bbdbbcda9e29af5b74d138b",
   "requirements": [
     {
       "acceptance_units": 1,
