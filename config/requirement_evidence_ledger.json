@@ -1,5 +1,5 @@
 {
-  "content_sha256": "dd0595dc89592fbf2d3196694db006456dc42dacace83827a36f1f42830bf698",
+  "content_sha256": "ce014e4c5c4718e0deb5452c798fcacd5212b2ee46744dbaca2118a433667661",
   "entries": [
     {
       "acceptance_ids": [
@@ -42,6 +42,21 @@
       "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
       "requirement_id": "ADDENDUM-22",
       "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
+    },
+    {
+      "acceptance_ids": [
+        "A1",
+        "A2",
+        "A3",
+        "A5",
+        "A6"
+      ],
+      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "requirement_id": "ADDENDUM-22",
+      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
     },
     {
       "acceptance_ids": [
@@ -102,12 +117,45 @@
       "acceptance_ids": [
         "A1"
       ],
+      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "requirement_id": "CTX2-TEST-001",
+      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
       "commit": "f66fbecc82a1cbb87ce78181caababd86791c1bc",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-06",
       "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
       "requirement_id": "CTX2-TEST-002",
       "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "requirement_id": "CTX2-TEST-002",
+      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "requirement_id": "CTX2-TEST-003",
+      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
     },
     {
       "acceptance_ids": [
@@ -141,6 +189,17 @@
       "ref": "artifacts/reqproof/evidence/resource-observation-ownership-audit/f66fbecc82a1cbb87ce78181caababd86791c1bc.json",
       "requirement_id": "RESOURCE-001",
       "sha256": "d0693fb503d453b26ddda53fdc7458478a40b0399b880d11851145955b14e554"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "9ca73bec998251eaf6f62c6167fd73b7f1657138",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/9ca73bec998251eaf6f62c6167fd73b7f1657138.json",
+      "requirement_id": "RESOURCE-001",
+      "sha256": "457c1ad116557b266daf814a83a484f071627732ad3b20d0aafd0f7f593e59f9"
     }
   ],
   "registry_content_sha256": "7805b55131471f7ffb988324423651d8ce3fb79355d6b625601d3ddca6790a13",
