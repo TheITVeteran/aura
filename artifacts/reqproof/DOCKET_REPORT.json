@@ -32,8 +32,8 @@
     },
     {
       "counts": {
-        "certified_complete": 1,
-        "claimed_complete_needs_evidence": 2,
+        "certified_complete": 2,
+        "claimed_complete_needs_evidence": 1,
         "ready_for_implementation": 12
       },
       "family": "ADDENDUM"
@@ -517,7 +517,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_children": 1
+        "certified_complete": 1
       },
       "family": "SKILLS"
     },
@@ -637,7 +637,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "2a0cde09d50563912792f83bce9d4e92ee2ef3294f501cced54ee8c676e8aac5",
+    "evidence_ledger_sha256": "542913cda4a161919ad6be4737be126cf23d57b59a9a8f5413cbb7b63953def2",
     "registry_sha256": "98cd86a195e26375cd7a658b57a13a9223984f1d8b2cc0dd790c27e87e79ee13"
   },
   "non_claims": [
@@ -645,7 +645,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "16fb85142a05e6c60fc8fe10ce41383b47c7e4059ff8b7285d83f509608b14ec",
+  "report_sha256": "590262faef4397bb6d8029cdffbcda1a5a200e142837abccafcca90bff6f251d",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2735,38 +2735,6 @@
       "title": "Hermetic resource and pressure testing"
     },
     {
-      "acceptance_units": 5,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 14,
-      "evidence_cells_verified": 0,
-      "family": "ADDENDUM",
-      "id": "ADDENDUM-23",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1",
-        "test:A1",
-        "implementation:A2",
-        "test:A2",
-        "implementation:A3",
-        "test:A3",
-        "implementation:A4",
-        "test:A4",
-        "live:A4",
-        "gui:A4",
-        "portability:A4",
-        "implementation:A5",
-        "test:A5",
-        "live:A5"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Fail-closed cognitive gates and complete skill discovery"
-    },
-    {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -2854,25 +2822,6 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests\u2026"
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [
-        "ADDENDUM-23"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_children",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 2,
-      "family": "SKILLS",
-      "id": "SKILLS-001",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
     },
     {
       "acceptance_units": 1,
@@ -7960,6 +7909,23 @@
       "title": "Run bounded multi-hour and then 24-72 hour longevity/pressure/idle/recovery soaks only after `VALIDATE-001` and every shorter requirement are green; triage any\u2026"
     },
     {
+      "acceptance_units": 5,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 14,
+      "evidence_cells_verified": 14,
+      "family": "ADDENDUM",
+      "id": "ADDENDUM-23",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Fail-closed cognitive gates and complete skill discovery"
+    },
+    {
       "acceptance_units": 4,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -8150,6 +8116,23 @@
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "SKILLS",
+      "id": "SKILLS-001",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
       "disposition": "nonmandatory",
       "evidence_cells_total": 3,
       "evidence_cells_verified": 0,
@@ -8172,7 +8155,6 @@
   "summary": {
     "claimed_complete_needs_evidence_ids": [
       "ADDENDUM-22",
-      "ADDENDUM-23",
       "CTX2-TEST-002",
       "LANE-001",
       "LIFECYCLE-001",
@@ -8180,10 +8162,9 @@
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 11,
-      "claimed_complete_needs_children": 1,
+      "certified_complete": 13,
       "claimed_complete_needs_dependencies": 1,
-      "claimed_complete_needs_evidence": 6,
+      "claimed_complete_needs_evidence": 5,
       "deferred": 1,
       "in_progress": 83,
       "nonmandatory": 1,
