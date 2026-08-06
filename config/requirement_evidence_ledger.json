@@ -1,5 +1,5 @@
 {
-  "content_sha256": "a5ffdde46b9eb258d4ec6c8fddbe2221822901abc68d8e87faa889a7aa70756c",
+  "content_sha256": "ffb5be2a94e01d828f5e7f141b84b60d7e75a751cc9d49ea3ccbbcd1e729bcec",
   "entries": [
     {
       "acceptance_ids": [
@@ -124,6 +124,17 @@
       "ref": "artifacts/reqproof/evidence/skill-certification-contract-tests/fcd82ff43b82f53b5c3ee9c330fcc721bc675fa5.json",
       "requirement_id": "CTX2-SKILL-001",
       "sha256": "339f16b9011ee38fdb4600b9b76ca685865ae7ba0723c103cb233570e065eb06"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "4b6fde0dabe39d164ee7e7432bdc78fcf990ed4a",
+      "evidence_class": "gui",
+      "recorded_at": "2026-08-06",
+      "ref": "artifacts/reqproof/evidence/skill-readiness-gui-audit/4b6fde0dabe39d164ee7e7432bdc78fcf990ed4a.json",
+      "requirement_id": "CTX2-SKILL-002",
+      "sha256": "ca00bca59f860b58b259993a0027844a4ecd3893dbe4b1811d277aa2fd05522d"
     },
     {
       "acceptance_ids": [
