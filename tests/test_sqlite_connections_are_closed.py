@@ -18,7 +18,7 @@ local code stating a contract the composition does not hold.
 
 from __future__ import annotations
 
-import re
+import ast
 import sqlite3
 from pathlib import Path
 
@@ -31,10 +31,26 @@ pytestmark = pytest.mark.unit
 REPO = Path(__file__).resolve().parent.parent
 SCANNED = ("core", "interface", "tools", "training")
 
-#: The bare form, excluding a line that already wraps it.
-_BARE = re.compile(
-    r"with\s+(?:sqlite3\.connect\(|self\._connect(?:_rw|_ro)?\(\))"
-)
+
+def _bare_sqlite_context_lines(source: str, *, filename: str) -> list[int]:
+    tree = ast.parse(source, filename=filename)
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        for item in node.items:
+            expression = item.context_expr
+            if not isinstance(expression, ast.Call):
+                continue
+            function = expression.func
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr == "connect"
+                and isinstance(function.value, ast.Name)
+                and function.value.id == "sqlite3"
+            ):
+                lines.append(expression.lineno)
+    return lines
 
 
 class TestTheHelperBehaves:
@@ -120,14 +136,28 @@ class TestTheCodebaseUsesIt:
                     continue
                 try:
                     body = path.read_text(encoding="utf-8")
-                except OSError:
+                    lines = _bare_sqlite_context_lines(body, filename=str(path))
+                except (OSError, SyntaxError, UnicodeError):
                     continue
-                for number, line in enumerate(body.splitlines(), 1):
-                    if "connecting(" in line:
-                        continue
-                    if _BARE.search(line):
-                        found.append(f"{path.relative_to(REPO)}:{number}")
+                found.extend(f"{path.relative_to(REPO)}:{line}" for line in lines)
         return sorted(found)
+
+    def test_scanner_ignores_prose_and_closing_helpers(self):
+        source = '''
+"""Never write ``with sqlite3.connect(path)`` directly."""
+with self._connect() as conn:
+    conn.execute("SELECT 1")
+with connecting(sqlite3.connect(path)) as conn:
+    conn.execute("SELECT 1")
+'''
+        assert _bare_sqlite_context_lines(source, filename="safe.py") == []
+
+    def test_scanner_finds_only_the_direct_bare_context(self):
+        source = '''
+with sqlite3.connect(path) as conn:
+    conn.execute("SELECT 1")
+'''
+        assert _bare_sqlite_context_lines(source, filename="unsafe.py") == [2]
 
     def test_no_connection_is_opened_without_being_closed(self):
         offenders = self._offenders()
