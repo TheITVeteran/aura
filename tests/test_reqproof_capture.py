@@ -394,6 +394,14 @@ def test_checked_repo_spec_is_valid() -> None:
         "--report",
         "/tmp/aura-reqproof-structural-gate.json",
     )
+    for proof_id in (
+        "reqproof-progress-engine-audit",
+        "reqproof-structural-gate-audit",
+    ):
+        assert (
+            "config/requirement_evidence_ledger.json"
+            not in specs.by_id()[proof_id].source_paths
+        ), "recording a receipt must not stale its own implementation proof"
     assert {
         (target.requirement_id, target.evidence_class)
         for target in specs.by_id()[

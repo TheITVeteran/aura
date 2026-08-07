@@ -1,5 +1,5 @@
 {
-  "content_sha256": "3d306de81ab84a49f9ffecfdec01de6be7689222cf6f8133b39097e6542bd671",
+  "content_sha256": "6034fe5e93384086c19dacd3195908c5a8ae1dd349c6685f444718b71796ff1e",
   "schema_version": 1,
   "specs": [
     {
@@ -643,7 +643,6 @@
       "source_paths": [
         "config/reqproof_progress_policy.json",
         "config/reqproof_scope_baseline.json",
-        "config/requirement_evidence_ledger.json",
         "config/requirement_registry.json",
         "docs/AURA_EXECUTION_TRACKER.md",
         "tools/reqproof/evidence.py",
@@ -683,7 +682,6 @@
         "config/reqproof_prose_token_allowlist.json",
         "config/reqproof_scope_baseline.json",
         "config/requirement_coverage_map.json",
-        "config/requirement_evidence_ledger.json",
         "config/requirement_registry.json",
         "docs/AURA_EXECUTION_TRACKER.md",
         "tools/reqproof/coverage.py",
