@@ -636,7 +636,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "8b24d01ca7bebd6662ee6a6d0b79356d53899b4c1215a8dc2a3deae2cb9bb92b",
+    "evidence_ledger_sha256": "4c5cdd16d3b46f8fb8a2efff4e27eca305da0a12264e72cfa5a587921e55afc3",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
@@ -644,7 +644,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "fc15f5818a13bbdd0cdd74feb4c2a22ae2d1c7052c724d0d71d8b1398d3245e9",
+  "report_sha256": "f52bfeb53a8738f04abc0e85741ae112dea697085bb028a3e573dcf1af79fe14",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -3106,17 +3106,14 @@
       "direct_dependency_blockers": [],
       "disposition": "claimed_complete_needs_evidence",
       "evidence_cells_total": 6,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 3,
       "family": "PASSF",
       "id": "PASSF-03",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1",
-        "implementation:A2",
         "test:A2",
-        "implementation:A3",
         "test:A3"
       ],
       "owner": "unassigned",
@@ -3226,30 +3223,22 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 22,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 9,
       "family": "ADDENDUM",
       "id": "ADDENDUM-21",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1",
-        "implementation:A2",
         "test:A2",
-        "implementation:A3",
         "test:A3",
         "live:A3",
-        "implementation:A4",
         "test:A4",
-        "implementation:A5",
         "test:A5",
         "live:A5",
-        "implementation:A6",
         "test:A6",
         "test:A7",
-        "implementation:A8",
         "test:A8",
-        "implementation:A9",
         "test:A9",
         "live:A9",
         "soak:A9"
@@ -4284,13 +4273,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 1,
       "family": "CTX2",
       "id": "CTX2-LANE-001",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1"
       ],
       "owner": "unassigned",
@@ -4304,13 +4292,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 1,
       "family": "CTX2",
       "id": "CTX2-LANE-002",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1"
       ],
       "owner": "unassigned",
@@ -4324,13 +4311,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 1,
       "family": "CTX2",
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1",
         "live:A1"
       ],
@@ -4345,13 +4331,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 1,
       "family": "CTX2",
       "id": "CTX2-LANE-004",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1"
       ],
       "owner": "unassigned",

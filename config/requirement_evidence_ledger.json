@@ -1,5 +1,5 @@
 {
-  "content_sha256": "8b24d01ca7bebd6662ee6a6d0b79356d53899b4c1215a8dc2a3deae2cb9bb92b",
+  "content_sha256": "4c5cdd16d3b46f8fb8a2efff4e27eca305da0a12264e72cfa5a587921e55afc3",
   "entries": [
     {
       "acceptance_ids": [
@@ -9,26 +9,16 @@
         "A4",
         "A5",
         "A6",
+        "A7",
         "A8",
         "A9"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
-      "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
-      "requirement_id": "ADDENDUM-21",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
-    },
-    {
-      "acceptance_ids": [
-        "A7"
-      ],
-      "commit": "dcc05c111cba451b96fc1bb9ea63f72d0851cdf4",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/dcc05c111cba451b96fc1bb9ea63f72d0851cdf4.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "ADDENDUM-21",
-      "sha256": "bc67de76fabc69faa05ec111a2080e754e5d5cd482a7d2707387772819648b2e"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -241,12 +231,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "CTX2-LANE-001",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -263,12 +253,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "CTX2-LANE-002",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -285,12 +275,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "CTX2-LANE-003",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -307,12 +297,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "CTX2-LANE-004",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -538,12 +528,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "dcc05c111cba451b96fc1bb9ea63f72d0851cdf4",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/dcc05c111cba451b96fc1bb9ea63f72d0851cdf4.json",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "LANE-001",
-      "sha256": "bc67de76fabc69faa05ec111a2080e754e5d5cd482a7d2707387772819648b2e"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
@@ -584,12 +574,12 @@
         "A2",
         "A3"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/37d2f4f09b9bfd04cb7e29f55bff34f5c876bd41.json",
       "requirement_id": "PASSF-03",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "431cb97ca173947e220c1506a15e0d7359dec757644fba775c2b525058ae3d42"
     },
     {
       "acceptance_ids": [
