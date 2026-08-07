@@ -207,8 +207,18 @@ class MemorySynthesizer:
 
     name = "memory_synthesizer"
 
-    SYNTHESIS_INTERVAL_SECONDS = 300  # Synthesize every 5 min
+    SYNTHESIS_INTERVAL_SECONDS = 300  # Loop tick
     SYNTHESIS_TRIGGER_COUNT = 20  # Or after 20 new memories
+
+    #: How quiet a conversation has to be before it counts as ended.
+    #:
+    #: Derived rather than picked: one synthesizer cycle. A gap shorter than
+    #: the loop's own period is a pause inside a session — someone reading,
+    #: thinking, or making coffee — and distilling across it would be the
+    #: every-few-minutes behaviour this replaces. Detection therefore lands
+    #: between one and two cycles after the last message, which is the cost
+    #: of not adding a second, faster timer to watch the first one.
+    SESSION_IDLE_SECONDS = SYNTHESIS_INTERVAL_SECONDS
 
     def __init__(self, snapshot_path: Path | None = None):
         self._memory_facade = None
@@ -217,11 +227,18 @@ class MemorySynthesizer:
             snapshot_path or state_root() / "data" / "worldview_snapshot.json"
         )
         self._new_since_synthesis = 0
+        #: When the last memory worth distilling arrived. Zero means nothing
+        #: has arrived yet, which is not the same as "arrived long ago" — the
+        #: boundary check must not read an empty runtime as an ended session.
+        self._last_memory_at = 0.0
+        self._session_ended_signalled = False
+        self._sessions_distilled = 0
         self._last_synthesis = 0.0
         self._last_success_at = 0.0
         self._last_error = ""
         self._consecutive_failures = 0
         self._synthesis_task: asyncio.Task | None = None
+        self._session_end_task: asyncio.Task | None = None
         self._adhoc_synthesis_task: asyncio.Task | None = None
         self._synthesis_lock = asyncio.Lock()
         self.running = False
@@ -279,6 +296,23 @@ class MemorySynthesizer:
         try:
             from core.event_bus import get_event_bus
 
+            queue = await get_event_bus().subscribe("session_ended")
+            listener = self._session_end_listener(queue)
+            self._session_end_task = get_task_tracker().create_task(
+                listener, name="MemorySynthesizer.session_end"
+            )
+        except _MEMORY_SYNTH_RECOVERABLE_ERRORS as exc:
+            self._last_error = f"{type(exc).__name__}: {_safe_text(exc, max_chars=240)}"
+            _record_memory_synth_fault(
+                exc,
+                action="continued with idle-gap session detection only; explicit session_ended not observed",
+                severity="warning",
+                stage="start.session_end_subscribe",
+            )
+
+        try:
+            from core.event_bus import get_event_bus
+
             await get_event_bus().publish(
                 "mycelium.register",
                 {
@@ -308,7 +342,13 @@ class MemorySynthesizer:
             self._synthesis_task.cancel()
         if self._adhoc_synthesis_task and not self._adhoc_synthesis_task.done():
             self._adhoc_synthesis_task.cancel()
-        for task in (self._synthesis_task, self._adhoc_synthesis_task):
+        if self._session_end_task and not self._session_end_task.done():
+            self._session_end_task.cancel()
+        for task in (
+            self._synthesis_task,
+            self._adhoc_synthesis_task,
+            self._session_end_task,
+        ):
             if task:
                 try:
                     await task
@@ -339,9 +379,26 @@ class MemorySynthesizer:
             return ""
         return self._snapshot.to_context_block(query, max_chars)
 
+    def notify_session_ended(self, detail: Any = None) -> None:
+        """A surface says its conversation is over; distil at the next tick.
+
+        ``core/voice/duplex/session.py`` has published ``session_ended`` on
+        the bus since it was written and nothing has ever subscribed. This is
+        the subscriber. Text conversations do not publish it, which is why the
+        idle gap in :meth:`session_is_over` is the general answer and this is
+        the fast path for surfaces that know.
+        """
+        self._session_ended_signalled = True
+        logger.debug("MemorySynthesizer: session end signalled (%s)", detail)
+
     def notify_new_memory(self):
         """Call this when a new memory is stored. Triggers synthesis if threshold hit."""
         self._new_since_synthesis = max(0, self._new_since_synthesis) + 1
+        self._last_memory_at = time.time()
+        # New material means the session resumed, whatever a previous signal
+        # claimed. Without this, one session_ended would make every later tick
+        # distil, which is the behaviour being removed.
+        self._session_ended_signalled = False
         if self._new_since_synthesis >= self.SYNTHESIS_TRIGGER_COUNT:
             if self.running and (
                 self._adhoc_synthesis_task is None or self._adhoc_synthesis_task.done()
@@ -386,12 +443,66 @@ class MemorySynthesizer:
 
     # ─── Synthesis ───────────────────────────────────────────────────────────
 
+    async def _session_end_listener(self, queue: asyncio.Queue) -> None:
+        """Drain session_ended events onto the boundary flag.
+
+        Failures here cost the fast path, never the loop: the idle gap still
+        detects the boundary, one cycle later.
+        """
+        while self.running:
+            try:
+                event = await queue.get()
+                self.notify_session_ended(event)
+            except asyncio.CancelledError:
+                raise
+            except _MEMORY_SYNTH_RECOVERABLE_ERRORS as exc:
+                _record_memory_synth_fault(
+                    exc,
+                    action="kept session-end listener alive; idle-gap detection still applies",
+                    severity="warning",
+                    stage="session_end_listener",
+                )
+                await asyncio.sleep(1.0)
+
+    def session_is_over(self, now: float | None = None) -> bool:
+        """Has the conversation gone quiet since the last thing worth keeping?
+
+        Two ways to be over: an explicit ``session_ended`` from a surface that
+        knows (the voice duplex publishes one), or a quiet gap of
+        :data:`SESSION_IDLE_SECONDS`. Both mean the same thing to a distiller
+        — nothing more is coming — which is why they meet here rather than
+        each growing their own path.
+        """
+        if self._new_since_synthesis <= 0:
+            return False
+        if self._session_ended_signalled:
+            return True
+        if self._last_memory_at <= 0.0:
+            return False
+        moment = time.time() if now is None else now
+        return (moment - self._last_memory_at) >= self.SESSION_IDLE_SECONDS
+
     async def _synthesis_loop(self):
-        """Background loop: synthesize on interval."""
+        """Background loop: distil a session once it ends, not every few minutes.
+
+        The loop used to call ``_run_synthesis`` on every tick regardless of
+        whether anything had happened or whether the conversation was still
+        going. A session of forty turns was therefore re-distilled eight times
+        over, each pass re-reading and re-aggregating the same growing set,
+        and a session that ended thirty seconds after a tick waited a full
+        cycle anyway.
+
+        Now a tick distils only when the session is over. Volume is still
+        covered mid-session by ``notify_new_memory``'s count trigger, so a
+        conversation that never goes quiet does not go un-synthesised — it is
+        just consolidated by how much was said rather than by the clock.
+        """
         while self.running:
             try:
                 await asyncio.sleep(self.SYNTHESIS_INTERVAL_SECONDS)
-                if self.running:
+                if self.running and self.session_is_over():
+                    self._session_ended_signalled = False
+                    self._sessions_distilled += 1
                     await self._run_synthesis()
             except asyncio.CancelledError:
                 raise
