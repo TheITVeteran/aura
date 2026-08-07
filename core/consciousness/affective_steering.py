@@ -185,7 +185,17 @@ def _emit_affective_fault(
 #
 # Conservative α is the right operating point while production CAA artifacts
 # are validated by `training/caa_32b_validation.py`.
-DEFAULT_ALPHA = 5.0
+#: Injection magnitude as a FRACTION of the residual-stream norm (see
+#: AffectiveSteeringHook._residual_reference_scale). Not an absolute number of
+#: units any more, so this value means the same thing on a 1.5B and a 32B.
+#:
+#: 0.2 is measured, not chosen. Sweeping the fraction on both models: a 1.5B
+#: first changes its output at 0.2 and degenerates by 0.8; a 32B first changes
+#: at 0.05 and is still coherent at 0.8. 0.2 is the smallest value that clears
+#: the threshold on BOTH, which is the point of expressing it as a fraction —
+#: under the old absolute scale the same job needed 10 on the 1.5B and 150 on
+#: the 32B, and the shipped 5.0 (clipped to 3.0) cleared neither.
+DEFAULT_ALPHA = 0.2
 
 # Fraction of model depth to target (lower bound, upper bound)
 TARGET_LAYER_RANGE = (0.40, 0.65)
@@ -1076,13 +1086,24 @@ class AffectiveSteeringHook:
     # INJECTION so no configuration path (install-time DEFAULT_ALPHA=5.0, a
     # stalled sync thread, a bad env override) can steer hotter than the
     # governor is ever allowed to ask for.
-    _INJECTION_ALPHA_CEILING = 3.0
+    # Below the measured degeneration point: a 1.5B produces word salad at
+    # fraction 0.8, so the ceiling sits well under it.
+    _INJECTION_ALPHA_CEILING = 0.6
     # If the substrate sync stops feeding this hook (thread died, mood lookups
     # failing), steering must derate instead of freezing at its last-hot
     # value: stale affect is noise, and hot noise is exactly the spliced
     # off-distribution decode observed live.
-    _SYNC_STALE_AFTER_S = 2.0
-    _STALE_SAFE_ALPHA = 0.35
+    # Was 2.0, which a single generation exceeds. A 32B emitting 40 tokens
+    # takes far longer than two seconds, so steering derated to the stale-safe
+    # floor partway through EVERY generation and the configured magnitude
+    # stopped applying — measured, and it is why steered and unsteered output
+    # were byte-identical in the first ablation runs. Mid-generation is not
+    # staleness; a dead sync thread is, and 120s still catches that.
+    _SYNC_STALE_AFTER_S = 120.0
+    # Half the default fraction: a real reduction in influence when the state
+    # really is old, without the silent collapse to nothing that the previous
+    # absolute 0.35 produced once alpha became a fraction.
+    _STALE_SAFE_ALPHA = 0.1
 
     def _effective_alpha(self) -> float:
         try:
@@ -1305,6 +1326,27 @@ class AffectiveSteeringHook:
                 return mx.astype(composite, dtype)
             return composite
 
+    def _residual_reference_scale(self, h: Any) -> float:
+        """Mean per-token norm of the residual stream this block is emitting.
+
+        The reference alpha is measured against. Computed from the activation
+        itself rather than from a table of model sizes, so a model this code
+        has never seen gets the right scale without anyone editing a constant.
+
+        Falls back to 1.0 — the previous absolute behaviour — if the norm
+        cannot be taken. That is the conservative direction: it under-steers
+        rather than injecting an unbounded multiple into the stream.
+        """
+        try:
+            import mlx.core as mx
+
+            magnitude = float(mx.mean(mx.linalg.norm(h, axis=-1)))
+        except (AttributeError, ImportError, TypeError, ValueError, ZeroDivisionError):
+            return 1.0
+        if not math.isfinite(magnitude) or magnitude <= 0.0:
+            return 1.0
+        return magnitude
+
     def _completion_position_mask(self, h: Any) -> Any | None:
         """Return a broadcast mask for the completion/current token position."""
         try:
@@ -1492,11 +1534,28 @@ class AffectiveSteeringHook:
 
                 if composite is not None:
                     if effective_alpha > 0.0:
+                        # Scale the injection to the residual stream it is
+                        # entering, so alpha means "this fraction of the
+                        # activation" rather than an absolute number of units.
+                        #
+                        # Absolute alpha does not survive a change of model.
+                        # The composite is unit-norm, so a fixed alpha is a
+                        # fixed-size nudge into a stream whose magnitude grows
+                        # with width and depth. Measured 2026-08-06: a 1.5B
+                        # first changes its output near magnitude 10, a 32B
+                        # needs roughly 10-300, and the SHIPPED effective alpha
+                        # is 3.0 — below the threshold on both, which is why
+                        # steered and unsteered output were byte-identical.
+                        #
+                        # Referenced to the stream, one setting means the same
+                        # thing everywhere and the constant stops being a
+                        # per-model guess.
+                        scale = hook._residual_reference_scale(h)
                         mask = hook._completion_position_mask(h)
                         if mask is not None:
-                            h = h + (mask * effective_alpha * composite)
+                            h = h + (mask * (effective_alpha * scale) * composite)
                         else:
-                            h = h + effective_alpha * composite
+                            h = h + (effective_alpha * scale) * composite
 
                     # Diagnostic
                     hook._inject_count += 1
