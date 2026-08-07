@@ -74,6 +74,83 @@ SOURCE_PATHS: Final = (
 )
 
 
+class RecurrentCanarySamplingError(RuntimeError):
+    """A bounded group could not produce enough proof-admissible samples."""
+
+    def __init__(
+        self,
+        *,
+        admitted: int,
+        requested: int,
+        rejected: list[dict[str, Any]],
+    ) -> None:
+        self.admitted = admitted
+        self.requested = requested
+        self.rejected = rejected
+        self.diagnostics = [
+            _sampling_rejection_diagnostics(receipt) for receipt in rejected
+        ]
+        reasons = sorted(
+            {
+                reason
+                for diagnostic in self.diagnostics
+                for reason in diagnostic["failed_gates"]
+            }
+        )
+        super().__init__(
+            "recurrent GRPO canary exhausted admissible samples: "
+            f"admitted={admitted} requested={requested} "
+            f"rejected={len(rejected)} failed_gates={','.join(reasons) or 'unknown'}"
+        )
+
+
+def _sampling_rejection_diagnostics(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a large sample receipt to the exact local admission predicates."""
+
+    sampling = dict(receipt.get("sampling_config") or {})
+    activation = dict(receipt.get("cached_recurrence_adapter") or {})
+    episode = dict(receipt.get("episode_receipt") or {})
+    honest_flags = list(episode.get("honest_flags") or [])
+    checks = {
+        "max_abs_logprob_drift": float(receipt.get("max_abs_logprob_drift", math.inf))
+        <= float(sampling.get("max_abs_logprob_drift", -math.inf)),
+        "mean_abs_logprob_drift": float(receipt.get("mean_abs_logprob_drift", math.inf))
+        <= float(sampling.get("max_mean_abs_logprob_drift", -math.inf)),
+        "clipped_token_fraction": float(receipt.get("clipped_token_fraction", math.inf))
+        <= float(sampling.get("max_clipped_token_fraction", -math.inf)),
+        "old_policy_approx_kl": float(receipt.get("old_policy_approx_kl", math.inf))
+        <= float(sampling.get("max_old_policy_approx_kl", -math.inf)),
+        "params_unchanged": receipt.get("cached_params_unchanged") is True,
+        "recurrence_adapter_active": bool(
+            activation.get("active") is True
+            and int(activation.get("calls", 0) or 0) > 0
+            and int(activation.get("adapted_positions", 0) or 0) > 0
+        ),
+        "nonparametric_memory_disabled": (
+            receipt.get("cached_nonparametric_memory_status") == "disabled_by_policy"
+        ),
+        "no_fallback": not any(str(flag).startswith("fallback_") for flag in honest_flags),
+        "behavior_admitted": receipt.get("behavior_admitted") is True,
+    }
+    return {
+        "episode_id": receipt.get("episode_id"),
+        "seed": receipt.get("seed"),
+        "token_count": receipt.get("token_count"),
+        "max_abs_logprob_drift": receipt.get("max_abs_logprob_drift"),
+        "mean_abs_logprob_drift": receipt.get("mean_abs_logprob_drift"),
+        "clipped_token_fraction": receipt.get("clipped_token_fraction"),
+        "old_policy_approx_kl": receipt.get("old_policy_approx_kl"),
+        "checks": checks,
+        "failed_gates": [name for name, passed in checks.items() if not passed],
+        "runtime_integrity": receipt.get("cached_runtime_integrity"),
+        "recurrence_adapter": activation,
+        "nonparametric_memory_status": receipt.get(
+            "cached_nonparametric_memory_status"
+        ),
+        "honest_flags": honest_flags,
+    }
+
+
 def _git(*args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -196,10 +273,10 @@ def _sample_group(
             }
         )
     if len(samples) != group_size:
-        raise RuntimeError(
-            "recurrent GRPO canary exhausted admissible samples: "
-            f"admitted={len(samples)} requested={group_size} "
-            f"rejected={len(rejected)}"
+        raise RecurrentCanarySamplingError(
+            admitted=len(samples),
+            requested=group_size,
+            rejected=rejected,
         )
     return prompt_tokens, samples, rows, rejected
 
@@ -560,13 +637,35 @@ def main() -> int:
                 "error": str(exc)[:4_000],
                 "recorded_at_unix_ns": time.time_ns(),
             }
+            if isinstance(exc, RecurrentCanarySamplingError):
+                failure["sampling_failure"] = {
+                    "admitted": exc.admitted,
+                    "requested": exc.requested,
+                    "rejected": len(exc.rejected),
+                    "diagnostics": exc.diagnostics,
+                    "rejected_sample_receipts": exc.rejected,
+                }
             atomic_write_bytes(
                 out_dir / "failure.json",
                 canonical_json_bytes(failure),
                 mode=0o600,
             )
         raise
-    print(json.dumps(receipt, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "schema": receipt["schema"],
+                "passed": receipt["passed"],
+                "optimizer_updates": receipt["optimizer_updates"],
+                "gates": receipt["gates"],
+                "elapsed_s": receipt["elapsed_s"],
+                "receipt_sha256": receipt["receipt_sha256"],
+                "receipt_path": str(out_dir / "receipt.json"),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0 if receipt["passed"] else 2
 
 

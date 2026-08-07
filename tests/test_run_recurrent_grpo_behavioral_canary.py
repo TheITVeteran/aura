@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -117,3 +118,57 @@ def test_reward_is_correctness_dominant_and_format_credit_bounded() -> None:
     assert wrong_reward == 0.1
     assert invalid_verdict["correct"] is False
     assert invalid_reward == 0.0
+
+
+def _rejected_sample_receipt() -> dict[str, object]:
+    return {
+        "episode_id": "episode-1",
+        "seed": 17,
+        "token_count": 4,
+        "behavior_admitted": False,
+        "max_abs_logprob_drift": 4.5,
+        "mean_abs_logprob_drift": 0.2,
+        "clipped_token_fraction": 0.5,
+        "old_policy_approx_kl": 0.02,
+        "sampling_config": {
+            "max_abs_logprob_drift": 4.0,
+            "max_mean_abs_logprob_drift": 0.5,
+            "max_clipped_token_fraction": 0.25,
+            "max_old_policy_approx_kl": 0.1,
+        },
+        "cached_params_unchanged": True,
+        "cached_nonparametric_memory_status": "disabled_by_policy",
+        "cached_runtime_integrity": {"ok": True},
+        "cached_recurrence_adapter": {
+            "active": True,
+            "calls": 1,
+            "adapted_positions": 4,
+        },
+        "episode_receipt": {"honest_flags": []},
+    }
+
+
+def test_sampling_rejection_diagnostics_name_every_failed_bound() -> None:
+    diagnostic = canary._sampling_rejection_diagnostics(_rejected_sample_receipt())
+
+    assert diagnostic["failed_gates"] == [
+        "max_abs_logprob_drift",
+        "clipped_token_fraction",
+        "behavior_admitted",
+    ]
+    assert diagnostic["checks"]["recurrence_adapter_active"] is True
+
+
+def test_sampling_failure_retains_receipts_and_compact_causes() -> None:
+    receipt = _rejected_sample_receipt()
+    error = canary.RecurrentCanarySamplingError(
+        admitted=0,
+        requested=2,
+        rejected=[receipt, json.loads(json.dumps(receipt))],
+    )
+
+    assert error.admitted == 0
+    assert error.requested == 2
+    assert error.rejected == [receipt, receipt]
+    assert "clipped_token_fraction" in str(error)
+    assert len(error.diagnostics) == 2
