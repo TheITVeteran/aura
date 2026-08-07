@@ -108,7 +108,11 @@ _STOPWORDS = {
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
-    return clamp_unit_interval(value, lower, upper)
+    # `float(...)` rather than a bare return: the helper comes from a module
+    # outside the strict-typed set, so mypy sees its result as Any and a
+    # function that promises a float would be quietly returning anything.
+    # The conversion is what makes the annotation true rather than asserted.
+    return float(clamp_unit_interval(value, lower, upper))
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

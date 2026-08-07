@@ -139,6 +139,12 @@ _NON_SECRET_LITERALS = re.compile(
       (?:abcdefghijklmnopqrstuvwxyz|abcdefghijklmnopqrstuvwx)
     | (?:EXAMPLE|PLACEHOLDER|REDACTED|FAKE|DUMMY|SAMPLE|TESTKEY)
     | X{8,}
+    # One character, repeated. "sk-aaaaaaaaaaaaaaaaaaaaaa" is the same
+    # argument as the alphabet-in-sequence case above and the same argument
+    # as X{8,}: a body with no entropy cannot be a key, whoever wrote it and
+    # wherever it sits. Generalised rather than adding 'a' to a list,
+    # because the next fixture will use a different letter.
+    | (?:sk-|ghp_|xox[baprs]-)(?P<repeated>[A-Za-z0-9])(?P=repeated){9,}
     """,
     re.IGNORECASE,
 )
