@@ -300,6 +300,7 @@ def grade_exact_paired_comparison(
     require_compute: bool,
     compute_tolerance: Rational,
     global_bound_family_count: int,
+    family_alpha: Rational = ALPHA,
 ) -> dict[str, Any]:
     """Grade one comparison and emit a complete exact certificate tree."""
 
@@ -317,6 +318,9 @@ def grade_exact_paired_comparison(
         or type(compute_tolerance) is not Rational
         or type(global_bound_family_count) is not int
         or global_bound_family_count <= 0
+        or type(family_alpha) is not Rational
+        or not _less(Rational(0, 1), family_alpha)
+        or _less(Rational(1, 2), family_alpha)
     ):
         _fail("exact_grade_contract_invalid")
     families = _validated_observations(observations_by_family)
@@ -345,7 +349,7 @@ def grade_exact_paired_comparison(
                 losses,
                 ties,
                 family_count=global_bound_family_count,
-                family_alpha=ALPHA,
+                family_alpha=family_alpha,
                 precision_bits=BOUND_PRECISION_BITS,
             )
             tail = exact_paired_binomial_tail(wins, losses)
@@ -410,7 +414,7 @@ def grade_exact_paired_comparison(
         family
         for family, _observations in families
         if family in adjusted
-        and _less(adjusted[family], ALPHA)
+        and _less(adjusted[family], family_alpha)
         and _less(MINIMUM_EFFECT, family_bounds[family].lower)
         and family not in invalid_compute
     ]
@@ -439,7 +443,7 @@ def grade_exact_paired_comparison(
             pooled_losses,
             pooled_ties,
             family_count=global_bound_family_count,
-            family_alpha=ALPHA,
+            family_alpha=family_alpha,
             precision_bits=BOUND_PRECISION_BITS,
         )
         pooled_tail = exact_paired_binomial_tail(
@@ -451,7 +455,7 @@ def grade_exact_paired_comparison(
     pooled_p = Rational(pooled_tail.numerator, pooled_tail.denominator)
     pooled_positive = (
         len(pooled_differences) >= MIN_OBSERVATIONS_FOR_VERDICT
-        and _less(pooled_p, ALPHA)
+        and _less(pooled_p, family_alpha)
         and _less(MINIMUM_EFFECT, pooled_bounds.lower)
     )
     required_positive = max(2, (2 * len(families) + 2) // 3)
@@ -475,7 +479,7 @@ def grade_exact_paired_comparison(
         "method": EXACT_GRADE_METHOD,
         "treatment": treatment,
         "control": control,
-        "alpha": _rational(ALPHA),
+        "alpha": _rational(family_alpha),
         "minimum_effect": _rational(MINIMUM_EFFECT),
         "require_compute": require_compute,
         "compute_tolerance": _rational(compute_tolerance),
@@ -517,6 +521,7 @@ def grade_exact_interaction(
     adapter_differences: Sequence[int],
     base_differences: Sequence[int],
     global_bound_family_count: int,
+    family_alpha: Rational = ALPHA,
 ) -> dict[str, Any]:
     """Certify the paired 2x2 interaction and its exact one-sided test."""
 
@@ -529,6 +534,9 @@ def grade_exact_interaction(
         or len(adapter_differences) != len(base_differences)
         or type(global_bound_family_count) is not int
         or global_bound_family_count < 2
+        or type(family_alpha) is not Rational
+        or not _less(Rational(0, 1), family_alpha)
+        or _less(Rational(1, 2), family_alpha)
     ):
         _fail("exact_interaction_values_invalid")
     adapter = tuple(adapter_differences)
@@ -547,7 +555,7 @@ def grade_exact_interaction(
             adapter.count(-1),
             adapter.count(0),
             family_count=global_bound_family_count,
-            family_alpha=ALPHA,
+            family_alpha=family_alpha,
             precision_bits=BOUND_PRECISION_BITS,
         )
         base_bounds = certified_rational_effect_bounds(
@@ -555,7 +563,7 @@ def grade_exact_interaction(
             base.count(-1),
             base.count(0),
             family_count=global_bound_family_count,
-            family_alpha=ALPHA,
+            family_alpha=family_alpha,
             precision_bits=BOUND_PRECISION_BITS,
         )
         sign_flip = exact_sign_flip_tail(interaction)
@@ -576,13 +584,13 @@ def grade_exact_interaction(
         "mean": _rational(effect),
         "lower": _rational(lower),
         "upper": _rational(upper),
-        "alpha": _rational(ALPHA),
+        "alpha": _rational(family_alpha),
         "minimum_effect": _rational(MINIMUM_EFFECT),
         "global_bound_family_count": global_bound_family_count,
         "simultaneous_coverage_lower": _rational(
             Rational(
-                ALPHA.denominator - ALPHA.numerator,
-                ALPHA.denominator,
+                family_alpha.denominator - family_alpha.numerator,
+                family_alpha.denominator,
             )
         ),
         "one_sided_exact_sign_flip_p": _rational(pvalue),
@@ -840,9 +848,10 @@ def exact_interaction_proven(interaction: Mapping[str, Any]) -> bool:
     try:
         lower = Rational(**interaction["lower"])
         pvalue = Rational(**interaction["one_sided_exact_sign_flip_p"])
+        alpha = Rational(**interaction["alpha"])
     except (KeyError, TypeError, ExactStatisticsError):
         _fail("exact_interaction_payload_invalid")
-    return _less(MINIMUM_EFFECT, lower) and _less(pvalue, ALPHA)
+    return _less(MINIMUM_EFFECT, lower) and _less(pvalue, alpha)
 
 
 def exact_interaction_refuted(interaction: Mapping[str, Any]) -> bool:

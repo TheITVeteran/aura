@@ -663,6 +663,7 @@ def _paired_claim(
     require_compute: bool,
     compute_tolerance: Rational,
     global_bound_family_count: int,
+    family_alpha: Rational = ALPHA,
 ) -> dict[str, Any]:
     by_domain: dict[str, list[ExactPairedObservation]] = defaultdict(list)
     accounting_certificates: list[dict[str, Any]] = []
@@ -721,6 +722,7 @@ def _paired_claim(
         compute_tolerance=compute_tolerance,
         require_compute=require_compute,
         global_bound_family_count=global_bound_family_count,
+        family_alpha=family_alpha,
     )
     accounting_admitted = all(certificate["admitted"] for certificate in accounting_certificates)
     grade["evidence"]["resource_accounting_required"] = True
@@ -738,11 +740,15 @@ def grade_campaign(
     issuer_tasks: Sequence[FrontierTask],
     trusted_contamination_root_sha256: str | None = None,
     trusted_campaign_policy_sha256: str | None = None,
+    family_alpha: Rational = ALPHA,
+    included_task_ids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Grade a complete replayed campaign; never infer absent cells."""
 
     if not isinstance(plan, CampaignPlan):
         _fail("campaign_plan_invalid")
+    if type(family_alpha) is not Rational:
+        _fail("campaign_family_alpha_invalid")
     plan_document = plan.to_dict()
     metadata = plan_document.get("metadata")
     if not isinstance(metadata, Mapping) or metadata.get("schema") != CAMPAIGN_SCHEMA:
@@ -771,6 +777,17 @@ def grade_campaign(
         if task_id in tasks_by_id:
             _fail("campaign_plan_task_duplicate")
         tasks_by_id[task_id] = cast(Mapping[str, Any], task)
+    if included_task_ids is None:
+        selected_task_ids = frozenset(tasks_by_id)
+    elif (
+        type(included_task_ids) is not frozenset
+        or not included_task_ids
+        or any(type(task_id) is not str for task_id in included_task_ids)
+        or not included_task_ids.issubset(tasks_by_id)
+    ):
+        _fail("campaign_grade_task_scope_invalid")
+    else:
+        selected_task_ids = included_task_ids
     if (
         not isinstance(issuer_tasks, Sequence)
         or not issuer_tasks
@@ -786,7 +803,8 @@ def grade_campaign(
         for task_id, task in issuer_tasks_by_id.items()
     ):
         _fail("campaign_issuer_tasks_mismatch")
-    expected_task_count = len(tasks_by_id)
+    planned_task_count = len(tasks_by_id)
+    expected_task_count = len(selected_task_ids)
     arms = tuple(raw_arms)
     if not set(PRIMARY_ARMS).issubset(arms) or any(arm not in FULL_ARMS for arm in arms):
         _fail("expected_arms_invalid")
@@ -857,7 +875,7 @@ def grade_campaign(
             or domain != task.get("domain")
             or payload_sha256 != task.get("task_payload_sha256")
             or type(execution_ordinal) is not int
-            or not 0 <= execution_ordinal < expected_task_count
+            or not 0 <= execution_ordinal < planned_task_count
         ):
             _fail("campaign_plan_cell_invalid")
         pair = (cell_task_id, cast(str, arm))
@@ -866,7 +884,7 @@ def grade_campaign(
         observed_pairs.add(pair)
         execution_ordinals[cast(str, arm)].add(execution_ordinal)
     if observed_pairs != expected_pairs or any(
-        execution_ordinals[arm] != set(range(expected_task_count)) for arm in arms
+        execution_ordinals[arm] != set(range(planned_task_count)) for arm in arms
     ):
         _fail("campaign_plan_coverage_invalid")
     if claim_eligible and (arms != FULL_ARMS or planned_domains != set(FRONTIER_DOMAINS)):
@@ -901,6 +919,8 @@ def grade_campaign(
             execution_config=cast(Mapping[str, Any], execution_config),
         )
         cell_id = cast(str, record["cell_id"])
+        if task_id not in selected_task_ids:
+            _fail("campaign_result_outside_grade_scope")
         if cell_id in observed_cell_ids:
             _fail("duplicate_campaign_cell_result")
         observed_cell_ids.add(cell_id)
@@ -955,6 +975,7 @@ def grade_campaign(
             require_compute=False,
             compute_tolerance=Rational(1, 1),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         ),
         "adapter_rlc_gain": _paired_claim(
             rows,
@@ -963,6 +984,7 @@ def grade_campaign(
             require_compute=False,
             compute_tolerance=Rational(1, 1),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         ),
         "adapter_effect_under_rlc": _paired_claim(
             rows,
@@ -971,6 +993,7 @@ def grade_campaign(
             require_compute=False,
             compute_tolerance=Rational(1, 1),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         ),
         "adapter_effect_under_vanilla": _paired_claim(
             rows,
@@ -979,6 +1002,7 @@ def grade_campaign(
             require_compute=False,
             compute_tolerance=Rational(1, 1),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         ),
     }
     if BASE_EQUAL_COMPUTE in arms:
@@ -989,6 +1013,7 @@ def grade_campaign(
             require_compute=True,
             compute_tolerance=Rational(1, 5),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         )
     if ADAPTER_EQUAL_COMPUTE in arms:
         comparisons["adapter_equal_compute"] = _paired_claim(
@@ -998,6 +1023,7 @@ def grade_campaign(
             require_compute=True,
             compute_tolerance=Rational(1, 5),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=family_alpha,
         )
 
     adapter_differences: list[int] = []
@@ -1011,6 +1037,7 @@ def grade_campaign(
         adapter_differences=adapter_differences,
         base_differences=base_differences,
         global_bound_family_count=global_bound_family_count,
+        family_alpha=family_alpha,
     )
     underpowered = sorted(
         domain for domain, count in domain_counts.items() if count < _MIN_DOMAIN_TRIALS
@@ -1061,8 +1088,8 @@ def grade_campaign(
         "domain_counts": dict(sorted(domain_counts.items())),
         "statistical_policy": {
             "alpha": {
-                "numerator": ALPHA.numerator,
-                "denominator": ALPHA.denominator,
+                "numerator": family_alpha.numerator,
+                "denominator": family_alpha.denominator,
             },
             "minimum_effect": {
                 "numerator": MINIMUM_EFFECT.numerator,

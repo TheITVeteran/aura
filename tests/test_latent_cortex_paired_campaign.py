@@ -13,6 +13,7 @@ from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.exact_paired_grade import (
     exact_campaign_power_plan,
 )
+from core.brain.llm.latent_cortex.exact_paired_statistics import Rational
 from core.brain.llm.latent_cortex.frontier_tasks import (
     FRONTIER_DOMAINS,
     build_task_manifest,
@@ -308,6 +309,53 @@ def _records(plan, tasks, *, gain: bool = True):
             }
         )
     return rows
+
+
+def test_campaign_grader_supports_a_frozen_balanced_interim_scope():
+    plan, tasks = _grade_plan()
+    records = _records(plan, tasks)
+    selected: set[str] = set()
+    domain_counts: dict[str, int] = {}
+    for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]:
+        domain = task["domain"]
+        count = domain_counts.get(domain, 0)
+        if count < 10:
+            selected.add(task["task_id"])
+            domain_counts[domain] = count + 1
+    scoped_records = [
+        record for record in records if record["definition"]["task_id"] in selected
+    ]
+
+    grade = grade_campaign(
+        scoped_records,
+        plan=plan,
+        issuer_tasks=tasks,
+        family_alpha=Rational(1, 200),
+        included_task_ids=frozenset(selected),
+    )
+
+    assert grade["verdict"] != "incomplete"
+    assert grade["expected_task_count"] == 70
+    assert grade["observed_task_count"] == 70
+    assert grade["statistical_policy"]["alpha"] == {
+        "numerator": 1,
+        "denominator": 200,
+    }
+    assert set(grade["domain_counts"].values()) == {10}
+
+
+def test_campaign_grader_rejects_results_beyond_an_interim_scope():
+    plan, tasks = _grade_plan()
+    records = _records(plan, tasks)
+    selected = frozenset({records[0]["definition"]["task_id"]})
+
+    with pytest.raises(PairedCampaignError, match="campaign_result_outside_grade_scope"):
+        grade_campaign(
+            records,
+            plan=plan,
+            issuer_tasks=tasks,
+            included_task_ids=selected,
+        )
 
 
 def test_plan_freezes_every_task_arm_and_is_deterministic():

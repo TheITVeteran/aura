@@ -253,6 +253,22 @@ def test_exact_interaction_supports_powered_campaigns_above_old_64_task_cap():
     assert exact_interaction_proven(interaction) is True
 
 
+def test_exact_graders_bind_the_declared_sequential_alpha_share():
+    interaction = grade_exact_interaction(
+        adapter_differences=[1] * 80,
+        base_differences=[0] * 80,
+        global_bound_family_count=2,
+        family_alpha=Rational(1, 200),
+    )
+
+    assert interaction["alpha"] == {"numerator": 1, "denominator": 200}
+    assert interaction["adapter_contrast_bounds"]["family_alpha"] == {
+        "numerator": 1,
+        "denominator": 200,
+    }
+    assert exact_interaction_proven(interaction) is True
+
+
 def test_noninferiority_power_certificate_proves_exact_minimum():
     power = minimum_zero_loss_noninferiority_observations(
         global_bound_family_count=50,
