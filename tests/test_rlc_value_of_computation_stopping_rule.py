@@ -72,10 +72,12 @@ def test_a_verified_answer_still_stops():
     assert decision["mode"] == "verified_stop"
 
 
-def test_stopping_is_priced_at_the_budget_it_forfeits():
-    """Early stopping is expensive because it throws away most of the budget;
-    as the budget genuinely runs out the forfeit shrinks. No new constant is
-    introduced -- the price is a signal the controller already carried."""
+def test_measured_worthlessness_still_permits_stopping():
+    """The rule is "keep going while continuing is worth something", not
+    "stopping is expensive". Pricing the forfeit into cost was wrong: gain/cost
+    is not monotonic in cost once gain can be negative, so a bigger forfeit
+    made stopping win HARDER exactly when continuing was measurably
+    worthless -- which is the regime the learned stop head exists to serve."""
     policy = ValueOfComputationPolicy(build_evidence_snapshot(bucket="test|none|short|s:mid|u:mid", cells={}))
     early = policy.choose(_state(budget_remaining_fraction=0.95), executors=_EXECUTORS)
     assert early["action"] != OperationKind.ABSTAIN.value

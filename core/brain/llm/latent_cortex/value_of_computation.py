@@ -1086,26 +1086,6 @@ class ValueOfComputationPolicy:
                 measured = bool(estimate["measured"])
                 gain = float(estimate["gain_lcb"]) if measured else _bootstrap_gain(action, state)
                 cost = float(estimate["cost_ucb"]) if measured else _BASE_COST[action]
-                if action in _TERMINAL_ACTIONS:
-                    # Ranking a terminal action by value-per-cost is a category
-                    # error: ANSWER and ABSTAIN cost almost nothing to execute
-                    # (0.01) but they END the episode, so dividing by that
-                    # execution cost multiplies their score ~100x and they win
-                    # against anything that does real work. Measured: at step 2
-                    # of 8 with uncertainty 0.5, abstain scored 3.1 against
-                    # check_assumption's 2.75, and every full-stack episode on
-                    # both the 1.5B and the 32B halted at the floor depth of 2.
-                    #
-                    # What stopping actually costs is the computation it
-                    # forfeits. Charging the remaining budget makes the trade
-                    # honest -- expensive to quit early, progressively cheaper
-                    # as the budget genuinely runs out -- and introduces no new
-                    # constant. The cases where stopping is correct are already
-                    # handled by explicit rules above this branch: a verified
-                    # answer stops at ``verified_stop`` and genuinely
-                    # irreducible uncertainty stops at ``irreducible_abstain``,
-                    # neither of which reaches this scoring path.
-                    cost = max(cost, float(state.budget_remaining_fraction))
                 value = gain / max(_EPSILON_COST, cost)
                 scored.append(
                     (
@@ -1121,6 +1101,40 @@ class ValueOfComputationPolicy:
                         },
                     )
                 )
+
+            # Stopping is only preferred when continuing is worthless.
+            #
+            # ANSWER and ABSTAIN cost ~0.01 to execute but END the episode, so
+            # ranking them by value-per-cost inflated them ~100x against
+            # anything that does real work: at step 2 of 8 with uncertainty
+            # 0.5, abstain scored 3.1 against check_assumption's 2.75, and
+            # every full-stack episode halted at the floor depth of 2.
+            #
+            # Charging them the forfeited budget instead is WRONG, because
+            # gain/cost is not monotonic in cost once gain can be negative:
+            # with measured evidence of -0.05 for every action, a larger
+            # denominator makes the score LESS negative, so a bigger forfeit
+            # made stopping win harder in exactly the regime where continuing
+            # is measurably worthless.
+            #
+            # The economics without that trap: an episode should keep going
+            # while any continuing action still has positive expected value,
+            # and may stop once none does. This needs no new constant, keeps
+            # the bootstrap case spending depth, and leaves measured evidence
+            # free to halt early -- which is the learned stop head's whole
+            # contract.
+            best_continuing = max(
+                (row[0] for row in scored if row[2] not in _TERMINAL_ACTIONS),
+                default=0.0,
+            )
+            if best_continuing > 0.0:
+                scored = [
+                    (
+                        row[0] if row[2] not in _TERMINAL_ACTIONS else float("-inf"),
+                        *row[1:],
+                    )
+                    for row in scored
+                ]
 
             # Sparse deterministic exploration only among non-terminal actions.
             under_sampled = sorted(
