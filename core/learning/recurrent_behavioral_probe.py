@@ -116,11 +116,20 @@ def build_behavioral_probe_report(
                 config=config,
                 schedule_library=None,
             )
-            mx.random.seed(paired_generation_seed(seed, task_ordinal, task.task_id, depth))
+            generation_seed = paired_generation_seed(
+                seed,
+                task_ordinal,
+                task.task_id,
+                depth,
+            )
+            mx.random.seed(generation_seed)
             result = engine.reason(
                 token_ids=prompt_tokens,
                 decode_max_tokens=320,
                 decode_sentence_grace_tokens=0,
+                nonparametric_memory_enabled=False,
+                sample_seed=generation_seed,
+                episode_id=f"behavioral-probe-{seed}-{task_ordinal}-{depth}",
             )
             grade = dict(task.grade(result.text if result.ok else ""))
             grade["correct"] = bool(grade.get("correct"))

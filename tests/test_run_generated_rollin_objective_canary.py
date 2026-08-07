@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import subprocess
 from pathlib import Path
 
@@ -128,6 +129,13 @@ def test_free_generation_uses_proof_grade_sampling_policy() -> None:
     assert config.max_tokens == 320
     assert config.temperature == 1.0
     assert config.top_p == 1.0
+
+
+def test_free_generation_disables_external_memory_and_binds_sample_seed() -> None:
+    source = inspect.getsource(canary._free_generation_report)
+
+    assert "nonparametric_memory_enabled=False" in source
+    assert "sample_seed=generation_seed" in source
 
 
 def test_training_rows_cycle_across_the_balanced_battery() -> None:
