@@ -1,0 +1,166 @@
+{
+  "command": [
+    "/Users/bryan/.aura/live-source/.venv/bin/python",
+    "tools/reqproof/gate.py",
+    "--mode",
+    "structural",
+    "--refresh-self-evidence",
+    "--report",
+    "/tmp/aura-reqproof-structural-gate.json"
+  ],
+  "cwd": ".",
+  "duration_seconds": 19.847602,
+  "environment_policy": {
+    "inherited_names_sha256": "ef6beaed0e8a44e60d33bb5cef8642714a849686f003a6cbb2d277de638c3d41",
+    "name": "host-sanitized-v1",
+    "override_names": [
+      "AURA_LOG_DIR",
+      "AURA_TEST_MODE",
+      "PYTHONDONTWRITEBYTECODE"
+    ],
+    "removed_prefixes": [
+      "AURA_",
+      "PYTEST_",
+      "COVERAGE_"
+    ]
+  },
+  "evidence_targets": [
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "evidence_class": "implementation",
+      "requirement_id": "SCOPE-001"
+    }
+  ],
+  "finished_at": "2026-08-07T08:23:33.877670+00:00",
+  "non_claims": [
+    "unlisted evidence classes or acceptance units",
+    "live runtime behavior",
+    "release readiness",
+    "soak reliability"
+  ],
+  "origin_main_commit": "94f825dfe22790ded8873b077ca2584785e42cff",
+  "output_bytes": 791,
+  "proof_id": "reqproof-structural-gate-audit",
+  "returncode": 0,
+  "schema": "aura.reqproof.command_receipt.v2",
+  "source_commit": "94f825dfe22790ded8873b077ca2584785e42cff",
+  "source_manifest": [
+    {
+      "path": "config/reqproof_defect_baseline.json",
+      "sha256": "4bd4cceb5d8f9fc1e73fd5ddc8ebbe9d3256c3999638813673e44bb3c2b48337",
+      "size_bytes": 48
+    },
+    {
+      "path": "config/reqproof_prose_token_allowlist.json",
+      "sha256": "48cc4763142d53fc616d69231b81529e930b2149f7b03618d956bcc2b0d7a767",
+      "size_bytes": 1044
+    },
+    {
+      "path": "config/reqproof_scope_baseline.json",
+      "sha256": "ba12d381fbfd4fd7edd76f997312eac7644d89536e2e9e068709a9f90e73bfa9",
+      "size_bytes": 45044
+    },
+    {
+      "path": "config/requirement_coverage_map.json",
+      "sha256": "21de1e716e2301778d0a0a16f63f1b2fac094b6146b152f260e72870c86500a6",
+      "size_bytes": 40797
+    },
+    {
+      "path": "config/requirement_registry.json",
+      "sha256": "57a8bec052529a9c3177b27b24b2869cc27441c4b74301d243a9402dd9e6a463",
+      "size_bytes": 579128
+    },
+    {
+      "path": "config/requirement_sources/ANIMA_RATIONIS.txt",
+      "sha256": "683fda592b223dbe9deaa98588d32efc54f0ba56ef1c81b49b4f0a92c3fcef6d",
+      "size_bytes": 61796
+    },
+    {
+      "path": "config/requirement_sources/AURA_CAPABILITIES_PDF.txt",
+      "sha256": "cd8969d62222ed30bcf9d125cd9e72c0036f3a6ce94bb9f563d5814b174f2ed0",
+      "size_bytes": 1095
+    },
+    {
+      "path": "config/requirement_sources/CONTEXT_TO_THINK_ABOUT_AS_YOU_WORK.txt",
+      "sha256": "998bc0f48161c1145adbab552b2e073916a774962b3defb76cf65710bbcf2115",
+      "size_bytes": 31400
+    },
+    {
+      "path": "config/requirement_sources/MANIFEST.json",
+      "sha256": "7ed83e7f40a7b24f29e195f0f402f06c8b2d6f89d4afebdcdc9c1e6034838de9",
+      "size_bytes": 2240
+    },
+    {
+      "path": "config/requirement_sources/SECOND_CRITICISM_CORPUS.txt",
+      "sha256": "027b88359b729cc8ed78b72f5ca9f0873399c1dfd4201d25843706dd7f3fa3ab",
+      "size_bytes": 6834
+    },
+    {
+      "path": "docs/AURA_EXECUTION_TRACKER.md",
+      "sha256": "11a24b94741c5aafaa9f3e2221ac55326c7ed482abea68ec0e2704f2f0695ad8",
+      "size_bytes": 2441563
+    },
+    {
+      "path": "tools/reqproof/coverage.py",
+      "sha256": "bc5c2e9adfe51732c54bc260e17e43270c9b2231db7e284b5faeaed85c5b093d",
+      "size_bytes": 11904
+    },
+    {
+      "path": "tools/reqproof/evidence.py",
+      "sha256": "a9189b867f3bde6008230b6892f85a135c464671c3c6ff74d185b9545c2dc4bd",
+      "size_bytes": 26783
+    },
+    {
+      "path": "tools/reqproof/gate.py",
+      "sha256": "6a2ab0294f04645cec33ec27cc218bece64ef07fed2af50089c1009dd4519646",
+      "size_bytes": 15627
+    },
+    {
+      "path": "tools/reqproof/schema.py",
+      "sha256": "c8e0dbe9eff03c52e9e4e98d6116dfdac0f31fc1d24454c0a679a2a70669364a",
+      "size_bytes": 25216
+    },
+    {
+      "path": "tools/reqproof/tracker_parse.py",
+      "sha256": "5c0f4d7e5d3dcb2e7ae6b2776d925edb5edac397daeb9d80861290a806c43290",
+      "size_bytes": 15831
+    },
+    {
+      "path": "tools/reqproof/validate.py",
+      "sha256": "592fc8fc00439f80711dbaf3f5b4e1b2a746cba1135133ed8c28b856d8011762",
+      "size_bytes": 22439
+    }
+  ],
+  "source_selectors": {
+    "globs": [
+      "config/requirement_sources/**/*"
+    ],
+    "paths": [
+      "config/reqproof_defect_baseline.json",
+      "config/reqproof_prose_token_allowlist.json",
+      "config/reqproof_scope_baseline.json",
+      "config/requirement_coverage_map.json",
+      "config/requirement_registry.json",
+      "docs/AURA_EXECUTION_TRACKER.md",
+      "tools/reqproof/coverage.py",
+      "tools/reqproof/evidence.py",
+      "tools/reqproof/gate.py",
+      "tools/reqproof/schema.py",
+      "tools/reqproof/tracker_parse.py",
+      "tools/reqproof/validate.py"
+    ]
+  },
+  "spec_registry": {
+    "content_sha256": "463d1a29134c2b4ef01e1927f7b935447196757304078186ed2790b6d29d039f",
+    "path": "config/requirement_proof_specs.json"
+  },
+  "started_at": "2026-08-07T08:23:14.029687+00:00",
+  "stderr": "",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout": "{\n  \"defect_counts\": {},\n  \"failures\": [],\n  \"mode\": \"structural\",\n  \"summary\": {\n    \"evidence_ledger_entries\": 62,\n    \"evidence_ledger_sha256\": \"25a79943f242ae2e2ec324182c6e20520f774e84eefe9ce4eeca8d9aa0b91c4a\",\n    \"mandatory_not_closed\": 300,\n    \"registry_content_sha256\": \"cebc5b3b7743f8a8c53f3c91dd2e187e17df5f48a94512efa377823a72c08f32\",\n    \"registry_revision\": 41,\n    \"requirements\": 313,\n    \"scope_baseline_cells\": 1305,\n    \"scope_baseline_sha256\": \"b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336\",\n    \"states\": {\n      \"complete\": 12,\n      \"deferred\": 1,\n      \"in_progress\": 100,\n      \"open\": 199,\n      \"withdrawn\": 1\n    },\n    \"tracker_extraction_sha256\": \"c6d386a043d45166fea0e0fc8b8713581e5cf17f73fab0f4d9c38cf9def55721\"\n  },\n  \"verdict\": \"pass\"\n}\n",
+  "stdout_sha256": "45edd9499ad84a742a1bf650fdfab3b6f2cb46d4665f66a0feb3f2fe59f31468",
+  "timeout_seconds": 300,
+  "verdict": "pass"
+}

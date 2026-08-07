@@ -1,5 +1,5 @@
 {
-  "content_sha256": "25a79943f242ae2e2ec324182c6e20520f774e84eefe9ce4eeca8d9aa0b91c4a",
+  "content_sha256": "3a11ebac4a3dd7321f0ef7611f65268b3fe25815c08cd46f68032793452596f4",
   "entries": [
     {
       "acceptance_ids": [
@@ -642,12 +642,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "83720a9bd3419ef6fbf3c3e26bb7c178c1d86705",
+      "commit": "94f825dfe22790ded8873b077ca2584785e42cff",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-structural-gate-audit/83720a9bd3419ef6fbf3c3e26bb7c178c1d86705.json",
+      "ref": "artifacts/reqproof/evidence/reqproof-structural-gate-audit/94f825dfe22790ded8873b077ca2584785e42cff.json",
       "requirement_id": "SCOPE-001",
-      "sha256": "5eaddd36b81c91cf3d6a579e86e29941e6e629e58800ee15e47c62e366f5542c"
+      "sha256": "797c0586bdf3c4e3b8a5d649bd0699ad17551927e7b2297924b9e2f6a8bc1388"
     },
     {
       "acceptance_ids": [
