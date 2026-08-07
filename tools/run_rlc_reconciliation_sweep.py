@@ -38,7 +38,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -216,6 +216,22 @@ class Journal:
             if record.get("event") == "CELL" and self._current(record):
                 out.append(record)
         return out
+
+
+YIELD_SENTINEL: Final = "YIELD"
+
+
+def yield_requested(out_dir: Path) -> bool:
+    """True when the operator wants the GPU back.
+
+    The host cannot hold two 32B models, so a long campaign and the live
+    instance are strictly exclusive. That does not mean the campaign needs
+    long contiguous blocks -- only that it must be able to stand up and leave
+    on request. Touching ``YIELD`` in the run directory stops the sweep at the
+    next cell boundary, which costs at most one cell, and every committed cell
+    stays valid because configuration identity travels with it.
+    """
+    return (out_dir / YIELD_SENTINEL).exists()
 
 
 def _status(out_dir: Path, **fields: Any) -> None:
@@ -668,6 +684,16 @@ def main() -> int:
                     _status(out_dir, phase="wall_budget_reached", arm=arm)
                     print("wall budget reached; exiting for clean resume", flush=True)
                     return 3
+                if yield_requested(out_dir):
+                    _status(out_dir, phase="yielded", arm=arm)
+                    print(
+                        f"yield requested: released the model after "
+                        f"{len(journal.done)} committed cells. Re-running the "
+                        f"launch script resumes here; delete the YIELD file "
+                        f"first.",
+                        flush=True,
+                    )
+                    return 4
                 cell_started = time.monotonic()
                 error = ""
                 receipt: dict[str, Any] = {}

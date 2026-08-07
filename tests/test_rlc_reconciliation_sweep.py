@@ -604,3 +604,16 @@ def test_latency_is_reported_beside_accuracy(tmp_path: Path):
     # Ten times the cost for the same score is a reportable result.
     assert verdict["latency_ratio_vs_ordinary_decode"]["full_stack"] == 10.0
     assert verdict["latency_ratio_vs_ordinary_decode"]["vanilla"] == 1.0
+
+
+def test_the_operator_can_reclaim_the_machine_between_cells(tmp_path: Path):
+    """The host cannot hold two 32B models, so the campaign and the live
+    instance are exclusive. The campaign must therefore be able to leave on
+    request rather than requiring long contiguous blocks."""
+    assert sweep.yield_requested(tmp_path) is False
+    (tmp_path / sweep.YIELD_SENTINEL).touch()
+    assert sweep.yield_requested(tmp_path) is True
+    # Committed work survives a yield: identity travels with the cell, so a
+    # resumed run re-admits exactly the cells it already paid for.
+    (tmp_path / sweep.YIELD_SENTINEL).unlink()
+    assert sweep.yield_requested(tmp_path) is False
