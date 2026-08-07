@@ -29,6 +29,12 @@
 
     const state = {
         active: false,
+        // Ambient: the microphone is open and she is in the room, but there
+        // is no modal, no orb taking over the screen, and every turn lands in
+        // the chat thread like any other. The full-screen surface below still
+        // exists and is still what the VOICE button opens — it is now the
+        // *focused* mode rather than the only mode.
+        ambient: false,
         ws: null,
         captureCtx: null,
         playbackCtx: null,
@@ -55,6 +61,117 @@
         closingIntentionally: false,
         rafHandle: null,
     };
+
+    // ── ambient presence ─────────────────────────────────────────────────
+    //
+    // Everything that makes an open microphone legible without making it
+    // loud. Three jobs: put spoken turns into the chat thread where every
+    // other turn lives, show what she heard but let pass, and never once
+    // prompt for anything the user did not ask for.
+
+    const AMBIENT_PREF_KEY = 'aura.voice.ambient';
+
+    const ambient = (() => {
+        let indicator = null;
+        let overheardEl = null;
+        let overheardTimer = null;
+        let streaming = false;
+
+        function ensureIndicator() {
+            if (indicator) return indicator;
+            indicator = document.createElement('div');
+            indicator.className = 'ambient-listening';
+            indicator.setAttribute('role', 'status');
+            indicator.setAttribute('aria-live', 'polite');
+            indicator.innerHTML =
+                '<span class="ambient-dot"></span>' +
+                '<span class="ambient-label">listening</span>' +
+                '<div class="ambient-overheard" id="ambient-overheard"></div>';
+            // Clicking the indicator opens the focused surface — the fastest
+            // route from "she is around" to "I want the full thing".
+            indicator.addEventListener('click', () => { surface(true); });
+            document.body.appendChild(indicator);
+            overheardEl = indicator.querySelector('#ambient-overheard');
+            return indicator;
+        }
+
+        return {
+            enabledByUser() {
+                try {
+                    return window.localStorage.getItem(AMBIENT_PREF_KEY) !== 'off';
+                } catch (_e) {
+                    // Private browsing or a locked-down profile. Default to
+                    // off: an ambient microphone is not something to enable
+                    // because storage happened to be unreadable.
+                    return false;
+                }
+            },
+
+            setPreference(on) {
+                try {
+                    window.localStorage.setItem(AMBIENT_PREF_KEY, on ? 'on' : 'off');
+                } catch (_e) { /* preference simply will not persist */ }
+            },
+
+            setEnabled(on) {
+                if (!on) {
+                    if (indicator) indicator.classList.remove('ambient-on');
+                    return;
+                }
+                ensureIndicator().classList.add('ambient-on');
+            },
+
+            setState(s) {
+                if (!indicator) return;
+                indicator.dataset.state = s || '';
+                const label = indicator.querySelector('.ambient-label');
+                if (!label) return;
+                label.textContent =
+                    s === 'user_speaking' ? 'hearing you'
+                        : s === 'thinking' ? 'thinking'
+                            : s === 'speaking' ? 'speaking'
+                                : 'listening';
+            },
+
+            // A turn she took. It belongs in the chat thread exactly like a
+            // typed one — same bubble, same history, same everything. That
+            // identity is the point of the whole feature: there is no
+            // separate place where the spoken conversation lives.
+            userSaid(text) {
+                if (typeof window.auraAppendVoiceTurn === 'function') {
+                    window.auraAppendVoiceTurn('user', text);
+                }
+                streaming = false;
+            },
+
+            auraChunk(text) {
+                if (!text) return;
+                if (typeof window.auraStreamVoiceReply !== 'function') return;
+                window.auraStreamVoiceReply(text, !streaming);
+                streaming = true;
+            },
+
+            replyDone() {
+                if (streaming && typeof window.auraFinishVoiceReply === 'function') {
+                    window.auraFinishVoiceReply();
+                }
+                streaming = false;
+            },
+
+            showOverheard(text, why) {
+                ensureIndicator();
+                if (!overheardEl) return;
+                const reason = Array.isArray(why) && why.length ? why[0] : '';
+                overheardEl.textContent = reason ? `heard "${text}" — ${reason}` : `heard "${text}"`;
+                indicator.classList.add('ambient-overheard-show');
+                clearTimeout(overheardTimer);
+                overheardTimer = setTimeout(
+                    () => indicator.classList.remove('ambient-overheard-show'),
+                    4200,
+                );
+            },
+        };
+    })();
 
     // ── DOM ──────────────────────────────────────────────────────────────
 
@@ -150,7 +267,7 @@
             root.classList.toggle('vm-show-transcript');
             el.transcriptToggle.classList.toggle('vm-active');
         });
-        el.end.addEventListener('click', () => exitVoiceMode());
+        el.end.addEventListener('click', () => leaveFocusedMode());
 
         // Tapping the orb interrupts — the fastest possible target, and the
         // gesture people reach for instinctively when they want it to stop.
@@ -166,9 +283,17 @@
 
     function onKeyDown(e) {
         if (!state.active) return;
+        if (state.ambient) {
+            // Ambient listening does not own the keyboard. Space is a page
+            // scroll and Escape closes whatever the user was actually looking
+            // at; stealing either because a microphone happens to be open is
+            // the kind of thing that makes a background feature feel like a
+            // foreground one.
+            return;
+        }
         if (e.key === 'Escape') {
             e.preventDefault();
-            exitVoiceMode();
+            leaveFocusedMode();
         } else if (e.code === 'Space' && e.target === document.body) {
             // Space is the universal "stop talking" key here.
             e.preventDefault();
@@ -329,8 +454,9 @@
                 setStatus(msg.state);
                 if (typeof msg.muted === 'boolean') {
                     state.muted = msg.muted;
-                    el.mute.classList.toggle('vm-active', state.muted);
+                    if (el.mute) el.mute.classList.toggle('vm-active', state.muted);
                 }
+                ambient.setState(msg.state);
                 break;
 
             case 'voice.partial':
@@ -342,10 +468,25 @@
             case 'voice.final':
                 state.partialStable = '';
                 state.partialTentative = '';
+                if (msg.text && msg.addressed === false) {
+                    // She heard it and decided it was not for her. Showing
+                    // nothing would make the gate invisible: the user could
+                    // not tell "did not hear me" from "chose not to answer",
+                    // and an ambient microphone whose decisions you cannot
+                    // see is one you cannot trust. Showing it as a chat
+                    // message would be worse — the thread would fill with
+                    // everything said in the room. So it surfaces as a
+                    // transient line that says what she heard and why she
+                    // let it pass, and then goes away.
+                    ambient.showOverheard(msg.text, msg.address_why || []);
+                    if (el.captionUser) el.captionUser.textContent = '';
+                    break;
+                }
                 if (msg.text) {
                     addTranscript('user', msg.text);
-                    el.captionUser.textContent = msg.text;
-                } else {
+                    ambient.userSaid(msg.text);
+                    if (el.captionUser) el.captionUser.textContent = msg.text;
+                } else if (el.captionUser) {
                     el.captionUser.textContent = '';
                 }
                 break;
@@ -360,7 +501,8 @@
                 // Caption follows the audio clause by clause, so the words
                 // on screen are the words currently in the air.
                 state.spokenSoFar = (state.spokenSoFar ? state.spokenSoFar + ' ' : '') + msg.text;
-                el.captionAura.textContent = state.spokenSoFar;
+                if (el.captionAura) el.captionAura.textContent = state.spokenSoFar;
+                ambient.auraChunk(msg.text);
                 break;
 
             case 'voice.backchannel':
@@ -374,6 +516,11 @@
             case 'voice.interrupted':
                 if (state.speechNode) state.speechNode.port.postMessage({ type: 'flush' });
                 markInterrupted(msg.spoken || '');
+                ambient.replyDone();
+                break;
+
+            case 'voice.metrics_done':
+                ambient.replyDone();
                 break;
 
             case 'voice.flush':
@@ -404,6 +551,9 @@
             case 'voice.metrics':
                 state.metrics = msg;
                 showMeta(`${Math.round(msg.time_to_first_audio_ms)} ms to first word`);
+                // Metrics are emitted once the utterance has actually been
+                // heard, which is the honest moment to close the chat bubble.
+                ambient.replyDone();
                 break;
 
             case 'voice.error':
@@ -600,36 +750,72 @@
 
     // ── entry / exit ─────────────────────────────────────────────────────
 
-    async function enterVoiceMode() {
-        if (state.active) return true;
+    // The surface is always built, even for an ambient session that never
+    // shows it. Guarding twenty `el.*` references on a flag is how a UI grows
+    // two subtly different code paths; building the DOM and simply not
+    // revealing it costs a few nodes and keeps one path.
+    async function openSession({ ambient: wantAmbient }) {
+        if (state.active) {
+            // Already listening. A focused request just reveals the surface.
+            if (!wantAmbient && state.ambient) surface(true);
+            return true;
+        }
         buildSurface();
         state.active = true;
+        state.ambient = Boolean(wantAmbient);
         state.closingIntentionally = false;
         setStatus('connecting');
-
-        // Animate in before the (possibly slow) permission prompt, so the
-        // transition never appears to hang on the click.
-        requestAnimationFrame(() => root.classList.add('vm-open'));
-        document.body.classList.add('vm-active');
+        surface(!state.ambient);
 
         try {
             await startPlayback();
             await startCapture();
         } catch (err) {
             console.error('[voice] audio init failed', err);
-            showMeta(err && err.name === 'NotAllowedError'
-                ? 'Microphone permission denied.'
-                : 'Could not start audio.');
+            const denied = err && err.name === 'NotAllowedError';
+            if (state.ambient) {
+                // Ambient listening must never nag. If the microphone is not
+                // available, it stops silently and the VOICE button — an
+                // explicit act, where a permission prompt is expected —
+                // remains the way in.
+                state.active = false;
+                state.ambient = false;
+                await teardownAudio();
+                ambient.setEnabled(false);
+                return false;
+            }
+            showMeta(denied ? 'Microphone permission denied.' : 'Could not start audio.');
             setStatus('error');
-            // Leave the surface up so the message is readable, but tear the
-            // half-initialised audio graph down.
             await teardownAudio();
             return false;
         }
 
         connect();
         state.rafHandle = requestAnimationFrame(tick);
+        ambient.setEnabled(true);
         return true;
+    }
+
+    function surface(show) {
+        if (!root) return;
+        if (show) {
+            // Animate in on the next frame so the transition never appears to
+            // hang on the click that started it.
+            requestAnimationFrame(() => root.classList.add('vm-open'));
+            document.body.classList.add('vm-active');
+            state.ambient = false;
+        } else {
+            root.classList.remove('vm-open');
+            document.body.classList.remove('vm-active');
+        }
+    }
+
+    async function enterVoiceMode() {
+        return openSession({ ambient: false });
+    }
+
+    async function enterAmbient() {
+        return openSession({ ambient: true });
     }
 
     async function teardownAudio() {
@@ -647,9 +833,25 @@
         }
     }
 
+    // Leaving the focused surface is not the same as ending the conversation.
+    // If ambient listening is on, closing the modal drops back to it rather
+    // than shutting the microphone — otherwise "End" would silently turn off
+    // a setting the user never touched.
+    async function leaveFocusedMode() {
+        if (!state.active) return;
+        if (ambient.enabledByUser()) {
+            surface(false);
+            state.ambient = true;
+            exportTranscript();
+            return;
+        }
+        await exitVoiceMode();
+    }
+
     async function exitVoiceMode() {
         if (!state.active) return;
         state.active = false;
+        state.ambient = false;
         state.closingIntentionally = true;
         clearTimeout(state.reconnectTimer);
         if (state.rafHandle) cancelAnimationFrame(state.rafHandle);
@@ -688,13 +890,81 @@
         showMeta(state.muted ? 'microphone off' : 'microphone on');
     }
 
+    // ── ambient startup ──────────────────────────────────────────────────
+
+    /**
+     * Start listening at launch, if — and only if — that is already settled.
+     *
+     * Two consents are required and neither is asked for here. The browser
+     * must already hold a microphone grant from a previous, deliberate act,
+     * and the user must not have turned ambient listening off. A page that
+     * pops a microphone prompt on load has decided something on the user's
+     * behalf; the VOICE button is where that decision belongs, because
+     * pressing it *is* the request.
+     *
+     * So the first run of a fresh profile is silent, and every run after the
+     * user has once said yes is ambient. That is the behaviour people
+     * actually want from something living on their machine: it is there when
+     * they open it, and it never once surprises them into being recorded.
+     */
+    async function maybeStartAmbient() {
+        if (!ambient.enabledByUser()) return false;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+
+        let granted = false;
+        try {
+            if (navigator.permissions && navigator.permissions.query) {
+                const status = await navigator.permissions.query({ name: 'microphone' });
+                granted = status.state === 'granted';
+                // If the user grants it later from the browser's own UI,
+                // honour that without making them reload.
+                status.onchange = () => {
+                    if (status.state === 'granted' && !state.active) enterAmbient();
+                };
+            }
+        } catch (_e) {
+            // Firefox has historically rejected the 'microphone' descriptor.
+            // No permission API means no way to know without prompting, and
+            // prompting is the thing being avoided, so stay quiet.
+            granted = false;
+        }
+        if (!granted) return false;
+        return enterAmbient();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { void maybeStartAmbient(); });
+    } else {
+        void maybeStartAmbient();
+    }
+
     window.AuraVoiceMode = {
         enter: enterVoiceMode,
         exit: exitVoiceMode,
-        toggle: async () => (state.active ? exitVoiceMode() : enterVoiceMode()),
+        // The VOICE button toggles the *focused* surface. When ambient
+        // listening is on, closing it returns to ambient rather than going
+        // deaf — the button controls the window, not the microphone.
+        toggle: async () => {
+            if (state.active && !state.ambient) return leaveFocusedMode();
+            return enterVoiceMode();
+        },
         isActive: () => state.active,
+        isAmbient: () => state.active && state.ambient,
+        ambientEnabled: () => ambient.enabledByUser(),
+        setAmbient: async (on) => {
+            ambient.setPreference(on);
+            if (on) return enterAmbient();
+            await exitVoiceMode();
+            ambient.setEnabled(false);
+            return false;
+        },
         setVoice: (v) => sendCommand('set_voice', { voice: v }),
         voices: () => state.voices.slice(),
-        status: () => ({ state: state.sessionState, muted: state.muted, metrics: state.metrics }),
+        status: () => ({
+            state: state.sessionState,
+            ambient: state.ambient,
+            muted: state.muted,
+            metrics: state.metrics,
+        }),
     };
 })();

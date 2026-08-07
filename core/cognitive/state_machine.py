@@ -67,7 +67,26 @@ class StateMachine:
         self.llm = resolve_llm_router(default=None)
 
     def _emit_telemetry(self, payload: dict):
-        """Emit real-time UI data via the Orchestrator's WebSocket."""
+        """Emit real-time UI data via the Orchestrator's WebSocket.
+
+        Reply chunks additionally go to whatever reply stream the current turn
+        is bound to. That binding is per-async-context, so this cannot deliver
+        one surface's reply to another — and a turn with nothing bound (every
+        text turn) pays one ContextVar read. Telemetry is best-effort by
+        design, so a failure here must never take down the turn producing it.
+        """
+        if payload.get("type") == "chat_stream_chunk":
+            try:
+                from core.conversation.reply_stream import publish_reply_chunk
+
+                publish_reply_chunk(str(payload.get("chunk") or ""))
+            except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
+                record_degradation(
+                    "cognitive.state_machine",
+                    exc,
+                    action="dropped one streamed reply chunk; the finished reply is unaffected",
+                    severity="debug",
+                )
         if self.orchestrator and hasattr(self.orchestrator, "_publish_telemetry"):
             self.orchestrator._publish_telemetry(payload)
 

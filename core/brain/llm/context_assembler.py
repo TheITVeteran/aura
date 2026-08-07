@@ -1697,6 +1697,26 @@ class ContextAssembler:
                 )
                 dynamic_system = system_prompt
 
+        # What has actually failed while serving this turn, as readings rather
+        # than as phrasing. This is what lets her say "the DNS probe has been
+        # failing for four minutes, so search is out" instead of a fixed
+        # apology written into whichever module broke. Appended last so it
+        # survives the middle-out truncation below: a failure she is not told
+        # about is one she will paper over.
+        try:
+            from core.conversation.failure_context import pending_failure_context
+
+            failure_block = pending_failure_context()
+            if failure_block:
+                dynamic_system = f"{dynamic_system}\n\n{failure_block}"
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler.failure_context",
+                exc,
+                severity="warning",
+                action="built the prompt without this turn's capability-failure readings",
+            )
+
         dynamic_system = _fit_ends(
             dynamic_system,
             system_budget,

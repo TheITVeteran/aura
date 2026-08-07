@@ -9,14 +9,22 @@ a UI animation.
 Two decisions here are load-bearing and worth stating plainly.
 
 **We use the governed turn, not ``think_stream``.**
-``CognitiveEngine.think_stream`` would give real token-level streaming and a
-much better time-to-first-audio. It also routes straight to the LLM router,
-skipping the governance and validation phases that the desktop surface
-deliberately requires — ``interface/server.py`` would rather fail closed
-than let a surface show an ungoverned reply. Speaking an ungoverned answer
-out loud is strictly worse than showing one, so the voice lane takes the
-same governed path and covers the latency with the filler reflex instead.
-That is a real trade: TTFA is bounded by full-reply latency today.
+``CognitiveEngine.think_stream`` routes straight to the LLM router, skipping
+the governance and validation phases that the desktop surface deliberately
+requires — ``interface/server.py`` would rather fail closed than let a
+surface show an ungoverned reply. Speaking an ungoverned answer out loud is
+strictly worse than showing one, so the voice lane takes the same governed
+path.
+
+This used to cost the whole latency budget: the governed turn returned one
+finished string, so time-to-first-audio was proportional to *total* reply
+length and the filler reflex existed to paper over the wait. It no longer
+does. ``respond_streaming`` watches the governed turn's own reply form —
+the pipeline already produces it incrementally — and hands clauses out as
+they land, each one governed before it is synthesised. The path, the checks
+and the final answer are unchanged; only the waiting is gone. The finished
+reply is still the authority, and a surface that spoke from the stream owes
+the listener a reconciliation against it.
 
 **Interruption edits what she believes she said.**
 When the user cuts her off, she has "said" a paragraph that they only heard
@@ -29,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import re
 import time
@@ -85,6 +94,7 @@ async def _default_responder(
     effective_message: str,
     session_id: str,
     timeout_s: float,
+    reply_stream: Any = None,
 ) -> str | None:
     """Refuse an unbound caller instead of bypassing governed chat admission."""
     record_degradation(
@@ -95,6 +105,65 @@ async def _default_responder(
         action="returned no reply without entering an ungoverned cognition lane",
     )
     return None
+
+
+def _responder_accepts_reply_stream(responder: Responder) -> bool:
+    """Whether this responder can deliver its reply incrementally.
+
+    Asked once, at bind time. A responder that does not take the parameter is
+    a perfectly good responder — it just answers all at once, and the surface
+    falls back to speaking the finished reply.
+    """
+    try:
+        signature = inspect.signature(responder)
+    except (TypeError, ValueError):
+        # Builtins and some callables have no introspectable signature. Assume
+        # the narrower contract: a wrong guess here would raise TypeError on
+        # every turn, which is a far worse failure than not streaming.
+        return False
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == "reply_stream":
+            return True
+    return False
+
+
+@dataclass(slots=True)
+class StreamingTurn:
+    """A governed turn in flight, plus the reply forming inside it.
+
+    Two halves that must both be honoured. ``channel`` carries clauses as they
+    are produced and is what makes speech start early; ``final()`` is the
+    reply the turn stands behind and is the only text that is authoritative.
+    Speaking from the first without checking the second is how a surface ends
+    up having said something its own governance revised.
+    """
+
+    channel: Any
+    task: "asyncio.Task[str | None]"
+
+    async def final(self) -> str | None:
+        """Await the finished governed reply. Safe to call more than once."""
+        try:
+            return await self.task
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:
+            record_degradation(
+                "voice_duplex.mind",
+                exc,
+                action="voice turn task failed after streaming had begun",
+            )
+            return None
+
+    async def abandon(self) -> None:
+        """Stop caring about this turn — used when a newer utterance wins."""
+        self.channel.close()
+        if not self.task.done():
+            self.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.task
 
 
 class MindBridge:
@@ -118,6 +187,8 @@ class MindBridge:
         self._turn_active = False
         self._pending_interruption: SpokenRecord | None = None
         self._history: list[SpokenRecord] = []
+        self._pending_corrections: list[str] = []
+        self._responder_streams = _responder_accepts_reply_stream(self._responder)
 
     # ── cognition ────────────────────────────────────────────────────────
 
@@ -159,6 +230,95 @@ class MindBridge:
             )
 
         return (reply or "").strip() or None
+
+    async def respond_streaming(
+        self, transcript: str, *, delivery_context: str = ""
+    ) -> "StreamingTurn | None":
+        """One governed turn, with its reply readable while it forms.
+
+        Same responder, same governed path, same final answer — the only
+        difference is that the caller may watch the reply assemble instead of
+        waiting for the last token. That is the whole latency story for
+        speech: it is what lets the first clause be *said* while the rest is
+        still being decided.
+
+        Returns a handle rather than a string because the caller has two jobs,
+        not one: consume the stream, then reconcile what it committed to out
+        loud against the final governed reply. A caller that only wants the
+        string should use ``respond``.
+        """
+        transcript = (transcript or "").strip()
+        if not transcript:
+            return None
+
+        from core.conversation.reply_stream import ReplyStreamChannel
+
+        effective = self._compose_effective_message(transcript, delivery_context)
+        channel = ReplyStreamChannel()
+        self._turn_active = True
+        started = time.perf_counter()
+
+        # A responder that cannot stream is not an error — it simply produces
+        # no chunks, the caller sees an empty stream, and the finished reply is
+        # spoken the ordinary way. Detecting that here rather than making every
+        # binding accept a parameter it ignores keeps the responder contract
+        # exactly as wide as it was.
+        streaming_kwargs: dict[str, Any] = (
+            {"reply_stream": channel} if self._responder_streams else {}
+        )
+        if not self._responder_streams:
+            channel.close()
+
+        entered = asyncio.Event()
+
+        async def _run() -> str | None:
+            entered.set()
+            try:
+                reply = await self._responder(
+                    transcript,
+                    effective_message=effective,
+                    session_id=self._session_id,
+                    timeout_s=self._timeout_s,
+                    **streaming_kwargs,
+                )
+            except TimeoutError:
+                record_degradation(
+                    "voice_duplex.mind",
+                    TimeoutError(f"voice cognition exceeded {self._timeout_s}s"),
+                    action="told the user the reasoning lane timed out instead of inventing a reply",
+                )
+                return None
+            except (
+                RuntimeError, ValueError, AttributeError, ImportError, TypeError, OSError
+            ) as exc:
+                record_degradation(
+                    "voice_duplex.mind",
+                    exc,
+                    action="voice turn failed before a reply formed; surfaced the failure",
+                )
+                return None
+            finally:
+                # The channel must close on every path, or a consumer that is
+                # iterating it waits for a producer that has already gone.
+                channel.close()
+                self._turn_active = False
+                self._pending_interruption = None
+                logger.info(
+                    "voice turn cognition: %.0f ms",
+                    (time.perf_counter() - started) * 1000.0,
+                )
+            return (reply or "").strip() or None
+
+        task = get_task_tracker().create_task(
+            _run(), name=f"VoiceMindBridge.turn:{self._session_id}"
+        )
+        # Do not hand back a turn whose cognition has not started. Creating a
+        # task only schedules it, and a "turn in flight" that has not actually
+        # begun is a lie the caller then acts on: a replacement utterance
+        # would cancel a turn that never ran, which from outside is
+        # indistinguishable from the request being dropped on the floor.
+        await entered.wait()
+        return StreamingTurn(channel=channel, task=task)
 
     def _reply_budget_for(self, transcript: str) -> tuple[int, bool]:
         """How long this answer should be. Returns (words, offer_to_continue).
@@ -253,6 +413,14 @@ class MindBridge:
         if delivery_context:
             parts.append(delivery_context)
 
+        # Anything she owes the listener from a previous turn — a reply that
+        # her own governance revised after part of it was already heard. It is
+        # handed over once and cleared, so she corrects the record and moves
+        # on rather than apologising every turn thereafter.
+        if self._pending_corrections:
+            parts.extend(self._pending_corrections)
+            self._pending_corrections = []
+
         pending = self._pending_interruption
         if pending is not None and (
             pending.interrupted or not pending.delivery_complete
@@ -289,6 +457,19 @@ class MindBridge:
     @property
     def last_spoken(self) -> SpokenRecord | None:
         return self._history[-1] if self._history else None
+
+    def note_correction(self, context: str) -> None:
+        """Carry a correction she owes the listener into her next turn.
+
+        Used when something already spoken was revised by her own governance.
+        The point is that the apology is *hers* — she is told what happened
+        and words it herself on the next turn, rather than this module
+        composing a fixed line about her own reliability.
+        """
+        text = str(context or "").strip()
+        if text:
+            self._pending_corrections.append(text[:1200])
+            del self._pending_corrections[:-3]
 
     # ── telemetry: what is she actually doing right now ──────────────────
 

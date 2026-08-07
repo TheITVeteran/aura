@@ -313,8 +313,49 @@ class BargeInConfig:
 
 
 @dataclass(slots=True)
+class AmbientConfig:
+    """Listening without being switched on first.
+
+    The point of ambient mode is that you walk up and talk. The cost is that
+    an open microphone hears everything in the room, so the decision of what
+    to *answer* moves out of the wake word and into a gate that weighs several
+    signals (see ``addressivity.py``).
+
+    ``enabled`` here governs only that gate. Whether the microphone opens at
+    all is the user's runtime setting and their browser permission — two
+    consents this module never overrides.
+    """
+
+    enabled: bool = field(
+        default_factory=lambda: _env_flag("AURA_VOICE_AMBIENT", True)
+    )
+    # Names she answers to. Her own name is the strongest single signal there
+    # is, and it stays the reliable way to get her attention in a noisy room.
+    names: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            part.strip()
+            for part in os.environ.get("AURA_VOICE_NAMES", "aura").split(",")
+            if part.strip()
+        )
+        or ("aura",)
+    )
+    # How long after she stops speaking a bare reply is still obviously hers
+    # to take. This is the term that makes the second and third thing you say
+    # need no ceremony, which is most of what a wake word costs you.
+    open_floor_s: float = field(
+        default_factory=lambda: _env_float("AURA_VOICE_OPEN_FLOOR_S", 18.0)
+    )
+    # Words required before a cold open — no name, no open floor — is treated
+    # as a request rather than as overheard speech.
+    min_cold_open_words: int = field(
+        default_factory=lambda: _env_int("AURA_VOICE_COLD_OPEN_WORDS", 3)
+    )
+
+
+@dataclass(slots=True)
 class DuplexConfig:
     vad: VadConfig = field(default_factory=VadConfig)
+    ambient: AmbientConfig = field(default_factory=AmbientConfig)
     asr: AsrConfig = field(default_factory=AsrConfig)
     endpoint: EndpointConfig = field(default_factory=EndpointConfig)
     backchannel: BackchannelConfig = field(default_factory=BackchannelConfig)
@@ -329,18 +370,24 @@ class DuplexConfig:
 
     # Target length for a spoken reply, in words.
     #
-    # This is the single largest latency lever in the whole lane, and it is
-    # not a trick. The governed turn returns its reply as one finished
-    # string, so nothing can be spoken until the last token is decoded —
-    # which makes time-to-first-audio proportional to *total* reply length.
-    # At a typical local decode rate, a 150-word answer is several seconds
-    # before the first syllable; a 40-word answer is roughly a quarter of
-    # that, and the first word arrives that much sooner.
+    # This used to be the largest latency lever in the lane: the governed turn
+    # returned one finished string, so nothing could be spoken until the last
+    # token was decoded and time-to-first-audio was proportional to *total*
+    # reply length. Capping the words was the only way to make her answer
+    # sooner — which is why spoken answers came out shallower than the same
+    # question typed.
     #
-    # It is also simply correct for the medium. Nobody says a 150-word
-    # paragraph on a phone call; they answer, then wait to see if you want
-    # more. Reading a written-length reply aloud is the thing that makes
-    # voice assistants exhausting.
+    # Clause streaming removed that job entirely (see governed_stream.py and
+    # mind_bridge.respond_streaming): the first clause is spoken while the
+    # rest is still being produced, so length no longer buys latency.
+    #
+    # What is left is the honest reason, and it is about the medium rather
+    # than the machine. Nobody says a 150-word paragraph on a phone call; they
+    # answer, then wait to see if you want more, and reading a written-length
+    # reply aloud is the thing that makes voice assistants exhausting. So this
+    # is now a shape hint the model may exceed when the answer needs it — see
+    # `MindBridge._reply_budget_for`, which sizes it per question — rather
+    # than a ceiling protecting a latency budget.
     spoken_reply_words: int = field(
         default_factory=lambda: _env_int("AURA_VOICE_REPLY_WORDS", 45)
     )

@@ -7705,6 +7705,44 @@ window.auraAppendVoiceTranscript = function (lines) {
     }
 };
 
+/**
+ * Put a spoken turn into the chat thread as it happens.
+ *
+ * Called by voice_mode.js while an ambient session is running. The three
+ * functions below are deliberately the *same* rendering path a typed turn
+ * takes — same bubble, same markdown, same history, same scroll behaviour.
+ *
+ * That sameness is the entire feature. A spoken conversation that lives in
+ * its own panel and gets folded back in at the end is two conversations that
+ * agree afterwards; this is one conversation that happens to have been
+ * spoken. It is also what stops the visible history from disagreeing with
+ * what she remembers, which is the thing that reads as her confabulating.
+ */
+window.auraAppendVoiceTurn = function (who, text) {
+    if (!text) return;
+    // A reply may still be streaming when the next thing is said — she can be
+    // interrupted. Close the open bubble first so the thread stays ordered.
+    if (activeStreamDiv) finishStreamMsg();
+    appendMsg(who === 'user' ? 'user' : 'aura', String(text));
+};
+
+window.auraStreamVoiceReply = function (chunk, isFirst) {
+    if (!chunk) return;
+    if (isFirst || !activeStreamDiv) {
+        if (activeStreamDiv) finishStreamMsg();
+        startStreamMsg('aura');
+        const ind = $('typing-ind');
+        if (ind) ind.classList.remove('show');
+    }
+    // Clauses arrive already spaced as speech; the stream buffer is plain
+    // text, so the join has to be explicit or the words run together.
+    appendStreamChunk((activeStreamContentRaw ? ' ' : '') + String(chunk));
+};
+
+window.auraFinishVoiceReply = function () {
+    if (activeStreamDiv) finishStreamMsg();
+};
+
 const micBtn = $('mic-btn');
 if (micBtn) micBtn.addEventListener('click', (e) => {
     e.preventDefault();

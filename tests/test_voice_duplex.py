@@ -17,6 +17,7 @@ pure logic or driven through injected fakes, so it runs in the offline suite.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import threading
 from types import SimpleNamespace
@@ -640,6 +641,7 @@ def test_repeated_typed_turn_cancels_and_quiesces_previous_turn():
     async def exercise() -> None:
         first_started = asyncio.Event()
         first_cancelled = asyncio.Event()
+        second_started = asyncio.Event()
         calls = 0
 
         async def responder(
@@ -658,6 +660,8 @@ def test_repeated_typed_turn_cancels_and_quiesces_previous_turn():
                 except asyncio.CancelledError:
                     first_cancelled.set()
                     raise
+            else:
+                second_started.set()
             return None
 
         session = DuplexVoiceSession(
@@ -672,7 +676,13 @@ def test_repeated_typed_turn_cancels_and_quiesces_previous_turn():
 
         await session.handle_command({"command": "text", "text": "second"})
         await asyncio.wait_for(first_cancelled.wait(), timeout=1.0)
-        await asyncio.sleep(0)
+        # Wait for the replacement turn to actually enter cognition rather
+        # than assuming one loop pass is enough to get there. Cognition runs
+        # in its own task now (that is what lets a reply be spoken while it is
+        # still forming), so "the turn was spawned" and "the turn is thinking"
+        # are separated by a scheduling hop. Waiting on the event asserts the
+        # stronger property the test is actually about.
+        await asyncio.wait_for(second_started.wait(), timeout=1.0)
 
         assert first_task is not None and first_task.done()
         assert session._turn_task is not first_task
@@ -737,7 +747,15 @@ def test_replacement_turn_fails_closed_when_prior_task_will_not_quiesce(
         assert calls == 1
         release_first.set()
         assert first_task is not None
-        await asyncio.wait_for(first_task, timeout=1.0)
+        # The turn ends cancelled, and that is the correct outcome: it *was*
+        # cancelled. A responder that swallows its CancelledError no longer
+        # launders the turn into a normal completion — cognition runs in its
+        # own task, so the turn task's own cancellation stands regardless of
+        # what the responder does with its. What matters here is that the task
+        # finishes once released rather than leaking.
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(first_task, timeout=1.0)
+        assert first_task.done()
         await session.close()
 
     asyncio.run(exercise())

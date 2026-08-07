@@ -436,3 +436,101 @@ body.vm-active .app-shell {
 .vm-root.vm-ducked .vm-orb-glow { opacity: 0.2 !important; }
 .vm-root.vm-ducked .vm-caption-aura { opacity: 0.5; }
 .vm-orb, .vm-caption-aura { transition: opacity 140ms ease; }
+
+/* ── ambient presence ──────────────────────────────────────────────────
+ *
+ * An open microphone needs exactly one piece of chrome: something that says
+ * she can hear you, and can be pointed at when you want the full surface.
+ * Anything more and a background capability starts behaving like a
+ * foreground one — which is the failure mode of every always-listening
+ * product that ends up switched off.
+ *
+ * It sits bottom-left, out of the composer's way, and it is the only thing
+ * ambient mode draws. The chat thread carries the conversation, because the
+ * chat thread is where the conversation is.
+ */
+.ambient-listening {
+  position: fixed;
+  left: var(--aura-space-4);
+  bottom: var(--aura-space-4);
+  z-index: 40;
+  display: none;
+  align-items: center;
+  gap: var(--aura-space-2);
+  padding: var(--aura-space-1) var(--aura-space-3) var(--aura-space-1) var(--aura-space-2);
+  border: 1px solid var(--aura-card-border);
+  border-radius: var(--aura-radius-pill);
+  background: var(--aura-card);
+  backdrop-filter: blur(12px);
+  font-family: var(--aura-font-ui);
+  font-size: var(--aura-text-2);
+  color: var(--aura-fg-mute);
+  cursor: pointer;
+  user-select: none;
+  transition: color 180ms ease, border-color 180ms ease;
+}
+
+.ambient-listening.ambient-on { display: inline-flex; }
+.ambient-listening:hover { color: var(--aura-fg-dim); border-color: var(--aura-accent-soft); }
+
+.ambient-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--aura-fg-mute);
+  /* The dot breathes only while she is idle-listening. It goes solid the
+   * moment she is actually doing something, so "quietly on" and "engaged"
+   * are distinguishable without reading the label. */
+  animation: ambient-breath 3.4s ease-in-out infinite;
+}
+
+.ambient-listening[data-state="user_speaking"] .ambient-dot,
+.ambient-listening[data-state="thinking"] .ambient-dot,
+.ambient-listening[data-state="speaking"] .ambient-dot {
+  animation: none;
+  background: var(--aura-accent);
+}
+
+.ambient-listening[data-state="speaking"] .ambient-dot { box-shadow: 0 0 8px var(--aura-accent); }
+
+@keyframes ambient-breath {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-dot { animation: none; opacity: 0.6; }
+}
+
+/* What she heard and let pass. Without this the gate is invisible and the
+ * user cannot tell "did not hear me" from "decided that was not for me" —
+ * which is the difference between a bug and a judgement call. It is
+ * transient and it never enters the thread: an ambient microphone that
+ * transcribed the room into the chat log would be its own kind of hostile. */
+.ambient-overheard {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--aura-space-2));
+  max-width: min(58ch, 60vw);
+  padding: var(--aura-space-2) var(--aura-space-3);
+  border: 1px solid var(--aura-card-border);
+  border-radius: var(--aura-radius-2);
+  background: var(--aura-card);
+  backdrop-filter: blur(12px);
+  color: var(--aura-fg-mute);
+  font-size: var(--aura-text-2);
+  line-height: var(--aura-text-2h);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.ambient-listening.ambient-overheard-show .ambient-overheard {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* The focused surface is open: the ambient chip would be a second, quieter
+ * copy of the same state sitting underneath a full-screen dialog. */
+body.vm-active .ambient-listening { display: none; }

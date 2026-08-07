@@ -23,7 +23,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -75,6 +75,7 @@ from core.voice.duplex.audio import (
     float32_to_pcm16,
     pcm16_to_float32,
 )
+from core.voice.duplex.addressivity import AddressivityGate
 from core.voice.duplex.backchannel import BackchannelReflex
 from core.voice.duplex.clause_chunker import StreamingChunker
 from core.voice.duplex.config import (
@@ -86,7 +87,8 @@ from core.voice.duplex.config import (
 from core.voice.duplex.echo_guard import EchoGuard
 from core.voice.duplex.endpointing import Completeness, Endpointer
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
-from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
+from core.voice.duplex.governed_stream import stream_governed_reply
+from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord, StreamingTurn
 from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
 from core.voice.duplex.paralinguistics import (
     DeliveryReading,
@@ -293,6 +295,22 @@ class DuplexVoiceSession:
         self._speaker_baseline = SpeakerBaseline()
         self._delivery = DeliveryReading()
 
+        # Ambient listening. The gate decides whether an utterance on an open
+        # microphone was meant for her; it is bypassed entirely whenever the
+        # user has opened the floor themselves, because a deliberate act of
+        # address does not need to be second-guessed by a heuristic.
+        self._ambient_gate = (
+            AddressivityGate(
+                names=self._config.ambient.names,
+                open_floor_s=self._config.ambient.open_floor_s,
+                min_cold_open_words=self._config.ambient.min_cold_open_words,
+            )
+            if self._config.ambient.enabled
+            else None
+        )
+        self._floor_explicitly_open = not self._config.ambient.enabled
+        self._last_reply_ended_at = 0.0
+
     # ── lifecycle ────────────────────────────────────────────────────────
 
     @property
@@ -475,6 +493,7 @@ class DuplexVoiceSession:
             silence_ms=silence_ms,
             speech_ms=speech_ms,
             min_utterance_ms=self._config.vad.min_utterance_ms,
+            terminality=self._read_terminality(),
         )
 
         if decision.should_end:
@@ -501,6 +520,81 @@ class DuplexVoiceSession:
             await self._mind.publish("backchannel", {"text": bc.text, "register": bc.register})
 
         self._maybe_schedule_partial()
+
+    def _evaluate_addressivity(self, transcript: str, final: Any) -> Any:
+        """Decide whether to answer this utterance.
+
+        Fails *open* if the gate itself breaks — the opposite of the gate's own
+        policy, and deliberately so. A crash in a heuristic must not make her
+        deaf; an unanswered user is a worse outcome than an occasional
+        unwanted answer, once the alternative is "the feature silently stopped
+        working".
+        """
+        try:
+            from core.voice.duplex.addressivity import AddressContext, AddressVerdict
+
+            if self._ambient_gate is None:
+                return AddressVerdict(True, "gate_disabled", reasons=("ambient gating is off",))
+
+            since = None
+            if self._last_reply_ended_at:
+                since = max(0.0, time.monotonic() - self._last_reply_ended_at)
+
+            # Only trust a loudness reading once the baseline has settled;
+            # before that, "quieter than usual" has no "usual" to mean.
+            loudness_z = (
+                float(self._delivery.energy_z)
+                if self._speaker_baseline.ready()
+                else None
+            )
+
+            context = AddressContext(
+                since_last_reply_s=since,
+                # The recogniser does not report a per-utterance confidence,
+                # so this stays None and the rung that would use it is skipped
+                # rather than fed a fabricated 1.0.
+                asr_confidence=None,
+                loudness_z=loudness_z,
+                competing_speech=bool(self._overlap.active),
+                duration_s=self._utterance.sample_count / float(CAPTURE_RATE),
+                floor_explicitly_open=self._floor_explicitly_open,
+            )
+            return self._ambient_gate.evaluate(transcript, context)
+        except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as exc:
+            record_degradation(
+                "voice_duplex.session",
+                exc,
+                action="answered without the addressivity check rather than going deaf",
+                severity="warning",
+            )
+            from core.voice.duplex.addressivity import AddressVerdict
+
+            return AddressVerdict(True, "gate_failed", reasons=("the addressivity gate errored",))
+
+    def _read_terminality(self) -> Any:
+        """The pitch contour at the end of what has been said so far.
+
+        Runs on every pause, which sounds expensive and is not: it is a
+        polyfit over the last three quarters of a second of audio that is
+        already in memory. It is also the difference between waiting out a
+        breath and talking over it, which is the single loudest complaint
+        about every voice assistant that ships.
+        """
+        try:
+            from core.voice.duplex.acoustic_endpoint import read_terminality
+
+            audio = self._utterance.audio()
+            if audio is None or getattr(audio, "size", 0) == 0:
+                return None
+            return read_terminality(audio, CAPTURE_RATE)
+        except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as exc:
+            record_degradation(
+                "voice_duplex.session",
+                exc,
+                action="endpointed on the transcript alone, without the pitch contour",
+                severity="debug",
+            )
+            return None
 
     def _maybe_speculate_final(self, decision: Any, silence_ms: float) -> None:
         """Start the final decode during the endpoint's wait, not after it.
@@ -927,14 +1021,36 @@ class DuplexVoiceSession:
                 await self._set_state(SessionState.LISTENING)
                 return
 
+            # Delivery is measured before the addressivity check, not after,
+            # because how near and how loudly something was said is evidence
+            # about who it was said to.
+            self._read_delivery(audio, transcript)
+
+            # Was that meant for her? On an open microphone this is the
+            # question that decides whether she is present in the room or
+            # merely switched on in it. Note the ordering: the transcript is
+            # sent either way. She heard it, the user can see that she heard
+            # it, and the only thing in question is whether to answer.
+            address = self._evaluate_addressivity(transcript, final)
             await self._send_json(
                 {
                     "type": protocol.EVT_FINAL,
                     "text": transcript,
                     "endpoint_reason": reason,
                     "decode_ms": round(final.decode_ms, 1),
+                    "addressed": address.addressed,
+                    "address_rung": address.rung,
+                    "address_why": list(address.reasons or address.vetoes),
                 }
             )
+            if not address.addressed:
+                logger.info("not answering: %s", address.narrative())
+                await self._mind.publish(
+                    "not_addressed",
+                    {"transcript": transcript[:160], **address.as_dict()},
+                )
+                await self._set_state(SessionState.LISTENING)
+                return
 
             # Delivery requests take effect on this very reply, not the next
             # one — that immediacy is most of what makes it feel responsive.
@@ -944,8 +1060,6 @@ class DuplexVoiceSession:
                     {"type": protocol.EVT_STYLE, "change": style_change}
                 )
                 await self._mind.publish("style_changed", {"change": style_change})
-
-            self._read_delivery(audio, transcript)
 
             self._mind.notify_user_spoke()
             await self._mind.publish(
@@ -962,23 +1076,42 @@ class DuplexVoiceSession:
 
             cognition_started = time.perf_counter()
 
-            reply = await self._mind.respond(
+            # The reply is spoken as it forms. Until this was wired, the first
+            # syllable waited for the last token, which made time-to-first-
+            # audio proportional to total reply length — and the word cap that
+            # compensated for it was why spoken answers were shallower than
+            # the same question typed.
+            turn = await self._mind.respond_streaming(
                 transcript, delivery_context=self._delivery.as_context()
             )
-            self._metrics.cognition_ms = (time.perf_counter() - cognition_started) * 1000.0
-            self._metrics.reply_ready_at = time.monotonic()
-
-            if not reply:
-                self._stop_fillers()
-                await self._speak_text(
-                    "Something went wrong in my reasoning lane before I had an answer. "
-                    "I'd rather say that than make something up.",
-                    cause=ThinkingCause.UNCERTAINTY,
-                )
+            if turn is None:
                 await self._set_state(SessionState.LISTENING)
                 return
 
-            await self._speak_reply(reply)
+            # Cognition now runs in its own task so its reply can be read
+            # while it forms — which means cancelling *this* task no longer
+            # stops it by itself. Superseding a turn has to actually stop the
+            # previous one: a governed turn nobody is listening to still holds
+            # the 32B, and the whole point of a newer utterance is that the
+            # older answer is no longer wanted.
+            async with self._cognition_bound_to_this_turn(turn):
+                streamed = await self._speak_streamed_reply(turn)
+                reply = await turn.final()
+                self._metrics.cognition_ms = (
+                    time.perf_counter() - cognition_started
+                ) * 1000.0
+                self._metrics.reply_ready_at = time.monotonic()
+
+                if streamed:
+                    return
+
+                if not reply:
+                    self._stop_fillers()
+                    await self._speak_cognition_failure()
+                    await self._set_state(SessionState.LISTENING)
+                    return
+
+                await self._speak_reply(reply)
         except asyncio.CancelledError:
             # Superseded by a newer utterance; not an error.
             raise
@@ -1059,13 +1192,280 @@ class DuplexVoiceSession:
         await self._send_json({"type": protocol.EVT_REPLY, "text": reply})
         await self._speak_text(reply, cause=None)
 
+    @contextlib.asynccontextmanager
+    async def _cognition_bound_to_this_turn(self, turn: StreamingTurn) -> Any:
+        """Tie a streaming cognition task to the lifetime of the turn task.
+
+        ``respond_streaming`` runs cognition in its own task, which is what
+        lets the reply be read while it is still forming. Two guarantees the
+        single-task version gave for free have to be restored by hand:
+
+        **Cancelling the turn stops the thinking.** A governed turn nobody is
+        listening to still holds the 32B, and a newer utterance means the
+        older answer is not wanted.
+
+        **The turn is not "finished" until the thinking has actually
+        stopped.** This is the subtle one, and it is why the teardown is
+        awaited rather than fire-and-forget. ``_cancel_active_turn`` decides a
+        replacement is safe to start by waiting for the turn task to
+        quiesce; if the turn task returns while its cognition is still
+        running, that check passes on a lie and two governed turns run at
+        once. Awaiting here means a cognition that will not stop keeps the
+        turn task alive, the quiescence check times out, and the session
+        fails closed — which is the whole point of having the check.
+        """
+        try:
+            yield turn
+        finally:
+            if not turn.task.done():
+                turn.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await turn.task
+
+    async def _speak_streamed_reply(self, turn: StreamingTurn) -> bool:
+        """Speak a governed reply while it is still being produced.
+
+        Returns True if the turn was delivered here. False means the stream
+        carried nothing — every turn that did not take the streaming cognition
+        path — and the caller should speak the finished reply the ordinary way.
+
+        Three things have to be true at once, and the order matters:
+
+        1. **Nothing ungoverned is spoken.** Each clause passes the
+           clause-local gates in ``govern_clause`` before a single sample of
+           it is synthesised.
+        2. **The finished reply is still the authority.** Streamed text is
+           pre-stabilisation. When the turn completes, what was said out loud
+           is reconciled against what the turn stands behind.
+        3. **A disagreement is spoken, not swallowed.** If governance revised
+           text that had already been heard, she says so. The alternative —
+           continuing as though the listener heard the corrected version — is
+           the failure this whole lane exists to avoid.
+        """
+        from core.conversation.reply_stream import reconcile
+
+        spoken_via_stream = ""
+
+        def _still_speaking() -> bool:
+            track = self._speaking
+            return not (track is not None and track.token.cancelled)
+
+        # stream_governed_reply pushes governed clauses; the synthesiser pulls.
+        # A small bounded queue bridges the two, and its bound is what keeps
+        # back-pressure intact: the synthesiser's rate paces the release, so a
+        # fast model can never build a backlog of audio nobody has heard yet.
+        bridge: asyncio.Queue[str] = asyncio.Queue(maxsize=4)
+
+        async def _hand_to_synthesis(clause: str) -> None:
+            await bridge.put(clause)
+
+        async def _produce() -> None:
+            nonlocal spoken_via_stream
+            outcome = await stream_governed_reply(
+                turn.channel.drain(timeout_s=self._config.cognition_timeout_s),
+                first_max_chars=self._config.tts.first_chunk_max_chars,
+                max_chars=self._config.tts.chunk_max_chars,
+                speak=_hand_to_synthesis,
+                on_first_chunk=self._stop_fillers,
+                should_continue=_still_speaking,
+            )
+            spoken_via_stream = outcome.spoken
+
+        producer = self._spawn(_produce())
+
+        async def _next_clause() -> str | None:
+            """The next governed clause, or None once there will not be one.
+
+            Deliberately not a sentinel value on the queue. A sentinel has to
+            be enqueued by the producer's ``finally``, and the producer can be
+            cancelled while blocked on a *full* queue — at which point the
+            sentinel cannot be enqueued either, and the consumer waits for a
+            message that will never come. Asking the producer task whether it
+            is finished has no such hole: a task that is done is done however
+            it ended.
+            """
+            while True:
+                try:
+                    return await asyncio.wait_for(bridge.get(), timeout=0.2)
+                except TimeoutError:
+                    if producer.done():
+                        # Drain anything the producer managed to enqueue
+                        # between the last get and finishing.
+                        if not bridge.empty():
+                            return bridge.get_nowait()
+                        return None
+                    continue
+
+        try:
+            # Peek the first clause before committing to an utterance. Most
+            # turns do not stream at all — every path through cognition that
+            # returns its reply in one piece — and starting a speaking track
+            # for a stream that never produces anything would report a
+            # synthesis failure for a turn that was simply not streamed.
+            first = await _next_clause()
+            if first is None:
+                return False
+
+            async def _pieces() -> AsyncIterator[str]:
+                yield first
+                while True:
+                    piece = await _next_clause()
+                    if piece is None:
+                        return
+                    yield piece
+
+            delivered = await self._deliver_utterance(_pieces(), cause=None)
+        finally:
+            if not producer.done():
+                producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer
+
+        await self._send_json(
+            {"type": protocol.EVT_REPLY, "text": delivered or spoken_via_stream}
+        )
+
+        final = await turn.final()
+        verdict = reconcile(spoken_via_stream, final or "")
+
+        if verdict.consistent and verdict.remainder:
+            # Governance kept everything already said and had more to add.
+            await self._speak_text(verdict.remainder, cause=None)
+            return True
+
+        if verdict.diverged:
+            record_degradation(
+                "voice_duplex.session",
+                RuntimeError("governed reply diverged from the text already spoken"),
+                action="told the user her own governance revised what they heard",
+                severity="warning",
+            )
+            await self._mind.publish(
+                "streamed_reply_diverged",
+                {"spoken_chars": len(verdict.spoken), "final_chars": len(verdict.final)},
+            )
+            # Her next turn is told what happened, so the correction is in her
+            # own words rather than a fixed apology string from this file.
+            self._mind.note_correction(verdict.correction_context)
+            await self._speak_correction(verdict)
+            return True
+
+        return True
+
+    async def _speak_cognition_failure(self) -> None:
+        """Say that the turn produced no answer, and say what actually stopped it.
+
+        This is the one failure she genuinely cannot narrate herself: the
+        thing that would do the narrating is what failed. So the words are
+        here — but the *content* is not fixed. The reason comes from the
+        degradation this turn actually recorded, so "my reasoning lane timed
+        out after two minutes" and "governance refused the reply" are
+        different sentences, because they are different situations and a
+        listener can act on the difference.
+        """
+        reason = ""
+        try:
+            from core.runtime.errors import recent_degradations
+
+            records = recent_degradations(
+                limit=12,
+                subsystem_prefixes=("voice_duplex.", "chat", "cognitive"),
+            )
+            for record in reversed(records):
+                detail = str(record.get("action") or record.get("error") or "").strip()
+                if detail:
+                    reason = detail.rstrip(".")
+                    break
+        except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
+            record_degradation(
+                "voice_duplex.session",
+                exc,
+                action="reported the cognition failure without naming its cause",
+                severity="debug",
+            )
+
+        if reason:
+            spoken = (
+                f"I didn't get an answer out of that one — {reason}. "
+                "I'd rather tell you that than make something up."
+            )
+        else:
+            spoken = (
+                "I didn't get an answer out of that one, and I can't see why "
+                "from here. I'd rather tell you that than make something up."
+            )
+        await self._speak_text(spoken, cause=ThinkingCause.UNCERTAINTY)
+
+    async def _speak_correction(self, verdict: Any) -> None:
+        """Say that the answer was revised after part of it was already heard.
+
+        This is deliberately the one place in the streamed path that speaks
+        text this module composed. It runs only when cognition has already
+        finished and disagreed with itself, so there is no turn left to ask;
+        the alternative is silence, which would leave the listener holding a
+        sentence Aura does not stand behind.
+        """
+        final = str(getattr(verdict, "final", "") or "").strip()
+        if final:
+            await self._speak_text(
+                "Hold on — let me correct that. " + final, cause=ThinkingCause.UNCERTAINTY
+            )
+            return
+        await self._speak_text(
+            "Hold on — I need to take that back. What I just said did not survive "
+            "my own checks, and I do not have a replacement answer yet.",
+            cause=ThinkingCause.UNCERTAINTY,
+        )
+
     async def _speak_text(self, text: str, *, cause: ThinkingCause | None) -> None:
-        """Chunk, synthesise and stream one full utterance."""
+        """Chunk, synthesise and stream one utterance whose text is known."""
+        chunker = StreamingChunker(
+            first_max_chars=self._config.tts.first_chunk_max_chars,
+            max_chars=self._config.tts.chunk_max_chars,
+        )
+        pieces = chunker.push(text) + chunker.flush()
+
+        async def _static_pieces() -> AsyncIterator[str]:
+            for piece in pieces:
+                yield piece
+
+        await self._deliver_utterance(
+            _static_pieces(),
+            cause=cause,
+            expected_pieces=len(pieces),
+            intended=text,
+        )
+
+    async def _deliver_utterance(
+        self,
+        pieces: AsyncIterator[str],
+        *,
+        cause: ThinkingCause | None,
+        expected_pieces: int | None = None,
+        intended: str | None = None,
+    ) -> str:
+        """Synthesise and stream an utterance whose text may still be arriving.
+
+        Taking an async source rather than a finished string is the whole
+        difference between speaking after thinking and speaking while
+        thinking. For a known reply the source is a list; for a governed
+        stream it is clauses released as the model produces them, and this
+        method cannot tell the difference — which is the point, because
+        everything downstream (echo registration, playback accounting, the
+        record of what was actually heard) then works identically for both.
+
+        ``expected_pieces`` is how completeness is judged when it is knowable.
+        A stream does not know its own length in advance, so it passes None
+        and completeness is decided by whether the source ended on its own
+        terms; see ``_speak_streamed_reply``.
+
+        Returns the text actually delivered.
+        """
         spec = self._prosody_spec()
         self._utterance_counter += 1
         track = _SpeakingTrack(
             utterance_id=self._utterance_counter,
-            intended=text,
+            intended="",
             started_at=time.monotonic(),
         )
         self._speaking = track
@@ -1074,16 +1474,13 @@ class DuplexVoiceSession:
         self._overlap_audio = []
         await self._set_state(SessionState.SPEAKING)
 
-        chunker = StreamingChunker(
-            first_max_chars=self._config.tts.first_chunk_max_chars,
-            max_chars=self._config.tts.chunk_max_chars,
-        )
-        pieces = chunker.push(text) + chunker.flush()
+        intended_parts: list[str] = []
 
-        async def _iter_chunks():
-            for piece in pieces:
+        async def _iter_chunks() -> AsyncIterator[str]:
+            async for piece in pieces:
                 if track.token.cancelled:
                     return
+                intended_parts.append(piece)
                 yield piece
 
         seq = 0
@@ -1127,15 +1524,28 @@ class DuplexVoiceSession:
                 action="stopped synthesis for this utterance",
             )
 
+        # What she meant to say. When the text was known up front it is the
+        # whole of it, even if synthesis died before a single piece was
+        # pulled — otherwise a total synthesis failure would record "nothing
+        # was intended", and the unheard tail (which is what stops her
+        # referring later to words nobody heard) would come out empty.
+        # A stream has no such foreknowledge, so there it is what was released.
+        intended_text = (
+            str(intended)
+            if intended is not None
+            else " ".join(part.strip() for part in intended_parts if part.strip())
+        )
+        track.intended = intended_text
+
         if self._speaking is track and not track.token.cancelled:
             delivered_text = " ".join(chunk_text for chunk_text, _ in track.chunks)
-            delivery_complete = bool(track.chunks) and (
-                not synthesis_failed and len(track.chunks) == len(pieces)
+            delivery_complete = bool(track.chunks) and not synthesis_failed and (
+                expected_pieces is None or len(track.chunks) == expected_pieces
             )
             if not track.chunks:
                 self._mind.record_spoken(
                     SpokenRecord(
-                        intended=text,
+                        intended=intended_text,
                         spoken="",
                         interrupted=False,
                         delivery_complete=False,
@@ -1152,10 +1562,10 @@ class DuplexVoiceSession:
                 )
                 await self._mind.publish(
                     "speech_delivery_failed",
-                    {"intended_chars": len(text), "delivered_chars": 0},
+                    {"intended_chars": len(intended_text), "delivered_chars": 0},
                 )
                 await self._set_state(SessionState.LISTENING)
-                return
+                return ""
             await self._send_binary(
                 protocol.encode_audio(
                     b"",
@@ -1174,11 +1584,11 @@ class DuplexVoiceSession:
             # So the turn stays open until the audio has actually been heard.
             await self._await_playback_drain(track)
             if track.token.cancelled or self._speaking is not track:
-                return
+                return delivered_text
 
             self._mind.record_spoken(
                 SpokenRecord(
-                    intended=text,
+                    intended=intended_text,
                     spoken=delivered_text,
                     interrupted=False,
                     delivery_complete=delivery_complete,
@@ -1187,6 +1597,10 @@ class DuplexVoiceSession:
                 )
             )
             self._speaking = None
+            # The floor is open from here. Inside the ambient window, a bare
+            # reply needs no name — which is the whole reason a conversation
+            # with her feels like one rather than like a series of commands.
+            self._last_reply_ended_at = time.monotonic()
             await self._send_json({"type": protocol.EVT_METRICS, **self._metrics.as_dict()})
             await self._mind.publish(
                 "spoke",
@@ -1197,6 +1611,8 @@ class DuplexVoiceSession:
                 },
             )
             await self._set_state(SessionState.LISTENING)
+            return delivered_text
+        return " ".join(chunk_text for chunk_text, _ in track.chunks)
 
     async def _await_playback_drain(self, track: _SpeakingTrack) -> None:
         """Stay in SPEAKING until the client has actually played the audio.
@@ -1327,11 +1743,19 @@ class DuplexVoiceSession:
         try:
             await self._send_json({"type": protocol.EVT_FINAL, "text": text, "typed": True})
             self._start_fillers()
-            reply = await self._mind.respond(text)
-            if reply:
-                await self._speak_reply(reply)
-            else:
+            turn = await self._mind.respond_streaming(text)
+            if turn is None:
                 await self._set_state(SessionState.LISTENING)
+                return
+            async with self._cognition_bound_to_this_turn(turn):
+                if await self._speak_streamed_reply(turn):
+                    return
+                reply = await turn.final()
+                if reply:
+                    await self._speak_reply(reply)
+                else:
+                    await self._speak_cognition_failure()
+                    await self._set_state(SessionState.LISTENING)
         except asyncio.CancelledError:
             raise
         except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:

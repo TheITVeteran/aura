@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import hashlib
 import html
 import inspect
@@ -19,11 +20,12 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -91,6 +93,9 @@ from interface.auth import (
     validate_runtime_security_request,
 )
 from interface.helpers import _notify_user_spoke
+
+if TYPE_CHECKING:
+    from core.conversation.reply_stream import ReplyStreamChannel
 
 logger = logging.getLogger("Aura.Server.Chat")
 
@@ -168,6 +173,7 @@ async def run_governed_surface_chat_turn(
     idempotency_key: str | None = None,
     source_headers: Sequence[tuple[bytes, bytes]] = (),
     client_host: str = "127.0.0.1",
+    reply_stream: "ReplyStreamChannel | None" = None,
 ) -> str | None:
     """Run a presentation surface through the authenticated HTTP chat contract.
 
@@ -175,6 +181,13 @@ async def run_governed_surface_chat_turn(
     lanes. Reusing the public handler preserves ingress inspection, memory and
     principal binding, foreground admission, durable delivery fencing,
     response stabilization, and the same governed action path as the desktop.
+
+    ``reply_stream`` lets a surface watch its own reply form. It changes
+    nothing about the path taken or the answer returned — the return value is
+    still the finished, stabilized reply, and it remains the only text this
+    function stands behind. A surface that acts on the stream owes the
+    listener a reconciliation against that final text; see
+    ``core/conversation/reply_stream.reconcile``.
     """
     normalized_surface = str(surface or "").strip().lower()
     if not re.fullmatch(r"[a-z][a-z0-9-]{1,31}", normalized_surface):
@@ -226,18 +239,26 @@ async def run_governed_surface_chat_turn(
     _require_internal(request)
     _check_rate_limit(request)
     context_token = _INTERNAL_SURFACE_CONTEXT.set(str(surface_context or "")[:4000])
+    stream_ctx: AbstractContextManager[object]
+    if reply_stream is not None:
+        from core.conversation.reply_stream import bind_reply_stream
+
+        stream_ctx = bind_reply_stream(reply_stream)
+    else:
+        stream_ctx = contextlib.nullcontext()
     try:
-        response = await asyncio.wait_for(
-            api_chat(body=body, request=request, _=None, __=None),
-            timeout=max(1.0, float(timeout_s)),
-        )
-        payload = json.loads(bytes(response.body).decode("utf-8", errors="replace"))
-        background = getattr(response, "background", None)
-        if background is not None:
-            await background()
-        if response.status_code >= 500 or not isinstance(payload, dict):
-            return None
-        return str(payload.get("response") or "").strip() or None
+        with stream_ctx:
+            response = await asyncio.wait_for(
+                api_chat(body=body, request=request, _=None, __=None),
+                timeout=max(1.0, float(timeout_s)),
+            )
+            payload = json.loads(bytes(response.body).decode("utf-8", errors="replace"))
+            background = getattr(response, "background", None)
+            if background is not None:
+                await background()
+            if response.status_code >= 500 or not isinstance(payload, dict):
+                return None
+            return str(payload.get("response") or "").strip() or None
     finally:
         _INTERNAL_SURFACE_CONTEXT.reset(context_token)
 
@@ -250,6 +271,7 @@ async def run_governed_voice_chat_turn(
     timeout_s: float,
     source_headers: Sequence[tuple[bytes, bytes]] = (),
     client_host: str = "127.0.0.1",
+    reply_stream: "ReplyStreamChannel | None" = None,
 ) -> str | None:
     """Compatibility wrapper for the governed voice presentation surface."""
 
@@ -261,6 +283,7 @@ async def run_governed_voice_chat_turn(
         timeout_s=timeout_s,
         source_headers=source_headers,
         client_host=client_host,
+        reply_stream=reply_stream,
     )
 
 
@@ -20150,6 +20173,22 @@ async def api_chat(
     _: None = Depends(_require_internal),
     __: None = Depends(_check_rate_limit),
 ):
+    """One chat turn, with a ledger bound for whatever fails inside it.
+
+    The ledger is bound here rather than inside the handler because the
+    binding must be released on *every* exit path. Voice and the private
+    Messages surface await this coroutine directly in their own context
+    rather than in a fresh request task, so a ledger left set would follow
+    that session into its next turn and have her explain a failure that had
+    already been dealt with two turns ago.
+    """
+    from core.conversation.failure_context import bind_failure_ledger
+
+    with bind_failure_ledger():
+        return await _api_chat_turn(body, request)
+
+
+async def _api_chat_turn(body: ChatRequest, request: Request):
     # Reject oversized messages before processing
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")

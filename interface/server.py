@@ -919,6 +919,7 @@ from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
 from interface.routes import devices as devices_routes
 from interface.routes import inner_state as inner_state_routes
+from interface.routes import media as media_routes
 from interface.routes import interaction_signals as interaction_signal_routes
 from interface.routes import memory as memory_routes
 from interface.routes import mission_control as mission_control_routes
@@ -952,6 +953,7 @@ app.include_router(dashboard_routes.router, prefix="/api", tags=["dashboard"])
 app.include_router(dashboard_routes.trace_router, prefix="/api", tags=["trace"])
 app.include_router(settings_routes.router, prefix="/api", tags=["settings"])
 app.include_router(multimodal_routes.router, prefix="/api", tags=["multimodal"])
+app.include_router(media_routes.router, prefix="/api", tags=["media"])
 app.include_router(performance_routes.router, prefix="/api", tags=["performance"])
 app.include_router(mission_control_routes.router, prefix="/api", tags=["mission_control"])
 

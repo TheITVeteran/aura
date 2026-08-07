@@ -21,8 +21,12 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from core.voice.duplex.config import EndpointConfig
+
+if TYPE_CHECKING:
+    from core.voice.duplex.acoustic_endpoint import TerminalityReading
 
 logger = logging.getLogger("Aura.Voice.Endpoint")
 
@@ -163,10 +167,30 @@ class Endpointer:
         silence_ms: float,
         speech_ms: float,
         min_utterance_ms: float,
+        terminality: "TerminalityReading | None" = None,
     ) -> EndpointDecision:
-        """Should the turn end now?"""
+        """Should the turn end now?
+
+        ``terminality`` is the pitch contour at the end of the utterance, when
+        one could be read. It can only ever *extend* the wait — see
+        ``acoustic_endpoint.patience_multiplier`` — so a bad reading costs a
+        beat of latency and can never cut somebody off. It is what separates
+        "that sentence is over" from "that sentence has a full stop because
+        Whisper likes full stops, and the speaker is drawing breath".
+        """
         completeness = classify(transcript)
         required = self.required_silence_ms(completeness)
+
+        if terminality is not None:
+            from core.voice.duplex.acoustic_endpoint import patience_multiplier
+
+            multiplier = patience_multiplier(
+                terminality, completeness is Completeness.COMPLETE
+            )
+            if multiplier > 1.0:
+                # Still bounded by the ceiling below, so patience cannot become
+                # a hang: max_silence_ms always ends the turn.
+                required = min(required * multiplier, self._config.max_silence_ms)
 
         # A cough or a door is not a turn. Without this the lane fires on
         # every non-speech transient that clears the VAD threshold.

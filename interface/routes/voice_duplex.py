@@ -336,12 +336,32 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                     raise RuntimeError("voice_principal_authorization_revoked")
                 await ws.send_bytes(payload)
 
+        # One conversation, however it is being conducted.
+        #
+        # The socket's own id is a fresh uuid per connection — right for
+        # bookkeeping, wrong for identity. Passing it downstream as the
+        # conversation key meant a spoken turn and a typed turn were two
+        # different threads to everything that keys on it, and a voice socket
+        # that merely *reconnected* (the client retries with backoff, so this
+        # is routine rather than exotic) started a third. Switching from
+        # talking to typing mid-thought is the most ordinary thing a person
+        # does with something that sits on their desk, and it must not be the
+        # moment she loses the thread.
+        #
+        # So the conversation key is derived from the principal, exactly as
+        # the desktop's own chat turns derive theirs: same person, same
+        # conversation, whichever way they said it.
+        conversation_key = (
+            f"paired:{device_session.device_id}" if device_session is not None else host
+        )
+
         async def governed_responder(
             transcript: str,
             *,
             effective_message: str,
             session_id: str,
             timeout_s: float,
+            reply_stream: Any = None,
         ) -> str | None:
             from interface.routes import chat as chat_routes
 
@@ -351,10 +371,11 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             return await chat_routes.run_governed_voice_chat_turn(
                 transcript,
                 surface_context=surface_context,
-                session_id=session_id,
+                session_id=conversation_key,
                 timeout_s=timeout_s,
                 source_headers=source_headers,
                 client_host=host,
+                reply_stream=reply_stream,
             )
 
         session = DuplexVoiceSession(
