@@ -255,6 +255,16 @@ def _paired_generation_seed(
     return int.from_bytes(hashlib.sha256(material.encode("ascii")).digest()[:4], "big")
 
 
+def _free_generation_sampling_config() -> RecurrentSamplingConfig:
+    """Use the exact categorical policy required by recurrent proof runs."""
+
+    return RecurrentSamplingConfig(
+        max_tokens=96,
+        temperature=1.0,
+        top_p=1.0,
+    )
+
+
 def _free_generation_report(
     model: Any,
     tokenizer: Any,
@@ -284,11 +294,7 @@ def _free_generation_report(
             depth_spec = spec.with_depth(depth)
             config = cortex_config_from_execution_spec(
                 depth_spec,
-                sampling=RecurrentSamplingConfig(
-                    max_tokens=96,
-                    temperature=0.0,
-                    top_p=1.0,
-                ),
+                sampling=_free_generation_sampling_config(),
             )
             config.decode_contract = "final_answer_v1"
             config.decode_contract_grace_tokens = 0
