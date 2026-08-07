@@ -463,21 +463,21 @@ body.vm-active .app-shell {
   background: var(--aura-card);
   backdrop-filter: blur(12px);
   font-family: var(--aura-font-ui);
-  font-size: var(--aura-text-2);
-  color: var(--aura-fg-mute);
+  font-size: calc(0.78rem * var(--chat-meta-scale, 1));
+  color: var(--text-dim);
   cursor: pointer;
   user-select: none;
   transition: color 180ms ease, border-color 180ms ease;
 }
 
 .ambient-listening.ambient-on { display: inline-flex; }
-.ambient-listening:hover { color: var(--aura-fg-dim); border-color: var(--aura-accent-soft); }
+.ambient-listening:hover { color: var(--text); border-color: var(--aura-accent-soft); }
 
 .ambient-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--aura-fg-mute);
+  background: var(--text-dim);
   /* The dot breathes only while she is idle-listening. It goes solid the
    * moment she is actually doing something, so "quietly on" and "engaged"
    * are distinguishable without reading the label. */
@@ -511,15 +511,20 @@ body.vm-active .app-shell {
   position: absolute;
   left: 0;
   bottom: calc(100% + var(--aura-space-2));
+  /* The chip is the containing block and it is only a few characters wide,
+   * so shrink-to-fit collapses this into a tall thin column of one or two
+   * words. max-content sizes it to the text and the max-width then keeps it
+   * from running off the screen. */
+  width: max-content;
   max-width: min(58ch, 60vw);
   padding: var(--aura-space-2) var(--aura-space-3);
   border: 1px solid var(--aura-card-border);
   border-radius: var(--aura-radius-2);
   background: var(--aura-card);
   backdrop-filter: blur(12px);
-  color: var(--aura-fg-mute);
-  font-size: var(--aura-text-2);
-  line-height: var(--aura-text-2h);
+  color: var(--text-dim);
+  font-size: calc(0.78rem * var(--chat-meta-scale, 1));
+  line-height: 1.45;
   opacity: 0;
   transform: translateY(4px);
   pointer-events: none;

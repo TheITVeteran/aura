@@ -13,6 +13,98 @@ from core.verification.decision_verifier import DecisionVerifier
 
 logger = logging.getLogger(__name__)
 
+# Capabilities that cannot work without a network path. When one of these
+# fails and the connectivity probe is down, "offline" is the true cause and
+# saying anything else sends the user debugging the wrong thing.
+_NETWORK_DEPENDENT = frozenset(
+    {
+        "sovereign_browser",
+        "sovereign_network",
+        "web_search",
+        "web_interlocutor",
+        "research_pipeline",
+        "content_fetcher",
+        "social_lurker",
+    }
+)
+
+_CAPABILITY_NOTE_ERRORS = (AttributeError, ImportError, RuntimeError, TypeError, ValueError)
+
+
+def _classify_capability_failure(skill_name: str, detail: str) -> str:
+    """Name the cause in terms of what the user can do next, not exception type.
+
+    She is explaining a situation, not reading a stack trace, and the thing
+    that changes what happens next is whether this is a missing tool, a
+    refused permission, or a network that is not there.
+    """
+    low = str(detail or "").lower()
+    if skill_name in _NETWORK_DEPENDENT:
+        try:
+            from core.runtime.connectivity import get_connectivity_status
+
+            if not get_connectivity_status().online:
+                return "offline"
+        except (OSError, *_CAPABILITY_NOTE_ERRORS):
+            pass
+    if any(word in low for word in ("denied", "not permitted", "unauthorized", "forbidden")):
+        return "unauthorized"
+    if any(word in low for word in ("not found", "no such", "missing", "not installed")):
+        return "not_installed"
+    if "timeout" in low or "timed out" in low:
+        return "timeout"
+    if any(word in low for word in ("refused by", "governance", "policy")):
+        return "refused"
+    return "failed"
+
+
+def _note_capability_outcome(skill_name: str, result: Any) -> None:
+    """Record a failed capability as facts for the reply to draw on."""
+    if not isinstance(result, dict):
+        return
+    ok = result.get("ok")
+    success = result.get("success")
+    failed = ok is False or success is False or bool(result.get("error"))
+    if not failed:
+        return
+    detail = str(result.get("error") or result.get("message") or "").strip()
+    try:
+        from core.conversation.failure_context import record_capability_failure
+
+        record_capability_failure(
+            skill_name,
+            intent=f"use {skill_name.replace('_', ' ')}",
+            cause=_classify_capability_failure(skill_name, detail),
+            detail=detail[:400],
+        )
+    except _CAPABILITY_NOTE_ERRORS as exc:
+        record_degradation(
+            "agency.failure_context",
+            exc,
+            action="the reply will not be able to explain this capability failure",
+            severity="debug",
+        )
+
+
+def _note_capability_exception(skill_name: str, exc: BaseException) -> None:
+    try:
+        from core.conversation.failure_context import record_capability_failure
+
+        record_capability_failure(
+            skill_name,
+            intent=f"use {skill_name.replace('_', ' ')}",
+            cause=_classify_capability_failure(skill_name, f"{type(exc).__name__}: {exc}"),
+            detail=f"{type(exc).__name__}: {exc}"[:400],
+        )
+    except _CAPABILITY_NOTE_ERRORS as note_exc:
+        record_degradation(
+            "agency.failure_context",
+            note_exc,
+            action="the reply will not be able to explain this capability failure",
+            severity="debug",
+        )
+
+
 class AgencyCoordinator:
     def __init__(self, orchestrator: Any):
         self.orchestrator = orchestrator
@@ -40,7 +132,17 @@ class AgencyCoordinator:
             logger.warning("AgencyCoordinator setup without capability_engine")
 
     async def execute_skill(self, skill_name: str, params: Dict[str, Any], context: Dict[str, Any] = None) -> Any:
-        """Executes a skill via the capability engine."""
+        """Executes a skill via the capability engine.
+
+        Every outcome, good or bad, passes through here, which makes it the
+        one place a failed capability can be turned into something she can
+        talk about. Recording it as facts (see
+        ``core/conversation/failure_context.py``) is what lets the reply say
+        what actually broke instead of falling back to a line written into
+        whichever skill it was — the difference between "I'm unable to browse
+        the web right now" and "I can't get out to the network, that probe has
+        been failing for a few minutes".
+        """
         engine = self.capability_engine
         if not engine:
             logger.error("Capability engine not found for skill: %s", skill_name)
@@ -69,10 +171,14 @@ class AgencyCoordinator:
                 return {"ok": False, "error": reason, "confidence": confidence}
 
             if hasattr(engine, "execute_skill"):
-                return await engine.execute_skill(skill_name, params, ctx)
-            return await engine.execute(skill_name, params, ctx)
+                result = await engine.execute_skill(skill_name, params, ctx)
+            else:
+                result = await engine.execute(skill_name, params, ctx)
+            _note_capability_outcome(skill_name, result)
+            return result
         except (sqlite3.Error, OSError) as e:
             record_degradation('agency', e)
+            _note_capability_exception(skill_name, e)
             logger.error("Skill execution failed for %s: %s", skill_name, e)
             record_degraded_event(
                 "agency_coordinator",
