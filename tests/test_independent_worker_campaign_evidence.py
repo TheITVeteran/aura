@@ -550,6 +550,8 @@ def test_v4_final_run_envelope_binds_independent_worker_replay(
         "look_count": 2,
         "certificate_head_sha256": "6" * 64,
         "certificate_chain_sha256": "7" * 64,
+        "first_boundary_look": 1,
+        "first_boundary_decision": "positive_boundary_crossed",
         "terminal_decision": "terminal_inconclusive",
     }
     expected_payload = {
@@ -583,6 +585,12 @@ def test_v4_final_run_envelope_binds_independent_worker_replay(
         ],
         "sequential_certificate_chain_sha256": sequential_evidence[
             "certificate_chain_sha256"
+        ],
+        "sequential_first_boundary_look": sequential_evidence[
+            "first_boundary_look"
+        ],
+        "sequential_first_boundary_decision": sequential_evidence[
+            "first_boundary_decision"
         ],
         "sequential_terminal_decision": sequential_evidence["terminal_decision"],
     }

@@ -2991,6 +2991,8 @@ def _sequential_final_evidence_binding(
     previous_sha256 = None
     certificate_sha256s: list[str] = []
     terminal_decision = None
+    first_boundary_look = None
+    first_boundary_decision = None
     for look in range(1, len(raw_looks) + 1):
         certificate = _read_canonical_json_artifact(
             look_dir / f"look-{look:03d}.json",
@@ -3024,12 +3026,20 @@ def _sequential_final_evidence_binding(
         previous_sha256 = certificate_sha256
         certificate_sha256s.append(certificate_sha256)
         terminal_decision = decision
+        if decision in {
+            "positive_boundary_crossed",
+            "refutation_boundary_crossed",
+        } and first_boundary_look is None:
+            first_boundary_look = look
+            first_boundary_decision = decision
     return {
         "sequential_look_count": len(certificate_sha256s),
         "sequential_certificate_head_sha256": previous_sha256,
         "sequential_certificate_chain_sha256": _sha256_bytes(
             canonical_json_bytes(certificate_sha256s)
         ),
+        "sequential_first_boundary_look": first_boundary_look,
+        "sequential_first_boundary_decision": first_boundary_decision,
         "sequential_terminal_decision": terminal_decision,
     }
 

@@ -1674,6 +1674,12 @@ def _verify_final_run_envelope(
                 "sequential_certificate_chain_sha256": sequential_evidence[
                     "certificate_chain_sha256"
                 ],
+                "sequential_first_boundary_look": sequential_evidence[
+                    "first_boundary_look"
+                ],
+                "sequential_first_boundary_decision": sequential_evidence[
+                    "first_boundary_decision"
+                ],
                 "sequential_terminal_decision": sequential_evidence[
                     "terminal_decision"
                 ],
@@ -1863,6 +1869,8 @@ def _verify_sequential_look_chain(
     decisions: list[str] = []
     first_positive_look: int | None = None
     first_refutation_look: int | None = None
+    first_boundary_look: int | None = None
+    first_boundary_decision: str | None = None
     for look in range(1, len(looks) + 1):
         path = look_dir / f"look-{look:03d}.json"
         if not path.is_file():
@@ -2040,6 +2048,12 @@ def _verify_sequential_look_chain(
                 and first_refutation_look is None
             ):
                 first_refutation_look = look
+            if decision in {
+                "positive_boundary_crossed",
+                "refutation_boundary_crossed",
+            } and first_boundary_look is None:
+                first_boundary_look = look
+                first_boundary_decision = decision
         except (OSError, TypeError, ValueError, KeyError) as exc:
             failures.append(f"sequential look {look} validation failed: {exc}")
 
@@ -2053,8 +2067,26 @@ def _verify_sequential_look_chain(
         "decisions": decisions,
         "first_positive_boundary_look": first_positive_look,
         "first_refutation_boundary_look": first_refutation_look,
+        "first_boundary_look": first_boundary_look,
+        "first_boundary_decision": first_boundary_decision,
         "terminal_decision": decisions[-1] if len(decisions) == len(looks) else None,
     }
+
+
+def _candidate_verdict_from_sequential_evidence(
+    terminal_grade_verdict: Any,
+    sequential_evidence: Mapping[str, Any],
+) -> Any:
+    if sequential_evidence.get("required") is not True:
+        return terminal_grade_verdict
+    if sequential_evidence.get("verified") is not True:
+        return terminal_grade_verdict
+    first_boundary = sequential_evidence.get("first_boundary_decision")
+    if first_boundary == "positive_boundary_crossed":
+        return "gain_preverified"
+    if first_boundary == "refutation_boundary_crossed":
+        return "gain_refuted"
+    return terminal_grade_verdict
 
 
 def verify_campaign_evidence(
@@ -2494,6 +2526,12 @@ def verify_campaign_evidence(
                         "sequential_certificate_chain_sha256": sequential_detail[
                             "certificate_chain_sha256"
                         ],
+                        "sequential_first_boundary_look": sequential_detail[
+                            "first_boundary_look"
+                        ],
+                        "sequential_first_boundary_decision": sequential_detail[
+                            "first_boundary_decision"
+                        ],
                         "sequential_terminal_decision": sequential_detail[
                             "terminal_decision"
                         ],
@@ -2547,10 +2585,14 @@ def verify_campaign_evidence(
                 )
                 final_attestation_verified = True
     detail["verifier_implementation_sha256"] = _verifier_implementation_sha256()
+    candidate_verdict = _candidate_verdict_from_sequential_evidence(
+        grade.get("verdict"),
+        sequential_detail,
+    )
     final_claim_proven = (
         final_attestation_verified
         and not failures
-        and grade.get("verdict") == "gain_preverified"
+        and candidate_verdict == "gain_preverified"
     )
 
     return {
@@ -2559,7 +2601,7 @@ def verify_campaign_evidence(
         "passed": not failures,
         "claim_tier": "PROVEN" if final_claim_proven else grade.get("claim_tier"),
         "verified_verdict": (
-            "gain_proven" if final_claim_proven else grade.get("verdict")
+            "gain_proven" if final_claim_proven else candidate_verdict
         ),
         "failures": failures,
         **detail,

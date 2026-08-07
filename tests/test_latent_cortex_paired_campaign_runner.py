@@ -1048,6 +1048,8 @@ def test_sequential_final_binding_commits_complete_chain(tmp_path: Path):
                 [certificate["certificate_sha256"] for certificate in certificates]
             )
         ).hexdigest(),
+        "sequential_first_boundary_look": None,
+        "sequential_first_boundary_decision": None,
         "sequential_terminal_decision": "terminal_inconclusive",
     }
 

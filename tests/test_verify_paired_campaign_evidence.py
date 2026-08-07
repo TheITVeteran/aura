@@ -270,7 +270,12 @@ def _publish_grade(campaign_dir, plan, tasks, records, manifest) -> dict:
     return final
 
 
-def _build_sequential_verifier_fixture(tmp_path: Path, monkeypatch):
+def _build_sequential_verifier_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    verdicts=("inconclusive", "inconclusive"),
+):
     tasks = [
         {"task_id": f"{domain}-{ordinal}", "domain": domain}
         for domain in ("coding", "mathematics")
@@ -313,6 +318,7 @@ def _build_sequential_verifier_fixture(tmp_path: Path, monkeypatch):
         )
 
     def fake_grade(records, *, plan, family_alpha, included_task_ids, **_kwargs):
+        look = len(included_task_ids) // 2
         alpha = {
             "numerator": family_alpha.numerator,
             "denominator": family_alpha.denominator,
@@ -322,7 +328,7 @@ def _build_sequential_verifier_fixture(tmp_path: Path, monkeypatch):
             "expected_task_count": len(included_task_ids),
             "expected_cell_count": len(records),
             "statistical_policy": {"alpha": alpha},
-            "verdict": "inconclusive",
+            "verdict": verdicts[look - 1],
         }
 
     def fake_independent(
@@ -333,12 +339,13 @@ def _build_sequential_verifier_fixture(tmp_path: Path, monkeypatch):
         included_task_ids,
         **_kwargs,
     ):
+        look = len(included_task_ids) // 2
         grade = {
             "plan_sha256": plan.plan_sha256,
             "expected_task_count": len(included_task_ids),
             "expected_cell_count": len(records),
             "statistical_policy": {"alpha": dict(family_alpha)},
-            "verdict": "inconclusive",
+            "verdict": verdicts[look - 1],
         }
         return {
             "semantic_grade": grade,
@@ -375,7 +382,7 @@ def _build_sequential_verifier_fixture(tmp_path: Path, monkeypatch):
             "expected_task_count": len(task_ids),
             "expected_cell_count": len(scoped),
             "statistical_policy": {"alpha": alpha},
-            "verdict": "inconclusive",
+            "verdict": verdicts[look - 1],
         }
         certificate = build_sequential_look_certificate(
             plan=plan,
@@ -432,6 +439,62 @@ def test_independent_verifier_reconstructs_complete_sequential_chain(
         "certificate_sha256"
     ]
     assert detail["decisions"] == ["continue", "terminal_inconclusive"]
+    assert detail["first_boundary_look"] is None
+    assert detail["first_boundary_decision"] is None
+
+
+def test_independent_verifier_preserves_earliest_crossed_boundary(
+    tmp_path: Path,
+    monkeypatch,
+):
+    plan, records, tasks, _certificates = _build_sequential_verifier_fixture(
+        tmp_path,
+        monkeypatch,
+        verdicts=("gain_preverified", "inconclusive"),
+    )
+
+    failures, detail = verifier_module._verify_sequential_look_chain(
+        tmp_path,
+        plan=plan,
+        records=records,
+        tasks=tasks,
+        trusted_contamination_root_sha256=None,
+        trusted_campaign_policy_sha256=None,
+    )
+
+    assert failures == []
+    assert detail["decisions"] == [
+        "positive_boundary_crossed",
+        "terminal_inconclusive",
+    ]
+    assert detail["first_boundary_look"] == 1
+    assert detail["first_boundary_decision"] == "positive_boundary_crossed"
+
+
+@pytest.mark.parametrize(
+    ("boundary", "terminal", "expected"),
+    [
+        ("positive_boundary_crossed", "inconclusive", "gain_preverified"),
+        ("refutation_boundary_crossed", "gain_preverified", "gain_refuted"),
+        (None, "inconclusive", "inconclusive"),
+    ],
+)
+def test_final_candidate_verdict_uses_the_first_sequential_boundary(
+    boundary: str | None,
+    terminal: str,
+    expected: str,
+):
+    assert (
+        verifier_module._candidate_verdict_from_sequential_evidence(
+            terminal,
+            {
+                "required": True,
+                "verified": True,
+                "first_boundary_decision": boundary,
+            },
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize("artifact_failure", ["missing", "extra"])
