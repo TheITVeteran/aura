@@ -3288,6 +3288,22 @@ def exact_adjoint_trajectory_auxiliary_loss(
             )
         improvement *= float(trajectory_config.improvement_weight) / pair_count
     terminal_value = sum(trail[-1] for trail in trails) / len(trails)
+    from core.learning.recurrence_native_objective_v3 import (
+        branch_diversity_penalty,
+    )
+
+    terminal_forward = LivePathForward(
+        branch_logits=(),
+        branch_states=states,
+        exchanges=0,
+        prompt_tokens=prepared.prompt_count,
+        answer_tokens=prepared.answer_count,
+        bridge_tokens=prepared.bridge_count,
+    )
+    _unused_diversity_penalty, diversity_cosines = branch_diversity_penalty(
+        terminal_forward,
+        target_cos=0.98,
+    )
     return ExactAdjointLivePathResult(
         value=improvement,
         gradients=None,
@@ -3301,7 +3317,7 @@ def exact_adjoint_trajectory_auxiliary_loss(
         step_losses=step_losses,
         displacements=(),
         oscillation_cosines=(),
-        diversity_cosines=(),
+        diversity_cosines=tuple(diversity_cosines),
         branch_indices=branch_indices,
         trajectory_config=trajectory_config,
         execution_spec_sha256=spec.sha256,

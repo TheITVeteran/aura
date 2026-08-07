@@ -623,6 +623,33 @@ def test_trajectory_auxiliary_measures_terminal_ce_without_training_it():
         assert difference < 3e-4, name
 
 
+def test_trajectory_auxiliary_loss_receipts_multi_branch_diversity() -> None:
+    mx.random.seed(20260807)
+    model = _model()
+    spec = _spec(
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=2,
+    )
+    config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=1.0,
+        improvement_margin=0.05,
+    )
+
+    measured = exact_adjoint_trajectory_auxiliary_loss(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        policy_sha256=recurrent_policy_sha256(model, spec),
+    )
+    receipt = measured.receipt()
+
+    assert len(receipt["diversity_cosines"]) == 1
+    assert validate_exact_adjoint_live_path_receipt(receipt) == receipt
+
+
 def test_bounded_exact_adjoint_matches_causal_and_stopping_gradient():
     """Intervention terms must match one monolithic differentiable oracle."""
 
