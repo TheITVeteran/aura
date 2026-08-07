@@ -76,34 +76,67 @@ def _mlx_vision_worker_loop(model_path: str, req_q: mp.Queue, res_q: mp.Queue):
                 temp = job.get("temp", 0.0)
                 
                 try:
+                    import base64 as _b64
+                    import io as _io
+
                     from mlx_vlm.prompt_utils import apply_chat_template
-                    
-                    # mlx_vlm accepts plain text prompts and handles image insertion.
-                    # Or we can format standard messages:
-                    messages = [{"role": "user", "content": [{"type": "text", "text": prompt_text}]}]
-                    
+                    from PIL import Image as _Image
+
+                    # `generate` takes paths or PIL images, never base64. The
+                    # previous code handed it the base64 string as if it were
+                    # a path, so every call failed — and failed *fatally*,
+                    # because the exception it raised was not in the handler
+                    # below and killed the worker rather than the request.
+                    image = _Image.open(
+                        _io.BytesIO(_b64.b64decode(image_base64))
+                    ).convert("RGB")
+
+                    # The message needs an explicit image part, and the
+                    # template needs to know how many. Without both, the
+                    # prompt carries no image token, so the model is asked
+                    # to describe a picture it was never shown — and answers
+                    # anyway, from the question alone.
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image"},
+                                {"type": "text", "text": prompt_text},
+                            ],
+                        }
+                    ]
+
                     try:
-                        formatted_prompt = apply_chat_template(processor, config, messages)
+                        formatted_prompt = apply_chat_template(
+                            processor, config, messages, num_images=1
+                        )
                     except (RuntimeError, AttributeError, TypeError, ValueError):
-                        formatted_prompt = prompt_text # Fallback
-                        
+                        formatted_prompt = prompt_text  # Fallback
+
+                    # No temperature kwarg: this build routes sampling
+                    # elsewhere and rejects it, which is the other way the
+                    # worker used to die mid-request.
                     response = generate(
                         model, processor,
                         prompt=formatted_prompt,
-                        image=[image_base64],
+                        image=[image],
                         verbose=False,
                         max_tokens=max_tokens,
-                        temperature=temp
                     )
-                    
+
                     if hasattr(response, 'text'):
                         text_output = response.text
                     else:
                         text_output = str(response)
-                        
+
                     res_q.put({"status": "ok", "action": "see", "id": job.get("id"), "response": text_output})
-                    
-                except (ImportError, AttributeError, RuntimeError) as eval_e:
+
+                except Exception as eval_e:  # noqa: BLE001 - see below
+                    # Deliberately broad. This is a worker process whose only
+                    # job is to answer requests: any exception that escapes
+                    # here kills it, and one malformed image would then take
+                    # sight down for the rest of the session. A failed
+                    # request must cost the request.
                     import traceback
                     err = f"{eval_e}\n{traceback.format_exc()}"
                     logger.error("Vision eval error: %s", err)

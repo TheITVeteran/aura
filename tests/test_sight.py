@@ -211,6 +211,9 @@ def test_a_camera_that_is_off_is_reported_as_the_users_choice(monkeypatch) -> No
     want me to turn it on?" rather than a fixed line about being unable to
     see.
     """
+    # Neutralise the dependency check so this test is about the camera
+    # setting rather than about what happens to be installed here.
+    monkeypatch.setattr("core.senses.sight.sight_dependency_gap", lambda: "")
     monkeypatch.setattr("core.senses.sight.camera_enabled", lambda: False)
 
     async def exercise() -> str:
@@ -229,6 +232,7 @@ def test_a_camera_that_is_off_is_reported_as_the_users_choice(monkeypatch) -> No
 
 
 def test_no_frame_in_time_is_reported_with_the_real_reason(monkeypatch) -> None:
+    monkeypatch.setattr("core.senses.sight.sight_dependency_gap", lambda: "")
     monkeypatch.setattr("core.senses.sight.camera_enabled", lambda: True)
 
     async def exercise() -> str:
@@ -331,3 +335,113 @@ def test_the_client_will_not_capture_without_the_users_camera_switch() -> None:
     assert "if (!state.cameraSignalWanted) return;" in capture
     # A stream this function opened is torn down; the presence lane's is not.
     assert "if (ownStream) ownStream.getTracks()" in capture
+
+
+def test_a_missing_vision_runtime_is_named_rather_than_timed_out(monkeypatch) -> None:
+    """A missing package must not look like a wedged model.
+
+    The vision worker is a subprocess; when its imports fail the parent sees
+    only "failed to initialize within 30s", so an absent dependency is
+    indistinguishable from a hung load and the operator debugs the wrong
+    thing. Checked up front, it is a sentence with a fix in it.
+    """
+    from core.senses import sight as sight_module
+
+    monkeypatch.setattr(
+        sight_module,
+        "sight_dependency_gap",
+        lambda: "torchvision is not installed — pip install torchvision==0.26.0",
+    )
+    monkeypatch.setattr(sight_module, "camera_enabled", lambda: True)
+
+    async def exercise() -> str:
+        with bind_failure_ledger():
+            result = await sight_module.look("what am I holding")
+            assert not result.ok
+            assert result.cause == "no_vision_runtime"
+            return pending_failure_context()
+
+    block = asyncio.run(exercise())
+    assert "torchvision" in block
+    assert "not_installed" in block
+    # And she is told a camera she cannot read from is not worth opening.
+    assert "still works" in block
+
+
+def test_the_dependency_check_reports_the_real_environment() -> None:
+    """Whatever it says has to be true of this machine, not a guess."""
+    import importlib.util
+
+    from core.senses.sight import sight_dependency_gap
+
+    gap = sight_dependency_gap()
+    if importlib.util.find_spec("torchvision") is None:
+        assert "torchvision" in gap
+    elif importlib.util.find_spec("mlx_vlm") is not None:
+        assert gap == ""
+
+
+# ── the worker actually reads the image ──────────────────────────────────
+
+
+def test_the_worker_hands_the_model_a_picture_not_a_string() -> None:
+    """Three defects lived here, and each was silent in a different way.
+
+    `generate` takes paths or PIL images; the worker passed the base64 string
+    as if it were a path. That raised, and the raise was not in the handler,
+    so it killed the worker rather than the request — one bad call took sight
+    down for the session.
+
+    The message carried no image part and the template was not told there was
+    an image, so even a successful call produced a prompt with no image token:
+    the model answers from the question alone and sounds completely
+    confident doing it. That is the worst of the three, because it looks like
+    working sight.
+
+    And `temperature=` is rejected by this build, which is the other way the
+    worker used to die mid-request.
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core" / "brain" / "llm" / "mlx_vision_worker.py"
+    ).read_text(encoding="utf-8")
+
+    assert "_Image.open(" in source, "the worker must decode to an image"
+    assert "image=[image_base64]" not in source, "base64 is not a path"
+    assert '{"type": "image"}' in source, "the message needs an image part"
+    assert "num_images=1" in source, "the template must be told there is an image"
+    assert "temperature=temp" not in source
+    # A failed request must cost the request, not the worker.
+    assert "except Exception as eval_e:" in source
+
+
+def test_a_worker_that_never_started_can_still_be_stopped() -> None:
+    """`join()` on an unstarted process asserts rather than returning.
+
+    So any failure *during* spawn turned every later stop() into
+    "can only join a started process" — which buried the real reason the
+    worker did not come up, and cost an hour of debugging the wrong thing.
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core" / "brain" / "llm" / "mlx_vision_client.py"
+    ).read_text(encoding="utf-8")
+    assert 'getattr(process, "_popen", None) is None' in source
+
+
+def test_one_vision_worker_is_shared_across_call_sites() -> None:
+    """Each construction spawns a subprocess holding 1.2 GB of weights."""
+    from core.brain.llm.mlx_vision_client import (
+        get_vision_client,
+        reset_vision_client_for_test,
+    )
+
+    reset_vision_client_for_test()
+    try:
+        assert get_vision_client() is get_vision_client()
+    finally:
+        reset_vision_client_for_test()

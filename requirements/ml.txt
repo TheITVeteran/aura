@@ -3,6 +3,13 @@
 numpy>=1.26,<3.0
 scipy>=1.13
 torch>=2.3           # CPU build; GPU: follow PyTorch install guide
+# Required for sight, not optional. transformers 5.x builds its image
+# processors on torchvision, so a machine with torch but without it loads
+# text models fine and cannot construct a vision processor at all — the
+# vision worker then dies during import and the parent sees only a 30s
+# timeout. Pin to the release matching your torch (0.26 ↔ torch 2.11), or
+# pip will upgrade torch underneath the whole runtime to satisfy it.
+torchvision>=0.18
 transformers>=4.41
 sentence-transformers>=3.0   # dense semantic retrieval (hybrid RAG, EmbeddingEngine)
 diffusers>=0.27

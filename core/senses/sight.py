@@ -227,6 +227,36 @@ def camera_enabled() -> bool:
         return False
 
 
+def sight_dependency_gap() -> str:
+    """What is missing before she can see at all, or "" if nothing is.
+
+    Checked up front rather than discovered as an opaque worker timeout. The
+    vision worker is a subprocess; when its imports fail, the parent sees
+    "failed to initialize within 30s" and nothing about why — so a missing
+    package looks identical to a wedged model, and the operator debugs the
+    wrong thing for an hour.
+
+    ``transformers`` 5.x builds its image and video processors on torchvision,
+    so a machine with torch but no torchvision loads text models fine and
+    cannot construct a vision processor at all. That is a one-line fix and
+    she should be able to say so.
+    """
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("mlx_vlm") is None:
+            return "mlx_vlm is not installed, so there is no local vision runtime"
+        if importlib.util.find_spec("torchvision") is None:
+            return (
+                "torchvision is not installed — transformers builds its image "
+                "processors on it, so the vision model cannot load without it "
+                "(pip install torchvision==0.26.0, which matches the installed torch)"
+            )
+    except (ImportError, ValueError) as exc:
+        return f"the vision runtime could not be checked: {type(exc).__name__}: {exc}"
+    return ""
+
+
 def _sight_prompt(question: str) -> str:
     """What to ask the vision model about the frame.
 
@@ -258,6 +288,20 @@ async def look(question: str, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Look:
     diagnostic detail for that record, not dialogue.
     """
     from core.conversation.failure_context import record_capability_failure
+
+    # Before the camera, before the frame: can she see at all? Capturing a
+    # frame she has no way to read wastes the user's time and turns a missing
+    # package into a mysterious timeout.
+    gap = sight_dependency_gap()
+    if gap:
+        record_capability_failure(
+            "camera",
+            intent=f"look through the camera to answer: {question[:120]}",
+            cause="not_installed",
+            detail=gap,
+            still_possible=("everything that does not need eyes",),
+        )
+        return Look(ok=False, cause="no_vision_runtime", detail=gap)
 
     if not camera_enabled():
         record_capability_failure(

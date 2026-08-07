@@ -578,6 +578,17 @@ class MLXVisionClient:
                     _exc,
                 )
         process, self._process = self._process, None
+        # A process object that was created but never started has no popen,
+        # and join() *asserts* rather than returning. So any failure during
+        # spawn turned every subsequent stop() into an AssertionError, which
+        # then buried the original cause — the operator sees "can only join a
+        # started process" and never learns why the worker did not come up.
+        if process is not None and getattr(process, "_popen", None) is None:
+            close = getattr(process, "close", None)
+            if callable(close):
+                with contextlib.suppress(ValueError, OSError):
+                    close()
+            process = None
         if process:
             process.join(timeout=3.0)
             if process.is_alive():
