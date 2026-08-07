@@ -985,6 +985,96 @@ def test_sequential_look_evaluation_publishes_independent_chained_certificate(
     assert json.loads(path.read_text()) == certificate
 
 
+def _write_sequential_final_chain(campaign_dir: Path, plan) -> list[dict]:
+    look_dir = campaign_dir / runner.SEQUENTIAL_LOOK_DIR
+    look_dir.mkdir()
+    certificates = []
+    previous_sha256 = None
+    power_looks = plan.to_dict()["metadata"]["execution_config"][
+        "exact_statistical_power"
+    ]["looks"]
+    for look, power in enumerate(power_looks, 1):
+        task_ids = runner.cumulative_task_ids(plan, look)
+        records = []
+        for cell_id in plan.cell_ids:
+            definition = plan.cell_definition(cell_id)
+            if definition["task_id"] in task_ids:
+                records.append(
+                    {
+                        "cell_id": cell_id,
+                        "definition": definition,
+                        "commit": {
+                            "result_sha256": "a" * 64,
+                            "verification_sha256": "b" * 64,
+                        },
+                    }
+                )
+        grade = {
+            "plan_sha256": plan.plan_sha256,
+            "expected_task_count": len(task_ids),
+            "expected_cell_count": len(records),
+            "statistical_policy": {"alpha": power["family_alpha"]},
+            "verdict": "inconclusive",
+        }
+        certificate = runner.build_sequential_look_certificate(
+            plan=plan,
+            look=look,
+            committed_records=records,
+            production_grade=grade,
+            independent_grade=grade,
+            previous_certificate_sha256=previous_sha256,
+        )
+        (look_dir / f"look-{look:03d}.json").write_bytes(
+            canonical_json_bytes(certificate) + b"\n"
+        )
+        certificates.append(certificate)
+        previous_sha256 = certificate["certificate_sha256"]
+    return certificates
+
+
+def test_sequential_final_binding_commits_complete_chain(tmp_path: Path):
+    plan = _sequential_runner_plan()
+    certificates = _write_sequential_final_chain(tmp_path, plan)
+
+    binding = runner._sequential_final_evidence_binding(tmp_path, plan)
+
+    assert binding == {
+        "sequential_look_count": 2,
+        "sequential_certificate_head_sha256": certificates[-1][
+            "certificate_sha256"
+        ],
+        "sequential_certificate_chain_sha256": hashlib.sha256(
+            canonical_json_bytes(
+                [certificate["certificate_sha256"] for certificate in certificates]
+            )
+        ).hexdigest(),
+        "sequential_terminal_decision": "terminal_inconclusive",
+    }
+
+
+def test_sequential_final_binding_rejects_rehashed_broken_link(tmp_path: Path):
+    plan = _sequential_runner_plan()
+    _write_sequential_final_chain(tmp_path, plan)
+    path = tmp_path / runner.SEQUENTIAL_LOOK_DIR / "look-002.json"
+    certificate = json.loads(path.read_bytes())
+    material = dict(certificate)
+    material.pop("certificate_sha256")
+    material["previous_certificate_sha256"] = "0" * 64
+    certificate = {
+        **material,
+        "certificate_sha256": hashlib.sha256(
+            canonical_json_bytes(material)
+        ).hexdigest(),
+    }
+    path.write_bytes(canonical_json_bytes(certificate) + b"\n")
+
+    with pytest.raises(
+        runner.CampaignProducerError,
+        match="cannot bind the final run",
+    ):
+        runner._sequential_final_evidence_binding(tmp_path, plan)
+
+
 def test_claim_broker_policy_covers_every_exact_worker_attempt_command(
     tmp_path: Path,
 ):

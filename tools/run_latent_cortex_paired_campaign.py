@@ -104,6 +104,7 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     logical_model_parameter_count,
 )
 from core.brain.llm.latent_cortex.sequential_campaign_evidence import (  # noqa: E402
+    SEQUENTIAL_LOOK_CERTIFICATE_SCHEMA,
     SequentialCampaignEvidenceError,
     build_sequential_look_certificate,
     cumulative_task_ids,
@@ -2954,6 +2955,85 @@ def _evaluate_sequential_look(
     return certificate
 
 
+def _sequential_final_evidence_binding(
+    campaign_dir: Path,
+    plan: CampaignPlan,
+) -> dict[str, Any]:
+    execution = plan.to_dict()["metadata"].get("execution_config")
+    raw_looks = (
+        execution.get("sequential_look_observations_per_domain")
+        if isinstance(execution, Mapping)
+        else None
+    )
+    if raw_looks is None:
+        return {}
+    if not isinstance(raw_looks, list) or not raw_looks:
+        raise CampaignProducerError("sequential final evidence plan is invalid")
+    power = execution.get("exact_statistical_power")
+    power_looks = power.get("looks") if isinstance(power, Mapping) else None
+    if not isinstance(power_looks, list) or len(power_looks) != len(raw_looks):
+        raise CampaignProducerError("sequential final evidence power is invalid")
+
+    look_dir = campaign_dir / SEQUENTIAL_LOOK_DIR
+    expected_names = {
+        f"look-{look:03d}.json" for look in range(1, len(raw_looks) + 1)
+    }
+    actual_names = (
+        {path.name for path in look_dir.iterdir() if path.is_file()}
+        if look_dir.is_dir()
+        else set()
+    )
+    if actual_names != expected_names:
+        raise CampaignProducerError(
+            "sequential final evidence artifact set differs from the plan"
+        )
+
+    previous_sha256 = None
+    certificate_sha256s: list[str] = []
+    terminal_decision = None
+    for look in range(1, len(raw_looks) + 1):
+        certificate = _read_canonical_json_artifact(
+            look_dir / f"look-{look:03d}.json",
+            role=f"sequential look {look} certificate",
+        )
+        material = dict(certificate)
+        certificate_sha256 = material.pop("certificate_sha256", None)
+        if (
+            certificate.get("schema") != SEQUENTIAL_LOOK_CERTIFICATE_SCHEMA
+            or certificate.get("campaign_name") != plan.campaign_name
+            or certificate.get("plan_sha256") != plan.plan_sha256
+            or certificate.get("look") != look
+            or certificate.get("terminal_look") != (look == len(raw_looks))
+            or certificate.get("previous_certificate_sha256") != previous_sha256
+            or certificate.get("look_power_receipt") != power_looks[look - 1]
+            or certificate_sha256 != _sha256_bytes(canonical_json_bytes(material))
+        ):
+            raise CampaignProducerError(
+                f"sequential look {look} cannot bind the final run"
+            )
+        decision = certificate.get("decision")
+        if decision not in {
+            "continue",
+            "positive_boundary_crossed",
+            "refutation_boundary_crossed",
+            "terminal_inconclusive",
+        }:
+            raise CampaignProducerError(
+                f"sequential look {look} has an invalid decision"
+            )
+        previous_sha256 = certificate_sha256
+        certificate_sha256s.append(certificate_sha256)
+        terminal_decision = decision
+    return {
+        "sequential_look_count": len(certificate_sha256s),
+        "sequential_certificate_head_sha256": previous_sha256,
+        "sequential_certificate_chain_sha256": _sha256_bytes(
+            canonical_json_bytes(certificate_sha256s)
+        ),
+        "sequential_terminal_decision": terminal_decision,
+    }
+
+
 def _admit_final_run_envelope(
     args: argparse.Namespace,
     plan: CampaignPlan,
@@ -2987,6 +3067,7 @@ def _admit_final_run_envelope(
         raise CampaignProducerError(
             "final run worker evidence differs from canonical disk artifacts"
         )
+    sequential_binding = _sequential_final_evidence_binding(campaign_dir, plan)
     payload = {
         "schema": FINAL_RUN_PAYLOAD_SCHEMA,
         "campaign_name": plan.campaign_name,
@@ -3006,6 +3087,7 @@ def _admit_final_run_envelope(
         "detached_classifications_sha256": worker_execution["detached_classifications_sha256"],
         "worker_imports_sha256": worker_execution["imports_sha256"],
         "worker_excluded_attempts_sha256": worker_execution["excluded_attempts_sha256"],
+        **sequential_binding,
     }
     request = _load_or_prepare_role_request(
         campaign_dir / FINAL_RUN_REQUEST_FILE,

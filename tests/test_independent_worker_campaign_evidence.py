@@ -544,6 +544,14 @@ def test_v4_final_run_envelope_binds_independent_worker_replay(
     }
     for name, document in artifacts.items():
         _private_json(campaign_dir / name, document)
+    sequential_evidence = {
+        "required": True,
+        "verified": True,
+        "look_count": 2,
+        "certificate_head_sha256": "6" * 64,
+        "certificate_chain_sha256": "7" * 64,
+        "terminal_decision": "terminal_inconclusive",
+    }
     expected_payload = {
         "schema": campaign_verifier.FINAL_RUN_PAYLOAD_SCHEMA,
         "campaign_name": plan.campaign_name,
@@ -569,6 +577,14 @@ def test_v4_final_run_envelope_binds_independent_worker_replay(
         "worker_excluded_attempts_sha256": worker_detail[
             "excluded_attempts_sha256"
         ],
+        "sequential_look_count": sequential_evidence["look_count"],
+        "sequential_certificate_head_sha256": sequential_evidence[
+            "certificate_head_sha256"
+        ],
+        "sequential_certificate_chain_sha256": sequential_evidence[
+            "certificate_chain_sha256"
+        ],
+        "sequential_terminal_decision": sequential_evidence["terminal_decision"],
     }
     signed_at = int(time.time())
     request = prepare_role_signature_request(
@@ -604,6 +620,7 @@ def test_v4_final_run_envelope_binds_independent_worker_replay(
         plan=plan,
         trusted_policy=policy,
         worker_evidence=worker_detail,
+        sequential_evidence=sequential_evidence,
     )
 
     assert failures == []

@@ -439,15 +439,29 @@ def verify_terminal_worker_stage(
         )
     except WorkerOriginError as exc:
         raise WorkerAttemptImportError("worker_stage_terminal_lifecycle_invalid") from exc
+    expected_lifecycle_path = lifecycle_path.resolve(strict=True)
     expected_summary = {
-        "artifact_path": str(lifecycle_path),
+        "artifact_path": str(expected_lifecycle_path),
         "artifact_sha256": lifecycle["artifact_sha256"],
         "event_type": "terminal",
         "event_sha256": event_origin["event_sha256"],
         "result_count": len(expected_cells),
         "session_id": authorization["session_id"],
     }
-    if broker_result.worker_origin_lifecycle != expected_summary:
+    observed_summary = dict(broker_result.worker_origin_lifecycle)
+    observed_path = observed_summary.get("artifact_path")
+    try:
+        observed_resolved = (
+            Path(observed_path).resolve(strict=True)
+            if isinstance(observed_path, str)
+            else None
+        )
+    except OSError:
+        observed_resolved = None
+    if observed_resolved != expected_lifecycle_path:
+        _fail("worker_stage_broker_lifecycle_path_invalid")
+    observed_summary["artifact_path"] = str(expected_lifecycle_path)
+    if observed_summary != expected_summary:
         _fail("worker_stage_broker_lifecycle_summary_invalid")
 
     manifest_body = {
@@ -456,7 +470,7 @@ def verify_terminal_worker_stage(
         "campaign_plan_sha256": plan.plan_sha256,
         "arm": arm,
         "worker_attempt_slot": worker_attempt_slot,
-        "stage_path": str(stage_path),
+        "stage_path": str(stage_path.resolve(strict=True)),
         "stage_sha256": _sha256_bytes(stage_raw),
         "stage_journal_head_sha256": snapshot.journal_head_sha256,
         "cell_ids": list(expected_cell_ids),
@@ -469,7 +483,7 @@ def verify_terminal_worker_stage(
         "broker_request_id": broker_result.request_id,
         "broker_receipt_sha256": broker_result.receipt_sha256,
         "broker_response_hmac_sha256": broker_result.response_hmac_sha256,
-        "lifecycle_path": str(lifecycle_path),
+        "lifecycle_path": str(expected_lifecycle_path),
         "lifecycle_artifact_sha256": lifecycle["artifact_sha256"],
         "lifecycle_event_sha256": event_origin["event_sha256"],
     }

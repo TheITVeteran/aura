@@ -564,6 +564,10 @@ def _final_evidence(
     request, payload = _role_request(
         request_path, policy=policy, role=CAMPAIGN_RUNNER
     )
+    sequential_binding = runner._sequential_final_evidence_binding(
+        campaign_dir,
+        plan,
+    )
     expected = {
         "schema": runner.FINAL_RUN_PAYLOAD_SCHEMA,
         "campaign_name": plan.campaign_name,
@@ -585,6 +589,7 @@ def _final_evidence(
         ],
         "worker_imports_sha256": worker["imports_sha256"],
         "worker_excluded_attempts_sha256": worker["excluded_attempts_sha256"],
+        **sequential_binding,
     }
     if payload != expected:
         _fail("final_run_payload_binding_invalid")
@@ -600,6 +605,16 @@ def _final_evidence(
     evidence = [
         _artifact(campaign_dir / name, role=role) for name, role in evidence_paths
     ]
+    if sequential_binding:
+        evidence.extend(
+            _artifact(
+                campaign_dir
+                / runner.SEQUENTIAL_LOOK_DIR
+                / f"look-{look:03d}.json",
+                role=f"sequential_look_{look}",
+            )
+            for look in range(1, sequential_binding["sequential_look_count"] + 1)
+        )
     return request, payload, issuer_attestation, evidence
 
 

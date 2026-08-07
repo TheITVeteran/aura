@@ -352,6 +352,11 @@ def verify_worker_campaign_evidence(
         if isinstance(execution, dict)
         else None
     )
+    sequential_looks = (
+        execution.get("sequential_look_observations_per_domain")
+        if isinstance(execution, dict)
+        else None
+    )
     if (
         not isinstance(metadata, dict)
         or metadata.get("claim_eligible") is not True
@@ -366,6 +371,14 @@ def verify_worker_campaign_evidence(
         or isinstance(attempt_slots, bool)
         or attempt_slots <= 0
         or attempt_slots > 64
+        or (
+            sequential_looks is not None
+            and (
+                not isinstance(sequential_looks, list)
+                or not sequential_looks
+                or attempt_slots % len(sequential_looks) != 0
+            )
+        )
         or not _is_sha256(expected_protocol_sha256)
     ):
         _fail("worker_evidence_plan_contract_invalid")
@@ -562,6 +575,11 @@ def verify_worker_campaign_evidence(
             common = {
                 "arm": arm,
                 "worker_attempt_slot": slot,
+                "worker_look": (
+                    (slot - 1) // (attempt_slots // len(sequential_looks)) + 1
+                    if sequential_looks is not None
+                    else 0
+                ),
                 "broker_result_artifact_sha256": broker_artifact["artifact_sha256"],
                 "broker_policy_sha256": broker_result.policy_sha256,
                 "broker_request_id": broker_result.request_id,

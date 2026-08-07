@@ -1580,6 +1580,7 @@ def _verify_final_run_envelope(
     plan: CampaignPlan,
     trusted_policy: Any | None,
     worker_evidence: Mapping[str, Any],
+    sequential_evidence: Mapping[str, Any],
 ) -> tuple[list[str], dict[str, Any]]:
     if plan.to_dict()["metadata"].get("claim_eligible") is not True:
         return [], {"required": False, "verified": False}
@@ -1590,6 +1591,14 @@ def _verify_final_run_envelope(
         }
     if worker_evidence.get("verified") is not True:
         return ["final run has no verified detached-worker evidence"], {
+            "required": True,
+            "verified": False,
+        }
+    if (
+        sequential_evidence.get("required") is True
+        and sequential_evidence.get("verified") is not True
+    ):
+        return ["final run has no verified sequential-look evidence"], {
             "required": True,
             "verified": False,
         }
@@ -1656,6 +1665,22 @@ def _verify_final_run_envelope(
         "worker_excluded_attempts_sha256": worker_evidence[
             "excluded_attempts_sha256"
         ],
+        **(
+            {
+                "sequential_look_count": sequential_evidence["look_count"],
+                "sequential_certificate_head_sha256": sequential_evidence[
+                    "certificate_head_sha256"
+                ],
+                "sequential_certificate_chain_sha256": sequential_evidence[
+                    "certificate_chain_sha256"
+                ],
+                "sequential_terminal_decision": sequential_evidence[
+                    "terminal_decision"
+                ],
+            }
+            if sequential_evidence.get("required") is True
+            else {}
+        ),
     }
     if worker_manifest.get("manifest_sha256") != worker_evidence.get(
         "worker_execution_manifest_sha256"
@@ -2321,6 +2346,7 @@ def verify_campaign_evidence(
             plan=plan,
             trusted_policy=trusted_policy,
             worker_evidence=worker_origin_detail,
+            sequential_evidence=sequential_detail,
         )
     except (OSError, TypeError, ValueError, KeyError) as exc:
         final_run_failures = [f"final run envelope validation failed: {exc}"]
@@ -2459,6 +2485,22 @@ def verify_campaign_evidence(
                     independent_scoring_sha256
                 ),
                 "verifier_implementation_sha256": _verifier_implementation_sha256(),
+                **(
+                    {
+                        "sequential_look_count": sequential_detail["look_count"],
+                        "sequential_certificate_head_sha256": sequential_detail[
+                            "certificate_head_sha256"
+                        ],
+                        "sequential_certificate_chain_sha256": sequential_detail[
+                            "certificate_chain_sha256"
+                        ],
+                        "sequential_terminal_decision": sequential_detail[
+                            "terminal_decision"
+                        ],
+                    }
+                    if sequential_detail.get("required") is True
+                    else {}
+                ),
             }
             detail["verifier_attestation_request"] = {
                 "role": EVIDENCE_VERIFIER,
