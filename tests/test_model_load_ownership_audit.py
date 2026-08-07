@@ -139,6 +139,68 @@ def test_capability_ablation_releases_lane_when_model_load_fails(monkeypatch) ->
     assert events == ["release:capability_ablation_load_failed"]
 
 
+def test_affect_ablation_retains_lane_until_responder_closes(monkeypatch) -> None:
+    from core.consciousness import affective_steering
+    from core.runtime import model_lane_control
+    from tools.affect_causality_mlx import make_affect_responder
+
+    events: list[str] = []
+    lease = SimpleNamespace(
+        active=True,
+        release=lambda **kwargs: events.append(f"release:{kwargs['reason']}"),
+    )
+    hook = SimpleNamespace(override_composite_vector=lambda _vector: None)
+    engine = SimpleNamespace(
+        _model_attached=True,
+        active_hooks=lambda: [hook],
+        attach=lambda _model, _tokenizer: events.append("attach"),
+        detach=lambda: events.append("detach"),
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_standalone_model_lane",
+        lambda **_kwargs: lease,
+    )
+    monkeypatch.setattr(affective_steering, "get_steering_engine", lambda: engine)
+    fake_mlx_lm = ModuleType("mlx_lm")
+    fake_mlx_lm.load = lambda model_id: (f"model:{model_id}", SimpleNamespace())
+    fake_mlx_lm.generate = lambda *_args, **_kwargs: "answer"
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+
+    responder = make_affect_responder(model_id="test-model", max_output_tokens=8)
+
+    assert events == ["attach"]
+    responder.close()
+    assert events == ["attach", "detach", "release:affect_causality_complete"]
+
+
+def test_affect_ablation_releases_lane_when_model_load_fails(monkeypatch) -> None:
+    from core.runtime import model_lane_control
+    from tools.affect_causality_mlx import make_affect_responder
+
+    events: list[str] = []
+    lease = SimpleNamespace(
+        release=lambda **kwargs: events.append(f"release:{kwargs['reason']}"),
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_standalone_model_lane",
+        lambda **_kwargs: lease,
+    )
+    fake_mlx_lm = ModuleType("mlx_lm")
+
+    def fail_load(_model_id: str):
+        raise RuntimeError("load failed")
+
+    fake_mlx_lm.load = fail_load
+    fake_mlx_lm.generate = lambda *_args, **_kwargs: "unused"
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+
+    with pytest.raises(RuntimeError, match="load failed"):
+        make_affect_responder(model_id="test-model", max_output_tokens=8)
+    assert events == ["release:affect_ablation_load_failed"]
+
+
 def test_capability_ablation_main_closes_responder_when_run_fails(
     monkeypatch,
     tmp_path: Path,

@@ -14796,6 +14796,14 @@
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/evaluation/source_attestation.py",
+      "scope": "<module>._git"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
       "count": 2,
       "path": "core/factory/rollback_manager.py",
       "scope": "<module>.RollbackManager.create_workspace"
@@ -15978,6 +15986,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "70387ae4202b678e82541bbf1611513ba7e6f04a8559a5346b34ce208bcd54a1",
+  "inventory_sha256": "504582229d417dbc6ab8bd170833542e445194bdcb2b82d7afc17c04bb249048",
   "schema_version": 1
 }

@@ -190,6 +190,17 @@
       "purpose": "evaluation"
     },
     {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/affect_causality_mlx.py",
+      "purpose": "evaluation"
+    },
+    {
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,

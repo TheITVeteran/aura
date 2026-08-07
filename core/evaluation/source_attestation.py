@@ -95,13 +95,18 @@ class SourceAttestation:
 
 def _git(root: Path, *args: str) -> tuple[int, str]:
     try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, repo-local
-            ["git", *args],
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        proc = get_subprocess_gateway().run(
+            ["/usr/bin/git", *args],
             cwd=str(root),
             capture_output=True,
             text=True,
             timeout=20.0,
             check=False,
+            read_only=True,
+            source="core.evaluation.source_attestation",
+            accelerator_capability="none",
         )
     except _GIT_ERRORS:
         return 1, ""
