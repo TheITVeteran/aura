@@ -37666,3 +37666,33 @@ change the completed campaign's negative result, authorize fusion or
 activation, prove a reasoning gain, or make another resident-32B run
 admissible before the architecture and training objective clear bounded
 behavioral canaries.
+
+## Checkpoint 2026-08-07-009: Every Recurrent Branch Must Learn the Answer
+
+The retained campaign evidence distinguishes a failed objective from a failed
+attachment. Validation cross-entropy fell from `9.7918` to `2.5821`, while the
+adapter fired at every declared recurrent position and changed every measured
+first-logit digest. Yet adapter plus RLC scored `3/28` against base RLC's
+`5/28` and vanilla's `13/28`. The package learned its surrogate and that
+surrogate selected the wrong behavior.
+
+The concrete shortcut was detached soft-min branch weighting. Of 103 joint
+updates, one branch received at least 90 percent of lexical responsibility on
+64 updates and at least 99 percent on 37. A separate geometric-distance hinge
+could then make the other branch look specialized without teaching its declared
+cognitive role or requiring it to solve anything. The execution spec said
+`mean_answer_ce`; the actual objective was soft best-branch CE.
+
+Generated-rollin config v2 now uses the equal branch mean. Every branch receives
+the same lexical responsibility, and the receipt records that policy. Config v1
+and its detached-softmin arithmetic remain independently replayable so the
+completed negative campaign is not rewritten. New configuration cannot select
+soft-min under the v2 schema. The compact campaign verdict, closeout receipt,
+independent verdict, and human-readable result summary are retained under
+`artifacts/closeout/latent_cortex/role_v6_directional_4seed_symmetric_20260806/`.
+
+Objective, specialization, trainer-authority, and trainer tests pass `56/56`;
+smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene pass. This
+retires the one-branch lexical shortcut. It does not yet add paired-depth
+marginal-gain training, a vanilla identity lane, free-generation checkpoint
+selection, proxy admission, a positive gain, activation, or fusion.

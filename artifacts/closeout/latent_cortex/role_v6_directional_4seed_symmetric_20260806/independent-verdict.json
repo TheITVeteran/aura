@@ -1,0 +1,59 @@
+{
+  "answer_reveal": {
+    "answer_reveal_sha256": "49b9c0e9f8c1f62fadb15bee1d07b6ae854c6c534e1772c9d5d0c4858c38a608",
+    "issuer_attested": false,
+    "required": true,
+    "sealed_output_manifest_sha256": "687726dd2e4c8272b08db243509b4e40097f1aa474ca4e827adc039eecd6b201",
+    "verified": true
+  },
+  "campaign_dir": "/Users/bryan/.aura/live-source/.claude/worktrees/rlc-role-v6-directional-7b5faa7f3/artifacts/closeout/latent_cortex/role_v6_directional_4seed_symmetric_20260806/campaign",
+  "campaign_trust": {
+    "required": false,
+    "verified": false
+  },
+  "claim_tier": "CONJECTURE",
+  "committed_records": 112,
+  "failures": [],
+  "final_run": {
+    "required": false,
+    "verified": false
+  },
+  "generation": {
+    "difficulty": 2,
+    "domains": [
+      "novel_algorithms",
+      "mathematics",
+      "coding",
+      "scientific_inference",
+      "long_horizon_planning",
+      "calibration",
+      "misleading_premise"
+    ],
+    "registry_version": "2026.08.06.1",
+    "seed_source": "post_seal_answer_reveal",
+    "seeds": [
+      5360318746408210906,
+      5511100171331532442,
+      7335647377766093096,
+      7644019091669859221
+    ]
+  },
+  "independent_claim_tier": "CONJECTURE",
+  "independent_implementation_sha256": "bb3559dfebfc6be141c7ad0adcbc64f8fd96b1f28716057fb686bab95c5558ce",
+  "independent_semantic_grade_sha256": "2dd7c9a818b178c92e396822a4903fc1e2a8474728735394fa97ded42156b9c0",
+  "independent_verdict": "incomplete_underpowered",
+  "passed": true,
+  "plan_sha256": "1be031309f3f0d7c15dd6391bdf66b5f020037439ce76ad1c06a7b7ab2e55569",
+  "production_semantic_grade_sha256": "2dd7c9a818b178c92e396822a4903fc1e2a8474728735394fa97ded42156b9c0",
+  "published_verdict": "incomplete_underpowered",
+  "recomputed_claim_tier": "CONJECTURE",
+  "recomputed_verdict": "incomplete_underpowered",
+  "schema": "aura.latent_cortex.independent_evidence_verdict.v2",
+  "task_count": 28,
+  "verified_verdict": "incomplete_underpowered",
+  "verifier_implementation_sha256": "2a8381af5bf83e764d10bb13c4c5ca550dfc689a105e769a773b9cd9150be002",
+  "worker_origins": {
+    "required": false,
+    "verified": false
+  }
+}

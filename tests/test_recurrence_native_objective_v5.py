@@ -26,6 +26,7 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     cached_supervised_live_path_value_and_grad,
 )
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
+    GENERATED_ROLLIN_CONFIG_SCHEMA_V1,
     GeneratedRollinSelectionConfig,
     derive_rollin_seed,
     detached_softmin_weights,
@@ -110,6 +111,7 @@ def test_generated_rollin_config_is_strict_and_hash_bound():
         branch_softmin_temperature=0.4,
     )
     assert GeneratedRollinSelectionConfig.from_dict(config.to_dict()) == config
+    assert config.branch_aggregation == "equal_mean"
     assert len(config.sha256) == 64
 
     malformed = config.to_dict()
@@ -118,6 +120,13 @@ def test_generated_rollin_config_is_strict_and_hash_bound():
         GeneratedRollinSelectionConfig.from_dict(malformed)
     with pytest.raises(ValueError, match="branch_softmin_temperature"):
         GeneratedRollinSelectionConfig(branch_softmin_temperature=0.0)
+
+    legacy = GeneratedRollinSelectionConfig(
+        schema=GENERATED_ROLLIN_CONFIG_SCHEMA_V1,
+        branch_aggregation="detached_softmin",
+    )
+    legacy_payload = legacy.to_dict()
+    assert GeneratedRollinSelectionConfig.from_dict(legacy_payload) == legacy
 
 
 def test_rollin_seed_is_source_bound_and_resume_stable():
@@ -254,7 +263,7 @@ def test_generated_rollin_gradient_uses_nested_rematerialization(monkeypatch):
     assert checkpointed
 
 
-def test_multi_branch_gradient_is_detached_softmin_combination():
+def test_multi_branch_gradient_requires_equal_branch_responsibility():
     model = _model()
     spec = _spec(branches=("constructive_solution", "critical_audit"))
     config = GeneratedRollinSelectionConfig(
@@ -299,8 +308,31 @@ def test_multi_branch_gradient_is_detached_softmin_combination():
         (branch_zero.value, branch_one.value),
         abs=1e-6,
     )
-    assert combined.branch_weights[0] != pytest.approx(0.5, abs=1e-4)
+    assert combined.branch_weights == pytest.approx((0.5, 0.5), abs=1e-12)
     assert _tree_max_difference(combined.gradients, expected) < 2e-6
+
+
+def test_legacy_v1_receipt_replays_detached_softmin_without_changing_history():
+    model = _model()
+    spec = _spec(branches=("constructive_solution", "critical_audit"))
+    config = GeneratedRollinSelectionConfig(
+        schema=GENERATED_ROLLIN_CONFIG_SCHEMA_V1,
+        student_forcing_probability=1.0,
+        sampling_temperature=0.0,
+        branch_softmin_temperature=0.7,
+        branch_aggregation="detached_softmin",
+    )
+    evaluation = generated_rollin_live_path_loss(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        base_seed=211,
+        config=config,
+    )
+
+    assert evaluation.branch_weights[0] != pytest.approx(0.5, abs=1e-4)
+    assert validate_generated_rollin_receipt(evaluation.receipt()) == evaluation.receipt()
 
 
 def test_streamed_branch_accumulation_is_order_invariant():

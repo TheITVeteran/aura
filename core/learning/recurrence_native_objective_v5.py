@@ -7,9 +7,11 @@ the exact KV-cached, recurrent execution path from objective v2.
 
 Generated roll-ins are detached behavior samples. Gold answer tokens remain the
 labels, so the objective learns recovery from its own prefixes without treating
-mistakes as truth. Branch gradients are materialized one at a time and combined
-with detached soft-min weights. The resulting gradient is the derivative of a
-soft best-branch objective without retaining every resident branch graph.
+mistakes as truth. The legacy v1 config combined branch gradients with detached
+soft-min weights; that let one branch solve while every other branch merely
+stayed geometrically different. Config v2 defaults to an equal branch mean so
+every branch must carry lexical responsibility. Legacy receipts retain their
+exact replay semantics.
 """
 
 from __future__ import annotations
@@ -35,7 +37,8 @@ from core.learning.recurrence_native_objective_v2 import (
 from core.learning.role_conditioned_lora import recurrent_branch_index
 
 RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA = "aura.recurrence_native_objective.v5"
-GENERATED_ROLLIN_CONFIG_SCHEMA = "aura.generated_rollin_selection_config.v1"
+GENERATED_ROLLIN_CONFIG_SCHEMA_V1 = "aura.generated_rollin_selection_config.v1"
+GENERATED_ROLLIN_CONFIG_SCHEMA = "aura.generated_rollin_selection_config.v2"
 GENERATED_ROLLIN_RECEIPT_SCHEMA = "aura.generated_rollin_selection_receipt.v1"
 GENERATED_ROLLIN_TRUST_BOUNDARY = "producer_sealed_tokens_external_policy_replay_required"
 _ROLLIN_SEED_DOMAIN = b"aura.generated_rollin.branch_seed.v1\0"
@@ -78,11 +81,18 @@ class GeneratedRollinSelectionConfig:
     student_forcing_probability: float = 0.5
     sampling_temperature: float = 0.8
     branch_softmin_temperature: float = 0.5
+    branch_aggregation: str = "equal_mean"
     schema: str = GENERATED_ROLLIN_CONFIG_SCHEMA
 
     def __post_init__(self) -> None:
         if self.schema != GENERATED_ROLLIN_CONFIG_SCHEMA:
-            raise ValueError("generated roll-in config schema is unsupported")
+            if self.schema != GENERATED_ROLLIN_CONFIG_SCHEMA_V1:
+                raise ValueError("generated roll-in config schema is unsupported")
+        if self.schema == GENERATED_ROLLIN_CONFIG_SCHEMA_V1:
+            if self.branch_aggregation != "detached_softmin":
+                raise ValueError("v1 generated roll-in config requires detached_softmin")
+        elif self.branch_aggregation != "equal_mean":
+            raise ValueError("v2 generated roll-in config requires equal_mean")
         for name, value, lower, upper in (
             (
                 "student_forcing_probability",
@@ -107,12 +117,15 @@ class GeneratedRollinSelectionConfig:
                 raise ValueError(f"{name} must be inside [{lower}, {upper}]")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema": self.schema,
             "student_forcing_probability": float(self.student_forcing_probability),
             "sampling_temperature": float(self.sampling_temperature),
             "branch_softmin_temperature": float(self.branch_softmin_temperature),
         }
+        if self.schema != GENERATED_ROLLIN_CONFIG_SCHEMA_V1:
+            payload["branch_aggregation"] = self.branch_aggregation
+        return payload
 
     @property
     def sha256(self) -> str:
@@ -123,19 +136,28 @@ class GeneratedRollinSelectionConfig:
         cls,
         value: Mapping[str, Any],
     ) -> GeneratedRollinSelectionConfig:
-        required = {
+        common = {
             "schema",
             "student_forcing_probability",
             "sampling_temperature",
             "branch_softmin_temperature",
         }
-        if not isinstance(value, Mapping) or set(value) != required:
+        if not isinstance(value, Mapping):
+            raise ValueError("generated roll-in config fields do not match")
+        schema = value.get("schema")
+        required = (
+            common
+            if schema == GENERATED_ROLLIN_CONFIG_SCHEMA_V1
+            else common | {"branch_aggregation"}
+        )
+        if set(value) != required:
             raise ValueError("generated roll-in config fields do not match")
         return cls(
-            schema=value["schema"],
+            schema=schema,
             student_forcing_probability=value["student_forcing_probability"],
             sampling_temperature=value["sampling_temperature"],
             branch_softmin_temperature=value["branch_softmin_temperature"],
+            branch_aggregation=value.get("branch_aggregation", "detached_softmin"),
         )
 
 
@@ -335,6 +357,37 @@ def _softmin_value(losses: Sequence[float], *, temperature: float) -> float:
         raise FloatingPointError("branch loss spread exceeds selection envelope")
     return reference - temperature * math.log(
         sum(math.exp(value) for value in exponents) / len(exponents)
+    )
+
+
+def _branch_objective_weights(
+    losses: Sequence[float],
+    *,
+    config: GeneratedRollinSelectionConfig,
+) -> tuple[float, ...]:
+    if config.branch_aggregation == "equal_mean":
+        if not losses:
+            raise ValueError("branch objective requires at least one loss")
+        weight = 1.0 / len(losses)
+        return tuple(weight for _loss in losses)
+    return detached_softmin_weights(
+        losses,
+        temperature=config.branch_softmin_temperature,
+    )
+
+
+def _branch_objective_value(
+    losses: Sequence[float],
+    *,
+    config: GeneratedRollinSelectionConfig,
+) -> float:
+    if config.branch_aggregation == "equal_mean":
+        if not losses:
+            raise ValueError("branch objective requires at least one loss")
+        return sum(float(loss) for loss in losses) / len(losses)
+    return _softmin_value(
+        losses,
+        temperature=config.branch_softmin_temperature,
     )
 
 
@@ -1082,7 +1135,11 @@ def generated_rollin_live_path_value_and_grad(
         branch_value = float(canonical_value)
         del canonical_value
 
-        if reference is None:
+        if resolved.branch_aggregation == "equal_mean":
+            raw_weight = 1.0
+            if reference is None:
+                reference = branch_value
+        elif reference is None:
             reference = branch_value
             raw_weight = 1.0
         elif branch_value < reference:
@@ -1142,9 +1199,9 @@ def generated_rollin_live_path_value_and_grad(
     gradients = tree_map(lambda value: value / denominator, gradients_numerator)
     mx.eval(gradients)
     branch_values = tuple(record["loss"] for record in records)
-    selection_weights = detached_softmin_weights(
+    selection_weights = _branch_objective_weights(
         branch_values,
-        temperature=resolved.branch_softmin_temperature,
+        config=resolved,
     )
     branches = tuple(
         GeneratedRollinBranchEvidence(
@@ -1159,9 +1216,9 @@ def generated_rollin_live_path_value_and_grad(
         for record, selection_weight in zip(records, selection_weights, strict=True)
     )
     evaluation = GeneratedRollinLivePathEvaluation(
-        value=_softmin_value(
+        value=_branch_objective_value(
             branch_values,
-            temperature=resolved.branch_softmin_temperature,
+            config=resolved,
         ),
         branches=branches,
         answer_token_count=len(answer),
@@ -1255,14 +1312,14 @@ def generated_rollin_live_path_loss(
             }
         )
     branch_values = tuple(record["loss"] for record in records)
-    selection_weights = detached_softmin_weights(
+    selection_weights = _branch_objective_weights(
         branch_values,
-        temperature=resolved.branch_softmin_temperature,
+        config=resolved,
     )
     return GeneratedRollinLivePathEvaluation(
-        value=_softmin_value(
+        value=_branch_objective_value(
             branch_values,
-            temperature=resolved.branch_softmin_temperature,
+            config=resolved,
         ),
         branches=tuple(
             GeneratedRollinBranchEvidence(
@@ -1400,18 +1457,18 @@ def validate_generated_rollin_receipt(value: Mapping[str, Any]) -> dict[str, Any
     config = GeneratedRollinSelectionConfig.from_dict(normalized["config"])
     if config.sha256 != normalized["config_sha256"]:
         raise ValueError("generated roll-in config commitment mismatch")
-    replayed_weights = detached_softmin_weights(
+    replayed_weights = _branch_objective_weights(
         losses,
-        temperature=config.branch_softmin_temperature,
+        config=config,
     )
     if any(
         not math.isclose(observed, replayed, rel_tol=0.0, abs_tol=1e-12)
         for observed, replayed in zip(weights, replayed_weights, strict=True)
     ):
         raise ValueError("generated roll-in branch weights do not replay")
-    replayed_value = _softmin_value(
+    replayed_value = _branch_objective_value(
         losses,
-        temperature=config.branch_softmin_temperature,
+        config=config,
     )
     if (
         isinstance(normalized["value"], bool)
@@ -1433,6 +1490,7 @@ def validate_generated_rollin_receipt(value: Mapping[str, Any]) -> dict[str, Any
 
 __all__ = [
     "GENERATED_ROLLIN_CONFIG_SCHEMA",
+    "GENERATED_ROLLIN_CONFIG_SCHEMA_V1",
     "GENERATED_ROLLIN_RECEIPT_SCHEMA",
     "GENERATED_ROLLIN_TRUST_BOUNDARY",
     "RECURRENCE_NATIVE_OBJECTIVE_V5_SCHEMA",
