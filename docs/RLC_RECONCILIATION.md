@@ -126,6 +126,37 @@ else. Folding it into the linear weights removes that scoping, so a fused
 model is a different function on every ordinary token too — it has to re-earn
 ordinary decode, and the pipeline refuses to activate one that does not.
 
+## What the live probes caught before the full run (2026-08-07)
+
+Five defects, none of which teacher-forced metrics or unit tests could see.
+Each is now a gate, because the point is to stop finding this class by
+spending 32B hours on it.
+
+1. **Mutual failure passed as parity.** The 1.5B rig scored 0/7 on both arms
+   and the sweep published `reaches_parity_with_ordinary_decode: true` →
+   `proceed_to_checkpoint_phase`. `0 >= 0` satisfies the gate. Parity is a
+   claim about a baseline; with no solved control task there is no baseline.
+   Now `battery_informative`.
+2. **A vanilla-only run announced a verdict about recurrence.** The `-1`
+   no-arm sentinel is below any vanilla score, so it took the deficit branch.
+   Now `inconclusive_no_recurrent_arm_measured`.
+3. **Cells were reused across decode configurations — twice.** First the
+   recurrent arms, then the control. Both times the stale cells were
+   deliberately preserved to save compute, so the mistake looks like
+   diligence. Decode identity now travels with the cell and a mismatch is
+   treated as absent; the first real run discarded 42 cells by itself.
+4. **The control was running at 320 tokens against a campaign that used 512.**
+   Vanilla emitted a terminal `FINAL_ANSWER` on 12% of tasks and scored 4/28.
+   At 512 it finished 43% and scored 3/7 — matching the campaign's 13/28.
+   Every cell that finished was correct, so vanilla's binding constraint is
+   *finishing*, not reasoning.
+5. **The disposition instruction is also a brevity effect.** "Give only the
+   best bounded answer" makes the recurrent arms finish 96% of the time
+   against the control's 43%. A deficit measured against a control that mostly
+   runs out of tokens is a statement about budget. Budget is therefore crossed
+   directly: `vanilla_long` and `rlc_nodisp_long` repeat the matched pair at
+   1024 while the five reproduction arms stay pinned to 512.
+
 ## Honest expectation
 
 Low. The frozen path starts 8 points behind ordinary decode, and the
