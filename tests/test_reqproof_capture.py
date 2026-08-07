@@ -378,3 +378,28 @@ def test_checked_repo_spec_is_valid() -> None:
         "core/**/*.py"
         in specs.by_id()["resource-observation-ownership-audit"].source_globs
     )
+    progress_target = specs.by_id()[
+        "reqproof-progress-engine-audit"
+    ].evidence_targets[0]
+    assert (
+        progress_target.requirement_id,
+        progress_target.evidence_class,
+        progress_target.acceptance_ids,
+    ) == ("PROGRESS-CONTROL-001", "implementation", ("A1",))
+    assert specs.by_id()["reqproof-progress-engine-audit"].command[-2:] == (
+        "--markdown",
+        "/tmp/aura-reqproof-progress.md",
+    )
+    assert specs.by_id()["reqproof-structural-gate-audit"].command[-2:] == (
+        "--report",
+        "/tmp/aura-reqproof-structural-gate.json",
+    )
+    assert {
+        (target.requirement_id, target.evidence_class)
+        for target in specs.by_id()[
+            "reqproof-control-plane-contract-tests"
+        ].evidence_targets
+    } == {
+        ("PROGRESS-CONTROL-001", "test"),
+        ("SCOPE-001", "test"),
+    }

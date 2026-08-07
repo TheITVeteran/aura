@@ -1,5 +1,5 @@
 {
-  "content_sha256": "82f57394ab026ef32ff27f46521faa0238cb6b067210d8d4b6f51fbc00dde2a6",
+  "content_sha256": "3d306de81ab84a49f9ffecfdec01de6be7689222cf6f8133b39097e6542bd671",
   "schema_version": 1,
   "specs": [
     {
@@ -560,6 +560,138 @@
       "source_paths": [
         "tests/test_production_surface_lint_contract.py",
         "tools/production_surface_lint.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_reqproof_capture.py",
+        "tests/test_reqproof_coverage.py",
+        "tests/test_reqproof_docket.py",
+        "tests/test_reqproof_evidence.py",
+        "tests/test_reqproof_gate.py",
+        "tests/test_reqproof_progress.py",
+        "tests/test_reqproof_schema.py",
+        "tests/test_reqproof_tracker_migration.py",
+        "tests/test_reqproof_validate.py"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "PROGRESS-CONTROL-001"
+        },
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "test",
+          "requirement_id": "SCOPE-001"
+        }
+      ],
+      "id": "reqproof-control-plane-contract-tests",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "tests/test_reqproof_*.py"
+      ],
+      "source_paths": [
+        "config/requirement_proof_specs.json",
+        "config/requirement_registry.json",
+        "tests/reqproof_testkit.py",
+        "tools/reqproof/capture.py",
+        "tools/reqproof/coverage.py",
+        "tools/reqproof/docket.py",
+        "tools/reqproof/evidence.py",
+        "tools/reqproof/gate.py",
+        "tools/reqproof/migrate.py",
+        "tools/reqproof/progress.py",
+        "tools/reqproof/schema.py",
+        "tools/reqproof/tracker_parse.py",
+        "tools/reqproof/validate.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/reqproof/progress.py",
+        "--report",
+        "/tmp/aura-reqproof-progress-report.json",
+        "--markdown",
+        "/tmp/aura-reqproof-progress.md"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "PROGRESS-CONTROL-001"
+        }
+      ],
+      "id": "reqproof-progress-engine-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [],
+      "source_paths": [
+        "config/reqproof_progress_policy.json",
+        "config/reqproof_scope_baseline.json",
+        "config/requirement_evidence_ledger.json",
+        "config/requirement_registry.json",
+        "docs/AURA_EXECUTION_TRACKER.md",
+        "tools/reqproof/evidence.py",
+        "tools/reqproof/progress.py",
+        "tools/reqproof/schema.py",
+        "tools/reqproof/tracker_parse.py",
+        "tools/reqproof/validate.py"
+      ],
+      "timeout_seconds": 300
+    },
+    {
+      "command": [
+        "{python}",
+        "tools/reqproof/gate.py",
+        "--mode",
+        "structural",
+        "--report",
+        "/tmp/aura-reqproof-structural-gate.json"
+      ],
+      "cwd": ".",
+      "evidence_targets": [
+        {
+          "acceptance_ids": [
+            "A1"
+          ],
+          "evidence_class": "implementation",
+          "requirement_id": "SCOPE-001"
+        }
+      ],
+      "id": "reqproof-structural-gate-audit",
+      "max_output_bytes": 1048576,
+      "source_globs": [
+        "config/requirement_sources/**/*"
+      ],
+      "source_paths": [
+        "config/reqproof_defect_baseline.json",
+        "config/reqproof_prose_token_allowlist.json",
+        "config/reqproof_scope_baseline.json",
+        "config/requirement_coverage_map.json",
+        "config/requirement_evidence_ledger.json",
+        "config/requirement_registry.json",
+        "docs/AURA_EXECUTION_TRACKER.md",
+        "tools/reqproof/coverage.py",
+        "tools/reqproof/evidence.py",
+        "tools/reqproof/gate.py",
+        "tools/reqproof/schema.py",
+        "tools/reqproof/tracker_parse.py",
+        "tools/reqproof/validate.py"
       ],
       "timeout_seconds": 300
     },
