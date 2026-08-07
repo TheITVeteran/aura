@@ -311,7 +311,25 @@ def _build_config(
         decode_repetition_penalty=1.25,
         decode_repetition_window=72,
         decode_bridge_policy="none",
-        decode_incumbent_policy="latent",
+        # The deployed system runs "vanilla_incumbent": every subsystem still
+        # executes and is receipted, but the public answer decodes from the
+        # clean prompt root, and a latent answer only takes over when an
+        # independent gain gate promotes it. That is monotonic by
+        # construction -- the system cannot score below ordinary decode.
+        #
+        # "latent" hands the answer to the recurrent path unconditionally,
+        # which means ordinary decode's answer is never a candidate at all.
+        # That is correct for the mechanism ablation (a degraded episode must
+        # not silently serve a vanilla answer and be read as a recurrent
+        # result) and flatly wrong for the arm that is supposed to BE the
+        # product. Carried over from the ablation config, it is why a stack
+        # with more verification scored HALF of plain greedy decode: the
+        # verifiers were selecting the best of several equally corrupted
+        # latent candidates, and the good answer was not in the pool.
+        # Selection cannot exceed the best candidate it is given.
+        decode_incumbent_policy=(
+            "vanilla_incumbent" if full else "latent"
+        ),
         # Serving-side answer replacement is a live-product safeguard: it
         # abstains rather than emit a candidate it cannot bound. In a research
         # arm that abstention destroys the observation -- the episode returns

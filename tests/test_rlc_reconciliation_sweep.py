@@ -617,3 +617,26 @@ def test_the_operator_can_reclaim_the_machine_between_cells(tmp_path: Path):
     # resumed run re-admits exactly the cells it already paid for.
     (tmp_path / sweep.YIELD_SENTINEL).unlink()
     assert sweep.yield_requested(tmp_path) is False
+
+
+def test_the_product_arm_keeps_ordinary_decode_as_the_incumbent():
+    """The stack scored HALF of plain greedy decode because the product arm ran
+    decode_incumbent_policy="latent": the recurrent path owned the answer
+    unconditionally, so ordinary decode's answer was never a candidate. Adding
+    verifiers to that cannot help -- selection cannot exceed the best candidate
+    in the pool, and the good one was not in it.
+
+    The deployed system runs "vanilla_incumbent": every subsystem still
+    executes and is receipted, the answer decodes from the clean prompt root,
+    and a latent answer takes over only when a gain gate promotes it. That is
+    monotonic by construction."""
+    full = sweep._build_config(8, 16, "applied", 512, profile="full")
+    assert full.decode_incumbent_policy == "vanilla_incumbent"
+    # The acceptance rule is what lets a latent answer win at all.
+    assert full.answer_replacement_enabled is True
+
+    # The ablation deliberately keeps the latent path owning the answer, so a
+    # degraded episode cannot silently serve vanilla and read as a result.
+    mech = sweep._build_config(4, 16, "suppressed", 512, profile="mechanism")
+    assert mech.decode_incumbent_policy == "latent"
+    assert mech.answer_replacement_enabled is False
