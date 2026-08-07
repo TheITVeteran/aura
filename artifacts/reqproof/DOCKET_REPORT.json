@@ -634,7 +634,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "fb31bb8e0c9e6e93d71d2fc4ab188d476e2a08a245f49b587f2add59eaa296b1",
+    "evidence_ledger_sha256": "44291be91d4958e8d526b2d863b0f32bdb84b2772a4a4d8c0c1847410492e158",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
@@ -642,7 +642,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "d1de5212e651a40dd9800b63178dd8749bf25db01ded6a4a63603f6579bf4270",
+  "report_sha256": "629c21d4d5e99c157eca20c8fb9c4554252a4a42ec50ff92e3445bd7cfdad445",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -2660,13 +2660,12 @@
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 0,
+      "evidence_cells_verified": 1,
       "family": "SCOPE",
       "id": "SCOPE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "implementation:A1",
         "test:A1",
         "release:A1"
       ],

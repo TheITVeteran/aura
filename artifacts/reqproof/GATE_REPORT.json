@@ -54,8 +54,8 @@
   },
   "schema_version": 1,
   "summary": {
-    "evidence_ledger_entries": 58,
-    "evidence_ledger_sha256": "fb31bb8e0c9e6e93d71d2fc4ab188d476e2a08a245f49b587f2add59eaa296b1",
+    "evidence_ledger_entries": 59,
+    "evidence_ledger_sha256": "44291be91d4958e8d526b2d863b0f32bdb84b2772a4a4d8c0c1847410492e158",
     "mandatory_not_closed": 300,
     "registry_content_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811",
     "registry_revision": 40,

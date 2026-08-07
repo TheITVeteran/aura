@@ -99,7 +99,7 @@
 | `RR-09` | `in_progress` | 3 | none |
 | `RUNTIME-001` | `in_progress` | 3 | none |
 | `RUNTIME-SETTINGS-001` | `in_progress` | 5 | UI-001, AUTONOMY-AUTHORITY-001, ENTERPRISE-CONTROL-001, VOICE-001, ADAPTATION-STATE-AUTHORITY-001, DATA-LIFECYCLE-001, COMPATIBILITY-001 |
-| `SCOPE-001` | `in_progress` | 3 | none |
+| `SCOPE-001` | `in_progress` | 2 | none |
 | `SECURITY-001` | `in_progress` | 3 | none |
 | `SELF-STATE-CHAT-001` | `in_progress` | 3 | CONVERSATION-001, MIND-001, STATE-001 |
 | `SEMANTIC-REVIEW-001` | `in_progress` | 2 | none |
@@ -125,4 +125,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `d1de5212e651a40dd9800b63178dd8749bf25db01ded6a4a63603f6579bf4270`
+Report SHA-256: `629c21d4d5e99c157eca20c8fb9c4554252a4a42ec50ff92e3445bd7cfdad445`

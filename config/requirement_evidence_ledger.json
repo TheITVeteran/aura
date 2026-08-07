@@ -1,5 +1,5 @@
 {
-  "content_sha256": "fb31bb8e0c9e6e93d71d2fc4ab188d476e2a08a245f49b587f2add59eaa296b1",
+  "content_sha256": "44291be91d4958e8d526b2d863b0f32bdb84b2772a4a4d8c0c1847410492e158",
   "entries": [
     {
       "acceptance_ids": [
@@ -615,6 +615,17 @@
       "ref": "artifacts/reqproof/evidence/resource-observation-contract-tests/b4c3560da719da16ccafe358b7b8e78f9a31760b.json",
       "requirement_id": "RESOURCE-001",
       "sha256": "051fb3b31a4d58a632955da4eca2af4ed9ef00dd02b4a0ca4f5292957b2e4283"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "83720a9bd3419ef6fbf3c3e26bb7c178c1d86705",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/reqproof-structural-gate-audit/83720a9bd3419ef6fbf3c3e26bb7c178c1d86705.json",
+      "requirement_id": "SCOPE-001",
+      "sha256": "5eaddd36b81c91cf3d6a579e86e29941e6e629e58800ee15e47c62e366f5542c"
     },
     {
       "acceptance_ids": [
