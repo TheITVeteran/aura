@@ -18,7 +18,10 @@ from tools.reqproof.evidence import (
     load_evidence_ledger,
     write_evidence_ledger_atomic,
 )
-from tools.reqproof.gate import run_gate
+from tools.reqproof.gate import (
+    _is_self_refreshable_stale_defect,
+    run_gate,
+)
 from tools.reqproof.migrate import migrate
 from tools.reqproof.progress import ScopeBaseline, write_scope_baseline_atomic
 from tools.reqproof.schema import load_registry
@@ -429,6 +432,96 @@ class TestFaultInjection:
         code, report = gate(tmp_path, paths)
         assert code == 1
         assert any("registry" in failure for failure in report["failures"])
+
+
+class TestStructuralEvidenceRefresh:
+    def test_only_the_structural_proofs_own_stale_receipt_is_eligible(self, tmp_path):
+        from tools.reqproof.validate import Defect
+
+        ref = (
+            "artifacts/reqproof/evidence/reqproof-structural-gate-audit/"
+            + "a" * 40
+            + ".json"
+        )
+        receipt = tmp_path / ref
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text(
+            json.dumps(
+                {
+                    "proof_id": "reqproof-structural-gate-audit",
+                    "verdict": "pass",
+                }
+            ),
+            encoding="utf-8",
+        )
+        own_stale = Defect("stale-evidence", f"SCOPE-001::{ref}", "changed")
+        unrelated = Defect(
+            "stale-evidence",
+            "SCOPE-001::artifacts/reqproof/evidence/other-proof/x.json",
+            "changed",
+        )
+        wrong_class = Defect("unproven-closure", f"SCOPE-001::{ref}", "missing")
+
+        assert _is_self_refreshable_stale_defect(tmp_path, own_stale) is True
+        assert _is_self_refreshable_stale_defect(tmp_path, unrelated) is False
+        assert _is_self_refreshable_stale_defect(tmp_path, wrong_class) is False
+
+    def test_self_refresh_keeps_every_other_defect_blocking(self, tmp_path, monkeypatch):
+        import tools.reqproof.gate as gate_module
+        from tools.reqproof.validate import Defect
+
+        paths = build_mini_repo(tmp_path)
+        ref = (
+            "artifacts/reqproof/evidence/reqproof-structural-gate-audit/"
+            + "b" * 40
+            + ".json"
+        )
+        receipt = tmp_path / ref
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text(
+            json.dumps(
+                {
+                    "proof_id": "reqproof-structural-gate-audit",
+                    "verdict": "pass",
+                }
+            ),
+            encoding="utf-8",
+        )
+        own = Defect("stale-evidence", f"SCOPE-001::{ref}", "changed")
+        other = Defect(
+            "stale-evidence",
+            "ALPHA-001::artifacts/reqproof/evidence/another-proof/x.json",
+            "changed",
+        )
+        monkeypatch.setattr(
+            gate_module,
+            "validate_registry",
+            lambda *_args, **_kwargs: [own, other],
+        )
+
+        code, report = gate(
+            tmp_path,
+            paths,
+            refresh_self_evidence=True,
+        )
+
+        assert code == 1
+        assert report["self_evidence_refresh"]["ignored_stale_receipts"] == [
+            own.fingerprint
+        ]
+        assert [row["subject"] for row in report["defects"]] == [other.subject]
+        assert any(other.fingerprint in failure for failure in report["failures"])
+
+    def test_self_refresh_is_structural_only(self, tmp_path):
+        paths = build_mini_repo(tmp_path)
+        code, report = gate(
+            tmp_path,
+            paths,
+            mode="release",
+            refresh_self_evidence=True,
+        )
+        assert code == 1
+        assert "self-evidence refresh is structural-only" in report["failures"]
 
 
 class TestRealRepositoryGate:

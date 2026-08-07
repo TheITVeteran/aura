@@ -80,6 +80,8 @@ from tools.reqproof.validate import (  # noqa: E402
 
 DEFAULT_BASELINE_PATH = ROOT / "config" / "reqproof_defect_baseline.json"
 DEFAULT_REPORT_PATH = ROOT / "artifacts" / "reqproof" / "GATE_REPORT.json"
+_STRUCTURAL_PROOF_ID = "reqproof-structural-gate-audit"
+_STRUCTURAL_RECEIPT_PREFIX = "artifacts/reqproof/evidence/reqproof-structural-gate-audit/"
 
 
 def load_defect_baseline(path: Path) -> list[str]:
@@ -113,6 +115,28 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
     tmp_path.replace(path)
 
 
+def _is_self_refreshable_stale_defect(root: Path, defect: Defect) -> bool:
+    """Return true only for stale evidence emitted by this gate's own proof."""
+    if defect.defect_class != "stale-evidence":
+        return False
+    _requirement, separator, ref = defect.subject.partition("::")
+    if not separator or not ref.startswith(_STRUCTURAL_RECEIPT_PREFIX):
+        return False
+    target = root / ref
+    try:
+        resolved = target.resolve(strict=True)
+        if target.is_symlink() or not resolved.is_relative_to(root.resolve()):
+            return False
+        data = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("proof_id") == _STRUCTURAL_PROOF_ID
+        and data.get("verdict") == "pass"
+    )
+
+
 def run_gate(
     *,
     root: Path,
@@ -125,6 +149,7 @@ def run_gate(
     baseline_path: Path,
     report_path: Path,
     refresh_baseline: bool = False,
+    refresh_self_evidence: bool = False,
 ) -> tuple[int, dict]:
     failures: list[str] = []
     defects: list[Defect] = []
@@ -184,6 +209,21 @@ def run_gate(
             root, registry_ids=set(registry.by_id())
         )
         defects.extend(coverage_defects)
+
+    self_refresh_ignored: list[str] = []
+    if refresh_self_evidence:
+        if mode != "structural":
+            failures.append("self-evidence refresh is structural-only")
+        else:
+            retained: list[Defect] = []
+            for defect in defects:
+                if _is_self_refreshable_stale_defect(root, defect):
+                    self_refresh_ignored.append(defect.fingerprint)
+                else:
+                    retained.append(defect)
+            defects = retained
+            if not self_refresh_ignored:
+                failures.append("self-evidence refresh found no stale structural receipt")
 
     for defect in defects:
         counts[defect.defect_class] = counts.get(defect.defect_class, 0) + 1
@@ -301,6 +341,11 @@ def run_gate(
         },
         "coverage": coverage_report,
         "failures": failures,
+        "self_evidence_refresh": {
+            "enabled": refresh_self_evidence,
+            "ignored_stale_receipts": sorted(self_refresh_ignored),
+            "provisional_until_replaced": bool(self_refresh_ignored),
+        },
         "non_claims": [
             "No completion percentage or checkpoint forecast is published by "
             "this gate yet; only raw counts are honest at this stage.",
@@ -327,6 +372,14 @@ def main() -> int:
         action="store_true",
         help="shrink-only refresh of the ratcheted defect baseline",
     )
+    parser.add_argument(
+        "--refresh-self-evidence",
+        action="store_true",
+        help=(
+            "during structural proof recapture, ignore only this gate's own "
+            "verified stale receipt; every other defect remains blocking"
+        ),
+    )
     args = parser.parse_args()
     code, report = run_gate(
         root=ROOT,
@@ -339,6 +392,7 @@ def main() -> int:
         baseline_path=Path(args.baseline),
         report_path=Path(args.report),
         refresh_baseline=bool(args.refresh_baseline),
+        refresh_self_evidence=bool(args.refresh_self_evidence),
     )
     print(
         json.dumps(
