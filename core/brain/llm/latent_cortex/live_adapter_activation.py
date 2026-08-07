@@ -341,6 +341,100 @@ def _validate_activation(value: Any) -> dict[str, Any]:
     return activation
 
 
+def build_live_adapter_activation(
+    *,
+    campaign_name: str,
+    policy_sha256: str,
+    adapter_id: str,
+    adapter_package_path: str | Path,
+    adapter_manifest_sha256: str,
+    adapter_composite_identity_sha256: str,
+    base_checkpoint_fingerprint: str,
+    model_behavior_bundle_sha256: str,
+    campaign_plan: Mapping[str, Any],
+    independent_verdict: Mapping[str, Any],
+    not_before_unix: int,
+    expires_at_unix: int,
+) -> dict[str, Any]:
+    """Build the exact externally attested production-activation payload."""
+
+    material = {
+        "schema": ACTIVATION_SCHEMA,
+        "campaign_name": campaign_name,
+        "policy_sha256": policy_sha256,
+        "adapter_id": adapter_id,
+        "adapter_package_path": str(Path(adapter_package_path).expanduser().absolute()),
+        "adapter_manifest_sha256": adapter_manifest_sha256,
+        "adapter_composite_identity_sha256": adapter_composite_identity_sha256,
+        "base_checkpoint_fingerprint": base_checkpoint_fingerprint,
+        "model_behavior_bundle_sha256": model_behavior_bundle_sha256,
+        "campaign_plan": dict(campaign_plan),
+        "independent_verdict": dict(independent_verdict),
+        "runtime_contract": dict(_RUNTIME_CONTRACT),
+        "not_before_unix": not_before_unix,
+        "expires_at_unix": expires_at_unix,
+    }
+    return _validate_activation(
+        {
+            **material,
+            "activation_sha256": hashlib.sha256(
+                canonical_json_bytes(material)
+            ).hexdigest(),
+        }
+    )
+
+
+def _validate_pointer(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema",
+        "activation",
+        "campaign_policy",
+        "activation_attestation",
+        "pointer_sha256",
+    }:
+        _fail("live_adapter_pointer_schema_invalid")
+    pointer = dict(value)
+    material = dict(pointer)
+    claimed = material.pop("pointer_sha256", None)
+    if (
+        pointer.get("schema") != ACTIVATION_POINTER_SCHEMA
+        or claimed != hashlib.sha256(canonical_json_bytes(material)).hexdigest()
+    ):
+        _fail("live_adapter_pointer_invalid")
+    return {
+        **material,
+        "activation": _validate_activation(pointer.get("activation")),
+        "campaign_policy": _binding(pointer.get("campaign_policy"), role="campaign_policy"),
+        "activation_attestation": _binding(
+            pointer.get("activation_attestation"),
+            role="activation_attestation",
+        ),
+        "pointer_sha256": claimed,
+    }
+
+
+def build_live_adapter_pointer(
+    *,
+    activation: Mapping[str, Any],
+    campaign_policy: Mapping[str, Any],
+    activation_attestation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the immutable pointer published only after detached signing."""
+
+    material = {
+        "schema": ACTIVATION_POINTER_SCHEMA,
+        "activation": dict(activation),
+        "campaign_policy": dict(campaign_policy),
+        "activation_attestation": dict(activation_attestation),
+    }
+    return _validate_pointer(
+        {
+            **material,
+            "pointer_sha256": hashlib.sha256(canonical_json_bytes(material)).hexdigest(),
+        }
+    )
+
+
 def _validate_positive_verdict(
     verdict: Mapping[str, Any],
     *,
@@ -434,23 +528,8 @@ def admit_live_adapter_activation(
         pointer_path,
         role="activation_pointer",
     )
-    if set(pointer) != {
-        "schema",
-        "activation",
-        "campaign_policy",
-        "activation_attestation",
-        "pointer_sha256",
-    }:
-        _fail("live_adapter_pointer_schema_invalid")
-    pointer_material = dict(pointer)
-    pointer_sha = pointer_material.pop("pointer_sha256", None)
-    if (
-        pointer.get("schema") != ACTIVATION_POINTER_SCHEMA
-        or pointer_sha
-        != hashlib.sha256(canonical_json_bytes(pointer_material)).hexdigest()
-    ):
-        _fail("live_adapter_pointer_invalid")
-    activation = _validate_activation(pointer.get("activation"))
+    pointer = _validate_pointer(pointer)
+    activation = pointer["activation"]
     if type(now_unix) is not int or not (
         activation["not_before_unix"]
         <= now_unix
@@ -683,5 +762,7 @@ __all__ = [
     "LiveAdapterActivationError",
     "admit_live_adapter_activation",
     "attach_certified_live_adapter",
+    "build_live_adapter_activation",
+    "build_live_adapter_pointer",
     "read_live_adapter_trust_root",
 ]

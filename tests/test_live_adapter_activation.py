@@ -188,34 +188,26 @@ def _fixture(
         expected_campaign_name=campaign_name,
         now_unix=1_800_000_200,
     )
-    material = {
-        "schema": activation.ACTIVATION_SCHEMA,
-        "campaign_name": campaign_name,
-        "policy_sha256": verified_policy.policy_sha256,
-        "adapter_id": "role-v6-test",
-        "adapter_package_path": str(package.resolve()),
-        "adapter_manifest_sha256": adapter_identity["manifest_sha256"],
-        "adapter_composite_identity_sha256": adapter_identity[
+    activation_document = activation.build_live_adapter_activation(
+        campaign_name=campaign_name,
+        policy_sha256=verified_policy.policy_sha256,
+        adapter_id="role-v6-test",
+        adapter_package_path=package,
+        adapter_manifest_sha256=adapter_identity["manifest_sha256"],
+        adapter_composite_identity_sha256=adapter_identity[
             "composite_identity_sha256"
         ],
-        "base_checkpoint_fingerprint": adapter_identity[
+        base_checkpoint_fingerprint=adapter_identity[
             "base_checkpoint_fingerprint"
         ],
-        "model_behavior_bundle_sha256": adapter_identity[
+        model_behavior_bundle_sha256=adapter_identity[
             "model_behavior_bundle_sha256"
         ],
-        "campaign_plan": plan_binding,
-        "independent_verdict": verdict_binding,
-        "runtime_contract": dict(activation._RUNTIME_CONTRACT),
-        "not_before_unix": 1_800_000_200,
-        "expires_at_unix": 1_800_010_000,
-    }
-    activation_document = {
-        **material,
-        "activation_sha256": hashlib.sha256(
-            canonical_json_bytes(material)
-        ).hexdigest(),
-    }
+        campaign_plan=plan_binding,
+        independent_verdict=verdict_binding,
+        not_before_unix=1_800_000_200,
+        expires_at_unix=1_800_010_000,
+    )
     attestation = build_role_attestation(
         verified_policy,
         role=EVIDENCE_VERIFIER,
@@ -227,18 +219,11 @@ def _fixture(
         tmp_path / "activation-attestation.json",
         attestation,
     )
-    pointer_material = {
-        "schema": activation.ACTIVATION_POINTER_SCHEMA,
-        "activation": activation_document,
-        "campaign_policy": policy_binding,
-        "activation_attestation": attestation_binding,
-    }
-    pointer = {
-        **pointer_material,
-        "pointer_sha256": hashlib.sha256(
-            canonical_json_bytes(pointer_material)
-        ).hexdigest(),
-    }
+    pointer = activation.build_live_adapter_pointer(
+        activation=activation_document,
+        campaign_policy=policy_binding,
+        activation_attestation=attestation_binding,
+    )
     pointer_path = tmp_path / "active.json"
     _write(pointer_path, pointer)
     return pointer_path, _public_pem(root), adapter_identity
@@ -292,6 +277,29 @@ def test_live_adapter_activation_requires_signed_positive_independent_evidence(
     assert receipt["adapter_identity"] == identity
     assert receipt["runtime_contract"] == activation._RUNTIME_CONTRACT
     assert len(receipt["receipt_sha256"]) == 64
+
+
+def test_live_adapter_builders_reject_invalid_activation_window(tmp_path: Path) -> None:
+    binding = {"path": str((tmp_path / "artifact").resolve()), "sha256": "a" * 64, "size_bytes": 1}
+
+    with pytest.raises(
+        activation.LiveAdapterActivationError,
+        match="live_adapter_activation_window_invalid",
+    ):
+        activation.build_live_adapter_activation(
+            campaign_name="campaign",
+            policy_sha256="b" * 64,
+            adapter_id="adapter",
+            adapter_package_path=tmp_path,
+            adapter_manifest_sha256="c" * 64,
+            adapter_composite_identity_sha256="d" * 64,
+            base_checkpoint_fingerprint="e" * 64,
+            model_behavior_bundle_sha256="f" * 64,
+            campaign_plan=binding,
+            independent_verdict=binding,
+            not_before_unix=10,
+            expires_at_unix=10,
+        )
 
 
 def test_live_adapter_activation_rejects_signed_conjecture(
