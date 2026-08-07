@@ -9,6 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.brain.llm.latent_cortex import (
+    independent_worker_campaign_evidence as worker_evidence_module,
+)
 from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignJournal,
     CampaignPlan,
@@ -42,6 +45,26 @@ ARM = runner.ADAPTER_RLC
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def test_sequential_worker_slots_rederive_balanced_look_batches() -> None:
+    looks = [160, 320, 480, 640]
+    assert [
+        worker_evidence_module._worker_look_for_slot(
+            slot,
+            attempt_slots=12,
+            sequential_looks=looks,
+        )
+        for slot in range(1, 13)
+    ] == [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]
+    assert worker_evidence_module._expected_worker_batches(
+        ["base_vanilla", "adapter_rlc"],
+        looks,
+    ) == {
+        (look, arm)
+        for look in range(1, 5)
+        for arm in ("base_vanilla", "adapter_rlc")
+    }
 
 
 def _hashed(body: dict, key: str) -> dict:

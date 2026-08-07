@@ -335,6 +335,30 @@ class VerifiedWorkerCampaignEvidence:
     excluded_attempt_count: int
 
 
+def _worker_look_for_slot(
+    slot: int,
+    *,
+    attempt_slots: int,
+    sequential_looks: list[Any] | None,
+) -> int:
+    if sequential_looks is None:
+        return 0
+    slots_per_look = attempt_slots // len(sequential_looks)
+    return (slot - 1) // slots_per_look + 1
+
+
+def _expected_worker_batches(
+    arms: list[str],
+    sequential_looks: list[Any] | None,
+) -> set[tuple[int, str]]:
+    look_values = (
+        range(1, len(sequential_looks) + 1)
+        if sequential_looks is not None
+        else (0,)
+    )
+    return {(worker_look, arm) for worker_look in look_values for arm in arms}
+
+
 def verify_worker_campaign_evidence(
     *,
     campaign_dir: Path,
@@ -481,7 +505,7 @@ def verify_worker_campaign_evidence(
 
     imports: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
-    successful_arms: set[str] = set()
+    successful_batches: set[tuple[int, str]] = set()
     detached_plan_sha256: str | None = None
     classification_head_sha256: str | None = None
     detached_terminals: list[dict[str, Any]] | None = None
@@ -572,14 +596,15 @@ def verify_worker_campaign_evidence(
             summary = broker_result.worker_origin_lifecycle
             if not isinstance(summary, dict):
                 _fail("worker_broker_lifecycle_summary_missing")
+            worker_look = _worker_look_for_slot(
+                slot,
+                attempt_slots=attempt_slots,
+                sequential_looks=sequential_looks,
+            )
             common = {
                 "arm": arm,
                 "worker_attempt_slot": slot,
-                "worker_look": (
-                    (slot - 1) // (attempt_slots // len(sequential_looks)) + 1
-                    if sequential_looks is not None
-                    else 0
-                ),
+                "worker_look": worker_look,
                 "broker_result_artifact_sha256": broker_artifact["artifact_sha256"],
                 "broker_policy_sha256": broker_result.policy_sha256,
                 "broker_request_id": broker_result.request_id,
@@ -608,8 +633,9 @@ def verify_worker_campaign_evidence(
                     }
                 )
                 continue
-            if arm in successful_arms:
-                _fail("worker_arm_imported_more_than_once")
+            batch = (worker_look, arm)
+            if batch in successful_batches:
+                _fail("worker_batch_imported_more_than_once")
             lifecycle_value = summary.get("artifact_path")
             if not isinstance(lifecycle_value, str):
                 _fail("worker_lifecycle_path_missing")
@@ -676,10 +702,11 @@ def verify_worker_campaign_evidence(
                     "canonical_imports": imported,
                 }
             )
-            successful_arms.add(arm)
+            successful_batches.add(batch)
 
+    expected_batches = _expected_worker_batches(arms, sequential_looks)
     if (
-        successful_arms != set(arms)
+        successful_batches != expected_batches
         or detached_plan_sha256 is None
         or classification_head_sha256 is None
         or detached_terminals is None
