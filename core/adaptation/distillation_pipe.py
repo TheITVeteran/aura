@@ -67,6 +67,29 @@ def _record_distillation_degradation(
     )
 
 
+def _cloud_teacher_allowed() -> bool:
+    """May the owner's own conversations be sent to a cloud teacher?
+
+    Defaults to False. A config read that fails answers False too, so a
+    broken config cannot quietly start exporting transcripts — the local
+    secondary teacher below still trains the adapter, just without a third
+    party in the loop.
+    """
+    try:
+        from core.config import get_config
+
+        return bool(
+            getattr(get_config().security, "allow_cloud_teacher_distillation", False)
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_distillation_degradation(
+            exc,
+            action="kept distillation on the local teacher after config read failed",
+            severity="debug",
+        )
+        return False
+
+
 class DistillationPipe:
     """Queries the CONFIGURED teacher path for ideal responses and appends the
     audited pair to the LoRA dataset.
@@ -74,9 +97,15 @@ class DistillationPipe:
     Not Gemini-specific: the teacher is whatever ``config.llm.teacher_model``
     names, with a local secondary lane as fallback. The old docstring named one
     cloud provider, which misrepresented both the trust boundary and where data
-    actually goes — the deep-teacher call is made with
-    ``allow_cloud_fallback=True``, so egress depends on runtime configuration
-    rather than on anything stated here.
+    actually goes.
+
+    Where it goes now: on-device by default. The teacher prompt embeds the
+    owner's original prompt verbatim, so this pipe learns from real
+    conversations, and the deep-teacher call used to pass
+    ``allow_cloud_fallback=True`` unconditionally — making a third party the
+    FIRST choice for reading the owner's turns and the local lane the
+    fallback. That is inverted: ``security.allow_cloud_teacher_distillation``
+    gates the cloud leg and defaults to False.
     """
 
     def __init__(self, dataset_path: str | None = None):
@@ -153,13 +182,24 @@ class DistillationPipe:
         """Prefer the configured deep-teacher path, then fall back to a local secondary lane."""
         from core.brain.types import ThinkingMode
 
+        # The teacher prompt embeds the owner's ORIGINAL PROMPT verbatim —
+        # this pipe learns from real conversations. Extraction from the
+        # owner's own turns therefore defaults to on-device, and the cloud
+        # teacher is opt-in rather than the first choice.
+        #
+        # The egress privacy boundary strips credentials and personal
+        # identifiers from anything that does reach a provider, but that is a
+        # filter on the leak, not a decision about the substance: a redacted
+        # transcript of the owner's work is still the owner's work, sitting in
+        # somebody else's log line so that a LoRA could be trained on it.
+        allow_cloud_teacher = _cloud_teacher_allowed()
         try:
             thought = await brain.think(
                 objective=teacher_prompt,
                 context={
                     "history": [],
                     "teacher_target": self.teacher_target,
-                    "allow_cloud_fallback": True,
+                    "allow_cloud_fallback": allow_cloud_teacher,
                 },
                 mode=ThinkingMode.DEEP,
                 priority=0.3,

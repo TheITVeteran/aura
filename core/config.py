@@ -187,6 +187,13 @@ class SecurityConfig(BaseModel):
     # buys a cloud fallback that can read the owner's contact details back to
     # them; it does not affect local inference, which never crosses a wire.
     redact_personal_data_to_model_providers: bool = True
+    # Whether the LoRA distillation pipe may use a CLOUD teacher. That pipe
+    # embeds the owner's original prompts verbatim, so this decides whether
+    # learning from their own conversations involves a third party at all.
+    # Redaction is not the same decision: a redacted transcript of the owner's
+    # work is still the owner's work. Defaults off — the local secondary
+    # teacher trains the adapter without one.
+    allow_cloud_teacher_distillation: bool = False
     enable_stealth_mode: bool = True
     force_unity_on: bool = False
 
