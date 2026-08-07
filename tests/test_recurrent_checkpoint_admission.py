@@ -143,17 +143,23 @@ def test_checkpoint_admission_requires_strict_gain_and_depth_interaction():
     assert all(admission["gates"].values())
     assert not any(admission["claim_flags"].values())
     assert validate_free_generation_report(initial) == initial
-    assert validate_recurrence_task_free_generation_report(
-        initial,
-        task_manifest=_TASK_MANIFEST,
-    ) == initial
+    assert (
+        validate_recurrence_task_free_generation_report(
+            initial,
+            task_manifest=_TASK_MANIFEST,
+        )
+        == initial
+    )
     assert validate_recurrence_task_manifest(_TASK_MANIFEST) == _TASK_MANIFEST
-    assert validate_checkpoint_behavioral_admission(
-        admission,
-        initial_report=initial,
-        trained_report=trained,
-        task_manifest=_TASK_MANIFEST,
-    ) == admission
+    assert (
+        validate_checkpoint_behavioral_admission(
+            admission,
+            initial_report=initial,
+            trained_report=trained,
+            task_manifest=_TASK_MANIFEST,
+        )
+        == admission
+    )
 
 
 def test_aggregate_gain_without_positive_depth_interaction_is_rejected():
@@ -238,9 +244,7 @@ def test_report_replay_rejects_tampering_and_incomplete_execution():
         validate_free_generation_report(tampered)
 
     inactive = copy.deepcopy(report)
-    inactive["records"][0]["episode_receipt"]["recurrence_adapter"][
-        "calls"
-    ] = 0
+    inactive["records"][0]["episode_receipt"]["recurrence_adapter"]["calls"] = 0
     inactive["records"][0]["episode_receipt_sha256"] = hashlib.sha256(
         json.dumps(
             inactive["records"][0]["episode_receipt"],

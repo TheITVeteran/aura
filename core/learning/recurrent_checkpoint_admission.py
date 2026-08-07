@@ -14,20 +14,14 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Never
 
-FREE_GENERATION_REPORT_SCHEMA: Final = (
-    "aura.rlc.recurrent_checkpoint_free_generation.v2"
-)
-CHECKPOINT_ADMISSION_SCHEMA: Final = (
-    "aura.rlc.recurrent_checkpoint_behavioral_admission.v1"
-)
+FREE_GENERATION_REPORT_SCHEMA: Final = "aura.rlc.recurrent_checkpoint_free_generation.v2"
+CHECKPOINT_ADMISSION_SCHEMA: Final = "aura.rlc.recurrent_checkpoint_behavioral_admission.v1"
 _ARMS: Final = frozenset({"initial_adapter", "trained_adapter"})
 _MAX_TASKS: Final = 256
 _MAX_DEPTHS: Final = 8
 _MAX_RESPONSE_CHARS: Final = 32_768
 _MAX_RESPONSE_TOKENS: Final = 8_192
-_TASK_MANIFEST_KEYS: Final = frozenset(
-    {"task_id", "family", "depth", "seed", "prompt", "answer"}
-)
+_TASK_MANIFEST_KEYS: Final = frozenset({"task_id", "family", "depth", "seed", "prompt", "answer"})
 
 
 class RecurrentCheckpointAdmissionError(ValueError):
@@ -108,8 +102,7 @@ def _validate_episode_evidence(
         or n_branches < 2
         or type(selected_branch) is not int
         or not 0 <= selected_branch < n_branches
-        or receipt.get("branch_selection_admitted")
-        is not branch_selection_admitted
+        or receipt.get("branch_selection_admitted") is not branch_selection_admitted
         or receipt.get("decode_incumbent_policy") != "latent"
         or receipt.get("decode_termination") != decode_termination
         or type(receipt.get("decode_generated_tokens")) is not int
@@ -159,10 +152,7 @@ def validate_recurrence_task_manifest(
 
     from core.learning.recurrence_curriculum import TASK_GENERATORS
 
-    if (
-        isinstance(task_manifest, (str, bytes))
-        or not 1 <= len(task_manifest) <= _MAX_TASKS
-    ):
+    if isinstance(task_manifest, (str, bytes)) or not 1 <= len(task_manifest) <= _MAX_TASKS:
         _fail("recurrent_checkpoint_task_manifest_invalid")
     rows: list[dict[str, Any]] = []
     task_ids: set[str] = set()
@@ -227,9 +217,7 @@ def build_free_generation_report(
     ):
         _fail("recurrent_checkpoint_report_identity_invalid")
     expected_coordinates = [
-        (task_id, depth)
-        for task_id in normalized_tasks
-        for depth in normalized_depths
+        (task_id, depth) for task_id in normalized_tasks for depth in normalized_depths
     ]
     rows = [dict(record) for record in records]
     if len(rows) != len(expected_coordinates):
@@ -296,11 +284,7 @@ def build_free_generation_report(
         )
         normalized_rows.append(row)
     correct_by_depth = {
-        str(depth): sum(
-            int(row["correct"])
-            for row in normalized_rows
-            if row["depth"] == depth
-        )
+        str(depth): sum(int(row["correct"]) for row in normalized_rows if row["depth"] == depth)
         for depth in normalized_depths
     }
     body = {
@@ -369,10 +353,9 @@ def validate_recurrence_task_free_generation_report(
 
     report = validate_free_generation_report(value)
     manifest = validate_recurrence_task_manifest(task_manifest)
-    if (
-        report["task_manifest_sha256"] != _sha(manifest)
-        or report["task_ids"] != [row["task_id"] for row in manifest]
-    ):
+    if report["task_manifest_sha256"] != _sha(manifest) or report["task_ids"] != [
+        row["task_id"] for row in manifest
+    ]:
         _fail("recurrent_checkpoint_report_task_manifest_mismatch")
     tasks = {
         row["task_id"]: TASK_GENERATORS[row["family"]](row["depth"], row["seed"])
@@ -413,12 +396,8 @@ def build_checkpoint_behavioral_admission(
         or initial["depths"] != trained["depths"]
     ):
         _fail("recurrent_checkpoint_admission_pair_invalid")
-    initial_rows = {
-        (row["task_id"], row["depth"]): row for row in initial["records"]
-    }
-    trained_rows = {
-        (row["task_id"], row["depth"]): row for row in trained["records"]
-    }
+    initial_rows = {(row["task_id"], row["depth"]): row for row in initial["records"]}
+    trained_rows = {(row["task_id"], row["depth"]): row for row in trained["records"]}
     shallow = initial["depths"][0]
     deep = initial["depths"][-1]
     initial_depth_delta = 0
@@ -436,8 +415,7 @@ def build_checkpoint_behavioral_admission(
     depth_interaction = trained_depth_delta - initial_depth_delta
     gates = {
         "complete_episode_execution": all(
-            row["episode_ok"] and row["branch_selection_admitted"]
-            for row in trained["records"]
+            row["episode_ok"] and row["branch_selection_admitted"] for row in trained["records"]
         ),
         "strict_heldout_free_generation_gain": aggregate_gain > 0,
         "positive_training_by_depth_interaction": depth_interaction > 0,

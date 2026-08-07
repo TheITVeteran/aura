@@ -111,9 +111,7 @@ def test_proxy_task_manifest_binds_answers_and_generation_coordinates() -> None:
 
     manifest, digest = canary.build_recurrence_task_manifest(tasks)
 
-    assert [row["task_id"] for row in manifest] == [
-        task.task_id for task in tasks
-    ]
+    assert [row["task_id"] for row in manifest] == [task.task_id for task in tasks]
     assert len(digest) == 64
 
 
@@ -136,8 +134,7 @@ def test_training_rows_cycle_across_the_balanced_battery() -> None:
     rows = [{"task_id": "a"}, {"task_id": "b"}, {"task_id": "c"}]
 
     observed = [
-        canary._cyclic_training_row(rows, one_based_step=step)["task_id"]
-        for step in range(1, 8)
+        canary._cyclic_training_row(rows, one_based_step=step)["task_id"] for step in range(1, 8)
     ]
 
     assert observed == ["a", "b", "c", "a", "b", "c", "a"]

@@ -45,16 +45,23 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     validate_branch_specialization_receipt,
     validate_generated_rollin_specialization_receipt,
 )
+from core.learning.recurrent_behavioral_probe import (  # noqa: E402
+    build_behavioral_probe_report as _free_generation_report,
+)
+from core.learning.recurrent_behavioral_probe import (  # noqa: E402
+    free_generation_sampling_config,
+    paired_generation_seed,
+)
+from core.learning.recurrent_behavioral_probe import (  # noqa: E402
+    tokenize_task as _tokenize,
+)
 from core.learning.recurrent_checkpoint_admission import (  # noqa: E402
     build_checkpoint_behavioral_admission,
-    build_free_generation_report,
     build_recurrence_task_manifest,
     validate_checkpoint_behavioral_admission,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
-    RecurrentSamplingConfig,
     attach_recurrent_policy_adapters,
-    cortex_config_from_execution_spec,
     recurrent_policy_sha256,
 )
 from core.learning.recurrent_sft_execution import (  # noqa: E402
@@ -74,6 +81,7 @@ SOURCE_PATHS: Final = (
     "core/learning/role_conditioned_lora.py",
     "core/learning/recurrent_grpo.py",
     "core/learning/recurrent_checkpoint_admission.py",
+    "core/learning/recurrent_behavioral_probe.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
     "tools/run_generated_rollin_objective_canary.py",
@@ -128,23 +136,6 @@ def _source_state() -> tuple[str, dict[str, dict[str, Any]]]:
     return head, bindings
 
 
-def _tokenize(tokenizer: Any, prompt: str, answer: str) -> tuple[list[int], list[int]]:
-    prompt_tokens = tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}],
-        add_generation_prompt=True,
-        tokenize=True,
-    )
-    try:
-        answer_tokens = tokenizer.encode(answer, add_special_tokens=False)
-    except TypeError:
-        answer_tokens = tokenizer.encode(answer)
-    eos = getattr(tokenizer, "eos_token_id", None)
-    normalized_answer = [int(token) for token in answer_tokens]
-    if eos is not None and (not normalized_answer or normalized_answer[-1] != int(eos)):
-        normalized_answer.append(int(eos))
-    return [int(token) for token in prompt_tokens], normalized_answer
-
-
 def _evaluate(
     model: Any,
     row: dict[str, Any],
@@ -173,9 +164,7 @@ def _evaluate(
         trajectory_config=trajectory_config,
         trajectory_policy_sha256=recurrent_policy_sha256(model, spec),
     )
-    receipt = validate_generated_rollin_specialization_receipt(
-        evaluation.receipt()
-    )
+    receipt = validate_generated_rollin_specialization_receipt(evaluation.receipt())
     return {
         "task_id": row["task_id"],
         "loss": evaluation.value,
@@ -226,43 +215,15 @@ def _branch_specialization_gates(
                 len(
                     {
                         branch["generated_tokens_sha256"]
-                        for branch in entry["objective_receipt"][
-                            "generated_receipt"
-                        ]["branches"]
+                        for branch in entry["objective_receipt"]["generated_receipt"]["branches"]
                     }
                 )
-                == len(
-                    entry["objective_receipt"]["generated_receipt"]["branches"]
-                )
+                == len(entry["objective_receipt"]["generated_receipt"]["branches"])
                 for entry in loss_trail
             )
         ),
-        "branch_state_specialized": bool(
-            separation_after and min(separation_after) >= 0.30
-        ),
+        "branch_state_specialized": bool(separation_after and min(separation_after) >= 0.30),
     }
-
-
-def _paired_generation_seed(
-    campaign_seed: int,
-    task_ordinal: int,
-    task_id: str,
-    depth: int,
-) -> int:
-    """Use one random stream per task/depth coordinate across both arms."""
-
-    material = f"{campaign_seed}:{task_ordinal}:{task_id}:{depth}"
-    return int.from_bytes(hashlib.sha256(material.encode("ascii")).digest()[:4], "big")
-
-
-def _free_generation_sampling_config() -> RecurrentSamplingConfig:
-    """Use the exact categorical policy required by recurrent proof runs."""
-
-    return RecurrentSamplingConfig(
-        max_tokens=320,
-        temperature=1.0,
-        top_p=1.0,
-    )
 
 
 def _cyclic_training_row(
@@ -275,106 +236,17 @@ def _cyclic_training_row(
     return rows[(one_based_step - 1) % len(rows)]
 
 
-def _free_generation_report(
-    model: Any,
-    tokenizer: Any,
-    tasks: list[Any],
-    *,
-    spec: RLCExecutionSpec,
-    arm: str,
-    adapter_sha256: str,
-    task_manifest_sha256: str,
-    seed: int,
-) -> dict[str, Any]:
-    """Run exact held-out generations at shallow and full recurrent depth."""
+def _paired_generation_seed(
+    campaign_seed: int,
+    task_ordinal: int,
+    task_id: str,
+    depth: int,
+) -> int:
+    return paired_generation_seed(campaign_seed, task_ordinal, task_id, depth)
 
-    import mlx.core as mx
 
-    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
-
-    depths = tuple(sorted({1, spec.recurrent_steps}))
-    records: list[dict[str, Any]] = []
-    for task_ordinal, task in enumerate(tasks):
-        prompt_tokens, _answer_tokens = _tokenize(
-            tokenizer,
-            task.prompt,
-            task.answer,
-        )
-        for depth in depths:
-            depth_spec = spec.with_depth(depth)
-            config = cortex_config_from_execution_spec(
-                depth_spec,
-                sampling=_free_generation_sampling_config(),
-            )
-            # This discriminator grades semantic terminal JSON independently.
-            # The global frontier certificate keeps its literal envelope.
-            config.decode_contract = "none"
-            config.decode_contract_grace_tokens = 0
-            config.decode_incumbent_policy = "latent"
-            engine = LatentCortexEngine(
-                model,
-                tokenizer=tokenizer,
-                config=config,
-                schedule_library=None,
-            )
-            mx.random.seed(
-                _paired_generation_seed(seed, task_ordinal, task.task_id, depth)
-            )
-            result = engine.reason(
-                token_ids=prompt_tokens,
-                decode_max_tokens=320,
-                decode_sentence_grace_tokens=0,
-            )
-            grade = dict(task.grade(result.text if result.ok else ""))
-            grade["correct"] = bool(grade.get("correct"))
-            receipt_payload = result.receipt.to_dict()
-            records.append(
-                {
-                    "task_id": task.task_id,
-                    "depth": depth,
-                    "response_sha256": hashlib.sha256(
-                        result.text.encode("utf-8")
-                    ).hexdigest(),
-                    "response_text": result.text,
-                    "tokens_sha256": hashlib.sha256(
-                        _canonical_json_bytes(result.tokens)
-                    ).hexdigest(),
-                    "tokens": list(result.tokens),
-                    "token_count": len(result.tokens),
-                    "correct": bool(result.ok and grade["correct"]),
-                    "grade_receipt": {
-                        **grade,
-                        "correct": bool(result.ok and grade["correct"]),
-                    },
-                    "episode_ok": bool(result.ok),
-                    "episode_reason": str(result.reason or ""),
-                    "decode_termination": str(
-                        result.receipt.decode_termination or "not_reached"
-                    ),
-                    "branch_selection_admitted": bool(
-                        result.receipt.branch_selection_admitted
-                    ),
-                    "decode_incumbent_policy": (
-                        result.receipt.decode_incumbent_policy
-                    ),
-                    "episode_receipt_sha256": hashlib.sha256(
-                        _canonical_json_bytes(receipt_payload)
-                    ).hexdigest(),
-                    "episode_receipt": receipt_payload,
-                }
-            )
-            del engine, result
-            mx.synchronize()
-            mx.clear_cache()
-    return build_free_generation_report(
-        arm=arm,
-        adapter_sha256=adapter_sha256,
-        execution_spec_sha256=spec.sha256,
-        task_manifest_sha256=task_manifest_sha256,
-        task_ids=[task.task_id for task in tasks],
-        depths=depths,
-        records=records,
-    )
+def _free_generation_sampling_config() -> Any:
+    return free_generation_sampling_config()
 
 
 def run_canary(
@@ -507,9 +379,7 @@ def run_canary(
             "prompt_tokens": validation_prompt_tokens,
             "answer_tokens": validation_answer_tokens,
         }
-        proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(
-            proxy_tasks
-        )
+        proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(proxy_tasks)
         free_generation_before = _free_generation_report(
             model,
             tokenizer,
@@ -551,12 +421,8 @@ def run_canary(
                 spec=spec,
                 config=specialization_config,
             )
-            structural_receipt = validate_branch_specialization_receipt(
-                result.evaluation.receipt()
-            )
-            optimizer_before = adapter_tensor_fingerprint(
-                adapter_tensor_dict(model)
-            )
+            structural_receipt = validate_branch_specialization_receipt(result.evaluation.receipt())
+            optimizer_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
             warmup_optimizer.update(model, result.gradients)
             mx.eval(model.trainable_parameters(), warmup_optimizer.state)
             post_update = branch_specialization_live_path_loss(
@@ -570,15 +436,11 @@ def run_canary(
                     "step": warmup_step,
                     "task_id": training_row["task_id"],
                     "loss_before": result.value,
-                    "separations_before": list(
-                        result.evaluation.separations
-                    ),
+                    "separations_before": list(result.evaluation.separations),
                     "separations_after": list(post_update.separations),
                     "objective_receipt": structural_receipt,
                     "adapter_before_sha256": optimizer_before,
-                    "adapter_after_sha256": adapter_tensor_fingerprint(
-                        adapter_tensor_dict(model)
-                    ),
+                    "adapter_after_sha256": adapter_tensor_fingerprint(adapter_tensor_dict(model)),
                 }
             )
         warmup_validation = _evaluate(
@@ -621,9 +483,7 @@ def run_canary(
                 trajectory_config=trajectory_config,
                 trajectory_policy_sha256=recurrent_policy_sha256(model, spec),
             )
-            receipt = validate_generated_rollin_specialization_receipt(
-                result.evaluation.receipt()
-            )
+            receipt = validate_generated_rollin_specialization_receipt(result.evaluation.receipt())
             optimizer.update(model, result.gradients)
             mx.eval(model.trainable_parameters(), optimizer.state)
             loss_trail.append(
@@ -634,16 +494,12 @@ def run_canary(
                     "lexical_loss": result.evaluation.generated.value,
                     "specialization_loss": result.evaluation.specialization.value,
                     "trajectory_loss": result.evaluation.trajectory.value,
-                    "branch_separations": list(
-                        result.evaluation.specialization.separations
-                    ),
+                    "branch_separations": list(result.evaluation.specialization.separations),
                     "branch_values": list(result.branch_values),
                     "branch_weights": list(result.branch_weights),
                     "rollin_base_seed": rollin_seed,
                     "objective_receipt": receipt,
-                    "adapter_sha256": adapter_tensor_fingerprint(
-                        adapter_tensor_dict(model)
-                    ),
+                    "adapter_sha256": adapter_tensor_fingerprint(adapter_tensor_dict(model)),
                 }
             )
         after = _evaluate(
@@ -704,9 +560,7 @@ def run_canary(
         "generated_prefix_exercised": all(
             any(
                 branch["student_forced_positions"]
-                for branch in entry["objective_receipt"]["generated_receipt"][
-                    "branches"
-                ]
+                for branch in entry["objective_receipt"]["generated_receipt"]["branches"]
             )
             for entry in loss_trail
         ),
@@ -720,12 +574,10 @@ def run_canary(
             for entry in loss_trail
         ),
         "warmup_target_reached": bool(
-            warmup_trail
-            and warmup_validation["specialization_loss"] <= 1e-6
+            warmup_trail and warmup_validation["specialization_loss"] <= 1e-6
         ),
         **_branch_specialization_gates(loss_trail, separation_after),
-        "heldout_lexical_non_regression": after["lexical_loss"]
-        <= before["lexical_loss"] + 1e-6,
+        "heldout_lexical_non_regression": after["lexical_loss"] <= before["lexical_loss"] + 1e-6,
         "heldout_depth_improvement_non_regression": after["trajectory_loss"]
         <= before["trajectory_loss"] + 1e-6,
         "heldout_free_generation_strict_gain": behavioral_admission["admitted"],
@@ -767,9 +619,7 @@ def run_canary(
         "validation_after": after,
         "branch_separation_after": separation_after,
         "validation_loss_delta": after["loss"] - before["loss"],
-        "validation_lexical_loss_delta": (
-            after["lexical_loss"] - before["lexical_loss"]
-        ),
+        "validation_lexical_loss_delta": (after["lexical_loss"] - before["lexical_loss"]),
         "gates": gates,
         "passed": all(gates.values()),
         "claim_state": {
