@@ -37410,3 +37410,37 @@ latency, release readiness, or soak reliability. Those live obligations remain
 under `RESOURCE-001`, `LANE-001`, `FOREGROUND-LATENCY-001`, and the deferred
 final soak. Verified completion rises from 6.66% to 7.06% solely because all
 six `PASSF-03` acceptance/evidence cells now have current pushed receipts.
+
+## Checkpoint 2026-08-07-001: Directional Evidence Gets Its Own Gate
+
+The active resident-32B role-v6 campaign is intentionally nonclaiming and
+underpowered. Its generic paired grader must therefore return an underpowered
+claim tier even if all 112 four-arm cells are valid and the adapter/RLC arm
+shows the directional pattern required to justify a larger experiment. That
+truthful statistical refusal previously left a control-plane gap: there was no
+current-generation certificate that independently distinguished a positive
+directional advance decision from a reasoning-gain claim.
+
+`tools/verify_latent_cortex_directional_gate.py` closes that gap without
+weakening the claim boundary. After the campaign is terminal it reopens the
+immutable plan and journal, regenerates and scores the hidden tasks, requires
+byte-identical recomputation of the independent evidence verdict, and verifies
+the complete balanced four-arm/seven-domain matrix. The advance rule requires
+the adapter/RLC arm to beat both adapter vanilla and base RLC, requires its
+difference over adapter vanilla to exceed base RLC's difference over base
+vanilla, forbids adapter-vanilla regression, requires byte-identical vanilla
+outputs, proves base-RLC adapter inactivity and trained-RLC scoped activity,
+requires a causal first-logit change, and rejects output replacement, editing,
+fallback, or asymmetric response policy.
+
+A positive certificate can only say
+`advance_to_powered_external_campaign`. It explicitly keeps reasoning gain,
+frontier gain, production activation, and static weight fusion false. A
+negative certificate remains useful evidence and emits exact repair diagnoses
+instead of collapsing into a generic benchmark failure. The focused verifier,
+historical-pilot, and paired-grading slice passes `47/47`; smoke passes
+`103/103`; Ruff and bytecode compilation pass. No live result is recorded by
+this checkpoint: the active campaign was still executing, with zero failed
+attempts, when the source contract was added. The powered externally rooted
+campaign, production activation, installed-app proof, release gates, and final
+soaks remain open.
