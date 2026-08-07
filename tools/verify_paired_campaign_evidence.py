@@ -31,7 +31,8 @@ import json
 import os
 import stat
 import sys
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never
@@ -51,6 +52,9 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     prepare_role_signature_request,
     validate_campaign_trust_policy,
     verify_role_attestation,
+)
+from core.brain.llm.latent_cortex.exact_paired_statistics import (  # noqa: E402
+    Rational,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     build_task_manifest,
@@ -91,6 +95,11 @@ WORKER_AUTHORIZATION_MANIFEST_FILE = "worker_authorization_manifest.json"
 WORKER_LIFECYCLE_MANIFEST_FILE = "worker_lifecycle_manifest.json"
 WORKER_KEY_ERASURE_MANIFEST_FILE = "worker_key_erasure_manifest.json"
 WORKER_ORIGIN_DIR = "worker_origins"
+SEQUENTIAL_LOOK_DIR = "sequential_looks"
+SEQUENTIAL_LOOK_CERTIFICATE_SCHEMA = (
+    "aura.latent_cortex.sequential_look_certificate.v1"
+)
+SEQUENTIAL_POWER_SCHEMA = "aura.latent_cortex.exact_group_sequential_power.v1"
 VERDICT_SCHEMA = "aura.latent_cortex.independent_evidence_verdict.v2"
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
@@ -108,6 +117,18 @@ WORKER_LIFECYCLE_MANIFEST_SCHEMA = (
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _sha256_canonical(value: Any) -> str:
+    return _sha256_bytes(canonical_json_bytes(value))
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _first_semantic_difference(
@@ -1689,6 +1710,328 @@ def _verify_final_run_envelope(
     }
 
 
+def _independent_sequential_task_assignments(
+    plan: CampaignPlan,
+) -> tuple[tuple[int, ...], dict[str, int]] | None:
+    """Reconstruct look membership without the production evidence module."""
+
+    metadata = plan.to_dict().get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("sequential plan metadata is invalid")
+    execution = metadata.get("execution_config")
+    task_manifest = metadata.get("task_manifest")
+    if not isinstance(execution, Mapping) or not isinstance(task_manifest, Mapping):
+        raise ValueError("sequential plan metadata is invalid")
+    raw_looks = execution.get("sequential_look_observations_per_domain")
+    if raw_looks is None:
+        return None
+    if (
+        not isinstance(raw_looks, list)
+        or not raw_looks
+        or any(type(value) is not int or value <= 0 for value in raw_looks)
+        or any(
+            current <= previous
+            for previous, current in zip(raw_looks, raw_looks[1:], strict=False)
+        )
+    ):
+        raise ValueError("sequential look boundaries are invalid")
+    tasks = task_manifest.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError("sequential task manifest is invalid")
+
+    looks = tuple(raw_looks)
+    domain_ordinals: Counter[str] = Counter()
+    assignments: dict[str, int] = {}
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            raise ValueError("sequential task manifest is invalid")
+        task_id = task.get("task_id")
+        domain = task.get("domain")
+        if (
+            not isinstance(task_id, str)
+            or not task_id
+            or task_id in assignments
+            or not isinstance(domain, str)
+            or not domain
+        ):
+            raise ValueError("sequential task manifest is invalid")
+        domain_ordinals[domain] += 1
+        ordinal = domain_ordinals[domain]
+        assigned_look = next(
+            (
+                look
+                for look, boundary in enumerate(looks, 1)
+                if ordinal <= boundary
+            ),
+            None,
+        )
+        if assigned_look is None:
+            raise ValueError("sequential task lies beyond the terminal look")
+        assignments[task_id] = assigned_look
+    if any(count != looks[-1] for count in domain_ordinals.values()):
+        raise ValueError("sequential terminal look is not balanced by domain")
+    return looks, assignments
+
+
+def _verify_sequential_look_chain(
+    campaign_dir: Path,
+    *,
+    plan: CampaignPlan,
+    records: Sequence[Mapping[str, Any]],
+    tasks: Sequence[Any],
+    trusted_contamination_root_sha256: str | None,
+    trusted_campaign_policy_sha256: str | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Independently reproduce every cumulative look certificate and link."""
+
+    try:
+        assignment_contract = _independent_sequential_task_assignments(plan)
+    except (TypeError, ValueError, KeyError) as exc:
+        return [f"sequential look plan validation failed: {exc}"], {
+            "required": True,
+            "verified": False,
+        }
+    if assignment_contract is None:
+        return [], {"required": False, "verified": True}
+
+    looks, assignments = assignment_contract
+    metadata = plan.to_dict()["metadata"]
+    execution = metadata["execution_config"]
+    power = execution.get("exact_statistical_power")
+    power_looks = power.get("looks") if isinstance(power, Mapping) else None
+    if (
+        not isinstance(power, Mapping)
+        or power.get("schema") != SEQUENTIAL_POWER_SCHEMA
+        or not isinstance(power_looks, list)
+        or len(power_looks) != len(looks)
+    ):
+        return ["sequential exact power receipt is invalid"], {
+            "required": True,
+            "verified": False,
+        }
+
+    look_dir = campaign_dir / SEQUENTIAL_LOOK_DIR
+    failures: list[str] = []
+    expected_names = {f"look-{look:03d}.json" for look in range(1, len(looks) + 1)}
+    actual_names = (
+        {path.name for path in look_dir.iterdir() if path.is_file()}
+        if look_dir.is_dir()
+        else set()
+    )
+    if actual_names != expected_names:
+        failures.append(
+            "sequential look artifact set differs from the frozen plan: "
+            f"missing={sorted(expected_names - actual_names)!r} "
+            f"extra={sorted(actual_names - expected_names)!r}"
+        )
+
+    record_by_cell: dict[str, Mapping[str, Any]] = {}
+    for record in records:
+        cell_id = record.get("cell_id") if isinstance(record, Mapping) else None
+        if not isinstance(cell_id, str) or cell_id in record_by_cell:
+            failures.append("sequential committed record identity is invalid")
+            continue
+        record_by_cell[cell_id] = record
+
+    previous_sha256: str | None = None
+    certificate_sha256s: list[str] = []
+    decisions: list[str] = []
+    first_positive_look: int | None = None
+    first_refutation_look: int | None = None
+    for look in range(1, len(looks) + 1):
+        path = look_dir / f"look-{look:03d}.json"
+        if not path.is_file():
+            continue
+        try:
+            certificate = _canonical_artifact(
+                path,
+                role=f"sequential look {look} certificate",
+            )
+            look_receipt = power_looks[look - 1]
+            if (
+                not isinstance(look_receipt, Mapping)
+                or look_receipt.get("look") != look
+            ):
+                raise ValueError("look power receipt does not match its ordinal")
+            alpha = look_receipt.get("family_alpha")
+            if (
+                not isinstance(alpha, Mapping)
+                or set(alpha) != {"numerator", "denominator"}
+                or type(alpha.get("numerator")) is not int
+                or type(alpha.get("denominator")) is not int
+            ):
+                raise ValueError("look family alpha is invalid")
+            rational_alpha = Rational(alpha["numerator"], alpha["denominator"])
+            canonical_alpha = {
+                "numerator": rational_alpha.numerator,
+                "denominator": rational_alpha.denominator,
+            }
+            if dict(alpha) != canonical_alpha:
+                raise ValueError("look family alpha is not canonical")
+
+            task_ids = frozenset(
+                task_id
+                for task_id, assigned_look in assignments.items()
+                if assigned_look <= look
+            )
+            expected_cell_ids = {
+                cell_id
+                for cell_id in plan.cell_ids
+                if plan.cell_definition(cell_id).get("task_id") in task_ids
+            }
+            scoped_records: list[Mapping[str, Any]] = []
+            record_receipts: list[dict[str, str]] = []
+            for cell_id in sorted(expected_cell_ids):
+                record = record_by_cell.get(cell_id)
+                if record is None:
+                    raise ValueError("cumulative cell scope is incomplete")
+                definition = record.get("definition")
+                commit = record.get("commit")
+                if (
+                    not isinstance(definition, Mapping)
+                    or dict(definition) != plan.cell_definition(cell_id)
+                    or not isinstance(commit, Mapping)
+                    or not _is_sha256(commit.get("result_sha256"))
+                    or not _is_sha256(commit.get("verification_sha256"))
+                ):
+                    raise ValueError("cumulative cell receipt is invalid")
+                scoped_records.append(record)
+                record_receipts.append(
+                    {
+                        "cell_id": cell_id,
+                        "result_sha256": commit["result_sha256"],
+                        "verification_sha256": commit["verification_sha256"],
+                    }
+                )
+            if len(scoped_records) != len(expected_cell_ids):
+                raise ValueError("cumulative cell scope is incomplete")
+
+            production = grade_campaign(
+                scoped_records,
+                plan=plan,
+                issuer_tasks=tasks,
+                trusted_contamination_root_sha256=(
+                    trusted_contamination_root_sha256
+                ),
+                trusted_campaign_policy_sha256=trusted_campaign_policy_sha256,
+                family_alpha=rational_alpha,
+                included_task_ids=task_ids,
+            )
+            independent_result = independent_grade_campaign(
+                scoped_records,
+                plan=plan,
+                issuer_tasks=tasks,
+                trusted_contamination_root_sha256=(
+                    trusted_contamination_root_sha256
+                ),
+                trusted_campaign_policy_sha256=trusted_campaign_policy_sha256,
+                family_alpha=canonical_alpha,
+                included_task_ids=task_ids,
+            )
+            if (
+                not isinstance(independent_result, dict)
+                or set(independent_result)
+                != {
+                    "semantic_grade",
+                    "semantic_grade_canonical_sha256",
+                    "implementation_sha256",
+                }
+            ):
+                raise ValueError("independent look grader returned an invalid envelope")
+            independent = independent_result.get("semantic_grade")
+            if not isinstance(independent, dict):
+                raise ValueError("independent look grader returned no semantic tree")
+            if independent_result.get(
+                "semantic_grade_canonical_sha256"
+            ) != _sha256_canonical(independent):
+                raise ValueError("independent look grade hash is invalid")
+            if not _is_sha256(independent_result.get("implementation_sha256")):
+                raise ValueError("independent look grader identity is invalid")
+            if canonical_json_bytes(production) != canonical_json_bytes(independent):
+                difference = _first_semantic_difference(production, independent)
+                raise ValueError(
+                    "production and independent look grades differ"
+                    + (f": {difference}" if difference is not None else "")
+                )
+
+            verdict = production.get("verdict")
+            terminal = look == len(looks)
+            if verdict == "gain_preverified":
+                decision = "positive_boundary_crossed"
+            elif verdict == "gain_refuted":
+                decision = "refutation_boundary_crossed"
+            elif terminal:
+                decision = "terminal_inconclusive"
+            else:
+                decision = "continue"
+            material = {
+                "schema": SEQUENTIAL_LOOK_CERTIFICATE_SCHEMA,
+                "campaign_name": plan.campaign_name,
+                "plan_sha256": plan.plan_sha256,
+                "look": look,
+                "terminal_look": terminal,
+                "previous_certificate_sha256": previous_sha256,
+                "look_power_receipt": dict(look_receipt),
+                "cumulative_task_count": len(task_ids),
+                "cumulative_cell_count": len(expected_cell_ids),
+                "cumulative_task_ids_sha256": _sha256_canonical(sorted(task_ids)),
+                "record_receipts": record_receipts,
+                "record_receipts_sha256": _sha256_canonical(record_receipts),
+                "production_grade": production,
+                "production_grade_sha256": _sha256_canonical(production),
+                "independent_grade": independent,
+                "independent_grade_sha256": _sha256_canonical(independent),
+                "independent_semantic_parity": True,
+                "decision": decision,
+                "claim_status": "candidate_external_final_verifier_required",
+            }
+            expected_certificate = {
+                **material,
+                "certificate_sha256": _sha256_canonical(material),
+            }
+            certificate_material = dict(certificate)
+            certificate_sha256 = certificate_material.pop(
+                "certificate_sha256",
+                None,
+            )
+            if certificate_sha256 != _sha256_canonical(certificate_material):
+                raise ValueError("certificate self-hash is invalid")
+            if certificate_material != material:
+                difference = _first_semantic_difference(
+                    material,
+                    certificate_material,
+                )
+                raise ValueError(
+                    "certificate differs from independent reconstruction"
+                    + (f": {difference}" if difference is not None else "")
+                )
+            previous_sha256 = expected_certificate["certificate_sha256"]
+            certificate_sha256s.append(previous_sha256)
+            decisions.append(decision)
+            if decision == "positive_boundary_crossed" and first_positive_look is None:
+                first_positive_look = look
+            if (
+                decision == "refutation_boundary_crossed"
+                and first_refutation_look is None
+            ):
+                first_refutation_look = look
+        except (OSError, TypeError, ValueError, KeyError) as exc:
+            failures.append(f"sequential look {look} validation failed: {exc}")
+
+    return failures, {
+        "required": True,
+        "verified": not failures,
+        "look_count": len(looks),
+        "verified_look_count": len(certificate_sha256s),
+        "certificate_head_sha256": previous_sha256,
+        "certificate_chain_sha256": _sha256_canonical(certificate_sha256s),
+        "decisions": decisions,
+        "first_positive_boundary_look": first_positive_look,
+        "first_refutation_boundary_look": first_refutation_look,
+        "terminal_decision": decisions[-1] if len(decisions) == len(looks) else None,
+    }
+
+
 def verify_campaign_evidence(
     campaign_dir: Path,
     *,
@@ -1796,6 +2139,19 @@ def verify_campaign_evidence(
         if contamination_trust_root
         else None
     )
+    sequential_failures, sequential_detail = _verify_sequential_look_chain(
+        campaign_dir,
+        plan=plan,
+        records=records,
+        tasks=tasks,
+        trusted_contamination_root_sha256=trusted_root,
+        trusted_campaign_policy_sha256=(
+            trusted_policy.policy_sha256 if trusted_policy is not None else None
+        ),
+    )
+    failures.extend(sequential_failures)
+    if sequential_detail.get("required") is True:
+        detail["sequential_looks"] = sequential_detail
     grade = grade_campaign(
         records,
         plan=plan,
