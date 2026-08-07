@@ -163,6 +163,53 @@ class CheatCodeRequest(BaseModel):
     silent: bool = False
 
 
+def _apply_camera_control(turn_on: bool) -> None:
+    """Work her own camera control, rather than explaining where it is.
+
+    "Turn on the camera" is a request for an action, and an assistant that
+    responds by describing the toggle has answered a different question. The
+    setting is the same one the UI's own switch writes, so this is her
+    pressing it — the state, the privacy record and the indicator all move
+    together, and the user sees the control change under their hands.
+    """
+    try:
+        from interface.routes.privacy import set_browser_camera_privacy
+
+        set_browser_camera_privacy(
+            enabled=bool(turn_on),
+            mode="browser_only" if turn_on else "off",
+            reason="switched by Aura at the owner's request",
+        )
+        # Tell the surface, so the toggle moves and the camera actually starts
+        # or stops. Without this the privacy record would say one thing and
+        # the hardware another, which is the worst possible split for a
+        # camera: a control that reads "on" over a device that is off, or the
+        # reverse.
+        from core.container import ServiceContainer
+
+        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        publish = getattr(orchestrator, "_publish_telemetry", None)
+        if publish is not None:
+            publish({"type": "camera_privacy", "enabled": bool(turn_on)})
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.sight",
+            exc,
+            action="could not operate the camera control on her own behalf",
+        )
+        try:
+            from core.conversation.failure_context import record_capability_failure
+
+            record_capability_failure(
+                "camera_control",
+                intent=f"switch the camera {'on' if turn_on else 'off'}",
+                cause="failed",
+                detail=f"{type(exc).__name__}: {exc}"[:200],
+            )
+        except _CHAT_RECOVERABLE_ERRORS:
+            pass
+
+
 def _publish_media_card(resolution: Any) -> None:
     """Put the player on screen.
 
@@ -20454,6 +20501,47 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             except _CHAT_RECOVERABLE_ERRORS as _media_exc:
                 record_degradation("chat.media", _media_exc)
                 logger.debug("Chat media preflight skipped: %s", _media_exc)
+
+            # Sight. "How many fingers am I holding up" is answerable only by
+            # looking, now, at this resolution — the presence lane's thumbnail
+            # cannot count fingers and may be seconds old. So the frame is
+            # captured for this turn and read by the multimodal model, and
+            # what it saw is injected as an observation she then speaks from.
+            #
+            # It is injected as a *reading*, not as an answer: the vision
+            # model's job is to say what is in the image, and hers is to
+            # answer the person. A 2B model asked to also be conversational
+            # starts hedging in assistant register instead of saying what is
+            # in front of it.
+            try:
+                from core.senses.sight_intent import classify as _classify_sight
+
+                _sight = _classify_sight(_original_user_message)
+                if _sight.kind == "look":
+                    from core.senses.sight import look as _look
+
+                    _seen = await _look(_sight.question)
+                    if _seen.ok:
+                        body.message = (
+                            "[you just looked through the camera. This is what "
+                            f"you can see right now: {_seen.answer}\n"
+                            "Answer them from this — it is your own observation, "
+                            "so say it as one. Do not describe it as an image or "
+                            "a frame, and do not add anything you cannot see.]\n\n"
+                            f"{body.message}"
+                        )
+                elif _sight.kind in ("camera_on", "camera_off"):
+                    _apply_camera_control(_sight.kind == "camera_on")
+                    body.message = (
+                        f"[you have just switched the camera "
+                        f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
+                        "using your own controls — it is done, not pending. Say so "
+                        "briefly the way a person confirms an action.]\n\n"
+                        f"{body.message}"
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
+                record_degradation("chat.sight", _sight_exc)
+                logger.debug("Chat sight preflight skipped: %s", _sight_exc)
 
             # Grounded recall: positional/temporal questions ("what did I first
             # ask?") are answered from the ACTUAL earliest/most-recent turn in the

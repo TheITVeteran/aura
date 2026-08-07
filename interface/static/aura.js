@@ -475,6 +475,75 @@ function stopCameraSignals() {
     state.cameraSignalCapture = null;
 }
 
+/**
+ * Take a frame because she was asked a question about right now.
+ *
+ * Deliberately not the presence lane below. That one samples 320×240 every
+ * few seconds to know whether somebody is there, which is all presence needs
+ * and nowhere near enough to count fingers or read a label — and it is
+ * whatever was captured last, not what is in front of the camera at the
+ * moment of the question.
+ *
+ * So this opens its own short-lived capture at a resolution a model can read,
+ * takes one frame, and posts it back against the request id the turn is
+ * waiting on. If the presence camera is already running its stream is reused,
+ * because starting a second one on the same device fails on most platforms
+ * and would be slower even where it does not.
+ */
+async function captureFrameForAura(request) {
+    const requestId = request && request.request_id;
+    if (!requestId) return;
+
+    // No camera permission from the user means no frame. The server's
+    // deadline expires and she says she could not look, which is true.
+    if (!state.cameraSignalWanted) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+
+    const width = Number(request.width) || 1280;
+    const height = Number(request.height) || 720;
+    let ownStream = null;
+    try {
+        let video = state.cameraSignalCapture && state.cameraSignalCapture.video;
+        if (!video) {
+            ownStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: width }, height: { ideal: height } },
+                audio: false,
+            });
+            video = document.createElement('video');
+            video.setAttribute('playsinline', 'true');
+            video.muted = true;
+            video.srcObject = ownStream;
+            await video.play();
+            // A camera that has just started returns black or half-exposed
+            // frames for the first moments while it auto-exposes. Answering
+            // from one of those is answering from a dark room that is not
+            // dark.
+            await new Promise((resolve) => setTimeout(resolve, 320));
+        }
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || width;
+        canvas.height = video.videoHeight || height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        await postInteractionSignal('/api/signals/camera_capture', {
+            request_id: requestId,
+            frame_data_url: canvas.toDataURL('image/jpeg', 0.85),
+            width: canvas.width,
+            height: canvas.height,
+        }, { quiet: true });
+    } catch (err) {
+        console.warn('[sight] capture failed', err);
+    } finally {
+        // Only tear down a stream this function opened. The presence lane
+        // owns its own and is still using it.
+        if (ownStream) ownStream.getTracks().forEach((t) => t.stop());
+    }
+}
+
 function captureCameraSignalFrame() {
     if (!state.cameraSignalActive || !state.cameraSignalCapture) return;
     const { video, canvas, ctx } = state.cameraSignalCapture;
@@ -2670,6 +2739,24 @@ function handleWsEvent(data) {
         finishStreamMsg();
         $('typing-ind').classList.remove('show');
         setChatPanelState('idle');
+    } else if (type === 'camera_capture_request') {
+        void captureFrameForAura(data);
+    } else if (type === 'camera_privacy') {
+        // She operated her own camera control. The visible control has to move
+        // with it, or the UI shows one state over hardware in another — the
+        // worst possible split for a camera, and the one that destroys trust
+        // in the indicator permanently.
+        const wanted = !!data.enabled;
+        state.cameraSignalWanted = wanted;
+        // The health poll would repaint this from the server a moment later
+        // anyway; the lock stops it fighting the change in the meantime.
+        state._privacyLockUntil = Date.now() + 3000;
+        const camBtn = $('btn-cam');
+        if (camBtn) {
+            camBtn.classList.toggle('disabled', !wanted);
+            camBtn.innerHTML = wanted ? '<span>● CAM</span>' : '<span>● CAM OFF</span>';
+        }
+        if (wanted) { void startCameraSignals(); } else { stopCameraSignals(); }
     } else if (type === 'status') {
         if (data.narrative) $('narrative').textContent = data.narrative;
     } else if (type === 'activity') {

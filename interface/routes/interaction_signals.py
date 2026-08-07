@@ -109,6 +109,43 @@ async def api_signal_vision(payload: VisionSignalPayload, _: None = Depends(_req
     return JSONResponse({"ok": True})
 
 
+class CameraCapturePayload(BaseModel):
+    request_id: str
+    frame_data_url: str
+    width: int = 0
+    height: int = 0
+
+
+@router.post("/signals/camera_capture")
+async def api_camera_capture(
+    payload: CameraCapturePayload, _: None = Depends(_require_internal)
+):
+    """A frame she asked for, on its way back to the turn that is waiting.
+
+    Distinct from `/signals/vision`, which is the presence lane: that one
+    samples a thumbnail every few seconds to know whether somebody is there,
+    and it is deliberately too small and too stale to answer a question about
+    right now. This is the reply to a specific request, correlated by id, and
+    the turn holding that id is blocked on it.
+    """
+    if not _camera_signal_allowed():
+        raise HTTPException(status_code=409, detail="Camera privacy is disabled")
+
+    from core.senses.sight import decode_frame, get_capture_broker
+
+    frame = decode_frame(payload.frame_data_url)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Invalid or oversized frame")
+    frame.width = int(payload.width or 0)
+    frame.height = int(payload.height or 0)
+
+    delivered = await get_capture_broker().deliver(payload.request_id, frame)
+    # A late frame is not an error worth raising — the turn that wanted it has
+    # already given up and said so — but the client is told it was too late so
+    # it can stop retrying.
+    return JSONResponse({"ok": True, "delivered": delivered})
+
+
 @router.get("/signals/status")
 async def api_signal_status(_: None = Depends(_require_internal)):
     engine = _get_engine()

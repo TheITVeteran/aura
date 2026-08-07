@@ -220,6 +220,14 @@ class MemorySynthesizer:
     #: of not adding a second, faster timer to watch the first one.
     SESSION_IDLE_SECONDS = SYNTHESIS_INTERVAL_SECONDS
 
+    #: How long the session-end listener waits on the bus before re-checking
+    #: whether it has been asked to stop. Nothing arriving is the normal
+    #: state — sessions end rarely — so this is a liveness poll, not a
+    #: deadline: an unbounded wait would keep the listener and its bus
+    #: subscription alive for the life of the process after `running` goes
+    #: false, because a queue nobody publishes to never wakes anyone up.
+    SESSION_END_POLL_SECONDS = 1.0
+
     def __init__(self, snapshot_path: Path | None = None):
         self._memory_facade = None
         self._snapshot: WorldviewSnapshot | None = None
@@ -451,7 +459,17 @@ class MemorySynthesizer:
         """
         while self.running:
             try:
-                event = await queue.get()
+                # Bounded, so the timeout is the poll interval rather than a
+                # failure: sessions end rarely, and an unbounded get() cannot
+                # notice `self.running` going false — the listener would
+                # outlive its synthesizer, holding a bus subscription for the
+                # life of the process.
+                try:
+                    event = await asyncio.wait_for(
+                        queue.get(), timeout=self.SESSION_END_POLL_SECONDS
+                    )
+                except TimeoutError:
+                    continue
                 self.notify_session_ended(event)
             except asyncio.CancelledError:
                 raise

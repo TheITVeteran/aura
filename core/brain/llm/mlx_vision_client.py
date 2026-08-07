@@ -619,3 +619,39 @@ class MLXVisionClient:
             logger.debug(
                 "Suppressed %s in core.brain.llm.mlx_vision_client: %s", type(_exc).__name__, _exc
             )
+
+
+# ── one worker, shared ────────────────────────────────────────────────────
+#
+# Constructing this class spawns a subprocess that loads a 1.2 GB model. Each
+# call site that builds its own therefore holds its own copy — on a host whose
+# resident 32B already wires ~20 GB, two or three of those is the difference
+# between a working machine and a swapping one. The class stays constructible
+# (tests and the adapters that pass an explicit model_path rely on it); this
+# is the accessor for everything that just wants "the vision worker".
+
+_SHARED_CLIENT: MLXVisionClient | None = None
+_SHARED_CLIENT_LOCK = threading.Lock()
+
+
+def get_vision_client(model_path: str = DEFAULT_VISION_MODEL) -> MLXVisionClient:
+    """The process-wide vision worker, started lazily on first sight."""
+    global _SHARED_CLIENT
+    with _SHARED_CLIENT_LOCK:
+        if _SHARED_CLIENT is None or _SHARED_CLIENT.model_path != str(model_path):
+            if _SHARED_CLIENT is not None:
+                # A different model was asked for. Stop the old worker rather
+                # than leaking it — two resident vision models is exactly the
+                # cost this accessor exists to avoid.
+                try:
+                    _SHARED_CLIENT.stop(reason="vision_model_changed")
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                    logger.exception("Replacing vision worker: stop of the old one failed")
+            _SHARED_CLIENT = MLXVisionClient(model_path)
+        return _SHARED_CLIENT
+
+
+def reset_vision_client_for_test() -> None:
+    global _SHARED_CLIENT
+    with _SHARED_CLIENT_LOCK:
+        _SHARED_CLIENT = None
