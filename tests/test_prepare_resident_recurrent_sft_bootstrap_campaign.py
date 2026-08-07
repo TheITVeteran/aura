@@ -290,9 +290,12 @@ def test_invalid_campaign_id_is_rejected_before_any_artifact_write(
 
 def test_profile_plan_covers_exact_steps_without_gaps() -> None:
     config, *_ = prepare._profile_config("full", seed=23)
-    assert config.objective == prepare.OBJECTIVE_NAME_V3
+    assert config.objective == prepare.OBJECTIVE_NAME_V4
     assert config.generated_rollin is not None
     assert config.branch_specialization is not None
+    assert config.trajectory_objective is not None
+    assert config.trajectory_objective.probe_steps == (1, 2, 4, 8)
+    assert config.trajectory_objective.improvement_weight == 1.0
     assert config.role_conditioned_branches == 2
     assert config.structural_warmup_steps == 8
     assert config.validation_examples == 24

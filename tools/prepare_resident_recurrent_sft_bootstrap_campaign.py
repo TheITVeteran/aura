@@ -37,6 +37,9 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
     RecurrenceTrainingTask,
     disjoint_task_split,
 )
+from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointTrajectoryConfig,
+)
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     GeneratedRollinSelectionConfig,
 )
@@ -44,10 +47,9 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     BranchSpecializationConfig,
 )
 from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
-    OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V4,
     REQUIRED_SOURCE_ROLES,
-    TRAINER_CONFIG_SCHEMA_V3,
-    TRAINER_CONFIG_SCHEMA_V4,
+    TRAINER_CONFIG_SCHEMA_V5,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -364,12 +366,17 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V3,
-                objective=OBJECTIVE_NAME_V3,
+                schema=TRAINER_CONFIG_SCHEMA_V5,
+                objective=OBJECTIVE_NAME_V4,
                 generated_rollin=GeneratedRollinSelectionConfig(),
                 branch_specialization=BranchSpecializationConfig(
                     weight=8.0,
                     target_separation=0.30,
+                ),
+                trajectory_objective=ExactAdjointTrajectoryConfig(
+                    probe_steps=(1, 2),
+                    improvement_weight=1.0,
+                    improvement_margin=0.05,
                 ),
                 structural_warmup_steps=4,
                 structural_warmup_learning_rate=1e-4,
@@ -386,6 +393,7 @@ def _profile_config(
                 lora_layers=8,
                 evaluate_every=1,
                 validation_examples=4,
+                intermediate_validation_examples=1,
                 max_seq_length=512,
                 memory_fraction=0.42,
                 branch_indices=(0, 1),
@@ -401,12 +409,17 @@ def _profile_config(
         return (
             ResidentSFTBootstrapConfig(
                 seed=seed,
-                schema=TRAINER_CONFIG_SCHEMA_V4,
-                objective=OBJECTIVE_NAME_V3,
+                schema=TRAINER_CONFIG_SCHEMA_V5,
+                objective=OBJECTIVE_NAME_V4,
                 generated_rollin=GeneratedRollinSelectionConfig(),
                 branch_specialization=BranchSpecializationConfig(
                     weight=8.0,
                     target_separation=0.30,
+                ),
+                trajectory_objective=ExactAdjointTrajectoryConfig(
+                    probe_steps=(1, 2, 4, 8),
+                    improvement_weight=1.0,
+                    improvement_margin=0.05,
                 ),
                 structural_warmup_steps=8,
                 structural_warmup_learning_rate=1e-4,

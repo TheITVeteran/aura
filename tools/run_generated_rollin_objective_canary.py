@@ -28,6 +28,9 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec  # noqa
 from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noqa: E402
     full_weight_checkpoint_identity,
 )
+from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointTrajectoryConfig,
+)
 from core.learning.recurrence_native_objective_v5 import (  # noqa: E402
     GeneratedRollinSelectionConfig,
     derive_rollin_seed,
@@ -44,6 +47,7 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
+    recurrent_policy_sha256,
 )
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
@@ -139,6 +143,7 @@ def _evaluate(
     spec: RLCExecutionSpec,
     generated_config: GeneratedRollinSelectionConfig,
     specialization_config: BranchSpecializationConfig,
+    trajectory_config: ExactAdjointTrajectoryConfig,
     campaign_seed: int,
 ) -> dict[str, Any]:
     seed = derive_rollin_seed(
@@ -156,6 +161,8 @@ def _evaluate(
         base_seed=seed,
         generated_config=generated_config,
         specialization_config=specialization_config,
+        trajectory_config=trajectory_config,
+        trajectory_policy_sha256=recurrent_policy_sha256(model, spec),
     )
     receipt = validate_generated_rollin_specialization_receipt(
         evaluation.receipt()
@@ -165,6 +172,7 @@ def _evaluate(
         "loss": evaluation.value,
         "lexical_loss": evaluation.generated.value,
         "specialization_loss": evaluation.specialization.value,
+        "trajectory_loss": evaluation.trajectory.value,
         "branch_separations": list(evaluation.specialization.separations),
         "branch_values": list(evaluation.branch_values),
         "branch_weights": list(evaluation.branch_weights),
@@ -281,6 +289,11 @@ def run_canary(
         weight=specialization_weight,
         target_separation=0.30,
     )
+    trajectory_config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=1.0,
+        improvement_margin=0.05,
+    )
     with (
         standalone_model_lane(
             owner_id=f"generated-rollin-canary:{out_dir.name}",
@@ -334,6 +347,7 @@ def run_canary(
             spec=spec,
             generated_config=objective_config,
             specialization_config=specialization_config,
+            trajectory_config=trajectory_config,
             campaign_seed=seed,
         )
         separation_before = _branch_separations(
@@ -393,6 +407,7 @@ def run_canary(
             spec=spec,
             generated_config=objective_config,
             specialization_config=specialization_config,
+            trajectory_config=trajectory_config,
             campaign_seed=seed,
         )
         # Reset momentum when the structural constraint is met. Continuing an
@@ -419,6 +434,8 @@ def run_canary(
                 base_seed=rollin_seed,
                 generated_config=objective_config,
                 specialization_config=specialization_config,
+                trajectory_config=trajectory_config,
+                trajectory_policy_sha256=recurrent_policy_sha256(model, spec),
             )
             receipt = validate_generated_rollin_specialization_receipt(
                 result.evaluation.receipt()
@@ -431,6 +448,7 @@ def run_canary(
                     "loss": result.value,
                     "lexical_loss": result.evaluation.generated.value,
                     "specialization_loss": result.evaluation.specialization.value,
+                    "trajectory_loss": result.evaluation.trajectory.value,
                     "branch_separations": list(
                         result.evaluation.specialization.separations
                     ),
@@ -449,6 +467,7 @@ def run_canary(
             spec=spec,
             generated_config=objective_config,
             specialization_config=specialization_config,
+            trajectory_config=trajectory_config,
             campaign_seed=seed,
         )
         separation_after = _branch_separations(
@@ -502,6 +521,8 @@ def run_canary(
         **_branch_specialization_gates(loss_trail, separation_after),
         "heldout_lexical_non_regression": after["lexical_loss"]
         <= before["lexical_loss"] + 1e-6,
+        "heldout_depth_improvement_non_regression": after["trajectory_loss"]
+        <= before["trajectory_loss"] + 1e-6,
     }
     body = {
         "schema": CANARY_SCHEMA,
@@ -516,6 +537,7 @@ def run_canary(
         "objective_config": {
             "generated": objective_config.to_dict(),
             "specialization": specialization_config.to_dict(),
+            "trajectory": trajectory_config.to_dict(),
             "warmup_steps": warmup_steps,
             "warmup_learning_rate": float(warmup_learning_rate),
             "joint_learning_rate": float(joint_learning_rate),

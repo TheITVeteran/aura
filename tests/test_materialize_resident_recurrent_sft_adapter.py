@@ -28,6 +28,7 @@ from core.brain.llm.latent_cortex.resident_recurrent_sft_adapter_identity import
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 from core.learning.recurrence_native_objective_v5 import (
+    GENERATED_ROLLIN_CONFIG_SCHEMA_V1,
     GeneratedRollinBranchEvidence,
     GeneratedRollinLivePathEvaluation,
     GeneratedRollinSelectionConfig,
@@ -97,7 +98,9 @@ def _objective_record() -> dict[str, Any]:
         answer_tokens_sha256="7" * 64,
         bridge_tokens_sha256="8" * 64,
         config=GeneratedRollinSelectionConfig(
+            schema=GENERATED_ROLLIN_CONFIG_SCHEMA_V1,
             branch_softmin_temperature=0.5,
+            branch_aggregation="detached_softmin",
         ),
         base_seed=10,
     )

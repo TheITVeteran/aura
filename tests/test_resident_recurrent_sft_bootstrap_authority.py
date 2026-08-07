@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v2 import ExactAdjointTrajectoryConfig
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
@@ -20,12 +21,14 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (
     LEGACY_REQUIRED_SOURCE_ROLES,
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V4,
     PREVIOUS_AUTHORITY_SCHEMA,
     PREVIOUS_REQUIRED_SOURCE_ROLES,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
     TRAINER_CONFIG_SCHEMA_V3,
     TRAINER_CONFIG_SCHEMA_V4,
+    TRAINER_CONFIG_SCHEMA_V5,
     TRAINING_AUTHORITY,
     ResidentSFTBootstrapAuthorityError,
     ResidentSFTBootstrapConfig,
@@ -191,6 +194,34 @@ def test_v4_config_binds_rotating_intermediate_validation_budget() -> None:
     ):
         invalid = config.to_dict()
         invalid["intermediate_validation_examples"] = 25
+        ResidentSFTBootstrapConfig.from_dict(invalid)
+
+
+def test_v5_config_requires_and_round_trips_depth_improvement_objective() -> None:
+    config = ResidentSFTBootstrapConfig(
+        seed=2026080701,
+        max_steps=104,
+        schema=TRAINER_CONFIG_SCHEMA_V5,
+        objective=OBJECTIVE_NAME_V4,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(),
+        trajectory_objective=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2, 4, 8),
+            improvement_weight=1.0,
+            improvement_margin=0.05,
+        ),
+        structural_warmup_steps=8,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+        validation_examples=24,
+        intermediate_validation_examples=4,
+    )
+
+    assert ResidentSFTBootstrapConfig.from_dict(config.to_dict()) == config
+    invalid = config.to_dict()
+    invalid.pop("trajectory_objective")
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="schema_invalid"):
         ResidentSFTBootstrapConfig.from_dict(invalid)
 
 

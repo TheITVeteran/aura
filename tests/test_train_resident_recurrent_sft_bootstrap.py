@@ -14,6 +14,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v2 import ExactAdjointTrajectoryConfig
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
@@ -22,10 +23,12 @@ from core.learning.recurrent_sft_execution import adapter_tensor_fingerprint
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V4,
     REQUIRED_SOURCE_ROLES,
     TRAINER_CONFIG_SCHEMA_V2,
     TRAINER_CONFIG_SCHEMA_V3,
     TRAINER_CONFIG_SCHEMA_V4,
+    TRAINER_CONFIG_SCHEMA_V5,
     ResidentSFTBootstrapConfig,
     build_authority,
     build_dataset_commitment,
@@ -127,6 +130,46 @@ def test_v3_phase_machine_resets_only_after_measured_structural_target() -> None
         match="warmup_target_not_reached",
     ):
         trainer._next_training_phase(config, [incomplete] * 4)
+
+
+def test_v4_objective_derives_a_terminal_depth_ladder_per_row() -> None:
+    config = ResidentSFTBootstrapConfig(
+        seed=17,
+        max_steps=8,
+        max_invocation_steps=2,
+        evaluate_every=2,
+        validation_examples=4,
+        intermediate_validation_examples=1,
+        schema=TRAINER_CONFIG_SCHEMA_V5,
+        objective=OBJECTIVE_NAME_V4,
+        generated_rollin=GeneratedRollinSelectionConfig(),
+        branch_specialization=BranchSpecializationConfig(),
+        trajectory_objective=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2, 4, 8),
+            improvement_weight=1.0,
+        ),
+        structural_warmup_steps=2,
+        structural_warmup_learning_rate=1e-4,
+        role_conditioned_branches=2,
+        branch_indices=(0, 1),
+    )
+
+    assert trainer._trajectory_config_for_row(
+        config,
+        RLCExecutionSpec(recurrent_steps=2),
+    ).probe_steps == (1, 2)
+    assert trainer._trajectory_config_for_row(
+        config,
+        RLCExecutionSpec(recurrent_steps=4),
+    ).probe_steps == (1, 2, 4)
+    with pytest.raises(
+        trainer.ResidentSFTBootstrapTrainingError,
+        match="trajectory_depth_uncovered",
+    ):
+        trainer._trajectory_config_for_row(
+            config,
+            RLCExecutionSpec(recurrent_steps=3),
+        )
 
 
 def test_trainer_releases_materialized_graphs_before_the_next_objective() -> None:

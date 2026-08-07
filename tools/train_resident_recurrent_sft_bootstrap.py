@@ -16,6 +16,7 @@ import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Final, Never, cast
@@ -48,6 +49,7 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     attach_recurrent_policy_adapters,
+    recurrent_policy_sha256,
 )
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
@@ -58,7 +60,9 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     OBJECTIVE_NAME,
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V4,
     TRAINER_CONFIG_SCHEMA_V4,
+    TRAINER_CONFIG_SCHEMA_V5,
     ResidentSFTBootstrapConfig,
     authorize_bound_artifacts,
     sha256_bytes,
@@ -323,7 +327,7 @@ def _validation_selection(
     panel = order[: config.validation_examples]
     if intermediate_cycle is None:
         return tuple(enumerate(panel))
-    if config.schema != TRAINER_CONFIG_SCHEMA_V4:
+    if config.schema not in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
         _fail("resident_sft_trainer_intermediate_validation_not_supported")
     if type(intermediate_cycle) is not int or intermediate_cycle < 0:
         _fail("resident_sft_trainer_intermediate_validation_cycle_invalid")
@@ -373,7 +377,11 @@ def _validation_summary(
             branch_weights: list[float] | None = None
             objective_receipt: dict[str, Any] | None = None
             rollin_base_seed: int | None = None
-        elif objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3}:
+        elif objective_name in {
+            OBJECTIVE_NAME_V2,
+            OBJECTIVE_NAME_V3,
+            OBJECTIVE_NAME_V4,
+        }:
             if config.generated_rollin is None:
                 _fail("resident_sft_trainer_rollin_config_missing")
             rollin_base_seed = derive_rollin_seed(
@@ -413,6 +421,16 @@ def _validation_summary(
                     base_seed=rollin_base_seed,
                     generated_config=config.generated_rollin,
                     specialization_config=config.branch_specialization,
+                    trajectory_config=(
+                        _trajectory_config_for_row(config, row_spec)
+                        if objective_name == OBJECTIVE_NAME_V4
+                        else None
+                    ),
+                    trajectory_policy_sha256=(
+                        recurrent_policy_sha256(model, row_spec)
+                        if objective_name == OBJECTIVE_NAME_V4
+                        else None
+                    ),
                     bridge_tokens=row["bridge_tokens"],
                     branch_indices=config.branch_indices,
                 )
@@ -460,7 +478,7 @@ def _validation_summary(
                     "objective_receipt": objective_receipt,
                 }
             )
-        if objective_name == OBJECTIVE_NAME_V3:
+        if objective_name in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
             assert specialization_loss is not None
             assert branch_separations is not None
             record.update(
@@ -470,6 +488,9 @@ def _validation_summary(
                     "branch_separations": branch_separations,
                 }
             )
+            if objective_name == OBJECTIVE_NAME_V4:
+                assert result.trajectory is not None
+                record["trajectory_loss"] = result.trajectory.value
         records.append(record)
     mean = sum(record["loss"] for record in records) / len(records)
     body = {
@@ -485,9 +506,9 @@ def _validation_summary(
         ),
         "branch_indices": list(config.branch_indices),
     }
-    if objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3}:
+    if objective_name in {OBJECTIVE_NAME_V2, OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
         body["objective"] = objective_name
-    if config.schema == TRAINER_CONFIG_SCHEMA_V4:
+    if config.schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
         body["validation_window"] = {
             "schema": "aura.resident_recurrent_sft_validation_window.v1",
             "panel_examples": len(panel),
@@ -509,7 +530,7 @@ def _optimizer_phase_from_checkpoint(
     config: ResidentSFTBootstrapConfig,
     loss_trail: Sequence[Mapping[str, Any]],
 ) -> str:
-    if config.objective != OBJECTIVE_NAME_V3:
+    if config.objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
         return JOINT_PHASE
     if not loss_trail:
         return STRUCTURAL_WARMUP_PHASE
@@ -523,7 +544,7 @@ def _next_training_phase(
     config: ResidentSFTBootstrapConfig,
     loss_trail: Sequence[Mapping[str, Any]],
 ) -> str:
-    if config.objective != OBJECTIVE_NAME_V3:
+    if config.objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
         return JOINT_PHASE
     warmup = [
         record
@@ -537,9 +558,28 @@ def _next_training_phase(
     return STRUCTURAL_WARMUP_PHASE
 
 
+def _trajectory_config_for_row(
+    config: ResidentSFTBootstrapConfig,
+    row_spec: RLCExecutionSpec,
+):
+    if config.objective != OBJECTIVE_NAME_V4:
+        return None
+    source = config.trajectory_objective
+    if source is None:
+        _fail("resident_sft_trainer_trajectory_config_missing")
+    probe_steps = tuple(
+        step for step in source.probe_steps if step <= row_spec.recurrent_steps
+    )
+    if len(probe_steps) < 2 or probe_steps[-1] != row_spec.recurrent_steps:
+        _fail("resident_sft_trainer_trajectory_depth_uncovered")
+    derived = replace(source, probe_steps=probe_steps)
+    derived.validate_depth(row_spec.recurrent_steps)
+    return derived
+
+
 def _make_optimizer(config: ResidentSFTBootstrapConfig, phase: str, optim: Any) -> Any:
     if phase == STRUCTURAL_WARMUP_PHASE:
-        if config.objective != OBJECTIVE_NAME_V3:
+        if config.objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
             _fail("resident_sft_trainer_structural_optimizer_unsupported")
         learning_rate = config.structural_warmup_learning_rate
         weight_decay = 0.0
@@ -885,7 +925,7 @@ def _run(args: argparse.Namespace) -> int:
                 ),
                 role_conditioned_branches=(
                     config.role_conditioned_branches
-                    if config.objective == OBJECTIVE_NAME_V3
+                    if config.objective in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}
                     else None
                 ),
             )
@@ -897,7 +937,7 @@ def _run(args: argparse.Namespace) -> int:
             topology_sha = adapter_topology_sha256(expected_adapter)
             optimizer_phase = (
                 STRUCTURAL_WARMUP_PHASE
-                if config.objective == OBJECTIVE_NAME_V3
+                if config.objective in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}
                 else JOINT_PHASE
             )
             optimizer = _make_optimizer(config, optimizer_phase, optim)
@@ -1160,7 +1200,7 @@ def _run(args: argparse.Namespace) -> int:
                     lexical_loss = result.value
                     specialization_loss = None
                     branch_separations = None
-                elif config.objective == OBJECTIVE_NAME_V3:
+                elif config.objective in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
                     if config.branch_specialization is None:
                         _fail("resident_sft_trainer_specialization_config_missing")
                     if training_phase == STRUCTURAL_WARMUP_PHASE:
@@ -1207,6 +1247,16 @@ def _run(args: argparse.Namespace) -> int:
                             base_seed=rollin_base_seed,
                             generated_config=config.generated_rollin,
                             specialization_config=config.branch_specialization,
+                            trajectory_config=(
+                                _trajectory_config_for_row(config, row_spec)
+                                if config.objective == OBJECTIVE_NAME_V4
+                                else None
+                            ),
+                            trajectory_policy_sha256=(
+                                recurrent_policy_sha256(model, row_spec)
+                                if config.objective == OBJECTIVE_NAME_V4
+                                else None
+                            ),
                             bridge_tokens=row["bridge_tokens"],
                             branch_indices=config.branch_indices,
                         )
@@ -1319,7 +1369,7 @@ def _run(args: argparse.Namespace) -> int:
                             "rollin_base_seed": rollin_base_seed,
                         }
                     )
-                if config.objective == OBJECTIVE_NAME_V3:
+                if config.objective in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
                     assert specialization_loss is not None
                     assert branch_separations is not None
                     loss_record.update(
@@ -1330,6 +1380,16 @@ def _run(args: argparse.Namespace) -> int:
                             "branch_separations": branch_separations,
                         }
                     )
+                    if (
+                        config.objective == OBJECTIVE_NAME_V4
+                        and training_phase == JOINT_PHASE
+                    ):
+                        trajectory_receipt = objective_receipt.get(
+                            "trajectory_receipt"
+                        )
+                        if not isinstance(trajectory_receipt, dict):
+                            _fail("resident_sft_trainer_trajectory_receipt_missing")
+                        loss_record["trajectory_loss"] = trajectory_receipt["value"]
                     if training_phase == STRUCTURAL_WARMUP_PHASE:
                         assert warmup_target_reached is not None
                         assert separations_after is not None
@@ -1347,7 +1407,9 @@ def _run(args: argparse.Namespace) -> int:
                 if step % config.evaluate_every == 0 or terminal:
                     intermediate_cycle = (
                         None
-                        if terminal or config.schema != TRAINER_CONFIG_SCHEMA_V4
+                        if terminal
+                        or config.schema
+                        not in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}
                         else step // config.evaluate_every - 1
                     )
                     validation = _validation_summary(

@@ -25,6 +25,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     CURRENT_REGISTRY_VERSION,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.recurrence_native_objective_v2 import ExactAdjointTrajectoryConfig
 from core.learning.recurrence_native_objective_v5 import (
     GeneratedRollinSelectionConfig,
 )
@@ -47,11 +48,13 @@ TRAINER_CONFIG_SCHEMA: Final = "aura.resident_recurrent_sft_bootstrap_config.v1"
 TRAINER_CONFIG_SCHEMA_V2: Final = "aura.resident_recurrent_sft_bootstrap_config.v2"
 TRAINER_CONFIG_SCHEMA_V3: Final = "aura.resident_recurrent_sft_bootstrap_config.v3"
 TRAINER_CONFIG_SCHEMA_V4: Final = "aura.resident_recurrent_sft_bootstrap_config.v4"
+TRAINER_CONFIG_SCHEMA_V5: Final = "aura.resident_recurrent_sft_bootstrap_config.v5"
 TRAINING_AUTHORITY: Final = "resident_32b_cached_recurrent_sft_bootstrap_only"
 CAMPAIGN_SCOPES: Final = frozenset({"canary_lifecycle", "full_bootstrap"})
 OBJECTIVE_NAME: Final = "cached_supervised_live_path_ce.v1"
 OBJECTIVE_NAME_V2: Final = "generated_rollin_branch_softmin_cached_ce.v2"
 OBJECTIVE_NAME_V3: Final = "generated_rollin_role_specialized_cached_ce.v3"
+OBJECTIVE_NAME_V4: Final = "generated_rollin_depth_specialized_cached_ce.v4"
 SAMPLER_NAME: Final = "seeded_family_depth_balanced_without_replacement"
 
 LEGACY_REQUIRED_SOURCE_ROLES: Final = frozenset(
@@ -252,6 +255,7 @@ class ResidentSFTBootstrapConfig:
     objective: str = OBJECTIVE_NAME
     generated_rollin: GeneratedRollinSelectionConfig | None = None
     branch_specialization: BranchSpecializationConfig | None = None
+    trajectory_objective: ExactAdjointTrajectoryConfig | None = None
     structural_warmup_steps: int = 0
     structural_warmup_learning_rate: float = 0.0
     role_conditioned_branches: int = 0
@@ -266,6 +270,8 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V2,
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
+            TRAINER_CONFIG_SCHEMA_V5,
         }:
             _fail("resident_sft_config_schema_invalid")
         expected_objective = {
@@ -273,6 +279,7 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V2: OBJECTIVE_NAME_V2,
             TRAINER_CONFIG_SCHEMA_V3: OBJECTIVE_NAME_V3,
             TRAINER_CONFIG_SCHEMA_V4: OBJECTIVE_NAME_V3,
+            TRAINER_CONFIG_SCHEMA_V5: OBJECTIVE_NAME_V4,
         }[self.schema]
         if self.objective != expected_objective:
             _fail("resident_sft_config_objective_invalid")
@@ -281,12 +288,18 @@ class ResidentSFTBootstrapConfig:
                 _fail("resident_sft_config_rollin_not_supported")
         elif not isinstance(self.generated_rollin, GeneratedRollinSelectionConfig):
             _fail("resident_sft_config_rollin_required")
-        if self.schema not in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}:
+        specialization_schemas = {
+            TRAINER_CONFIG_SCHEMA_V3,
+            TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
+        }
+        if self.schema not in specialization_schemas:
             if (
                 self.branch_specialization is not None
                 or self.structural_warmup_steps != 0
                 or self.structural_warmup_learning_rate != 0.0
                 or self.role_conditioned_branches != 0
+                or self.trajectory_objective is not None
             ):
                 _fail("resident_sft_config_specialization_not_supported")
         else:
@@ -314,7 +327,15 @@ class ResidentSFTBootstrapConfig:
             )
             if self.role_conditioned_branches != len(self.branch_indices):
                 _fail("resident_sft_role_conditioned_branch_count_mismatch")
-        if self.schema == TRAINER_CONFIG_SCHEMA_V4:
+            if self.schema == TRAINER_CONFIG_SCHEMA_V5:
+                if not isinstance(
+                    self.trajectory_objective,
+                    ExactAdjointTrajectoryConfig,
+                ):
+                    _fail("resident_sft_config_trajectory_required")
+            elif self.trajectory_objective is not None:
+                _fail("resident_sft_config_trajectory_not_supported")
+        if self.schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
             _integer(
                 self.intermediate_validation_examples,
                 role="resident_sft_intermediate_validation_examples",
@@ -465,10 +486,15 @@ class ResidentSFTBootstrapConfig:
             TRAINER_CONFIG_SCHEMA_V2,
             TRAINER_CONFIG_SCHEMA_V3,
             TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
         }:
             assert self.generated_rollin is not None
             result["generated_rollin"] = self.generated_rollin.to_dict()
-        if self.schema in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}:
+        if self.schema in {
+            TRAINER_CONFIG_SCHEMA_V3,
+            TRAINER_CONFIG_SCHEMA_V4,
+            TRAINER_CONFIG_SCHEMA_V5,
+        }:
             assert self.branch_specialization is not None
             result.update(
                 {
@@ -480,10 +506,13 @@ class ResidentSFTBootstrapConfig:
                     "role_conditioned_branches": self.role_conditioned_branches,
                 }
             )
-        if self.schema == TRAINER_CONFIG_SCHEMA_V4:
+        if self.schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}:
             result["intermediate_validation_examples"] = (
                 self.intermediate_validation_examples
             )
+        if self.schema == TRAINER_CONFIG_SCHEMA_V5:
+            assert self.trajectory_objective is not None
+            result["trajectory_objective"] = self.trajectory_objective.to_dict()
         return result
 
     @classmethod
@@ -536,6 +565,28 @@ class ResidentSFTBootstrapConfig:
                     role_conditioned_branches=2,
                 ).to_dict()
             )
+        elif schema == TRAINER_CONFIG_SCHEMA_V5:
+            expected = set(
+                cls(
+                    seed=0,
+                    max_steps=2,
+                    max_invocation_steps=1,
+                    evaluate_every=1,
+                    validation_examples=2,
+                    intermediate_validation_examples=1,
+                    schema=TRAINER_CONFIG_SCHEMA_V5,
+                    objective=OBJECTIVE_NAME_V4,
+                    generated_rollin=GeneratedRollinSelectionConfig(),
+                    branch_specialization=BranchSpecializationConfig(),
+                    trajectory_objective=ExactAdjointTrajectoryConfig(
+                        probe_steps=(1, 2),
+                        improvement_weight=1.0,
+                    ),
+                    structural_warmup_steps=1,
+                    structural_warmup_learning_rate=1e-4,
+                    role_conditioned_branches=2,
+                ).to_dict()
+            )
         else:
             _fail("resident_sft_config_schema_invalid")
         record = _exact(raw, expected, role="resident_sft_config")
@@ -563,7 +614,7 @@ class ResidentSFTBootstrapConfig:
                 validation_examples=record["validation_examples"],
                 intermediate_validation_examples=(
                     record["intermediate_validation_examples"]
-                    if schema == TRAINER_CONFIG_SCHEMA_V4
+                    if schema in {TRAINER_CONFIG_SCHEMA_V4, TRAINER_CONFIG_SCHEMA_V5}
                     else 0
                 ),
                 max_seq_length=record["max_seq_length"],
@@ -578,6 +629,7 @@ class ResidentSFTBootstrapConfig:
                         TRAINER_CONFIG_SCHEMA_V2,
                         TRAINER_CONFIG_SCHEMA_V3,
                         TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
                     }
                     else None
                 ),
@@ -585,22 +637,49 @@ class ResidentSFTBootstrapConfig:
                     BranchSpecializationConfig.from_dict(
                         record["branch_specialization"]
                     )
-                    if schema in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}
+                    if schema
+                    in {
+                        TRAINER_CONFIG_SCHEMA_V3,
+                        TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
+                    }
+                    else None
+                ),
+                trajectory_objective=(
+                    ExactAdjointTrajectoryConfig.from_dict(
+                        record["trajectory_objective"]
+                    )
+                    if schema == TRAINER_CONFIG_SCHEMA_V5
                     else None
                 ),
                 structural_warmup_steps=(
                     record["structural_warmup_steps"]
-                    if schema in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}
+                    if schema
+                    in {
+                        TRAINER_CONFIG_SCHEMA_V3,
+                        TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
+                    }
                     else 0
                 ),
                 structural_warmup_learning_rate=(
                     record["structural_warmup_learning_rate"]
-                    if schema in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}
+                    if schema
+                    in {
+                        TRAINER_CONFIG_SCHEMA_V3,
+                        TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
+                    }
                     else 0.0
                 ),
                 role_conditioned_branches=(
                     record["role_conditioned_branches"]
-                    if schema in {TRAINER_CONFIG_SCHEMA_V3, TRAINER_CONFIG_SCHEMA_V4}
+                    if schema
+                    in {
+                        TRAINER_CONFIG_SCHEMA_V3,
+                        TRAINER_CONFIG_SCHEMA_V4,
+                        TRAINER_CONFIG_SCHEMA_V5,
+                    }
                     else 0
                 ),
             )
@@ -1239,6 +1318,7 @@ __all__ = [
     "OBJECTIVE_NAME",
     "OBJECTIVE_NAME_V2",
     "OBJECTIVE_NAME_V3",
+    "OBJECTIVE_NAME_V4",
     "PREVIOUS_AUTHORITY_SCHEMA",
     "PREVIOUS_REQUIRED_SOURCE_ROLES",
     "REQUIRED_SOURCE_ROLES",
@@ -1249,6 +1329,7 @@ __all__ = [
     "TRAINER_CONFIG_SCHEMA_V2",
     "TRAINER_CONFIG_SCHEMA_V3",
     "TRAINER_CONFIG_SCHEMA_V4",
+    "TRAINER_CONFIG_SCHEMA_V5",
     "TRAINING_AUTHORITY",
     "artifact_binding",
     "authorize_bound_artifacts",

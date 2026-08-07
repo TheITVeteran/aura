@@ -37746,3 +37746,28 @@ v5, and v6 exact-gradient and receipt suites pass `51/51`; smoke passes
 `103/103`; Ruff, bytecode compilation, and diff hygiene pass. Trainer authority
 does not yet require the new term, and no proxy or resident campaign is
 authorized by this checkpoint.
+
+## Checkpoint 2026-08-07-012: The Trainer Cannot Omit Depth Improvement
+
+Paired-depth learning is now part of a new authority-bound training contract,
+not an optional caller argument. Trainer config v5 requires objective v4 plus a
+trajectory policy. The campaign preparer emits `(1,2)` for its depth-2 canary
+and `(1,2,4,8)` for the full curriculum. At execution time the trainer derives
+the exact terminal ladder for each projected row and refuses any depth not
+covered by the authority. The old v1-v4 trainer records and objective v1-v3
+retain their original schemas and replay behavior.
+
+Every joint update binds the current recurrent-policy SHA-256 and emits the v2
+generated/specialization/depth receipt. Intermediate and terminal validation
+run the same detached depth arithmetic. The materializer requires that receipt
+for objective v4, checks its value and identity against the generated-prefix
+and specialization records, and rejects depth evidence on historical
+objective-v3 records. Structural warmup remains a separately receipted phase;
+the depth term begins only when joint answer training begins.
+
+The bounded objective canary now trains and evaluates the depth term and adds a
+held-out depth-improvement non-regression gate. Authority, campaign preparation,
+trainer/resume state, detached controller, canary, and materialization tests
+pass `152/152`; smoke passes `103/103`; Ruff, bytecode compilation, and diff
+hygiene pass. No new model campaign has run, proxy admission remains closed,
+and the completed negative resident result is unchanged.

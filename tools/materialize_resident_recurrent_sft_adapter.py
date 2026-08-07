@@ -60,6 +60,7 @@ from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: 
     OBJECTIVE_NAME,
     OBJECTIVE_NAME_V2,
     OBJECTIVE_NAME_V3,
+    OBJECTIVE_NAME_V4,
     authorize_bound_artifacts,
     sha256_bytes,
     sha256_json,
@@ -414,6 +415,7 @@ def _verify_specialization_record(
     record: Mapping[str, Any],
     *,
     validation: bool,
+    depth_required: bool = False,
 ) -> None:
     receipt = record.get("objective_receipt")
     if not isinstance(receipt, Mapping):
@@ -461,6 +463,7 @@ def _verify_specialization_record(
         ) from exc
     generated = validated["generated_receipt"]
     specialization = validated["specialization_receipt"]
+    trajectory = validated.get("trajectory_receipt")
     if (
         record.get("objective_receipt_sha256") != validated["receipt_sha256"]
         or record.get("rollin_base_seed") != generated["base_seed"]
@@ -474,6 +477,12 @@ def _verify_specialization_record(
         or record.get("branch_weights")
         != [branch["selection_weight"] for branch in generated["branches"]]
         or record.get("branch_separations") != specialization["separations"]
+        or (trajectory is None) is depth_required
+        or (
+            depth_required
+            and record.get("trajectory_loss") != validated["trajectory_value"]
+        )
+        or (not depth_required and "trajectory_loss" in record)
     ):
         _fail("resident_sft_materialize_objective_receipt_drift")
 
@@ -491,13 +500,18 @@ def _verify_objective_evidence(
             _fail("resident_sft_materialize_legacy_objective_receipt_unexpected")
         return
     if objective != OBJECTIVE_NAME_V2:
-        if objective != OBJECTIVE_NAME_V3:
+        if objective not in {OBJECTIVE_NAME_V3, OBJECTIVE_NAME_V4}:
             _fail("resident_sft_materialize_objective_unsupported")
+        depth_required = objective == OBJECTIVE_NAME_V4
         for record in state["loss_trail"]:
-            _verify_specialization_record(record, validation=False)
+            _verify_specialization_record(
+                record,
+                validation=False,
+                depth_required=depth_required and record.get("phase") != "structural_warmup",
+            )
         summaries = [state["baseline_validation"], *state["validation_trail"]]
         for summary in summaries:
-            if summary.get("objective") != OBJECTIVE_NAME_V3:
+            if summary.get("objective") != objective:
                 _fail("resident_sft_materialize_validation_objective_drift")
             records = summary.get("records")
             if not isinstance(records, list) or not records:
@@ -505,7 +519,11 @@ def _verify_objective_evidence(
             for record in records:
                 if not isinstance(record, Mapping):
                     _fail("resident_sft_materialize_validation_records_invalid")
-                _verify_specialization_record(record, validation=True)
+                _verify_specialization_record(
+                    record,
+                    validation=True,
+                    depth_required=depth_required,
+                )
         return
     for record in state["loss_trail"]:
         _verify_generated_rollin_record(record)
