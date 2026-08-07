@@ -66,6 +66,34 @@ this failure**, which is why neither run warned anyone.
   working, and the trained arm may not do that more often than the ordinary
   path does.
 
+## Four more defects the live run exposed
+
+Probing against the real 32B before committing the full sweep caught four
+things that would each have silently ruined the result.
+
+1. **The episode wall clock.** The engine default is 120s; the campaign's
+   median recurrent episode ran 298s. Every recurrent cell terminated
+   `budget_exhausted` with no text, and would have graded as a wrong answer.
+   The sweep now passes an explicit 720s episode budget.
+2. **Serving-side answer replacement.** It abstained rather than emit a
+   candidate it could not bound, which destroys a research observation. Same
+   thing aborted CP420S12. Disabled for research arms; the raw recurrent
+   answer is retained and graded on its own terms.
+3. **Atomic decomposition killed long answers.** A mathematics trace needing
+   more than 256 atoms raised, and the *completed* latent episode died with it
+   (`latent_phase_failed`). Both the atom and transition budgets now coarsen
+   instead of refusing — a diagnostic layer must cost resolution, not the
+   result it is describing. Fixed in the product, not just the harness.
+4. **No repetition penalty.** A probe cell decoded 640 tokens of "to to to
+   to". The campaign ran at 1.25/72, so without it `rlc_asrun` was not
+   reproducing the arm it exists to reproduce.
+
+Also corrected: an unfinished decode is a *policy* observation and is scored
+incorrect, per CP420S12 — only infrastructure failures are excluded. This
+matters in one direction specifically: the 2026-08-06 `base_rlc` arm carried
+nine output-channel failures out of 28, so excluding them would flatter the
+recurrent path rather than measure it.
+
 ## What is running
 
 Run root: `/Users/bryan/.aura/rlc-reconcile-20260807/`
