@@ -45,8 +45,16 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     validate_branch_specialization_receipt,
     validate_generated_rollin_specialization_receipt,
 )
+from core.learning.recurrent_checkpoint_admission import (  # noqa: E402
+    build_checkpoint_behavioral_admission,
+    build_free_generation_report,
+    build_recurrence_task_manifest,
+    validate_checkpoint_behavioral_admission,
+)
 from core.learning.recurrent_grpo import (  # noqa: E402
+    RecurrentSamplingConfig,
     attach_recurrent_policy_adapters,
+    cortex_config_from_execution_spec,
     recurrent_policy_sha256,
 )
 from core.learning.recurrent_sft_execution import (  # noqa: E402
@@ -57,7 +65,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v1"
+CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v2"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
@@ -65,6 +73,7 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v6.py",
     "core/learning/role_conditioned_lora.py",
     "core/learning/recurrent_grpo.py",
+    "core/learning/recurrent_checkpoint_admission.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
     "tools/run_generated_rollin_objective_canary.py",
@@ -234,6 +243,121 @@ def _branch_specialization_gates(
     }
 
 
+def _paired_generation_seed(
+    campaign_seed: int,
+    task_ordinal: int,
+    task_id: str,
+    depth: int,
+) -> int:
+    """Use one random stream per task/depth coordinate across both arms."""
+
+    material = f"{campaign_seed}:{task_ordinal}:{task_id}:{depth}"
+    return int.from_bytes(hashlib.sha256(material.encode("ascii")).digest()[:4], "big")
+
+
+def _free_generation_report(
+    model: Any,
+    tokenizer: Any,
+    tasks: list[Any],
+    *,
+    spec: RLCExecutionSpec,
+    arm: str,
+    adapter_sha256: str,
+    task_manifest_sha256: str,
+    seed: int,
+) -> dict[str, Any]:
+    """Run exact held-out generations at shallow and full recurrent depth."""
+
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    depths = tuple(sorted({1, spec.recurrent_steps}))
+    records: list[dict[str, Any]] = []
+    for task_ordinal, task in enumerate(tasks):
+        prompt_tokens, _answer_tokens = _tokenize(
+            tokenizer,
+            task.prompt,
+            task.answer,
+        )
+        for depth in depths:
+            depth_spec = spec.with_depth(depth)
+            config = cortex_config_from_execution_spec(
+                depth_spec,
+                sampling=RecurrentSamplingConfig(
+                    max_tokens=96,
+                    temperature=0.0,
+                    top_p=1.0,
+                ),
+            )
+            config.decode_contract = "final_answer_v1"
+            config.decode_contract_grace_tokens = 0
+            config.decode_incumbent_policy = "latent"
+            engine = LatentCortexEngine(
+                model,
+                tokenizer=tokenizer,
+                config=config,
+                schedule_library=None,
+            )
+            mx.random.seed(
+                _paired_generation_seed(seed, task_ordinal, task.task_id, depth)
+            )
+            result = engine.reason(
+                token_ids=prompt_tokens,
+                decode_max_tokens=96,
+                decode_sentence_grace_tokens=0,
+            )
+            grade = dict(task.grade(result.text if result.ok else ""))
+            grade["correct"] = bool(grade.get("correct"))
+            receipt_payload = result.receipt.to_dict()
+            records.append(
+                {
+                    "task_id": task.task_id,
+                    "depth": depth,
+                    "response_sha256": hashlib.sha256(
+                        result.text.encode("utf-8")
+                    ).hexdigest(),
+                    "response_text": result.text,
+                    "tokens_sha256": hashlib.sha256(
+                        _canonical_json_bytes(result.tokens)
+                    ).hexdigest(),
+                    "tokens": list(result.tokens),
+                    "token_count": len(result.tokens),
+                    "correct": bool(result.ok and grade["correct"]),
+                    "grade_receipt": {
+                        **grade,
+                        "correct": bool(result.ok and grade["correct"]),
+                    },
+                    "episode_ok": bool(result.ok),
+                    "episode_reason": str(result.reason or ""),
+                    "decode_termination": str(
+                        result.receipt.decode_termination or "not_reached"
+                    ),
+                    "branch_selection_admitted": bool(
+                        result.receipt.branch_selection_admitted
+                    ),
+                    "decode_incumbent_policy": (
+                        result.receipt.decode_incumbent_policy
+                    ),
+                    "episode_receipt_sha256": hashlib.sha256(
+                        _canonical_json_bytes(receipt_payload)
+                    ).hexdigest(),
+                }
+            )
+            del engine, result
+            mx.synchronize()
+            mx.clear_cache()
+    return build_free_generation_report(
+        arm=arm,
+        adapter_sha256=adapter_sha256,
+        execution_spec_sha256=spec.sha256,
+        task_manifest_sha256=task_manifest_sha256,
+        task_ids=[task.task_id for task in tasks],
+        depths=depths,
+        records=records,
+    )
+
+
 def run_canary(
     *,
     model_path: Path,
@@ -341,6 +465,27 @@ def run_canary(
                 }
             )
         training_row, validation_row = rows
+        proxy_tasks = task_battery(
+            ["boolean", "modular"],
+            [2],
+            2,
+            seed=seed + 7_919,
+            excluded_prompts=tuple(task.prompt for task in tasks),
+            excluded_task_ids=tuple(task.task_id for task in tasks),
+        )
+        proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(
+            proxy_tasks
+        )
+        free_generation_before = _free_generation_report(
+            model,
+            tokenizer,
+            proxy_tasks,
+            spec=spec,
+            arm="initial_adapter",
+            adapter_sha256=adapter_before,
+            task_manifest_sha256=proxy_manifest_sha256,
+            seed=seed,
+        )
         before = _evaluate(
             model,
             validation_row,
@@ -477,6 +622,27 @@ def run_canary(
         )
         adapter = adapter_tensor_dict(model)
         adapter_after = adapter_tensor_fingerprint(adapter)
+        free_generation_after = _free_generation_report(
+            model,
+            tokenizer,
+            proxy_tasks,
+            spec=spec,
+            arm="trained_adapter",
+            adapter_sha256=adapter_after,
+            task_manifest_sha256=proxy_manifest_sha256,
+            seed=seed,
+        )
+        behavioral_admission = build_checkpoint_behavioral_admission(
+            initial_report=free_generation_before,
+            trained_report=free_generation_after,
+            task_manifest=proxy_manifest,
+        )
+        validate_checkpoint_behavioral_admission(
+            behavioral_admission,
+            initial_report=free_generation_before,
+            trained_report=free_generation_after,
+            task_manifest=proxy_manifest,
+        )
         out_dir.mkdir(parents=True, exist_ok=False)
         mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter)
 
@@ -523,6 +689,7 @@ def run_canary(
         <= before["lexical_loss"] + 1e-6,
         "heldout_depth_improvement_non_regression": after["trajectory_loss"]
         <= before["trajectory_loss"] + 1e-6,
+        "heldout_free_generation_strict_gain": behavioral_admission["admitted"],
     }
     body = {
         "schema": CANARY_SCHEMA,
@@ -548,6 +715,11 @@ def run_canary(
         "adapter_after_sha256": adapter_after,
         "training_task_id": training_row["task_id"],
         "validation_task_id": validation_row["task_id"],
+        "proxy_task_manifest": proxy_manifest,
+        "proxy_task_manifest_sha256": proxy_manifest_sha256,
+        "free_generation_before": free_generation_before,
+        "free_generation_after": free_generation_after,
+        "checkpoint_behavioral_admission": behavioral_admission,
         "validation_before": before,
         "branch_separation_before": separation_before,
         "warmup_trail": warmup_trail,
@@ -566,6 +738,7 @@ def run_canary(
             "frontier_level_proven": False,
             "promotion_allowed": False,
             "fusion_allowed": False,
+            "resident_campaign_admitted": False,
         },
         "elapsed_s": time.time() - started,
     }

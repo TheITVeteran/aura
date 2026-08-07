@@ -1550,6 +1550,9 @@ def cortex_config_from_execution_spec(
         decode_temperature=resolved.temperature,
         decode_top_p=resolved.top_p,
         decode_bridge_policy="none",
+        # Scientific execution must measure the recurrent policy itself. The
+        # resident worker's safer default preserves vanilla output instead.
+        decode_incumbent_policy="latent",
         decode_contract="none",
         decode_min_tokens=0,
         decode_repetition_penalty=1.0,

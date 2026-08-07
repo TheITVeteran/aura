@@ -37807,3 +37807,33 @@ prevents the known negative RLC from degrading daily answers while preserving
 its live internal computation and research observability. It does not prove a
 recurrent gain, authorize a fusion or adapter activation, admit another
 resident campaign, or close the still-pending free-generation proxy gates.
+
+## Checkpoint 2026-08-07-014: Checkpoints Must Improve What They Freely Generate
+
+Teacher-forced validation loss and latent trajectory loss can diagnose an
+optimizer, but neither establishes that a trained checkpoint answers held-out
+questions better. The bounded generated-rollin canary now evaluates an initial
+and trained adapter on a disjoint exact-answer proxy at recurrent depths one and
+two using complete free generation. Scientific execution explicitly selects
+the latent policy even though Aura's public worker preserves the vanilla
+incumbent. Both treatment arms use the same task/depth random stream, eliminating
+arm-dependent recurrent randomness as a causal confound.
+
+The new behavioral admission contract binds the exact response text, token
+sequence, adapter and execution-spec identities, decode termination, branch
+admission, and episode-receipt commitment for every coordinate. Its verifier
+does not trust the producing grader: it regenerates every held-out task from
+the committed family/depth/seed coordinates, rejects invented prompts or
+answers, and independently re-grades the exact emitted text. A correctly
+rehashed forged grade therefore still fails replay.
+
+A checkpoint is admitted only if every trained episode completes through an
+admitted recurrent branch, aggregate held-out free-generation correctness
+strictly rises, the training-by-depth interaction is positive, and no trained
+task becomes less correct at greater depth. Even a passing bounded proxy keeps
+resident-32B gain, frontier capability, fusion, and production activation
+explicitly false. Focused admission, canary, and recurrent-policy tests pass
+`40/40`; smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene
+pass. This checkpoint installs the discriminator. It does not claim that a
+checkpoint has passed it, authorize another resident campaign, or alter the
+retained negative result.

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from core.learning.recurrence_curriculum import task_battery
 from tools import run_generated_rollin_objective_canary as canary
 
 
@@ -103,3 +104,21 @@ def test_branch_specialization_gate_rejects_rng_or_state_collapse() -> None:
         }
     ]
     assert all(canary._branch_specialization_gates(specialized, [0.31]).values())
+
+
+def test_proxy_task_manifest_binds_answers_and_generation_coordinates() -> None:
+    tasks = task_battery(["boolean", "modular"], [2], 1, seed=17)
+
+    manifest, digest = canary.build_recurrence_task_manifest(tasks)
+
+    assert [row["task_id"] for row in manifest] == [
+        task.task_id for task in tasks
+    ]
+    assert len(digest) == 64
+
+
+def test_free_generation_uses_matched_random_streams_across_arms() -> None:
+    seed = canary._paired_generation_seed(17, 2, "heldout-task", 4)
+
+    assert seed == canary._paired_generation_seed(17, 2, "heldout-task", 4)
+    assert seed != canary._paired_generation_seed(17, 2, "heldout-task", 2)
