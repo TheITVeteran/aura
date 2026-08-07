@@ -65,6 +65,7 @@ from core.brain.llm.latent_cortex.exact_paired_grade import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.exact_paired_statistics import Rational  # noqa: E402
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
+    CONTAMINATION_SAFE_REGISTRY_VERSION,
     CURRENT_REGISTRY_VERSION,
     FRONTIER_DOMAINS,
     REGISTRY_VERSION,
@@ -146,7 +147,11 @@ WORKER_EXECUTION_MANIFEST_FILE = "worker_execution_manifest.json"
 SEQUENTIAL_LOOK_DIR = "sequential_looks"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
-CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+LEGACY_CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v3"
+CONTAMINATION_AUDIT_SCHEMAS = frozenset(
+    {LEGACY_CONTAMINATION_AUDIT_SCHEMA, CONTAMINATION_AUDIT_SCHEMA}
+)
 TASK_ISSUER_PAYLOAD_SCHEMA = "aura.latent_cortex.task_issuer_prelaunch.v1"
 CAMPAIGN_RUNNER_PAYLOAD_SCHEMA = "aura.latent_cortex.runner_prelaunch.v1"
 SEALED_OUTPUT_MANIFEST_SCHEMA = "aura.latent_cortex.sealed_output_manifest.v4"
@@ -1056,8 +1061,16 @@ def _contamination_audit(
     args: argparse.Namespace,
     tasks: tuple[FrontierTask, ...] | tuple[PublicTaskRecord, ...],
     *,
+    expected_training_dataset_identity_sha256: str | None = None,
     expected_training_corpus_sha256: str | None = None,
 ) -> dict[str, Any]:
+    if expected_training_corpus_sha256 is not None:
+        if (
+            expected_training_dataset_identity_sha256 is not None
+            and expected_training_dataset_identity_sha256 != expected_training_corpus_sha256
+        ):
+            raise CampaignProducerError("conflicting training dataset identity requirements")
+        expected_training_dataset_identity_sha256 = expected_training_corpus_sha256
     raw_path = str(getattr(args, "contamination_audit", "") or "").strip()
     if not raw_path:
         return {}
@@ -1071,6 +1084,7 @@ def _contamination_audit(
     trust_root_path = str(getattr(args, "contamination_trust_root", "") or "").strip()
     if not trust_root_path:
         raise CampaignProducerError("contamination audit trust root is required")
+    schema = audit.get("schema") if isinstance(audit, dict) else None
     required = {
         "schema",
         "task_manifest_sha256",
@@ -1081,7 +1095,13 @@ def _contamination_audit(
         "methods",
         "signature",
     }
-    if not isinstance(audit, dict) or set(audit) != required:
+    if schema == CONTAMINATION_AUDIT_SCHEMA:
+        required.add("training_dataset_identity_sha256")
+    if (
+        not isinstance(audit, dict)
+        or schema not in CONTAMINATION_AUDIT_SCHEMAS
+        or set(audit) != required
+    ):
         raise CampaignProducerError("contamination audit schema is invalid")
     manifest = _manifest_for_tasks(tasks)
     body = dict(audit)
@@ -1090,8 +1110,7 @@ def _contamination_audit(
     corpora = audit["corpora"]
     required_methods = {"exact_prompt", "normalized_prompt", "token_fivegram"}
     if (
-        audit["schema"] != CONTAMINATION_AUDIT_SCHEMA
-        or audit["task_manifest_sha256"] != manifest.manifest_sha256
+        audit["task_manifest_sha256"] != manifest.manifest_sha256
         or audit["status"] != "passed_zero_overlap"
         or audit["overlap_count"] != 0
         or audit["auditor_independence"] != "external"
@@ -1108,10 +1127,26 @@ def _contamination_audit(
         )
     ):
         raise CampaignProducerError("contamination audit verification failed")
-    corpus_hashes = {record["snapshot_sha256"] for record in corpora if isinstance(record, dict)}
+    if schema == CONTAMINATION_AUDIT_SCHEMA:
+        covered_identity = audit.get("training_dataset_identity_sha256")
+        if (
+            not isinstance(covered_identity, str)
+            or len(covered_identity) != 64
+            or any(character not in "0123456789abcdef" for character in covered_identity)
+        ):
+            raise CampaignProducerError("contamination audit dataset identity is invalid")
+    else:
+        corpus_hashes = {
+            record["snapshot_sha256"] for record in corpora if isinstance(record, dict)
+        }
+        covered_identity = (
+            expected_training_dataset_identity_sha256
+            if expected_training_dataset_identity_sha256 in corpus_hashes
+            else None
+        )
     if (
-        expected_training_corpus_sha256 is not None
-        and expected_training_corpus_sha256 not in corpus_hashes
+        expected_training_dataset_identity_sha256 is not None
+        and expected_training_dataset_identity_sha256 != covered_identity
     ):
         raise CampaignProducerError(
             "contamination audit does not cover the adapter training corpus"
@@ -1532,16 +1567,12 @@ def _execution_config(
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
         "worker_origin_protocol": WORKER_ORIGIN_PROTOCOL,
-        "worker_origin_attempt_slots": (
-            args.max_infra_attempts * len(_campaign_looks(args))
-        ),
+        "worker_origin_attempt_slots": (args.max_infra_attempts * len(_campaign_looks(args))),
         "vanilla_fallback_allowed": False,
         "exact_statistical_power": _statistical_power_plan(args),
         **(
             {
-                "sequential_look_observations_per_domain": list(
-                    args.sequential_look_values
-                ),
+                "sequential_look_observations_per_domain": list(args.sequential_look_values),
                 "sequential_alpha_weights": [
                     {
                         "numerator": value.numerator,
@@ -1566,9 +1597,7 @@ def _statistical_power_plan(args: argparse.Namespace) -> dict[str, Any]:
         comparison_count += 1
     planned = int(getattr(args, "seed_count", 0) or len(args.seed_values))
     sequential_looks = tuple(getattr(args, "sequential_look_values", ()))
-    sequential_weights = tuple(
-        getattr(args, "sequential_alpha_weight_values", ())
-    )
+    sequential_weights = tuple(getattr(args, "sequential_alpha_weight_values", ()))
     if sequential_looks or sequential_weights:
         return exact_group_sequential_power_plan(
             domain_count=len(args.domain_values),
@@ -1603,10 +1632,7 @@ def _worker_attempt_slot_range(
 def _task_look_assignments(plan: CampaignPlan) -> dict[str, int]:
     execution_config = plan.to_dict()["metadata"]["execution_config"]
     if not execution_config.get("sequential_look_observations_per_domain"):
-        return {
-            task["task_id"]: 0
-            for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]
-        }
+        return {task["task_id"]: 0 for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]}
     try:
         return sequential_task_look_assignments(plan)
     except SequentialCampaignEvidenceError as exc:
@@ -1659,9 +1685,7 @@ def _pending_worker_cell_ids(
         and cell_id not in canonical_sealed_cell_ids
     ]
     pending.sort(
-        key=lambda cell_id: int(
-            plan.cell_definition(cell_id)["execution_ordinal_within_arm"]
-        )
+        key=lambda cell_id: int(plan.cell_definition(cell_id)["execution_ordinal_within_arm"])
     )
     return pending
 
@@ -1675,7 +1699,7 @@ def _expected_plan(
     contamination_audit = _contamination_audit(
         args,
         tasks,
-        expected_training_corpus_sha256=training_corpus_sha256,
+        expected_training_dataset_identity_sha256=training_corpus_sha256,
     )
     execution_config = _execution_config(args, adapter_identity)
     unsigned_plan = build_campaign_plan(
@@ -1725,7 +1749,9 @@ def _expected_worker_plan(
     contamination_audit = _contamination_audit(
         args,
         tasks,
-        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(adapter_identity),
+        expected_training_dataset_identity_sha256=_adapter_dataset_manifest_sha256(
+            adapter_identity
+        ),
     )
     execution_config = _execution_config(args, adapter_identity)
     unsigned_plan = build_campaign_plan(
@@ -1835,9 +1861,7 @@ def _resolve_projection(model: Any, projection: str) -> tuple[Any, str, Any]:
             "resident_adapter_projection_owner_missing": "owner is missing",
             "resident_adapter_projection_missing": "projection is missing",
         }.get(exc.code, exc.code)
-        raise CampaignProducerError(
-            f"adapter projection {detail}: {projection}"
-        ) from exc
+        raise CampaignProducerError(f"adapter projection {detail}: {projection}") from exc
 
 
 def _vanilla_once(
@@ -2983,18 +3007,12 @@ def _sequential_final_evidence_binding(
         raise CampaignProducerError("sequential final evidence power is invalid")
 
     look_dir = campaign_dir / SEQUENTIAL_LOOK_DIR
-    expected_names = {
-        f"look-{look:03d}.json" for look in range(1, len(raw_looks) + 1)
-    }
+    expected_names = {f"look-{look:03d}.json" for look in range(1, len(raw_looks) + 1)}
     actual_names = (
-        {path.name for path in look_dir.iterdir() if path.is_file()}
-        if look_dir.is_dir()
-        else set()
+        {path.name for path in look_dir.iterdir() if path.is_file()} if look_dir.is_dir() else set()
     )
     if actual_names != expected_names:
-        raise CampaignProducerError(
-            "sequential final evidence artifact set differs from the plan"
-        )
+        raise CampaignProducerError("sequential final evidence artifact set differs from the plan")
 
     previous_sha256 = None
     certificate_sha256s: list[str] = []
@@ -3018,9 +3036,7 @@ def _sequential_final_evidence_binding(
             or certificate.get("look_power_receipt") != power_looks[look - 1]
             or certificate_sha256 != _sha256_bytes(canonical_json_bytes(material))
         ):
-            raise CampaignProducerError(
-                f"sequential look {look} cannot bind the final run"
-            )
+            raise CampaignProducerError(f"sequential look {look} cannot bind the final run")
         decision = certificate.get("decision")
         if decision not in {
             "continue",
@@ -3028,16 +3044,18 @@ def _sequential_final_evidence_binding(
             "refutation_boundary_crossed",
             "terminal_inconclusive",
         }:
-            raise CampaignProducerError(
-                f"sequential look {look} has an invalid decision"
-            )
+            raise CampaignProducerError(f"sequential look {look} has an invalid decision")
         previous_sha256 = certificate_sha256
         certificate_sha256s.append(certificate_sha256)
         terminal_decision = decision
-        if decision in {
-            "positive_boundary_crossed",
-            "refutation_boundary_crossed",
-        } and first_boundary_look is None:
+        if (
+            decision
+            in {
+                "positive_boundary_crossed",
+                "refutation_boundary_crossed",
+            }
+            and first_boundary_look is None
+        ):
             first_boundary_look = look
             first_boundary_decision = decision
     return {
@@ -3441,9 +3459,7 @@ def _build_worker_execution_manifest(
                     "arm": arm,
                     "worker_look": worker_look,
                     "worker_attempt_slot": attempt_slot,
-                    "broker_result_artifact_sha256": broker_artifact[
-                        "artifact_sha256"
-                    ],
+                    "broker_result_artifact_sha256": broker_artifact["artifact_sha256"],
                     "broker_policy_sha256": broker_result.policy_sha256,
                     "broker_request_id": broker_result.request_id,
                     "broker_receipt_sha256": broker_result.receipt_sha256,
@@ -3495,25 +3511,17 @@ def _build_worker_execution_manifest(
                 if not isinstance(stage_detached_plan, str):
                     raise CampaignProducerError("worker stage detached plan is invalid")
                 if detached_plan_sha256 != stage_detached_plan:
-                    raise CampaignProducerError(
-                        "worker attempts span different detached plans"
-                    )
+                    raise CampaignProducerError("worker attempts span different detached plans")
                 imports.append(
                     {
                         **common,
                         "classification": "terminal_imported",
                         "session_id": summary["session_id"],
                         "detached_plan_sha256": stage_detached_plan,
-                        "verified_stage_manifest_sha256": verified_stage[
-                            "manifest_sha256"
-                        ],
+                        "verified_stage_manifest_sha256": verified_stage["manifest_sha256"],
                         "stage_sha256": verified_stage["stage_sha256"],
-                        "stage_journal_head_sha256": verified_stage[
-                            "stage_journal_head_sha256"
-                        ],
-                        "result_chain_head_sha256": verified_stage[
-                            "result_chain_head_sha256"
-                        ],
+                        "stage_journal_head_sha256": verified_stage["stage_journal_head_sha256"],
+                        "result_chain_head_sha256": verified_stage["result_chain_head_sha256"],
                         "cell_ids": verified_stage["cell_ids"],
                         "import_intent_sha256": import_intent["intent_sha256"],
                         "import_receipt_sha256": import_receipt["receipt_sha256"],
@@ -3524,11 +3532,7 @@ def _build_worker_execution_manifest(
 
     if (
         successful_batches
-        != {
-            (worker_look, arm)
-            for worker_look in _campaign_looks(args)
-            for arm in _arms(args)
-        }
+        != {(worker_look, arm) for worker_look in _campaign_looks(args) for arm in _arms(args)}
         or detached_plan_sha256 is None
         or detached_classification_head_sha256 is None
         or detached_terminals is None
@@ -3811,8 +3815,7 @@ def _orchestrate(
                     )
                     if worker_attempt_slot is None:
                         print(
-                            f"look {worker_look} arm {arm} exhausted "
-                            "pre-authorized worker slots",
+                            f"look {worker_look} arm {arm} exhausted pre-authorized worker slots",
                             flush=True,
                         )
                         return 4
@@ -3823,11 +3826,7 @@ def _orchestrate(
                     worker_attempt_slot=worker_attempt_slot,
                     worker_look=worker_look,
                 )
-                code = (
-                    outcome.returncode
-                    if isinstance(outcome, BrokeredProcessResult)
-                    else outcome
-                )
+                code = outcome.returncode if isinstance(outcome, BrokeredProcessResult) else outcome
                 if worker_origin_required:
                     if not isinstance(outcome, BrokeredProcessResult):
                         if code == 124:
@@ -3848,8 +3847,7 @@ def _orchestrate(
                         result=outcome,
                     )
                 print(
-                    f"look {worker_look} arm {arm} process exit={code} "
-                    f"attempt={attempts}",
+                    f"look {worker_look} arm {arm} process exit={code} attempt={attempts}",
                     flush=True,
                 )
                 if code != 0 and attempts >= args.max_infra_attempts:
@@ -3954,7 +3952,9 @@ def _prepare_trust_requests(args: argparse.Namespace) -> dict[str, Any]:
     contamination_audit = _contamination_audit(
         args,
         tasks,
-        expected_training_corpus_sha256=_adapter_dataset_manifest_sha256(adapter_identity),
+        expected_training_dataset_identity_sha256=_adapter_dataset_manifest_sha256(
+            adapter_identity
+        ),
     )
     execution_config = _execution_config(args, adapter_identity)
     unsigned_plan = build_campaign_plan(
@@ -4023,7 +4023,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument(
         "--task-registry-version",
-        choices=(REGISTRY_VERSION, CURRENT_REGISTRY_VERSION),
+        choices=(
+            REGISTRY_VERSION,
+            CURRENT_REGISTRY_VERSION,
+            CONTAMINATION_SAFE_REGISTRY_VERSION,
+        ),
         default=REGISTRY_VERSION,
         help="versioned task lineage; legacy remains the replay-safe default",
     )
@@ -4095,9 +4099,7 @@ def main() -> int:
         )
         expected_final = int(args.seed_count) if args.worker_arm else len(args.seed_values)
         if args.sequential_look_values[-1] != expected_final:
-            parser.error(
-                "the terminal sequential look must equal the campaign seed count"
-            )
+            parser.error("the terminal sequential look must equal the campaign seed count")
     else:
         args.sequential_look_values = ()
         args.sequential_alpha_weight_values = ()

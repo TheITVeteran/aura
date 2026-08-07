@@ -37,6 +37,7 @@ TASK_COMMITMENT_SCHEMA = "aura.latent_cortex.frontier_task_commitment.v1"
 SCORE_RESULT_SCHEMA = "aura.latent_cortex.frontier_score_result.v1"
 REGISTRY_VERSION = "2026.07.18.1"
 CURRENT_REGISTRY_VERSION = "2026.07.18.2"
+CONTAMINATION_SAFE_REGISTRY_VERSION = "2026.08.06.1"
 SCORER_VERSION = "1"
 
 FRONTIER_DOMAINS = (
@@ -67,6 +68,7 @@ SUPPORTED_REGISTRY_EXCLUSIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         REGISTRY_VERSION: EXCLUDED_TRAINING_FAMILIES,
         CURRENT_REGISTRY_VERSION: CURRENT_EXCLUDED_TRAINING_FAMILIES,
+        CONTAMINATION_SAFE_REGISTRY_VERSION: CURRENT_EXCLUDED_TRAINING_FAMILIES,
     }
 )
 _ACTIVE_REGISTRY_VERSION: ContextVar[str] = ContextVar(
@@ -1066,13 +1068,19 @@ def _generate_long_horizon_planning(seed: int, difficulty: int) -> FrontierTask:
             }
         )
     order, reward, makespan = _best_plan(tasks, horizon)
+    registry_version, _exclusions = _active_registry_contract()
+    tie_break_instruction = (
+        "Break any remaining tie by selecting the alphabetically earliest sequence of task labels."
+        if registry_version == CONTAMINATION_SAFE_REGISTRY_VERSION
+        else "then choose the lexicographically smallest task-name sequence."
+    )
     prompt = (
         "Fresh planning task. One crew executes at most one task at a time, starts "
         "at time 0, and may skip tasks. A selected task may start only after every "
         "required task has completed. It earns its reward only if completion is no "
         f"later than its own deadline and the overall horizon {horizon}. Tasks are "
-        f"{tasks}. Maximize total reward; then minimize makespan; then choose the "
-        "lexicographically smallest task-name sequence. Return the selected order, "
+        f"{tasks}. Maximize total reward; then minimize makespan. "
+        f"{tie_break_instruction} Return the selected order, "
         "reward, and makespan. "
         + _response_instruction("order (list of strings), reward (integer), makespan (integer)")
     )
@@ -1081,7 +1089,7 @@ def _generate_long_horizon_planning(seed: int, difficulty: int) -> FrontierTask:
         seed=seed,
         difficulty=difficulty,
         generator_id="dependency_deadline_portfolio",
-        generator_version="1",
+        generator_version=("2" if registry_version == CONTAMINATION_SAFE_REGISTRY_VERSION else "1"),
         prompt=prompt,
         response_contract='{"order":list[str],"reward":int,"makespan":int}',
         expected={"order": order, "reward": reward, "makespan": makespan},
@@ -1452,11 +1460,16 @@ class FrontierTaskRegistry:
 
 DEFAULT_REGISTRY = FrontierTaskRegistry()
 CURRENT_REGISTRY = FrontierTaskRegistry(version=CURRENT_REGISTRY_VERSION)
+CONTAMINATION_SAFE_REGISTRY = FrontierTaskRegistry(version=CONTAMINATION_SAFE_REGISTRY_VERSION)
 
 
 def _registry(version: str) -> FrontierTaskRegistry:
     normalized = _require_registry_version(version)
-    return CURRENT_REGISTRY if normalized == CURRENT_REGISTRY_VERSION else DEFAULT_REGISTRY
+    return {
+        REGISTRY_VERSION: DEFAULT_REGISTRY,
+        CURRENT_REGISTRY_VERSION: CURRENT_REGISTRY,
+        CONTAMINATION_SAFE_REGISTRY_VERSION: CONTAMINATION_SAFE_REGISTRY,
+    }[normalized]
 
 
 def generate_task(
@@ -1554,6 +1567,7 @@ __all__ = [
     "CURRENT_EXCLUDED_TRAINING_FAMILIES",
     "CURRENT_REGISTRY",
     "CURRENT_REGISTRY_VERSION",
+    "CONTAMINATION_SAFE_REGISTRY_VERSION",
     "DEFAULT_REGISTRY",
     "DOMAIN_GENERATORS",
     "EXCLUDED_TRAINING_FAMILIES",

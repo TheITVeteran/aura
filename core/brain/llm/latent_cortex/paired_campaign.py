@@ -53,7 +53,11 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 
 CAMPAIGN_SCHEMA = "aura.latent_cortex.resident_paired_campaign.v1"
 GRADE_SCHEMA = "aura.latent_cortex.resident_paired_grade.v2"
-CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+LEGACY_CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v3"
+CONTAMINATION_AUDIT_SCHEMAS = frozenset(
+    {LEGACY_CONTAMINATION_AUDIT_SCHEMA, CONTAMINATION_AUDIT_SCHEMA}
+)
 
 BASE_VANILLA = "base_vanilla"
 BASE_RLC = "base_rlc"
@@ -154,9 +158,7 @@ def _validate_claim_exact_power(
     domains = execution_config.get("domains")
     generation_seed_count = execution_config.get("generation_seed_count")
     observed_receipt = execution_config.get("exact_statistical_power")
-    sequential_looks = execution_config.get(
-        "sequential_look_observations_per_domain"
-    )
+    sequential_looks = execution_config.get("sequential_look_observations_per_domain")
     sequential_weights = execution_config.get("sequential_alpha_weights")
     domain_counts: dict[str, int] = defaultdict(int)
     for domain in task_domains:
@@ -188,14 +190,9 @@ def _validate_claim_exact_power(
                 comparison_count=_comparison_count(arms),
                 arm_count=len(arms),
                 look_observations_per_domain=sequential_looks,
-                alpha_weights=tuple(
-                    Rational(**weight)
-                    for weight in sequential_weights
-                ),
+                alpha_weights=tuple(Rational(**weight) for weight in sequential_weights),
             )
-            powered = expected_receipt[
-                "terminal_look_powered_for_zero_loss_noninferiority"
-            ]
+            powered = expected_receipt["terminal_look_powered_for_zero_loss_noninferiority"]
         else:
             expected_receipt = exact_campaign_power_plan(
                 domain_count=len(domain_counts),
@@ -226,7 +223,10 @@ def _contamination_audit_valid(
     *,
     task_manifest_sha256: Any,
 ) -> bool:
-    if not isinstance(audit, Mapping) or set(audit) != {
+    if not isinstance(audit, Mapping):
+        return False
+    schema = audit.get("schema")
+    required = {
         "schema",
         "task_manifest_sha256",
         "status",
@@ -235,7 +235,10 @@ def _contamination_audit_valid(
         "corpora",
         "methods",
         "signature",
-    }:
+    }
+    if schema == CONTAMINATION_AUDIT_SCHEMA:
+        required.add("training_dataset_identity_sha256")
+    if schema not in CONTAMINATION_AUDIT_SCHEMAS or set(audit) != required:
         return False
     signature = audit.get("signature")
     if not isinstance(signature, Mapping) or set(signature) != {
@@ -251,8 +254,7 @@ def _contamination_audit_valid(
     corpora = audit.get("corpora")
     methods = audit.get("methods")
     if (
-        audit.get("schema") != CONTAMINATION_AUDIT_SCHEMA
-        or audit.get("task_manifest_sha256") != task_manifest_sha256
+        audit.get("task_manifest_sha256") != task_manifest_sha256
         or audit.get("status") != "passed_zero_overlap"
         or audit.get("overlap_count") != 0
         or audit.get("auditor_independence") != "external"
@@ -280,6 +282,10 @@ def _contamination_audit_valid(
                 "trust_root_sha256",
             )
         )
+    ):
+        return False
+    if schema == CONTAMINATION_AUDIT_SCHEMA and not _is_sha256(
+        audit.get("training_dataset_identity_sha256")
     ):
         return False
     body = {key: value for key, value in audit.items() if key != "signature"}

@@ -12,6 +12,7 @@ import pytest
 from core.brain.frontier_evidence_v5 import canonical_json_bytes
 from core.brain.llm.latent_cortex.frontier_tasks import (
     ANSWER_PAYLOAD_SCHEMA,
+    CONTAMINATION_SAFE_REGISTRY_VERSION,
     CURRENT_EXCLUDED_TRAINING_FAMILIES,
     CURRENT_REGISTRY_VERSION,
     DOMAIN_GENERATORS,
@@ -139,6 +140,27 @@ def test_current_registry_truthfully_declares_full_training_lineage():
     assert current.task_id != legacy.task_id
     assert current.public.prompt != legacy.public.prompt
     assert _expected(current) != {}
+
+
+def test_contamination_safe_registry_versions_planning_prompt_without_rewriting_history():
+    previous = generate_task(
+        "long_horizon_planning",
+        seed=817_231,
+        difficulty=2,
+        registry_version=CURRENT_REGISTRY_VERSION,
+    )
+    safe = generate_task(
+        "long_horizon_planning",
+        seed=817_231,
+        difficulty=2,
+        registry_version=CONTAMINATION_SAFE_REGISTRY_VERSION,
+    )
+    assert "then choose the lexicographically smallest" in previous.public.prompt
+    assert "then choose the lexicographically smallest" not in safe.public.prompt
+    assert "alphabetically earliest sequence" in safe.public.prompt
+    assert safe.public.registry_version == CONTAMINATION_SAFE_REGISTRY_VERSION
+    assert safe.public.excluded_training_families == RECURRENCE_TRAINING_FAMILIES
+    assert safe.task_id != previous.task_id
 
 
 def test_versioned_manifests_reject_mixed_registry_lineage():

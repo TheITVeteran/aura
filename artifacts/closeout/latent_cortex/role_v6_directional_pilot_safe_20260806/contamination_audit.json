@@ -1,0 +1,28 @@
+{
+  "auditor_independence": "external",
+  "corpora": [
+    {
+      "name": "resident_32b_role_v6_step104",
+      "snapshot_sha256": "bc4d01fa86e26cf7e83b901f384db3f0af9d19cc336ead8431a1252db6154bfe"
+    },
+    {
+      "name": "resident_32b_role_v6_step104:validation",
+      "snapshot_sha256": "9f8bbb33a39a04fbce94ad66198ac256247eba0841ab0ea580c9ac5f893660b5"
+    }
+  ],
+  "methods": [
+    "exact_prompt",
+    "normalized_prompt",
+    "token_fivegram"
+  ],
+  "overlap_count": 0,
+  "schema": "aura.latent_cortex.contamination_audit.v3",
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "4035ecbefc50d553d61279a777834e9338e436d0703dd59a002dc27b335e9ed6",
+    "signature_b64": "7CsFQqtAIEU3Y9YWmUyoX8xCLmc4593ZskCqJnTR+ogAXMPn1Gp41tKCYn9ZwK3igKKtg307Je+xPptOD+nKBg=="
+  },
+  "status": "passed_zero_overlap",
+  "task_manifest_sha256": "413a14547a8d3010613cadb6cf7f033962bbf5ccb482bce526d96c674dbc12ec",
+  "training_dataset_identity_sha256": "7bb8e53d5bac6857bb1d6d30cb89396281780c493593202934c29283e4775893"
+}

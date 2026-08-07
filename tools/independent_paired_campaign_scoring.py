@@ -23,7 +23,11 @@ from typing import Any, Never, cast
 
 GRADE_SCHEMA = "aura.latent_cortex.resident_paired_grade.v2"
 CAMPAIGN_SCHEMA = "aura.latent_cortex.resident_paired_campaign.v1"
-CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+LEGACY_CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
+CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v3"
+CONTAMINATION_AUDIT_SCHEMAS = frozenset(
+    {LEGACY_CONTAMINATION_AUDIT_SCHEMA, CONTAMINATION_AUDIT_SCHEMA}
+)
 COMPARISON_SCHEMA = "aura.latent_cortex.exact_paired_comparison.v1"
 INTERACTION_SCHEMA = "aura.latent_cortex.exact_paired_interaction.v1"
 MODEL_PROFILE_SCHEMA = "aura.rlc.model_compute_profile.v1"
@@ -550,7 +554,10 @@ def _contamination_metadata_valid(
     task_manifest_sha256: Any,
     trusted_root_sha256: str | None,
 ) -> bool:
-    if not isinstance(audit, Mapping) or set(audit) != {
+    if not isinstance(audit, Mapping):
+        return False
+    schema = audit.get("schema")
+    required = {
         "schema",
         "task_manifest_sha256",
         "status",
@@ -559,14 +566,16 @@ def _contamination_metadata_valid(
         "corpora",
         "methods",
         "signature",
-    }:
+    }
+    if schema == CONTAMINATION_AUDIT_SCHEMA:
+        required.add("training_dataset_identity_sha256")
+    if schema not in CONTAMINATION_AUDIT_SCHEMAS or set(audit) != required:
         return False
     signature = audit.get("signature")
     corpora = audit.get("corpora")
     methods = audit.get("methods")
     if (
-        audit.get("schema") != CONTAMINATION_AUDIT_SCHEMA
-        or audit.get("task_manifest_sha256") != task_manifest_sha256
+        audit.get("task_manifest_sha256") != task_manifest_sha256
         or audit.get("status") != "passed_zero_overlap"
         or type(audit.get("overlap_count")) is not int
         or audit.get("overlap_count") != 0
@@ -599,6 +608,10 @@ def _contamination_metadata_valid(
         or not _is_sha256(signature.get("signed_payload_sha256"))
         or not _is_sha256(signature.get("trust_root_sha256"))
         or signature.get("trust_root_sha256") != trusted_root_sha256
+    ):
+        return False
+    if schema == CONTAMINATION_AUDIT_SCHEMA and not _is_sha256(
+        audit.get("training_dataset_identity_sha256")
     ):
         return False
     body = {key: value for key, value in audit.items() if key != "signature"}
@@ -1041,9 +1054,7 @@ def _extract_rows(
         configured_domains = execution_config.get("domains")
         generation_seed_count = execution_config.get("generation_seed_count")
         observed_power = execution_config.get("exact_statistical_power")
-        sequential_looks = execution_config.get(
-            "sequential_look_observations_per_domain"
-        )
+        sequential_looks = execution_config.get("sequential_look_observations_per_domain")
         sequential_weights = execution_config.get("sequential_alpha_weights")
         domain_counts: dict[str, int] = defaultdict(int)
         for task in task_records.values():
@@ -1068,13 +1079,9 @@ def _extract_rows(
             ):
                 _fail("independent_claim_power_invalid")
             try:
-                independent_weights = tuple(
-                    _Q(**weight) for weight in sequential_weights
-                )
+                independent_weights = tuple(_Q(**weight) for weight in sequential_weights)
             except (TypeError, IndependentScoringError) as exc:
-                raise IndependentScoringError(
-                    "independent_claim_power_invalid"
-                ) from exc
+                raise IndependentScoringError("independent_claim_power_invalid") from exc
             expected_power = _exact_group_sequential_power_plan(
                 domain_count=len(domain_counts),
                 comparison_count=4
@@ -1084,9 +1091,7 @@ def _extract_rows(
                 look_observations_per_domain=sequential_looks,
                 alpha_weights=independent_weights,
             )
-            powered = expected_power[
-                "terminal_look_powered_for_zero_loss_noninferiority"
-            ]
+            powered = expected_power["terminal_look_powered_for_zero_loss_noninferiority"]
         else:
             expected_power = _exact_campaign_power_plan(
                 domain_count=len(domain_counts),
@@ -2130,9 +2135,7 @@ def _interaction(
         "alpha": _q_payload(family_alpha),
         "minimum_effect": _q_payload(MINIMUM_EFFECT),
         "global_bound_family_count": global_bound_family_count,
-        "simultaneous_coverage_lower": _q_payload(
-            _q_subtract(ONE, family_alpha)
-        ),
+        "simultaneous_coverage_lower": _q_payload(_q_subtract(ONE, family_alpha)),
         "one_sided_exact_sign_flip_p": _q_payload(pvalue),
         "sign_flip_assumption": SIGN_FLIP_ASSUMPTION,
         "sign_flip_assumption_preregistered": True,

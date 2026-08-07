@@ -175,9 +175,7 @@ def test_depth_conditioned_adapter_load_reconstructs_and_reads_back_bank(
     assert loaded_count == 2
     assert set(tensors).issubset(loaded)
     assert all(bool(mx.array_equal(loaded[key], value)) for key, value in tensors.items())
-    assert bool(
-        mx.all(target.model.layers[2].self_attn.q_proj.depth_a[1] == 1.0)
-    )
+    assert bool(mx.all(target.model.layers[2].self_attn.q_proj.depth_a[1] == 1.0))
 
 
 def test_role_conditioned_adapter_load_reconstructs_and_reads_back_bank(
@@ -238,10 +236,7 @@ def test_role_conditioned_adapter_load_reconstructs_and_reads_back_bank(
         "model.layers.2.self_attn.q_proj",
     ]
     manifest = {
-        "schema": (
-            runner.resident_recurrent_sft_adapter_identity
-            .ROLE_CONDITIONED_MANIFEST_SCHEMA
-        ),
+        "schema": (runner.resident_recurrent_sft_adapter_identity.ROLE_CONDITIONED_MANIFEST_SCHEMA),
         "lora": {
             "rank": 2,
             "scale": 20.0,
@@ -529,6 +524,7 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
     )
     audit_body = {
         "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "training_dataset_identity_sha256": "d" * 64,
         "task_manifest_sha256": manifest.manifest_sha256,
         "status": "passed_zero_overlap",
         "overlap_count": 0,
@@ -852,7 +848,10 @@ def test_sequential_worker_batches_are_balanced_disjoint_and_cumulative():
     for worker_look in (1, 2):
         assigned = [task_id for task_id, look in assignments.items() if look == worker_look]
         assert len(assigned) == 4
-        assert {domain: sum(task_domains[item] == domain for item in assigned) for domain in task_domains.values()} == {
+        assert {
+            domain: sum(task_domains[item] == domain for item in assigned)
+            for domain in task_domains.values()
+        } == {
             "coding": 2,
             "mathematics": 2,
         }
@@ -907,9 +906,7 @@ def test_sequential_resume_excludes_imported_and_future_cells():
     assert set(pending).isdisjoint(second)
     assert pending == sorted(
         pending,
-        key=lambda cell_id: plan.cell_definition(cell_id)[
-            "execution_ordinal_within_arm"
-        ],
+        key=lambda cell_id: plan.cell_definition(cell_id)["execution_ordinal_within_arm"],
     )
 
 
@@ -943,9 +940,7 @@ def test_sequential_look_evaluation_publishes_independent_chained_certificate(
         "plan_sha256": plan.plan_sha256,
         "expected_task_count": len(task_ids),
         "expected_cell_count": len(records),
-        "statistical_policy": {
-            "alpha": {"numerator": 1, "denominator": 200}
-        },
+        "statistical_policy": {"alpha": {"numerator": 1, "denominator": 200}},
         "verdict": "inconclusive",
     }
 
@@ -994,9 +989,7 @@ def _write_sequential_final_chain(campaign_dir: Path, plan) -> list[dict]:
     look_dir.mkdir()
     certificates = []
     previous_sha256 = None
-    power_looks = plan.to_dict()["metadata"]["execution_config"][
-        "exact_statistical_power"
-    ]["looks"]
+    power_looks = plan.to_dict()["metadata"]["execution_config"]["exact_statistical_power"]["looks"]
     for look, power in enumerate(power_looks, 1):
         task_ids = runner.cumulative_task_ids(plan, look)
         records = []
@@ -1028,9 +1021,7 @@ def _write_sequential_final_chain(campaign_dir: Path, plan) -> list[dict]:
             independent_grade=grade,
             previous_certificate_sha256=previous_sha256,
         )
-        (look_dir / f"look-{look:03d}.json").write_bytes(
-            canonical_json_bytes(certificate) + b"\n"
-        )
+        (look_dir / f"look-{look:03d}.json").write_bytes(canonical_json_bytes(certificate) + b"\n")
         certificates.append(certificate)
         previous_sha256 = certificate["certificate_sha256"]
     return certificates
@@ -1044,9 +1035,7 @@ def test_sequential_final_binding_commits_complete_chain(tmp_path: Path):
 
     assert binding == {
         "sequential_look_count": 2,
-        "sequential_certificate_head_sha256": certificates[-1][
-            "certificate_sha256"
-        ],
+        "sequential_certificate_head_sha256": certificates[-1]["certificate_sha256"],
         "sequential_certificate_chain_sha256": hashlib.sha256(
             canonical_json_bytes(
                 [certificate["certificate_sha256"] for certificate in certificates]
@@ -1068,9 +1057,7 @@ def test_sequential_final_binding_rejects_rehashed_broken_link(tmp_path: Path):
     material["previous_certificate_sha256"] = "0" * 64
     certificate = {
         **material,
-        "certificate_sha256": hashlib.sha256(
-            canonical_json_bytes(material)
-        ).hexdigest(),
+        "certificate_sha256": hashlib.sha256(canonical_json_bytes(material)).hexdigest(),
     }
     path.write_bytes(canonical_json_bytes(certificate) + b"\n")
 
@@ -1186,6 +1173,7 @@ def _worker_origin_claim_fixture(tmp_path: Path):
     )
     audit_body = {
         "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "training_dataset_identity_sha256": "d" * 64,
         "task_manifest_sha256": task_manifest.manifest_sha256,
         "status": "passed_zero_overlap",
         "overlap_count": 0,
@@ -1734,6 +1722,7 @@ def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path
     key_id = hashlib.sha256(public_der).hexdigest()
     body = {
         "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "training_dataset_identity_sha256": "f" * 64,
         "task_manifest_sha256": manifest.manifest_sha256,
         "status": "passed_zero_overlap",
         "overlap_count": 0,
@@ -1793,6 +1782,7 @@ def test_contamination_audit_must_cover_bound_adapter_training_corpus(
     )
     body = {
         "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "training_dataset_identity_sha256": "f" * 64,
         "task_manifest_sha256": manifest.manifest_sha256,
         "status": "passed_zero_overlap",
         "overlap_count": 0,
@@ -1915,6 +1905,7 @@ def test_prelaunch_trust_verifies_all_pinned_roles_before_inference(
     )
     audit_body = {
         "schema": runner.CONTAMINATION_AUDIT_SCHEMA,
+        "training_dataset_identity_sha256": "d" * 64,
         "task_manifest_sha256": task_manifest.manifest_sha256,
         "status": "passed_zero_overlap",
         "overlap_count": 0,

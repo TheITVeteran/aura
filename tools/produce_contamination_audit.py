@@ -40,6 +40,7 @@ Usage:
       --task-registry-version 2026.07.18.2 \
       --trust-root ~/.aura/trust/contamination_audit_ed25519_public.pem
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,6 +58,7 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
     canonical_json_bytes,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
+    CONTAMINATION_SAFE_REGISTRY_VERSION,
     CURRENT_REGISTRY_VERSION,
     FRONTIER_DOMAINS,
     REGISTRY_VERSION,
@@ -66,6 +68,9 @@ from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     CONTAMINATION_AUDIT_SCHEMA,
+)
+from core.learning.resident_recurrent_sft_bootstrap_authority import (  # noqa: E402
+    build_dataset_commitment,
 )
 
 AUDIT_METHODS = ("exact_prompt", "normalized_prompt", "token_fivegram")
@@ -117,32 +122,96 @@ def _atomic_write(path: Path, payload: bytes, *, mode: int = 0o644) -> None:
     os.replace(temporary, path)
 
 
-def _load_training_prompts(manifest_path: Path) -> tuple[list[str], str, int]:
-    """Exact corpus prompts + snapshot hash from a trainer dataset manifest."""
+def _load_corpus(
+    manifest_path: Path,
+) -> tuple[list[str], str, list[dict[str, object]]]:
+    """Load a legacy manifest or canonical recurrent-SFT row array."""
     payload = _read_regular_file(manifest_path, max_bytes=MAX_MANIFEST_BYTES)
     snapshot_sha256 = _sha256_bytes(payload)
     try:
         manifest = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise AuditError("training manifest is not valid JSON") from exc
-    examples = manifest.get("examples")
+    if isinstance(manifest, dict):
+        examples = manifest.get("examples")
+    else:
+        examples = manifest
     if not isinstance(examples, list) or not examples:
         raise AuditError("training manifest has no examples")
     prompts: list[str] = []
+    rows: list[dict[str, object]] = []
     for index, example in enumerate(examples):
         prompt = example.get("prompt") if isinstance(example, dict) else None
         if not isinstance(prompt, str) or not prompt.strip():
             raise AuditError(f"training example {index} has no prompt")
         prompts.append(prompt)
-    return prompts, snapshot_sha256, len(prompts)
+        rows.append(dict(example))
+    return prompts, snapshot_sha256, rows
+
+
+def _training_corpus_material(
+    args: argparse.Namespace,
+) -> tuple[list[str], list[dict[str, str]], str, int]:
+    training_path = Path(args.training_manifest)
+    training_prompts, training_sha256, training_rows = _load_corpus(training_path)
+    corpus_name = str(getattr(args, "corpus_name", "training") or "training")
+    corpora = [
+        {
+            "name": corpus_name,
+            "snapshot_sha256": training_sha256,
+        }
+    ]
+    prompts = list(training_prompts)
+    row_count = len(training_rows)
+    validation_value = str(getattr(args, "validation_manifest", "") or "").strip()
+    if validation_value:
+        validation_path = Path(validation_value)
+        validation_prompts, validation_sha256, validation_rows = _load_corpus(validation_path)
+        prompts.extend(validation_prompts)
+        row_count += len(validation_rows)
+        corpora.append(
+            {
+                "name": f"{corpus_name}:validation",
+                "snapshot_sha256": validation_sha256,
+            }
+        )
+
+        def commitment_rows(
+            rows: list[dict[str, object]], *, split: str
+        ) -> list[dict[str, object]]:
+            normalized: list[dict[str, object]] = []
+            required = {"task_id", "family", "depth", "prompt", "answer", "ordinal"}
+            for index, row in enumerate(rows):
+                if set(row) != required or row.get("ordinal") != index:
+                    raise AuditError(f"{split} manifest is not a canonical recurrent-SFT row array")
+                normalized.append({key: value for key, value in row.items() if key != "ordinal"})
+            return normalized
+
+        try:
+            dataset_identity = str(
+                build_dataset_commitment(
+                    commitment_rows(training_rows, split="training"),
+                    commitment_rows(validation_rows, split="validation"),
+                )["dataset_sha256"]
+            )
+        except (TypeError, ValueError) as exc:
+            raise AuditError(
+                "training and validation manifests do not form a canonical "
+                "resident recurrent-SFT dataset"
+            ) from exc
+    else:
+        dataset_identity = training_sha256
+    expected_identity = str(getattr(args, "training_dataset_identity_sha256", "") or "").strip()
+    if expected_identity and expected_identity != dataset_identity:
+        raise AuditError(
+            "recomputed training dataset identity does not match the declared identity"
+        )
+    return prompts, corpora, dataset_identity, row_count
 
 
 def _fivegrams(prompt: str) -> set[str]:
     tokens = _normalized_prompt(prompt).split()
-    return {
-        " ".join(tokens[index : index + 5])
-        for index in range(max(0, len(tokens) - 4))
-    }
+    return {" ".join(tokens[index : index + 5]) for index in range(max(0, len(tokens) - 4))}
 
 
 def _overlap_report(
@@ -151,10 +220,7 @@ def _overlap_report(
 ) -> tuple[int, list[dict[str, object]]]:
     """Sweep every campaign prompt against the whole corpus, all methods."""
     exact = {_sha256_bytes(p.encode("utf-8")) for p in training_prompts}
-    normalized = {
-        _sha256_bytes(_normalized_prompt(p).encode("utf-8"))
-        for p in training_prompts
-    }
+    normalized = {_sha256_bytes(_normalized_prompt(p).encode("utf-8")) for p in training_prompts}
     corpus_fivegrams: set[str] = set()
     for prompt in training_prompts:
         corpus_fivegrams |= _fivegrams(prompt)
@@ -164,10 +230,7 @@ def _overlap_report(
         methods_hit: list[str] = []
         if _sha256_bytes(prompt.encode("utf-8")) in exact:
             methods_hit.append("exact_prompt")
-        if (
-            _sha256_bytes(_normalized_prompt(prompt).encode("utf-8"))
-            in normalized
-        ):
+        if _sha256_bytes(_normalized_prompt(prompt).encode("utf-8")) in normalized:
             methods_hit.append("normalized_prompt")
         shared = _fivegrams(prompt) & corpus_fivegrams
         if shared:
@@ -191,9 +254,7 @@ def _campaign_manifest(args: argparse.Namespace):
     if args.domains.strip().lower() == "all":
         domains = FRONTIER_DOMAINS
     else:
-        domains = tuple(
-            value.strip() for value in args.domains.split(",") if value.strip()
-        )
+        domains = tuple(value.strip() for value in args.domains.split(",") if value.strip())
     tasks = generate_task_battery(
         seeds,
         domains=domains,
@@ -201,9 +262,7 @@ def _campaign_manifest(args: argparse.Namespace):
         registry_version=args.task_registry_version,
     )
     manifest = build_task_manifest(tasks)
-    task_prompts = [
-        (record.task_id, record.prompt) for record in manifest.tasks
-    ]
+    task_prompts = [(record.task_id, record.prompt) for record in manifest.tasks]
     return manifest, task_prompts
 
 
@@ -275,28 +334,18 @@ def cmd_keygen(args: argparse.Namespace) -> int:
 
 
 def _build_audit_body(args: argparse.Namespace) -> tuple[dict, list[dict]]:
-    training_prompts, snapshot_sha256, corpus_size = _load_training_prompts(
-        Path(args.training_manifest)
-    )
+    training_prompts, corpora, dataset_identity, corpus_size = _training_corpus_material(args)
     manifest, task_prompts = _campaign_manifest(args)
     overlap_count, hits = _overlap_report(task_prompts, training_prompts)
-    key_external = _is_outside_repo(Path(args.key)) and _is_outside_repo(
-        Path(args.trust_root)
-    )
+    key_external = _is_outside_repo(Path(args.key)) and _is_outside_repo(Path(args.trust_root))
     body = {
         "schema": CONTAMINATION_AUDIT_SCHEMA,
         "task_manifest_sha256": manifest.manifest_sha256,
-        "status": (
-            "passed_zero_overlap" if overlap_count == 0 else "failed_overlap"
-        ),
+        "status": ("passed_zero_overlap" if overlap_count == 0 else "failed_overlap"),
         "overlap_count": overlap_count,
         "auditor_independence": "external" if key_external else "internal",
-        "corpora": [
-            {
-                "name": str(args.corpus_name),
-                "snapshot_sha256": snapshot_sha256,
-            }
-        ],
+        "training_dataset_identity_sha256": dataset_identity,
+        "corpora": corpora,
         "methods": list(AUDIT_METHODS),
     }
     report = [
@@ -329,9 +378,7 @@ def cmd_produce(args: argparse.Namespace) -> int:
     payload = json.dumps(audit, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     _atomic_write(Path(args.out), payload)
     if args.report_out:
-        report_payload = (
-            json.dumps(report, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-        )
+        report_payload = json.dumps(report, indent=2, sort_keys=True).encode("utf-8") + b"\n"
         _atomic_write(Path(args.report_out), report_payload)
     print(
         f"audit written: status={body['status']} overlap_count="
@@ -343,8 +390,7 @@ def cmd_produce(args: argparse.Namespace) -> int:
         return 2
     if body["auditor_independence"] != "external":
         print(
-            "WARNING: key material inside the repository — campaign requires "
-            "external independence"
+            "WARNING: key material inside the repository — campaign requires external independence"
         )
         return 3
     return 0
@@ -377,6 +423,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "status",
         "overlap_count",
         "auditor_independence",
+        "training_dataset_identity_sha256",
         "corpora",
         "methods",
         "signature",
@@ -388,6 +435,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     signature = body.pop("signature")
 
     failures: list[str] = []
+    if audit.get("schema") != CONTAMINATION_AUDIT_SCHEMA:
+        failures.append("audit schema is not the current producer schema")
     # 1. Signature against the trust root, over the canonical body bytes.
     trust_bytes = _read_regular_file(Path(args.trust_root), max_bytes=64 * 1024)
     public_key = load_pem_public_key(trust_bytes)
@@ -408,25 +457,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if audit["task_manifest_sha256"] != manifest.manifest_sha256:
         failures.append("task manifest hash does not match regenerated battery")
     # 3. Corpus snapshot + overlap recomputed from raw bytes.
-    training_prompts, snapshot_sha256, _ = _load_training_prompts(
-        Path(args.training_manifest)
-    )
+    training_prompts, corpora, dataset_identity, _ = _training_corpus_material(args)
     declared = {
         record.get("snapshot_sha256")
         for record in audit.get("corpora", [])
         if isinstance(record, dict)
     }
-    if snapshot_sha256 not in declared:
-        failures.append("training corpus snapshot hash not declared in audit")
+    expected_snapshots = {record["snapshot_sha256"] for record in corpora}
+    if declared != expected_snapshots:
+        failures.append("training corpus snapshot hashes do not match the audit")
+    if audit.get("training_dataset_identity_sha256") != dataset_identity:
+        failures.append("training dataset identity does not match the audit")
     overlap_count, _hits = _overlap_report(task_prompts, training_prompts)
     if overlap_count != audit["overlap_count"]:
-        failures.append(
-            f"recomputed overlap {overlap_count} != declared "
-            f"{audit['overlap_count']}"
-        )
-    expected_status = (
-        "passed_zero_overlap" if overlap_count == 0 else "failed_overlap"
-    )
+        failures.append(f"recomputed overlap {overlap_count} != declared {audit['overlap_count']}")
+    expected_status = "passed_zero_overlap" if overlap_count == 0 else "failed_overlap"
     if audit["status"] != expected_status:
         failures.append("status does not match recomputed overlap")
     if not set(AUDIT_METHODS).issubset(audit.get("methods", [])):
@@ -444,13 +489,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def _add_generation_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--training-manifest", required=True)
+    parser.add_argument("--validation-manifest", default="")
+    parser.add_argument("--training-dataset-identity-sha256", default="")
     parser.add_argument("--seeds", required=True)
     parser.add_argument("--domains", default="all")
     parser.add_argument("--difficulty", type=int, default=2)
     parser.add_argument(
         "--task-registry-version",
         default=CURRENT_REGISTRY_VERSION,
-        choices=sorted({REGISTRY_VERSION, CURRENT_REGISTRY_VERSION}),
+        choices=sorted(
+            {
+                REGISTRY_VERSION,
+                CURRENT_REGISTRY_VERSION,
+                CONTAMINATION_SAFE_REGISTRY_VERSION,
+            }
+        ),
     )
 
 

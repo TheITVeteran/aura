@@ -1,0 +1,45 @@
+[
+  {
+    "corpus_examples": 216,
+    "hits": [
+      {
+        "methods": [
+          "token_fivegram"
+        ],
+        "shared_fivegrams": [
+          "then choose the lexicographically smallest"
+        ],
+        "task_id": "rlc_frontier:long_horizon_planning:888d6d64efb74c0647d5b5687f029ba3cffa2a5191960aafad5e42e5171c9b71"
+      },
+      {
+        "methods": [
+          "token_fivegram"
+        ],
+        "shared_fivegrams": [
+          "then choose the lexicographically smallest"
+        ],
+        "task_id": "rlc_frontier:long_horizon_planning:8b67f1cf57d4ec0b08eb06325a9f09cd31fc10b964a5bb973131a18df13333a0"
+      },
+      {
+        "methods": [
+          "token_fivegram"
+        ],
+        "shared_fivegrams": [
+          "then choose the lexicographically smallest"
+        ],
+        "task_id": "rlc_frontier:long_horizon_planning:a71031a158a3816ffbb8feee537a87c9770823d6a352fdb9eab56e486fd51709"
+      },
+      {
+        "methods": [
+          "token_fivegram"
+        ],
+        "shared_fivegrams": [
+          "then choose the lexicographically smallest"
+        ],
+        "task_id": "rlc_frontier:long_horizon_planning:c1d21e03bff776691013796d8b6b75b6f4d78ad28148524fee6f0c278bc4e8b8"
+      }
+    ],
+    "registry_version": "2026.07.18.2",
+    "task_count": 28
+  }
+]
