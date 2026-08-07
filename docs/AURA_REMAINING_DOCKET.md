@@ -69,7 +69,7 @@
 | `OBSERVE-001` | `in_progress` | 3 | none |
 | `OS-AUTOMATION-001` | `in_progress` | 3 | DESKTOP-001, EFFECT-001, FOREGROUND-LATENCY-001, TOOLS-001 |
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
-| `PROGRESS-CONTROL-001` | `in_progress` | 6 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
+| `PROGRESS-CONTROL-001` | `in_progress` | 5 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
 | `RESOURCE-001` | `in_progress` | 1 | none |
 | `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
@@ -125,4 +125,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `629c21d4d5e99c157eca20c8fb9c4554252a4a42ec50ff92e3445bd7cfdad445`
+Report SHA-256: `92e24cfb82df92c719a7391cb30aa9cf09cf9c134144b1f2960a893cea456699`

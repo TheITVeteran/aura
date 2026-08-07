@@ -10,14 +10,14 @@
   "completion": {
     "engineering_estimate_percent": "27.00",
     "engineering_estimate_status": "legacy_uncertified_not_used_for_release",
-    "machine_certified_percent": "7.13",
+    "machine_certified_percent": "7.19",
     "status": "provisional_evidence_backfill_incomplete",
-    "verified_basis_points": 713
+    "verified_basis_points": 719
   },
   "evidence_classes": [
     {
       "cells_total": 516,
-      "cells_verified": 48,
+      "cells_verified": 49,
       "evidence_class": "implementation",
       "weight": 2
     },
@@ -75,7 +75,7 @@
     "total_checkpoint_records_low": 506
   },
   "inputs": {
-    "evidence_ledger_sha256": "44291be91d4958e8d526b2d863b0f32bdb84b2772a4a4d8c0c1847410492e158",
+    "evidence_ledger_sha256": "e76697990cb688e700d1d71e7735159383e12f82582231bcb7d58c9e368b7806",
     "progress_policy_sha256": "51b725d4ff7c375ae98cece8d7d6d4351739689b500450b67b836e7e37006a47",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811",
     "scope_baseline_sha256": "b6e9e3295b297e9a32223fa75322584e1f9d395225888924a38f9791205b7336"
@@ -86,7 +86,7 @@
     "Checkpoint records sharing one commit are counted as records and exposed separately from distinct commits.",
     "Parent and child requirements are both counted when each declares its own integration or proof burden."
   ],
-  "report_sha256": "c4b0675029800dfbd593dde65c7a25876e84b87fa314d4d4c885c84e4f09d2a7",
+  "report_sha256": "f7dc4fe49a68bee8482e6464b575dc3e745f86ac5d760e704446a05e7a07e979",
   "requirements": [
     {
       "acceptance_evidence_required": [
@@ -6055,7 +6055,7 @@
       ],
       "acceptance_units": 1,
       "cells_total": 6,
-      "cells_verified": 0,
+      "cells_verified": 1,
       "id": "PROGRESS-CONTROL-001",
       "kind": "atomic",
       "required_evidence_classes": [
@@ -6069,7 +6069,7 @@
       "state_claim": "in_progress",
       "weight_provenance": "default",
       "weighted_points_total": "19.00",
-      "weighted_points_verified": "0.00"
+      "weighted_points_verified": "2.00"
     },
     {
       "acceptance_evidence_required": [
@@ -7975,13 +7975,13 @@
   "schema_version": 1,
   "scope": {
     "acceptance_evidence_cells_total": 1305,
-    "acceptance_evidence_cells_verified": 102,
+    "acceptance_evidence_cells_verified": 103,
     "assigned_weight_requirements": 0,
     "mandatory_requirements": 312,
     "requirements_total": 313,
     "scope_baseline_cells": 1305,
-    "weighted_points_remaining": "2774.00",
+    "weighted_points_remaining": "2772.00",
     "weighted_points_total": "2987.00",
-    "weighted_points_verified": "213.00"
+    "weighted_points_verified": "215.00"
   }
 }

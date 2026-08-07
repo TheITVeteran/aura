@@ -1,5 +1,5 @@
 {
-  "content_sha256": "44291be91d4958e8d526b2d863b0f32bdb84b2772a4a4d8c0c1847410492e158",
+  "content_sha256": "e76697990cb688e700d1d71e7735159383e12f82582231bcb7d58c9e368b7806",
   "entries": [
     {
       "acceptance_ids": [
@@ -593,6 +593,17 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-tests/cce2eb03a9c9f652038e02c25440810e3f9dbc9b.json",
       "requirement_id": "PASSF-03",
       "sha256": "4eea58514837ef9f945cbd540e096989619bcd19328a31e94d880e4faf29cb63"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "2d948026f27296e30383b9d10af377a8eb79c228",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/reqproof-progress-engine-audit/2d948026f27296e30383b9d10af377a8eb79c228.json",
+      "requirement_id": "PROGRESS-CONTROL-001",
+      "sha256": "94c177be0d2415c9c7ff9a6d01ea447ddc9fddf6c93b650f60dc83b006ab474b"
     },
     {
       "acceptance_ids": [
