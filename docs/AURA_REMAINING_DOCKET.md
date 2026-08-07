@@ -6,10 +6,10 @@
 
 - Requirements: **313** total / **312** mandatory
 - In progress: **100**
-- Claimed complete but missing evidence: **0**
+- Claimed complete but missing evidence: **3**
 - Ready for implementation: **166**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **12**
+- Machine-certified complete: **8**
 
 ## Active Requirements
 
@@ -17,7 +17,7 @@
 |---|---|---:|---|
 | `ACTION-SPINE-001` | `in_progress` | 2 | EXPECT-001, EFFECT-001, ARCH-001, SUBSTRATE-001, FOREGROUND-LATENCY-001, AUTONOMY-AUTHORITY-001 |
 | `ADAPT-001` | `in_progress` | 3 | none |
-| `ADDENDUM-22` | `in_progress` | 14 | none |
+| `ADDENDUM-22` | `in_progress` | 19 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
 | `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
@@ -29,9 +29,9 @@
 | `CHECKPOINT-001` | `in_progress` | 0 | none |
 | `CLOSEOUT-001` | `in_progress` | 3 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
-| `CTX2-TEST-001` | `in_progress` | 0 | none |
-| `CTX2-TEST-002` | `in_progress` | 1 | none |
-| `CTX2-TEST-003` | `in_progress` | 0 | none |
+| `CTX2-TEST-001` | `in_progress` | 1 | none |
+| `CTX2-TEST-002` | `in_progress` | 2 | none |
+| `CTX2-TEST-003` | `in_progress` | 1 | none |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
 | `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
 | `CTX3-PERCEPT-002` | `in_progress` | 5 | none |
@@ -54,7 +54,7 @@
 | `HEALTH-SURFACE-001` | `in_progress` | 4 | RUNTIME-001, OBSERVE-001, UI-001 |
 | `IIT-SYSTEM-001` | `in_progress` | 3 | STATE-001, SUBSTRATE-001, INTELLIGENCE-001, CLAIMS-001, PROOF-001, TEST-DEPTH-001 |
 | `INFERENCE-RELIABILITY-001` | `in_progress` | 3 | LANE-001, RUNTIME-001, FAULT-001, CAPABILITY-CERT-001, FRONTIER-COGNITION-001 |
-| `LANE-001` | `in_progress` | 2 | none |
+| `LANE-001` | `in_progress` | 3 | none |
 | `LAUNCH-PROVENANCE-001` | `in_progress` | 4 | OPERATIONS-001, RUNTIME-001, DESKTOP-ACCESS-001, VALIDATE-001 |
 | `LIFECYCLE-001` | `in_progress` | 0 | FAULT-001, ARCH-001, REPO-001, VALIDATE-001 |
 | `MATRIX-09` | `in_progress` | 10 | none |
@@ -71,7 +71,7 @@
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
 | `PROGRESS-CONTROL-001` | `in_progress` | 6 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
-| `RESOURCE-001` | `in_progress` | 1 | none |
+| `RESOURCE-001` | `in_progress` | 2 | none |
 | `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
 | `RLC-ANTI-INTERFERENCE-001` | `in_progress` | 3 | RLC-CONSOLIDATION-001, CAPABILITY-CERT-001, IDENTITY-001 |
 | `RLC-BRANCHES-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
@@ -120,9 +120,12 @@
 
 These requirements carry a historical complete claim but are not machine-certified:
 
+- `CTX2-GATE-001`
+- `CTX2-GATE-002`
+- `PASSF-03`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `4f8fa1e42cf79af116bab98a459b81d48512c8290cb13ff5f546e9fd7e5322c3`
+Report SHA-256: `fc15f5818a13bbdd0cdd74feb4c2a22ae2d1c7052c724d0d71d8b1398d3245e9`

@@ -1,5 +1,5 @@
 {
-  "content_sha256": "013995d61abfc0ecd3b4ebb1537df8584e1639e8f43c5bfa93262e8382b0556b",
+  "content_sha256": "8b24d01ca7bebd6662ee6a6d0b79356d53899b4c1215a8dc2a3deae2cb9bb92b",
   "entries": [
     {
       "acceptance_ids": [
@@ -9,7 +9,6 @@
         "A4",
         "A5",
         "A6",
-        "A7",
         "A8",
         "A9"
       ],
@@ -19,6 +18,17 @@
       "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
       "requirement_id": "ADDENDUM-21",
       "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+    },
+    {
+      "acceptance_ids": [
+        "A7"
+      ],
+      "commit": "dcc05c111cba451b96fc1bb9ea63f72d0851cdf4",
+      "evidence_class": "implementation",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/dcc05c111cba451b96fc1bb9ea63f72d0851cdf4.json",
+      "requirement_id": "ADDENDUM-21",
+      "sha256": "bc67de76fabc69faa05ec111a2080e754e5d5cd482a7d2707387772819648b2e"
     },
     {
       "acceptance_ids": [
@@ -528,12 +538,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "6d3ef2cec8c114caea38fa2edeb757c8706d7570",
+      "commit": "dcc05c111cba451b96fc1bb9ea63f72d0851cdf4",
       "evidence_class": "implementation",
-      "recorded_at": "2026-08-06",
-      "ref": "artifacts/reqproof/evidence/model-lane-contract-audit/6d3ef2cec8c114caea38fa2edeb757c8706d7570.json",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/model-load-ownership-audit/dcc05c111cba451b96fc1bb9ea63f72d0851cdf4.json",
       "requirement_id": "LANE-001",
-      "sha256": "27114f652e59970bfa390013b527ccccb3d95f1790c1de437ce9e92b7ec0aa6d"
+      "sha256": "bc67de76fabc69faa05ec111a2080e754e5d5cd482a7d2707387772819648b2e"
     },
     {
       "acceptance_ids": [
