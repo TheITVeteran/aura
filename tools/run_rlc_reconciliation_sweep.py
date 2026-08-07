@@ -31,6 +31,7 @@ which is what makes the whole sweep affordable.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
@@ -54,14 +55,42 @@ SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
 # finished 96% of the time. A deficit measured against a control that mostly
 # runs out of tokens is a statement about budget, not about recurrence, so the
 # budget is varied directly rather than argued about.
-ARMS: tuple[tuple[str, int | None, str, int | None], ...] = (
-    ("vanilla", None, "applied", None),
-    ("rlc_asrun", 4, "applied", None),
-    ("rlc_nodisp", 4, "suppressed", None),
-    ("rlc_shallow", 1, "applied", None),
-    ("rlc_shallow_nodisp", 1, "suppressed", None),
-    ("vanilla_long", None, "applied", 1024),
-    ("rlc_nodisp_long", 4, "suppressed", 1024),
+@dataclasses.dataclass(frozen=True)
+class Arm:
+    """One measured configuration.
+
+    ``profile`` selects how much of the built stack is switched on:
+
+    ``ordinary``   plain decode -- the control.
+    ``mechanism``  recurrence, branches and slots only, with the internal
+                   proxy verifiers. This is what the 2026-08-06 campaign and
+                   every reconciliation run before 2026-08-07 measured. It is
+                   an ABLATION, not the system.
+    ``full``       every pillar the program actually built: adaptive halting,
+                   hidden-state optimization, temporary fast weights, local
+                   repair and the evidence-bound acceptance rule, on top of
+                   the verifier mesh. This is the claim under test -- that
+                   reasoning is a unified system rather than one mechanism.
+    ``full_oracle`` ``full`` plus a ground-truth verifier. Not a capability
+                   claim and never promotable; it is the verifier ablation,
+                   and it separates a generation ceiling from a selection
+                   ceiling.
+    """
+
+    name: str
+    steps: int | None
+    policy: str
+    max_tokens: int | None
+    profile: str
+
+
+ARMS: tuple[Arm, ...] = (
+    Arm("vanilla", None, "applied", None, "ordinary"),
+    Arm("full_stack", 8, "applied", None, "full"),
+    Arm("full_stack_oracle", 8, "applied", None, "full_oracle"),
+    # Ablations, meaningful only underneath the full arm.
+    Arm("rlc_mechanism", 4, "suppressed", None, "mechanism"),
+    Arm("vanilla_long", None, "applied", 1024, "ordinary"),
 )
 
 
@@ -209,18 +238,47 @@ def _build_config(
     policy: str,
     max_tokens: int,
     decode_contract: str = "final_answer_v1",
+    profile: str = "mechanism",
 ):
     from core.brain.llm.latent_cortex.types import (
         BranchConfig,
         CortexConfig,
+        FastWeightsConfig,
+        LatentOptConfig,
         RecurrenceConfig,
         WorkspaceConfig,
     )
 
+    full = profile in {"full", "full_oracle"}
+    # Adaptive halting is the program's own latency lever and its own
+    # capability claim: easy problems converge in two steps and stop paying,
+    # hard ones are allowed to keep going. Pinning min == max, as every run
+    # before 2026-08-07 did, forces the deep path onto every question and
+    # removes the mechanism that makes depth affordable at all.
+    min_steps = 2 if full else steps
+    recurrence = RecurrenceConfig(
+        max_steps=steps,
+        min_steps=min_steps,
+        alpha=0.5,
+        alpha_schedule="cosine" if full else "constant",
+        convergence_eps=0.02,
+        fixed_depth=not full,
+    )
     return CortexConfig(
         workspace=WorkspaceConfig(n_slots=n_slots, seed=0),
-        recurrence=RecurrenceConfig(max_steps=steps, min_steps=steps),
-        branches=BranchConfig(n_branches=2, exchange_interval=1),
+        recurrence=recurrence,
+        branches=BranchConfig(
+            n_branches=2,
+            exchange_interval=4 if full else 1,
+            # Branches must not isolate for longer than the run is allowed to
+            # last; a depth-1 ablation would otherwise never exchange at all.
+            isolation_steps=max(1, min(2, steps)),
+        ),
+        # Anima Rationis pillars 5 and 6. Off in every prior run, which is
+        # why "the recurrent path" had never actually been measured: without
+        # these the second pass is the same computation as the first.
+        latent_opt=LatentOptConfig(enabled=full, steps=4, lr=0.05),
+        fast_weights=FastWeightsConfig(enabled=full, rank=2, opt_steps=4),
         prelude_frac=0.25,
         coda_frac=0.25,
         decode_max_tokens=max_tokens,
@@ -241,8 +299,12 @@ def _build_config(
         # no text and the cell becomes a fault instead of a measurement. The
         # same thing aborted CP420S12. Research measures the mechanism, so the
         # raw recurrent answer is retained and graded on its own terms.
-        answer_replacement_enabled=False,
-        local_repair_enabled=False,
+        # The Spark's acceptance rule: replace an answer only when the
+        # evidence for the new one clearly exceeds the old. Disabling it in a
+        # research arm was how "confidently wrong" got measured and reported
+        # as a property of recurrence.
+        answer_replacement_enabled=full,
+        local_repair_enabled=full,
         # A degraded episode that quietly serves an ordinary decode would make
         # this arm a second copy of the vanilla control wearing the recurrent
         # arm's label -- the worst possible failure here, because it looks like
@@ -298,6 +360,31 @@ def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
     return "".join(pieces)
 
 
+def _oracle_verifier(task):
+    """Ground-truth scorer for the verifier ablation.
+
+    The Spark's verifier ladder runs from no verifier through self-rating,
+    learned, process and executable verifiers up to an oracle. The oracle rung
+    exists to answer one question that no other rung can: when the system
+    fails, is it because it could not GENERATE a correct trajectory, or
+    because it could not SELECT the correct one it already had? Those two
+    failures have opposite remedies, and guessing between them is how a
+    program spends weeks on the wrong half.
+
+    An arm using this is a ceiling, never a capability claim, and never
+    promotable -- which is why it is bound to an arm name carrying "oracle".
+    """
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    def _score(candidate: str) -> float:
+        try:
+            return 1.0 if ft.score_task(task, candidate).correct else 0.0
+        except Exception:  # noqa: BLE001 - a scorer fault is not a signal
+            return 0.0
+
+    return _score
+
+
 class EpisodeFault(RuntimeError):
     """Infrastructure failed. Never scored as a wrong answer."""
 
@@ -333,6 +420,7 @@ def _run_rlc(
     tokenizer,
     *,
     wall_clock_s: float = 720.0,
+    verifier=None,
 ) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.types import ComputeBudget
@@ -344,8 +432,15 @@ def _run_rlc(
     # which would have been graded as a wrong answer, making the whole arm a
     # measurement of the budget rather than of recurrence.
     budget = ComputeBudget(wall_clock_s=wall_clock_s)
-    result = engine.reason(token_ids=prompt_tokens, budget=budget)
+    episode_started = time.monotonic()
+    kwargs: dict[str, Any] = {}
+    if verifier is not None:
+        kwargs["verifier"] = verifier
+    result = engine.reason(token_ids=prompt_tokens, budget=budget, **kwargs)
     receipt = result.receipt.to_dict()
+    # Latency has to be attributable, or "make it faster" is guesswork. The
+    # engine's own phase accounting is preferred; the wall time is the floor.
+    receipt.setdefault("episode_wall_s", time.monotonic() - episode_started)
     text = getattr(result, "text", "") or ""
     if not text and tokenizer is not None and getattr(result, "tokens", None):
         text = tokenizer.decode(list(result.tokens))
@@ -382,7 +477,7 @@ def main() -> int:
     parser.add_argument("--max-wall-s", type=float, default=64_800.0)
     parser.add_argument(
         "--arms",
-        default=",".join(a[0] for a in ARMS),
+        default=",".join(a.name for a in ARMS),
         help="comma-separated subset of arms to execute",
     )
     parser.add_argument(
@@ -404,7 +499,7 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    selected = [a for a in ARMS if a[0] in {v.strip() for v in args.arms.split(",")}]
+    selected = [a for a in ARMS if a.name in {v.strip() for v in args.arms.split(",")}]
     if not selected:
         print("no arms selected", file=sys.stderr)
         return 2
@@ -439,8 +534,8 @@ def main() -> int:
         return 0
 
     arm_tokens = {
-        name: (args.max_tokens if override is None else override)
-        for name, _steps, _policy, override in selected
+        a.name: (args.max_tokens if a.max_tokens is None else a.max_tokens)
+        for a in selected
     }
     fingerprints = {
         name: decode_fingerprint(
@@ -525,12 +620,15 @@ def main() -> int:
                 flush=True,
             )
 
-        for arm, steps, policy, _override in selected:
+        for spec in selected:
+            arm, steps, policy = spec.name, spec.steps, spec.policy
             tokens = arm_tokens[arm]
             config = (
                 None
                 if steps is None
-                else _build_config(steps, args.n_slots, policy, tokens)
+                else _build_config(
+                    steps, args.n_slots, policy, tokens, profile=spec.profile
+                )
             )
             for index, task in enumerate(tasks):
                 key = (arm, task.task_id)
@@ -553,12 +651,22 @@ def main() -> int:
                             tokens,
                         )
                     else:
+                        # The verifier ablation. An oracle arm is a
+                        # diagnostic ceiling that separates a generation
+                        # limit from a selection limit; it is never a
+                        # capability claim and never promotable, which the
+                        # arm name carries so no downstream reader can lose
+                        # track of which one produced a number.
+                        verifier = None
+                        if spec.profile == "full_oracle":
+                            verifier = _oracle_verifier(task)
                         text, receipt = _run_rlc(
                             model,
                             config,
                             _render_prompt(tokenizer, task),
                             tokenizer,
                             wall_clock_s=args.episode_wall_s,
+                            verifier=verifier,
                         )
                 except Exception as exc:  # noqa: BLE001 - recorded, never silent
                     # A harness fault must be visible as a fault. It is never
@@ -574,7 +682,14 @@ def main() -> int:
                         "decode_fingerprint": fingerprints[arm],
                         "decode_max_tokens": tokens,
                         "recurrent_steps": steps,
+                        "arm_profile": spec.profile,
                         "terminal_instruction_policy": policy,
+                        # Latency is a first-class result, not a footnote:
+                        # a unified system that answers better but takes ten
+                        # minutes has not been shown to be deployable.
+                        "steps_taken": receipt.get("steps_taken"),
+                        "halted_early": receipt.get("halted_early"),
+                        "phase_latency_s": receipt.get("phase_latency_s"),
                         "text": text,
                         "error": error,
                         "latency_s": time.monotonic() - cell_started,
@@ -636,9 +751,18 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
                 "reasons": {},
                 "generated_tokens": [],
                 "prefix_tokens": [],
+                "latency_s": [],
+                "steps_taken": [],
+                "halted_early": 0,
             },
         )
         bucket["total"] += 1
+        if cell.get("latency_s") is not None:
+            bucket["latency_s"].append(float(cell["latency_s"]))
+        if cell.get("steps_taken") is not None:
+            bucket["steps_taken"].append(cell["steps_taken"])
+        if cell.get("halted_early"):
+            bucket["halted_early"] += 1
         if cell.get("error"):
             bucket["errors"] += 1
             continue
@@ -653,6 +777,27 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
             bucket["generated_tokens"].append(cell["decode_generated_tokens"])
         if cell.get("decode_prefix_token_count") is not None:
             bucket["prefix_tokens"].append(cell["decode_prefix_token_count"])
+
+    # Accuracy without cost is not a deployability result. The program's own
+    # standard requires equal-latency AND equal-compute comparisons, so every
+    # arm publishes what its answers cost next to what they were worth.
+    for bucket in arms.values():
+        lat = sorted(bucket.pop("latency_s", []) or [])
+        steps = [x for x in bucket.pop("steps_taken", []) if x is not None]
+        bucket["latency_median_s"] = (
+            round(lat[len(lat) // 2], 1) if lat else None
+        )
+        bucket["latency_p90_s"] = (
+            round(lat[max(0, int(len(lat) * 0.9) - 1)], 1) if lat else None
+        )
+        bucket["steps_median"] = (
+            sorted(steps)[len(steps) // 2] if steps else None
+        )
+        bucket["halted_early_fraction"] = (
+            round(bucket["halted_early"] / bucket["total"], 2)
+            if bucket.get("total")
+            else None
+        )
 
     vanilla = arms.get("vanilla", {}).get("correct", 0)
     best_rlc_name, best_rlc = "", -1
@@ -690,6 +835,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         decision = "proceed_to_checkpoint_phase"
     else:
         decision = "recurrent_path_below_ordinary_decode"
+    vanilla_latency = arms.get("vanilla", {}).get("latency_median_s") or 0.0
     verdict = {
         "schema": SWEEP_SCHEMA,
         "arms": arms,
@@ -699,6 +845,14 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "arms_complete": complete,
         "faulted_arms": faulted,
         "battery_informative": informative,
+        "latency_ratio_vs_ordinary_decode": {
+            name: (
+                round(b["latency_median_s"] / vanilla_latency, 1)
+                if b.get("latency_median_s") and vanilla_latency
+                else None
+            )
+            for name, b in arms.items()
+        },
         "reaches_parity_with_ordinary_decode": reaches_parity,
         "decision": decision,
         "claims": {

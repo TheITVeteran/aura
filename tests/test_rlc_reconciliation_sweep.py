@@ -21,55 +21,55 @@ if str(TOOLS) not in sys.path:
 import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 
-def test_arms_cross_disposition_against_recurrence_depth():
-    """The sweep must be a factorial, or it cannot attribute the deficit."""
-    by_name = {name: (steps, policy) for name, steps, policy, _tokens in sweep.ARMS}
-    assert by_name["vanilla"][0] is None
-    # Both factors must vary, and vary independently.
-    assert by_name["rlc_asrun"] == (4, "applied")
-    assert by_name["rlc_nodisp"] == (4, "suppressed")
-    assert by_name["rlc_shallow"] == (1, "applied")
-    assert by_name["rlc_shallow_nodisp"] == (1, "suppressed")
+def test_the_full_stack_arm_enables_every_pillar_that_was_built():
+    """Every run before 2026-08-07 measured recurrence with hidden-state
+    optimization, fast weights and adaptive halting switched OFF, and reported
+    the result as a property of "the recurrent path". The program's own claim
+    is that reasoning is a unified system, so the arm under test has to be the
+    union, not one component of it."""
+    cfg = sweep._build_config(8, 16, "applied", 512, profile="full")
+    assert cfg.latent_opt.enabled is True, "hidden-state optimization"
+    assert cfg.fast_weights.enabled is True, "temporary fast weights"
+    assert cfg.local_repair_enabled is True, "local repair"
+    assert cfg.answer_replacement_enabled is True, "evidence-bound acceptance"
+    assert cfg.generative_verifier_enabled is True
+    assert cfg.counterfactual_verifier_enabled is True
+    assert cfg.prefix_stability_enabled is True
+    # Adaptive halting: the depth is a ceiling, not a floor.
+    assert cfg.recurrence.min_steps == 2
+    assert cfg.recurrence.max_steps == 8
+    assert cfg.recurrence.fixed_depth is False
 
 
-def test_the_token_budget_is_crossed_against_the_disposition():
-    """The control was completion-limited, so budget is a third factor and has
-    to vary against a matched recurrent arm -- otherwise a budget effect and a
-    recurrence effect are indistinguishable."""
-    by_name = {
-        name: (steps, policy, tokens) for name, steps, policy, tokens in sweep.ARMS
-    }
-    # Same decode as `vanilla`, more room to finish.
-    assert by_name["vanilla_long"] == (None, "applied", 1024)
-    # Same depth and policy as `rlc_nodisp`, matched to `vanilla_long`.
-    assert by_name["rlc_nodisp_long"] == (4, "suppressed", 1024)
-    assert by_name["rlc_nodisp"][:2] == by_name["rlc_nodisp_long"][:2]
-    # The five reproduction arms must stay on the campaign's own budget.
-    for name in ("vanilla", "rlc_asrun", "rlc_nodisp", "rlc_shallow"):
-        assert by_name[name][2] is None, f"{name} must inherit the campaign budget"
+def test_the_mechanism_arm_stays_an_ablation():
+    """The stripped configuration is retained, but only underneath the full
+    arm, and it must not silently acquire the pillars."""
+    cfg = sweep._build_config(4, 16, "suppressed", 512, profile="mechanism")
+    assert cfg.latent_opt.enabled is False
+    assert cfg.fast_weights.enabled is False
+    assert cfg.local_repair_enabled is False
+    assert cfg.answer_replacement_enabled is False
+    # Forced depth: no early halting, which is what makes it an ablation.
+    assert cfg.recurrence.min_steps == cfg.recurrence.max_steps == 4
+    assert cfg.recurrence.fixed_depth is True
 
 
-def test_each_arm_carries_its_own_configuration_identity():
-    """A 1024-token arm and a 512-token arm are different measurements, so a
-    single run-wide fingerprint would let one be resumed as the other."""
-    common = dict(
-        model="/models/resident",
-        n_slots=16,
-        episode_wall_s=720.0,
-        seed=20260807,
-        per_domain=4,
-    )
-    short = sweep.decode_fingerprint(max_tokens=512, arm="vanilla", **common)
-    long = sweep.decode_fingerprint(max_tokens=1024, arm="vanilla_long", **common)
-    same_budget_other_arm = sweep.decode_fingerprint(
-        max_tokens=512, arm="rlc_nodisp", **common
-    )
-    assert len({short, long, same_budget_other_arm}) == 3
+def test_the_battery_leads_with_the_unified_system_not_the_ablation():
+    by_name = {a.name: a for a in sweep.ARMS}
+    assert by_name["vanilla"].profile == "ordinary"
+    assert by_name["full_stack"].profile == "full"
+    assert by_name["full_stack_oracle"].profile == "full_oracle"
+    assert by_name["rlc_mechanism"].profile == "mechanism"
+    # The control and the unified arm must share a decode budget, or the
+    # contrast measures the budget instead of the system.
+    assert by_name["vanilla"].max_tokens == by_name["full_stack"].max_tokens
+    # The oracle arm is a diagnostic ceiling and is never promotable.
+    assert "oracle" in by_name["full_stack_oracle"].name
 
 
 def test_config_carries_the_arm_policy_and_validates():
     for steps, policy in ((4, "applied"), (1, "suppressed")):
-        config = sweep._build_config(steps, 16, policy, 320)
+        config = sweep._build_config(steps, 16, policy, 320, profile="mechanism")
         assert config.validate() == []
         assert config.terminal_instruction_policy == policy
         assert config.recurrence.max_steps == steps
@@ -567,3 +567,40 @@ def test_per_arm_fingerprints_retire_only_the_arm_that_changed(tmp_path: Path):
     narrowed = sweep.Journal(path, {"vanilla": vanilla_fp})
     assert narrowed.done == {("vanilla", "task-a")}
     assert narrowed.superseded == 1
+
+
+def test_latency_is_reported_beside_accuracy(tmp_path: Path):
+    """A unified system that answers better but takes ten minutes has not been
+    shown to be deployable. The program's own standard requires equal-latency
+    and equal-compute comparisons, so cost travels with the verdict."""
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for task in tasks:
+        reveal = task.reveal_for_verifier()
+        correct = "FINAL_ANSWER: " + json.dumps(reveal["expected"])
+        journal.append(
+            {
+                "event": "CELL", "arm": "vanilla", "task_id": task.task_id,
+                "domain": task.domain, "text": correct, "error": "",
+                "latency_s": 40.0,
+            }
+        )
+        journal.append(
+            {
+                "event": "CELL", "arm": "full_stack", "task_id": task.task_id,
+                "domain": task.domain, "text": correct, "error": "",
+                "latency_s": 400.0, "steps_taken": 3, "halted_early": True,
+            }
+        )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    full = verdict["arms"]["full_stack"]
+    assert full["latency_median_s"] == 400.0
+    assert full["steps_median"] == 3
+    # Adaptive halting is the latency lever; its use must be visible.
+    assert full["halted_early_fraction"] == 1.0
+    # Ten times the cost for the same score is a reportable result.
+    assert verdict["latency_ratio_vs_ordinary_decode"]["full_stack"] == 10.0
+    assert verdict["latency_ratio_vs_ordinary_decode"]["vanilla"] == 1.0
