@@ -717,6 +717,27 @@ def test_claim_eligible_plan_rejects_exact_but_underpowered_receipt():
         )
 
 
+def test_claim_output_policy_requires_arm_symmetric_raw_decodes():
+    valid = {
+        "effective_rlc_config": {"answer_replacement_enabled": False},
+        "response_contract_policy": {
+            "applies_identically_to_all_decode_arms": True,
+            "output_editing": False,
+            "rlc_answer_replacement_enabled": False,
+            "causal_attribution_rule": "raw_terminal_decode_all_arms",
+        },
+    }
+
+    paired._validate_claim_output_policy(valid)
+    asymmetric = json.loads(json.dumps(valid))
+    asymmetric["effective_rlc_config"]["answer_replacement_enabled"] = True
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_claim_output_policy_invalid",
+    ):
+        paired._validate_claim_output_policy(asymmetric)
+
+
 def test_claim_grade_requires_out_of_band_campaign_policy_pin():
     plan, tasks = _grade_plan(claim_eligible=True)
 

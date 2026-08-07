@@ -293,6 +293,13 @@ def _claim_plan_and_tasks(power_receipt):
             "generation_seed_policy": "external_issuer_uniform_63bit",
             "generation_seed_disclosure": "post_seal_answer_reveal",
             "domains": list(FRONTIER_DOMAINS),
+            "effective_rlc_config": {"answer_replacement_enabled": False},
+            "response_contract_policy": {
+                "applies_identically_to_all_decode_arms": True,
+                "output_editing": False,
+                "rlc_answer_replacement_enabled": False,
+                "causal_attribution_rule": "raw_terminal_decode_all_arms",
+            },
             "exact_statistical_power": power_receipt,
             "implementation_sha256": {
                 "tools/run_latent_cortex_paired_campaign.py": RUNNER_SHA256,
@@ -517,6 +524,27 @@ def test_claim_eligibility_is_independently_derived_for_incomplete_grade(
             plan=plan,
             issuer_tasks=tasks,
             trusted_contamination_root_sha256="0" * 64,
+            trusted_campaign_policy_sha256=POLICY_SHA256,
+        )
+
+    asymmetric = plan.to_dict()
+    asymmetric["metadata"]["execution_config"]["effective_rlc_config"][
+        "answer_replacement_enabled"
+    ] = True
+    asymmetric_plan = type(plan).build(
+        asymmetric["campaign_name"],
+        [plan.cell_definition(cell_id) for cell_id in plan.cell_ids],
+        metadata=asymmetric["metadata"],
+    )
+    with pytest.raises(
+        IndependentScoringError,
+        match="independent_claim_output_policy_invalid",
+    ):
+        independent_grade_campaign(
+            [],
+            plan=asymmetric_plan,
+            issuer_tasks=tasks,
+            trusted_contamination_root_sha256=trust_root,
             trusted_campaign_policy_sha256=POLICY_SHA256,
         )
 
