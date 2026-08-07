@@ -218,29 +218,19 @@ def test_disposition_injection_is_real_when_applied_and_absent_when_suppressed()
     assert applied["decode_bridge_token_count"] == 0
 
 
-def test_an_episode_with_no_answer_raises_instead_of_scoring_zero():
-    """A starved budget must not be gradeable as a wrong answer.
-
-    The first live sweep committed two recurrent cells whose episodes ended
-    budget_exhausted and confidence_bound_abstention with no text at all. The
-    engine's default 120s episode wall clock is smaller than these episodes
-    need -- the 2026-08-06 campaign's median recurrent episode ran 298s -- so
-    every recurrent cell would have graded as incorrect, and the arm would have
-    measured the budget rather than recurrence.
-    """
-    model = _tiny_model()
-    config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
-
+def _run_with_dead_engine(model, config, reason: str, termination: str):
     class _DeadResult:
         ok = False
-        reason = "budget_exhausted"
         tokens: list[int] = []
         text = ""
+
+        def __init__(self):
+            self.reason = reason
 
         class receipt:  # noqa: N801
             @staticmethod
             def to_dict():
-                return {"decode_termination": "budget_exhausted"}
+                return {"decode_termination": termination}
 
     class _DeadEngine:
         def __init__(self, *args, **kwargs):
@@ -254,11 +244,54 @@ def test_an_episode_with_no_answer_raises_instead_of_scoring_zero():
     original = engine_module.LatentCortexEngine
     engine_module.LatentCortexEngine = _DeadEngine
     try:
-        with pytest.raises(sweep.EpisodeFault) as excinfo:
-            sweep._run_rlc(model, config, [1, 2, 3], _StubTokenizer())
+        return sweep._run_rlc(model, config, [1, 2, 3], _StubTokenizer())
     finally:
         engine_module.LatentCortexEngine = original
-    assert "budget_exhausted" in str(excinfo.value)
+
+
+def test_infrastructure_failure_raises_instead_of_scoring_zero():
+    """A broken harness must not be gradeable as a wrong answer.
+
+    The first live sweep died on the engine's default 120s episode wall clock,
+    which is smaller than these episodes need -- the 2026-08-06 campaign's
+    median recurrent episode ran 298s.
+    """
+    model = _tiny_model()
+    config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
+
+    with pytest.raises(sweep.EpisodeFault) as excinfo:
+        _run_with_dead_engine(
+            model, config, "latent_phase_failed:ValueError:boom", "not_reached"
+        )
+    assert "latent_phase_failed" in str(excinfo.value)
+
+
+def test_a_model_that_cannot_finish_its_answer_is_scored_not_excluded():
+    """An unfinished decode is the arm failing to answer, which is a result.
+
+    CP420S12 settled this: bounded abstentions and incomplete decodes are
+    scored as incorrect policy observations, while cancellation, latent-phase,
+    worker and invariant failures stay fatal. The 2026-08-06 base_rlc arm
+    carried nine such policy failures out of 28, so excluding them would
+    flatter the recurrent path rather than measure it.
+    """
+    model = _tiny_model()
+    config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
+
+    text, receipt = _run_with_dead_engine(
+        model,
+        config,
+        "decode_incomplete:contract_irrecoverable",
+        "contract_irrecoverable",
+    )
+    assert text == ""
+    assert receipt["decode_termination"] == "contract_irrecoverable"
+
+    assert sweep._is_policy_failure("decode_incomplete:x", "contract_irrecoverable")
+    assert sweep._is_policy_failure("", "token_limit_contract_incomplete")
+    # Infrastructure never counts as policy, even when it mentions a budget.
+    assert not sweep._is_policy_failure("latent_phase_failed:budget_exhausted", "")
+    assert not sweep._is_policy_failure("worker_died", "budget_exhausted")
 
 
 def test_a_faulted_arm_makes_the_sweep_inconclusive_not_negative(tmp_path: Path):

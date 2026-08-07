@@ -209,7 +209,31 @@ def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
 
 
 class EpisodeFault(RuntimeError):
-    """The episode did not produce an answer. Never a wrong answer."""
+    """Infrastructure failed. Never scored as a wrong answer."""
+
+
+# A model that cannot finish its answer inside the token budget has failed to
+# answer -- that is a policy observation and it is scored incorrect, exactly as
+# CP420S12 established. Infrastructure failures are different in kind and must
+# never be graded, because grading them reports a broken harness as a reasoning
+# result. The 2026-08-06 campaign's own base_rlc arm carried nine such policy
+# failures out of 28, so excluding them would flatter the recurrent path.
+_POLICY_FAILURE_MARKERS: tuple[str, ...] = (
+    "decode_incomplete",
+    "contract_irrecoverable",
+    "token_limit",
+    "budget_exhausted",
+    "answer_replacement_abstained",
+    "confidence_bound_abstention",
+    "wall_reserve",
+)
+
+
+def _is_policy_failure(reason: str, termination: str) -> bool:
+    haystack = f"{reason} {termination}".lower()
+    if "latent_phase" in haystack or "worker" in haystack or "invariant" in haystack:
+        return False
+    return any(marker in haystack for marker in _POLICY_FAILURE_MARKERS)
 
 
 def _run_rlc(
@@ -235,12 +259,16 @@ def _run_rlc(
     text = getattr(result, "text", "") or ""
     if not text and tokenizer is not None and getattr(result, "tokens", None):
         text = tokenizer.decode(list(result.tokens))
+    reason = str(getattr(result, "reason", "") or "")
+    termination = str(receipt.get("decode_termination") or "")
     if not result.ok or not text.strip():
-        raise EpisodeFault(
-            f"episode produced no answer: ok={result.ok} "
-            f"reason={result.reason!r} "
-            f"termination={receipt.get('decode_termination')!r}"
-        )
+        if not _is_policy_failure(reason, termination):
+            raise EpisodeFault(
+                f"episode produced no answer: ok={result.ok} "
+                f"reason={reason!r} termination={termination!r}"
+            )
+        # A policy failure is a real observation: the arm did not answer.
+        # It is graded on exactly the text it managed to emit.
     # Belt and braces on the same hazard: if any fallback did serve an ordinary
     # decode, this is not an observation of the recurrent path.
     flags = [str(flag) for flag in (receipt.get("honest_flags") or [])]
