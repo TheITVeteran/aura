@@ -25,6 +25,7 @@ which is what makes the whole sweep affordable.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -57,12 +58,60 @@ def _atomic_write(path: Path, payload: str) -> None:
     os.replace(tmp, path)
 
 
-class Journal:
-    """Append-only cell journal. Resumption replays it and skips committed work."""
+def _read_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
-    def __init__(self, path: Path) -> None:
+
+def decode_fingerprint(
+    *,
+    model: str,
+    n_slots: int,
+    max_tokens: int,
+    episode_wall_s: float,
+    seed: int,
+    per_domain: int,
+) -> str:
+    """Identity of the decode configuration every cell in a run must share.
+
+    Twice now a resumed run reused cells produced under an older configuration
+    -- once the recurrent arms, once the control -- and both times the effect
+    was to compare arms that had been decoded under different rules. That is
+    precisely the confound this sweep exists to remove, so the check cannot be
+    a habit of whoever restarts the run. Cells carry their configuration and a
+    mismatched cell is treated as absent.
+    """
+    body = json.dumps(
+        {
+            "contract": "rlc_reconciliation_decode.v1",
+            "episode_wall_s": float(episode_wall_s),
+            "max_tokens": int(max_tokens),
+            "model": str(model),
+            "n_slots": int(n_slots),
+            "per_domain": int(per_domain),
+            "seed": int(seed),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+class Journal:
+    """Append-only cell journal. Resumption replays it and skips committed work.
+
+    Only cells matching the current decode fingerprint count as committed; a
+    cell from a superseded configuration is discarded and re-run.
+    """
+
+    def __init__(self, path: Path, fingerprint: str | None = None) -> None:
         self.path = path
+        self.fingerprint = fingerprint
         self.done: set[tuple[str, str]] = set()
+        self.superseded = 0
         if path.exists():
             for line in path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -73,8 +122,17 @@ class Journal:
                 except json.JSONDecodeError:
                     # A torn final line from a hard kill is not evidence.
                     continue
-                if record.get("event") == "CELL":
-                    self.done.add((record["arm"], record["task_id"]))
+                if record.get("event") != "CELL":
+                    continue
+                if not self._current(record):
+                    self.superseded += 1
+                    continue
+                self.done.add((record["arm"], record["task_id"]))
+
+    def _current(self, record: dict[str, Any]) -> bool:
+        if self.fingerprint is None:
+            return True
+        return record.get("decode_fingerprint") == self.fingerprint
 
     def append(self, record: dict[str, Any]) -> None:
         with self.path.open("a", encoding="utf-8") as handle:
@@ -94,7 +152,7 @@ class Journal:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if record.get("event") == "CELL":
+            if record.get("event") == "CELL" and self._current(record):
                 out.append(record)
         return out
 
@@ -337,9 +395,28 @@ def main() -> int:
         print(json.dumps({"tasks": len(tasks), "arms": [a[0] for a in selected]}, indent=2))
         return 0
 
-    journal = Journal(out_dir / "journal.jsonl")
+    fingerprint = decode_fingerprint(
+        model=args.model,
+        n_slots=args.n_slots,
+        max_tokens=args.max_tokens,
+        episode_wall_s=args.episode_wall_s,
+        seed=args.seed,
+        per_domain=args.per_domain,
+    )
+    _atomic_write(
+        out_dir / "decode_fingerprint.json",
+        json.dumps({"decode_fingerprint": fingerprint}, indent=1, sort_keys=True) + "\n",
+    )
+    journal = Journal(out_dir / "journal.jsonl", fingerprint)
     planned = len(selected) * len(tasks)
     print(f"planned cells {planned}, already committed {len(journal.done)}", flush=True)
+    if journal.superseded:
+        # Loud, because silently re-running them looks identical to a slow start.
+        print(
+            f"discarded {journal.superseded} cells from a superseded decode "
+            f"configuration; they will be re-run under {fingerprint[:16]}",
+            flush=True,
+        )
 
     from mlx_lm import load
 
@@ -411,6 +488,7 @@ def main() -> int:
                         "arm": arm,
                         "task_id": task.task_id,
                         "domain": task.domain,
+                        "decode_fingerprint": fingerprint,
                         "recurrent_steps": steps,
                         "terminal_instruction_policy": policy,
                         "text": text,
@@ -455,7 +533,13 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     from core.brain.llm.latent_cortex import frontier_tasks as ft
 
     by_id = {t.task_id: t for t in tasks}
-    journal = Journal(out_dir / "journal.jsonl")
+    # Grading is bound to the same configuration the cells were produced under.
+    # Absent the record (an older run, or a unit test), every cell is admitted.
+    recorded = _read_json(out_dir / "decode_fingerprint.json")
+    journal = Journal(
+        out_dir / "journal.jsonl",
+        (recorded or {}).get("decode_fingerprint"),
+    )
     arms: dict[str, dict[str, Any]] = {}
     for cell in journal.cells():
         arm = cell["arm"]

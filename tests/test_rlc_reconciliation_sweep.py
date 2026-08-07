@@ -397,3 +397,68 @@ def test_one_solved_control_task_makes_the_battery_informative(tmp_path: Path):
     assert verdict["battery_informative"] is True
     assert verdict["reaches_parity_with_ordinary_decode"] is True
     assert verdict["decision"] == "proceed_to_checkpoint_phase"
+
+
+def test_a_cell_from_a_superseded_decode_configuration_is_re_run(tmp_path: Path):
+    """The defect that cost two restarts: a resumed run reused cells produced
+    under an older decode configuration, so the control and the treatment were
+    compared across different rules. Configuration identity travels with the
+    cell, and a mismatch is treated as absent rather than as evidence."""
+    current = sweep.decode_fingerprint(
+        model="/models/resident",
+        n_slots=16,
+        max_tokens=320,
+        episode_wall_s=720.0,
+        seed=20260807,
+        per_domain=4,
+    )
+    superseded = sweep.decode_fingerprint(
+        model="/models/resident",
+        n_slots=16,
+        max_tokens=192,  # the only difference, and it changes every answer
+        episode_wall_s=720.0,
+        seed=20260807,
+        per_domain=4,
+    )
+    assert current != superseded
+
+    path = tmp_path / "journal.jsonl"
+    stale = sweep.Journal(path, superseded)
+    stale.append(
+        {
+            "event": "CELL",
+            "arm": "vanilla",
+            "task_id": "task-a",
+            "domain": "mathematics",
+            "decode_fingerprint": superseded,
+            "text": "FINAL_ANSWER: {}",
+            "error": "",
+        }
+    )
+
+    resumed = sweep.Journal(path, current)
+    assert resumed.done == set(), "a superseded cell must not count as committed"
+    assert resumed.superseded == 1
+    assert resumed.cells() == [], "and must not be graded"
+
+    # Under its own fingerprint it is still perfectly good evidence.
+    replayed = sweep.Journal(path, superseded)
+    assert replayed.done == {("vanilla", "task-a")}
+
+
+def test_an_unfingerprinted_journal_is_still_readable(tmp_path: Path):
+    """Older runs and unit fixtures carry no fingerprint; they are admitted."""
+    path = tmp_path / "journal.jsonl"
+    journal = sweep.Journal(path)
+    journal.append(
+        {
+            "event": "CELL",
+            "arm": "vanilla",
+            "task_id": "task-a",
+            "domain": "mathematics",
+            "text": "FINAL_ANSWER: {}",
+            "error": "",
+        }
+    )
+    assert sweep.Journal(path).done == {("vanilla", "task-a")}
+    assert sweep.Journal(path).superseded == 0
