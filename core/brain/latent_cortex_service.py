@@ -2638,10 +2638,12 @@ class LatentCortexService:
                     private_evidence=answer_replacement_private,
                     expected_objective=expected_objective,
                     expected_selected_branch=int(receipt.get("selected_branch")),
-                    expected_enabled=(
-                        executed_config.answer_replacement_enabled
-                        and executed_config.decode_incumbent_policy == "latent"
-                    ),
+                    # Must match the engine exactly. The engine no longer
+                    # gates promotion on decode_incumbent_policy -- that
+                    # coupling made the floor and the gain mutually exclusive
+                    # -- so a validator still expecting it would reject every
+                    # receipt the engine now produces as unproven.
+                    expected_enabled=executed_config.answer_replacement_enabled,
                     expected_margin=executed_config.answer_replacement_margin,
                     expected_max_output_tokens=replacement_output_limit,
                     expected_output_text=(

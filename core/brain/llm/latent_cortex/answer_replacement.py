@@ -288,6 +288,45 @@ def _candidate_inventory(
             "dominates": dominates,
         }
         rows.append({**payload, "candidate_decision_sha256": _sha(payload)})
+
+    # Branch candidates are promotable too, not just repairs of the incumbent.
+    #
+    # Until now `rows` came only from local_repair requests, so the recurrent
+    # path's own answers -- the entire product of the workspace, the branches
+    # and the recurrence -- had no route to becoming the output under
+    # vanilla_incumbent. The only way a latent answer could ever be served was
+    # decode_incumbent_policy="latent", which hands it the output
+    # unconditionally and removes the floor. That is why the floor and the gain
+    # were mutually exclusive: repairs could win safely, branches could only
+    # win recklessly.
+    #
+    # A branch wins here on exactly the same evidence rule as a repair: its
+    # lower confidence bound must clear the incumbent's upper bound plus the
+    # margin. The floor is preserved because the incumbent is ordinary decode
+    # and nothing displaces it without dominating it on measured evidence.
+    for index in sorted(branch_quality):
+        quality = branch_quality[index]
+        # An unmeasured candidate has bounds [0, 1] and can never dominate; it
+        # is recorded rather than silently skipped so the receipt shows every
+        # candidate that was considered.
+        dominates = bool(
+            float(quality["lower_bound"])
+            > float(baseline_quality["upper_bound"]) + margin
+        )
+        payload = {
+            "request_id": f"branch-{index}",
+            "branch": index,
+            "transaction_sha256": "",
+            "transaction_status": "branch_candidate",
+            "required_verifier": "",
+            "same_verifier_class": False,
+            "source_branch_quality": quality,
+            "replacement_quality": quality,
+            "dominance_margin": margin,
+            "compared_against": "actual_final_decode",
+            "dominates": dominates,
+        }
+        rows.append({**payload, "candidate_decision_sha256": _sha(payload)})
     return rows, selected_quality
 
 
@@ -452,7 +491,17 @@ def build_answer_replacement_receipt(
     accepted_text = baseline_text
     accepted_tokens = baseline
     if intended == "replace":
-        candidate = private_evidence["generated_repairs"].get(selected_request_id)
+        # A promoted candidate is either a repair of the incumbent or a branch
+        # answer; both bind their output the same way, by exact text/token
+        # round-trip, and both fail closed to abstain if that binding cannot be
+        # proven. Branch ids carry the "branch-" prefix their row was built
+        # with, so the source is unambiguous.
+        if selected_request_id.startswith("branch-"):
+            candidate = private_evidence["branch_candidates"].get(
+                selected_request_id.removeprefix("branch-")
+            )
+        else:
+            candidate = private_evidence["generated_repairs"].get(selected_request_id)
         try:
             if not isinstance(candidate, str):
                 raise ValueError("replacement private source is absent")
@@ -466,7 +515,11 @@ def build_answer_replacement_receipt(
                 raise ValueError("replacement output binding failed")
         except (AttributeError, KeyError, TypeError, ValueError):
             decision = "abstain"
-            reason = "dominant_repair_output_binding_failed"
+            reason = (
+                "dominant_branch_output_binding_failed"
+                if selected_request_id.startswith("branch-")
+                else "dominant_repair_output_binding_failed"
+            )
             binding_status = "failed_closed"
             accepted_text = ""
             accepted_tokens = []
@@ -484,7 +537,11 @@ def build_answer_replacement_receipt(
     }
     output_binding = {
         "source": (
-            "repaired_candidate"
+            (
+                "branch_candidate"
+                if selected_request_id.startswith("branch-")
+                else "repaired_candidate"
+            )
             if decision == "replace"
             else "baseline_decode"
             if decision == "retain"
@@ -717,13 +774,25 @@ def validate_answer_replacement_receipt(
         raise ValueError("answer replacement reconstruction differs")
     decision = value["decision"]
     if decision == "replace":
-        candidate = private["generated_repairs"].get(selected_request_id)
+        # A promoted candidate is a repair of the incumbent or a branch answer.
+        # Both are validated identically -- exact text/token round-trip against
+        # the private source that produced them -- so neither can be served
+        # without the receipt proving where it came from.
+        is_branch = selected_request_id.startswith("branch-")
+        candidate = (
+            private["branch_candidates"].get(
+                selected_request_id.removeprefix("branch-")
+            )
+            if is_branch
+            else private["generated_repairs"].get(selected_request_id)
+        )
         expected_effect = "replaced"
         if (
             intended != "replace"
             or value["reason"] != expected_reason
             or not isinstance(candidate, str)
-            or binding["source"] != "repaired_candidate"
+            or binding["source"]
+            != ("branch_candidate" if is_branch else "repaired_candidate")
             or binding["binding_status"] != "exact_text_token_roundtrip"
             or binding["text_sha256"] != _text_sha(candidate)
             or not 0 < binding["token_count"] <= output_limit

@@ -352,9 +352,22 @@ def test_no_repair_budget_never_returns_a_deterministically_refuted_decode():
     assert private["baseline_text"] == baseline
     assert receipt["private_evidence_required"] is True
     assert receipt["baseline_quality"]["basis"] == "deterministic_exact_refutation"
-    assert receipt["decision"] == "abstain"
-    assert receipt["reason"] == "known_refutation_has_no_dominant_repair"
-    assert tokens == []
+    # The safety property in this test's name -- a deterministically refuted
+    # decode is never returned -- still holds, and is now satisfied by a
+    # STRONGER outcome than abstention. Branch candidates became promotable
+    # under the same lower-bound-dominance rule repairs use, so an
+    # arithmetically verified branch ("2 + 2 = 4.", every atom verified, lower
+    # bound 1.0) displaces a refuted baseline (bounds [0, 0]) instead of the
+    # system giving up. Abstaining was previously the only option because the
+    # recurrent path had no route to the output at all.
+    assert receipt["decision"] == "replace"
+    assert receipt["reason"] == (
+        "replacement_lower_bound_exceeds_final_decode_upper_bound_plus_margin"
+    )
+    assert receipt["accepted_output"]["source"] == "branch_candidate"
+    # The refuted baseline is not what gets served -- the point of the test.
+    assert tokens
+    assert _decode(tokens) != baseline
 
 
 def test_output_text_tamper_is_rejected_by_service_reconstruction():
