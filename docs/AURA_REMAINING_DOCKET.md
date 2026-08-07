@@ -17,7 +17,7 @@
 |---|---|---:|---|
 | `ACTION-SPINE-001` | `in_progress` | 2 | EXPECT-001, EFFECT-001, ARCH-001, SUBSTRATE-001, FOREGROUND-LATENCY-001, AUTONOMY-AUTHORITY-001 |
 | `ADAPT-001` | `in_progress` | 3 | none |
-| `ADDENDUM-22` | `in_progress` | 19 | none |
+| `ADDENDUM-22` | `in_progress` | 14 | none |
 | `AGENCY-001` | `in_progress` | 3 | TOOLS-001, SECURITY-001, ACTION-SPINE-001 |
 | `ARCH-001` | `in_progress` | 2 | none |
 | `ASYNC-TASK-001` | `in_progress` | 3 | FAULT-001, LIFECYCLE-001, CONVERSATION-001 |
@@ -29,9 +29,9 @@
 | `CHECKPOINT-001` | `in_progress` | 0 | none |
 | `CLOSEOUT-001` | `in_progress` | 3 | none |
 | `CONVERSATION-001` | `in_progress` | 3 | INFERENCE-RELIABILITY-001, FOREGROUND-LATENCY-001 |
-| `CTX2-TEST-001` | `in_progress` | 1 | none |
-| `CTX2-TEST-002` | `in_progress` | 2 | none |
-| `CTX2-TEST-003` | `in_progress` | 1 | none |
+| `CTX2-TEST-001` | `in_progress` | 0 | none |
+| `CTX2-TEST-002` | `in_progress` | 1 | none |
+| `CTX2-TEST-003` | `in_progress` | 0 | none |
 | `CTX3-DECIDE-001` | `in_progress` | 2 | none |
 | `CTX3-PERCEPT-001` | `in_progress` | 4 | none |
 | `CTX3-PERCEPT-002` | `in_progress` | 5 | none |
@@ -71,7 +71,7 @@
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
 | `PROGRESS-CONTROL-001` | `in_progress` | 6 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
-| `RESOURCE-001` | `in_progress` | 2 | none |
+| `RESOURCE-001` | `in_progress` | 1 | none |
 | `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
 | `RLC-ANTI-INTERFERENCE-001` | `in_progress` | 3 | RLC-CONSOLIDATION-001, CAPABILITY-CERT-001, IDENTITY-001 |
 | `RLC-BRANCHES-001` | `in_progress` | 2 | RLC-MECHANICS-001, RLC-EXPERIMENTS-001 |
@@ -125,4 +125,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `bdcfb072e99e137f7e179375fa80e0dc63df3f7daf328995d75a093d9a6a8dae`
+Report SHA-256: `d1de5212e651a40dd9800b63178dd8749bf25db01ded6a4a63603f6579bf4270`
