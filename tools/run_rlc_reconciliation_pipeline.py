@@ -190,6 +190,26 @@ def main() -> int:
     _log(run_dir, f"sweep scores: {scores}")
     _phase_status(run_dir, phase="sweep_complete", sweep_scores=scores)
 
+    if not sweep_verdict.get("arms_complete", True):
+        _decide(
+            run_dir,
+            {
+                "decision": "inconclusive_sweep_arms_carry_harness_faults",
+                "summary": (
+                    "One or more arms carried harness faults, so they were not "
+                    "measured. Concluding from them would report an execution "
+                    "failure as a reasoning result. No weights were touched. "
+                    "Fix the fault and re-run launch_sweep.sh; committed cells "
+                    "are skipped."
+                ),
+                "evidence": {
+                    "arm_scores": scores,
+                    "faulted_arms": sweep_verdict.get("faulted_arms"),
+                },
+            },
+        )
+        return 0
+
     if not sweep_verdict.get("reaches_parity_with_ordinary_decode"):
         _decide(
             run_dir,

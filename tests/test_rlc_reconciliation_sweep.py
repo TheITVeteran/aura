@@ -216,3 +216,84 @@ def test_disposition_injection_is_real_when_applied_and_absent_when_suppressed()
     assert applied["decode_bridge_applied"] is False
     assert suppressed["decode_bridge_applied"] is False
     assert applied["decode_bridge_token_count"] == 0
+
+
+def test_an_episode_with_no_answer_raises_instead_of_scoring_zero():
+    """A starved budget must not be gradeable as a wrong answer.
+
+    The first live sweep committed two recurrent cells whose episodes ended
+    budget_exhausted and confidence_bound_abstention with no text at all. The
+    engine's default 120s episode wall clock is smaller than these episodes
+    need -- the 2026-08-06 campaign's median recurrent episode ran 298s -- so
+    every recurrent cell would have graded as incorrect, and the arm would have
+    measured the budget rather than recurrence.
+    """
+    model = _tiny_model()
+    config = sweep._build_config(2, 4, "applied", 8, decode_contract="none")
+
+    class _DeadResult:
+        ok = False
+        reason = "budget_exhausted"
+        tokens: list[int] = []
+        text = ""
+
+        class receipt:  # noqa: N801
+            @staticmethod
+            def to_dict():
+                return {"decode_termination": "budget_exhausted"}
+
+    class _DeadEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def reason(self, **kwargs):  # noqa: ARG002
+            return _DeadResult()
+
+    import core.brain.llm.latent_cortex.engine as engine_module
+
+    original = engine_module.LatentCortexEngine
+    engine_module.LatentCortexEngine = _DeadEngine
+    try:
+        with pytest.raises(sweep.EpisodeFault) as excinfo:
+            sweep._run_rlc(model, config, [1, 2, 3], _StubTokenizer())
+    finally:
+        engine_module.LatentCortexEngine = original
+    assert "budget_exhausted" in str(excinfo.value)
+
+
+def test_a_faulted_arm_makes_the_sweep_inconclusive_not_negative(tmp_path: Path):
+    """An arm that did not run has not lost. It has not been measured."""
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for task in tasks:
+        reveal = task.reveal_for_verifier()
+        journal.append(
+            {
+                "event": "CELL",
+                "arm": "vanilla",
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "text": "FINAL_ANSWER: " + json.dumps(reveal["expected"]),
+                "error": "",
+            }
+        )
+        journal.append(
+            {
+                "event": "CELL",
+                "arm": "rlc_asrun",
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "text": "",
+                "error": "EpisodeFault: episode produced no answer",
+            }
+        )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["arms_complete"] is False
+    assert verdict["faulted_arms"]["rlc_asrun"] == len(tasks)
+    assert verdict["decision"] == "inconclusive_arms_carry_harness_faults"
+    # Crucially it does NOT report the recurrent path as below vanilla.
+    assert verdict["reaches_parity_with_ordinary_decode"] is False
+    assert verdict["arms"]["rlc_asrun"]["correct"] == 0

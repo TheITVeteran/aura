@@ -188,15 +188,39 @@ def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
     return "".join(pieces)
 
 
-def _run_rlc(model, config, prompt_tokens: list[int], tokenizer) -> tuple[str, dict[str, Any]]:
+class EpisodeFault(RuntimeError):
+    """The episode did not produce an answer. Never a wrong answer."""
+
+
+def _run_rlc(
+    model,
+    config,
+    prompt_tokens: list[int],
+    tokenizer,
+    *,
+    wall_clock_s: float = 720.0,
+) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import ComputeBudget
 
     engine = LatentCortexEngine(model, config=config, tokenizer=tokenizer)
-    result = engine.reason(token_ids=prompt_tokens)
+    # The default 120s episode wall clock is smaller than these episodes take:
+    # the 2026-08-06 campaign's median recurrent episode ran 298s. Left at the
+    # default, every recurrent cell terminates budget_exhausted with no text --
+    # which would have been graded as a wrong answer, making the whole arm a
+    # measurement of the budget rather than of recurrence.
+    budget = ComputeBudget(wall_clock_s=wall_clock_s)
+    result = engine.reason(token_ids=prompt_tokens, budget=budget)
     receipt = result.receipt.to_dict()
     text = getattr(result, "text", "") or ""
-    if not text and tokenizer is not None:
+    if not text and tokenizer is not None and getattr(result, "tokens", None):
         text = tokenizer.decode(list(result.tokens))
+    if not result.ok or not text.strip():
+        raise EpisodeFault(
+            f"episode produced no answer: ok={result.ok} "
+            f"reason={result.reason!r} "
+            f"termination={receipt.get('decode_termination')!r}"
+        )
     return text, receipt
 
 
@@ -209,6 +233,9 @@ def main() -> int:
     parser.add_argument("--n-slots", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=320)
     parser.add_argument("--memory-fraction", type=float, default=0.40)
+    # Per-episode wall clock. The engine default is 120s; the campaign's median
+    # recurrent episode was 298s, so the default silently starves every arm.
+    parser.add_argument("--episode-wall-s", type=float, default=720.0)
     parser.add_argument("--max-wall-s", type=float, default=64_800.0)
     parser.add_argument(
         "--arms",
@@ -314,7 +341,11 @@ def main() -> int:
                         )
                     else:
                         text, receipt = _run_rlc(
-                            model, config, _render_prompt(tokenizer, task), tokenizer
+                            model,
+                            config,
+                            _render_prompt(tokenizer, task),
+                            tokenizer,
+                            wall_clock_s=args.episode_wall_s,
                         )
                 except Exception as exc:  # noqa: BLE001 - recorded, never silent
                     # A harness fault must be visible as a fault. It is never
@@ -410,18 +441,25 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         if bucket["correct"] > best_rlc:
             best_rlc_name, best_rlc = name, bucket["correct"]
 
-    reaches_parity = best_rlc >= vanilla and best_rlc >= 0
-    decision = (
-        "proceed_to_checkpoint_phase"
-        if reaches_parity
-        else "recurrent_path_below_ordinary_decode"
-    )
+    # An arm carrying harness faults has not been measured. Concluding either
+    # way from it would report a starved budget as a reasoning result.
+    faulted = {name: b["errors"] for name, b in arms.items() if b["errors"]}
+    complete = not faulted
+    reaches_parity = complete and best_rlc >= vanilla and best_rlc >= 0
+    if not complete:
+        decision = "inconclusive_arms_carry_harness_faults"
+    elif reaches_parity:
+        decision = "proceed_to_checkpoint_phase"
+    else:
+        decision = "recurrent_path_below_ordinary_decode"
     verdict = {
         "schema": SWEEP_SCHEMA,
         "arms": arms,
         "vanilla_correct": vanilla,
         "best_recurrent_arm": best_rlc_name,
         "best_recurrent_correct": best_rlc,
+        "arms_complete": complete,
+        "faulted_arms": faulted,
         "reaches_parity_with_ordinary_decode": reaches_parity,
         "decision": decision,
         "claims": {
