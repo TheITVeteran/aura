@@ -1315,6 +1315,12 @@ class DuplexVoiceSession:
                     yield piece
 
             delivered = await self._deliver_utterance(_pieces(), cause=None)
+            # Captured before the finally, because a barge-in clears
+            # ``_speaking`` and the distinction is what decides whether a
+            # correction is owed at all.
+            interrupted = self._speaking is None and bool(
+                self._mind.last_spoken and self._mind.last_spoken.interrupted
+            )
         finally:
             if not producer.done():
                 producer.cancel()
@@ -1326,7 +1332,23 @@ class DuplexVoiceSession:
         )
 
         final = await turn.final()
-        verdict = reconcile(spoken_via_stream, final or "")
+
+        if interrupted:
+            # The listener cut her off, so the reply is already incomplete for
+            # a reason that has nothing to do with governance, and the
+            # interruption machinery has already recorded the heard prefix and
+            # handed the unheard tail to the next turn. Issuing a correction
+            # on top of that would apologise for a revision to text they never
+            # reached, which is worse than saying nothing.
+            return True
+
+        # Reconcile against what was *delivered*, not what was released to the
+        # synthesiser. They differ whenever synthesis stopped short, and the
+        # correction context claims "the user heard X" — a claim that must be
+        # true, or her next turn refers to words nobody heard, which is the
+        # exact hallucination this whole lane is built to avoid.
+        heard = delivered or spoken_via_stream
+        verdict = reconcile(heard, final or "")
 
         if verdict.consistent and verdict.remainder:
             # Governance kept everything already said and had more to add.
