@@ -29,7 +29,6 @@ import io
 import json
 import logging
 import math
-import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -38,11 +37,15 @@ from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.types import ComputeBudget, FastWeightsConfig
+from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.LatentCortex.FastWeights")
 FAST_WEIGHT_OPTIMIZER = "rms_normalized_sgd_backtracking_v1"
 
-_MODEL_LEASE_LOCK = threading.Lock()
+_MODEL_LEASE_LOCK = checked_lock(
+    "latent_cortex.fast_weights.model_lease",
+    rank=LockRank.REGISTRY,
+)
 _MODEL_LEASES: dict[int, tuple[Any, str]] = {}
 
 _TARGET_ATTRS = {
@@ -350,8 +353,11 @@ class EpisodicFastWeights:
         # it was proving. Nothing about the prior episode may outlive it.
         self.lifecycle = FastWeightsLifecycle()
         self._exported_handles = []
+        target_attrs = _TARGET_ATTRS.get(self.config.target)
+        if target_attrs is None:
+            raise ValueError("unsupported fast-weight projection target")
+        parent_attr, leaf_attr = target_attrs
         self._acquire_model_lease(inner_model, episode_id)
-        parent_attr, leaf_attr = _TARGET_ATTRS[self.config.target]
         start, end = layer_range
         candidates = list(range(start, end))[: max(1, self.config.max_wrapped_layers)]
         attached = False
@@ -654,9 +660,7 @@ class EpisodicFastWeights:
         lifecycle.budget_exhausted = bool(trace["budget_exhausted"])
 
     def prove_erase(self, probe_fn: Callable[[], Any], baseline) -> bool:
-        """Assert the model's function is EXACTLY the pre-attach baseline."""
-        import mlx.core as mx
-
+        """Assert byte-identical restoration of the pre-attach probe tensor."""
         from core.brain.llm.latent_cortex.verified_best import tensor_sha256
 
         if self.handles or not self.lifecycle.erased:
@@ -664,8 +668,10 @@ class EpisodicFastWeights:
         after = probe_fn()
         self.lifecycle.erase_probe_before_sha256 = tensor_sha256(baseline)
         self.lifecycle.erase_probe_after_sha256 = tensor_sha256(after)
-        proven = self.lifecycle.detach_conflicts == 0 and bool(
-            mx.allclose(after, baseline, atol=0.0, rtol=0.0)
+        proven = (
+            self.lifecycle.detach_conflicts == 0
+            and self.lifecycle.erase_probe_before_sha256
+            == self.lifecycle.erase_probe_after_sha256
         )
         self.lifecycle.erase_proven = proven
         if not proven:

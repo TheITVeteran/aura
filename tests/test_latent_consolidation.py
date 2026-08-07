@@ -14,12 +14,35 @@ from pathlib import Path
 
 import pytest
 
+from core.learning.heldout_battery import BatterySpec, generate_battery
 from core.learning.latent_consolidation import (
     build_proposals,
     run_consolidation_cycle,
     scan_queue,
     validate_candidate,
 )
+
+
+def _heldout_contract(*, regress_after: bool = False):
+    spec = BatterySpec(seed=9182, size=8)
+    answers = {
+        task.task_id: f"Answer: {task.answer}" for task in generate_battery(spec)
+    }
+    calls = 0
+
+    def evaluate(_model, prompts):
+        nonlocal calls
+        calls += 1
+        assert {task_id for task_id, _prompt in prompts} == set(answers)
+        if regress_after and calls == 2:
+            return {task_id: "Answer: definitely-wrong" for task_id in answers}
+        return dict(answers)
+
+    return {
+        "heldout_solver": evaluate,
+        "heldout_spec": spec,
+        "heldout_evaluator_id": "test.sealed_exact.v1",
+    }
 
 
 def _make_candidate(root, episode_id, *, domain="math", erase=True, steps=2,
@@ -396,11 +419,14 @@ def test_full_train_activates_identity_adapter_and_rolls_back(tiny_model, tmp_pa
         proposal,
         tiny_model,
         adapter_dir=tmp_path / "adapters",
-        heldout_solver=lambda model: 0.5,
+        **_heldout_contract(),
     )
     assert receipt["activated"] is True, receipt
     assert receipt["interference_battery"]["verdict"] == "PASS"
-    assert receipt["heldout"] == {"before": 0.5, "after": 0.5}
+    assert receipt["heldout"]["gate"]["verdict"] == "PASS"
+    assert receipt["heldout"]["before"]["result"]["accuracy"] == 1.0
+    assert receipt["heldout"]["after"]["result"]["accuracy"] == 1.0
+    assert receipt["heldout"]["before"]["manifest"] == receipt["heldout"]["battery"]
     active = receipt["active_adapter"]
     # The adapter is genuinely attached: the target module is the wrapper.
     layer = tiny_model.model.layers[active.handles[0].layer_index]
@@ -414,6 +440,53 @@ def test_full_train_activates_identity_adapter_and_rolls_back(tiny_model, tmp_pa
     assert not hasattr(layer.self_attn.o_proj, "wrapper")
 
 
+def test_missing_heldout_contract_refuses_before_distillation(tiny_model, tmp_path):
+    from core.learning.latent_adapter_distillation import run_consolidation_train
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.0)
+    adapter_dir = tmp_path / "adapters"
+
+    receipt = run_consolidation_train(
+        _proposal_for(queue),
+        tiny_model,
+        adapter_dir=adapter_dir,
+    )
+
+    assert receipt["activated"] is False
+    assert receipt["refusal_reason"] == "heldout_promotion_contract_missing"
+    assert not adapter_dir.exists()
+
+
+def test_incomplete_heldout_response_set_refuses_activation(tiny_model, tmp_path):
+    from core.learning.latent_adapter_distillation import run_consolidation_train
+
+    queue = tmp_path / "queue"
+    for i in range(3):
+        _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.0)
+    contract = _heldout_contract()
+    valid_solver = contract["heldout_solver"]
+
+    def incomplete_solver(model, prompts):
+        responses = valid_solver(model, prompts)
+        responses.pop(next(iter(responses)))
+        return responses
+
+    contract["heldout_solver"] = incomplete_solver
+    receipt = run_consolidation_train(
+        _proposal_for(queue),
+        tiny_model,
+        adapter_dir=tmp_path / "adapters",
+        **contract,
+    )
+
+    assert receipt["activated"] is False
+    assert receipt["refusal_reason"].startswith(
+        "heldout_evaluation_failed:heldout_response_coverage_mismatch"
+    )
+
+
 def test_disruptive_adapter_is_refused_and_model_untouched(tiny_model, tmp_path):
     from core.learning.interference_battery import snapshot_probe_behavior
     from core.learning.latent_adapter_distillation import run_consolidation_train
@@ -425,7 +498,10 @@ def test_disruptive_adapter_is_refused_and_model_untouched(tiny_model, tmp_path)
 
     before = snapshot_probe_behavior(tiny_model)
     receipt = run_consolidation_train(
-        proposal, tiny_model, adapter_dir=tmp_path / "adapters"
+        proposal,
+        tiny_model,
+        adapter_dir=tmp_path / "adapters",
+        **_heldout_contract(),
     )
     assert receipt["activated"] is False
     assert receipt["refusal_reason"] == "interference_battery_failed"
@@ -441,13 +517,11 @@ def test_heldout_regression_blocks_activation(tiny_model, tmp_path):
         _make_weighted_candidate(queue, f"ep-{i}", v_scale=0.0)
     proposal = _proposal_for(queue)
 
-    scores = iter([0.8, 0.5])  # before, after: a real regression
-
     receipt = run_consolidation_train(
         proposal,
         tiny_model,
         adapter_dir=tmp_path / "adapters",
-        heldout_solver=lambda model: next(scores),
+        **_heldout_contract(regress_after=True),
     )
     assert receipt["activated"] is False
     assert receipt["refusal_reason"] == "heldout_regression"
@@ -499,7 +573,10 @@ def test_attach_dimension_mismatch_is_refused_not_crashed(tiny_model, tmp_path):
     proposal = _proposal_for(queue)
     before = snapshot_probe_behavior(tiny_model)
     receipt = run_consolidation_train(
-        proposal, tiny_model, adapter_dir=tmp_path / "adapters"
+        proposal,
+        tiny_model,
+        adapter_dir=tmp_path / "adapters",
+        **_heldout_contract(),
     )
     assert receipt["activated"] is False
     assert receipt["refusal_reason"].startswith("attach_failed")

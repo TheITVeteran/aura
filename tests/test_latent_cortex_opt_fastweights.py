@@ -518,6 +518,29 @@ def test_model_level_lease_rejects_concurrent_episode_and_recovers(tiny_model):
     assert second.lease_receipt()["released"] is True
 
 
+def test_invalid_projection_target_cannot_leak_model_lease(tiny_model):
+    invalid = EpisodicFastWeights(FastWeightsConfig(enabled=True))
+    invalid.config.target = "q_proj"
+
+    with pytest.raises(ValueError, match="unsupported fast-weight projection target"):
+        invalid.attach(
+            tiny_model.model,
+            (P_END, P_END + 1),
+            seed_stat=0.4,
+            episode_id="ep-invalid-target",
+        )
+
+    assert invalid.lease_receipt()["acquired"] is False
+    contender = EpisodicFastWeights(FastWeightsConfig(enabled=True))
+    assert contender.attach(
+        tiny_model.model,
+        (P_END, P_END + 1),
+        seed_stat=0.4,
+        episode_id="ep-after-invalid-target",
+    ) == 1
+    contender.detach()
+
+
 def test_fast_weights_optimize_changes_function_then_erase_restores(tiny_model):
     baseline = _probe(tiny_model)
     fw = EpisodicFastWeights(
@@ -759,6 +782,27 @@ def test_erase_proof_fails_honestly_if_model_left_dirty(tiny_model):
         assert fw.prove_erase(lambda: _probe(tiny_model), baseline) is False
     finally:
         layer.self_attn.q_proj.weight = original
+
+
+def test_erase_proof_requires_byte_identity_not_numeric_equality():
+    baseline = mx.array([-0.0], dtype=mx.float32)
+    numerically_equal_but_byte_distinct = mx.array([0.0], dtype=mx.float32)
+    assert bool(
+        mx.allclose(
+            baseline,
+            numerically_equal_but_byte_distinct,
+            atol=0.0,
+            rtol=0.0,
+        )
+    )
+    fw = EpisodicFastWeights(FastWeightsConfig(enabled=True))
+    fw.lifecycle.erased = True
+
+    assert fw.prove_erase(lambda: numerically_equal_but_byte_distinct, baseline) is False
+    assert (
+        fw.lifecycle.erase_probe_before_sha256
+        != fw.lifecycle.erase_probe_after_sha256
+    )
 
 
 def test_consolidation_export_requires_proven_erase(tiny_model, tmp_path, monkeypatch):

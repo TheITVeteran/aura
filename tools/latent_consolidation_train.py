@@ -2,7 +2,7 @@
 """Run the durable-learning consolidation train on real queue candidates.
 
 scan queue → validate → build proposals → distill each into a durable
-adapter → interference battery (natural probes) → optional held-out check →
+adapter → interference battery (natural probes) → sealed held-out check →
 activation trial → PROVEN rollback → receipts. The model is returned to its
 exact pre-run state (this tool proves it); durable ACTIVATION on the live
 instance goes through the service/adapter seam, not this operator tool.
@@ -18,6 +18,7 @@ Set AURA_LOG_DIR so lab logging never lands in the live ~/.aura/logs:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -35,6 +36,9 @@ def main() -> int:
     parser.add_argument("--adapter-dir", default="", help="durable adapter output dir")
     parser.add_argument("--out", default="", help="report path")
     parser.add_argument("--max-minutes", type=float, default=20.0)
+    parser.add_argument("--heldout-seed", type=int, default=0)
+    parser.add_argument("--heldout-size", type=int, default=40)
+    parser.add_argument("--heldout-max-tokens", type=int, default=256)
     args = parser.parse_args()
 
     from core.runtime.model_lane_control import standalone_model_lane
@@ -55,6 +59,7 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
             "latent consolidation model load requires an active standalone model-lane lease"
         )
     from core.config import DATA_DIR
+    from core.learning.heldout_battery import BatterySpec
     from core.learning.latent_adapter_distillation import (
         rollback_adapter,
         run_consolidation_train,
@@ -85,9 +90,60 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
         "trains": [],
     }
     if proposals:
-        from mlx_lm import load
+        from mlx_lm import generate, load
+
+        generation_kwargs: dict = {
+            "max_tokens": args.heldout_max_tokens,
+            "verbose": False,
+        }
+        try:
+            from mlx_lm.sample_utils import make_sampler
+
+            generation_kwargs["sampler"] = make_sampler(temp=0.0)
+        except ImportError:
+            pass
 
         model, tokenizer = load(args.model)
+
+        def heldout_solver(current_model, prompts):
+            responses: dict[str, str] = {}
+            for task_id, user_prompt in prompts:
+                if time.monotonic() > deadline:
+                    raise RuntimeError("heldout_evaluation_deadline_exceeded")
+                prompt = user_prompt
+                apply_template = getattr(tokenizer, "apply_chat_template", None)
+                if callable(apply_template):
+                    try:
+                        prompt = apply_template(
+                            [{"role": "user", "content": user_prompt}],
+                            tokenize=False,
+                            add_generation_prompt=True,
+                        )
+                    except (TypeError, ValueError):
+                        prompt = user_prompt
+                try:
+                    output = generate(
+                        current_model,
+                        tokenizer,
+                        prompt=prompt,
+                        **generation_kwargs,
+                    )
+                except TypeError:
+                    generation_kwargs.pop("sampler", None)
+                    output = generate(
+                        current_model,
+                        tokenizer,
+                        prompt=prompt,
+                        **generation_kwargs,
+                    )
+                responses[task_id] = output if isinstance(output, str) else str(output)
+            return responses
+
+        heldout_spec = BatterySpec(seed=args.heldout_seed, size=args.heldout_size)
+        evaluator_id = (
+            "latent_consolidation_train.greedy.v1:"
+            f"{hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}"
+        )
         for proposal in proposals:
             if time.monotonic() > deadline:
                 report["deadline_exceeded"] = True
@@ -100,6 +156,9 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
                     model,
                     adapter_dir=adapter_dir,
                     tokenizer=tokenizer,
+                    heldout_solver=heldout_solver,
+                    heldout_spec=heldout_spec,
+                    heldout_evaluator_id=evaluator_id,
                 )
             except Exception as exc:  # noqa: BLE001 - one bad proposal must not kill the run
                 print(f"  train crashed: {type(exc).__name__}: {exc}", flush=True)

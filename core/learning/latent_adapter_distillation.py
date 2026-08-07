@@ -9,9 +9,9 @@ that turns parity into improving" — RSL gap analysis). This module finishes
 the loop without inventing a second training pipeline: episode ΔW=UVᵀ
 candidates are already weight-space objects, so distillation is a provenance
 -checked low-rank MERGE (rank concatenation computing the candidate MEAN
-delta), the anti-interference battery (natural-language probes) plus an
-optional held-out regression check gate activation, activation is the same
-module-swap seam the episodic fast weights use, and rollback restores the
+delta), the anti-interference battery (natural-language probes) plus a
+mandatory sealed held-out regression check gates activation. Activation uses
+the same module-swap seam as episodic fast weights, and rollback restores the
 original modules with probe-equality proof.
 
 Nothing here mutates stored checkpoint files. Durable adapters live beside
@@ -25,11 +25,12 @@ import io
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.learning.heldout_battery import BatterySpec
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentAdapterDistillation")
@@ -57,12 +58,12 @@ _HELDOUT_REGRESSION_TOLERANCE = 0.02
 class DurableDeltaLinear:
     """y = base(x) + s·((x Vᵀ) Uᵀ) with U, V loaded from a durable artifact."""
 
-    def __init__(self, base, U, V, scale: float, tag: str) -> None:
+    def __init__(self, base, u_factor, v_factor, scale: float, tag: str) -> None:
         import mlx.core as mx
 
         self.base = base
-        self.U = mx.array(U)
-        self.V = mx.array(V)
+        self.U = mx.array(u_factor)
+        self.V = mx.array(v_factor)
         self.scale = float(scale)
         self.tag = tag
         mx.eval(self.U, self.V)
@@ -323,12 +324,16 @@ def run_consolidation_train(
     *,
     adapter_dir: Path | str,
     tokenizer=None,
-    heldout_solver: Callable[[Any], float] | None = None,
+    heldout_solver: Callable[[Any, tuple[tuple[str, str], ...]], Mapping[str, str]]
+    | None = None,
+    heldout_spec: BatterySpec | None = None,
+    heldout_evaluator_id: str = "",
 ) -> dict[str, Any]:
     """The complete durable-learning cycle for one proposal.
 
-    distill → interference battery (activation candidate applied and
-    reverted while measuring) → optional held-out regression → activate →
+    validate held-out promotion contract → distill → interference battery
+    (activation candidate applied and reverted while measuring) → paired
+    sealed held-out regression → activate →
     return the live handle + a full receipt. On any gate failure the model
     is left untouched and the receipt says exactly why.
     """
@@ -344,6 +349,17 @@ def run_consolidation_train(
         "started_at": time.time(),
         "activated": False,
     }
+    if heldout_solver is None:
+        receipt["refusal_reason"] = "heldout_promotion_contract_missing"
+        return receipt
+    if not isinstance(heldout_spec, BatterySpec) or heldout_spec.size <= 0:
+        receipt["refusal_reason"] = "heldout_promotion_spec_invalid"
+        return receipt
+    evaluator_id = str(heldout_evaluator_id or "").strip()
+    if not evaluator_id:
+        receipt["refusal_reason"] = "heldout_promotion_evaluator_missing"
+        return receipt
+
     distilled = distill_proposal_to_adapter(proposal, adapter_dir=adapter_dir)
     receipt["distillation"] = {
         key: value for key, value in distilled.items() if key != "manifest"
@@ -389,17 +405,55 @@ def run_consolidation_train(
         receipt["refusal_reason"] = "interference_battery_failed"
         return receipt
 
-    if heldout_solver is not None:
-        before = float(heldout_solver(model))
+    from core.learning.heldout_battery import (
+        evaluate_sealed_responses,
+        generate_battery,
+    )
+    from core.learning.permanent_distillation import PASS
+    from core.learning.permanent_distillation_gates import frontier_regression_gate
+
+    tasks = generate_battery(heldout_spec)
+    prompts = tuple((task.task_id, task.prompt) for task in tasks)
+    try:
+        before = evaluate_sealed_responses(
+            heldout_spec,
+            heldout_solver(model, prompts),
+            evaluator_id=evaluator_id,
+        )
         holdout_trial = _attach(model, adapter_path)
         try:
-            after = float(heldout_solver(model))
+            after = evaluate_sealed_responses(
+                heldout_spec,
+                heldout_solver(model, prompts),
+                evaluator_id=evaluator_id,
+            )
         finally:
             _detach(holdout_trial)
-        receipt["heldout"] = {"before": round(before, 4), "after": round(after, 4)}
-        if after < before - _HELDOUT_REGRESSION_TOLERANCE:
-            receipt["refusal_reason"] = "heldout_regression"
-            return receipt
+    except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "latent_adapter_distillation",
+            exc,
+            action="refused durable adapter after held-out promotion evidence failed",
+        )
+        receipt["refusal_reason"] = f"heldout_evaluation_failed:{exc}"
+        return receipt
+
+    heldout_gate = frontier_regression_gate(
+        before=before.result,
+        after=after.result,
+        max_drop=_HELDOUT_REGRESSION_TOLERANCE,
+    )
+    receipt["heldout"] = {
+        "schema": "aura.latent_adapter.heldout_promotion.v1",
+        "battery": before.manifest,
+        "evaluator_id": evaluator_id,
+        "before": before.to_dict(),
+        "after": after.to_dict(),
+        "gate": heldout_gate,
+    }
+    if heldout_gate["verdict"] != PASS:
+        receipt["refusal_reason"] = "heldout_regression"
+        return receipt
 
     baseline_rows = snapshot_probe_behavior(model, probes)
     active = _attach(model, adapter_path)

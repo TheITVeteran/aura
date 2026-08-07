@@ -381,7 +381,7 @@ Status rules:
 | `PRIVACY-001` | `OPEN 2026-07-13` | Enforce privacy across prompts, memory, self-model state, telemetry, logs, screen and accessibility capture, browser and device data, credentials, contact channels, training artifacts, backups, exports, and external tools. Require purpose and principal scoping, least disclosure, encryption and key lifecycle, redaction before persistence or transmission, retention and deletion propagation, provenance-preserving audit, adversarial exfiltration tests, and truthful handling when consent or authority is absent. | Owner privacy, enterprise data-governance, multimodal sensing, memory, and external-action requirements |
 | `RELEASE-001` | `OPEN 2026-07-13` | Produce a reproducible, signed, notarized, provenance-bound Aura release whose installed application, models, adapters, configuration, schemas, migrations, documentation, support artifacts, and rollback path match the certified source and claims. Block publication on any mandatory requirement, regression, stale proof, unresolved security or privacy issue, unsupported environment, failed clean-machine replay, or incomplete soak; independently verify the final bundle from its public manifest. | Aura 1.0 sealed-product requirement and final release ladder |
 | `RESOURCE-OWNERSHIP-001` | `IN PROGRESS 2026-07-17` | Give every model, accelerator, memory reservation, process, task, thread, socket, file lock, timer, browser or desktop session, and long-running campaign exactly one lifecycle owner with explicit admission, budget, liveness, cancellation, handoff, cleanup, and restart semantics. Prove no duplicate model owners, orphaned work, unbounded queue, stale lease, leaked inhibitor, cross-run contamination, or background contention under crash and pressure. | Model-lane, lifecycle, detached-run, latency, and indefinite-reliability requirements |
-| `RLC-MECH-006` | `IN PROGRESS 2026-07-16` | Productionize the sixth Recursive Latent Cortex mechanism, episode-scoped generated temporary synapses: attach only to declared projections under exclusive ownership, optimize with finite monotonic evidence, make any answer influence causally attributable, preserve exact compute accounting, detach on every terminal path, independently prove functional and byte-level restoration, and forbid persistence or consolidation without a separate held-out promotion contract. | Anima Rationis mechanism six; resident temporary-synapse optimizer and erasure evidence |
+| `RLC-MECH-006` | `IN PROGRESS (BOUNDED SOURCE/CONTRACT SLICE GREEN; LIVE PROMOTION EVIDENCE OPEN) 2026-08-07` | Productionize the sixth Recursive Latent Cortex mechanism, episode-scoped generated temporary synapses: attach only to declared projections under exclusive ownership, optimize with finite monotonic evidence, make any answer influence causally attributable, preserve exact compute accounting, detach on every terminal path, independently prove functional and byte-level restoration, and forbid persistence or consolidation without a separate held-out promotion contract. | Anima Rationis mechanism six; resident temporary-synapse optimizer and erasure evidence; checkpoint `2026-08-07-006` |
 | `SEMANTIC-REVIEW-001` | `IN PROGRESS 2026-07-17` | Complete hash-bound semantic review of every tracked source and governed configuration span before claiming whole-codebase closure. Read each frozen batch in full, record findings and explicit no-finding rationales against exact hashes, reject stale or partial receipts, perform grouped remediation only after inventory completion, re-review changed spans, and obtain an independent second pass over critical and sampled ordinary surfaces. | Read-everything-first requirement, semantic campaign, and independent review burden |
 | `VOICE-001` | `IN PROGRESS 2026-07-15` | Deliver production-grade live speech input and output with truthful device and permission state, bounded wake and endpoint detection, interruption and cancellation, no duplicate capture or playback, natural conversational turn-taking, configurable voice and rate that reach the real owner, transcript and non-audio alternatives, privacy-aware retention, degraded-mode recovery, and exact installed-app evidence across supported audio devices and restart. | Voice conversation, runtime settings, accessibility, privacy, and portability requirements |
 | `RLC-SCOPE-001` | `IN PROGRESS 2026-07-15` | Map every requirement, caveat, mechanism, failure mode, experiment, expansion, and learning claim in `Anima Rationis.txt` to executable owners, dependencies, tests, live artifacts, independent verdicts, and explicit non-claims. Zero unmapped statements and zero closure from prose/code presence are mandatory. | Recursive Latent Cortex request; `SCOPE-001`, `PROGRESS-CONTROL-001`; CP95 |
@@ -37580,3 +37580,35 @@ next-step artifact. It does not make the small directional campaign
 claim-eligible, supply external role custody, run the powered campaign, prove a
 gain, authorize recurrent-adapter installation, close Aura 1.0, or replace the
 deferred final soaks.
+
+## Checkpoint 2026-08-07-006: Temporary Synapses Cannot Promote on an Optional Test
+
+The episode-scoped fast-weight owner now participates in runtime lock-order
+validation, validates its declared projection before taking the exclusive model
+lease, and cannot leak that lease through an unsupported target. Erasure proof
+now compares the SHA-256 digest of the exact probe tensor bytes instead of
+numeric equality; signed-zero and other byte-distinct representations therefore
+cannot pass a byte-restoration claim merely because a numeric comparator treats
+them as equal.
+
+The durable consolidation train no longer treats held-out evaluation as
+optional. A missing held-out evaluator, battery specification, or evaluator
+identity refuses before adapter distillation writes an artifact. The admitted
+path regenerates one sealed exact-answer battery, gives the evaluator prompts
+without answers, requires complete and type-valid response coverage, hashes the
+full response set, and grades baseline and trial-attached responses against the
+same manifest. The existing paired frontier-regression producer derives the
+promotion verdict. The operator tool now executes that deterministic greedy
+battery on the already-owned model lane, binds the evaluator to its source-file
+hash, honors the enclosing deadline, and still proves rollback before exit.
+
+The consolidation, permanent-gate, temporary-synapse, causal-attribution, and
+compute-accounting slice passes `87/87`; smoke passes `103/103`; Ruff, bytecode
+compilation, and diff hygiene pass. Negative tests prove that an invalid target
+does not retain model ownership, numeric-but-byte-distinct restoration fails,
+missing held-out evidence writes no adapter, incomplete response coverage cannot
+activate one, regression refuses activation, and accepted trial activation can
+be rolled back exactly. `RLC-MECH-006` remains open for current resident-model
+promotion and retained live evidence; this checkpoint does not claim a promoted
+adapter, a retained reasoning gain, production activation, static fusion, or
+release readiness.

@@ -28,10 +28,11 @@ import hashlib
 import json
 import random
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Callable
 
 BATTERY_VERSION = 1
+SEALED_EVALUATION_SCHEMA = "aura.heldout_battery.sealed_evaluation.v1"
 
 ANSWER_INSTRUCTION = (
     "Solve the problem. Think step by step if needed, then give the final "
@@ -325,6 +326,25 @@ class BatteryResult:
         }
 
 
+@dataclass(frozen=True)
+class SealedBatteryEvaluation:
+    """One complete, reproducible evaluation over an exact battery seal."""
+
+    manifest: dict[str, object]
+    result: BatteryResult
+    responses_sha256: str
+    evaluator_id: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema": SEALED_EVALUATION_SCHEMA,
+            "manifest": self.manifest,
+            "result": self.result.to_dict(),
+            "responses_sha256": self.responses_sha256,
+            "evaluator_id": self.evaluator_id,
+        }
+
+
 def grade_battery(
     spec: BatterySpec,
     tasks: list[HeldoutTask],
@@ -352,6 +372,56 @@ def grade_battery(
     return result
 
 
+def evaluate_sealed_responses(
+    spec: BatterySpec,
+    responses: Mapping[str, str],
+    *,
+    evaluator_id: str,
+) -> SealedBatteryEvaluation:
+    """Validate and grade one complete response set against a regenerated seal.
+
+    The caller supplies responses, never task answers. This function regenerates
+    the canonical battery, rejects missing/extra/non-string responses, and binds
+    the result to both the task-set and response-set hashes.
+    """
+    if not isinstance(spec, BatterySpec) or spec.size <= 0:
+        raise ValueError("heldout_spec_invalid")
+    identity = str(evaluator_id or "").strip()
+    if not identity:
+        raise ValueError("heldout_evaluator_id_missing")
+    if not isinstance(responses, Mapping):
+        raise ValueError("heldout_responses_invalid")
+
+    tasks = generate_battery(spec)
+    expected_ids = {task.task_id for task in tasks}
+    response_ids = set(responses)
+    if response_ids != expected_ids:
+        missing = len(expected_ids - response_ids)
+        extra = len(response_ids - expected_ids)
+        raise ValueError(
+            f"heldout_response_coverage_mismatch:missing={missing}:extra={extra}"
+        )
+    normalized: dict[str, str] = {}
+    for task_id in sorted(expected_ids):
+        value = responses[task_id]
+        if not isinstance(value, str):
+            raise ValueError(f"heldout_response_not_string:{task_id}")
+        normalized[task_id] = value
+
+    response_blob = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return SealedBatteryEvaluation(
+        manifest=battery_manifest(spec, tasks),
+        result=grade_battery(spec, tasks, normalized),
+        responses_sha256=hashlib.sha256(response_blob).hexdigest(),
+        evaluator_id=identity,
+    )
+
+
 def battery_manifest(spec: BatterySpec, tasks: list[HeldoutTask]) -> dict[str, object]:
     """Auditable description of a sealed battery (hashes, not answers)."""
     return {
@@ -373,9 +443,12 @@ __all__ = [
     "BatteryResult",
     "BatterySpec",
     "HeldoutTask",
+    "SEALED_EVALUATION_SCHEMA",
+    "SealedBatteryEvaluation",
     "battery_fingerprints",
     "battery_manifest",
     "extract_answer",
+    "evaluate_sealed_responses",
     "generate_battery",
     "grade_battery",
     "grade_response",
