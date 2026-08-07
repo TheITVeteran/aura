@@ -138,6 +138,19 @@ def _build_config(
         decode_top_p=1.0,
         decode_bridge_policy="none",
         decode_incumbent_policy="latent",
+        # Serving-side answer replacement is a live-product safeguard: it
+        # abstains rather than emit a candidate it cannot bound. In a research
+        # arm that abstention destroys the observation -- the episode returns
+        # no text and the cell becomes a fault instead of a measurement. The
+        # same thing aborted CP420S12. Research measures the mechanism, so the
+        # raw recurrent answer is retained and graded on its own terms.
+        answer_replacement_enabled=False,
+        local_repair_enabled=False,
+        # A degraded episode that quietly serves an ordinary decode would make
+        # this arm a second copy of the vanilla control wearing the recurrent
+        # arm's label -- the worst possible failure here, because it looks like
+        # a result. Let it fault visibly instead.
+        allow_vanilla_fallback=False,
         decode_contract=decode_contract,
         decode_contract_grace_tokens=320 if decode_contract != "none" else 0,
         terminal_instruction_policy=policy,
@@ -221,6 +234,11 @@ def _run_rlc(
             f"reason={result.reason!r} "
             f"termination={receipt.get('decode_termination')!r}"
         )
+    # Belt and braces on the same hazard: if any fallback did serve an ordinary
+    # decode, this is not an observation of the recurrent path.
+    flags = [str(flag) for flag in (receipt.get("honest_flags") or [])]
+    if any("fallback" in flag or "vanilla" in flag for flag in flags):
+        raise EpisodeFault(f"episode degraded to an ordinary decode: flags={flags}")
     return text, receipt
 
 

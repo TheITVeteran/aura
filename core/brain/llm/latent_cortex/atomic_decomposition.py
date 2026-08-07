@@ -136,8 +136,50 @@ def _candidate_spans(text: str) -> list[tuple[int, int, bool]]:
         (start, end, False) for start, end in _bounded_plain_spans(text, cursor, len(text))
     )
     if len(spans) > MAX_ATOMS:
-        raise ValueError(f"atomic decomposition exceeds {MAX_ATOMS} atoms")
+        spans = _merge_to_budget(spans)
     return spans
+
+
+def _merge_to_budget(spans: list[tuple[int, int, bool]]) -> list[tuple[int, int, bool]]:
+    """Coarsen a long trace into MAX_ATOMS atoms instead of refusing it.
+
+    Raising here destroyed the whole episode: a mathematics answer long enough
+    to need more than 256 atoms took the completed latent computation down with
+    it, and the caller saw ``latent_phase_failed`` rather than an answer.
+    Decomposition is a diagnostic layer, so exceeding its budget must cost
+    diagnostic resolution, not the result being diagnosed.
+
+    Merging keeps every invariant the validator checks: adjacent spans are
+    fused in order, so coverage stays contiguous and complete, the bound is
+    still honored, and fenced spans are never merged into prose (their
+    boundaries carry different semantics).
+    """
+
+    merged: list[tuple[int, int, bool]] = []
+    stride = (len(spans) + MAX_ATOMS - 1) // MAX_ATOMS
+    index = 0
+    while index < len(spans):
+        start, end, fenced = spans[index]
+        consumed = 1
+        while (
+            consumed < stride
+            and index + consumed < len(spans)
+            and spans[index + consumed][2] == fenced
+            # Spans are separated by trimmed whitespace, so requiring exact
+            # adjacency would block every merge. Absorbing that whitespace is
+            # harmless: coverage is measured over non-space characters.
+            and spans[index + consumed][0] >= end
+            # An atom also has a character ceiling, and a merged atom that
+            # breaks it fails validation just as surely as too many atoms.
+            # Both bounds are jointly satisfiable: MAX_ATOMS * MAX_ATOM_CHARS
+            # exceeds MAX_SOURCE_CHARS.
+            and spans[index + consumed][1] - start <= MAX_ATOM_CHARS
+        ):
+            end = spans[index + consumed][1]
+            consumed += 1
+        merged.append((start, end, fenced))
+        index += consumed
+    return merged
 
 
 def _dependency_cues(fragment: str) -> tuple[str, ...]:
@@ -248,7 +290,15 @@ def build_atomic_decomposition(candidate: str, *, objective: str = "") -> dict[s
             if transition is not None:
                 transitions.append(transition)
     if len(transitions) > MAX_TRANSITIONS:
-        raise ValueError(f"atomic decomposition exceeds {MAX_TRANSITIONS} transitions")
+        # Same principle as the atom budget: a dense dependency graph costs
+        # diagnostic resolution, not the episode. Transitions are ordered by
+        # atom index, so keeping the prefix keeps the earliest reasoning --
+        # which is where a first divergence is found. The loss is not silent:
+        # every cue that lost its edge reappears in
+        # ``omitted_dependency_atom_ids`` and lowers ``linked_cue_count``,
+        # and both independent validators recompute those from this same
+        # truncated list.
+        transitions = transitions[:MAX_TRANSITIONS]
 
     covered = {
         index
