@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-import aiohttp
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Resilience.Diagnostics")
 
@@ -100,12 +100,18 @@ class DiagnosticsAgent:
         
         try:
             start = asyncio.get_running_loop().time()
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://localhost:8000/health", timeout=5) as resp:
-                    if resp.status == 200:
-                        results["server_online"] = True
-                        results["latency_ms"] = (asyncio.get_running_loop().time() - start) * 1000
-        except (OSError, ConnectionError, TimeoutError):
+            response = await get_network_gateway().request_async(
+                "GET",
+                "http://localhost:8000/health",
+                timeout=5.0,
+                source="resilience.diagnostics_agent.connectivity",
+                read_only=True,
+                suppress_degradation=True,
+            )
+            if int(response.get("status_code") or 0) == 200:
+                results["server_online"] = True
+                results["latency_ms"] = (asyncio.get_running_loop().time() - start) * 1000
+        except (OSError, ConnectionError, TimeoutError, ValueError):
             results["server_online"] = False
             
         return results

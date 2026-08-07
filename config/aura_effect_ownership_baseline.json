@@ -6065,6 +6065,14 @@
       "scope": "<module>.ActionExecutor._dispatch"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/agency/tool_orchestrator.py",
+      "scope": "<module>.ToolOrchestrator.search_web"
+    },
+    {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -6169,6 +6177,22 @@
       "scope": "<module>.WebClient.get"
     },
     {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/collective/belief_sync.py",
+      "scope": "<module>.BeliefSync._push_to_peer"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/collective/belief_sync.py",
+      "scope": "<module>.BeliefSync._query_single_peer"
+    },
+    {
       "callee": "core.runtime.network_gateway.get_network_gateway().connect_stream",
       "canonical_owner": false,
       "category": "network_gateway",
@@ -6247,6 +6271,14 @@
       "count": 2,
       "path": "core/phases/response_generation_unitary.py",
       "scope": "<module>.UnitaryResponsePhase.execute"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/resilience/diagnostics_agent.py",
+      "scope": "<module>.DiagnosticsAgent.check_connectivity"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
@@ -13025,14 +13057,6 @@
       "scope": "<module>.PluginAllowlist.__init__"
     },
     {
-      "callee": "os.makedirs",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/sandbox.py",
-      "scope": "<module>.LocalCommandSandbox.execute_sandboxed_command"
-    },
-    {
       "callee": "TRUST_LOG_PATH.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15237,14 +15261,6 @@
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
-      "path": "core/security/sandbox.py",
-      "scope": "<module>.LocalCommandSandbox.execute_sandboxed_command"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
       "path": "core/self/source_excerpt.py",
       "scope": "<module>.snippet_verdict"
     },
@@ -15986,6 +16002,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "504582229d417dbc6ab8bd170833542e445194bdcb2b82d7afc17c04bb249048",
+  "inventory_sha256": "bbeaadf0d5a39e688d9e1b10eacfc21862acc774227dab614ab1d61eae22cdf4",
   "schema_version": 1
 }

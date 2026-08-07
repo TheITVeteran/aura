@@ -357,17 +357,37 @@ class ActionExecutor:
             api_key = None
         if not api_key:
             api_key = os.environ.get("GEMINI_API_KEY")
+
+        # This SDK carries its own transport, so the query never reaches
+        # NetworkGateway. Screen it here or do not use the cloud leg at all —
+        # dropping the key falls through to the Sovereign/DDG pipelines below,
+        # which answer the same question without leaving the machine.
+        grounded_query = query
+        if api_key:
+            from core.security.egress_privacy import filter_model_prompt
+
+            screened = filter_model_prompt(query, provider="gemini_grounded_search")
+            if screened.allowed:
+                grounded_query = screened.text or ""
+            else:
+                logger.warning(
+                    "ReAct: grounded search refused by egress privacy (%s); "
+                    "using the local search pipeline instead",
+                    screened.reason,
+                )
+                api_key = None
+
         if api_key:
             try:
-                logger.info("ReAct: Executing grounded search for: %s", query)
-                
+                logger.info("ReAct: Executing grounded search for: %s", grounded_query)
+
                 def _do_search():
                     from google import genai
                     from google.genai import types
                     client = genai.Client(api_key=api_key)
                     return client.models.generate_content(
                         model='gemini-2.5-pro',
-                        contents=query,
+                        contents=grounded_query,
                         config=types.GenerateContentConfig(
                             tools=[{"google_search": {}}],
                             temperature=0.0

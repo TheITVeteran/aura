@@ -40,14 +40,27 @@ class GroundedSearchSkill(BaseSkill):
                 "note": "Fallback to standard web_search if needed."
             }
 
+        # The query is the user's own words and this SDK builds its own HTTP,
+        # so NetworkGateway never sees it. Screen it here or send nothing.
+        from core.security.egress_privacy import filter_model_prompt
+
+        screened = filter_model_prompt(query, provider="gemini_grounded_search")
+        if not screened.allowed:
+            return {
+                "ok": False,
+                "error": f"Grounded search refused by egress privacy: {screened.reason}",
+                "note": "Fallback to standard web_search if needed.",
+            }
+        query = screened.text or ""
+
         try:
             # We delay import until runtime to prevent strict dependencies
             from google import genai
             from google.genai import types
-            
+
             client = genai.Client(api_key=api_key)
             logger.info("Executing grounded search for: %s", query)
-            
+
             response = client.models.generate_content(
                 model='gemini-2.5-pro',
                 contents=query,

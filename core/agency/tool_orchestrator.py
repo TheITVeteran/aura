@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-import aiohttp
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import (
@@ -38,6 +37,7 @@ from core.runtime.errors import (
     record_degradation,
 )
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.network_gateway import get_network_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
@@ -661,20 +661,39 @@ class ToolOrchestrator:
         headers = {"User-Agent": "Aura-Cognitive-Node/1.0"}
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(search_url, headers=headers, timeout=10) as resp:
-                    if resp.status == 200:
-                        html = await resp.text()
-                        results = self._parse_duckduckgo_html(html, limit=5)
-                        payload = "\n".join(
-                            f"{idx + 1}. {item['title']} — {item['url']}"
-                            for idx, item in enumerate(results)
-                        )
-                        return await self.sanitize_output(
-                            payload or f"No results parsed for {query}."
-                        )
-                    return f"FAILED: Search status: {resp.status}"
-        except (OSError, ConnectionError, TimeoutError) as e:
+            # Through the canonical gateway, not a private session: a search
+            # query is the user's words leaving the machine, and this path
+            # used to reach the open web without passing the outbound
+            # preflight, provenance recording, or the egress privacy
+            # boundary. Provenance matters twice here — the HTML that comes
+            # back is untrusted text written by someone who knows an agent
+            # reads it.
+            response = await get_network_gateway().request_async(
+                "GET",
+                search_url,
+                headers=headers,
+                timeout=10.0,
+                source="agency.tool_orchestrator.search_web",
+                read_only=True,
+            )
+            status = int(response.get("status_code") or 0)
+            if status == 200:
+                content = response.get("content") or b""
+                html = (
+                    content.decode("utf-8", errors="replace")
+                    if isinstance(content, bytes)
+                    else str(content)
+                )
+                results = self._parse_duckduckgo_html(html, limit=5)
+                payload = "\n".join(
+                    f"{idx + 1}. {item['title']} — {item['url']}"
+                    for idx, item in enumerate(results)
+                )
+                return await self.sanitize_output(
+                    payload or f"No results parsed for {query}."
+                )
+            return f"FAILED: Search status: {status}"
+        except (OSError, ConnectionError, TimeoutError, ValueError) as e:
             record_degradation(
                 "tool_orchestrator",
                 e,

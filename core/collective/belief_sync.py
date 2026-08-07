@@ -6,13 +6,13 @@ from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import secrets
-import aiohttp
 import hashlib
 import json
 import time
 import math
 from typing import Dict, List, Any, Optional
 from core.container import ServiceContainer
+from core.runtime.network_gateway import get_network_gateway
 from core.adaptation.immune_system import get_immune_system
 from core.runtime import background_policy
 from core.utils.task_tracker import get_task_tracker
@@ -197,27 +197,42 @@ class BeliefSync:
     async def _broadcast_to_peers(self, payload: Dict[str, Any]):
         """Push beliefs to all active peers via RPC."""
         if not self.orchestrator.peers: return
-        
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for peer_id, peer_info in self.orchestrator.peers.items():
-                addr = peer_info.get("address")
-                port = peer_info.get("rpc_port", 8000)
-                if not addr: continue
-                
-                # Aura RPC Port (Phase 16.2 convention)
-                url = f"http://{addr}:{port}/rpc/receive_beliefs"
-                tasks.append(self._push_to_peer(session, url, payload))
-            
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _push_to_peer(self, session, url, payload):
+        tasks = []
+        for peer_id, peer_info in self.orchestrator.peers.items():
+            addr = peer_info.get("address")
+            port = peer_info.get("rpc_port", 8000)
+            if not addr: continue
+
+            # Aura RPC Port (Phase 16.2 convention)
+            url = f"http://{addr}:{port}/rpc/receive_beliefs"
+            tasks.append(self._push_to_peer(url, payload))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _push_to_peer(self, url, payload):
+        """Send one peer payload through the canonical network gateway.
+
+        This used to open its own ``aiohttp.ClientSession``, which put four
+        of this module's outbound paths outside ``NetworkGateway`` — and so
+        outside governance, the outbound preflight, and the egress privacy
+        boundary. What it sends is not incidental traffic: these are Aura's
+        beliefs and drive states. A peer address arrives from discovery, so
+        "it is only ever the LAN" was an assumption nothing enforced.
+        """
         try:
-            async with session.post(url, json=payload, timeout=5.0) as resp:
-                if resp.status == 200:
-                    return True
-        except (OSError, ConnectionError, TimeoutError) as e:
+            response = await get_network_gateway().request_async(
+                "POST",
+                url,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps(payload),
+                timeout=5.0,
+                source="collective.belief_sync.push",
+                suppress_degradation=True,
+            )
+            return int(response.get("status_code") or 0) == 200
+        except (OSError, ConnectionError, TimeoutError, ValueError) as e:
             record_degradation('belief_sync', e)
             logger.debug("Silent push failure to %s: %s", url, e)
         return False
@@ -228,29 +243,40 @@ class BeliefSync:
             return []
 
         all_results = []
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for peer_id, peer_info in self.orchestrator.peers.items():
-                addr = peer_info["address"]
-                port = peer_info.get("rpc_port", 8000)
-                # Aura RPC Port (Phase 16.2 convention)
-                url = f"http://{addr}:{port}/rpc/query_beliefs" 
-                tasks.append(self._query_single_peer(session, url, entity))
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, list):
-                    all_results.extend(res)
-        
+        tasks = []
+        for peer_id, peer_info in self.orchestrator.peers.items():
+            addr = peer_info["address"]
+            port = peer_info.get("rpc_port", 8000)
+            # Aura RPC Port (Phase 16.2 convention)
+            url = f"http://{addr}:{port}/rpc/query_beliefs"
+            tasks.append(self._query_single_peer(url, entity))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, list):
+                all_results.extend(res)
+
         return all_results
 
-    async def _query_single_peer(self, session, url, entity) -> List[Dict[str, Any]]:
+    async def _query_single_peer(self, url, entity) -> List[Dict[str, Any]]:
         try:
-            async with session.post(url, json={"entity": entity}, timeout=5.0) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("beliefs", [])
-        except (OSError, ConnectionError, TimeoutError) as e:
+            response = await get_network_gateway().request_async(
+                "POST",
+                url,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps({"entity": entity}),
+                timeout=5.0,
+                source="collective.belief_sync.query",
+                suppress_degradation=True,
+            )
+            if int(response.get("status_code") or 0) == 200:
+                content = response.get("content") or b""
+                text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+                data = json.loads(text) if text.strip() else {}
+                if isinstance(data, dict):
+                    beliefs = data.get("beliefs", [])
+                    return beliefs if isinstance(beliefs, list) else []
+        except (OSError, ConnectionError, TimeoutError, ValueError) as e:
             record_degradation('belief_sync', e)
             logger.debug("BeliefSync: Failed to query peer %s: %s", url, e)
         return []
@@ -285,21 +311,25 @@ class BeliefSync:
 
     async def _broadcast_resonance(self, payload: Dict[str, Any]):
         """Push drive states to all active peers."""
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for peer_id, peer_info in self.orchestrator.peers.items():
-                addr = peer_info.get("address")
-                port = peer_info.get("rpc_port", 8000)
-                if not addr: continue
-                
-                # Add authentication token if configured (Phase 16.3)
-                payload["token"] = peer_info.get("auth_token") or self._instance_secret
-                
-                url = f"http://{addr}:{port}/rpc/receive_resonance"
-                tasks.append(self._push_to_peer(session, url, payload))
-            
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = []
+        for peer_id, peer_info in self.orchestrator.peers.items():
+            addr = peer_info.get("address")
+            port = peer_info.get("rpc_port", 8000)
+            if not addr: continue
+
+            # Add authentication token if configured (Phase 16.3). Per-peer,
+            # so it is built into a per-peer copy rather than mutated into the
+            # shared dict — the loop used to overwrite one key on one object
+            # that every queued task then read at await time, so whichever
+            # peer was last in the iteration set the token they all sent.
+            peer_payload = dict(payload)
+            peer_payload["token"] = peer_info.get("auth_token") or self._instance_secret
+
+            url = f"http://{addr}:{port}/rpc/receive_resonance"
+            tasks.append(self._push_to_peer(url, peer_payload))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _validate_belief_schema(self, belief: Dict[str, Any]) -> bool:
         """Strict schema verification for incoming belief objects."""
@@ -379,18 +409,17 @@ class BeliefSync:
         }
         
         logger.info("🌌 Broadcasting Attention Spike: %s (urg=%.1f)", context[:30], urgency)
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for peer_id, peer_info in self.orchestrator.peers.items():
-                addr = peer_info.get("address")
-                port = peer_info.get("rpc_port", 8000)
-                if not addr: continue
-                
-                url = f"http://{addr}:{port}/rpc/attention_spike"
-                tasks.append(self._push_to_peer(session, url, payload))
-            
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = []
+        for peer_id, peer_info in self.orchestrator.peers.items():
+            addr = peer_info.get("address")
+            port = peer_info.get("rpc_port", 8000)
+            if not addr: continue
+
+            url = f"http://{addr}:{port}/rpc/attention_spike"
+            tasks.append(self._push_to_peer(url, payload))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle_attention_spike(self, payload: Dict[str, Any]):
         """Phase 18.1: Handle incoming attention spike from peer."""

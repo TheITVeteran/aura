@@ -131,6 +131,10 @@ class EgressFilterResult:
     redactions: int = 0
     reason: str = ""
     kinds: tuple[str, ...] = field(default_factory=tuple)
+    #: Set instead of ``body`` when the caller handed us a prompt rather than
+    #: a request body — an SDK that builds its own HTTP. Same boundary, same
+    #: tiers; only the shape of what is being inspected differs.
+    text: str | None = None
 
     @property
     def modified(self) -> bool:
@@ -360,6 +364,79 @@ def filter_outbound_body(
     )
 
 
+def filter_model_prompt(text: str | None, *, provider: str) -> EgressFilterResult:
+    """The same boundary, for a provider SDK that builds its own request.
+
+    ``NetworkGateway`` can only inspect what passes through it, and a vendor
+    client does not. ``core/adapters/api_adapter.py`` holds a
+    ``google.genai`` client and hands it the prompt directly, so the whole
+    turn reached Google over the SDK's own HTTP stack — past governance, past
+    the defensive preflight, past :func:`filter_outbound_body`. A boundary
+    with a second door is a boundary in name only.
+
+    This is that door. Callers pass the text they are about to hand a vendor
+    client; a refusal means send nothing and fall back to local inference.
+    """
+    tier = Tier.FULL if _personal_redaction_enabled() else Tier.CREDENTIALS
+    if not text:
+        return EgressFilterResult(
+            allowed=True,
+            body=None,
+            text=text,
+            tier=tier,
+            inspected=True,
+            reason="empty prompt",
+        )
+    try:
+        patterns = _patterns_for(tier)
+        redacted, changed = redact_text(str(text), patterns=patterns)
+    except (AttributeError, RecursionError, TypeError, ValueError) as exc:
+        record_degradation(
+            "egress_privacy",
+            exc,
+            severity="warning",
+            action=f"refused the {provider} prompt rather than send it uninspected",
+            enforce_failure_policy=False,
+        )
+        _count_refusal()
+        return EgressFilterResult(
+            allowed=False,
+            body=None,
+            text=None,
+            tier=tier,
+            inspected=False,
+            reason=f"prompt redaction failed: {exc}",
+        )
+
+    if not changed:
+        return EgressFilterResult(
+            allowed=True,
+            body=None,
+            text=str(text),
+            tier=tier,
+            inspected=True,
+            reason="nothing sensitive found",
+        )
+
+    kinds = _kinds_in(redacted, patterns)
+    _count_redaction()
+    logger.info(
+        "Egress privacy: stripped %s from a prompt bound for %s",
+        ",".join(sorted(kinds)) or "unclassified content",
+        provider,
+    )
+    return EgressFilterResult(
+        allowed=True,
+        body=None,
+        text=redacted,
+        tier=tier,
+        inspected=True,
+        redactions=1,
+        kinds=tuple(sorted(kinds)),
+        reason="sensitive values stripped before sending",
+    )
+
+
 #: The ``[TOKEN]`` a replacement leaves behind. Pulled out rather than
 #: assumed at the start of the string, because the userinfo replacement is
 #: ``\1[REDACTED_USERINFO]@`` — a prefix test would classify a caught
@@ -452,6 +529,7 @@ __all__ = [
     "Tier",
     "destination_is_local",
     "egress_privacy_counters",
+    "filter_model_prompt",
     "filter_outbound_body",
     "reset_egress_privacy_counters_for_test",
     "tier_for",

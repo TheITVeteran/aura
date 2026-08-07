@@ -115,7 +115,6 @@ class APIAdapter:
     def __init__(self):
         self._gemini_client     = None
         self._local_client      = None
-        self._http_session      = None
         self._last_embed_space  = ""
 
         # Capability flags (set after start())
@@ -134,12 +133,13 @@ class APIAdapter:
 
     async def start(self):
         """Initialize clients from environment / Aura config."""
-        # ISSUE #29 - Create shared HTTP session to prevent connection pooling exhaustion
-        import aiohttp
-        if self._http_session is None or self._http_session.closed:
-            self._http_session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(limit=100, keepalive_timeout=60)
-            )
+        # There used to be a shared aiohttp.ClientSession here, opened on
+        # every start() with a 100-connection TCPConnector, "to prevent
+        # connection pooling exhaustion". Nothing in this class ever made a
+        # request with it — it was created, tracked, and closed, and that was
+        # the whole of its life. Generation goes through the google.genai
+        # client or the local backend. Removed rather than routed, because
+        # routing a session nobody uses would have preserved the confusion.
 
         # Load config from Aura's config system
         gemini_key    = None
@@ -208,11 +208,6 @@ class APIAdapter:
             logger.error("❌ [BOOT] AgencyFacade registration error: %s", e)
 
     async def stop(self):
-        if self._http_session and not self._http_session.closed:
-            try:
-                await self._http_session.close()
-            finally:
-                self._http_session = None
         # A stopped adapter must not keep ADVERTISING generation capability.
         # stop() previously closed only the HTTP session, so has_gemini /
         # has_local stayed true and get_status() reported a live backend for
@@ -487,6 +482,47 @@ class APIAdapter:
 
     # ─── Gemini ──────────────────────────────────────────────────────────────
 
+    def _screen_for_egress(
+        self, prompt: str, system_instruction: str | None
+    ) -> tuple[str, str | None] | None:
+        """Read the prompt before the vendor SDK sends it, or send nothing.
+
+        This adapter holds a ``google.genai`` client, which builds and sends
+        its own HTTP. That is a second door out of the machine:
+        ``NetworkGateway`` — and therefore governance, the defensive
+        preflight, and the egress privacy filter — never sees these bytes.
+        Screening here is what makes the boundary singular rather than
+        merely present.
+
+        Returns None to mean "do not send this to the cloud". The caller
+        already treats None as a failed cloud leg and continues down its
+        fallback chain to local inference, which is the correct outcome: the
+        answer still gets produced, on this machine.
+        """
+        try:
+            from core.security.egress_privacy import filter_model_prompt
+
+            screened_prompt = filter_model_prompt(prompt, provider="gemini")
+            screened_system = filter_model_prompt(
+                system_instruction, provider="gemini"
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_api_degradation(
+                exc,
+                action="refused the Gemini call rather than send an unscreened prompt",
+                extra={"backend": "gemini"},
+            )
+            self._last_gemini_error = f"egress_privacy_unavailable: {exc}"
+            return None
+
+        if not (screened_prompt.allowed and screened_system.allowed):
+            reason = screened_prompt.reason or screened_system.reason
+            logger.warning("APIAdapter: Gemini call refused by egress privacy — %s", reason)
+            self._last_gemini_error = f"egress_privacy_refused: {reason}"
+            return None
+
+        return screened_prompt.text or "", screened_system.text
+
     async def _gemini_generate(
         self, prompt: str, tier: str, temperature: float, max_tokens: int, system_instruction: str | None = None, config: dict[str, Any] | None = None
     ) -> str | None:
@@ -494,6 +530,10 @@ class APIAdapter:
         if self._gemini_client and self.has_gemini:
             model_name = GEMINI_MODELS.get(tier, GEMINI_MODELS["api_fast"])
             self._last_gemini_error = ""
+            sent = self._screen_for_egress(prompt, system_instruction)
+            if sent is None:
+                return None
+            prompt, system_instruction = sent
             try:
                 from google import genai
                 config_kwargs = {
@@ -541,10 +581,22 @@ class APIAdapter:
         try:
             from google import genai
             system_text, user_text = self._split_prompt(prompt)
+            # Same door, same screen. The stream path used to be the one that
+            # got missed, which is how a boundary ends up with an exception
+            # nobody remembers making.
+            screened = self._screen_for_egress(
+                user_text, system_instruction or system_text or None
+            )
+            if screened is None:
+                return
+            user_text, system_instruction = screened
             config = genai.types.GenerateContentConfig(
                 temperature=temperature,
                 max_output_tokens=max_tokens,
-                system_instruction=system_instruction or system_text or None,
+                # Not `system_instruction or system_text`: system_text is the
+                # UNSCREENED original, and that fallback would put it back on
+                # the wire the moment screening emptied the instruction.
+                system_instruction=system_instruction,
             )
             async for chunk in self._gemini_client.aio.models.generate_content_stream(
                 model=model_name,
