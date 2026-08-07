@@ -138,6 +138,42 @@ class LatentWorkspace:
         dim = int(prompt_embeddings.shape[-1])
         pooled = mx.mean(prompt_embeddings, axis=1, keepdims=True)  # (1,1,D)
         target_rms = mx.mean(per_position_rms(prompt_embeddings))
+        # Span the prompt instead of averaging it.
+        #
+        # Seeding every slot from the SAME global mean left the workspace with
+        # an effective rank of one: measured slot-to-slot cosine at seed was
+        # 0.9993 (min 0.9992, max 0.9993) against 0.0419 for the prompt's own
+        # token embeddings. Sixteen slots carried one direction sixteen times,
+        # differentiated only by a 5% role anchor. A recurrent operator cannot
+        # pull apart states that begin 99.93% aligned, which is exactly the
+        # long-standing cos(pass1, pass2) = 0.9994 obstacle -- the same number,
+        # arriving from the seed rather than from the recurrence.
+        #
+        # Mean-pooling also destroys order: for "start=17, apply +13 then -6
+        # mod 19" the centroid averages away which number is the start and
+        # which operations follow, so the decode attends to sixteen copies of a
+        # bag-of-words gist. Topic without specifics is precisely the observed
+        # failure -- fluent, committed, wrong.
+        #
+        # Each slot now pools a DISJOINT span of the prompt. A mean of token
+        # embeddings stays inside their convex hull, so every seed remains in
+        # the embedding manifold the frozen layers were trained on, while the
+        # slots differ because their spans differ. Order survives as position
+        # across slots. Short prompts fall back to the global mean, which is
+        # the previous behaviour and the only sensible answer when there are
+        # fewer tokens than slots.
+        length = int(prompt_embeddings.shape[1])
+        if length >= m:
+            edges = [round(i * length / m) for i in range(m + 1)]
+            spans = []
+            for i in range(m):
+                lo, hi = edges[i], max(edges[i + 1], edges[i] + 1)
+                spans.append(
+                    mx.mean(prompt_embeddings[:, lo:hi, :], axis=1, keepdims=True)
+                )
+            span_seed = mx.concatenate(spans, axis=1)  # (1,M,D)
+        else:
+            span_seed = mx.broadcast_to(pooled, (1, m, prompt_embeddings.shape[2]))
 
         base_seed = config.seed
         if branch_role:
@@ -200,9 +236,7 @@ class LatentWorkspace:
             anchors.append(role_anchor(f"{role}#{i}", dim, base_seed))
         anchor_mat = mx.stack(anchors, axis=0)[None, :, :]  # (1,M,D)
 
-        z = mx.broadcast_to(pooled, (1, m, dim)) + (
-            float(config.anchor_scale) * target_rms * anchor_mat
-        )
+        z = span_seed + (float(config.anchor_scale) * target_rms * anchor_mat)
         if context_by_slot:
             rows = []
             for i in range(m):
