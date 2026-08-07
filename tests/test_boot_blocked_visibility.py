@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -67,10 +68,16 @@ def test_background_worktree_instance_is_named_as_such():
 
 
 def test_a_desktop_holder_is_not_labelled_background():
+    # The cwd has to be somewhere that is definitively NOT a worktree, and
+    # the repo root is not that: the contributing workflow puts development
+    # checkouts under `.claude/worktrees/`, which is the exact substring
+    # `singleton` matches on. Using the repo root made this test pass or fail
+    # on where the suite happened to be run from rather than on the behaviour
+    # it names — green from the primary checkout, red from every worktree.
     _write_holder_meta(
         "orchestrator", os.getpid(),
         cmdline=["aura_main.py", "--desktop"],
-        cwd=str(Path(__file__).resolve().parents[1]),
+        cwd=str(Path(tempfile.gettempdir()) / "aura-desktop-holder"),
     )
     singleton._publish_boot_blocked("orchestrator", os.getpid())
     notice = singleton.read_boot_blocked()

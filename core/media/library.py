@@ -36,6 +36,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -81,6 +82,28 @@ MAX_SCAN_SECONDS = 2.5
 INDEX_TTL_S = 120.0
 
 
+def _media_roots_flag() -> Any:
+    """The declared knob for where media lives.
+
+    Declared rather than read raw from the environment: a raw
+    ``os.environ.get`` is untyped, undiscoverable and individually parsed,
+    which is how this repo accumulated several hundred invisible knobs. The
+    declaration puts it in `flag_report()` alongside every other one.
+    """
+    from core.runtime.flags import FlagKind, declare
+
+    return declare(
+        "AURA_MEDIA_ROOTS",
+        kind=FlagKind.STRING,
+        default="",
+        description=(
+            "os.pathsep-separated directories to index for playable media; "
+            "empty means the platform's usual Music/Movies/Videos/Downloads"
+        ),
+        owner="core.media.library",
+    )
+
+
 def _default_roots() -> tuple[Path, ...]:
     """Where a person's media actually lives, plus anything they configured.
 
@@ -89,7 +112,7 @@ def _default_roots() -> tuple[Path, ...]:
     exist is simply skipped rather than reported as an error — most people
     have some of these directories and nobody has all of them.
     """
-    configured = os.environ.get("AURA_MEDIA_ROOTS", "").strip()
+    configured = str(_media_roots_flag().value() or "").strip()
     if configured:
         roots = [Path(p).expanduser() for p in configured.split(os.pathsep) if p.strip()]
         return tuple(r for r in roots if r.is_dir())

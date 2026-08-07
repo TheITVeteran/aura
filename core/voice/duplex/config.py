@@ -32,6 +32,30 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _voice_names() -> tuple[str, ...]:
+    """The names she answers to, as a declared flag rather than a raw read.
+
+    Declared because this one is operator-facing in a way the latency budgets
+    above are not — it is the difference between an assistant that answers to
+    its name and one that does not — and because a raw ``os.environ.get`` is
+    untyped and invisible to `flag_report()`, which is how this repo grew
+    several hundred knobs nobody could enumerate.
+    """
+    from core.runtime.flags import FlagKind, declare
+
+    flag = declare(
+        "AURA_VOICE_NAMES",
+        kind=FlagKind.STRING,
+        default="aura",
+        description="Comma-separated names Aura answers to on an open microphone",
+        owner="core.voice.duplex.config",
+    )
+    names = tuple(
+        part.strip() for part in str(flag.value() or "").split(",") if part.strip()
+    )
+    return names or ("aura",)
+
+
 # ── Audio format ──────────────────────────────────────────────────────────
 # 16 kHz mono is what Silero and Whisper both want; resampling once at the
 # browser edge is cheaper than resampling every frame server-side.
@@ -331,14 +355,7 @@ class AmbientConfig:
     )
     # Names she answers to. Her own name is the strongest single signal there
     # is, and it stays the reliable way to get her attention in a noisy room.
-    names: tuple[str, ...] = field(
-        default_factory=lambda: tuple(
-            part.strip()
-            for part in os.environ.get("AURA_VOICE_NAMES", "aura").split(",")
-            if part.strip()
-        )
-        or ("aura",)
-    )
+    names: tuple[str, ...] = field(default_factory=lambda: _voice_names())
     # How long after she stops speaking a bare reply is still obviously hers
     # to take. This is the term that makes the second and third thing you say
     # need no ceremony, which is most of what a wake word costs you.

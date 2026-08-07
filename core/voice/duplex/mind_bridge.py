@@ -52,6 +52,11 @@ from core.utils.task_tracker import get_task_tracker
 # re-checking whether it has been asked to stop. Silence is normal.
 _ACTIVITY_POLL_TIMEOUT_S = 1.0
 
+# How long to wait for a freshly created cognition task to actually enter the
+# responder. This is one scheduling hop on any healthy loop; a budget this
+# large means only a badly starved one ever reaches it.
+_TURN_START_TIMEOUT_S = 5.0
+
 logger = logging.getLogger("Aura.Voice.MindBridge")
 
 # Voice-lane topics on the event bus. Namespaced so subscribers can take the
@@ -317,7 +322,24 @@ class MindBridge:
         # begun is a lie the caller then acts on: a replacement utterance
         # would cancel a turn that never ran, which from outside is
         # indistinguishable from the request being dropped on the floor.
-        await entered.wait()
+        #
+        # Bounded, because this is only ever one scheduling hop under any
+        # healthy loop. If the loop is so wedged that a created task cannot
+        # start within seconds, waiting longer helps nobody — the turn is
+        # handed back anyway and the caller's own timeouts take it from there,
+        # which is strictly better than a voice session that hangs at the
+        # moment it is asked a question.
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=_TURN_START_TIMEOUT_S)
+        except TimeoutError:
+            record_degradation(
+                "voice_duplex.mind",
+                TimeoutError(
+                    f"cognition task did not start within {_TURN_START_TIMEOUT_S}s"
+                ),
+                action="handed back the turn anyway; the event loop is badly starved",
+                severity="warning",
+            )
         return StreamingTurn(channel=channel, task=task)
 
     def _reply_budget_for(self, transcript: str) -> tuple[int, bool]:

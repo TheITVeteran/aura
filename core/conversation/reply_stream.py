@@ -54,6 +54,15 @@ logger = logging.getLogger("Aura.Conversation.ReplyStream")
 # that the reply was long.
 _MAX_PENDING_CHUNKS = 256
 
+# How long to wait for the next chunk before concluding the producer has
+# stopped rather than merely thinking. Deliberately generous: a hard question
+# can leave a real gap between clauses, and cutting a reply short because the
+# model paused would be a worse failure than waiting. What this rules out is
+# the unbounded case — a producer that dies without closing its channel
+# leaving the consumer parked forever, holding a speaking track and a session
+# state with it.
+DEFAULT_CHUNK_TIMEOUT_S = 120.0
+
 _RECOVERABLE = (RuntimeError, AttributeError, TypeError, ValueError)
 
 
@@ -160,12 +169,16 @@ class ReplyStreamChannel:
     # ── consumer side ────────────────────────────────────────────────────
 
     async def __aiter__(self) -> AsyncIterator[str]:
-        while True:
-            item = await self._queue.get()
-            if item is None:
-                return
-            self._stats.consumed += 1
-            yield item
+        """Iterate with the default budget. See ``drain`` for an explicit one.
+
+        Bounded rather than a bare ``queue.get()``: a producer that dies
+        without closing would otherwise park its consumer forever, and on the
+        voice path that consumer is holding a speaking track and a session
+        state. The budget is generous because a slow clause is normal and only
+        a *stopped* producer is a fault.
+        """
+        async for chunk in self.drain(timeout_s=DEFAULT_CHUNK_TIMEOUT_S):
+            yield chunk
 
     async def drain(self, *, timeout_s: float) -> AsyncIterator[str]:
         """Iterate with a deadline on each individual chunk.
