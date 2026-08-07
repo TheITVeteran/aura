@@ -24,7 +24,7 @@ import sys
 import time
 import uuid
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -1521,7 +1521,9 @@ def _execution_config(
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
         "worker_origin_protocol": WORKER_ORIGIN_PROTOCOL,
-        "worker_origin_attempt_slots": args.max_infra_attempts,
+        "worker_origin_attempt_slots": (
+            args.max_infra_attempts * len(_campaign_looks(args))
+        ),
         "vanilla_fallback_allowed": False,
         "exact_statistical_power": _statistical_power_plan(args),
         **(
@@ -1570,6 +1572,108 @@ def _statistical_power_plan(args: argparse.Namespace) -> dict[str, Any]:
         arm_count=len(arms),
         planned_observations_per_domain=planned,
     )
+
+
+def _campaign_looks(args: argparse.Namespace) -> tuple[int, ...]:
+    values = tuple(getattr(args, "sequential_look_values", ()))
+    return tuple(range(1, len(values) + 1)) if values else (0,)
+
+
+def _worker_attempt_slot_range(
+    args: argparse.Namespace,
+    worker_look: int,
+) -> range:
+    if worker_look == 0:
+        return range(1, args.max_infra_attempts + 1)
+    start = (worker_look - 1) * args.max_infra_attempts + 1
+    return range(start, start + args.max_infra_attempts)
+
+
+def _task_look_assignments(plan: CampaignPlan) -> dict[str, int]:
+    metadata = plan.to_dict()["metadata"]
+    execution_config = metadata["execution_config"]
+    raw_looks = execution_config.get("sequential_look_observations_per_domain")
+    tasks = metadata["task_manifest"]["tasks"]
+    if not raw_looks:
+        return {task["task_id"]: 0 for task in tasks}
+    if (
+        not isinstance(raw_looks, list)
+        or not raw_looks
+        or any(type(value) is not int or value <= 0 for value in raw_looks)
+    ):
+        raise CampaignProducerError("frozen sequential look contract is invalid")
+    domain_ordinals: Counter[str] = Counter()
+    assignments: dict[str, int] = {}
+    for task in tasks:
+        task_id = task.get("task_id")
+        domain = task.get("domain")
+        if not isinstance(task_id, str) or not isinstance(domain, str):
+            raise CampaignProducerError("frozen sequential task manifest is invalid")
+        domain_ordinals[domain] += 1
+        ordinal = domain_ordinals[domain]
+        worker_look = next(
+            (index for index, boundary in enumerate(raw_looks, 1) if ordinal <= boundary),
+            None,
+        )
+        if worker_look is None:
+            raise CampaignProducerError("sequential task exceeds terminal look")
+        assignments[task_id] = worker_look
+    if any(count != raw_looks[-1] for count in domain_ordinals.values()):
+        raise CampaignProducerError("sequential domains are not balanced at terminal look")
+    return assignments
+
+
+def _arm_cell_ids_for_look(
+    plan: CampaignPlan,
+    arm: str,
+    worker_look: int,
+    *,
+    cumulative: bool,
+) -> set[str]:
+    assignments = _task_look_assignments(plan)
+    return {
+        cell_id
+        for cell_id in plan.cell_ids
+        if plan.cell_definition(cell_id).get("arm") == arm
+        and (
+            assignments[plan.cell_definition(cell_id)["task_id"]] == worker_look
+            or (
+                cumulative
+                and worker_look > 0
+                and assignments[plan.cell_definition(cell_id)["task_id"]] <= worker_look
+            )
+        )
+    }
+
+
+def _pending_worker_cell_ids(
+    plan: CampaignPlan,
+    *,
+    arm: str,
+    worker_look: int,
+    runnable_cell_ids: Sequence[str],
+    stage_sealed_cell_ids: set[str],
+    canonical_sealed_cell_ids: set[str],
+) -> list[str]:
+    allowed_cells = _arm_cell_ids_for_look(
+        plan,
+        arm,
+        worker_look,
+        cumulative=False,
+    )
+    pending = [
+        cell_id
+        for cell_id in runnable_cell_ids
+        if cell_id in allowed_cells
+        and cell_id not in stage_sealed_cell_ids
+        and cell_id not in canonical_sealed_cell_ids
+    ]
+    pending.sort(
+        key=lambda cell_id: int(
+            plan.cell_definition(cell_id)["execution_ordinal_within_arm"]
+        )
+    )
+    return pending
 
 
 def _expected_plan(
@@ -2066,6 +2170,11 @@ def _worker_origin_context(
         return None
     if not supplied:
         raise CampaignProducerError("claim worker stage and origin channel are required")
+    if args.worker_attempt_slot not in _worker_attempt_slot_range(
+        args,
+        int(getattr(args, "worker_look", 0) or 0),
+    ):
+        raise CampaignProducerError("worker attempt slot is outside its frozen look")
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     paths = _worker_attempt_paths(
         campaign_dir,
@@ -2249,6 +2358,7 @@ def _execute_worker(
         canonical_journal_path = campaign_dir / JOURNAL_FILE
         with CampaignJournal(canonical_journal_path, plan) as canonical:
             costs = _prior_rlc_costs(canonical)
+            canonical_sealed = set(canonical.resume().sealed_cell_ids)
         worker_journal_path = (
             origin_context["paths"]["stage"]
             if origin_context is not None
@@ -2256,15 +2366,13 @@ def _execute_worker(
         )
         with CampaignJournal(worker_journal_path, plan) as journal:
             sealed = set(journal.resume().sealed_cell_ids)
-            pending = [
-                cell_id
-                for cell_id in journal.resume().runnable_cell_ids
-                if plan.cell_definition(cell_id)["arm"] == arm and cell_id not in sealed
-            ]
-            pending.sort(
-                key=lambda cell_id: int(
-                    plan.cell_definition(cell_id)["execution_ordinal_within_arm"]
-                )
+            pending = _pending_worker_cell_ids(
+                plan,
+                arm=arm,
+                worker_look=args.worker_look,
+                runnable_cell_ids=journal.resume().runnable_cell_ids,
+                stage_sealed_cell_ids=sealed,
+                canonical_sealed_cell_ids=canonical_sealed,
             )
             for cell_id in pending:
                 definition = plan.cell_definition(cell_id)
@@ -2407,6 +2515,7 @@ def _worker_args(
     arm: str,
     *,
     worker_attempt_slot: int | None = None,
+    worker_look: int = 0,
 ) -> list[str]:
     if str(getattr(args, "worker_arm", "") or ""):
         seed_count = int(args.seed_count)
@@ -2476,8 +2585,8 @@ def _worker_args(
         str(args.equal_compute_max_samples),
         "--max-infra-attempts",
         str(args.max_infra_attempts),
-        "--worker-arm",
-        arm,
+        "--worker-look",
+        str(worker_look),
     ]
     if worker_attempt_slot is not None:
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
@@ -2504,13 +2613,25 @@ def _worker_args(
         value = str(getattr(args, attribute, "") or "").strip()
         if value:
             command.extend([option, value])
+    command.extend(["--worker-arm", arm])
     return command
 
 
-def _arm_outputs_sealed(campaign_dir: Path, plan: CampaignPlan, arm: str) -> bool:
+def _arm_outputs_sealed(
+    campaign_dir: Path,
+    plan: CampaignPlan,
+    arm: str,
+    *,
+    worker_look: int = 0,
+) -> bool:
     with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
         sealed = set(journal.resume().sealed_cell_ids)
-    expected = {cell_id for cell_id in plan.cell_ids if plan.cell_definition(cell_id)["arm"] == arm}
+    expected = _arm_cell_ids_for_look(
+        plan,
+        arm,
+        worker_look,
+        cumulative=True,
+    )
     return expected.issubset(sealed)
 
 
@@ -2860,9 +2981,12 @@ def _next_worker_attempt_slot(
     campaign_dir: Path,
     arm: str,
     *,
+    minimum: int = 1,
     maximum: int,
 ) -> int | None:
-    for attempt_slot in range(1, maximum + 1):
+    if type(minimum) is not int or minimum <= 0 or minimum > maximum:
+        raise CampaignProducerError("worker attempt slot range is invalid")
+    for attempt_slot in range(minimum, maximum + 1):
         paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
         lifecycle_exists = paths["origin_dir"].is_dir() and any(
             paths["origin_dir"].glob("*.lifecycle.json")
@@ -3061,146 +3185,170 @@ def _build_worker_execution_manifest(
     )
     imports: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
-    successful_arms: set[str] = set()
+    successful_batches: set[tuple[int, str]] = set()
     detached_plan_sha256: str | None = None
     detached_classification_head_sha256: str | None = None
     detached_terminals: list[dict[str, Any]] | None = None
     detached_quarantines: list[dict[str, Any]] | None = None
 
-    for arm in _arms(args):
-        for attempt_slot in range(1, args.max_infra_attempts + 1):
-            paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
-            if not paths["broker_result"].exists():
-                origin_activity = paths["origin_dir"].is_dir() and any(
-                    paths["origin_dir"].iterdir()
-                )
-                if origin_activity or paths["stage"].exists():
-                    raise CampaignProducerError(
-                        "worker attempt has activity without broker evidence"
+    for worker_look in _campaign_looks(args):
+        for arm in _arms(args):
+            for attempt_slot in _worker_attempt_slot_range(args, worker_look):
+                paths = _worker_attempt_paths(campaign_dir, arm, attempt_slot)
+                if not paths["broker_result"].exists():
+                    origin_activity = paths["origin_dir"].is_dir() and any(
+                        paths["origin_dir"].iterdir()
                     )
-                continue
-            broker_result, broker_artifact = _load_brokered_worker_result(paths["broker_result"])
-            summary = broker_result.worker_origin_lifecycle
-            if not isinstance(summary, dict):
-                raise CampaignProducerError(
-                    "worker broker evidence has no lifecycle classification"
+                    if origin_activity or paths["stage"].exists():
+                        raise CampaignProducerError(
+                            "worker attempt has activity without broker evidence"
+                        )
+                    continue
+                broker_result, broker_artifact = _load_brokered_worker_result(
+                    paths["broker_result"]
                 )
-            detached_evidence = _verify_detached_worker_broker_result(
-                broker_result,
-                require_claim_eligible=False,
-            )
-            current_detached_plan = detached_evidence.plan["plan_sha256"]
-            current_terminals = [
-                asdict(terminal) for terminal in detached_evidence.terminal_summaries
-            ]
-            current_quarantines = [
-                asdict(quarantine) for quarantine in detached_evidence.quarantine_summaries
-            ]
-            if detached_plan_sha256 is None:
-                detached_plan_sha256 = current_detached_plan
-                detached_classification_head_sha256 = detached_evidence.classification_head_sha256
-                detached_terminals = current_terminals
-                detached_quarantines = current_quarantines
-            elif (
-                detached_plan_sha256 != current_detached_plan
-                or detached_classification_head_sha256
-                != detached_evidence.classification_head_sha256
-                or detached_terminals != current_terminals
-                or detached_quarantines != current_quarantines
-            ):
-                raise CampaignProducerError(
-                    "worker attempts do not share one detached evidence snapshot"
+                summary = broker_result.worker_origin_lifecycle
+                if not isinstance(summary, dict):
+                    raise CampaignProducerError(
+                        "worker broker evidence has no lifecycle classification"
+                    )
+                detached_evidence = _verify_detached_worker_broker_result(
+                    broker_result,
+                    require_claim_eligible=False,
                 )
-            matching_terminals = [
-                terminal
-                for terminal in current_terminals
-                if terminal["request_id"] == broker_result.request_id
-            ]
-            if len(matching_terminals) != 1:
-                raise CampaignProducerError("worker broker result has no unique detached terminal")
-            detached_terminal = matching_terminals[0]
-            expected_claim_eligible = bool(
-                broker_result.returncode == 0 and broker_result.status == "passed"
-            )
-            if detached_terminal["claim_eligible"] is not expected_claim_eligible:
-                raise CampaignProducerError(
-                    "worker broker result eligibility differs from detached evidence"
+                current_detached_plan = detached_evidence.plan["plan_sha256"]
+                current_terminals = [
+                    asdict(terminal) for terminal in detached_evidence.terminal_summaries
+                ]
+                current_quarantines = [
+                    asdict(quarantine) for quarantine in detached_evidence.quarantine_summaries
+                ]
+                if detached_plan_sha256 is None:
+                    detached_plan_sha256 = current_detached_plan
+                    detached_classification_head_sha256 = (
+                        detached_evidence.classification_head_sha256
+                    )
+                    detached_terminals = current_terminals
+                    detached_quarantines = current_quarantines
+                elif (
+                    detached_plan_sha256 != current_detached_plan
+                    or detached_classification_head_sha256
+                    != detached_evidence.classification_head_sha256
+                    or detached_terminals != current_terminals
+                    or detached_quarantines != current_quarantines
+                ):
+                    raise CampaignProducerError(
+                        "worker attempts do not share one detached evidence snapshot"
+                    )
+                matching_terminals = [
+                    terminal
+                    for terminal in current_terminals
+                    if terminal["request_id"] == broker_result.request_id
+                ]
+                if len(matching_terminals) != 1:
+                    raise CampaignProducerError(
+                        "worker broker result has no unique detached terminal"
+                    )
+                detached_terminal = matching_terminals[0]
+                expected_claim_eligible = bool(
+                    broker_result.returncode == 0 and broker_result.status == "passed"
                 )
-            common = {
-                "arm": arm,
-                "worker_attempt_slot": attempt_slot,
-                "broker_result_artifact_sha256": broker_artifact["artifact_sha256"],
-                "broker_policy_sha256": broker_result.policy_sha256,
-                "broker_request_id": broker_result.request_id,
-                "broker_receipt_sha256": broker_result.receipt_sha256,
-                "broker_response_hmac_sha256": broker_result.response_hmac_sha256,
-                "worker_origin_lifecycle": summary,
-                "detached_supervisor_attempt": detached_evidence.attempt,
-                "detached_terminal_event_sha256": detached_terminal["event_sha256"],
-                "detached_classification_head_sha256": (
-                    detached_evidence.classification_head_sha256
-                ),
-            }
-            if broker_result.returncode != 0 or broker_result.status != "passed":
-                excluded.append(
+                if detached_terminal["claim_eligible"] is not expected_claim_eligible:
+                    raise CampaignProducerError(
+                        "worker broker result eligibility differs from detached evidence"
+                    )
+                common = {
+                    "arm": arm,
+                    "worker_look": worker_look,
+                    "worker_attempt_slot": attempt_slot,
+                    "broker_result_artifact_sha256": broker_artifact[
+                        "artifact_sha256"
+                    ],
+                    "broker_policy_sha256": broker_result.policy_sha256,
+                    "broker_request_id": broker_result.request_id,
+                    "broker_receipt_sha256": broker_result.receipt_sha256,
+                    "broker_response_hmac_sha256": broker_result.response_hmac_sha256,
+                    "worker_origin_lifecycle": summary,
+                    "detached_supervisor_attempt": detached_evidence.attempt,
+                    "detached_terminal_event_sha256": detached_terminal["event_sha256"],
+                    "detached_classification_head_sha256": (
+                        detached_evidence.classification_head_sha256
+                    ),
+                }
+                if broker_result.returncode != 0 or broker_result.status != "passed":
+                    excluded.append(
+                        {
+                            **common,
+                            "classification": "terminal_excluded",
+                            "status": broker_result.status,
+                            "returncode": broker_result.returncode,
+                            "reason": broker_result.error,
+                        }
+                    )
+                    continue
+                batch = (worker_look, arm)
+                if batch in successful_batches:
+                    raise CampaignProducerError(
+                        "worker execution has multiple imported attempts for one batch"
+                    )
+                receipt = _import_brokered_worker_attempt(
+                    args,
+                    plan,
+                    arm=arm,
+                    attempt_slot=attempt_slot,
+                    result=broker_result,
+                )
+                if receipt is None:
+                    raise CampaignProducerError("passed worker attempt was not imported")
+                verified_stage = _read_canonical_json_artifact(
+                    paths["verified_stage"], role="verified worker stage"
+                )
+                import_intent = _read_canonical_json_artifact(
+                    paths["import_intent"], role="worker import intent"
+                )
+                import_receipt = _read_canonical_json_artifact(
+                    paths["import_receipt"], role="worker import receipt"
+                )
+                if import_receipt != receipt:
+                    raise CampaignProducerError("worker import receipt differs")
+                stage_detached_plan = verified_stage.get("detached_plan_sha256")
+                if not isinstance(stage_detached_plan, str):
+                    raise CampaignProducerError("worker stage detached plan is invalid")
+                if detached_plan_sha256 != stage_detached_plan:
+                    raise CampaignProducerError(
+                        "worker attempts span different detached plans"
+                    )
+                imports.append(
                     {
                         **common,
-                        "classification": "terminal_excluded",
-                        "status": broker_result.status,
-                        "returncode": broker_result.returncode,
-                        "reason": broker_result.error,
+                        "classification": "terminal_imported",
+                        "session_id": summary["session_id"],
+                        "detached_plan_sha256": stage_detached_plan,
+                        "verified_stage_manifest_sha256": verified_stage[
+                            "manifest_sha256"
+                        ],
+                        "stage_sha256": verified_stage["stage_sha256"],
+                        "stage_journal_head_sha256": verified_stage[
+                            "stage_journal_head_sha256"
+                        ],
+                        "result_chain_head_sha256": verified_stage[
+                            "result_chain_head_sha256"
+                        ],
+                        "cell_ids": verified_stage["cell_ids"],
+                        "import_intent_sha256": import_intent["intent_sha256"],
+                        "import_receipt_sha256": import_receipt["receipt_sha256"],
+                        "canonical_imports": import_receipt["imported"],
                     }
                 )
-                continue
-            if arm in successful_arms:
-                raise CampaignProducerError(
-                    "worker execution has multiple imported attempts for one arm"
-                )
-            receipt = _import_brokered_worker_attempt(
-                args,
-                plan,
-                arm=arm,
-                attempt_slot=attempt_slot,
-                result=broker_result,
-            )
-            if receipt is None:
-                raise CampaignProducerError("passed worker attempt was not imported")
-            verified_stage = _read_canonical_json_artifact(
-                paths["verified_stage"], role="verified worker stage"
-            )
-            import_intent = _read_canonical_json_artifact(
-                paths["import_intent"], role="worker import intent"
-            )
-            import_receipt = _read_canonical_json_artifact(
-                paths["import_receipt"], role="worker import receipt"
-            )
-            if import_receipt != receipt:
-                raise CampaignProducerError("worker import receipt differs")
-            stage_detached_plan = verified_stage.get("detached_plan_sha256")
-            if not isinstance(stage_detached_plan, str):
-                raise CampaignProducerError("worker stage detached plan is invalid")
-            if detached_plan_sha256 != stage_detached_plan:
-                raise CampaignProducerError("worker attempts span different detached plans")
-            imports.append(
-                {
-                    **common,
-                    "classification": "terminal_imported",
-                    "session_id": summary["session_id"],
-                    "detached_plan_sha256": stage_detached_plan,
-                    "verified_stage_manifest_sha256": verified_stage["manifest_sha256"],
-                    "stage_sha256": verified_stage["stage_sha256"],
-                    "stage_journal_head_sha256": verified_stage["stage_journal_head_sha256"],
-                    "result_chain_head_sha256": verified_stage["result_chain_head_sha256"],
-                    "cell_ids": verified_stage["cell_ids"],
-                    "import_intent_sha256": import_intent["intent_sha256"],
-                    "import_receipt_sha256": import_receipt["receipt_sha256"],
-                    "canonical_imports": import_receipt["imported"],
-                }
-            )
-            successful_arms.add(arm)
+                successful_batches.add(batch)
 
     if (
-        successful_arms != set(_arms(args))
+        successful_batches
+        != {
+            (worker_look, arm)
+            for worker_look in _campaign_looks(args)
+            for arm in _arms(args)
+        }
         or detached_plan_sha256 is None
         or detached_classification_head_sha256 is None
         or detached_terminals is None
@@ -3267,6 +3415,7 @@ def _run_child(
     timeout_s: float,
     *,
     worker_attempt_slot: int | None = None,
+    worker_look: int = 0,
 ) -> int | BrokeredProcessResult:
     campaign_dir = Path(args.campaign_dir).expanduser().resolve()
     log_path = campaign_dir / LOG_FILE
@@ -3274,6 +3423,7 @@ def _run_child(
         args,
         arm,
         worker_attempt_slot=worker_attempt_slot,
+        worker_look=worker_look,
     )
     if broker_available():
         deadline = time.monotonic() + timeout_s
@@ -3301,6 +3451,7 @@ def _run_child(
                             {
                                 "state": "worker_origin_signature_required",
                                 "arm": arm,
+                                "worker_look": worker_look,
                                 "worker_attempt_slot": worker_attempt_slot,
                                 "attestation_path": attestation_path,
                             },
@@ -3340,6 +3491,7 @@ def _detached_worker_origin_policy(
     *,
     arm: str,
     attempt_slot: int,
+    worker_look: int = 0,
 ) -> dict[str, Any]:
     metadata = plan.to_dict()["metadata"]
     cells = [
@@ -3347,8 +3499,12 @@ def _detached_worker_origin_policy(
             "cell_id": cell_id,
             "cell_type": PAIRED_CAMPAIGN_CELL_TYPE,
         }
-        for cell_id in plan.cell_ids
-        if plan.cell_definition(cell_id).get("arm") == arm
+        for cell_id in _arm_cell_ids_for_look(
+            plan,
+            arm,
+            worker_look,
+            cumulative=False,
+        )
     ]
     cells.sort(
         key=lambda cell: int(plan.cell_definition(cell["cell_id"])["execution_ordinal_within_arm"])
@@ -3388,35 +3544,41 @@ def _detached_broker_policy(
     if args.confirmatory:
         if plan is None:
             raise CampaignProducerError("claim broker policy requires the frozen campaign plan")
-        return [
-            {
-                "command": _worker_args(
-                    args,
-                    arm,
-                    worker_attempt_slot=attempt_slot,
-                ),
-                "cwd": str(REPO_ROOT),
-                "stdout_path": str(campaign_dir / LOG_FILE),
-                "timeout_s_max": float(args.arm_timeout),
-                "max_invocations": 1,
-                "worker_origin": _detached_worker_origin_policy(
-                    args,
-                    plan,
-                    arm=arm,
-                    attempt_slot=attempt_slot,
-                ),
-            }
-            for arm in _arms(args)
-            for attempt_slot in range(1, args.max_infra_attempts + 1)
-        ]
+        policies: list[dict[str, Any]] = []
+        for worker_look in _campaign_looks(args):
+            for arm in _arms(args):
+                for attempt_slot in _worker_attempt_slot_range(args, worker_look):
+                    policies.append(
+                        {
+                            "command": _worker_args(
+                                args,
+                                arm,
+                                worker_attempt_slot=attempt_slot,
+                                worker_look=worker_look,
+                            ),
+                            "cwd": str(REPO_ROOT),
+                            "stdout_path": str(campaign_dir / LOG_FILE),
+                            "timeout_s_max": float(args.arm_timeout),
+                            "max_invocations": 1,
+                            "worker_origin": _detached_worker_origin_policy(
+                                args,
+                                plan,
+                                arm=arm,
+                                attempt_slot=attempt_slot,
+                                worker_look=worker_look,
+                            ),
+                        }
+                    )
+        return policies
     return [
         {
-            "command": _worker_args(args, arm),
+            "command": _worker_args(args, arm, worker_look=worker_look),
             "cwd": str(REPO_ROOT),
             "stdout_path": str(campaign_dir / LOG_FILE),
             "timeout_s_max": float(args.arm_timeout),
             "max_invocations": int(args.max_infra_attempts),
         }
+        for worker_look in _campaign_looks(args)
         for arm in _arms(args)
     ]
 
@@ -3433,61 +3595,85 @@ def _orchestrate(
     arm_execution_order = tuple(metadata["arm_execution_order"])
     if set(arm_execution_order) != set(_arms(args)):
         raise CampaignProducerError("frozen arm execution order is invalid")
-    for arm in arm_execution_order:
-        if arm not in _arms(args):
-            continue
-        attempts = 0
-        while not _arm_outputs_sealed(campaign_dir, plan, arm):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                print(
-                    "campaign deadline exceeded; resumable evidence preserved",
-                    flush=True,
-                )
-                return 3
-            attempts += 1
-            if attempts > args.max_infra_attempts:
-                print(f"arm {arm} exhausted infrastructure attempts", flush=True)
-                return 4
-            worker_attempt_slot = None
-            if worker_origin_required:
-                worker_attempt_slot = _next_worker_attempt_slot(
-                    campaign_dir,
-                    arm,
-                    maximum=args.max_infra_attempts,
-                )
-                if worker_attempt_slot is None:
+    for worker_look in _campaign_looks(args):
+        for arm in arm_execution_order:
+            if arm not in _arms(args):
+                continue
+            attempts = 0
+            while not _arm_outputs_sealed(
+                campaign_dir,
+                plan,
+                arm,
+                worker_look=worker_look,
+            ):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     print(
-                        f"arm {arm} exhausted pre-authorized worker slots",
+                        "campaign deadline exceeded; resumable evidence preserved",
+                        flush=True,
+                    )
+                    return 3
+                attempts += 1
+                if attempts > args.max_infra_attempts:
+                    print(
+                        f"look {worker_look} arm {arm} exhausted infrastructure attempts",
                         flush=True,
                     )
                     return 4
-            outcome = _run_child(
-                args,
-                arm,
-                min(args.arm_timeout, remaining),
-                worker_attempt_slot=worker_attempt_slot,
-            )
-            code = outcome.returncode if isinstance(outcome, BrokeredProcessResult) else outcome
-            if worker_origin_required:
-                if not isinstance(outcome, BrokeredProcessResult):
-                    if code == 124:
+                worker_attempt_slot = None
+                if worker_origin_required:
+                    slot_range = _worker_attempt_slot_range(args, worker_look)
+                    worker_attempt_slot = _next_worker_attempt_slot(
+                        campaign_dir,
+                        arm,
+                        minimum=slot_range.start,
+                        maximum=slot_range.stop - 1,
+                    )
+                    if worker_attempt_slot is None:
                         print(
-                            f"arm {arm} authorization or execution timed out",
+                            f"look {worker_look} arm {arm} exhausted "
+                            "pre-authorized worker slots",
                             flush=True,
                         )
-                        return code
-                    raise CampaignProducerError("claim worker has no authenticated broker result")
-                _import_brokered_worker_attempt(
+                        return 4
+                outcome = _run_child(
                     args,
-                    plan,
-                    arm=arm,
-                    attempt_slot=int(worker_attempt_slot),
-                    result=outcome,
+                    arm,
+                    min(args.arm_timeout, remaining),
+                    worker_attempt_slot=worker_attempt_slot,
+                    worker_look=worker_look,
                 )
-            print(f"arm {arm} process exit={code} attempt={attempts}", flush=True)
-            if code != 0 and attempts >= args.max_infra_attempts:
-                return code or 4
+                code = (
+                    outcome.returncode
+                    if isinstance(outcome, BrokeredProcessResult)
+                    else outcome
+                )
+                if worker_origin_required:
+                    if not isinstance(outcome, BrokeredProcessResult):
+                        if code == 124:
+                            print(
+                                f"look {worker_look} arm {arm} authorization "
+                                "or execution timed out",
+                                flush=True,
+                            )
+                            return code
+                        raise CampaignProducerError(
+                            "claim worker has no authenticated broker result"
+                        )
+                    _import_brokered_worker_attempt(
+                        args,
+                        plan,
+                        arm=arm,
+                        attempt_slot=int(worker_attempt_slot),
+                        result=outcome,
+                    )
+                print(
+                    f"look {worker_look} arm {arm} process exit={code} "
+                    f"attempt={attempts}",
+                    flush=True,
+                )
+                if code != 0 and attempts >= args.max_infra_attempts:
+                    return code or 4
 
     worker_execution = _build_worker_execution_manifest(args, plan)
     sealed_outputs = _seal_output_manifest(
@@ -3687,6 +3873,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-infra-attempts", type=_positive_int, default=3)
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--worker-arm", choices=FULL_ARMS, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--worker-look", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument(
         "--worker-attempt-slot", type=_positive_int, default=0, help=argparse.SUPPRESS
     )
@@ -3727,6 +3914,11 @@ def main() -> int:
     else:
         args.sequential_look_values = ()
         args.sequential_alpha_weight_values = ()
+    if args.worker_arm:
+        if args.worker_look not in _campaign_looks(args):
+            parser.error("worker look is outside the frozen sequential contract")
+    elif args.worker_look != 0:
+        parser.error("worker look is reserved for isolated workers")
     worker_origin_values = (
         args.worker_attempt_slot,
         args.worker_stage_journal,

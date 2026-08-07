@@ -807,6 +807,106 @@ def test_worker_command_resolves_relative_campaign_directory(
     assert all(entry["max_invocations"] == 1 for entry in policy)
 
 
+def _sequential_runner_plan():
+    tasks = generate_task_battery(
+        [11, 22, 33, 44],
+        domains=("mathematics", "coding"),
+        difficulty=1,
+    )
+    return build_campaign_plan(
+        "sequential-runner-contract",
+        tasks,
+        model_identity={"model": "test"},
+        adapter_identity={"adapter": "test"},
+        execution_config={
+            "sequential_look_observations_per_domain": [2, 4],
+            "sequential_alpha_weights": [
+                {"numerator": 1, "denominator": 10},
+                {"numerator": 9, "denominator": 10},
+            ],
+        },
+        arms=runner.PRIMARY_ARMS,
+    )
+
+
+def test_sequential_worker_batches_are_balanced_disjoint_and_cumulative():
+    plan = _sequential_runner_plan()
+    assignments = runner._task_look_assignments(plan)
+    task_domains = {
+        task["task_id"]: task["domain"]
+        for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]
+    }
+
+    for worker_look in (1, 2):
+        assigned = [task_id for task_id, look in assignments.items() if look == worker_look]
+        assert len(assigned) == 4
+        assert {domain: sum(task_domains[item] == domain for item in assigned) for domain in task_domains.values()} == {
+            "coding": 2,
+            "mathematics": 2,
+        }
+    first = runner._arm_cell_ids_for_look(
+        plan,
+        runner.BASE_RLC,
+        1,
+        cumulative=False,
+    )
+    second = runner._arm_cell_ids_for_look(
+        plan,
+        runner.BASE_RLC,
+        2,
+        cumulative=False,
+    )
+    cumulative = runner._arm_cell_ids_for_look(
+        plan,
+        runner.BASE_RLC,
+        2,
+        cumulative=True,
+    )
+    assert len(first) == len(second) == 4
+    assert first.isdisjoint(second)
+    assert cumulative == first | second
+
+
+def test_sequential_resume_excludes_imported_and_future_cells():
+    plan = _sequential_runner_plan()
+    first = runner._arm_cell_ids_for_look(
+        plan,
+        runner.BASE_RLC,
+        1,
+        cumulative=False,
+    )
+    second = runner._arm_cell_ids_for_look(
+        plan,
+        runner.BASE_RLC,
+        2,
+        cumulative=False,
+    )
+    already_imported = {next(iter(first))}
+    pending = runner._pending_worker_cell_ids(
+        plan,
+        arm=runner.BASE_RLC,
+        worker_look=1,
+        runnable_cell_ids=plan.cell_ids,
+        stage_sealed_cell_ids=set(),
+        canonical_sealed_cell_ids=already_imported,
+    )
+
+    assert set(pending) == first - already_imported
+    assert set(pending).isdisjoint(second)
+    assert pending == sorted(
+        pending,
+        key=lambda cell_id: plan.cell_definition(cell_id)[
+            "execution_ordinal_within_arm"
+        ],
+    )
+
+
+def test_sequential_attempt_slots_are_disjoint_per_look():
+    args = SimpleNamespace(max_infra_attempts=3)
+    assert tuple(runner._worker_attempt_slot_range(args, 1)) == (1, 2, 3)
+    assert tuple(runner._worker_attempt_slot_range(args, 2)) == (4, 5, 6)
+
+
 def test_claim_broker_policy_covers_every_exact_worker_attempt_command(
     tmp_path: Path,
 ):
