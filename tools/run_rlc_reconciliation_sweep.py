@@ -498,9 +498,18 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     # way from it would report a starved budget as a reasoning result.
     faulted = {name: b["errors"] for name, b in arms.items() if b["errors"]}
     complete = not faulted
-    reaches_parity = complete and best_rlc >= vanilla and best_rlc >= 0
+    # A battery the ordinary decode cannot score on has not measured the
+    # recurrent path either: 0 >= 0 satisfies every inequality below, so mutual
+    # failure would otherwise be published as parity and promote a model that
+    # answered nothing. Parity is a claim about a baseline, and with no solved
+    # control task there is no baseline to be at parity with. The floor is
+    # structural (a baseline exists / does not), not a tuned threshold.
+    informative = vanilla > 0
+    reaches_parity = complete and informative and best_rlc >= vanilla
     if not complete:
         decision = "inconclusive_arms_carry_harness_faults"
+    elif not informative:
+        decision = "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
     elif reaches_parity:
         decision = "proceed_to_checkpoint_phase"
     else:
@@ -513,6 +522,7 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
         "best_recurrent_correct": best_rlc,
         "arms_complete": complete,
         "faulted_arms": faulted,
+        "battery_informative": informative,
         "reaches_parity_with_ordinary_decode": reaches_parity,
         "decision": decision,
         "claims": {

@@ -210,6 +210,30 @@ def main() -> int:
         )
         return 0
 
+    if not sweep_verdict.get("battery_informative", True):
+        _decide(
+            run_dir,
+            {
+                "decision": "inconclusive_battery_uninformative",
+                "summary": (
+                    "The ordinary decode scored zero on this battery, so the "
+                    "recurrent arms were never compared against a working "
+                    "baseline -- mutual failure satisfies every parity "
+                    "inequality. This is a statement about the battery or the "
+                    "model, not about recurrence. No checkpoint was promoted "
+                    "and no weights were fused."
+                ),
+                "evidence": {
+                    "arm_scores": scores,
+                    "vanilla_correct": sweep_verdict.get("vanilla_correct"),
+                    "best_recurrent_correct": sweep_verdict.get(
+                        "best_recurrent_correct"
+                    ),
+                },
+            },
+        )
+        return 0
+
     if not sweep_verdict.get("reaches_parity_with_ordinary_decode"):
         _decide(
             run_dir,

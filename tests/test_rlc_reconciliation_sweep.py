@@ -330,3 +330,70 @@ def test_a_faulted_arm_makes_the_sweep_inconclusive_not_negative(tmp_path: Path)
     # Crucially it does NOT report the recurrent path as below vanilla.
     assert verdict["reaches_parity_with_ordinary_decode"] is False
     assert verdict["arms"]["rlc_asrun"]["correct"] == 0
+
+
+def test_mutual_failure_is_not_parity(tmp_path: Path):
+    """0 >= 0 satisfies the parity inequality. It must not satisfy the gate.
+
+    A battery the ordinary decode cannot score on has not measured recurrence
+    at all, and promoting on it would advance a model that answered nothing.
+    """
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+
+    for task in tasks:
+        for arm in ("vanilla", "rlc_asrun"):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": "I am not able to answer this.",
+                    "error": "",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["vanilla_correct"] == 0
+    assert verdict["best_recurrent_correct"] == 0
+    assert verdict["battery_informative"] is False
+    assert verdict["reaches_parity_with_ordinary_decode"] is False
+    assert (
+        verdict["decision"]
+        == "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
+    )
+    assert verdict["claims"]["fusion_authorized"] is False
+
+
+def test_one_solved_control_task_makes_the_battery_informative(tmp_path: Path):
+    """The floor is structural: a baseline exists, or it does not."""
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+
+    for index, task in enumerate(tasks):
+        reveal = task.reveal_for_verifier()
+        correct_line = "FINAL_ANSWER: " + json.dumps(reveal["expected"])
+        # Exactly one control task is solved, by both arms.
+        text = correct_line if index == 0 else "no answer"
+        for arm in ("vanilla", "rlc_asrun"):
+            journal.append(
+                {
+                    "event": "CELL",
+                    "arm": arm,
+                    "task_id": task.task_id,
+                    "domain": task.domain,
+                    "text": text,
+                    "error": "",
+                }
+            )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["vanilla_correct"] == 1
+    assert verdict["battery_informative"] is True
+    assert verdict["reaches_parity_with_ordinary_decode"] is True
+    assert verdict["decision"] == "proceed_to_checkpoint_phase"

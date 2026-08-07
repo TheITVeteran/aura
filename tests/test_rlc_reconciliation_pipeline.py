@@ -217,3 +217,29 @@ def test_an_unfinished_sweep_is_reported_not_assumed(tmp_path, monkeypatch):
     assert _run_pipeline(run_dir, monkeypatch) == 1
     decision = json.loads((run_dir / "DECISION.json").read_text())
     assert decision["decision"] == "incomplete_sweep_did_not_finish"
+
+
+def test_an_uninformative_battery_is_reported_as_such_not_as_a_recurrence_verdict(
+    tmp_path, monkeypatch
+):
+    """Mutual failure says nothing about recurrence, and must not be filed as if
+    it did. The pipeline that supervises an unattended run is the last place a
+    'nothing happened' result may be narrated as a finding."""
+    run_dir = tmp_path / "run"
+    verdict = _sweep_verdict(vanilla=0, best=0)
+    verdict["battery_informative"] = False
+    verdict["decision"] = (
+        "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
+    )
+    _write(run_dir / "sweep" / "verdict.json", verdict)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("no phase may run on an uninformative battery")
+
+    monkeypatch.setattr(pipeline, "_run", _explode)
+
+    assert _run_pipeline(run_dir, monkeypatch) == 0
+    decision = json.loads((run_dir / "DECISION.json").read_text())
+    assert decision["decision"] == "inconclusive_battery_uninformative"
+    assert "not about recurrence" in decision["summary"]
+    assert not (run_dir / "fused_candidate").exists()
