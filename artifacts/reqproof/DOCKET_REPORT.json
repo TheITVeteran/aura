@@ -634,7 +634,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "e76697990cb688e700d1d71e7735159383e12f82582231bcb7d58c9e368b7806",
+    "evidence_ledger_sha256": "58b00b8e0d33e0d856b64ac4176abc422b8e999c846c6cc3e74f3dff2f808f41",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
@@ -642,7 +642,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "92e24cfb82df92c719a7391cb30aa9cf09cf9c134144b1f2960a893cea456699",
+  "report_sha256": "c167906d8d35a80bc4458d01ce5b9dfe6784c8f6fef1253855e3db528bfca9bf",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -1951,13 +1951,12 @@
       ],
       "disposition": "in_progress",
       "evidence_cells_total": 6,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "PROGRESS",
       "id": "PROGRESS-CONTROL-001",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "test:A1",
         "live:A1",
         "portability:A1",
         "release:A1",
@@ -2659,13 +2658,12 @@
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "SCOPE",
       "id": "SCOPE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "test:A1",
         "release:A1"
       ],
       "owner": "unassigned",

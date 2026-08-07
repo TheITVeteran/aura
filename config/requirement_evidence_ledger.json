@@ -1,5 +1,5 @@
 {
-  "content_sha256": "e76697990cb688e700d1d71e7735159383e12f82582231bcb7d58c9e368b7806",
+  "content_sha256": "58b00b8e0d33e0d856b64ac4176abc422b8e999c846c6cc3e74f3dff2f808f41",
   "entries": [
     {
       "acceptance_ids": [
@@ -609,6 +609,17 @@
       "acceptance_ids": [
         "A1"
       ],
+      "commit": "e57acb3ebfaeb27db3efc3061ef04ae041b23bde",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e57acb3ebfaeb27db3efc3061ef04ae041b23bde.json",
+      "requirement_id": "PROGRESS-CONTROL-001",
+      "sha256": "c5758f89d788e30af42c549292be7b4609666417fdaf895c152aea58941e6c4f"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
       "commit": "7b5a93d4530623c87bc3aaca39ef4e6f1c1417c2",
       "evidence_class": "implementation",
       "recorded_at": "2026-08-07",
@@ -637,6 +648,17 @@
       "ref": "artifacts/reqproof/evidence/reqproof-structural-gate-audit/83720a9bd3419ef6fbf3c3e26bb7c178c1d86705.json",
       "requirement_id": "SCOPE-001",
       "sha256": "5eaddd36b81c91cf3d6a579e86e29941e6e629e58800ee15e47c62e366f5542c"
+    },
+    {
+      "acceptance_ids": [
+        "A1"
+      ],
+      "commit": "e57acb3ebfaeb27db3efc3061ef04ae041b23bde",
+      "evidence_class": "test",
+      "recorded_at": "2026-08-07",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e57acb3ebfaeb27db3efc3061ef04ae041b23bde.json",
+      "requirement_id": "SCOPE-001",
+      "sha256": "c5758f89d788e30af42c549292be7b4609666417fdaf895c152aea58941e6c4f"
     },
     {
       "acceptance_ids": [

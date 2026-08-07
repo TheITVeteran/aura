@@ -69,7 +69,7 @@
 | `OBSERVE-001` | `in_progress` | 3 | none |
 | `OS-AUTOMATION-001` | `in_progress` | 3 | DESKTOP-001, EFFECT-001, FOREGROUND-LATENCY-001, TOOLS-001 |
 | `PERF-001` | `in_progress` | 5 | FOREGROUND-LATENCY-001, HEALTH-SURFACE-001 |
-| `PROGRESS-CONTROL-001` | `in_progress` | 5 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
+| `PROGRESS-CONTROL-001` | `in_progress` | 4 | SCOPE-001, RELEASE-CONTRACT-001, CHECKPOINT-001, VALIDATE-001 |
 | `QUANTUM-001` | `in_progress` | 2 | none |
 | `RESOURCE-001` | `in_progress` | 1 | none |
 | `RESOURCE-OWNERSHIP-001` | `in_progress` | 3 | none |
@@ -99,7 +99,7 @@
 | `RR-09` | `in_progress` | 3 | none |
 | `RUNTIME-001` | `in_progress` | 3 | none |
 | `RUNTIME-SETTINGS-001` | `in_progress` | 5 | UI-001, AUTONOMY-AUTHORITY-001, ENTERPRISE-CONTROL-001, VOICE-001, ADAPTATION-STATE-AUTHORITY-001, DATA-LIFECYCLE-001, COMPATIBILITY-001 |
-| `SCOPE-001` | `in_progress` | 2 | none |
+| `SCOPE-001` | `in_progress` | 1 | none |
 | `SECURITY-001` | `in_progress` | 3 | none |
 | `SELF-STATE-CHAT-001` | `in_progress` | 3 | CONVERSATION-001, MIND-001, STATE-001 |
 | `SEMANTIC-REVIEW-001` | `in_progress` | 2 | none |
@@ -125,4 +125,4 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `92e24cfb82df92c719a7391cb30aa9cf09cf9c134144b1f2960a893cea456699`
+Report SHA-256: `c167906d8d35a80bc4458d01ce5b9dfe6784c8f6fef1253855e3db528bfca9bf`
