@@ -918,6 +918,7 @@ class _CampaignMaterial:
     expected_cell_count: int
     claim_eligible: bool
     plan_sha256: str
+    family_alpha: _Q
 
 
 def _extract_rows(
@@ -927,6 +928,8 @@ def _extract_rows(
     issuer_tasks: Sequence[Any],
     trusted_contamination_root_sha256: str | None,
     trusted_campaign_policy_sha256: str | None,
+    family_alpha: _Q,
+    included_task_ids: frozenset[str] | None,
 ) -> _CampaignMaterial:
     try:
         document = plan.to_dict()
@@ -969,6 +972,17 @@ def _extract_rows(
         if task_id in task_records:
             _fail("independent_plan_task_duplicate")
         task_records[task_id] = task
+    if included_task_ids is None:
+        selected_task_ids = frozenset(task_records)
+    elif (
+        type(included_task_ids) is not frozenset
+        or not included_task_ids
+        or any(type(task_id) is not str for task_id in included_task_ids)
+        or not included_task_ids.issubset(task_records)
+    ):
+        _fail("independent_grade_task_scope_invalid")
+    else:
+        selected_task_ids = included_task_ids
     issuer_by_id: dict[str, Any] = {}
     if (
         isinstance(issuer_tasks, (str, bytes))
@@ -1100,7 +1114,8 @@ def _extract_rows(
     expected_pairs = {(task_id, arm) for task_id in task_records for arm in arms}
     planned_pairs: set[tuple[str, str]] = set()
     execution_ordinals: dict[str, set[int]] = defaultdict(set)
-    expected_task_count = len(task_records)
+    planned_task_count = len(task_records)
+    expected_task_count = len(selected_task_ids)
     for cell_id in cell_ids:
         definition = plan.cell_definition(cell_id)
         task_id = definition.get("task_id")
@@ -1113,7 +1128,7 @@ def _extract_rows(
             or definition.get("domain") != task.get("domain")
             or definition.get("task_payload_sha256") != task.get("task_payload_sha256")
             or type(ordinal) is not int
-            or not 0 <= ordinal < expected_task_count
+            or not 0 <= ordinal < planned_task_count
         ):
             _fail("independent_plan_cell_invalid")
         pair = (cast(str, task_id), cast(str, arm))
@@ -1122,7 +1137,7 @@ def _extract_rows(
         planned_pairs.add(pair)
         execution_ordinals[cast(str, arm)].add(ordinal)
     if planned_pairs != expected_pairs or any(
-        execution_ordinals[arm] != set(range(expected_task_count)) for arm in arms
+        execution_ordinals[arm] != set(range(planned_task_count)) for arm in arms
     ):
         _fail("independent_plan_coverage_invalid")
 
@@ -1168,6 +1183,7 @@ def _extract_rows(
         arm = expected_definition.get("arm")
         if (
             not isinstance(task_id, str)
+            or task_id not in selected_task_ids
             or not isinstance(domain, str)
             or arm not in arms
             or result.get("arm") != arm
@@ -1305,6 +1321,7 @@ def _extract_rows(
         expected_cell_count=expected_task_count * len(arms),
         claim_eligible=claim_eligible,
         plan_sha256=cast(str, plan_sha256),
+        family_alpha=family_alpha,
     )
 
 
@@ -1888,6 +1905,7 @@ def _comparison(
     require_compute: bool,
     compute_tolerance: _Q,
     global_bound_family_count: int,
+    family_alpha: _Q = ALPHA,
 ) -> dict[str, Any]:
     by_domain: dict[str, list[tuple[str, bool, bool, int, int]]] = defaultdict(list)
     accounting_certificates: list[dict[str, Any]] = []
@@ -1940,7 +1958,13 @@ def _comparison(
         wins = differences.count(1)
         losses = differences.count(-1)
         ties = len(differences) - wins - losses
-        bounds = _effect_bounds(wins, losses, ties, global_bound_family_count)
+        bounds = _effect_bounds(
+            wins,
+            losses,
+            ties,
+            global_bound_family_count,
+            family_alpha,
+        )
         pvalue = _paired_tail(wins, losses)
         mismatches = [
             row[0] for row in observations if not _within_compute(row[3], row[4], compute_tolerance)
@@ -1979,7 +2003,7 @@ def _comparison(
         domain
         for domain in sorted(by_domain)
         if domain in adjusted
-        and _q_less(adjusted[domain], ALPHA)
+        and _q_less(adjusted[domain], family_alpha)
         and _q_less(MINIMUM_EFFECT, _Q(**family_bounds[domain]["lower"]))
         and domain not in invalid_compute
     ]
@@ -2002,11 +2026,12 @@ def _comparison(
         pooled_losses,
         pooled_ties,
         global_bound_family_count,
+        family_alpha,
     )
     pooled_p = _paired_tail(pooled_wins, pooled_losses)
     pooled_positive = (
         len(pooled) >= MIN_DOMAIN_TRIALS
-        and _q_less(pooled_p, ALPHA)
+        and _q_less(pooled_p, family_alpha)
         and _q_less(MINIMUM_EFFECT, _Q(**pooled_bounds["lower"]))
     )
     required_positive = max(2, (2 * len(by_domain) + 2) // 3)
@@ -2023,7 +2048,7 @@ def _comparison(
         "method": GRADE_METHOD,
         "treatment": treatment,
         "control": control,
-        "alpha": _q_payload(ALPHA),
+        "alpha": _q_payload(family_alpha),
         "minimum_effect": _q_payload(MINIMUM_EFFECT),
         "require_compute": require_compute,
         "compute_tolerance": _q_payload(compute_tolerance),
@@ -2071,6 +2096,7 @@ def _interaction(
     base: Sequence[int],
     *,
     global_bound_family_count: int,
+    family_alpha: _Q = ALPHA,
 ) -> dict[str, Any]:
     if not adapter or len(adapter) != len(base):
         _fail("independent_interaction_invalid")
@@ -2082,12 +2108,14 @@ def _interaction(
         adapter.count(-1),
         adapter.count(0),
         global_bound_family_count,
+        family_alpha,
     )
     base_bounds = _effect_bounds(
         base.count(1),
         base.count(-1),
         base.count(0),
         global_bound_family_count,
+        family_alpha,
     )
     lower = _q_subtract(_Q(**adapter_bounds["lower"]), _Q(**base_bounds["upper"]))
     upper = _q_subtract(_Q(**adapter_bounds["upper"]), _Q(**base_bounds["lower"]))
@@ -2099,10 +2127,12 @@ def _interaction(
         "mean": _q_payload(_Q(sum(interaction), len(interaction))),
         "lower": _q_payload(lower),
         "upper": _q_payload(upper),
-        "alpha": _q_payload(ALPHA),
+        "alpha": _q_payload(family_alpha),
         "minimum_effect": _q_payload(MINIMUM_EFFECT),
         "global_bound_family_count": global_bound_family_count,
-        "simultaneous_coverage_lower": _q_payload(_Q(19, 20)),
+        "simultaneous_coverage_lower": _q_payload(
+            _q_subtract(ONE, family_alpha)
+        ),
         "one_sided_exact_sign_flip_p": _q_payload(pvalue),
         "sign_flip_assumption": SIGN_FLIP_ASSUMPTION,
         "sign_flip_assumption_preregistered": True,
@@ -2154,6 +2184,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=False,
             compute_tolerance=ONE,
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         ),
         "adapter_rlc_gain": _comparison(
             rows,
@@ -2162,6 +2193,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=False,
             compute_tolerance=ONE,
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         ),
         "adapter_effect_under_rlc": _comparison(
             rows,
@@ -2170,6 +2202,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=False,
             compute_tolerance=ONE,
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         ),
         "adapter_effect_under_vanilla": _comparison(
             rows,
@@ -2178,6 +2211,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=False,
             compute_tolerance=ONE,
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         ),
     }
     if BASE_EQUAL_COMPUTE in material.arms:
@@ -2188,6 +2222,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=True,
             compute_tolerance=_Q(1, 5),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         )
     if ADAPTER_EQUAL_COMPUTE in material.arms:
         comparisons["adapter_equal_compute"] = _comparison(
@@ -2197,6 +2232,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
             require_compute=True,
             compute_tolerance=_Q(1, 5),
             global_bound_family_count=global_bound_family_count,
+            family_alpha=material.family_alpha,
         )
     adapter_differences: list[int] = []
     base_differences: list[int] = []
@@ -2209,6 +2245,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
         adapter_differences,
         base_differences,
         global_bound_family_count=global_bound_family_count,
+        family_alpha=material.family_alpha,
     )
     underpowered = sorted(
         domain for domain, count in domain_counts.items() if count < MIN_DOMAIN_TRIALS
@@ -2220,7 +2257,10 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
         not underpowered
         and all(comparisons[name]["tier"] == PROVEN for name in required_claims)
         and _q_less(MINIMUM_EFFECT, _Q(**interaction["lower"]))
-        and _q_less(_Q(**interaction["one_sided_exact_sign_flip_p"]), ALPHA)
+        and _q_less(
+            _Q(**interaction["one_sided_exact_sign_flip_p"]),
+            material.family_alpha,
+        )
         and comparisons["adapter_effect_under_vanilla"]["evidence"].get("all_families_noninferior")
     )
     refuted = comparisons["adapter_rlc_gain"]["tier"] == REFUTED or _q_less_equal(
@@ -2267,7 +2307,7 @@ def _semantic_grade(material: _CampaignMaterial) -> dict[str, Any]:
         "plan_sha256": material.plan_sha256,
         "domain_counts": dict(sorted(domain_counts.items())),
         "statistical_policy": {
-            "alpha": _q_payload(ALPHA),
+            "alpha": _q_payload(material.family_alpha),
             "minimum_effect": _q_payload(MINIMUM_EFFECT),
             "minimum_domain_observations": MIN_DOMAIN_TRIALS,
             "minimum_domain_count": 2,
@@ -2290,15 +2330,25 @@ def independent_grade_campaign(
     issuer_tasks: Sequence[Any],
     trusted_contamination_root_sha256: str | None = None,
     trusted_campaign_policy_sha256: str | None = None,
+    family_alpha: Mapping[str, int] | None = None,
+    included_task_ids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Return an independently reconstructed exact semantic grade."""
 
+    try:
+        independent_alpha = ALPHA if family_alpha is None else _Q(**family_alpha)
+    except (TypeError, IndependentScoringError) as exc:
+        raise IndependentScoringError("independent_family_alpha_invalid") from exc
+    if not _q_less(ZERO, independent_alpha) or _q_less(_Q(1, 2), independent_alpha):
+        _fail("independent_family_alpha_invalid")
     material = _extract_rows(
         records,
         plan=plan,
         issuer_tasks=issuer_tasks,
         trusted_contamination_root_sha256=trusted_contamination_root_sha256,
         trusted_campaign_policy_sha256=trusted_campaign_policy_sha256,
+        family_alpha=independent_alpha,
+        included_task_ids=included_task_ids,
     )
     semantic_grade = _semantic_grade(material)
     return {

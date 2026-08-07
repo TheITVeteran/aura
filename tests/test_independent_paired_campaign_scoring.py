@@ -589,6 +589,41 @@ def test_independent_complete_semantic_tree_matches_production_byte_for_byte():
             Path(independent_grade_campaign.__code__.co_filename).read_bytes()
         ).hexdigest()
     )
+
+
+def test_independent_interim_scope_and_alpha_match_production_byte_for_byte():
+    plan, tasks = _plan_and_tasks()
+    records = _records(plan, tasks)
+    selected: set[str] = set()
+    seen_domains: set[str] = set()
+    for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]:
+        if task["domain"] not in seen_domains:
+            selected.add(task["task_id"])
+            seen_domains.add(task["domain"])
+    scoped = [
+        record for record in records if record["definition"]["task_id"] in selected
+    ]
+    alpha = {"numerator": 1, "denominator": 200}
+
+    production = grade_campaign(
+        scoped,
+        plan=plan,
+        issuer_tasks=tasks,
+        family_alpha=Rational(**alpha),
+        included_task_ids=frozenset(selected),
+    )
+    independent = independent_grade_campaign(
+        scoped,
+        plan=plan,
+        issuer_tasks=tasks,
+        family_alpha=alpha,
+        included_task_ids=frozenset(selected),
+    )
+
+    assert independent["semantic_grade"] == production
+    assert _canonical_bytes(independent["semantic_grade"]) == canonical_json_bytes(
+        production
+    )
     assert (
         independent["semantic_grade_canonical_sha256"]
         == hashlib.sha256(canonical_json_bytes(production)).hexdigest()
