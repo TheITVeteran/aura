@@ -126,9 +126,16 @@ def test_client_preserves_authenticated_supervisor_lifecycle_receipt(
         "session_id": "e" * 32,
     }
 
+    observed_request_sizes: list[int] = []
+
     def authenticated_response() -> None:
         payload = server.recv(65_536)
+        observed_request_sizes.append(len(payload))
         request = json.loads(payload)
+        assert request["schema"] == broker.REQUEST_SCHEMA
+        assert "command" not in request
+        assert "cwd" not in request
+        assert "stdout_path" not in request
         body = {
             "schema": broker.RESPONSE_SCHEMA,
             "request_id": request["request_id"],
@@ -167,7 +174,7 @@ def test_client_preserves_authenticated_supervisor_lifecycle_receipt(
     thread.start()
     try:
         result = broker.run_brokered_process(
-            [sys.executable, "unused"],
+            [sys.executable, "x" * 10_000],
             cwd=tmp_path,
             stdout_path=tmp_path / "worker.log",
             timeout_s=2.0,
@@ -182,6 +189,7 @@ def test_client_preserves_authenticated_supervisor_lifecycle_receipt(
         assert result.status == "passed"
         assert result.worker_origin_lifecycle == lifecycle
         assert len(result.response_hmac_sha256) == 64
+        assert observed_request_sizes and observed_request_sizes[0] < 2_048
     finally:
         thread.join(timeout=2.0)
         server.close()

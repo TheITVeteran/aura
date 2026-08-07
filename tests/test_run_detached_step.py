@@ -1401,6 +1401,40 @@ def test_stale_resume_verdict_cannot_authorize_later_attempt(
     assert "verdict binding is invalid" in raised.value.stderr
 
 
+def test_compact_broker_request_resolves_exact_large_frozen_policy(tmp_path: Path) -> None:
+    command = [sys.executable, "x" * 10_000]
+    stdout_path = tmp_path / "worker.log"
+    policy = detached._build_broker_policy(
+        [
+            {
+                "command": command,
+                "cwd": str(tmp_path),
+                "stdout_path": str(stdout_path),
+                "timeout_s_max": 30.0,
+                "max_invocations": 1,
+            }
+        ],
+        detached._frozen_environment(),
+    )[0]
+    request = {
+        "schema": detached.broker_protocol.REQUEST_SCHEMA,
+        "action": "run",
+        "command_sha256": policy["command_sha256"],
+        "request_binding_sha256": detached.broker_protocol.compute_broker_request_binding(
+            policy["command"],
+            cwd=policy["cwd"],
+            stdout_path=policy["stdout_path"],
+        ),
+        "timeout_s": 30.0,
+    }
+
+    assert detached._matching_broker_policy({"broker_policy": [policy]}, request) == policy
+    assert len(detached._canonical_bytes(request)) < 2_048
+    request["request_binding_sha256"] = "0" * 64
+    with pytest.raises(detached.BrokerRequestError, match="exceeds its frozen policy"):
+        detached._matching_broker_policy({"broker_policy": [policy]}, request)
+
+
 def test_exact_broker_policy_runs_worker_inside_strict_target_boundary(tmp_path: Path) -> None:
     run_dir = tmp_path / "brokered-run"
     worker_log = tmp_path / "broker-worker.log"

@@ -18,11 +18,12 @@ from typing import Any
 from core.governance_context import local_internal_governed_scope
 from core.runtime.file_write_gateway import get_file_write_gateway
 
-REQUEST_SCHEMA = "aura.detached_step.broker_request.v1"
+REQUEST_SCHEMA = "aura.detached_step.broker_request.v2"
 RESPONSE_SCHEMA = "aura.detached_step.broker_response.v1"
 BROKER_SOCKET_ENV = "AURA_DETACHED_BROKER_SOCKET"
 BROKER_TOKEN_ENV = "AURA_DETACHED_BROKER_TOKEN"
 _MAX_DATAGRAM_BYTES = 65_536
+_MAX_REQUEST_DATAGRAM_BYTES = 2_048
 
 
 class DetachedBrokerError(RuntimeError):
@@ -61,6 +62,25 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _command_sha256(command: list[str]) -> str:
     return hashlib.sha256(_canonical_bytes(command)).hexdigest()
+
+
+def compute_broker_request_binding(
+    command: list[str],
+    *,
+    cwd: str,
+    stdout_path: str,
+) -> str:
+    """Bind a request to one exact frozen broker policy without retransmitting it."""
+
+    return hashlib.sha256(
+        _canonical_bytes(
+            {
+                "command": command,
+                "cwd": cwd,
+                "stdout_path": stdout_path,
+            }
+        )
+    ).hexdigest()
 
 
 def _normalized_command(command: list[str], cwd: Path) -> list[str]:
@@ -124,20 +144,23 @@ def run_brokered_process(
     reply_path = Path("/tmp") / reply_name
     if len(os.fsencode(reply_path)) >= 100:
         raise DetachedBrokerError("detached subprocess broker reply path is too long")
+    resolved_stdout_path = str(stdout_path.expanduser().resolve(strict=False))
     request = {
         "schema": REQUEST_SCHEMA,
         "action": "run",
         "broker_token": broker_token,
         "request_id": request_id,
-        "command": normalized_command,
         "command_sha256": _command_sha256(normalized_command),
-        "cwd": str(resolved_cwd),
-        "stdout_path": str(stdout_path.expanduser().resolve(strict=False)),
+        "request_binding_sha256": compute_broker_request_binding(
+            normalized_command,
+            cwd=str(resolved_cwd),
+            stdout_path=resolved_stdout_path,
+        ),
         "timeout_s": float(timeout_s),
         "reply_path": str(reply_path),
     }
     payload = _canonical_bytes(request)
-    if len(payload) > _MAX_DATAGRAM_BYTES:
+    if len(payload) > _MAX_REQUEST_DATAGRAM_BYTES:
         raise DetachedBrokerError("detached subprocess broker request is too large")
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:

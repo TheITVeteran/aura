@@ -59,6 +59,7 @@ from core.brain.llm.latent_cortex.worker_origin import (  # noqa: E402
     verify_worker_authorization,
     verify_worker_lifecycle_event_origin,
 )
+from core.runtime import detached_subprocess_broker as broker_protocol  # noqa: E402
 from core.runtime.detached_worker_origin import (  # noqa: E402
     DetachedWorkerOriginAuthority,
     DetachedWorkerOriginError,
@@ -1813,16 +1814,16 @@ def _broker_reply_path(request: dict[str, Any], target_pid: int) -> Path:
 
 
 def _matching_broker_policy(plan: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
-    command = request.get("command")
     command_sha = str(request.get("command_sha256") or "")
+    request_binding_sha = str(request.get("request_binding_sha256") or "")
     timeout_s = request.get("timeout_s")
     if (
-        request.get("schema") != f"{SCHEMA_PREFIX}.broker_request.v1"
+        request.get("schema") != broker_protocol.REQUEST_SCHEMA
         or request.get("action") != "run"
-        or not isinstance(command, list)
-        or not command
-        or any(not isinstance(item, str) or not item for item in command)
-        or command_sha != _sha256(command)
+        or len(command_sha) != 64
+        or any(character not in "0123456789abcdef" for character in command_sha)
+        or len(request_binding_sha) != 64
+        or any(character not in "0123456789abcdef" for character in request_binding_sha)
         or not isinstance(timeout_s, (int, float))
         or isinstance(timeout_s, bool)
         or not math.isfinite(float(timeout_s))
@@ -1838,10 +1839,13 @@ def _matching_broker_policy(plan: dict[str, Any], request: dict[str, Any]) -> di
         policy: dict[str, Any] = policy_value
         if policy["command_sha256"] != command_sha:
             continue
+        expected_binding = broker_protocol.compute_broker_request_binding(
+            policy["command"],
+            cwd=policy["cwd"],
+            stdout_path=policy["stdout_path"],
+        )
         if (
-            policy["command"] != command
-            or request.get("cwd") != policy["cwd"]
-            or request.get("stdout_path") != policy["stdout_path"]
+            request_binding_sha != expected_binding
             or float(timeout_s) > float(policy["timeout_s_max"])
         ):
             raise BrokerRequestError("broker request exceeds its frozen policy")
