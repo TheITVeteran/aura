@@ -127,7 +127,7 @@ def _minmax(values: Sequence[float | int], *, digits: int = 6) -> list[float | i
     return [round(float(low), digits), round(float(high), digits)]
 
 
-def _validate_plan(plan: CampaignPlan) -> tuple[int, int]:
+def _validate_plan(plan: CampaignPlan) -> tuple[int, int, bool]:
     document = plan.to_dict()
     metadata = document.get("metadata")
     cells = document.get("cells")
@@ -160,6 +160,10 @@ def _validate_plan(plan: CampaignPlan) -> tuple[int, int]:
     adapter_spec = execution.get("adapter_execution_spec")
     if (
         not isinstance(policy, Mapping)
+        or policy.get("schema") not in {
+            "public_response_contract_v1",
+            "public_response_contract_v2",
+        }
         or policy.get("applies_identically_to_all_decode_arms") is not True
         or policy.get("causal_attribution_rule") != "raw_terminal_decode_all_arms"
         or policy.get("output_editing") is not False
@@ -173,7 +177,53 @@ def _validate_plan(plan: CampaignPlan) -> tuple[int, int]:
         or adapter_spec.get("decode_bridge_policy") != "none"
     ):
         _fail("directional_output_symmetry_policy_invalid")
-    return len(tasks), len(cells)
+    observed_decode_receipts_required = (
+        policy.get("schema") == "public_response_contract_v2"
+    )
+    if observed_decode_receipts_required and policy.get(
+        "observed_decode_receipt_required"
+    ) is not True:
+        _fail("directional_observed_decode_receipt_policy_missing")
+    return len(tasks), len(cells), observed_decode_receipts_required
+
+
+def _validate_decode_receipt(
+    result: Mapping[str, Any],
+    *,
+    text: str,
+    arm: str,
+    required: bool,
+) -> Mapping[str, Any] | None:
+    receipt = result.get("decode_receipt")
+    if receipt is None and not required:
+        return None
+    if not isinstance(receipt, Mapping):
+        _fail("directional_decode_receipt_missing")
+    if (
+        receipt.get("schema") != "aura.latent_cortex.arm_decode_receipt.v1"
+        or receipt.get("decode_contract") != "final_answer_v1"
+        or not isinstance(receipt.get("decode_termination"), str)
+        or not receipt["decode_termination"]
+        or type(receipt.get("decode_generated_tokens")) is not int
+        or receipt["decode_generated_tokens"] < 0
+        or type(receipt.get("decode_max_tokens")) is not int
+        or receipt["decode_max_tokens"] <= 0
+        or type(receipt.get("decode_contract_grace_tokens")) is not int
+        or receipt["decode_contract_grace_tokens"] < 0
+        or receipt.get("raw_output_sha256")
+        != hashlib.sha256(text.encode("utf-8")).hexdigest()
+    ):
+        _fail("directional_decode_receipt_invalid")
+    episode = result.get("episode_receipt")
+    if arm in {BASE_RLC, ADAPTER_RLC}:
+        if (
+            not isinstance(episode, Mapping)
+            or receipt["decode_termination"] != episode.get("decode_termination")
+            or receipt["decode_generated_tokens"]
+            != episode.get("decode_generated_tokens")
+        ):
+            _fail("directional_decode_receipt_episode_mismatch")
+    return receipt
 
 
 def _replacement_retained(receipt: Mapping[str, Any]) -> bool:
@@ -198,6 +248,7 @@ def _summarize_records(
     records: Sequence[Mapping[str, Any]],
     *,
     tasks_by_id: Mapping[str, Any],
+    observed_decode_receipts_required: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     rows: dict[str, dict[str, Mapping[str, Any]]] = defaultdict(dict)
     for record in records:
@@ -237,6 +288,12 @@ def _summarize_records(
             text = result.get("text")
             if not isinstance(text, str) or result.get("arm") != arm:
                 _fail("directional_output_invalid")
+            decode_receipt = _validate_decode_receipt(
+                result,
+                text=text,
+                arm=arm,
+                required=observed_decode_receipts_required,
+            )
             score = tasks_by_id[task_id].score(text)
             scored.append(bool(score.correct))
             score_reasons.append(str(score.reason))
@@ -248,12 +305,22 @@ def _summarize_records(
                 generated = receipt.get("decode_generated_tokens")
                 if type(generated) is int:
                     generated_tokens.append(generated)
-                terminations.append(str(receipt.get("decode_termination")))
+                terminations.append(
+                    str(
+                        decode_receipt.get("decode_termination")
+                        if decode_receipt is not None
+                        else receipt.get("decode_termination")
+                    )
+                )
                 raw_outputs_retained = raw_outputs_retained and _replacement_retained(receipt)
             else:
                 if receipt not in ({}, None):
                     _fail("directional_ordinary_episode_receipt_present")
-                terminations.append("ordinary_generation")
+                terminations.append(
+                    str(decode_receipt.get("decode_termination"))
+                    if decode_receipt is not None
+                    else "ordinary_generation"
+                )
         arm_summary[arm] = {
             "correct": sum(scored),
             "total": len(scored),
@@ -298,6 +365,8 @@ def _summarize_records(
         "base_recurrence_adapter_activation": base_activation,
         "adapter_recurrence_adapter_activation": adapter_activation,
         "causal_first_logit_digest_changes": causal_digest_changes,
+        "observed_decode_receipts_required": observed_decode_receipts_required,
+        "observed_decode_receipts_valid": observed_decode_receipts_required,
     }
     return arm_summary, mechanics
 
@@ -388,7 +457,11 @@ def verify(
     campaign_dir = campaign_dir.expanduser().resolve(strict=True)
     plan_path = campaign_dir / "plan.json"
     plan = CampaignPlan.from_dict(read_canonical_json(plan_path, role="directional_plan"))
-    expected_tasks, expected_cells = _validate_plan(plan)
+    (
+        expected_tasks,
+        expected_cells,
+        observed_decode_receipts_required,
+    ) = _validate_plan(plan)
     # The independent verifier intentionally emits human-reviewable indented
     # JSON. Its bytes are hashed below and its complete semantics must equal an
     # independent recomputation, so canonical whitespace is not a trust input.
@@ -416,7 +489,11 @@ def verify(
     tasks_by_id = {task.task_id: task for task in tasks}
     with _open_journal_readonly(campaign_dir / "campaign.jsonl", plan) as journal:
         records = journal.committed_records()
-    arm_summary, mechanics = _summarize_records(records, tasks_by_id=tasks_by_id)
+    arm_summary, mechanics = _summarize_records(
+        records,
+        tasks_by_id=tasks_by_id,
+        observed_decode_receipts_required=observed_decode_receipts_required,
+    )
     replayed_cells = int(supplied.get("committed_records", -1))
     rules = _evaluate_rules(
         arm_summary=arm_summary,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -117,6 +118,52 @@ def test_replacement_receipt_must_retain_the_raw_baseline() -> None:
     assert gate._replacement_retained(receipt) is True
     receipt["answer_replacement"]["answer_selection_effect"] = "replaced"
     assert gate._replacement_retained(receipt) is False
+
+
+def test_observed_decode_receipt_binds_raw_output_and_rlc_episode() -> None:
+    text = 'FINAL_ANSWER: {"answer": 7}'
+    receipt = {
+        "schema": "aura.latent_cortex.arm_decode_receipt.v1",
+        "decode_contract": "final_answer_v1",
+        "decode_termination": "contract_complete",
+        "decode_generated_tokens": 9,
+        "decode_max_tokens": 320,
+        "decode_contract_grace_tokens": 320,
+        "raw_output_sha256": hashlib.sha256(text.encode()).hexdigest(),
+    }
+    result = {
+        "decode_receipt": receipt,
+        "episode_receipt": {
+            "decode_termination": "contract_complete",
+            "decode_generated_tokens": 9,
+        },
+    }
+
+    assert gate._validate_decode_receipt(
+        result,
+        text=text,
+        arm=ADAPTER_RLC,
+        required=True,
+    ) == receipt
+
+    broken = copy.deepcopy(result)
+    broken["decode_receipt"]["raw_output_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="directional_decode_receipt_invalid"):
+        gate._validate_decode_receipt(
+            broken,
+            text=text,
+            arm=ADAPTER_RLC,
+            required=True,
+        )
+
+
+def test_legacy_directional_evidence_may_omit_decode_receipt() -> None:
+    assert gate._validate_decode_receipt(
+        {"episode_receipt": {}},
+        text="legacy",
+        arm=BASE_VANILLA,
+        required=False,
+    ) is None
 
 
 def test_independent_evidence_is_a_required_rule() -> None:

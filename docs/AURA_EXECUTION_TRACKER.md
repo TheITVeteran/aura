@@ -37640,3 +37640,29 @@ powered campaign, activation, fusion, reasoning-gain claim, or frontier claim is
 authorized. Focused closeout, gate, and launch-bundle tests pass `28/28`; Ruff
 and bytecode compilation pass. The negative result is retained as architectural
 evidence, not relabelled as an underpowered success.
+
+## Checkpoint 2026-08-07-008: Decode Symmetry Is Observed, Not Merely Declared
+
+The completed directional campaign used one contract-aware terminal rule for
+every decoding arm, but the journal only carried the detailed termination
+receipt for recurrent episodes. Vanilla execution was source-bound to the same
+rule while its evidence row said only `ordinary_generation`. That was enough to
+reconstruct the old run from frozen code, but not enough for the next expensive
+campaign to prove execution symmetry directly from each result.
+
+Response-contract policy v2 now requires a per-arm decode receipt. Every raw
+output is bound to its SHA-256 digest, generated-token count, hard and grace
+budgets, contract identity, and observed termination. Recurrent receipts must
+also agree exactly with the episode receipt; vanilla and equal-compute paths
+emit the same schema from their actual streaming loop. The directional verifier
+accepts historical v1 evidence for replay, but v2 plans fail closed if any
+runtime receipt is absent, malformed, detached from the raw bytes, or
+inconsistent with recurrent execution.
+
+Focused campaign, contract-termination, and directional-gate tests pass
+`70/70`; smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene
+pass. This strengthens the next experiment's evidence contract. It does not
+change the completed campaign's negative result, authorize fusion or
+activation, prove a reasoning gain, or make another resident-32B run
+admissible before the architecture and training objective clear bounded
+behavioral canaries.

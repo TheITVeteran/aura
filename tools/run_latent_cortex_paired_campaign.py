@@ -138,6 +138,7 @@ MANIFEST_FILE = "campaign_manifest.json"
 GRADE_FILE = "grade.json"
 LOG_FILE = "runner.log"
 SEALED_OUTPUT_MANIFEST_FILE = "sealed_output_manifest.json"
+DECODE_RECEIPT_SCHEMA = "aura.latent_cortex.arm_decode_receipt.v1"
 ANSWER_REVEAL_REQUEST_FILE = "answer_reveal_request.json"
 ANSWER_REVEAL_FILE = "answer_reveal.json"
 FINAL_RUN_REQUEST_FILE = "final_run_request.json"
@@ -1557,7 +1558,7 @@ def _execution_config(
         "rlc_profile": args.rlc_profile,
         "decode_max_tokens": args.decode_max_tokens,
         "response_contract_policy": {
-            "schema": "public_response_contract_v1",
+            "schema": "public_response_contract_v2",
             "termination": "final_answer_v1",
             "contract_grace_tokens": effective.decode_contract_grace_tokens,
             "verifier_probe_max_tokens": effective.verifier_probe_max_tokens,
@@ -1565,6 +1566,7 @@ def _execution_config(
             "output_editing": False,
             "rlc_answer_replacement_enabled": effective.answer_replacement_enabled,
             "causal_attribution_rule": "raw_terminal_decode_all_arms",
+            "observed_decode_receipt_required": True,
         },
         "episode_timeout_s": args.episode_timeout,
         "load_timeout_s": args.load_timeout,
@@ -1881,7 +1883,7 @@ def _vanilla_once(
     max_tokens: int,
     sample_seed: int | None = None,
     accounting_engine: Any,
-) -> tuple[str, int, dict[str, Any], dict[str, Any], float]:
+) -> tuple[str, int, dict[str, Any], dict[str, Any], float, dict[str, Any]]:
     import mlx.core as mx
     from mlx_lm import stream_generate
 
@@ -1909,6 +1911,7 @@ def _vanilla_once(
     pieces: list[str] = []
     generated_tokens = 0
     contract_grace_tokens = min(max(0, int(max_tokens)), 512)
+    disposition = ContractDecodeDisposition.CONTINUE
     for response in stream_generate(
         model,
         tokenizer,
@@ -1925,6 +1928,25 @@ def _vanilla_once(
         }:
             break
     text = "".join(pieces)
+    termination = {
+        ContractDecodeDisposition.COMPLETE: "contract_complete",
+        ContractDecodeDisposition.INVALID: "contract_invalid",
+    }.get(disposition)
+    if termination is None:
+        termination = (
+            "budget_max_tokens"
+            if generated_tokens >= max_tokens + contract_grace_tokens
+            else "model_eos_before_contract"
+        )
+    decode_receipt = {
+        "schema": DECODE_RECEIPT_SCHEMA,
+        "decode_contract": "final_answer_v1",
+        "decode_termination": termination,
+        "decode_generated_tokens": int(generated_tokens),
+        "decode_max_tokens": int(max_tokens),
+        "decode_contract_grace_tokens": int(contract_grace_tokens),
+        "raw_output_sha256": _sha256_bytes(text.encode("utf-8")),
+    }
     prompt_tokens = len(prompt_token_ids)
     output_tokens = max(1, generated_tokens)
     n_layers = len(model.model.layers)
@@ -1986,7 +2008,14 @@ def _vanilla_once(
         ),
         verifier=verifier,
     )
-    return text, layer_apps, ledger.to_receipt(), information, verifier_score
+    return (
+        text,
+        layer_apps,
+        ledger.to_receipt(),
+        information,
+        verifier_score,
+        decode_receipt,
+    )
 
 
 def _majority_output(outputs: list[str]) -> str:
@@ -2012,7 +2041,7 @@ def _equal_compute(
     max_samples: int,
     accounting_engine: Any,
     target_resource: Mapping[str, Any],
-) -> tuple[str, int, int, dict[str, Any], dict[str, Any]]:
+) -> tuple[str, int, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
     from core.brain.llm.latent_cortex.resource_accounting import (
         NON_NEURAL_PARITY_COUNTERS,
         ResourceLedger,
@@ -2029,12 +2058,20 @@ def _equal_compute(
     outputs: list[str] = []
     scores: list[float] = []
     resources: list[dict[str, Any]] = []
+    decode_receipts: list[dict[str, Any]] = []
     information: dict[str, Any] | None = None
     spent = 0
     target_reached = False
     seed_base = int(task.task_payload_sha256[:16], 16)
     for sample_index in range(max_samples):
-        text, cost, resource, sample_information, verifier_score = _vanilla_once(
+        (
+            text,
+            cost,
+            resource,
+            sample_information,
+            verifier_score,
+            sample_decode_receipt,
+        ) = _vanilla_once(
             model,
             tokenizer,
             task,
@@ -2045,6 +2082,7 @@ def _equal_compute(
         outputs.append(text)
         scores.append(verifier_score)
         resources.append(resource)
+        decode_receipts.append(sample_decode_receipt)
         if information is None:
             information = sample_information
         elif information != sample_information:
@@ -2078,6 +2116,20 @@ def _equal_compute(
         len(outputs),
         ResourceLedger.aggregate(resources).to_receipt(),
         information,
+        {
+            "schema": DECODE_RECEIPT_SCHEMA,
+            "decode_contract": "final_answer_v1",
+            "decode_termination": "equal_compute_selection",
+            "decode_generated_tokens": sum(
+                int(receipt["decode_generated_tokens"]) for receipt in decode_receipts
+            ),
+            "decode_max_tokens": int(max_tokens),
+            "decode_contract_grace_tokens": min(max(0, int(max_tokens)), 512),
+            "raw_output_sha256": _sha256_bytes(
+                _majority_output(eligible).encode("utf-8")
+            ),
+            "sample_receipts": decode_receipts,
+        },
     )
 
 
@@ -2405,6 +2457,7 @@ def _execute_worker(
                 try:
                     with _deadline_alarm(args.episode_timeout, "campaign_cell"):
                         receipt: dict[str, Any] = {}
+                        decode_receipt: dict[str, Any]
                         resource_accounting: dict[str, Any]
                         information_accounting: dict[str, Any]
                         arm_verifier_score: float | None = None
@@ -2419,6 +2472,19 @@ def _execute_worker(
                                 resource_accounting,
                                 information_accounting,
                             ) = _run_rlc(rlc_engine, task, args)
+                            decode_receipt = {
+                                "schema": DECODE_RECEIPT_SCHEMA,
+                                "decode_contract": "final_answer_v1",
+                                "decode_termination": str(receipt["decode_termination"]),
+                                "decode_generated_tokens": int(
+                                    receipt["decode_generated_tokens"]
+                                ),
+                                "decode_max_tokens": int(args.decode_max_tokens),
+                                "decode_contract_grace_tokens": int(
+                                    rlc_engine.config.decode_contract_grace_tokens
+                                ),
+                                "raw_output_sha256": "",
+                            }
                         elif arm.endswith("_equal_compute"):
                             source_arm = BASE_RLC if arm == BASE_EQUAL_COMPUTE else ADAPTER_RLC
                             target = costs.get((task.task_id, source_arm))
@@ -2431,6 +2497,7 @@ def _execute_worker(
                                 samples,
                                 resource_accounting,
                                 information_accounting,
+                                decode_receipt,
                             ) = _equal_compute(
                                 model,
                                 tokenizer,
@@ -2448,6 +2515,7 @@ def _execute_worker(
                                 resource_accounting,
                                 information_accounting,
                                 arm_verifier_score,
+                                decode_receipt,
                             ) = _vanilla_once(
                                 model,
                                 tokenizer,
@@ -2457,6 +2525,9 @@ def _execute_worker(
                             )
                     if receipt:
                         receipt.update(worker_identity)
+                    decode_receipt["raw_output_sha256"] = _sha256_bytes(
+                        text.encode("utf-8")
+                    )
                     elapsed = time.monotonic() - started
                     if elapsed > args.episode_timeout:
                         raise CampaignProducerError(
@@ -2481,6 +2552,7 @@ def _execute_worker(
                         "runtime_adapter_identity": actual_adapter_identity,
                         "runtime_model_identity": worker_identity,
                         "episode_receipt": receipt,
+                        "decode_receipt": decode_receipt,
                         "resource_accounting": resource_accounting,
                         "information_accounting": information_accounting,
                         "arm_verifier_score": arm_verifier_score,

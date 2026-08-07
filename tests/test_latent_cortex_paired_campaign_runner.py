@@ -2113,7 +2113,7 @@ def test_paired_campaign_contract_discloses_raw_output_attribution_policy():
     policy = runner._execution_config(args, {})["response_contract_policy"]
 
     assert policy == {
-        "schema": "public_response_contract_v1",
+        "schema": "public_response_contract_v2",
         "termination": "final_answer_v1",
         "contract_grace_tokens": 128,
         "verifier_probe_max_tokens": 128,
@@ -2121,6 +2121,7 @@ def test_paired_campaign_contract_discloses_raw_output_attribution_policy():
         "output_editing": False,
         "rlc_answer_replacement_enabled": False,
         "causal_attribution_rule": "raw_terminal_decode_all_arms",
+        "observed_decode_receipt_required": True,
     }
 
 
@@ -2188,7 +2189,7 @@ def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
         args=args,
         model=SimpleNamespace(args=args, layers=[object(), object()]),
     )
-    text, layer_apps, *_ = runner._vanilla_once(
+    text, layer_apps, *_prefix, decode_receipt = runner._vanilla_once(
         model,
         Tokenizer(),
         task,
@@ -2203,6 +2204,15 @@ def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):
     assert observed["max_tokens"] == 128
     assert observed["prompt"] == list("rendered")
     assert layer_apps == (len("rendered") + len(expected) - 1) * 2
+    assert decode_receipt == {
+        "schema": "aura.latent_cortex.arm_decode_receipt.v1",
+        "decode_contract": "final_answer_v1",
+        "decode_termination": "contract_complete",
+        "decode_generated_tokens": len(expected),
+        "decode_max_tokens": 64,
+        "decode_contract_grace_tokens": 64,
+        "raw_output_sha256": hashlib.sha256(expected.encode()).hexdigest(),
+    }
 
 
 def test_rlc_campaign_verifier_receives_public_response_contract():
