@@ -149,7 +149,14 @@ class MlxAffectResponder:
         prompt = self._tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        return str(
+        # Count injections across this generation. A steered arm that injects
+        # nothing is an untreated arm, and an untreated arm scored against a
+        # control produces a confident null for a treatment that never ran.
+        # This repository has the scar: an adapter evaluation where `calls > 0`
+        # was never checked, so a treatment that never fired was reported as a
+        # treatment with no effect.
+        before = self._injection_count()
+        text = str(
             self._generate(
                 self._model,
                 self._tokenizer,
@@ -158,6 +165,23 @@ class MlxAffectResponder:
                 verbose=False,
             )
         ).strip()
+        after = self._injection_count()
+        if arm != UNSTEERED and after <= before:
+            raise SteeringUnavailableError(
+                f"arm {arm!r} injected nothing: hook injection count did not advance "
+                f"({before} -> {after}). The steering path is not reaching generation, "
+                "so this arm is untreated and any comparison against it is a null "
+                "manufactured by a broken setup."
+            )
+        if arm == UNSTEERED and after > before:
+            raise SteeringUnavailableError(
+                f"the unsteered control injected {after - before} time(s); it is not a "
+                "control"
+            )
+        return text
+
+    def _injection_count(self) -> int:
+        return sum(int(getattr(hook, "_inject_count", 0) or 0) for hook in self._hooks())
 
     def close(self) -> None:
         if self._closed:

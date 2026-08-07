@@ -2081,6 +2081,73 @@ def _dnu_baseline_max_tokens() -> int:
 
 DNU_BASELINE_MAX_TOKENS = _dnu_baseline_max_tokens()
 
+#: The treatment arm's wall-clock budget. Named here rather than left implicit
+#: so the parity report can compare it against the baselines' instead of the
+#: reader having to find it in the live path.
+FULL_AURA_WALL_CLOCK_S = 240.0
+
+
+def _dnu_budget_parity_report() -> dict:
+    """What each arm was ALLOWED to spend, checked, and refused when unequal.
+
+    This exists because BASELINES.json had no field for it. Three baselines
+    reported 0.1667 apiece — identical to four decimal places across three
+    structurally different systems — while running at 160 tokens against a
+    full_aura with a 240s budget, effectively unbounded tokens and a
+    deterministic symbolic solver. Every fact needed to see the problem was
+    somewhere in the repository and none of it was next to the number.
+
+    A difference that HANDICAPS the treatment is a violation too. It is
+    tempting to wave that through as conservative; it is still an uncontrolled
+    variable, just one that flatters a different conclusion.
+    """
+    from core.evaluation.matched_budget import ConditionBudget, check_budget_parity
+
+    solver_on = (
+        str(_FLAG_ENABLE_STRUCTURED_PROOF_SOLVER.value() or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    baseline_timeout = _baseline_timeout_seconds()
+
+    # `solver_available` is declared varied ONLY when the solver is actually
+    # on. Declaring it unconditionally would permanently exempt the dimension
+    # that voided the original bundle.
+    varied = frozenset({"solver_available"} if solver_on else set())
+
+    budgets = [
+        ConditionBudget(
+            condition="baselines",
+            model_id="local",
+            max_output_tokens=DNU_BASELINE_MAX_TOKENS,
+            max_wall_clock_s=baseline_timeout,
+            solver_available=False,
+            varied=varied,
+        ),
+        ConditionBudget(
+            condition="full_aura",
+            model_id="local",
+            max_output_tokens=DNU_BASELINE_MAX_TOKENS,
+            max_wall_clock_s=baseline_timeout,
+            solver_available=solver_on,
+            varied=varied,
+        ),
+    ]
+    report = check_budget_parity(budgets)
+    payload = report.to_dict()
+    payload["refusal_reason"] = report.refusal_reason()
+    payload["summary"] = (
+        f"tokens={DNU_BASELINE_MAX_TOKENS} wall_clock={baseline_timeout}s "
+        f"solver={'varied(declared)' if solver_on else 'off for both arms'}"
+    )
+    payload["treatment_wall_clock_ceiling_s"] = FULL_AURA_WALL_CLOCK_S
+    payload["note"] = (
+        "When the solver is ON it is the declared independent variable, and the "
+        "claim this bundle supports is about the architecture INCLUDING its "
+        "symbolic solver — not about the cognitive layer alone. "
+        "See docs/DNU_BASELINE_FAIRNESS_AUDIT.md."
+    )
+    return payload
+
 
 def _iter_router_generation_clients(router):
     """Yield router/client objects that may own an active baseline generation."""
@@ -4597,9 +4664,25 @@ async def main():
     print(f"  [OK] {scorecard_path.name}")
 
     # Write BASELINES.json
+    #
+    # The budget the arms actually ran under travels WITH the numbers. The
+    # retracted bundle recorded three baselines at exactly 0.1667 and nothing
+    # beside them saying that they had been capped at 160 tokens while
+    # full_aura ran a 240s live path with a symbolic solver. Three structurally
+    # different systems agreeing to four decimal places is the signature of a
+    # shared handicap, and the artifact contained no field in which that could
+    # have been noticed. The audit that caught it was a human getting
+    # suspicious months later.
+    baselines = dict(baselines)
+    baselines["_budget_parity"] = _dnu_budget_parity_report()
     baselines_path = run_dir / "BASELINES.json"
     baselines_path.write_text(json.dumps(baselines, indent=2), encoding="utf-8")
     print(f"  [OK] {baselines_path.name}")
+    parity = baselines["_budget_parity"]
+    if not parity.get("matched", False):
+        print(f"  [PARITY] COMPARISON VOID: {parity.get('refusal_reason', '')}")
+    else:
+        print(f"  [PARITY] arms matched: {parity.get('summary', '')}")
 
     # Write ABLATIONS.json
     ablations_path = run_dir / "ABLATIONS.json"

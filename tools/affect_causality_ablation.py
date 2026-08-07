@@ -194,6 +194,11 @@ def run(
                 score = directional_score(output, probe)
                 detail["valence"] = round(valence_score(output), 4)
                 detail["chars"] = len(output)
+                # Keep the text. The 32B run returned every arm at exactly the
+                # chance value and the scorecard retained nothing that could
+                # say why — a null nobody can diagnose is a null nobody should
+                # act on.
+                detail["output"] = output[:400]
             except TimeoutError:
                 outcome = "timeout"
             except Exception as exc:  # noqa: BLE001 — every attempt counted, this one too
@@ -211,6 +216,41 @@ def run(
                 )
             )
     return ledger
+
+
+def metric_sensitivity(ledger: AttemptLedger) -> dict[str, Any]:
+    """How often the metric fired at all, across every arm.
+
+    Without this the tool cannot tell "affect had no effect" from "the ruler
+    has no markings", and it reported the second as the first. The 32B run on
+    2026-08-06 returned every arm at exactly 0.500 — the chance value — because
+    the valence lexicon matched zero words in all 48 generations. A reader
+    seeing three identical arms would have concluded that steering does
+    nothing, when the measurement had simply not engaged.
+
+    A null result is only informative from an instrument that can produce a
+    non-null one, so a run where the metric never fires is reported as
+    `metric_insensitive` and its effect estimates are withheld.
+    """
+    fired = 0
+    total = 0
+    for attempt in ledger.attempts:
+        if attempt.outcome in {"crash", "timeout"}:
+            continue
+        total += 1
+        if abs(float(attempt.detail.get("valence", 0.0) or 0.0)) > 0.0:
+            fired += 1
+    rate = round(fired / total, 4) if total else 0.0
+    return {
+        "outputs_scored": total,
+        "outputs_where_metric_fired": fired,
+        "fire_rate": rate,
+        "metric_engaged": fired > 0,
+        "why_it_matters": (
+            "a metric that never fires makes every arm identical and turns an "
+            "unmeasured question into a reported null"
+        ),
+    }
 
 
 def mean_abs_paired_difference(ledger: AttemptLedger, a: str, b: str) -> float:
@@ -246,9 +286,18 @@ def validate_null(responder, probes: list[AffectProbe]) -> dict[str, Any]:
     ledger = run(responder, probes, arms=(NULL_A, NULL_B))
     separation = paired_separation(ledger, NULL_A, NULL_B)
     noise_floor = mean_abs_paired_difference(ledger, NULL_A, NULL_B)
-    # BOTH conditions. The signed test alone was insufficient — see
-    # mean_abs_paired_difference for the instrument it let through.
-    passed = separation.get("verdict") == "unresolved" and noise_floor <= 0.0
+    # The null holds when two MEANINGLESS directions produce no SYSTEMATIC
+    # directional difference. It does not require them to produce identical
+    # text: they are different permutations, so a real model will word things
+    # differently under each, and demanding a zero floor would fail the null on
+    # every real run (measured — a 1.5B returned floor 0.09 and the verdict was
+    # withheld for the wrong reason).
+    #
+    # The floor is not a pass/fail on its own. It is the magnitude a claimed
+    # effect has to clear, and that is what suppresses the leaking-instrument
+    # case: an apparatus reading the arm label off the arm name produces a
+    # floor near 1.0, which no effect can exceed.
+    passed = separation.get("verdict") == "unresolved"
     return {
         "purpose": (
             "two independent permutations of the same steering vector; they differ by "
@@ -330,18 +379,31 @@ def main(argv: list[str] | None = None) -> int:
     real_vs_unsteered = paired_separation(ledger, REAL, UNSTEERED)
     shuffled_vs_unsteered = paired_separation(ledger, SHUFFLED, UNSTEERED)
 
+    sensitivity = metric_sensitivity(ledger)
+    metric_engaged = bool(sensitivity["metric_engaged"])
     null_holds = bool(null_report["null_holds"])
     # The verdict requires BOTH: the real state beats an unsteered baseline
     # (affect reaches generation) AND beats a magnitude-matched permutation
     # (the state's content is what did it). Only the second answers the
     # criticism; the first alone is satisfied by any noise injector.
-    content_matters = real_vs_shuffled.get("verdict") == "treatment_better"
+    noise_floor = float(null_report["noise_floor_mean_abs_difference"])
+    effect = abs(
+        summaries[REAL]["mean_score"] - summaries[SHUFFLED]["mean_score"]
+    )
+    exceeds_noise = effect > noise_floor
+    content_matters = (
+        real_vs_shuffled.get("verdict") == "treatment_better" and exceeds_noise
+    )
     reaches_generation = real_vs_unsteered.get("verdict") == "treatment_better"
     verdict = (
         "withheld_null_failed"
         if not null_holds
+        else "withheld_metric_insensitive"
+        if not metric_engaged
         else "affect_content_is_causal"
         if (content_matters and reaches_generation)
+        else "withheld_effect_inside_noise_floor"
+        if reaches_generation and not exceeds_noise
         else "indistinguishable_from_magnitude_matched_noise"
         if reaches_generation
         else "no_measurable_effect"
@@ -359,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         tasks_solvable_without_component=True,
     )
 
-    is_evidence = args.responder == "mlx" and null_holds
+    is_evidence = args.responder == "mlx" and null_holds and metric_engaged
     report = {
         "schema": "aura.affect_causality_scorecard.v1",
         "source_attestation": attest().to_dict(),
@@ -369,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         "is_evidence_about_aura": is_evidence,
         "verdict": verdict,
         "null_validation": null_report,
+        "metric_sensitivity": sensitivity,
         "conditions": summaries,
         "separation": {
             "real_vs_shuffled": real_vs_shuffled,
@@ -381,6 +444,12 @@ def main(argv: list[str] | None = None) -> int:
                 "agreement with the INTENDED valence direction, scored by a transparent "
                 "word lexicon. A learned sentiment model would be more sensitive and less "
                 "auditable; every word that moves this score can be read in the source"
+            ),
+            "noise_floor_meaning": (
+                "two different permutations of one vector are both meaningless "
+                "directions, so they should not differ SYSTEMATICALLY in the intended "
+                "direction — but they will word things differently, and that per-probe "
+                "churn is the floor a claimed effect has to clear"
             ),
             "what_a_win_means": (
                 "the state's CONTENT changed the output, not merely its magnitude. That "
@@ -395,6 +464,15 @@ def main(argv: list[str] | None = None) -> int:
         "claims": [claim.to_dict()],
         "inference": summarise([claim]),
         "attempts": ledger.to_dict(),
+        "output_samples": [
+            {
+                "condition": a.condition,
+                "task_id": a.task_id,
+                "valence": a.detail.get("valence"),
+                "output": a.detail.get("output", ""),
+            }
+            for a in ledger.attempts[:12]
+        ],
     }
 
     out_path = Path(args.out)
@@ -407,6 +485,18 @@ def main(argv: list[str] | None = None) -> int:
         s = summaries[arm]
         print(
             f"{arm:<20}{s['mean_score']:<14.3f}{s['clean_success_rate']:<12.3f}{s['attempts']}"
+        )
+
+    print(
+        f"\nmetric fired on {sensitivity['outputs_where_metric_fired']}/"
+        f"{sensitivity['outputs_scored']} outputs "
+        f"({sensitivity['fire_rate']:.3f})"
+    )
+    if not metric_engaged:
+        print(
+            "  METRIC NEVER FIRED. Every arm sits at the chance value because the\n"
+            "  lexicon matched nothing, not because steering did nothing. This run\n"
+            "  measured the ruler, not the effect. Effect estimates are WITHHELD."
         )
 
     null_sep = null_report["separation"]
@@ -430,6 +520,10 @@ def main(argv: list[str] | None = None) -> int:
             f"{summaries[REAL]['mean_score'] - summaries[UNSTEERED]['mean_score']:+.4f}  "
             f"CI {real_vs_unsteered.get('ci95')} ({real_vs_unsteered.get('verdict')})"
         )
+    print(
+        f"noise floor (mean |diff| between two meaningless directions) = {noise_floor:.4f}"
+        f"   effect = {effect:.4f}   exceeds = {exceeds_noise}"
+    )
     print(f"\nVERDICT: {verdict}")
     if verdict == "indistinguishable_from_magnitude_matched_noise":
         print(
