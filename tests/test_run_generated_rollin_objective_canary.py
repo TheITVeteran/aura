@@ -130,3 +130,16 @@ def test_free_generation_uses_proof_grade_sampling_policy() -> None:
     assert config.max_tokens == 320
     assert config.temperature == 1.0
     assert config.top_p == 1.0
+
+
+def test_training_rows_cycle_across_the_balanced_battery() -> None:
+    rows = [{"task_id": "a"}, {"task_id": "b"}, {"task_id": "c"}]
+
+    observed = [
+        canary._cyclic_training_row(rows, one_based_step=step)["task_id"]
+        for step in range(1, 8)
+    ]
+
+    assert observed == ["a", "b", "c", "a", "b", "c", "a"]
+    with pytest.raises(ValueError, match="cycle coordinates"):
+        canary._cyclic_training_row(rows, one_based_step=0)

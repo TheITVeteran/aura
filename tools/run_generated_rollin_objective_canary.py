@@ -65,7 +65,7 @@ from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
-CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v2"
+CANARY_SCHEMA: Final = "aura.generated_rollin_objective_canary.v3"
 SOURCE_PATHS: Final = (
     "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrence_native_objective_v5.py",
@@ -265,6 +265,16 @@ def _free_generation_sampling_config() -> RecurrentSamplingConfig:
     )
 
 
+def _cyclic_training_row(
+    rows: list[dict[str, Any]],
+    *,
+    one_based_step: int,
+) -> dict[str, Any]:
+    if not rows or type(one_based_step) is not int or one_based_step < 1:
+        raise ValueError("training-row cycle coordinates are invalid")
+    return rows[(one_based_step - 1) % len(rows)]
+
+
 def _free_generation_report(
     model: Any,
     tokenizer: Any,
@@ -455,32 +465,47 @@ def run_canary(
             role_conditioned_branches=len(spec.branch_roles),
         )
         adapter_before = adapter_tensor_fingerprint(adapter_tensor_dict(model))
-        tasks = task_battery(["boolean"], [2], 2, seed=seed)
-        if len(tasks) != 2:
-            raise RuntimeError("canary task battery did not produce two tasks")
-        rows = []
-        for task in tasks:
+        training_tasks = task_battery(
+            ["boolean", "modular"],
+            [2],
+            2,
+            seed=seed,
+        )
+        if len(training_tasks) != 4:
+            raise RuntimeError("canary training battery did not produce four tasks")
+        training_rows = []
+        for task in training_tasks:
             prompt_tokens, answer_tokens = _tokenize(
                 tokenizer,
                 task.prompt,
                 str(task.answer),
             )
-            rows.append(
+            training_rows.append(
                 {
                     "task_id": task.task_id,
                     "prompt_tokens": prompt_tokens,
                     "answer_tokens": answer_tokens,
                 }
             )
-        training_row, validation_row = rows
         proxy_tasks = task_battery(
             ["boolean", "modular"],
             [2],
             2,
             seed=seed + 7_919,
-            excluded_prompts=tuple(task.prompt for task in tasks),
-            excluded_task_ids=tuple(task.task_id for task in tasks),
+            excluded_prompts=tuple(task.prompt for task in training_tasks),
+            excluded_task_ids=tuple(task.task_id for task in training_tasks),
         )
+        validation_task = proxy_tasks[0]
+        validation_prompt_tokens, validation_answer_tokens = _tokenize(
+            tokenizer,
+            validation_task.prompt,
+            validation_task.answer,
+        )
+        validation_row = {
+            "task_id": validation_task.task_id,
+            "prompt_tokens": validation_prompt_tokens,
+            "answer_tokens": validation_answer_tokens,
+        }
         proxy_manifest, proxy_manifest_sha256 = build_recurrence_task_manifest(
             proxy_tasks
         )
@@ -515,6 +540,10 @@ def run_canary(
         warmup_optimizer.init(model.trainable_parameters())
         warmup_trail: list[dict[str, Any]] = []
         for warmup_step in range(1, warmup_steps + 1):
+            training_row = _cyclic_training_row(
+                training_rows,
+                one_based_step=warmup_step,
+            )
             result = branch_specialization_live_path_value_and_grad(
                 model,
                 training_row["prompt_tokens"],
@@ -538,6 +567,7 @@ def run_canary(
             warmup_trail.append(
                 {
                     "step": warmup_step,
+                    "task_id": training_row["task_id"],
                     "loss_before": result.value,
                     "separations_before": list(
                         result.evaluation.separations
@@ -550,10 +580,6 @@ def run_canary(
                     ),
                 }
             )
-            if min(post_update.separations) >= float(
-                specialization_config.target_separation
-            ):
-                break
         warmup_validation = _evaluate(
             model,
             validation_row,
@@ -572,6 +598,10 @@ def run_canary(
         optimizer.init(model.trainable_parameters())
         loss_trail: list[dict[str, Any]] = []
         for step in range(1, steps + 1):
+            training_row = _cyclic_training_row(
+                training_rows,
+                one_based_step=step,
+            )
             rollin_seed = derive_rollin_seed(
                 campaign_seed=seed,
                 phase="train",
@@ -598,6 +628,7 @@ def run_canary(
             loss_trail.append(
                 {
                     "step": step,
+                    "task_id": training_row["task_id"],
                     "loss": result.value,
                     "lexical_loss": result.evaluation.generated.value,
                     "specialization_loss": result.evaluation.specialization.value,
@@ -689,8 +720,7 @@ def run_canary(
         ),
         "warmup_target_reached": bool(
             warmup_trail
-            and min(warmup_trail[-1]["separations_after"])
-            >= float(specialization_config.target_separation)
+            and warmup_validation["specialization_loss"] <= 1e-6
         ),
         **_branch_specialization_gates(loss_trail, separation_after),
         "heldout_lexical_non_regression": after["lexical_loss"]
@@ -721,7 +751,7 @@ def run_canary(
         "steps": steps,
         "adapter_before_sha256": adapter_before,
         "adapter_after_sha256": adapter_after,
-        "training_task_id": training_row["task_id"],
+        "training_task_ids": [task.task_id for task in training_tasks],
         "validation_task_id": validation_row["task_id"],
         "proxy_task_manifest": proxy_manifest,
         "proxy_task_manifest_sha256": proxy_manifest_sha256,
