@@ -1,128 +1,144 @@
 # RLC reconciliation — state of the campaign
 
-Last updated 2026-08-07 12:35 PDT. Read this first; it supersedes every
-earlier plan in this file's history.
+Last updated 2026-08-07 16:50 PDT. Supersedes every earlier plan in this
+file's history.
 
 ## The one thing to understand
 
-**Every negative RLC result this program has produced measured a system that
-was not switched on.** Not "failed" — never ran.
+**A win was structurally impossible until 2026-08-07.** Every negative result
+this program has produced — the 2026-08-06 campaign's 13-vs-5, and its 9-vs-4
+reproduction — measured a system that either was not switched on or had no
+code path by which it could exceed ordinary decode.
 
-Everything above the recurrence loop is gated on an *admitted task verifier*.
-Nothing ever supplied one, so on every prior run:
+That is not a face-saving reading. It is three specific defects:
 
-- fast weights took **0** optimization attempts (`verifier_unavailable`)
-- the generative and counterfactual verifiers reported
-  `admitted_task_verifier_unavailable`
-- latent optimization descended a proxy with `verifier policy: off` — its loss
-  moved 0.001 across 4 steps
-- the value-of-computation controller, with no evidence to act on, chose
-  `ABSTAIN` and halted at the minimum step
+- the promotion gate was wired to `decode_incumbent_policy == "latent"`, the
+  very policy that removes the floor. Under `latent` the recurrent path owned
+  the answer outright and could score far below vanilla. Under
+  `vanilla_incumbent` the floor held and replacement was **force-disabled**, so
+  the episode was exactly ordinary decode at several times the cost. No
+  configuration could both keep the floor and gain.
+- promotable rows were built only from `local_repair` requests, so branch
+  answers — the entire product of the workspace, branches and recurrence — had
+  no route to the output under the safe policy.
+- that coupling existed in **three** places (engine gate, receipt authority,
+  service validator). Fixing fewer than all three makes every receipt report
+  `answer_replacement_unproven`.
 
-The 2026-08-06 campaign's 13-vs-5, and this morning's 9-vs-4 reproduction of
-it, are both measurements of that state. They say nothing about recurrence,
-the terminal disposition, or the unified architecture. `RLC Proofs` named this
-exact gap as an open item before any of it was run.
+## The invariant this is now built against
 
-## What is fixed and pushed
+Bryan's contract, and the right one:
 
-Admission is not granted by passing a callable. `blind_review.run_decoy_preflight`
-scores four synthetic controls — correct arithmetic + valid code, wrong
-arithmetic + invalid code, and two byte-identical texts — and admits only a
-reviewer that separates correct from incorrect by ≥0.05 **and** returns
-bit-identical scores for identical input. That deliberately refuses an
-answer-key oracle (which scores every control alike) and admits an executable
-verifier.
+> **≥ vanilla always. No improvement is neutral. Improvement is gain. It must
+> never return a lower-quality answer.**
 
-`EpisodeTaskVerifier` (core/brain/llm/latent_cortex/task_verifiers.py) already
-implemented the whole contract, including the `fast_weight_learning_evidence`
-provider that fast-weight attachment requires. Use it. Do not write another
-one — that mistake was already made and reverted today.
+Enforced by `tests/test_rlc_never_worse_than_vanilla.py`, which enumerates the
+decode contract rather than trusting it, requires ordinary decode to own the
+answer until a gain gate promotes something, and requires every arm to declare
+which side of the floor it sits on. The mechanism ablation is the only arm
+permitted below it.
 
-With it admitted, previously unreachable code ran for the first time and
-immediately crashed: `±inf` sentinels meaning "no verified score yet" leaked
-into a causal receipt canonicalized with `allow_nan=False`, raising inside
-receipt construction and destroying episodes that had already produced their
-answers. Fixed at the single serialization boundary they all cross
-(`_finite_record` in types.py), not field by field.
+## Ten defects fixed today, in dependency order
 
-Also fixed: the harness passed `token_ids` alone, leaving the verification
-objective empty, so both verifiers refused with
-`verification_objective_unavailable` however well the verifier was admitted.
+Each masked the next; none was visible until its predecessor was fixed.
 
-## Current live status
+1. **Verifier never admitted.** Fast weights took 0 optimization attempts, both
+   verifiers reported `admitted_task_verifier_unavailable`, latent optimization
+   ran with `verifier policy: off`, the controller abstained at the floor.
+   Admission is not passing a callable — `blind_review.run_decoy_preflight`
+   requires separating correct from incorrect arithmetic by ≥0.05 *and*
+   bit-identical scores on identical input. An answer-key oracle fails it by
+   design. Use `EpisodeTaskVerifier`; it already implements the whole contract
+   including `fast_weight_learning_evidence`.
+2. **`±inf` sentinels** ("no verified score yet") leaking into a causal receipt
+   canonicalized with `allow_nan=False`, destroying episodes that had already
+   answered. Fixed at the one serialization boundary they all cross
+   (`_finite_record`), not field by field.
+3. **Verification objective empty** — passing `token_ids` alone leaves it
+   blank and both verifiers refuse regardless of admission. Pass `messages`.
+4. **Controller quitting at floor depth.** Terminal actions cost 0.01 to
+   execute but END the episode, so `gain/cost` inflated them ~100×; at step 2
+   of 8 abstain scored 3.1 against check_assumption's 2.75. Pricing the
+   forfeited budget into cost was WRONG — `gain/cost` is not monotonic in cost
+   once gain can be negative. Correct rule: keep going while any continuing
+   action has positive expected value.
+5. **Workspace at effective rank 1.** Every slot seeded from the same global
+   mean prompt embedding: slot-to-slot cosine **0.9993** against 0.0419 for the
+   prompt's own tokens. Sixteen slots held one direction sixteen times. This is
+   the `cos(pass1,pass2) = 0.9994` obstacle chased since CP226 — it came from
+   the seed, not the recurrence. Slots now pool disjoint spans of the prompt
+   (mean of token embeddings stays in their convex hull, so seeds remain
+   in-manifold). After: mean 0.4277, min 0.0282.
+6. **Ordinary decode excluded from the candidate pool** (`incumbent_policy`).
+7. **Decode parameters diverging from the control** — a 1.25 repetition penalty
+   the deployed system does not use, hostile to arithmetic that repeats digits
+   and phrasing by construction.
+8. **Promotion gate coupled to the floor-removing policy** (above).
+9. **Branch answers structurally unpromotable** (above). They now win on the
+   same lower-bound-dominance rule repairs use.
+10. **That coupling in three places, only one fixed** — caught by the wiring
+    and verified-best tests.
 
-Working: verifier admitted, both verifiers emitting real receipts, latent opt
-on `strict_task_score_improvement_v1`, branch scores real for the first time
-(`[None, 0.558594]` — one branch scored on evidence, one unscored).
+## Current status
 
-**Open, and blocking the battery:** `value_controller_abstain`. On both the
-1.5B and the 32B the controller takes `steps_taken = 2` — the floor — against
-`max_steps = 8`, every single task. The full stack therefore pays ~2.6×
-ordinary decode for two recurrent steps. Running the battery before this is
-fixed would produce a third "it didn't help" result that again means "it
-didn't run."
+Working: verifier admitted; both verifiers emitting real receipts; latent
+optimization on `strict_task_score_improvement_v1`; branch scores real; the
+controller spending depth (`steps_taken` 2 → 5, `halting_reason`
+`value_controller_abstain` → `schedule_complete`); ordinary decode as
+incumbent; branch candidates promotable.
 
-Fast weights report `not_admitted_high_confidence_evidence_absent`. That is
-believed **correct** — TheSpark specifies adaptation only on high-confidence
-evidence — and should not be "fixed" without evidence it is wrong.
+Believed correct, do NOT "fix" without evidence: fast weights reporting
+`not_admitted_high_confidence_evidence_absent` — TheSpark specifies adaptation
+only on high-confidence evidence.
+
+Open empirical questions the battery answers: does a branch ever dominate on
+real 32B output, and does the system beat 11/28.
 
 ## Measured costs (32B, 2026-08-07)
 
-| arm | median latency | note |
-|---|---|---|
-| vanilla | 62–66s | ordinary decode, the deployability bar |
-| full_stack | 164s | ~2.6× ordinary decode |
+| arm | correct | finished | median latency |
+|---|---|---|---|
+| `vanilla` | 9/28 | 12/28 | 60s |
+| `vanilla_equal_compute` (best-of-3 + vote) | 11/28 | 22/28 | 103s |
+| `full_stack` (pre-fix, latent-owned) | 2/28 | ~90% | 135–164s |
 
-## The battery to run once the controller is fixed
+**11/28 is the bar.** Beating plain greedy decode while costing more proves
+nothing — Anima Rationis: *"otherwise it is just expensive self-consistency."*
 
-One run answers both "does it work" and "is it just compute" — the
-equal-compute control is an arm, and the depth-scaling curve comes free from
-`steps_taken`, which is recorded per cell.
+## Running it
 
-| arm | purpose | est. |
-|---|---|---|
-| `vanilla` | baseline | 29 min |
-| `vanilla_equal_compute` | best-of-N at matched FLOPs — **the real bar** | ~75 min |
-| `full_stack` | the unified system | ~77 min |
-| `full_stack_oracle` | selection vs generation ceiling; never promotable | ~77 min |
-
-≈4.3h. Anima Rationis sets the standard: *"the latent system wins only if…
-otherwise it is just expensive self-consistency."* A win over plain vanilla
-that is not also a win over equal-compute vanilla is not an architectural
-result.
-
-## Taking the machine back
-
-The host cannot hold two 32B models, so the campaign and the live instance are
-exclusive — but the campaign leaves on request. See `YIELD.md` in the run
-directory:
+`chain.sh` gates the battery on a clean regression, publishes the verified
+source into the capsule, purges stale latent cells (ordinary-decode cells stay
+valid — that path never touches the workspace), and launches. Every terminal
+state lands in `chain_status.json`:
 
 ```bash
-touch /Users/bryan/.aura/rlc-reconcile-20260807/sweep/YIELD
+cat /Users/bryan/.aura/rlc-full-20260807/chain_status.json
 ```
 
-Stops at the next cell boundary (≤165s). Resume by deleting the file and
-re-running `launch_sweep.sh`. Cells carry the sha256 of the decode
-configuration that produced them, so a resume can never mix configurations.
+Reclaim the GPU at a cost of one cell:
 
-## If you are a new session picking this up
+```bash
+touch /Users/bryan/.aura/rlc-full-20260807/sweep/YIELD
+```
+
+**Only the `launch_*.sh` / `chain.sh` scripts detach properly** (nohup +
+caffeinate, reparent to PID 1). Anything started with an agent harness's own
+background runner dies with that session.
+
+## If you are a new session
 
 1. `git pull` — everything is on origin/main.
-2. Read the "Open" item above. Fix the controller first.
-3. Validate on the 1.5B rig before spending 32B time. It is a `--model` swap:
-   `~/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/*/`
-   — same `qwen2` architecture and tokenizer as the fused 32B, ~2 min for a
-   full 7-arm protocol run, ~1GB. It found four live defects today in minutes.
-4. Then launch the battery detached: `cd /Users/bryan/.aura/rlc-reconcile-20260807
-   && nohup ./launch_sweep.sh >> runner.log 2>&1 &` — nohup + caffeinate
-   reparents it to PID 1, so it survives the session that started it.
-
-**Anything launched with the harness's own background runner does NOT survive
-a session.** Only the `launch_*.sh` scripts detach properly.
+2. Read the invariant above. It is the design contract.
+3. Validate on the 1.5B rig before spending 32B time — a `--model` swap to
+   `~/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/*/`.
+   Same `qwen2` architecture and tokenizer as the fused 32B, ~2 min for a full
+   protocol run, ~1GB. It found most of the ten defects above in minutes. Its
+   known limit: it validates plumbing, not capability — it never reaches the
+   token cap, and its output contains nothing a deterministic router can check.
+4. Launch detached via `chain.sh`.
 
 ## Standing rule
 
-Nothing here awards a reasoning gain, a frontier result, or a promotion. An
-arm whose subsystems report `unavailable` has not measured the thing its name
-claims. Check the receipt before believing the number.
+An arm whose subsystems report `unavailable` has not measured the thing its
+name claims. Check the receipt before believing the number.
