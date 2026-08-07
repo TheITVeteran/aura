@@ -511,6 +511,37 @@ def _validate_positive_verdict(
         _sha256(verdict.get(f"{role}_sha256"), role=role)
 
 
+def validate_positive_live_adapter_evidence(
+    activation: Mapping[str, Any],
+    *,
+    campaign_plan: Mapping[str, Any],
+    independent_verdict: Mapping[str, Any],
+    independent_verdict_path: str | Path,
+) -> CampaignPlan:
+    """Validate the positive evidence bound into an activation before signing."""
+
+    normalized_activation = _validate_activation(activation)
+    try:
+        plan = CampaignPlan.from_dict(campaign_plan)
+    except (TypeError, ValueError) as exc:
+        raise LiveAdapterActivationError(
+            "live_adapter_campaign_plan_invalid"
+        ) from exc
+    verdict_path = _reject_symlink_chain(
+        independent_verdict_path,
+        role="independent_verdict",
+    )
+    if not verdict_path.is_file():
+        _fail("live_adapter_independent_verdict_unavailable")
+    _validate_positive_verdict(
+        independent_verdict,
+        activation=normalized_activation,
+        plan=plan,
+        certificate_path=verdict_path,
+    )
+    return plan
+
+
 def admit_live_adapter_activation(
     pointer_path: str | Path,
     *,
@@ -765,4 +796,5 @@ __all__ = [
     "build_live_adapter_activation",
     "build_live_adapter_pointer",
     "read_live_adapter_trust_root",
+    "validate_positive_live_adapter_evidence",
 ]

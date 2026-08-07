@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     build_role_attestation,
     validate_campaign_trust_policy,
 )
+from tools import materialize_live_recurrent_adapter_activation as materializer
 
 
 def _public_raw(key: Ed25519PrivateKey) -> bytes:
@@ -300,6 +302,105 @@ def test_live_adapter_builders_reject_invalid_activation_window(tmp_path: Path) 
             not_before_unix=10,
             expires_at_unix=10,
         )
+
+
+def test_activation_materializer_publishes_only_after_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_pointer_path, root_pem, identity = _fixture(tmp_path)
+    existing_pointer = json.loads(existing_pointer_path.read_text())
+    root_path = tmp_path / "root.pem"
+    root_path.write_bytes(root_pem)
+    root_path.chmod(0o600)
+    output = tmp_path / "prepared"
+    activation_document = existing_pointer["activation"]
+
+    preparation = materializer.prepare_activation(
+        campaign_plan_path=Path(activation_document["campaign_plan"]["path"]),
+        independent_verdict_path=Path(
+            activation_document["independent_verdict"]["path"]
+        ),
+        campaign_policy_path=Path(existing_pointer["campaign_policy"]["path"]),
+        trusted_root_path=root_path,
+        adapter_package_path=Path(activation_document["adapter_package_path"]),
+        approved_adapter_roots=[tmp_path / "releases"],
+        output_dir=output,
+        signed_at_unix=1_800_000_300,
+        not_before_unix=1_800_000_200,
+        expires_at_unix=1_800_010_000,
+    )
+
+    assert preparation["publication_allowed"] is False
+    assert preparation["required_next_step"].startswith("detached_evidence")
+    assert not (output / "active.json").exists()
+    request = json.loads((output / "activation-signature-request.json").read_text())
+    assert request["signed_payload"]["operation"] == "activate_recurrent_adapter"
+    assert request["signed_payload"]["purpose"] == (
+        "verified-recurrent-adapter-activation"
+    )
+    existing_attestation = json.loads(
+        Path(existing_pointer["activation_attestation"]["path"]).read_text()
+    )
+    monkeypatch.setattr(
+        materializer,
+        "assemble_role_attestation",
+        lambda *_args, **_kwargs: existing_attestation,
+    )
+    monkeypatch.setattr(
+        materializer,
+        "full_weight_checkpoint_identity",
+        lambda _path: {
+            "fingerprint": identity["base_checkpoint_fingerprint"],
+            "method": "sha256",
+            "files": 1,
+        },
+    )
+    monkeypatch.setattr(
+        materializer,
+        "model_behavior_bundle_identity",
+        lambda _path: {"bundle_sha256": identity["model_behavior_bundle_sha256"]},
+    )
+    monkeypatch.setattr(
+        materializer,
+        "personality_bundle_identity",
+        lambda _path: {"present": False, "identity_sha256": "e" * 64},
+    )
+    monkeypatch.setattr(
+        materializer,
+        "runtime_environment_identity",
+        lambda: {"identity_sha256": "f" * 64},
+    )
+    monkeypatch.setattr(activation, "declared_bindings", lambda _manifest: ())
+    monkeypatch.setattr(activation, "inspect_mlx_tensor_metadata", lambda _path: ())
+    monkeypatch.setattr(
+        activation,
+        "validate_resident_recurrent_sft_adapter_identity",
+        lambda *_args, **_kwargs: dict(identity),
+    )
+    signature = tmp_path / "signature.bin"
+    signature.write_bytes(b"s" * 64)
+    pointer_out = output / "active.json"
+    receipt_out = output / "publication.json"
+
+    publication = materializer.finalize_activation(
+        preparation_path=output / "preparation.json",
+        signature_path=signature,
+        campaign_policy_path=Path(existing_pointer["campaign_policy"]["path"]),
+        trusted_root_path=root_path,
+        model_path=tmp_path / "model",
+        personality_adapter_path=None,
+        approved_adapter_roots=[tmp_path / "releases"],
+        pointer_path=pointer_out,
+        publication_receipt_path=receipt_out,
+        now_unix=1_800_000_400,
+    )
+
+    assert publication["published"] is True
+    assert publication["static_weight_fusion_performed"] is False
+    assert publication["admission_receipt"]["verified_verdict"] == "gain_proven"
+    assert pointer_out.exists()
+    assert receipt_out.exists()
 
 
 def test_live_adapter_activation_rejects_signed_conjecture(
