@@ -57,6 +57,7 @@ EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
 EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v2"
 EXACT_ADJOINT_INTERVENTION_SCHEMA = "aura.exact_adjoint_intervention_objective.v1"
 EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v3"
+EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v4"
 INTERVENTION_MEASUREMENT_TRUST_BOUNDARY = (
     "producer_sealed_arithmetic_external_state_replay_required"
 )
@@ -331,6 +332,7 @@ class ExactAdjointLivePathResult:
     bridge_tokens_sha256: str
     bridge_token_count: int
     token_loss_weights: tuple[float, ...]
+    terminal_objective_weight: float = 1.0
     lesion_losses: Mapping[int, tuple[float, ...]] = field(default_factory=dict)
     stopping_teacher_receipts: tuple[Mapping[str, Any], ...] = ()
     intervention_config: ExactAdjointInterventionConfig | None = None
@@ -339,9 +341,14 @@ class ExactAdjointLivePathResult:
         if not _valid_sha256(self.policy_sha256):
             raise ValueError("proof receipt requires a valid policy_sha256")
         intervention_enabled = self.intervention_config is not None
+        auxiliary_only = float(self.terminal_objective_weight) != 1.0
+        if auxiliary_only and intervention_enabled:
+            raise ValueError("auxiliary trajectory receipts cannot include interventions")
         payload = {
             "schema": (
-                EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
+                EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA
+                if auxiliary_only
+                else EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
                 if intervention_enabled
                 else EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA
             ),
@@ -376,6 +383,8 @@ class ExactAdjointLivePathResult:
                 self.trajectory_config.to_dict() if self.trajectory_config is not None else None
             ),
         }
+        if auxiliary_only:
+            payload["terminal_objective_weight"] = float(self.terminal_objective_weight)
         if intervention_enabled:
             payload.update(
                 {
@@ -413,6 +422,10 @@ class ExactAdjointLivePathResult:
         if intervention_enabled:
             input_payload["intervention_config"] = payload["intervention_config"]
             input_payload["measurement_trust_boundary"] = payload["measurement_trust_boundary"]
+        if auxiliary_only:
+            input_payload["terminal_objective_weight"] = payload[
+                "terminal_objective_weight"
+            ]
         payload["objective_input_sha256"] = _exact_adjoint_input_sha256(input_payload)
         encoded = json.dumps(
             payload,
@@ -462,8 +475,11 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         "measurement_trust_boundary",
     }
     schema = value.get("schema") if isinstance(value, Mapping) else None
+    auxiliary_only = schema == EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA
     intervention_enabled = schema == EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
     required = base_required | intervention_fields if intervention_enabled else base_required
+    if auxiliary_only:
+        required = required | {"terminal_objective_weight"}
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError("exact-adjoint trajectory receipt fields do not match")
     receipt = dict(value)
@@ -480,6 +496,7 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     if receipt["schema"] not in {
         EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
         EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
+        EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA,
     }:
         raise ValueError("exact-adjoint trajectory receipt schema is unsupported")
     for role in (
@@ -551,7 +568,17 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     term_values = {
         str(name): finite_number(number, role=f"{name} value") for name, number in terms.items()
     }
-    expected_total = terminal + diversity + sum(term_values.values())
+    terminal_weight = (
+        finite_number(
+            receipt["terminal_objective_weight"],
+            role="terminal objective weight",
+        )
+        if auxiliary_only
+        else 1.0
+    )
+    if not 0.0 <= terminal_weight <= 1.0:
+        raise ValueError("exact-adjoint terminal objective weight is invalid")
+    expected_total = terminal_weight * terminal + diversity + sum(term_values.values())
     if not math.isclose(total, expected_total, rel_tol=0.0, abs_tol=1e-9):
         raise ValueError("exact-adjoint total does not replay from its terms")
 
@@ -595,6 +622,8 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     if intervention_enabled:
         input_payload["intervention_config"] = receipt["intervention_config"]
         input_payload["measurement_trust_boundary"] = receipt["measurement_trust_boundary"]
+    if auxiliary_only:
+        input_payload["terminal_objective_weight"] = terminal_weight
     if receipt["objective_input_sha256"] != _exact_adjoint_input_sha256(input_payload):
         raise ValueError("exact-adjoint objective input commitment mismatch")
     step_losses = receipt["step_losses"]
@@ -2455,6 +2484,7 @@ def _exact_adjoint_live_path_result(
     intervention_config: ExactAdjointInterventionConfig | None = None,
     policy_sha256: str | None = None,
     allow_signed_token_loss_weights: bool = False,
+    terminal_objective_weight: float = 1.0,
 ) -> ExactAdjointLivePathResult:
     """Compute the exact live-path gradient with bounded graph residency.
 
@@ -2479,6 +2509,13 @@ def _exact_adjoint_live_path_result(
         or not 0.0 <= float(diversity_weight) <= 10.0
     ):
         raise ValueError("diversity_weight must be inside [0, 10]")
+    if (
+        isinstance(terminal_objective_weight, bool)
+        or not isinstance(terminal_objective_weight, (int, float))
+        or not math.isfinite(float(terminal_objective_weight))
+        or not 0.0 <= float(terminal_objective_weight) <= 1.0
+    ):
+        raise ValueError("terminal_objective_weight must be inside [0, 1]")
     if token_loss_weights is None:
         normalized_token_weights = (1.0,) * len(answer_tokens)
     else:
@@ -2610,9 +2647,10 @@ def _exact_adjoint_live_path_result(
         )(parameters, state)
         mx.eval(value, parameter_gradient, state_gradient)
         branch_values.append(float(value))
-        add_parameter_gradient(parameter_gradient, branch_scale)
+        terminal_scale = branch_scale * float(terminal_objective_weight)
+        add_parameter_gradient(parameter_gradient, terminal_scale)
         direct_cotangents[-1][selected_index] = mx.stop_gradient(
-            direct_cotangents[-1][selected_index] + branch_scale * state_gradient
+            direct_cotangents[-1][selected_index] + terminal_scale * state_gradient
         )
         del value, parameter_gradient, state_gradient
         mx.clear_cache()
@@ -3010,7 +3048,9 @@ def _exact_adjoint_live_path_result(
         raise RuntimeError("exact adjoint parameter gradient is empty")
     base_value = sum(branch_values) / len(branch_values)
     total_value = (
-        base_value + float(diversity_weight) * diversity_value + sum(trajectory_values.values())
+        float(terminal_objective_weight) * base_value
+        + float(diversity_weight) * diversity_value
+        + sum(trajectory_values.values())
     )
     return ExactAdjointLivePathResult(
         value=total_value,
@@ -3040,6 +3080,7 @@ def _exact_adjoint_live_path_result(
         bridge_tokens_sha256=bridge_tokens_sha256,
         bridge_token_count=len(bridge_tokens),
         token_loss_weights=normalized_token_weights,
+        terminal_objective_weight=float(terminal_objective_weight),
     )
 
 
@@ -3105,6 +3146,187 @@ def exact_adjoint_trajectory_live_path_value_and_grad(
         diversity_weight=diversity_weight,
         diversity_target_cos=diversity_target_cos,
         token_loss_weights=token_loss_weights,
+    )
+
+
+def exact_adjoint_trajectory_auxiliary_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    trajectory_config: ExactAdjointTrajectoryConfig,
+    policy_sha256: str,
+    bridge_tokens: Sequence[int] = (),
+    branch_index: int | None = None,
+    token_loss_weights: Sequence[float] | None = None,
+) -> ExactAdjointLivePathResult:
+    """Differentiate trajectory terms without counting terminal CE twice.
+
+    Generated-prefix objectives already own the terminal policy loss. This
+    surface reuses the exact-adjoint depth probes while assigning the measured
+    terminal loss zero objective weight; the v4 receipt makes that distinction
+    machine-verifiable rather than implicit in the caller.
+    """
+
+    return _exact_adjoint_live_path_result(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+        token_loss_weights=token_loss_weights,
+        branch_index=branch_index,
+        trajectory_config=trajectory_config,
+        policy_sha256=policy_sha256,
+        terminal_objective_weight=0.0,
+    )
+
+
+def exact_adjoint_trajectory_auxiliary_loss(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    trajectory_config: ExactAdjointTrajectoryConfig,
+    policy_sha256: str,
+    bridge_tokens: Sequence[int] = (),
+    branch_index: int | None = None,
+) -> ExactAdjointLivePathResult:
+    """Measure the detached depth-improvement auxiliary without an adjoint."""
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    if (
+        float(trajectory_config.displacement_weight) > 0.0
+        or float(trajectory_config.oscillation_weight) > 0.0
+    ):
+        raise ValueError("loss-only trajectory evaluation supports improvement terms only")
+    trajectory_config.validate_depth(spec.recurrent_steps)
+    if not _valid_sha256(policy_sha256):
+        raise ValueError("policy_sha256 must be a lowercase SHA-256 digest")
+    branch_indices = (
+        tuple(range(len(spec.branch_roles)))
+        if branch_index is None
+        else (branch_index,)
+    )
+    if any(
+        type(index) is not int or not 0 <= index < len(spec.branch_roles)
+        for index in branch_indices
+    ):
+        raise ValueError("branch_index is outside the live-path branch set")
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+    )
+    targets = mx.array(list(answer_tokens))[None, :]
+    states = tuple(mx.stop_gradient(state) for state in prepared.states)
+    mx.eval(states)
+    trails_by_branch = {index: [] for index in branch_indices}
+    for step in range(spec.recurrent_steps):
+        outputs = _advance_recurrent_states(
+            model,
+            prepared.prompts_at_window,
+            states,
+            prepared.anchors,
+            spec,
+            step,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+        states = tuple(mx.stop_gradient(state) for state in outputs)
+        mx.eval(states)
+        for index in branch_indices:
+            logits = _persist_and_score(
+                model,
+                prepared.prompt_embeddings,
+                prepared.seeds[index],
+                states[index],
+                prepared.tail_embeddings,
+                branch_index=index,
+                bridge_count=prepared.bridge_count,
+                answer_count=prepared.answer_count,
+                prelude_end=prepared.prelude_end,
+                coda_start=prepared.coda_start,
+            )
+            loss = nn.losses.cross_entropy(
+                logits.astype(mx.float32),
+                targets,
+                reduction="mean",
+            )
+            mx.eval(loss)
+            trails_by_branch[index].append(float(loss))
+            del logits, loss
+        del outputs
+        mx.clear_cache()
+    trails = tuple(tuple(trails_by_branch[index]) for index in branch_indices)
+    step_losses = {
+        step: tuple(trail[step - 1] for trail in trails)
+        for step in trajectory_config.probe_steps
+    }
+    pair_count = (len(trajectory_config.probe_steps) - 1) * len(branch_indices)
+    improvement = 0.0
+    if float(trajectory_config.improvement_weight) > 0.0:
+        for previous, current in zip(
+            trajectory_config.probe_steps,
+            trajectory_config.probe_steps[1:],
+            strict=False,
+        ):
+            improvement += sum(
+                max(
+                    step_losses[current][offset]
+                    - step_losses[previous][offset]
+                    + float(trajectory_config.improvement_margin),
+                    0.0,
+                )
+                for offset in range(len(branch_indices))
+            )
+        improvement *= float(trajectory_config.improvement_weight) / pair_count
+    terminal_value = sum(trail[-1] for trail in trails) / len(trails)
+    return ExactAdjointLivePathResult(
+        value=improvement,
+        gradients=None,
+        terminal_value=terminal_value,
+        diversity_value=0.0,
+        trajectory_values={
+            "improvement": improvement,
+            "displacement": 0.0,
+            "oscillation": 0.0,
+        },
+        step_losses=step_losses,
+        displacements=(),
+        oscillation_cosines=(),
+        diversity_cosines=(),
+        branch_indices=branch_indices,
+        trajectory_config=trajectory_config,
+        execution_spec_sha256=spec.sha256,
+        recurrent_depth=spec.recurrent_steps,
+        execution_branch_count=len(spec.branch_roles),
+        diversity_weight=0.0,
+        diversity_target_cos=0.98,
+        policy_sha256=policy_sha256,
+        prompt_tokens_sha256=_canonical_tokens_sha256(
+            prompt_tokens,
+            role="prompt_tokens",
+        ),
+        prompt_token_count=len(prompt_tokens),
+        answer_tokens_sha256=_canonical_tokens_sha256(
+            answer_tokens,
+            role="answer_tokens",
+        ),
+        answer_token_count=len(answer_tokens),
+        bridge_tokens_sha256=_canonical_optional_tokens_sha256(
+            bridge_tokens,
+            role="bridge_tokens",
+        ),
+        bridge_token_count=len(bridge_tokens),
+        token_loss_weights=(1.0,) * len(answer_tokens),
+        terminal_objective_weight=0.0,
     )
 
 
@@ -3221,6 +3443,7 @@ __all__ = [
     "CachedLivePathRollin",
     "CachedSupervisedLivePathEvaluation",
     "CachedSupervisedLivePathResult",
+    "EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA",
     "EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA",
     "EXACT_ADJOINT_INTERVENTION_SCHEMA",
     "EXACT_ADJOINT_TRAJECTORY_SCHEMA",
@@ -3241,6 +3464,8 @@ __all__ = [
     "detached_monotonicity_penalty",
     "exact_adjoint_composite_live_path_value_and_grad",
     "exact_adjoint_live_path_value_and_grad",
+    "exact_adjoint_trajectory_auxiliary_loss",
+    "exact_adjoint_trajectory_auxiliary_value_and_grad",
     "exact_adjoint_trajectory_live_path_value_and_grad",
     "generate_cached_live_path_rollin",
     "live_path_branch_answer_ce_trail",

@@ -23,9 +23,11 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
 )
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointTrajectoryConfig,
     LivePathForward,
     _advance_recurrent_states,
     _prepare_recurrent_prefix,
+    exact_adjoint_trajectory_auxiliary_value_and_grad,
 )
 from core.learning.recurrence_native_objective_v4 import (  # noqa: E402
     pairwise_separations,
@@ -38,10 +40,12 @@ from core.learning.recurrence_native_objective_v6 import (  # noqa: E402
     BranchSpecializationConfig,
     branch_specialization_live_path_loss,
     branch_specialization_live_path_value_and_grad,
+    generated_rollin_specialization_loss,
     generated_rollin_specialization_value_and_grad,
     validate_branch_specialization_receipt,
     validate_generated_rollin_specialization_receipt,
 )
+from core.learning.recurrent_grpo import recurrent_policy_sha256  # noqa: E402
 from core.learning.role_conditioned_lora import wrap_role_conditioned  # noqa: E402
 
 PROMPT = [5, 9, 17, 3, 42]
@@ -330,6 +334,88 @@ def test_composite_receipt_binds_generated_and_structural_objectives():
     _rehash(attacked)
     with pytest.raises(ValueError, match="specialization value does not replay"):
         validate_generated_rollin_specialization_receipt(attacked)
+
+
+def test_depth_composite_adds_only_paired_improvement_gradient():
+    model = _model()
+    spec = _spec()
+    trajectory_config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=0.7,
+        improvement_margin=10.0,
+    )
+    policy_sha256 = recurrent_policy_sha256(model, spec)
+    generated_config = GeneratedRollinSelectionConfig(
+        student_forcing_probability=0.5,
+        sampling_temperature=0.0,
+    )
+    specialization_config = BranchSpecializationConfig(weight=2.0)
+    result = generated_rollin_specialization_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        base_seed=90211,
+        generated_config=generated_config,
+        specialization_config=specialization_config,
+        trajectory_config=trajectory_config,
+        trajectory_policy_sha256=policy_sha256,
+    )
+    measured = generated_rollin_specialization_loss(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        base_seed=90211,
+        generated_config=generated_config,
+        specialization_config=specialization_config,
+        trajectory_config=trajectory_config,
+        trajectory_policy_sha256=policy_sha256,
+    )
+    trajectory = exact_adjoint_trajectory_auxiliary_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=trajectory_config,
+        policy_sha256=policy_sha256,
+    )
+    generated = generated_rollin_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        base_seed=90211,
+        config=generated_config,
+    )
+    specialization = branch_specialization_live_path_value_and_grad(
+        model,
+        PROMPT,
+        spec=spec,
+        config=specialization_config,
+    )
+
+    receipt = result.evaluation.receipt()
+    assert validate_generated_rollin_specialization_receipt(receipt) == receipt
+    assert measured.value == pytest.approx(result.value, abs=1e-6)
+    assert result.evaluation.trajectory is not None
+    assert result.value == pytest.approx(
+        result.evaluation.generated.value
+        + result.evaluation.specialization.value
+        + result.evaluation.trajectory.value,
+        abs=1e-6,
+    )
+    result_flat = dict(tree_flatten(result.gradients))
+    expected_flat = {
+        path: generated_value + dict(tree_flatten(specialization.gradients))[path]
+        + dict(tree_flatten(trajectory.gradients))[path]
+        for path, generated_value in tree_flatten(generated.gradients)
+    }
+    assert result_flat.keys() == expected_flat.keys()
+    assert all(
+        bool(mx.allclose(result_flat[path], expected_flat[path], rtol=1e-5, atol=1e-6))
+        for path in result_flat
+    )
 
 
 def test_single_branch_is_rejected_instead_of_reporting_vacuous_diversity():

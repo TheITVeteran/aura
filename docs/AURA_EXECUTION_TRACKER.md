@@ -37720,3 +37720,29 @@ closes malformed-candidate admission. It does not repair the negative
 resident-32B result, add paired-depth marginal-gain training, preserve vanilla
 identity through latent decode, authorize another 32B campaign, or permit
 activation or fusion.
+
+## Checkpoint 2026-08-07-011: Depth Must Earn Its Additional Computation
+
+The generated-rollin and branch-specialization objective used by the negative
+resident campaign had no causal requirement that a deeper recurrent state
+improve on a shallower state. The repository already contained an exact-adjoint
+trajectory hinge, but it lived on an older teacher-forced path and was bypassed
+by the active generated-prefix composite.
+
+The exact-adjoint implementation now exposes a versioned auxiliary mode. It
+measures terminal cross-entropy but assigns it zero objective weight, then
+differentiates only the paired depth-improvement hinge. This prevents the
+generated-prefix terminal objective from being counted twice. Its v4 receipt
+binds the zero terminal weight, probe losses, trajectory configuration, policy,
+model execution spec, and arithmetic. Validation replays the same detached
+recurrent transitions as training; a test caught and removed a smaller
+checkpointed-forward numerical drift before admission.
+
+The generated-rollin plus specialization composite can now add that auxiliary
+gradient as a separately spilled, bounded-memory term and emits a v2 composite
+receipt binding all three values and identities. Historical composite receipts
+retain their exact v1 form when no trajectory term is present. Objective v2,
+v5, and v6 exact-gradient and receipt suites pass `51/51`; smoke passes
+`103/103`; Ruff, bytecode compilation, and diff hygiene pass. Trainer authority
+does not yet require the new term, and no proxy or resident campaign is
+authorized by this checkpoint.

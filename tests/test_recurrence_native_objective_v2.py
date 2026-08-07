@@ -40,6 +40,7 @@ from core.learning.progressive_recurrent_objective import (  # noqa: E402
     progressive_objective_loss,
 )
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA,
     EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
     EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
     ExactAdjointInterventionConfig,
@@ -54,6 +55,8 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
     exact_adjoint_composite_live_path_value_and_grad,
+    exact_adjoint_trajectory_auxiliary_loss,
+    exact_adjoint_trajectory_auxiliary_value_and_grad,
     exact_adjoint_trajectory_live_path_value_and_grad,
     generate_cached_live_path_rollin,
     live_path_forward,
@@ -555,6 +558,68 @@ def test_bounded_exact_adjoint_matches_full_unroll_trajectory_gradient():
     assert set(full_flat) == set(exact_flat)
     for name in full_flat:
         difference = float(mx.max(mx.abs(full_flat[name] - exact_flat[name])))
+        assert difference < 3e-4, name
+
+
+def test_trajectory_auxiliary_measures_terminal_ce_without_training_it():
+    mx.random.seed(20260807)
+    auxiliary_model = _model()
+    mx.random.seed(20260807)
+    zero_terminal_model = _model()
+    spec = _spec(recurrent_steps=3)
+    config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2, 3),
+        improvement_weight=0.7,
+        improvement_margin=10.0,
+    )
+    policy_sha256 = recurrent_policy_sha256(auxiliary_model, spec)
+
+    auxiliary = exact_adjoint_trajectory_auxiliary_value_and_grad(
+        auxiliary_model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        policy_sha256=policy_sha256,
+    )
+    measured = exact_adjoint_trajectory_auxiliary_loss(
+        auxiliary_model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        policy_sha256=policy_sha256,
+    )
+    zero_terminal = exact_adjoint_trajectory_live_path_value_and_grad(
+        zero_terminal_model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        policy_sha256=recurrent_policy_sha256(zero_terminal_model, spec),
+        token_loss_weights=(0.0,) * len(ANSWER),
+    )
+    mx.eval(auxiliary.gradients, zero_terminal.gradients)
+
+    receipt = auxiliary.receipt()
+    assert receipt["schema"] == EXACT_ADJOINT_AUXILIARY_RECEIPT_SCHEMA
+    assert receipt["terminal_objective_weight"] == 0.0
+    assert auxiliary.terminal_value > 0.0
+    assert measured.value == pytest.approx(auxiliary.value, abs=1e-6)
+    assert measured.step_losses == pytest.approx(auxiliary.step_losses, abs=1e-6)
+    assert validate_exact_adjoint_live_path_receipt(measured.receipt()) == measured.receipt()
+    assert auxiliary.value == pytest.approx(
+        sum(auxiliary.trajectory_values.values()),
+        abs=1e-9,
+    )
+    assert validate_exact_adjoint_live_path_receipt(receipt) == receipt
+    auxiliary_flat = dict(tree_flatten(auxiliary.gradients))
+    zero_terminal_flat = dict(tree_flatten(zero_terminal.gradients))
+    assert set(auxiliary_flat) == set(zero_terminal_flat)
+    for name in auxiliary_flat:
+        difference = float(
+            mx.max(mx.abs(auxiliary_flat[name] - zero_terminal_flat[name]))
+        )
         assert difference < 3e-4, name
 
 

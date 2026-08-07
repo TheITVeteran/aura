@@ -20,10 +20,15 @@ from typing import Any, Final
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrence_native_objective_v2 import (
+    ExactAdjointLivePathResult,
+    ExactAdjointTrajectoryConfig,
     LivePathForward,
     _advance_recurrent_states,
     _prepare_recurrent_prefix,
+    exact_adjoint_trajectory_auxiliary_loss,
+    exact_adjoint_trajectory_auxiliary_value_and_grad,
     transformer_layer_group_checkpointing,
+    validate_exact_adjoint_live_path_receipt,
 )
 from core.learning.recurrence_native_objective_v4 import (
     DEFAULT_TARGET_SEPARATION,
@@ -41,6 +46,7 @@ RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA: Final = "aura.recurrence_native_objective
 BRANCH_SPECIALIZATION_CONFIG_SCHEMA: Final = "aura.branch_specialization_config.v1"
 BRANCH_SPECIALIZATION_RECEIPT_SCHEMA: Final = "aura.branch_specialization_receipt.v1"
 COMPOSITE_RECEIPT_SCHEMA: Final = "aura.generated_rollin_specialization_receipt.v1"
+COMPOSITE_DEPTH_RECEIPT_SCHEMA: Final = "aura.generated_rollin_specialization_receipt.v2"
 EXACT_ADJOINT_ALGORITHM: Final = "layer_rematerialized_recomputed_states_reverse_v3"
 EXACT_ADJOINT_LAYER_GROUP_SIZE: Final = 1
 SUPPORTED_EXACT_ADJOINT_ALGORITHMS: Final = frozenset(
@@ -180,10 +186,15 @@ class BranchSpecializationResult:
 class GeneratedRollinSpecializationEvaluation:
     generated: GeneratedRollinLivePathEvaluation
     specialization: BranchSpecializationEvaluation
+    trajectory: ExactAdjointLivePathResult | None = None
 
     @property
     def value(self) -> float:
-        return self.generated.value + self.specialization.value
+        return (
+            self.generated.value
+            + self.specialization.value
+            + (self.trajectory.value if self.trajectory is not None else 0.0)
+        )
 
     @property
     def branch_values(self) -> tuple[float, ...]:
@@ -215,7 +226,11 @@ class GeneratedRollinSpecializationEvaluation:
 
     def receipt(self) -> dict[str, Any]:
         body = {
-            "schema": COMPOSITE_RECEIPT_SCHEMA,
+            "schema": (
+                COMPOSITE_DEPTH_RECEIPT_SCHEMA
+                if self.trajectory is not None
+                else COMPOSITE_RECEIPT_SCHEMA
+            ),
             "objective_schema": RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA,
             "value": self.value,
             "generated_value": self.generated.value,
@@ -223,6 +238,13 @@ class GeneratedRollinSpecializationEvaluation:
             "generated_receipt": self.generated.receipt(),
             "specialization_receipt": self.specialization.receipt(),
         }
+        if self.trajectory is not None:
+            body.update(
+                {
+                    "trajectory_value": self.trajectory.value,
+                    "trajectory_receipt": self.trajectory.receipt(),
+                }
+            )
         return {**body, "receipt_sha256": _sha256_json(body)}
 
 
@@ -277,6 +299,19 @@ def _branch_indices(
     ):
         raise ValueError("branch specialization requires two or more valid branches")
     return indices
+
+
+def _trajectory_branch_index(
+    requested: Sequence[int] | None,
+    *,
+    branch_count: int,
+) -> int | None:
+    if requested is None or tuple(requested) == tuple(range(branch_count)):
+        return None
+    indices = tuple(requested)
+    if len(indices) == 1 and type(indices[0]) is int and 0 <= indices[0] < branch_count:
+        return indices[0]
+    raise ValueError("trajectory objective requires all branches or one explicit branch")
 
 
 def _weighted_penalty(
@@ -613,6 +648,8 @@ def generated_rollin_specialization_value_and_grad(
     base_seed: int,
     generated_config: GeneratedRollinSelectionConfig | None = None,
     specialization_config: BranchSpecializationConfig | None = None,
+    trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    trajectory_policy_sha256: str | None = None,
     bridge_tokens: Sequence[int] = (),
     token_loss_weights: Sequence[float] | None = None,
     branch_indices: Sequence[int] | None = None,
@@ -644,6 +681,34 @@ def generated_rollin_specialization_value_and_grad(
     gc.collect()
     mx.clear_cache()
 
+    trajectory_evaluation: ExactAdjointLivePathResult | None = None
+    trajectory_host: Any | None = None
+    if trajectory_config is not None:
+        trajectory_branch_index = _trajectory_branch_index(
+            branch_indices,
+            branch_count=len(spec.branch_roles),
+        )
+        trajectory = exact_adjoint_trajectory_auxiliary_value_and_grad(
+            model,
+            prompt_tokens,
+            answer_tokens,
+            spec=spec,
+            trajectory_config=trajectory_config,
+            policy_sha256=str(trajectory_policy_sha256 or ""),
+            bridge_tokens=bridge_tokens,
+            branch_index=trajectory_branch_index,
+        )
+        mx.eval(trajectory.gradients)
+        trajectory_evaluation = trajectory
+        trajectory_host = tree_map(
+            lambda value: np.array(value, copy=True),
+            trajectory.gradients,
+        )
+        del trajectory
+        mx.synchronize()
+        gc.collect()
+        mx.clear_cache()
+
     generated = generated_rollin_live_path_value_and_grad(
         model,
         prompt_tokens,
@@ -660,10 +725,18 @@ def generated_rollin_specialization_value_and_grad(
         generated.gradients,
         structural_host,
     )
+    if trajectory_host is not None:
+        gradients = tree_map(
+            lambda combined, trajectory_gradient: combined
+            + mx.array(trajectory_gradient),
+            gradients,
+            trajectory_host,
+        )
     mx.eval(gradients)
     evaluation = GeneratedRollinSpecializationEvaluation(
         generated=generated.evaluation,
         specialization=specialization_evaluation,
+        trajectory=trajectory_evaluation,
     )
     return GeneratedRollinSpecializationResult(
         evaluation=evaluation,
@@ -680,6 +753,8 @@ def generated_rollin_specialization_loss(
     base_seed: int,
     generated_config: GeneratedRollinSelectionConfig | None = None,
     specialization_config: BranchSpecializationConfig | None = None,
+    trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    trajectory_policy_sha256: str | None = None,
     bridge_tokens: Sequence[int] = (),
     token_loss_weights: Sequence[float] | None = None,
     branch_indices: Sequence[int] | None = None,
@@ -702,9 +777,27 @@ def generated_rollin_specialization_loss(
         config=specialization_config,
         branch_indices=branch_indices,
     )
+    trajectory = (
+        exact_adjoint_trajectory_auxiliary_loss(
+            model,
+            prompt_tokens,
+            answer_tokens,
+            spec=spec,
+            trajectory_config=trajectory_config,
+            policy_sha256=str(trajectory_policy_sha256 or ""),
+            bridge_tokens=bridge_tokens,
+            branch_index=_trajectory_branch_index(
+                branch_indices,
+                branch_count=len(spec.branch_roles),
+            ),
+        )
+        if trajectory_config is not None
+        else None
+    )
     return GeneratedRollinSpecializationEvaluation(
         generated=generated,
         specialization=specialization,
+        trajectory=trajectory,
     )
 
 
@@ -806,7 +899,7 @@ def validate_branch_specialization_receipt(value: Mapping[str, Any]) -> dict[str
 def validate_generated_rollin_specialization_receipt(
     value: Mapping[str, Any],
 ) -> dict[str, Any]:
-    required = {
+    base_required = {
         "schema",
         "objective_schema",
         "value",
@@ -816,23 +909,56 @@ def validate_generated_rollin_specialization_receipt(
         "specialization_receipt",
         "receipt_sha256",
     }
+    depth_enabled = (
+        isinstance(value, Mapping)
+        and value.get("schema") == COMPOSITE_DEPTH_RECEIPT_SCHEMA
+    )
+    required = base_required | (
+        {"trajectory_value", "trajectory_receipt"} if depth_enabled else set()
+    )
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError("generated specialization receipt fields do not match")
     receipt = dict(value)
     if (
-        receipt["schema"] != COMPOSITE_RECEIPT_SCHEMA
+        receipt["schema"]
+        not in {COMPOSITE_RECEIPT_SCHEMA, COMPOSITE_DEPTH_RECEIPT_SCHEMA}
         or receipt["objective_schema"] != RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA
     ):
         raise ValueError("generated specialization receipt identity is invalid")
     generated = validate_generated_rollin_receipt(receipt["generated_receipt"])
     specialization = validate_branch_specialization_receipt(receipt["specialization_receipt"])
-    expected = float(generated["value"]) + float(specialization["value"])
+    trajectory = (
+        validate_exact_adjoint_live_path_receipt(receipt["trajectory_receipt"])
+        if depth_enabled
+        else None
+    )
+    trajectory_value = float(trajectory["value"]) if trajectory is not None else 0.0
+    if trajectory is not None:
+        if (
+            trajectory["execution_spec_sha256"] != generated["execution_spec_sha256"]
+            or trajectory["prompt_tokens_sha256"] != generated["prompt_tokens_sha256"]
+            or trajectory["answer_tokens_sha256"] != generated["answer_tokens_sha256"]
+            or trajectory["bridge_tokens_sha256"] != generated["bridge_tokens_sha256"]
+            or trajectory["branch_indices"]
+            != [branch["branch_index"] for branch in generated["branches"]]
+        ):
+            raise ValueError("generated specialization trajectory identity drift")
+    expected = (
+        float(generated["value"])
+        + float(specialization["value"])
+        + trajectory_value
+    )
     for role, actual, target in (
         ("generated value", receipt["generated_value"], generated["value"]),
         (
             "specialization value",
             receipt["specialization_value"],
             specialization["value"],
+        ),
+        *(
+            (("trajectory value", receipt["trajectory_value"], trajectory_value),)
+            if depth_enabled
+            else ()
         ),
         ("total", receipt["value"], expected),
     ):
@@ -855,6 +981,7 @@ __all__ = [
     "BRANCH_SPECIALIZATION_CONFIG_SCHEMA",
     "BRANCH_SPECIALIZATION_RECEIPT_SCHEMA",
     "COMPOSITE_RECEIPT_SCHEMA",
+    "COMPOSITE_DEPTH_RECEIPT_SCHEMA",
     "RECURRENCE_NATIVE_OBJECTIVE_V6_SCHEMA",
     "SUPPORTED_EXACT_ADJOINT_ALGORITHMS",
     "BranchSpecializationConfig",
