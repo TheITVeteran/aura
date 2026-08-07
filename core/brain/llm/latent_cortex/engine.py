@@ -6556,6 +6556,7 @@ class LatentCortexEngine:
         receipt.terminal_disposition = finalize_terminal_disposition_receipt(
             terminal_decision,
             instruction_tokens=terminal_instruction_tokens,
+            instruction_policy=self.config.terminal_instruction_policy,
             full_bridge_tokens=bridge_tokens,
             output_tokens=out_tokens,
             output_text=output_text,

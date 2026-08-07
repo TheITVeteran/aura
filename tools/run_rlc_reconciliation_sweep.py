@@ -136,6 +136,13 @@ def _build_config(
         decode_max_tokens=max_tokens,
         decode_temperature=0.0,
         decode_top_p=1.0,
+        # The 2026-08-06 campaign ran with these; without them a probe cell
+        # decoded 640 tokens of "to to to to". Leaving the defaults would mean
+        # rlc_asrun is not reproducing the arm it is supposed to reproduce, and
+        # every recurrent arm would be measured against a decode discipline the
+        # original never had.
+        decode_repetition_penalty=1.25,
+        decode_repetition_window=72,
         decode_bridge_policy="none",
         decode_incumbent_policy="latent",
         # Serving-side answer replacement is a live-product safeguard: it

@@ -306,6 +306,7 @@ def finalize_terminal_disposition_receipt(
     output_tokens: Sequence[int],
     output_text: str,
     output_source: str,
+    instruction_policy: str = "applied",
 ) -> dict[str, Any]:
     if decision.reason not in _REASON_PRECEDENCE or _INSTRUCTIONS[decision.reason] != decision.instruction:
         raise ValueError("terminal decision identity is invalid")
@@ -315,13 +316,25 @@ def finalize_terminal_disposition_receipt(
         "substrate_model_decode",
     }:
         raise ValueError("terminal output provenance is invalid")
+    if instruction_policy not in {"applied", "suppressed"}:
+        raise ValueError("terminal instruction policy is invalid")
     instruction_applied = bool(instruction_tokens)
-    if output_source != "substrate_model_decode" and not instruction_applied:
+    if (
+        output_source != "substrate_model_decode"
+        and not instruction_applied
+        # A research arm may withhold the instruction deliberately so its
+        # decode sees exactly what an ordinary decode sees. The disposition is
+        # still classified and still receipted; only the injection is skipped,
+        # and the policy is recorded below so the absence is attributable
+        # rather than looking like a dropped contract.
+        and instruction_policy != "suppressed"
+    ):
         raise ValueError("resident terminal output lacks its language instruction")
     language = {
         "source": output_source,
         "model_generated": True,
         "instruction_applied": instruction_applied,
+        "instruction_policy": instruction_policy,
         "instruction": decision.instruction,
         "instruction_sha256": _sha256_bytes(decision.instruction.encode("utf-8")),
         "instruction_token_count": len(instruction_tokens),
@@ -443,6 +456,7 @@ def validate_terminal_disposition_receipt(
             "source",
             "model_generated",
             "instruction_applied",
+            "instruction_policy",
             "instruction",
             "instruction_sha256",
             "instruction_token_count",
