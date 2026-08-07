@@ -9,6 +9,7 @@ bit-for-bit unchanged.
 from __future__ import annotations
 
 import json
+import math
 import re
 
 import numpy as np
@@ -23,7 +24,10 @@ from core.brain.llm.latent_cortex.branches import BranchEnsemble  # noqa: E402
 from core.brain.llm.latent_cortex.causal_receipt import (  # noqa: E402
     validate_causal_receipt,
 )
-from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
+from core.brain.llm.latent_cortex.engine import (  # noqa: E402
+    LatentCortexEngine,
+    _contract_admitted_branch_score,
+)
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
 from core.brain.llm.latent_cortex.governance import parameter_fingerprint  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
@@ -41,6 +45,13 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
 
 N_LAYERS = 8
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23, 2, 88]
+
+
+def test_contract_invalid_branch_cannot_win_on_a_higher_scalar_score():
+    scores = {0: 0.99, 1: 0.40}
+
+    assert _contract_admitted_branch_score(0, scores, {1}) == -math.inf
+    assert _contract_admitted_branch_score(1, scores, {1}) == pytest.approx(0.40)
 
 
 class _ExactEvidenceTokenizer:
@@ -121,6 +132,7 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.params_unchanged is True
     assert r.n_layers == N_LAYERS and r.prelude_end == 2 and r.coda_start == 6
     assert r.n_branches == 2 and r.n_slots == 4
+    assert r.branch_selection_admitted is True
     assert r.steps_taken >= 2
     assert r.branch_isolation["certified"] is True
     assert r.loop_stability["shared_train_inference_core"] is True
@@ -850,6 +862,47 @@ def test_invalid_schedule_falls_back_honestly(tiny_model):
     assert result.ok, "fallback must still answer"
     assert any(f.startswith("fallback_vanilla") for f in result.receipt.honest_flags)
     assert result.tokens, "vanilla fallback must decode"
+
+
+def test_no_contract_valid_branch_falls_back_before_verifier_selection(
+    tiny_model,
+    monkeypatch,
+):
+    class InvalidContractTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(_tokens):
+            return "A fluent answer without the required terminal contract."
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        InvalidContractTokenizer(),
+        config=_config(
+            decode_contract="final_answer_v1",
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    result = engine.reason(
+        prompt="Return the requested contract object.",
+        verifier=lambda _text: 1.0,
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert "branch_selection_no_contract_valid_candidate" in result.receipt.honest_flags
+    assert "fallback_vanilla:RuntimeError" in result.receipt.honest_flags
+    assert [row["valid"] for row in result.receipt.branch_contract] == [False, False]
+    assert result.receipt.branch_selection_admitted is False
 
 
 def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):

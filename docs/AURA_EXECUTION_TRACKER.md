@@ -37696,3 +37696,27 @@ smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene pass. This
 retires the one-branch lexical shortcut. It does not yet add paired-depth
 marginal-gain training, a vanilla identity lane, free-generation checkpoint
 selection, proxy admission, a positive gain, activation, or fusion.
+
+## Checkpoint 2026-08-07-010: Invalid Answers Cannot Win a Branch Election
+
+The task verifier previously scored every decoded branch before the public
+answer contract had authority over selection. A fluent but malformed response
+could therefore outrank a lower-scoring contract-valid answer. The receipt
+recorded each contract verdict, but that evidence was observational rather than
+causal.
+
+Contract validity is now an admission gate. Under `final_answer_v1`, invalid
+branches receive no selection authority regardless of their scalar verifier
+score. If every candidate is invalid, the live path enters the existing honest
+vanilla fallback before blind review or downstream repair can promote one; raw
+scientific campaigns with fallback disabled retain their malformed neural trace
+instead of silently padding it. The receipt also carries an explicit
+`branch_selection_admitted` bit, so its historical integer default cannot be
+mistaken for a latent winner when fallback occurred before admission.
+
+Engine, probe-cache, task-verifier, and causal-receipt tests pass `93/93`;
+smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene pass. This
+closes malformed-candidate admission. It does not repair the negative
+resident-32B result, add paired-depth marginal-gain training, preserve vanilla
+identity through latent decode, authorize another 32B campaign, or permit
+activation or fusion.

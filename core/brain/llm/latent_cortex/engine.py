@@ -178,6 +178,23 @@ def _logits_digest(logits) -> str:
     return hashlib.sha256(memoryview(arr)).hexdigest()
 
 
+def _contract_admitted_branch_score(
+    branch_index: int,
+    scores: Mapping[int, float],
+    valid_contract_branches: set[int] | None,
+) -> float:
+    """Exclude a known-invalid terminal candidate before branch selection."""
+
+    if branch_index not in scores:
+        raise KeyError("branch score is missing")
+    if valid_contract_branches is not None and branch_index not in valid_contract_branches:
+        return -math.inf
+    score = float(scores[branch_index])
+    if not math.isfinite(score):
+        raise ValueError("branch score must be finite")
+    return score
+
+
 class LatentCortexEngine:
     """Runs complete latent-reasoning episodes on one frozen model."""
 
@@ -4726,6 +4743,32 @@ class LatentCortexEngine:
                 )
                 text = self._decode_public_text(probe, receipt=receipt)
                 branch_probe_texts[branch.index] = text
+            valid_contract_branches: set[int] | None = None
+            if self.config.decode_contract == "final_answer_v1":
+                from core.brain.llm.latent_cortex.answer_contract import (
+                    contract_answer_state,
+                )
+
+                contract_states = {
+                    index: contract_answer_state(text)
+                    for index, text in sorted(branch_probe_texts.items())
+                }
+                receipt.branch_contract = [
+                    {
+                        "branch": index,
+                        "marker_count": state["marker_count"],
+                        "complete": state["complete"],
+                        "valid": state["valid"],
+                        "reason": str(state["reason"])[:120],
+                    }
+                    for index, state in contract_states.items()
+                ]
+                valid_contract_branches = {
+                    index for index, state in contract_states.items() if state["valid"]
+                }
+                if not valid_contract_branches and self.config.allow_vanilla_fallback:
+                    receipt.flag("branch_selection_no_contract_valid_candidate")
+                    raise RuntimeError("no_contract_valid_latent_branch")
             from core.brain.llm.latent_cortex.blind_review import (
                 run_decoy_balanced_review,
             )
@@ -4750,7 +4793,24 @@ class LatentCortexEngine:
             else:
                 if receipt.decoy_verification["selection_admitted"]:
                     verifier = pending_verifier
-                    winner = ensemble.select(score_fn=lambda branch: blind_scores[branch.index])
+                    if valid_contract_branches is not None:
+                        if not valid_contract_branches:
+                            receipt.flag("branch_selection_no_contract_valid_candidate")
+                        else:
+                            invalid_count = len(ensemble.branches) - len(
+                                valid_contract_branches
+                            )
+                            if invalid_count:
+                                receipt.flag(
+                                    f"branch_selection_contract_rejected:{invalid_count}"
+                                )
+                    winner = ensemble.select(
+                        score_fn=lambda branch: _contract_admitted_branch_score(
+                            branch.index,
+                            blind_scores,
+                            valid_contract_branches,
+                        )
+                    )
                     selection_basis = "task_verifier"
                     if math.isfinite(float(winner.score)):
                         branch_verifier_score = float(winner.score)
@@ -4758,27 +4818,6 @@ class LatentCortexEngine:
                     receipt.flag("branch_verifier_decoy_calibration_failed")
                     verifier = None
                     winner = select_without_task_verifier()
-            # CP180: selection is auditable against the PUBLIC contract —
-            # each probe's contract verdict (complete/valid/why-not) lands
-            # in the receipt beside the scalar scores.
-            if branch_probe_texts:
-                from core.brain.llm.latent_cortex.answer_contract import (
-                    contract_answer_state,
-                )
-
-                receipt.branch_contract = [
-                    {
-                        "branch": index,
-                        "marker_count": state["marker_count"],
-                        "complete": state["complete"],
-                        "valid": state["valid"],
-                        "reason": str(state["reason"])[:120],
-                    }
-                    for index, state in (
-                        (index, contract_answer_state(text))
-                        for index, text in sorted(branch_probe_texts.items())
-                    )
-                ]
         else:
             if pending_verifier is not None and self.tokenizer is not None:
                 receipt.flag("branch_verifier_skipped_budget")
@@ -5143,6 +5182,7 @@ class LatentCortexEngine:
             )
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
+        receipt.branch_selection_admitted = True
         receipt.steps_taken = winner.steps
         receipt.residual_trail = list(winner.halting.residual_trail)
         receipt.best_step = (

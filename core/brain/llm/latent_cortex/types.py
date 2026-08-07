@@ -1306,6 +1306,10 @@ class EpisodeReceipt:
     # independent vote.
     branch_exchange: dict[str, Any] = field(default_factory=dict)
     selected_branch: int = 0
+    # ``selected_branch`` retains its integer wire shape for historical
+    # receipts.  This bit distinguishes an admitted latent winner from the
+    # dataclass default when the episode falls back before branch admission.
+    branch_selection_admitted: bool = False
     exchanges: int = 0
     # Scoped durable-adapter activation. Zero calls means no recurrence-native
     # delta was resident; nonzero calls prove it was read only by slot windows.
@@ -1675,6 +1679,7 @@ class EpisodeReceipt:
             "kv_state_tree": dict(self.kv_state_tree),
             "branch_exchange": dict(self.branch_exchange),
             "selected_branch": self.selected_branch,
+            "branch_selection_admitted": self.branch_selection_admitted,
             "exchanges": self.exchanges,
             "recurrence_adapter": dict(self.recurrence_adapter),
             "latent_opt_applied": self.latent_opt_applied,
