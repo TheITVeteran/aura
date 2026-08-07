@@ -106,6 +106,41 @@ def _command(value: Any, *, role: str) -> list[str]:
     return [str(executable), *value[1:]]
 
 
+def _verify_mutable_output_excludes_explicit_inputs(
+    *,
+    source_root: Path,
+    output_root: Path,
+    runner: list[str],
+    broker_policy: list[Any],
+) -> None:
+    commands: list[tuple[str, list[str], Path]] = [("runner", runner, source_root)]
+    for index, specification in enumerate(broker_policy):
+        if not isinstance(specification, Mapping):
+            _fail("detached_broker_policy_invalid")
+        command = specification.get("command")
+        cwd_value = specification.get("cwd")
+        if (
+            not isinstance(command, list)
+            or not command
+            or any(not isinstance(item, str) or not item for item in command)
+            or not isinstance(cwd_value, str)
+            or not cwd_value
+        ):
+            _fail("detached_broker_policy_invalid")
+        cwd = _absolute_path(cwd_value, role=f"broker_{index}_cwd")
+        if not cwd.is_dir():
+            _fail("detached_broker_policy_invalid")
+        commands.append((f"broker_{index}", command, cwd))
+
+    for role, command, cwd in commands:
+        try:
+            explicit_inputs = detached._source_file_arguments(command, cwd)
+        except (OSError, ValueError) as exc:
+            raise PilotControllerError(f"{role}_explicit_input_inspection_failed") from exc
+        if any(path == output_root or path.is_relative_to(output_root) for path in explicit_inputs):
+            _fail(f"{role}_explicit_input_inside_execution_output_root")
+
+
 def load_config(path: Path) -> dict[str, Any]:
     raw = read_stable_bytes(path.resolve(strict=True), max_bytes=MAX_CONFIG_BYTES)
     try:
@@ -175,6 +210,12 @@ def load_config(path: Path) -> dict[str, Any]:
     )
     if output_root == source_root or not output_root.is_relative_to(source_root):
         _fail("execution_output_root_invalid")
+    _verify_mutable_output_excludes_explicit_inputs(
+        source_root=source_root,
+        output_root=output_root,
+        runner=runner,
+        broker_policy=broker_policy,
+    )
     for name, minimum, maximum in (
         ("max_attempts", 1, 100),
         ("retry_backoff_seconds", 1, 3600),

@@ -210,6 +210,63 @@ def test_config_hash_and_command_hash_are_fail_closed(tmp_path: Path) -> None:
         controller.load_config(path)
 
 
+@pytest.mark.parametrize("owner", ["runner", "broker"])
+def test_config_rejects_explicit_input_inside_mutable_output_root(
+    tmp_path: Path,
+    owner: str,
+) -> None:
+    config = _config(tmp_path)
+    campaign = Path(config["campaign_dir"])
+    campaign.mkdir()
+    audit = campaign / "contamination-audit.json"
+    audit.write_text("{}\n", encoding="utf-8")
+    body = {key: value for key, value in config.items() if key != "config_sha256"}
+    if owner == "runner":
+        command = [*config["runner_command"], "--contamination-audit", str(audit)]
+        body["runner_command"] = command
+        body["runner_command_sha256"] = controller._sha256(command)
+    else:
+        policy = [
+            {
+                "command": [sys.executable, "-c", "raise SystemExit(0)", str(audit)],
+                "cwd": config["source_root"],
+                "stdout_path": str(campaign / "broker.log"),
+                "timeout_s_max": 30.0,
+                "max_invocations": 1,
+            }
+        ]
+        body["detached_broker_policy"] = policy
+        body["detached_broker_policy_sha256"] = controller._sha256(policy)
+    config = {**body, "config_sha256": controller._sha256(body)}
+    path = tmp_path / f"{owner}-config.json"
+    path.write_bytes(controller.canonical_json_bytes(config) + b"\n")
+
+    with pytest.raises(
+        controller.PilotControllerError,
+        match=rf"{owner}(_0)?_explicit_input_inside_execution_output_root",
+    ):
+        controller.load_config(path)
+
+
+def test_config_accepts_explicit_input_outside_mutable_output_root(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    source = Path(config["source_root"])
+    audit = source / "campaign-inputs" / "contamination-audit.json"
+    audit.parent.mkdir()
+    audit.write_text("{}\n", encoding="utf-8")
+    command = [*config["runner_command"], "--contamination-audit", str(audit)]
+    body = {
+        **{key: value for key, value in config.items() if key != "config_sha256"},
+        "runner_command": command,
+        "runner_command_sha256": controller._sha256(command),
+    }
+    config = {**body, "config_sha256": controller._sha256(body)}
+    path = tmp_path / "external-input-config.json"
+    path.write_bytes(controller.canonical_json_bytes(config) + b"\n")
+
+    assert controller.load_config(path)["runner_command"] == command
+
+
 def test_event_journal_recovers_one_committed_event_after_state_write_gap(
     tmp_path: Path,
 ) -> None:
