@@ -161,7 +161,7 @@ def test_a_fused_candidate_that_regresses_ordinary_decode_is_not_activated(
 
     assert _run_pipeline(run_dir, monkeypatch, checkpoint_root="/tmp/ckpt") == 0
     decision = json.loads((run_dir / "DECISION.json").read_text())
-    assert decision["decision"] == "no_activation_fused_candidate_regressed"
+    assert decision["decision"] == "no_activation_attached_candidate_regressed"
     assert decision["evidence"]["ordinary_decode_preserved"] is False
     # The recurrent gain alone did not carry it.
     assert decision["evidence"]["recurrent_gain_reproduced"] is True
@@ -203,7 +203,7 @@ def test_a_candidate_that_holds_both_arms_is_staged_with_a_rollback(
 
     assert _run_pipeline(run_dir, monkeypatch, checkpoint_root="/tmp/ckpt") == 0
     decision = json.loads((run_dir / "DECISION.json").read_text())
-    assert decision["decision"] == "fused_candidate_passed_staged_for_activation"
+    assert decision["decision"] == "attached_candidate_passed_staged_for_activation"
     # A rollback target is recorded, and it is the untouched resident.
     assert decision["evidence"]["rollback_path"] == "/nonexistent/resident"
     assert decision["evidence"]["candidate_vanilla_correct"] == 14
@@ -243,3 +243,58 @@ def test_an_uninformative_battery_is_reported_as_such_not_as_a_recurrence_verdic
     assert decision["decision"] == "inconclusive_battery_uninformative"
     assert "not about recurrence" in decision["summary"]
     assert not (run_dir / "fused_candidate").exists()
+
+
+def test_the_candidate_is_attached_never_fused(tmp_path, monkeypatch):
+    """The adapter is a ScopedLoRALinear whose delta applies only at latent
+    slot positions. Fusing folds it into the linear weights and removes that
+    scoping, making the candidate a different function on every ordinary token
+    -- so it would be re-validated in a form it was never trained in, and would
+    most likely fail the ordinary-decode gate for a reason unrelated to its
+    quality. Live attachment exists, so fusion buys nothing and risks the run.
+    """
+    run_dir = tmp_path / "run"
+    _write(run_dir / "sweep" / "verdict.json", _sweep_verdict(vanilla=13, best=16))
+    invoked: list[str] = []
+
+    def _fake_run(_run_dir, argv, *, timeout_s):  # noqa: ARG001
+        joined = " ".join(argv)
+        invoked.append(joined)
+        if "run_rlc_checkpoint_sweep.py" in joined:
+            _write(
+                run_dir / "checkpoints" / "verdict.json",
+                {
+                    "best_checkpoint": "sequence-00000060-step-00000059-def",
+                    "best_correct": 3,
+                    "beats_ordinary_decode": True,
+                },
+            )
+        elif "run_rlc_reconciliation_sweep.py" in joined:
+            _write(
+                run_dir / "candidate_sweep" / "verdict.json",
+                {
+                    "arms": {"vanilla": {"correct": 14}, "rlc_nodisp": {"correct": 18}},
+                    "vanilla_correct": 14,
+                    "best_recurrent_arm": "rlc_nodisp",
+                    "best_recurrent_correct": 18,
+                },
+            )
+        return 0
+
+    monkeypatch.setattr(pipeline, "_run", _fake_run)
+    assert _run_pipeline(run_dir, monkeypatch, checkpoint_root="/tmp/ckpt") == 0
+
+    assert not any("fuse_rlc_candidate" in call for call in invoked), (
+        "phase 3 must not fuse"
+    )
+    revalidation = [c for c in invoked if "run_rlc_reconciliation_sweep.py" in c]
+    assert len(revalidation) == 1
+    call = revalidation[0]
+    # Re-validated against the untouched resident with the adapter attached,
+    # on a seed the candidate was not selected on.
+    assert "--adapter /tmp/ckpt/sequence-00000060-step-00000059-def" in call
+    assert "--model /nonexistent/resident" in call
+    assert "--seed 20260814" in call
+
+    decision = json.loads((run_dir / "DECISION.json").read_text())
+    assert decision["decision"] == "attached_candidate_passed_staged_for_activation"

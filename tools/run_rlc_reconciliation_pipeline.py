@@ -8,16 +8,20 @@ and exits zero rather than proceeding on hope.
 
   1 frozen sweep      can the recurrent path reach an ordinary decode at all?
   2 checkpoint sweep  does any retained adapter beat the frozen path?
-  3 fusion candidate  does merging that adapter leave the model better?
+  3 attached candidate does that adapter hold up on questions it has not seen?
   4 decision          what is true, and what was therefore done.
 
-Phase 3 exists because "fuse the adapter" is not a merge on this program. The
+Phase 3 attaches rather than fuses, and that is the whole point. The
 recurrence adapter is a ScopedLoRALinear: its delta applies at latent slot
-positions and nowhere else. Standard fusion folds that delta into the linear
-weights unconditionally, so the fused model is a different function on every
-ordinary token too. A fused candidate is therefore a new model that has to
-re-earn ordinary decode, not a packaging step -- and this pipeline refuses to
-activate one that regresses it.
+positions and nowhere else, which is the form it was trained in and the form
+the bisect measured. Standard fusion folds that delta into the linear weights
+unconditionally, so a fused model is a different function on every ordinary
+token -- it would have to re-earn ordinary decode against a change nobody
+asked for, and would most likely fail for a reason unrelated to the adapter's
+quality. Live attachment already exists, so fusion buys nothing and risks the
+result. Attachment also sharpens the ordinary-decode gate: with the scoping
+intact, ordinary decode should be untouched, so any regression there means the
+scoping is not holding and the candidate must not be activated.
 """
 from __future__ import annotations
 
@@ -332,43 +336,24 @@ def main() -> int:
         return 0
 
     # ── Phase 3 ──────────────────────────────────────────────────────────
-    # A positive checkpoint is a candidate, not a promotion. Fusing a
-    # slot-scoped adapter changes ordinary decode too, so the fused model
-    # re-earns both arms on a fresh seed before anything is activated.
-    _phase_status(run_dir, phase="fusing")
-    candidate_dir = run_dir / "fused_candidate"
+    # A positive checkpoint is a candidate, not a promotion, and it re-earns
+    # both arms on a seed it has never seen before anything is staged.
+    #
+    # The candidate is ATTACHED, not fused. The recurrence adapter is a
+    # ScopedLoRALinear: its delta applies at latent slot positions and nowhere
+    # else, which is the form it was trained in and the form the checkpoint
+    # bisect measured it in. Fusing folds that delta into the linear weights
+    # and removes the scoping, so a fused model is a different function on
+    # every ordinary token -- it would have to re-earn ordinary decode against
+    # a change nobody asked for, and would most likely fail a gate for a
+    # reason that has nothing to do with the adapter's quality. Live
+    # attachment already exists (core/brain/llm/latent_cortex/
+    # live_adapter_activation.py), so fusion buys nothing here and risks the
+    # whole result.
+    _phase_status(run_dir, phase="revalidating_candidate_attached")
     best_checkpoint = str(checkpoint_verdict.get("best_checkpoint") or "")
     checkpoint_path = Path(args.checkpoint_root) / best_checkpoint
-    code = _run(
-        run_dir,
-        [
-            sys.executable,
-            str(REPO_ROOT / "tools" / "fuse_rlc_candidate.py"),
-            "--model",
-            args.model,
-            "--adapter",
-            str(checkpoint_path),
-            "--out",
-            str(candidate_dir),
-        ],
-        timeout_s=args.phase_timeout_s,
-    )
-    if code != 0 or not (candidate_dir / "config.json").exists():
-        _decide(
-            run_dir,
-            {
-                "decision": "no_fusion_candidate_merge_failed",
-                "summary": (
-                    "A retained adapter beat ordinary decode, but merging it "
-                    "into the base weights failed. The resident is untouched."
-                ),
-                "evidence": {"arm_scores": scores, "fuse_exit": code},
-            },
-        )
-        return 0
-
-    # Re-earn both arms on a seed the candidate has never seen.
-    _phase_status(run_dir, phase="revalidating_candidate")
+    candidate_dir = checkpoint_path
     revalidation_dir = run_dir / "candidate_sweep"
     code = _run(
         run_dir,
@@ -376,7 +361,9 @@ def main() -> int:
             sys.executable,
             str(REPO_ROOT / "tools" / "run_rlc_reconciliation_sweep.py"),
             "--model",
-            str(candidate_dir),
+            args.model,
+            "--adapter",
+            str(checkpoint_path),
             "--out-dir",
             str(revalidation_dir),
             "--seed",
@@ -407,15 +394,17 @@ def main() -> int:
     candidate_best = int(candidate_verdict.get("best_recurrent_correct", -1))
     resident_vanilla = int(sweep_verdict.get("vanilla_correct") or 0)
 
-    # Fusing folded a slot-scoped delta into every position, so the ordinary
-    # lane is the one most likely to have silently regressed. It is the gate.
+    # Attachment keeps the delta scoped to latent slots, so ordinary decode
+    # should be untouched. That makes it a sharp gate rather than a lenient
+    # one: any ordinary-lane regression means the scoping is not holding, and
+    # a candidate whose scoping does not hold must not be activated.
     ordinary_preserved = candidate_vanilla >= resident_vanilla
     recurrent_gain = candidate_best > resident_vanilla
     if not (ordinary_preserved and recurrent_gain):
         _decide(
             run_dir,
             {
-                "decision": "no_activation_fused_candidate_regressed",
+                "decision": "no_activation_attached_candidate_regressed",
                 "summary": (
                     "The fused candidate did not re-earn its place. Folding a "
                     "slot-scoped adapter into the base weights changes every "
@@ -439,7 +428,7 @@ def main() -> int:
     _decide(
         run_dir,
         {
-            "decision": "fused_candidate_passed_staged_for_activation",
+            "decision": "attached_candidate_passed_staged_for_activation",
             "summary": (
                 "The fused candidate held ordinary decode and improved the "
                 "recurrent path on a fresh seed. It is staged at the path "

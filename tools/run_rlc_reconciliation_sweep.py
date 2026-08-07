@@ -93,6 +93,7 @@ def decode_fingerprint(
     seed: int,
     per_domain: int,
     arm: str = "",
+    adapter: str = "",
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -105,8 +106,11 @@ def decode_fingerprint(
     """
     body = json.dumps(
         {
+            # An attached adapter is a different model. Without it in the
+            # identity, a candidate's cells could resume as frozen-base cells.
+            "adapter": str(adapter),
             "arm": str(arm),
-            "contract": "rlc_reconciliation_decode.v2",
+            "contract": "rlc_reconciliation_decode.v3",
             "episode_wall_s": float(episode_wall_s),
             "max_tokens": int(max_tokens),
             "model": str(model),
@@ -381,6 +385,17 @@ def main() -> int:
         default=",".join(a[0] for a in ARMS),
         help="comma-separated subset of arms to execute",
     )
+    parser.add_argument(
+        "--adapter",
+        default="",
+        help=(
+            "Optional recurrence adapter to ATTACH (not fuse) before the run. "
+            "Attachment preserves ScopedLoRALinear slot scoping, which is the "
+            "form the adapter was trained in; fusing folds the delta into the "
+            "linear weights and changes ordinary decode at every token."
+        ),
+    )
+    parser.add_argument("--adapter-manifest", default="")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -436,6 +451,7 @@ def main() -> int:
             seed=args.seed,
             per_domain=args.per_domain,
             arm=name,
+            adapter=args.adapter,
         )
         for name, tokens in arm_tokens.items()
     }
@@ -484,6 +500,30 @@ def main() -> int:
         print(f"memory envelope: {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         print("model loaded", flush=True)
+        if args.adapter:
+            from core.brain.llm.latent_cortex.resident_adapter_loader import (
+                load_resident_adapter,
+            )
+
+            manifest_path = Path(args.adapter_manifest) if args.adapter_manifest else None
+            if manifest_path is None or not manifest_path.exists():
+                found = list(Path(args.adapter).parent.rglob(
+                    "recurrence_adapter_manifest.json"
+                ))
+                manifest_path = found[0] if found else None
+            if manifest_path is None:
+                print("adapter requested but no manifest found", file=sys.stderr)
+                return 2
+            projections = load_resident_adapter(
+                model,
+                Path(args.adapter),
+                json.loads(manifest_path.read_text(encoding="utf-8")),
+            )
+            print(
+                f"adapter attached: {args.adapter} ({projections} projections, "
+                f"slot scoping preserved)",
+                flush=True,
+            )
 
         for arm, steps, policy, _override in selected:
             tokens = arm_tokens[arm]
