@@ -2017,6 +2017,7 @@ def test_effective_full_stack_shape_is_frozen_not_cli_placeholder():
     assert effective.decode_contract == "final_answer_v1"
     assert effective.decode_contract_grace_tokens == 512
     assert effective.verifier_probe_max_tokens == 192
+    assert effective.answer_replacement_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -2049,6 +2050,7 @@ def test_full_stack_mechanism_profiles_toggle_one_mechanism(
     assert effective.latent_opt.enabled is latent_opt
     assert effective.fast_weights.enabled is fast_weights
     assert effective.branches.exchange_gamma == pytest.approx(exchange_gamma)
+    assert effective.answer_replacement_enabled is False
     if profile == "resident_full_stack_no_branch_exchange":
         assert effective.branches.exchange_interval > effective.recurrence.max_steps
 
@@ -2082,6 +2084,44 @@ def test_v2_execution_spec_overrides_cli_and_preserves_training_graph():
     assert effective.decode_contract == "final_answer_v1"
     assert effective.decode_contract_grace_tokens == 128
     assert effective.verifier_probe_max_tokens == 128
+    assert effective.answer_replacement_enabled is False
+
+
+def test_paired_campaign_contract_discloses_raw_output_attribution_policy():
+    args = SimpleNamespace(
+        rlc_profile="recurrence_attribution",
+        profile="primary",
+        n_slots=4,
+        branches=2,
+        rlc_steps=2,
+        decode_max_tokens=128,
+        difficulty=2,
+        task_registry_version="2026.08.06.1",
+        seed_count=4,
+        seed_values=(1, 2, 3, 4),
+        domain_values=("mathematics",),
+        episode_timeout=600.0,
+        load_timeout=1200.0,
+        warmup_timeout=600.0,
+        arm_timeout=14400.0,
+        campaign_timeout=43200.0,
+        equal_compute_max_samples=8,
+        max_infra_attempts=3,
+        sequential_look_values=(),
+        sequential_alpha_weight_values=(),
+    )
+    policy = runner._execution_config(args, {})["response_contract_policy"]
+
+    assert policy == {
+        "schema": "public_response_contract_v1",
+        "termination": "final_answer_v1",
+        "contract_grace_tokens": 128,
+        "verifier_probe_max_tokens": 128,
+        "applies_identically_to_all_decode_arms": True,
+        "output_editing": False,
+        "rlc_answer_replacement_enabled": False,
+        "causal_attribution_rule": "raw_terminal_decode_all_arms",
+    }
 
 
 def test_vanilla_decode_uses_same_contract_stop_and_bounded_grace(monkeypatch):

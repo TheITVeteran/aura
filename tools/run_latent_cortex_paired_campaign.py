@@ -1457,6 +1457,11 @@ def _build_rlc_config(
             ),
             decode_repetition_penalty=1.25,
             decode_repetition_window=72,
+            # Paired attribution must score the model's raw terminal decode on
+            # every arm.  The live RLC answer-replacement gate is RLC-only
+            # post-processing; enabling it here while vanilla remains raw
+            # confounds recurrence with asymmetric output editing.
+            answer_replacement_enabled=False,
             allow_vanilla_fallback=False,
             escape={"enabled": False},
         )
@@ -1495,6 +1500,7 @@ def _build_rlc_config(
             decode_bridge_policy="assistant_answer_v3",
             decode_repetition_penalty=1.25,
             decode_repetition_window=72,
+            answer_replacement_enabled=False,
             allow_vanilla_fallback=False,
         )
     return CortexConfig(
@@ -1507,6 +1513,7 @@ def _build_rlc_config(
         verifier_probe_max_tokens=verifier_probe_tokens,
         decode_repetition_penalty=1.25,
         decode_repetition_window=72,
+        answer_replacement_enabled=False,
         allow_vanilla_fallback=False,
     )
 
@@ -1556,6 +1563,8 @@ def _execution_config(
             "verifier_probe_max_tokens": effective.verifier_probe_max_tokens,
             "applies_identically_to_all_decode_arms": True,
             "output_editing": False,
+            "rlc_answer_replacement_enabled": effective.answer_replacement_enabled,
+            "causal_attribution_rule": "raw_terminal_decode_all_arms",
         },
         "episode_timeout_s": args.episode_timeout,
         "load_timeout_s": args.load_timeout,
