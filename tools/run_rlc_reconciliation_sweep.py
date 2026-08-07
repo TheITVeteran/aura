@@ -308,7 +308,14 @@ def _build_config(
         # rlc_asrun is not reproducing the arm it is supposed to reproduce, and
         # every recurrent arm would be measured against a decode discipline the
         # original never had.
-        decode_repetition_penalty=1.25,
+        # The deployed system decodes at penalty 1.0; so does the ordinary
+        # control. 1.25 was added here to stop a degenerate "to to to to"
+        # probe, and it is actively hostile to this task family: step-by-step
+        # arithmetic repeats phrasing, variable names and digits by
+        # construction, so penalizing repetition penalizes the reasoning. It
+        # also meant the incumbent decode was not ordinary decode, which
+        # breaks the floor the whole design depends on.
+        decode_repetition_penalty=1.0 if full else 1.25,
         decode_repetition_window=72,
         decode_bridge_policy="none",
         # The deployed system runs "vanilla_incumbent": every subsystem still
