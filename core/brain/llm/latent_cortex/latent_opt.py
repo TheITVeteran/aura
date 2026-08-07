@@ -148,7 +148,17 @@ class OptTrace:
                 self.verifier_proxy_tolerance_scale,
                 12,
             ),
-            "score_trail": [round(value, 12) for value in self.verifier_score_trail],
+            # A non-finite entry is the "no verified score" sentinel, not a
+            # measurement. It has to serialize as absence: the causal receipt
+            # is canonicalized with allow_nan=False, so leaking -inf here
+            # raises inside receipt construction and takes down an episode
+            # that had otherwise completed. This path only executes once a
+            # task verifier is admitted, which is why it survived every run
+            # that had no verifier to admit.
+            "score_trail": [
+                None if not math.isfinite(float(value)) else round(float(value), 12)
+                for value in self.verifier_score_trail
+            ],
             "decisions": [dict(row) for row in self.verifier_decisions],
             "score_improvement_accepts": self.verifier_score_improvement_accepts,
             "proxy_nonregression_accepts": (

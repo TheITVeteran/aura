@@ -421,6 +421,7 @@ def _run_rlc(
     *,
     wall_clock_s: float = 720.0,
     verifier=None,
+    objective: str = "",
 ) -> tuple[str, dict[str, Any]]:
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
     from core.brain.llm.latent_cortex.types import ComputeBudget
@@ -436,7 +437,18 @@ def _run_rlc(
     kwargs: dict[str, Any] = {}
     if verifier is not None:
         kwargs["verifier"] = verifier
-    result = engine.reason(token_ids=prompt_tokens, budget=budget, **kwargs)
+    if objective:
+        # The engine derives its verification objective from prompt/messages.
+        # Passing token_ids alone -- which this harness did to control the
+        # chat template exactly -- leaves the objective empty, and BOTH the
+        # generative and counterfactual verifiers then refuse to run with
+        # "verification_objective_unavailable" no matter how well the verifier
+        # itself was admitted. The messages form carries the objective while
+        # keeping the same rendered tokens.
+        kwargs["messages"] = [{"role": "user", "content": objective}]
+        result = engine.reason(budget=budget, **kwargs)
+    else:
+        result = engine.reason(token_ids=prompt_tokens, budget=budget, **kwargs)
     receipt = result.receipt.to_dict()
     # Latency has to be attributable, or "make it faster" is guesswork. The
     # engine's own phase accounting is preferred; the wall time is the floor.
@@ -667,6 +679,11 @@ def main() -> int:
                             tokenizer,
                             wall_clock_s=args.episode_wall_s,
                             verifier=verifier,
+                            objective=(
+                                task.public.prompt
+                                if spec.profile in {"full", "full_oracle"}
+                                else ""
+                            ),
                         )
                 except Exception as exc:  # noqa: BLE001 - recorded, never silent
                     # A harness fault must be visible as a fault. It is never

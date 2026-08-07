@@ -1209,6 +1209,35 @@ class WeightIntegrityProof:
         )
 
 
+def _finite_record(value: Any) -> Any:
+    """Strip non-finite sentinels from anything about to become a receipt.
+
+    Internally the cortex uses +/-inf to mean "no verified score exists yet" --
+    a fine sentinel for a comparison, and meaningless in a record. The causal
+    receipt is canonicalized with ``allow_nan=False``, so one leaked sentinel
+    raises inside receipt construction and destroys an episode that had
+    already produced its answer.
+
+    Sanitizing field by field is the wrong altitude: the sentinels arrive from
+    branch scores, latent-optimization score trails, verifier arbitration, and
+    anywhere else a comparison starts at an extremum. This is the single
+    boundary all of them cross. Absence serializes as null, which is what the
+    sentinel meant in the first place.
+
+    None of this was reachable until a task verifier could be admitted, which
+    is why the entire class survived every run this program has done.
+    """
+    if isinstance(value, bool) or isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite_record(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite_record(v) for v in value]
+    return value
+
+
 @dataclass
 class EpisodeReceipt:
     """Everything one reasoning episode actually did — the honesty record."""
@@ -1646,6 +1675,9 @@ class EpisodeReceipt:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        return _finite_record(self._to_dict_raw())
+
+    def _to_dict_raw(self) -> dict[str, Any]:
         return {
             "episode_id": self.episode_id,
             "domain": self.domain,
@@ -1695,7 +1727,18 @@ class EpisodeReceipt:
             "first_logits_digest_spec": dict(self.first_logits_digest_spec),
             "best_step": self.best_step,
             "reverted_to_best": self.reverted_to_best,
-            "branch_scores": [round(s, 6) for s in self.branch_scores],
+            # An unscored branch carries the -inf sentinel internally, which
+            # says no verified score exists -- not a score of negative
+            # infinity. Consumers keep the float; the SERIALIZED receipt must
+            # say "unscored", because it is canonicalized with allow_nan=False
+            # and the sentinel would otherwise raise during receipt
+            # construction and destroy an episode that already had its answer.
+            # Only reachable once a task verifier is admitted, which is why no
+            # prior run in this program ever hit it.
+            "branch_scores": [
+                None if not math.isfinite(float(s)) else round(float(s), 6)
+                for s in self.branch_scores
+            ],
             "branch_contract": [dict(row) for row in self.branch_contract],
             "verifier_preflight": dict(self.verifier_preflight),
             "blind_review": dict(self.blind_review),
