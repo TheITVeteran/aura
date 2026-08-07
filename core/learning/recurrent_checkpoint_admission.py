@@ -16,7 +16,15 @@ from typing import Any, Final, Never
 
 FREE_GENERATION_REPORT_SCHEMA: Final = "aura.rlc.recurrent_checkpoint_free_generation.v2"
 CHECKPOINT_ADMISSION_SCHEMA: Final = "aura.rlc.recurrent_checkpoint_behavioral_admission.v1"
-_ARMS: Final = frozenset({"initial_adapter", "trained_adapter"})
+CHECKPOINT_ADMISSION_SCHEMA_V2: Final = (
+    "aura.rlc.recurrent_checkpoint_behavioral_admission.v2"
+)
+# ``ordinary_decode`` is the vanilla control: the same frozen weights answering
+# without the recurrent path at all. Without it an admission can only say a
+# trained adapter beat an untrained adapter on the same degraded path, which is
+# exactly what the 2026-08-06 campaign proved is not enough -- adapter+RLC
+# scored 3/28 while ordinary decode on identical weights scored 13/28.
+_ARMS: Final = frozenset({"initial_adapter", "trained_adapter", "ordinary_decode"})
 _MAX_TASKS: Final = 256
 _MAX_DEPTHS: Final = 8
 _MAX_RESPONSE_CHARS: Final = 32_768
@@ -370,13 +378,45 @@ def validate_recurrence_task_free_generation_report(
     return report
 
 
+_ANSWER_MARKER: Final = "FINAL_ANSWER:"
+
+
+def _is_answer_only(text: object) -> bool:
+    """True when a response states an answer without doing any work first.
+
+    Structural, not a length threshold: everything before the answer marker is
+    the reasoning, and a response that has none of it answered without working.
+    A response with no marker at all is a different failure (it is graded
+    incorrect on its own terms) and is not counted here.
+    """
+
+    if not isinstance(text, str):
+        return False
+    index = text.find(_ANSWER_MARKER)
+    if index < 0:
+        return False
+    return not text[:index].strip()
+
+
+def _answer_only_count(records: Sequence[Mapping[str, Any]]) -> int:
+    return sum(1 for row in records if _is_answer_only(row.get("response_text")))
+
+
 def build_checkpoint_behavioral_admission(
     *,
     initial_report: Mapping[str, Any],
     trained_report: Mapping[str, Any],
     task_manifest: Sequence[Mapping[str, Any]],
+    ordinary_decode_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Require strict held-out gain attributable to training and recurrence depth."""
+    """Require strict held-out gain over training, depth, and ordinary decode.
+
+    ``ordinary_decode_report`` is the vanilla control on the same frozen
+    weights and the same tasks. It is not optional in effect: an admission
+    built without it is sealed unadmitted, because improving on an untrained
+    adapter proves nothing about whether the recurrent path is worth running
+    at all. Historical v1 receipts stay replayable under their own schema.
+    """
 
     initial = validate_recurrence_task_free_generation_report(
         initial_report,
@@ -386,6 +426,18 @@ def build_checkpoint_behavioral_admission(
         trained_report,
         task_manifest=task_manifest,
     )
+    ordinary: dict[str, Any] | None = None
+    if ordinary_decode_report is not None:
+        ordinary = validate_recurrence_task_free_generation_report(
+            ordinary_decode_report,
+            task_manifest=task_manifest,
+        )
+        if (
+            ordinary["arm"] != "ordinary_decode"
+            or ordinary["task_manifest_sha256"] != trained["task_manifest_sha256"]
+            or ordinary["task_ids"] != trained["task_ids"]
+        ):
+            _fail("recurrent_checkpoint_admission_ordinary_control_invalid")
     if (
         initial["arm"] != "initial_adapter"
         or trained["arm"] != "trained_adapter"
@@ -413,6 +465,9 @@ def build_checkpoint_behavioral_admission(
         trained_depth_regressions += int(trained_deep < trained_shallow)
     aggregate_gain = trained["total_correct"] - initial["total_correct"]
     depth_interaction = trained_depth_delta - initial_depth_delta
+    ordinary_correct = None if ordinary is None else int(ordinary["total_correct"])
+    trained_answer_only = _answer_only_count(trained["records"])
+    ordinary_answer_only = None if ordinary is None else _answer_only_count(ordinary["records"])
     gates = {
         "complete_episode_execution": all(
             row["episode_ok"] and row["branch_selection_admitted"] for row in trained["records"]
@@ -420,14 +475,45 @@ def build_checkpoint_behavioral_admission(
         "strict_heldout_free_generation_gain": aggregate_gain > 0,
         "positive_training_by_depth_interaction": depth_interaction > 0,
         "no_trained_depth_regressions": trained_depth_regressions == 0,
+        # The floor. A checkpoint that answers fewer held-out questions than
+        # the same weights answering ordinarily has not earned the recurrent
+        # path, however much it improved on its own untrained starting point.
+        "beats_ordinary_decode": (
+            ordinary_correct is not None
+            and int(trained["total_correct"]) > ordinary_correct
+        ),
+        # Answer-span supervision pays a model to stop reasoning: emitting the
+        # answer immediately is the cheapest way to make it predictable. The
+        # cp796 and role-v6 runs did exactly that -- median generated tokens
+        # fell to 28 against 452 for the untrained path -- while validation
+        # cross-entropy fell smoothly and monotonically the entire way. No
+        # teacher-forced loss can see this, so it is gated on behavior: the
+        # trained arm may not answer without working more often than the
+        # ordinary path does.
+        "no_answer_only_collapse": (
+            ordinary_answer_only is not None
+            and trained_answer_only <= ordinary_answer_only
+        ),
     }
-    body = {
-        "schema": CHECKPOINT_ADMISSION_SCHEMA,
-        "decision": (
+    decision = (
+        "reject_no_ordinary_decode_control"
+        if ordinary is None
+        else (
             "admit_bounded_next_scale_proxy"
             if all(gates.values())
             else "reject_checkpoint_behavioral_gain_unproven"
+        )
+    )
+    body = {
+        "schema": CHECKPOINT_ADMISSION_SCHEMA_V2,
+        "ordinary_decode_report_sha256": (
+            None if ordinary is None else ordinary["report_sha256"]
         ),
+        "ordinary_decode_correct": ordinary_correct,
+        "trained_correct": int(trained["total_correct"]),
+        "trained_answer_only_responses": trained_answer_only,
+        "ordinary_answer_only_responses": ordinary_answer_only,
+        "decision": decision,
         "initial_report_sha256": initial["report_sha256"],
         "trained_report_sha256": trained["report_sha256"],
         "execution_spec_sha256": initial["execution_spec_sha256"],
@@ -440,7 +526,7 @@ def build_checkpoint_behavioral_admission(
         "training_by_depth_interaction": depth_interaction,
         "trained_depth_regressions": trained_depth_regressions,
         "gates": gates,
-        "admitted": all(gates.values()),
+        "admitted": ordinary is not None and all(gates.values()),
         "claim_flags": {
             "resident_32b_gain_proven": False,
             "frontier_level_proven": False,
@@ -457,6 +543,7 @@ def validate_checkpoint_behavioral_admission(
     initial_report: Mapping[str, Any],
     trained_report: Mapping[str, Any],
     task_manifest: Sequence[Mapping[str, Any]],
+    ordinary_decode_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         _fail("recurrent_checkpoint_admission_invalid")
@@ -464,6 +551,7 @@ def validate_checkpoint_behavioral_admission(
         initial_report=initial_report,
         trained_report=trained_report,
         task_manifest=task_manifest,
+        ordinary_decode_report=ordinary_decode_report,
     )
     if dict(value) != expected:
         _fail("recurrent_checkpoint_admission_replay_mismatch")
@@ -472,6 +560,7 @@ def validate_checkpoint_behavioral_admission(
 
 __all__ = [
     "CHECKPOINT_ADMISSION_SCHEMA",
+    "CHECKPOINT_ADMISSION_SCHEMA_V2",
     "FREE_GENERATION_REPORT_SCHEMA",
     "RecurrentCheckpointAdmissionError",
     "build_checkpoint_behavioral_admission",

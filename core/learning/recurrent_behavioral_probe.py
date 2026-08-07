@@ -175,8 +175,101 @@ def build_behavioral_probe_report(
     )
 
 
+def build_ordinary_decode_probe_report(
+    model: Any,
+    tokenizer: Any,
+    tasks: list[Any],
+    *,
+    spec: RLCExecutionSpec,
+    adapter_sha256: str,
+    task_manifest_sha256: str,
+    seed: int,
+) -> dict[str, Any]:
+    """The vanilla control: the same weights answering without the RLC path.
+
+    Reported at every depth coordinate the recurrent arms use so the two
+    reports are directly comparable, even though ordinary decode has no
+    recurrent depth -- the same generation is recorded at each coordinate
+    because the ordinary path does not vary with it. Without this arm an
+    admission can only compare a trained adapter to an untrained adapter on
+    the same path, which is how a checkpoint scoring 3/28 passed review while
+    ordinary decode on identical weights scored 13/28.
+    """
+
+    import mlx.core as mx
+    from mlx_lm import stream_generate
+
+    from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
+
+    depths = tuple(sorted({1, spec.recurrent_steps}))
+    records: list[dict[str, Any]] = []
+    for task_ordinal, task in enumerate(tasks):
+        prompt_tokens, _answer_tokens = tokenize_task(
+            tokenizer,
+            task.prompt,
+            task.answer,
+        )
+        generation_seed = paired_generation_seed(seed, task_ordinal, task.task_id, 1)
+        mx.random.seed(generation_seed)
+        rendered = tokenizer.decode(prompt_tokens)
+        pieces: list[str] = []
+        for response in stream_generate(
+            model, tokenizer, prompt=rendered, max_tokens=320
+        ):
+            pieces.append(response.text)
+            if "}" in response.text and is_contract_complete("".join(pieces)):
+                break
+        text = "".join(pieces)
+        tokens = list(tokenizer.encode(text, add_special_tokens=False))
+        grade = dict(task.grade(text))
+        grade["correct"] = bool(grade.get("correct"))
+        receipt_payload = {
+            "schema": "aura.rlc.ordinary_decode_probe.v1",
+            "arm": "ordinary_decode",
+            "generation_seed": generation_seed,
+            "recurrent_steps": 0,
+        }
+        for depth in depths:
+            records.append(
+                {
+                    "task_id": task.task_id,
+                    "depth": depth,
+                    "response_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "response_text": text,
+                    "tokens_sha256": hashlib.sha256(
+                        canonical_json_bytes(tokens)
+                    ).hexdigest(),
+                    "tokens": list(tokens),
+                    "token_count": len(tokens),
+                    "correct": bool(grade["correct"]),
+                    "grade_receipt": dict(grade),
+                    "episode_ok": True,
+                    "episode_reason": "",
+                    "decode_termination": "contract_complete",
+                    "branch_selection_admitted": True,
+                    "decode_incumbent_policy": "vanilla_incumbent",
+                    "episode_receipt_sha256": hashlib.sha256(
+                        canonical_json_bytes(receipt_payload)
+                    ).hexdigest(),
+                    "episode_receipt": receipt_payload,
+                }
+            )
+        mx.synchronize()
+        mx.clear_cache()
+    return build_free_generation_report(
+        arm="ordinary_decode",
+        adapter_sha256=adapter_sha256,
+        execution_spec_sha256=spec.sha256,
+        task_manifest_sha256=task_manifest_sha256,
+        task_ids=[task.task_id for task in tasks],
+        depths=depths,
+        records=records,
+    )
+
+
 __all__ = [
     "build_behavioral_probe_report",
+    "build_ordinary_decode_probe_report",
     "canonical_json_bytes",
     "free_generation_sampling_config",
     "paired_generation_seed",

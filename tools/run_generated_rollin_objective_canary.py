@@ -49,6 +49,7 @@ from core.learning.recurrent_behavioral_probe import (  # noqa: E402
     build_behavioral_probe_report as _free_generation_report,
 )
 from core.learning.recurrent_behavioral_probe import (  # noqa: E402
+    build_ordinary_decode_probe_report,
     free_generation_sampling_config,
     paired_generation_seed,
 )
@@ -528,16 +529,30 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
+        # The vanilla floor. Measured on the same weights and the same tasks,
+        # after training, because the base weights never move -- only the
+        # adapter does, and the ordinary path does not read it.
+        ordinary_decode_report = build_ordinary_decode_probe_report(
+            model,
+            tokenizer,
+            proxy_tasks,
+            spec=spec,
+            adapter_sha256=adapter_after,
+            task_manifest_sha256=proxy_manifest_sha256,
+            seed=seed,
+        )
         behavioral_admission = build_checkpoint_behavioral_admission(
             initial_report=free_generation_before,
             trained_report=free_generation_after,
             task_manifest=proxy_manifest,
+            ordinary_decode_report=ordinary_decode_report,
         )
         validate_checkpoint_behavioral_admission(
             behavioral_admission,
             initial_report=free_generation_before,
             trained_report=free_generation_after,
             task_manifest=proxy_manifest,
+            ordinary_decode_report=ordinary_decode_report,
         )
         out_dir.mkdir(parents=True, exist_ok=False)
         mx.save_safetensors(str(out_dir / "adapter.safetensors"), adapter)

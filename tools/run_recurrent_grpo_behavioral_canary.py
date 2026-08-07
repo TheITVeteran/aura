@@ -31,6 +31,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 from core.learning.grpo import group_advantages, reward_from_verdict  # noqa: E402
 from core.learning.recurrent_behavioral_probe import (  # noqa: E402
     build_behavioral_probe_report,
+    build_ordinary_decode_probe_report,
     canonical_json_bytes,
     free_generation_sampling_config,
     tokenize_task,
@@ -524,6 +525,16 @@ def run_canary(
             task_manifest_sha256=proxy_manifest_sha256,
             seed=seed,
         )
+        # The vanilla floor: same weights, same tasks, no recurrent path.
+        ordinary = build_ordinary_decode_probe_report(
+            model,
+            tokenizer,
+            proxy_tasks,
+            spec=spec,
+            adapter_sha256=adapter_after,
+            task_manifest_sha256=proxy_manifest_sha256,
+            seed=seed,
+        )
         admission: dict[str, Any] | None = None
         admission_error = ""
         try:
@@ -531,12 +542,14 @@ def run_canary(
                 initial_report=before,
                 trained_report=after,
                 task_manifest=proxy_manifest,
+                ordinary_decode_report=ordinary,
             )
             validate_checkpoint_behavioral_admission(
                 admission,
                 initial_report=before,
                 trained_report=after,
                 task_manifest=proxy_manifest,
+                ordinary_decode_report=ordinary,
             )
         except RecurrentCheckpointAdmissionError as exc:
             admission_error = str(exc)
