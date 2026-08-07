@@ -1295,6 +1295,19 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["pressure_error"] = repr(exc)
     try:
+        # Two boundaries that are worth exactly as much as their visibility.
+        # Egress counts what left after being read; attestation says whether
+        # the identity Aura booted with is the one she last wrote. Both
+        # answer honestly when nothing has happened yet — a zero here means
+        # "nothing was refused", never "nothing was checked".
+        from core.security.egress_privacy import egress_privacy_counters
+        from core.security.state_attestation import attestation_report
+
+        block["egress_privacy"] = egress_privacy_counters()
+        block["state_attestation"] = attestation_report()
+    except Exception as exc:  # noqa: BLE001 - each health add-on is isolated
+        block["egress_privacy_error"] = repr(exc)
+    try:
         from core.knowledge.metta import metta_report
         from core.organism.model_validation import get_suite, validation_report
 

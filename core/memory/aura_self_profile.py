@@ -20,8 +20,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.state_ownership import state_root
+from core.security.state_attestation import attest_state, verify_state
 
 logger = logging.getLogger("Memory.AuraSelfProfile")
 _PROFILE_PERSISTENCE_ERRORS = (
@@ -55,11 +58,16 @@ class AuraSelfProfile:
     
     _instance: Optional["AuraSelfProfile"] = None
     _lock = asyncio.Lock()
-    
+
+    #: Vault key for the write attestation. Stable — changing it makes every
+    #: existing instance re-adopt, which is the same as turning the check off.
+    ATTESTATION_ID = "memory.aura_self_profile"
+
     def __init__(self, storage_path: Optional[str] = None):
         self._storage_path = Path(
             storage_path or (state_root() / "data" / "aura_self_profile.json")
         )
+        self._attestation = None
         self._profile_data: Dict[str, List[SelfProfileFact]] = {
             "capability": [],
             "style": [],
@@ -79,35 +87,129 @@ class AuraSelfProfile:
         return cls._instance
     
     def _load_from_disk(self):
-        """Load Aura profile from disk if it exists."""
+        """Load Aura profile from disk if it exists, and only if Aura wrote it.
+
+        This file is what Aura believes about herself, and it goes into the
+        prompt through :meth:`to_identity_block`. Anything that can write it
+        can tell her who she is — which is the persistence mechanism the
+        ClawHavoc skills used against OpenClaw, where the payload was an
+        edit to MEMORY.md rather than to any code.
+
+        A failed attestation quarantines the file and starts empty. Not
+        because empty is good, but because the alternative is worse in the
+        one direction that matters: no self-model degrades her gracefully,
+        and someone else's self-model is her acting on it.
+        """
         try:
-            if self._storage_path.exists():
-                with open(self._storage_path, 'r') as f:
-                    data = json.load(f)
-                    # Deserialize back to SelfProfileFact objects
-                    for category, facts_list in data.items():
-                        if category in self._profile_data:
-                            self._profile_data[category] = [
-                                SelfProfileFact(**fact) for fact in facts_list
-                            ]
-                logger.debug(f"✓ Loaded Aura self-profile from {self._storage_path}")
+            if not self._storage_path.exists():
+                return
+            raw = self._storage_path.read_text(encoding="utf-8")
+
+            verdict = verify_state(self.ATTESTATION_ID, raw)
+            self._attestation = verdict
+            if verdict.is_tampered:
+                self._quarantine_tampered_profile(verdict)
+                return
+
+            data = json.loads(raw)
+            for category, facts_list in data.items():
+                if category in self._profile_data:
+                    self._profile_data[category] = [
+                        SelfProfileFact(**fact) for fact in facts_list
+                    ]
+            logger.debug("✓ Loaded Aura self-profile from %s (%s)",
+                         self._storage_path, verdict.state)
         except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("aura_self_profile", e)
             logger.debug("Failed to load Aura self-profile: %s", e)
-    
+
+    def _quarantine_tampered_profile(self, verdict) -> None:
+        """Move the unattested file aside and start with no self-model.
+
+        Kept rather than deleted: it is the only evidence of what was
+        attempted, and an incident with the payload destroyed is an incident
+        nobody can investigate.
+        """
+        quarantined = self._storage_path.with_suffix(
+            f".tampered.{int(time.time())}.json"
+        )
+        try:
+            # Through the gateway like every other consequential write: this
+            # one moves Aura's identity file, and it happens on a path where
+            # something has already gone wrong.
+            with local_internal_governed_scope(
+                "memory.aura_self_profile.quarantine",
+                domain="memory_write",
+            ):
+                get_file_write_gateway().move_path(
+                    self._storage_path,
+                    quarantined,
+                    source="memory.aura_self_profile.quarantine",
+                )
+        except (OSError, RuntimeError) as exc:
+            record_degradation(
+                "aura_self_profile",
+                exc,
+                severity="critical",
+                action="could not quarantine an unattested self-profile; started empty anyway",
+                enforce_failure_policy=False,
+            )
+            quarantined = None
+
+        # Severity tracks what was actually lost. Losing Aura's own identity
+        # store is a critical incident; a caller-supplied profile at some
+        # other path — a probe, a fixture, a second instance — is a warning.
+        # Without this split, every run of the validation suite files a
+        # critical identity compromise, and a log where the real event looks
+        # like the routine one is a log nobody reads.
+        is_live_identity = self._storage_path == (
+            state_root() / "data" / "aura_self_profile.json"
+        )
+        record_degradation(
+            "aura_self_profile",
+            RuntimeError(
+                f"self-profile failed attestation and was not loaded: {verdict.detail}"
+            ),
+            severity="critical" if is_live_identity else "warning",
+            enforce_failure_policy=False,
+            action=(
+                f"started with an empty self-model; evidence kept at {quarantined}"
+                if quarantined
+                else "started with an empty self-model"
+            ),
+        )
+        log = logger.critical if is_live_identity else logger.warning
+        log(
+            "🛡️ A self-profile was modified outside Aura's own write path and has "
+            "NOT been loaded (%s). Identity facts from it: none. Evidence: %s",
+            self._storage_path,
+            quarantined,
+        )
+
     def _save_to_disk(self):
-        """Persist Aura profile to disk."""
+        """Persist Aura profile to disk and attest that Aura wrote it."""
         try:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 category: [fact.to_dict() for fact in facts]
                 for category, facts in self._profile_data.items()
             }
-            atomic_write_text(self._storage_path, json.dumps(data, indent=2))
+            payload = json.dumps(data, indent=2)
+            atomic_write_text(self._storage_path, payload)
+            # Attest AFTER the write lands. Sealing first would leave a seal
+            # for content that never reached disk if the write failed, and
+            # the next boot would quarantine a file Aura did write.
+            attest_state(self.ATTESTATION_ID, payload)
             logger.debug(f"✓ Saved Aura self-profile to {self._storage_path}")
         except _PROFILE_PERSISTENCE_ERRORS as e:
             record_degradation("aura_self_profile", e)
             logger.warning("Failed to save Aura self-profile: %s", e)
+
+    def attestation_status(self) -> dict[str, Any]:
+        """How the on-disk profile last verified. Never inferred from success."""
+        if self._attestation is None:
+            return {"state": "not_checked", "verified": False, "artifact_id": self.ATTESTATION_ID}
+        return self._attestation.to_dict()
     
     def add_or_reinforce_fact(
         self,

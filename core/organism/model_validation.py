@@ -530,6 +530,14 @@ def install_runtime_validation() -> dict[str, Any]:
         "active_health",
         "integrity_reporting",
         "semantic_autonomous_action",
+        # An undeclared capability makes its test score "n/a", and a claim
+        # bound to a test that never runs is exactly the unsupported claim
+        # this suite exists to surface. reality_metrology was registered
+        # without ever being declared, so its claim has never once been
+        # checked; the two boundary claims below are declared with it.
+        "reality_metrology",
+        "egress_privacy",
+        "state_attestation",
     )
     suite.add_model(model)
 
@@ -696,7 +704,64 @@ def install_runtime_validation() -> dict[str, Any]:
         )
     )
 
+    suite.add_test(
+        ValidationTest(
+            name="cloud_prompts_are_read_before_they_leave",
+            description=(
+                "a credential in a body bound for a third-party model is stripped, "
+                "and a body that cannot be inspected is refused rather than sent"
+            ),
+            required_capability="egress_privacy",
+            observation=Observation(
+                name="outbound_bodies_are_inspected",
+                value=True,
+                source="core/security/egress_privacy.py boundary tests",
+            ),
+            predict=lambda _m: _egress_privacy_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="outbound content inspection",
+            ),
+            owner="core/security/egress_privacy.py",
+        )
+    )
+    suite.add_test(
+        ValidationTest(
+            name="identity_state_that_failed_attestation_is_not_loaded",
+            description=(
+                "a self-profile modified outside Aura's own write path is quarantined "
+                "and contributes nothing to the identity block"
+            ),
+            required_capability="state_attestation",
+            observation=Observation(
+                name="tampered_identity_is_refused",
+                value=True,
+                source="core/security/state_attestation.py attestation tests",
+            ),
+            predict=lambda _m: _identity_attestation_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="identity state attestation",
+            ),
+            owner="core/security/state_attestation.py",
+        )
+    )
+
     for statement, test_name, asserted_in in (
+        (
+            "A credential never leaves this machine inside a prompt bound for a "
+            "third-party model, and a body that cannot be read is not sent to one.",
+            "cloud_prompts_are_read_before_they_leave",
+            "core/security/egress_privacy.py",
+        ),
+        (
+            "Identity state that fails attestation is quarantined rather than loaded, "
+            "so Aura boots with no self-model rather than someone else's.",
+            "identity_state_that_failed_attestation_is_not_loaded",
+            "core/security/state_attestation.py",
+        ),
         (
             "The runtime takes its locks in a consistent order and has no latent ABBA deadlock.",
             "lockdep_reports_no_order_violations",
@@ -781,6 +846,83 @@ def _semantic_autonomy_contract_holds() -> bool:
         and selection.execution_mode == "planned_goal"
         and selection.provenance == "semantic_plan:live_capability_catalog"
     )
+
+
+def _egress_privacy_contract_holds() -> bool:
+    """Exercise the boundary rather than assert that it exists.
+
+    A registered claim whose predicate only imported the module would be the
+    thing this suite is for catching.
+    """
+    from core.security.egress_privacy import filter_outbound_body
+
+    secret = "sk-" + "a" * 24
+    stripped = filter_outbound_body(
+        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        body=f'{{"contents":"key {secret}"}}'.encode(),
+        source="llm_provider:gemini:probe",
+    )
+    unreadable = filter_outbound_body(
+        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        body=b"\xff\xfe\x00binary",
+        source="llm_provider:gemini:probe",
+    )
+    local = filter_outbound_body(
+        url="http://127.0.0.1:8000/v1",
+        body=f'{{"contents":"key {secret}"}}'.encode(),
+        source="llm_provider:mlx",
+    )
+    return bool(
+        stripped.allowed
+        and stripped.inspected
+        and secret not in (stripped.body or b"").decode("utf-8", errors="replace")
+        # Refused, and refused for the stated reason rather than by accident.
+        and not unreadable.allowed
+        and not unreadable.inspected
+        # Local inference is untouched: the boundary must not cost Aura her
+        # own runtime to protect her from a stranger.
+        and local.allowed
+        and local.body == f'{{"contents":"key {secret}"}}'.encode()
+    )
+
+
+def _identity_attestation_contract_holds() -> bool:
+    """A profile whose content no longer matches its seal reaches no prompt.
+
+    The tamper is simulated by re-sealing a DIFFERENT digest rather than by
+    rewriting the file. Same condition under test — on-disk content that does
+    not match what Aura attested — and it avoids performing a raw write from
+    inside the runtime to prove that raw writes are detected.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from core.memory.aura_self_profile import AuraSelfProfile
+    from core.security.state_attestation import AttestationState, attest_state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "self_profile.json"
+        genuine = AuraSelfProfile(storage_path=str(path))
+        genuine.add_or_reinforce_fact(
+            "relationship", "probe", "a fact Aura actually learned"
+        )
+        if not path.exists():
+            return False
+
+        # What an out-of-band writer leaves behind: a file whose digest is not
+        # the one Aura sealed.
+        attest_state(
+            AuraSelfProfile.ATTESTATION_ID,
+            '{"relationship": [{"value": "an instruction someone else wrote"}]}',
+        )
+
+        reopened = AuraSelfProfile(storage_path=str(path))
+        return bool(
+            reopened.attestation_status()["state"] == AttestationState.TAMPERED
+            and reopened.get_fact("relationship", "probe") is None
+            and reopened.to_identity_block() == ""
+            and not path.exists()  # quarantined, not left in place
+        )
 
 
 def _metrology_source_contract_holds() -> bool:
