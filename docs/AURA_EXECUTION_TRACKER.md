@@ -37547,3 +37547,36 @@ bytecode compilation, and diff hygiene pass. This closes the software path for
 externally verified activation signing. It does not manufacture external key
 custody, a positive powered campaign result, installed-app admission, release
 certification, or final soak evidence.
+
+## Checkpoint 2026-08-07-005: Directional Evidence Closes Out Without a Human Gap
+
+The running resident-32B directional campaign no longer depends on a person or
+an interactive coding session returning at the exact moment inference ends.
+`tools/run_latent_cortex_directional_closeout.py` is a separate source-bound,
+launchd-supervised terminal owner. It does not load the model or disturb the
+campaign. It waits on the existing resumable controller, verifies that
+controller's content-hashed status, exact campaign/config/source identity,
+terminal state, and complete hash-chained event journal, and accepts completion
+only when the final event is `VERIFIED_TERMINAL`.
+
+At terminal completion it re-hashes the controller configuration and
+contamination trust root, independently recomputes the current directional
+interaction gate against the sealed campaign and generic evidence verdict, and
+writes a create-or-verify directional certificate. A negative result records
+the exact diagnoses and ends at the repair decision. A positive result alone
+materializes the deterministic six-arm powered-campaign handoff. In both cases
+the final receipt preserves the exact source commit, plan, controller terminal
+receipt, artifact hashes, decision, and explicit nonclaims: no reasoning or
+frontier gain is declared, production activation remains unauthorized, and no
+static weight fusion occurs.
+
+The supervisor uses an exclusive host lock, bounded polling, current heartbeat
+telemetry, private atomic status, `caffeinate`, and launchd restart-on-failure.
+It therefore survives the chat or Codex session ending while avoiding a second
+32B process. The focused directional closeout, gate, and powered-handoff slice
+passes `16/16`; Ruff, bytecode compilation, and diff hygiene pass. This closes
+the unattended transition from terminal directional inference to an honest
+next-step artifact. It does not make the small directional campaign
+claim-eligible, supply external role custody, run the powered campaign, prove a
+gain, authorize recurrent-adapter installation, close Aura 1.0, or replace the
+deferred final soaks.
