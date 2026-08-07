@@ -2544,6 +2544,10 @@ def _worker_args(
         )
         seed_count = len(seed_values)
         seed_entropy_bits = min(value.bit_length() for value in seed_values)
+    sequential_observations = str(getattr(args, "sequential_look_observations", "") or "").strip()
+    sequential_alpha_weights = str(getattr(args, "sequential_alpha_weights", "") or "").strip()
+    if bool(sequential_observations) != bool(sequential_alpha_weights):
+        raise CampaignProducerError("worker sequential contract is incomplete")
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -2563,10 +2567,6 @@ def _worker_args(
         str(seed_count),
         "--seed-entropy-bits",
         str(seed_entropy_bits),
-        "--sequential-look-observations",
-        str(getattr(args, "sequential_look_observations", "") or ""),
-        "--sequential-alpha-weights",
-        str(getattr(args, "sequential_alpha_weights", "") or ""),
         "--domains",
         args.domains,
         "--difficulty",
@@ -2602,6 +2602,15 @@ def _worker_args(
         "--worker-look",
         str(worker_look),
     ]
+    if sequential_observations:
+        command.extend(
+            [
+                "--sequential-look-observations",
+                sequential_observations,
+                "--sequential-alpha-weights",
+                sequential_alpha_weights,
+            ]
+        )
     if worker_attempt_slot is not None:
         campaign_dir = Path(args.campaign_dir).expanduser().resolve()
         paths = _worker_attempt_paths(campaign_dir, arm, worker_attempt_slot)

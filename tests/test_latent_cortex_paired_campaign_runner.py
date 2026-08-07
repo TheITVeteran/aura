@@ -805,6 +805,17 @@ def test_worker_command_resolves_relative_campaign_directory(
     assert {entry["command"][-1] for entry in policy} == set(runner.FULL_ARMS)
     assert all(entry["cwd"] == str(runner.REPO_ROOT) for entry in policy)
     assert all(entry["max_invocations"] == 1 for entry in policy)
+    assert all(all(argument for argument in entry["command"]) for entry in policy)
+    assert all("--sequential-look-observations" not in entry["command"] for entry in policy)
+
+    args.sequential_look_observations = "1"
+    args.sequential_alpha_weights = "1/1"
+    sequential = runner._worker_args(args, runner.BASE_RLC, worker_look=1)
+    assert sequential[sequential.index("--sequential-look-observations") + 1] == "1"
+    assert sequential[sequential.index("--sequential-alpha-weights") + 1] == "1/1"
+    args.sequential_alpha_weights = ""
+    with pytest.raises(runner.CampaignProducerError, match="sequential contract is incomplete"):
+        runner._worker_args(args, runner.BASE_RLC, worker_look=1)
 
 
 def _sequential_runner_plan():
