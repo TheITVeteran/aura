@@ -1171,26 +1171,19 @@ class AffectiveSteeringHook:
             
             # DEVIATION FROM NEUTRAL, not absolute level.
             #
-            # Measured 2026-08-06: two OPPOSING affect states — valence 0.9 vs
-            # 0.1, with stress/motivation/energy moved to match — produced
-            # composites with cosine 0.9925. Nearly the same direction, so no
-            # metric could ever detect that the state's content mattered,
-            # because after normalisation it barely did.
+            # Measured 2026-08-06: two OPPOSING states (valence 0.9 vs 0.1)
+            # converged to composite cosine +0.6285 — pointing the same way, so
+            # no metric could show the state's content mattered. The derived
+            # vectors were fine (full rank 5, valence_positive . frustration =
+            # -0.50); the defect was here. Weights were ABSOLUTE activations, so
+            # a dimension equal in both states (arousal, 0.7 in both) added an
+            # identical term to each composite and that common-mode dominated
+            # the unit-normalised result while carrying no state information.
+            # Centred on neutral the same two states reach -0.8437.
             #
-            # The derived vectors were not the problem: full rank 5, mean
-            # pairwise |cos| 0.26, valence_positive . frustration = -0.50. The
-            # problem was here. Every weight was an ABSOLUTE activation, so a
-            # dimension sitting at the same value in both states — arousal was
-            # 0.7 in both — contributed an identical term to both composites,
-            # and that shared common-mode dominated the unit-normalised result
-            # while carrying no information about the state.
-            #
-            # Subtracting the neutral-state weight makes each term encode how
-            # far this dimension has moved from the middle, which is what a
-            # steering vector is supposed to represent. It also gives the
-            # semantically right boundary condition: a genuinely neutral affect
-            # now produces a zero composite and stands steering down, instead
-            # of injecting a constant direction that means nothing.
+            # It also fixes the boundary condition: neutral affect now stands
+            # steering down instead of injecting a constant meaningless
+            # direction.
             neutral = self._neutral_reference_state()
             for sv in self._vectors.values():
                 weight = sv.compute_weight_from_state(state) - sv.compute_weight_from_state(
@@ -1508,22 +1501,15 @@ class AffectiveSteeringHook:
                     # Diagnostic
                     hook._inject_count += 1
                     hook._last_effective_alpha = effective_alpha
-                    # Note: norm is expensive, only do it occasionally.
-                    #
-                    # This is an OBSERVATION and it must never be able to void
-                    # the injection above. It could, and it did: the call was
-                    # `mx.norm`, which does not exist in this MLX version — the
-                    # symbol is `mx.linalg.norm`. Every 50th injection therefore
-                    # raised AttributeError, the enclosing handler caught it and
-                    # "returned original block output after steering injection
-                    # failed", and the steering that had ALREADY been applied on
-                    # the line above was discarded along with it.
-                    #
-                    # Measured on 2026-08-06 while running the affect ablation:
-                    # a continuous stream of MARGINAL faults, each one throwing
-                    # away a successful injection to compute a number nobody
-                    # reads during generation. A statistic that can destroy the
-                    # effect it is measuring is worse than no statistic.
+                    # Norm is expensive, so only occasionally — and it is an
+                    # OBSERVATION that must never void the injection above. It
+                    # could, and did: the call was `mx.norm`, which does not
+                    # exist in this MLX version (`mx.linalg.norm` does). Every
+                    # 50th injection raised AttributeError, the enclosing
+                    # handler returned the original block output, and the
+                    # steering already applied on the line above was discarded
+                    # with it. A statistic that destroys the effect it measures
+                    # is worse than no statistic.
                     if hook._inject_count % 50 == 0:
                         try:
                             import mlx.core as mx
