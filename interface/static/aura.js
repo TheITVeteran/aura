@@ -8074,7 +8074,15 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
     if (!runtimeSettingsState.hydrated) return { status: 'deferred', detail: 'settings not hydrated' };
     const inputEnabled = runtimeSettingsState.values['voice.input_enabled'] === true;
     const autoListen = runtimeSettingsState.values['voice.auto_listen'] === true;
+
+    // The persisted setting is the authority on whether an open microphone is
+    // wanted. Nothing on the client may default it on — an ambient microphone
+    // is not something to enable because a preference failed to load.
+    const duplex = window.AuraVoiceMode;
+    const haveDuplex = duplex && typeof duplex.setAmbient === 'function';
+
     if (!inputEnabled || !autoListen) {
+        if (haveDuplex && duplex.isAmbient()) await duplex.setAmbient(false);
         if (!state.voiceActive) return { status: 'applied', detail: 'auto-listen remains stopped' };
         const stopped = await toggleVoice(false);
         return {
@@ -8087,6 +8095,7 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
     // Do not open a second getUserMedia stream when sounddevice owns capture.
     if (state.voiceSummary && state.voiceSummary.server_capture === true) {
         if (state.voiceActive) await toggleVoice(false);
+        if (haveDuplex && duplex.isAmbient()) await duplex.setAmbient(false);
         return {
             status: state.voiceSummary.listening ? 'applied' : 'deferred',
             detail: state.voiceSummary.listening
@@ -8094,6 +8103,22 @@ async function reconcileAutoListenFromSettings({ reportFailure = true } = {}) {
                 : 'canonical server microphone owner is applying auto-listen',
         };
     }
+
+    // Prefer the full-duplex ambient lane. It is the one with barge-in,
+    // backchannels, governed clause streaming and the addressivity gate that
+    // decides whether an utterance was even meant for her; the legacy
+    // half-duplex path below is only a fallback for when that bundle failed
+    // to load, so that auto-listen is never simply dead.
+    if (haveDuplex) {
+        if (duplex.isActive()) return { status: 'applied', detail: 'ambient listening already active' };
+        const started = await duplex.setAmbient(true);
+        if (started) return { status: 'applied', detail: 'ambient duplex listening started' };
+        return {
+            status: reportFailure ? 'failed' : 'deferred',
+            detail: 'ambient listening needs microphone permission — press VOICE once to grant it',
+        };
+    }
+
     if (state.voiceActive) return { status: 'applied', detail: 'auto-listen already active' };
     const started = await toggleVoice(true, { quiet: !reportFailure });
     return {

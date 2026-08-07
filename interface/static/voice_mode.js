@@ -97,12 +97,16 @@
 
         return {
             enabledByUser() {
+                // Mirrors the persisted `voice.auto_listen` runtime setting,
+                // which is the authority — aura.js pushes it here as soon as
+                // settings hydrate. The local copy exists only so a reload
+                // can resume listening in the same frame instead of waiting
+                // a round trip, and it defaults to *off*: an ambient
+                // microphone must never be enabled because a preference
+                // failed to load.
                 try {
-                    return window.localStorage.getItem(AMBIENT_PREF_KEY) !== 'off';
+                    return window.localStorage.getItem(AMBIENT_PREF_KEY) === 'on';
                 } catch (_e) {
-                    // Private browsing or a locked-down profile. Default to
-                    // off: an ambient microphone is not something to enable
-                    // because storage happened to be unreadable.
                     return false;
                 }
             },
