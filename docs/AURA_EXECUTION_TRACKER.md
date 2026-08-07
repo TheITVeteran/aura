@@ -37444,3 +37444,35 @@ this checkpoint: the active campaign was still executing, with zero failed
 attempts, when the source contract was added. The powered externally rooted
 campaign, production activation, installed-app proof, release gates, and final
 soaks remain open.
+
+## Checkpoint 2026-08-07-002: Powered Campaign Handoff Is Deterministic
+
+`tools/materialize_powered_latent_cortex_handoff.py` now converts only a valid,
+positive current-generation directional certificate into a canonical powered
+campaign handoff. It rejects a rehashed or partially positive verdict, any
+missing advance rule, a mismatched plan, a claiming directional plan, or drift
+between the directional certificate and exact plan bytes. It carries forward
+the resident model and adapter identities and the tested RLC slot, branch,
+depth, profile, decode, task-registry, difficulty, equal-compute, response-
+contract, and execution-spec identities rather than allowing an operator to
+silently substitute a different experiment.
+
+The handoff recomputes the current exact six-arm power floor from code. It
+requires 411 observations per domain across all seven frontier domains: 2,877
+fresh tasks and 17,262 arm cells spanning base vanilla, base RLC, adapter
+vanilla, adapter RLC, and both equal-compute controls. It records that this is
+only the zero-loss noninferiority floor and keeps a preregistered positive-
+interaction power simulation mandatory. The handoff lists every still-missing
+external input: fresh high-entropy seeds, post-seed hidden-task commitment,
+adapter-dataset-bound contamination audit, revisioned external policy,
+separate issuer/runner attestations, post-seal answer reveal, post-grade runner
+signature, and post-evidence independent verifier attestation.
+
+The artifact is intentionally not a launch packet. `launch_authorized`,
+production activation, and static fusion remain false until the existing
+private-key-free prelaunch and independent admission paths accept those exact
+inputs. The focused powered-handoff, current directional, historical watcher,
+and paired-grade slice passes `42/42`; Ruff and bytecode compilation pass. This
+checkpoint closes configuration drift between a positive pilot and external
+campaign preparation. It does not supply external custody, run the powered
+campaign, prove gain, or authorize installation.
