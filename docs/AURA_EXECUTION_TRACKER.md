@@ -37612,3 +37612,31 @@ be rolled back exactly. `RLC-MECH-006` remains open for current resident-model
 promotion and retained live evidence; this checkpoint does not claim a promoted
 adapter, a retained reasoning gain, production activation, static fusion, or
 release readiness.
+
+## Checkpoint 2026-08-07-007: Directional Closeout Reads Its Producer's Format
+
+The 112-cell resident-32B directional campaign completed with a valid sealed
+journal, but its detached closeout exposed a producer/consumer contract defect:
+the independent verifier deliberately emits indented reviewable JSON while the
+directional gate required canonical compact JSON bytes. The evidence itself was
+valid; presentation whitespace prevented the gate from reading it.
+
+The shared campaign reader now separates strict JSON semantics and protected
+storage from optional canonical byte layout. Campaign plans, signed payloads,
+and other canonical protocol objects retain byte-for-byte canonical checks. The
+independent verdict accepts its producer's documented indented form while still
+rejecting duplicate keys, non-finite values, symlinks, mutable group/world
+storage, unstable reads, and non-object roots. Its exact bytes remain hashed,
+and the complete parsed verdict must still equal a fresh independent
+recomputation before any directional rule can pass.
+
+The exact completed campaign then verifies without loading the model. It records
+`13/28` for both byte-identical vanilla controls, `5/28` for base RLC, and
+`3/28` for adapter plus RLC. All 112 cells replay, adapter activity is scoped and
+positive, base-RLC adapter activity is zero, and first logits change on all 28
+adapter-RLC tasks, but the trained recurrent arm is worse rather than better.
+The decision is therefore `repair_and_preregister_directional_revision`; no
+powered campaign, activation, fusion, reasoning-gain claim, or frontier claim is
+authorized. Focused closeout, gate, and launch-bundle tests pass `28/28`; Ruff
+and bytecode compilation pass. The negative result is retained as architectural
+evidence, not relabelled as an underpowered success.

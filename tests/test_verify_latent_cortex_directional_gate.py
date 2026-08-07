@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -137,3 +138,25 @@ def test_directional_verdict_write_is_create_or_verify(tmp_path) -> None:
     gate._write_once(path, document)
     with pytest.raises(gate.DirectionalGateError, match="output_conflict"):
         gate._write_once(path, {"schema": "fixture", "value": 2})
+
+
+def test_independent_verifier_pretty_json_is_strictly_readable(tmp_path) -> None:
+    path = tmp_path / "independent-verdict.json"
+    verdict = {
+        "schema": "aura.latent_cortex.independent_evidence_verdict.v2",
+        "passed": True,
+        "failures": [],
+    }
+    path.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n")
+
+    assert gate.read_strict_json(
+        path, role="directional_independent_verdict"
+    ) == verdict
+
+
+def test_independent_verifier_duplicate_keys_remain_rejected(tmp_path) -> None:
+    path = tmp_path / "independent-verdict.json"
+    path.write_text('{"passed":true,"passed":false}\n')
+
+    with pytest.raises(ValueError, match="duplicate_key"):
+        gate.read_strict_json(path, role="directional_independent_verdict")

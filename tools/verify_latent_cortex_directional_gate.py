@@ -29,6 +29,7 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.campaign_launch_bundle import (  # noqa: E402
     read_canonical_json,
+    read_strict_json,
 )
 from core.brain.llm.latent_cortex.frontier_tasks import FRONTIER_DOMAINS  # noqa: E402
 from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
@@ -388,7 +389,10 @@ def verify(
     plan_path = campaign_dir / "plan.json"
     plan = CampaignPlan.from_dict(read_canonical_json(plan_path, role="directional_plan"))
     expected_tasks, expected_cells = _validate_plan(plan)
-    supplied = read_canonical_json(
+    # The independent verifier intentionally emits human-reviewable indented
+    # JSON. Its bytes are hashed below and its complete semantics must equal an
+    # independent recomputation, so canonical whitespace is not a trust input.
+    supplied = read_strict_json(
         independent_verdict_path.expanduser().resolve(strict=True),
         role="directional_independent_verdict",
     )

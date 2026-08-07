@@ -144,12 +144,11 @@ def _strict_json(raw: bytes, *, role: str) -> dict[str, Any]:
     return value
 
 
-def read_canonical_json(
+def _read_strict_json_payload(
     path: Path,
     *,
     role: str,
-    trailing_newline: bool | None = True,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bytes]:
     try:
         observed = path.lstat()
     except OSError:
@@ -166,7 +165,26 @@ def read_canonical_json(
         raw = read_stable_bytes(path, max_bytes=_MAX_JSON_BYTES)
     except (OSError, ValueError):
         _fail(f"{role}_unavailable")
-    value = _strict_json(raw, role=role)
+    return _strict_json(raw, role=role), raw
+
+
+def read_strict_json(
+    path: Path,
+    *,
+    role: str,
+) -> dict[str, Any]:
+    """Read one owner-protected JSON object without prescribing its layout."""
+    value, _raw = _read_strict_json_payload(path, role=role)
+    return value
+
+
+def read_canonical_json(
+    path: Path,
+    *,
+    role: str,
+    trailing_newline: bool | None = True,
+) -> dict[str, Any]:
+    value, raw = _read_strict_json_payload(path, role=role)
     if trailing_newline is None:
         trailing_newline = value.get("schema") not in {
             *RESIDENT_SFT_MANIFEST_SCHEMAS,
