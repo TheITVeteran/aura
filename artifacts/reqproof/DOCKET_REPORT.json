@@ -385,7 +385,7 @@
     },
     {
       "counts": {
-        "claimed_complete_needs_evidence": 1,
+        "certified_complete": 1,
         "ready_for_implementation": 13
       },
       "family": "PASSF"
@@ -636,7 +636,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "4c5cdd16d3b46f8fb8a2efff4e27eca305da0a12264e72cfa5a587921e55afc3",
+    "evidence_ledger_sha256": "e79eac2b0075443e0d5f67278238334c10a6eb20895dec9e631d4957c4deb2bf",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
@@ -644,7 +644,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "f52bfeb53a8738f04abc0e85741ae112dea697085bb028a3e573dcf1af79fe14",
+  "report_sha256": "09a99cbdcd00bdd8185753bb99622a6679961fb823d54167d7f68a73cf890f6b",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -1580,13 +1580,12 @@
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
       "evidence_cells_total": 4,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "LANE",
       "id": "LANE-001",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "test:A1",
         "live:A1",
         "release:A1"
       ],
@@ -2007,8 +2006,7 @@
     {
       "acceptance_units": 1,
       "closure_blockers": [
-        "ADDENDUM-22",
-        "PASSF-03"
+        "ADDENDUM-22"
       ],
       "direct_dependency_blockers": [],
       "disposition": "in_progress",
@@ -3101,27 +3099,6 @@
       "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
     },
     {
-      "acceptance_units": 3,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 6,
-      "evidence_cells_verified": 3,
-      "family": "PASSF",
-      "id": "PASSF-03",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "test:A1",
-        "test:A2",
-        "test:A3"
-      ],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Resource envelope and admission system"
-    },
-    {
       "acceptance_units": 5,
       "closure_blockers": [
         "CTX2-GATE-001",
@@ -3223,23 +3200,14 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 22,
-      "evidence_cells_verified": 9,
+      "evidence_cells_verified": 18,
       "family": "ADDENDUM",
       "id": "ADDENDUM-21",
       "kind": "parent",
       "mandatory": true,
       "missing_evidence_cells": [
-        "test:A1",
-        "test:A2",
-        "test:A3",
         "live:A3",
-        "test:A4",
-        "test:A5",
         "live:A5",
-        "test:A6",
-        "test:A7",
-        "test:A8",
-        "test:A9",
         "live:A9",
         "soak:A9"
       ],
@@ -4273,14 +4241,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-001",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4292,14 +4258,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-002",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -4311,13 +4275,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 3,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-003",
       "kind": "atomic",
       "mandatory": true,
       "missing_evidence_cells": [
-        "test:A1",
         "live:A1"
       ],
       "owner": "unassigned",
@@ -4331,14 +4294,12 @@
       "direct_dependency_blockers": [],
       "disposition": "ready_for_implementation",
       "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
+      "evidence_cells_verified": 2,
       "family": "CTX2",
       "id": "CTX2-LANE-004",
       "kind": "atomic",
       "mandatory": true,
-      "missing_evidence_cells": [
-        "test:A1"
-      ],
+      "missing_evidence_cells": [],
       "owner": "unassigned",
       "parent": "ADDENDUM-21",
       "state_claim": "open",
@@ -8103,6 +8064,23 @@
       "title": "- `CTX2-SKILL-002`: validate every discovered class is importable, instantiable under its declared dependencies, schema-valid, authority/effect classified, and\u2026"
     },
     {
+      "acceptance_units": 3,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 6,
+      "evidence_cells_verified": 6,
+      "family": "PASSF",
+      "id": "PASSF-03",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Resource envelope and admission system"
+    },
+    {
       "acceptance_units": 1,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -8162,14 +8140,13 @@
   "summary": {
     "claimed_complete_needs_evidence_ids": [
       "CTX2-GATE-001",
-      "CTX2-GATE-002",
-      "PASSF-03"
+      "CTX2-GATE-002"
     ],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 8,
+      "certified_complete": 9,
       "claimed_complete_needs_children": 1,
-      "claimed_complete_needs_evidence": 3,
+      "claimed_complete_needs_evidence": 2,
       "deferred": 1,
       "in_progress": 100,
       "nonmandatory": 1,

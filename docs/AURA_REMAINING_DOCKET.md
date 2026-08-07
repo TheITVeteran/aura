@@ -6,10 +6,10 @@
 
 - Requirements: **313** total / **312** mandatory
 - In progress: **100**
-- Claimed complete but missing evidence: **3**
+- Claimed complete but missing evidence: **2**
 - Ready for implementation: **166**
 - Blocked by direct dependency: **33**
-- Machine-certified complete: **8**
+- Machine-certified complete: **9**
 
 ## Active Requirements
 
@@ -54,7 +54,7 @@
 | `HEALTH-SURFACE-001` | `in_progress` | 4 | RUNTIME-001, OBSERVE-001, UI-001 |
 | `IIT-SYSTEM-001` | `in_progress` | 3 | STATE-001, SUBSTRATE-001, INTELLIGENCE-001, CLAIMS-001, PROOF-001, TEST-DEPTH-001 |
 | `INFERENCE-RELIABILITY-001` | `in_progress` | 3 | LANE-001, RUNTIME-001, FAULT-001, CAPABILITY-CERT-001, FRONTIER-COGNITION-001 |
-| `LANE-001` | `in_progress` | 3 | none |
+| `LANE-001` | `in_progress` | 2 | none |
 | `LAUNCH-PROVENANCE-001` | `in_progress` | 4 | OPERATIONS-001, RUNTIME-001, DESKTOP-ACCESS-001, VALIDATE-001 |
 | `LIFECYCLE-001` | `in_progress` | 0 | FAULT-001, ARCH-001, REPO-001, VALIDATE-001 |
 | `MATRIX-09` | `in_progress` | 10 | none |
@@ -122,10 +122,9 @@ These requirements carry a historical complete claim but are not machine-certifi
 
 - `CTX2-GATE-001`
 - `CTX2-GATE-002`
-- `PASSF-03`
 
 ## Interpretation
 
 The JSON report contains every requirement, exact missing acceptance/evidence cells, direct dependency blockers, closure blockers, and family counts. Historical checkpoint prose remains audit history and cannot award evidence credit.
 
-Report SHA-256: `f52bfeb53a8738f04abc0e85741ae112dea697085bb028a3e573dcf1af79fe14`
+Report SHA-256: `09a99cbdcd00bdd8185753bb99622a6679961fb823d54167d7f68a73cf890f6b`
