@@ -259,7 +259,7 @@ def _free_generation_sampling_config() -> RecurrentSamplingConfig:
     """Use the exact categorical policy required by recurrent proof runs."""
 
     return RecurrentSamplingConfig(
-        max_tokens=96,
+        max_tokens=320,
         temperature=1.0,
         top_p=1.0,
     )
@@ -296,7 +296,9 @@ def _free_generation_report(
                 depth_spec,
                 sampling=_free_generation_sampling_config(),
             )
-            config.decode_contract = "final_answer_v1"
+            # This discriminator grades semantic terminal JSON independently.
+            # The global frontier certificate keeps its literal envelope.
+            config.decode_contract = "none"
             config.decode_contract_grace_tokens = 0
             config.decode_incumbent_policy = "latent"
             engine = LatentCortexEngine(
@@ -310,7 +312,7 @@ def _free_generation_report(
             )
             result = engine.reason(
                 token_ids=prompt_tokens,
-                decode_max_tokens=96,
+                decode_max_tokens=320,
                 decode_sentence_grace_tokens=0,
             )
             grade = dict(task.grade(result.text if result.ok else ""))

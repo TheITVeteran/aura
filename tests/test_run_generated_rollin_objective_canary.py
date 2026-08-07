@@ -127,6 +127,6 @@ def test_free_generation_uses_matched_random_streams_across_arms() -> None:
 def test_free_generation_uses_proof_grade_sampling_policy() -> None:
     config = canary._free_generation_sampling_config()
 
-    assert config.max_tokens == 96
+    assert config.max_tokens == 320
     assert config.temperature == 1.0
     assert config.top_p == 1.0

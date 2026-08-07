@@ -115,6 +115,47 @@ def test_training_task_exposes_exact_grpo_contract():
     assert task.grade("the answer is probably one")["reason"] == "unparseable"
 
 
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        'Final answer: {"value":0}',
+        'Reasoning first.\n```json\n{"value":0}\n```',
+        '```json\n{\n  "value": 0\n}\n```',
+        '{"value":0}',
+    ],
+)
+def test_training_task_accepts_unambiguous_terminal_json_forms(rendered):
+    task = RecurrenceTrainingTask(
+        prompt="Evaluate the value.",
+        answer='FINAL_ANSWER: {"value":0}',
+        depth=1,
+        family="boolean",
+        seed=1,
+    )
+
+    assert task.grade(rendered)["correct"] is True
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        'Final answer: {"value":0}\ntrailing prose',
+        'Final answer: {"value":1}\nFinal answer: {"value":0}',
+        'Reasoning {"value":1} without a terminal answer cue',
+    ],
+)
+def test_training_task_rejects_ambiguous_or_nonterminal_json(rendered):
+    task = RecurrenceTrainingTask(
+        prompt="Evaluate the value.",
+        answer='FINAL_ANSWER: {"value":0}',
+        depth=1,
+        family="boolean",
+        seed=1,
+    )
+
+    assert task.grade(rendered)["reason"] == "unparseable"
+
+
 def test_recurrence_split_is_prompt_and_identity_disjoint():
     train, holdout = disjoint_task_split(
         families=("khop", "budget_plan"),

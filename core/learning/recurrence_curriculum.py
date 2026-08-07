@@ -11,15 +11,81 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Never
 
 CURRICULUM_SCHEMA = "aura.recurrence_training_curriculum.v1"
 CURRICULUM_VERSION = "2026.07.18.1"
 MAX_TRAINING_DEPTH = 32
+_TERMINAL_FINAL_CUE = re.compile(
+    r"(?im)^[ \t]*(?:\*\*)?final(?:_| )answer(?:\*\*)?[ \t]*:[ \t]*"
+)
+_TERMINAL_JSON_FENCE = re.compile(
+    r"```(?:json)?[ \t]*\r?\n(?P<payload>\{.*\})[ \t]*\r?\n```[ \t]*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_semantic_terminal_answer(response: str) -> dict[str, Any]:
+    """Canonicalize only unambiguous terminal JSON into the strict parser."""
+
+    from core.brain.llm.latent_cortex.frontier_tasks import (
+        FrontierTaskError,
+        parse_final_answer,
+    )
+
+    try:
+        return parse_final_answer(response)
+    except FrontierTaskError as strict_error:
+        stripped = response.strip()
+        candidates: list[str] = []
+        if stripped.startswith("{") and stripped.endswith("}"):
+            candidates.append(stripped)
+        fence = _TERMINAL_JSON_FENCE.search(stripped)
+        if fence is not None:
+            candidates.append(fence.group("payload").strip())
+        cues = list(_TERMINAL_FINAL_CUE.finditer(stripped))
+        if len(cues) == 1:
+            payload = stripped[cues[0].end() :].strip()
+            fenced_payload = _TERMINAL_JSON_FENCE.fullmatch(payload)
+            if fenced_payload is not None:
+                payload = fenced_payload.group("payload").strip()
+            candidates.append(payload)
+        unique = tuple(dict.fromkeys(candidates))
+        if len(unique) != 1:
+            raise strict_error
+        try:
+            def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                decoded: dict[str, Any] = {}
+                for key, item in pairs:
+                    if key in decoded:
+                        raise ValueError("duplicate terminal JSON key")
+                    decoded[key] = item
+                return decoded
+
+            def reject_float(_value: str) -> Never:
+                raise ValueError("floating-point terminal JSON is unsupported")
+
+            decoded = json.loads(
+                unique[0],
+                object_pairs_hook=reject_duplicates,
+                parse_float=reject_float,
+                parse_constant=reject_float,
+            )
+            canonical = json.dumps(
+                decoded,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise strict_error from None
+        return parse_final_answer(f"FINAL_ANSWER: {canonical}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,14 +144,13 @@ class RecurrenceTrainingTask:
         }
 
     def grade(self, response: str) -> dict[str, Any]:
-        """Strictly grade the bounded FINAL_ANSWER JSON contract."""
+        """Grade one unambiguous terminal JSON answer against exact content."""
         try:
             from core.brain.llm.latent_cortex.frontier_tasks import (
                 FrontierTaskError,
-                parse_final_answer,
             )
 
-            produced = parse_final_answer(response)
+            produced = _parse_semantic_terminal_answer(response)
         except (FrontierTaskError, TypeError, ValueError):
             return {
                 "correct": False,
@@ -107,6 +172,15 @@ def _json_answer(value: dict[str, Any]) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
+    )
+
+
+def _terminal_contract(*keys: str) -> str:
+    rendered = ", ".join(keys)
+    return (
+        " You may reason before answering. Finish with exactly one final line using the "
+        "envelope FINAL_ANSWER: <JSON object>. FINAL_ANSWER is the envelope, not a "
+        f"JSON key. The JSON object must contain exactly these keys: {rendered}."
     )
 
 
@@ -135,7 +209,8 @@ def khop_reachability(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"A functional directed graph has these edges: {edges}. Start at {start} "
-            f"and follow exactly {depth} edges. Return FINAL_ANSWER and JSON key node."
+            f"and follow exactly {depth} edges."
+            + _terminal_contract("node")
         ),
         answer=_json_answer({"node": node}),
         depth=depth,
@@ -167,8 +242,8 @@ def nested_boolean(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"Evaluate this {depth}-operation expression with 1=true, 0=false, and xor "
-            f"meaning exactly one operand is true: {expression}. Return FINAL_ANSWER "
-            "and JSON key value containing 1 or 0."
+            f"meaning exactly one operand is true: {expression}. Return a value of 1 or 0."
+            + _terminal_contract("value")
         ),
         answer=_json_answer({"value": 1 if value else 0}),
         depth=depth,
@@ -197,8 +272,8 @@ def modular_chain(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"Start at the given value and apply each operation modulo {modulus}: "
-            f"start={initial}. Operations: {', '.join(operations)}. "
-            "Return FINAL_ANSWER and JSON key residue."
+            f"start={initial}. Operations: {', '.join(operations)}."
+            + _terminal_contract("residue")
         ),
         answer=_json_answer({"residue": value}),
         depth=depth,
@@ -227,8 +302,8 @@ def register_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"Trace three registers from r0={initial[0]}, r1={initial[1]}, "
-            f"r2={initial[2]}. Apply in order: {'; '.join(operations)}. "
-            "End with FINAL_ANSWER and JSON keys r0,r1,r2."
+            f"r2={initial[2]}. Apply in order: {'; '.join(operations)}. End"
+            + _terminal_contract("r0", "r1", "r2")
         ),
         answer=_json_answer({"r0": registers[0], "r1": registers[1], "r2": registers[2]}),
         depth=depth,
@@ -264,8 +339,8 @@ def stack_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
                 state.append(rng.randrange(1, 10))
     return RecurrenceTrainingTask(
         prompt=(
-            f"Begin with list {initial}. Apply in order: {'; '.join(operations)}. "
-            "Return FINAL_ANSWER followed by JSON with the single key state."
+            f"Begin with list {initial}. Apply in order: {'; '.join(operations)}. Return"
+            + _terminal_contract("state")
         ),
         answer=_json_answer({"state": state}),
         depth=depth,
@@ -285,7 +360,8 @@ def constraint_order(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             "Find the unique total order satisfying every constraint: "
-            f"{'; '.join(constraints)}. Return FINAL_ANSWER and JSON key order."
+            f"{'; '.join(constraints)}."
+            + _terminal_contract("order")
         ),
         answer=_json_answer({"order": order}),
         depth=depth,
@@ -314,8 +390,8 @@ def causal_intervention(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"Binary structural equations: {'; '.join(equations)}. Intervene with "
-            f"do(x{intervention_index}={intervention_value}), replacing that equation. "
-            f"Return FINAL_ANSWER and JSON key x{count - 1}."
+            f"do(x{intervention_index}={intervention_value}), replacing that equation."
+            + _terminal_contract(f"x{count - 1}")
         ),
         answer=_json_answer({f"x{count - 1}": intervened[-1]}),
         depth=depth,
@@ -344,7 +420,8 @@ def bayes_update(depth: int, seed: int) -> RecurrenceTrainingTask:
             f"{likelihood_h.numerator}/{likelihood_h.denominator}, and P(E|not H)="
             f"{likelihood_not_h.numerator}/{likelihood_not_h.denominator}. Observe "
             f"the same conditionally independent evidence E exactly {depth} times. "
-            "Return FINAL_ANSWER and JSON keys posterior and choice (H or not_H)."
+            "The choice value must be H or not_H."
+            + _terminal_contract("posterior", "choice")
         ),
         answer=_json_answer(
             {
@@ -387,7 +464,8 @@ def budget_plan(depth: int, seed: int) -> RecurrenceTrainingTask:
         prompt=(
             f"Choose any subset of jobs under budget {budget}: {job_text}. Maximize "
             "reward, then minimize cost, then choose the lexicographically smallest "
-            "ID list. Return FINAL_ANSWER and JSON keys selected,cost,reward."
+            "ID list."
+            + _terminal_contract("selected", "cost", "reward")
         ),
         answer=_json_answer({"cost": best_cost, "reward": best_reward, "selected": list(best_ids)}),
         depth=depth,
@@ -416,8 +494,8 @@ def symbolic_rewrite(depth: int, seed: int) -> RecurrenceTrainingTask:
             operations.append("reverse")
     return RecurrenceTrainingTask(
         prompt=(
-            f"Start with string {initial}. Apply in order: {'; '.join(operations)}. "
-            "Return FINAL_ANSWER and JSON key state."
+            f"Start with string {initial}. Apply in order: {'; '.join(operations)}. Return"
+            + _terminal_contract("state")
         ),
         answer=_json_answer({"state": state}),
         depth=depth,
@@ -440,7 +518,8 @@ def premise_audit(depth: int, seed: int) -> RecurrenceTrainingTask:
     return RecurrenceTrainingTask(
         prompt=(
             f"Ground-truth table: {table}. Exactly one claim conflicts with the table: "
-            f"{'; '.join(claims)}. Return FINAL_ANSWER and JSON key false_claim."
+            f"{'; '.join(claims)}."
+            + _terminal_contract("false_claim")
         ),
         answer=_json_answer({"false_claim": false_index}),
         depth=depth,
@@ -467,7 +546,7 @@ def code_trace(depth: int, seed: int) -> RecurrenceTrainingTask:
             f"Trace this pseudocode exactly with values={values}: acc={initial}; for each "
             f"(index,value), if (index+value) mod {modulus} == 0 then acc += 2*value "
             "else acc -= value; then acc += index mod 2. Indexing starts at zero. "
-            "Return FINAL_ANSWER and JSON key acc."
+            + _terminal_contract("acc")
         ),
         answer=_json_answer({"acc": accumulator}),
         depth=depth,
