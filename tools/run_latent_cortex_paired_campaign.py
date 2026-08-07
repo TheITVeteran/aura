@@ -2719,6 +2719,8 @@ def _load_or_prepare_role_request(
     policy: Any,
     role: str,
     payload: Mapping[str, Any],
+    operation: str,
+    purpose: str,
 ) -> dict[str, Any]:
     if path.exists():
         request = _read_json_artifact(str(path), role=f"{role} signature request")
@@ -2733,6 +2735,8 @@ def _load_or_prepare_role_request(
             role=role,
             payload=payload,
             signed_at_unix=signed_at,
+            operation=operation,
+            purpose=purpose,
         )
         if request != expected:
             raise CampaignProducerError(f"{role} request differs from the current payload")
@@ -2742,6 +2746,8 @@ def _load_or_prepare_role_request(
         role=role,
         payload=payload,
         signed_at_unix=int(time.time()),
+        operation=operation,
+        purpose=purpose,
     )
     _atomic_create_or_verify(path, canonical_json_bytes(request) + b"\n")
     return request
@@ -2783,6 +2789,8 @@ def _admit_answer_reveal(
             policy=policy,
             role=TASK_ISSUER,
             payload=payload,
+            operation="answer_reveal",
+            purpose=f"{plan.campaign_name}:answer-reveal",
         )
         request_sha256 = request["request_sha256"]
         attestation_path = str(getattr(args, "answer_reveal_attestation", "") or "").strip()
@@ -3104,6 +3112,8 @@ def _admit_final_run_envelope(
         policy=policy,
         role=CAMPAIGN_RUNNER,
         payload=payload,
+        operation="final_run",
+        purpose=f"{plan.campaign_name}:final-run",
     )
     attestation_path = str(getattr(args, "final_run_attestation", "") or "").strip()
     if not attestation_path:

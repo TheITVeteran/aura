@@ -441,6 +441,8 @@ def _post_inference_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         role=TASK_ISSUER,
         payload=reveal_payload,
         signed_at_unix=1_900_000_250,
+        operation="answer_reveal",
+        purpose=f"{fixture['campaign_name']}:answer-reveal",
     )
     _write_json(campaign_dir / "answer_reveal_request.json", answer_request)
     fixture.update(
@@ -630,6 +632,8 @@ def _admit_answer_phase(fixture: dict, tmp_path: Path) -> tuple[dict, dict]:
         payload=fixture["reveal_payload"],
         signed_at_unix=1_900_000_250,
         private_key=fixture["role_keys"][TASK_ISSUER],
+        operation="answer_reveal",
+        purpose=f"{fixture['campaign_name']}:answer-reveal",
     )
     path = tmp_path / "external-answer-reveal-attestation.json"
     _write_json(path, attestation)
@@ -704,6 +708,8 @@ def _publish_final_request(fixture: dict, issuer_attestation: dict) -> dict:
         role=CAMPAIGN_RUNNER,
         payload=payload,
         signed_at_unix=1_900_000_350,
+        operation="final_run",
+        purpose=f"{fixture['campaign_name']}:final-run",
     )
     _write_json(campaign_dir / "final_run_request.json", request)
     fixture.update(
@@ -743,6 +749,8 @@ def test_post_inference_phase_packets_bind_real_reveal_and_final_signatures(
             payload=fixture["final_payload"],
             signed_at_unix=1_900_000_350,
             private_key=fixture["role_keys"][CAMPAIGN_RUNNER],
+            operation="final_run",
+            purpose=f"{fixture['campaign_name']}:final-run",
         )
         final_path = tmp_path / "external-final-run-attestation.json"
         _write_json(final_path, final_attestation)
@@ -794,6 +802,8 @@ def test_answer_phase_rejects_recommitted_wrong_answer(
             role=TASK_ISSUER,
             payload=attacked,
             signed_at_unix=1_900_000_250,
+            operation="answer_reveal",
+            purpose=f"{fixture['campaign_name']}:answer-reveal",
         )
         _write_json(fixture["campaign_dir"] / "answer_reveal_request.json", request)
 

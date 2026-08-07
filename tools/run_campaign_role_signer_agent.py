@@ -324,6 +324,8 @@ def _validate_signature_request(
         expected_operation = (
             "campaign_manifest"
             if purpose == f"{campaign_id}:campaign-manifest"
+            else "answer_reveal"
+            if purpose == f"{campaign_id}:answer-reveal"
             else "group_lineage"
             if purpose.startswith(f"{campaign_id}:group:") and purpose.endswith(":lineage")
             else "group_manifest"
@@ -332,6 +334,9 @@ def _validate_signature_request(
         )
         if operation != expected_operation:
             raise SignerAgentError("task_issuer_purpose_rejected")
+    elif role == "campaign_runner":
+        if purpose != f"{campaign_id}:final-run" or operation != "final_run":
+            raise SignerAgentError("campaign_runner_purpose_rejected")
     elif role == "evidence_verifier":
         if purpose != "verified-recurrent-campaign-close" or operation != "campaign_close":
             raise SignerAgentError("evidence_verifier_purpose_rejected")

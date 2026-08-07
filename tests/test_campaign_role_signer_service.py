@@ -11,10 +11,13 @@ from pathlib import Path
 import pytest
 
 from core.brain.llm.latent_cortex.campaign_trust import (
+    CAMPAIGN_RUNNER,
+    CAMPAIGN_TRUST_ROLES,
     EVIDENCE_VERIFIER,
     TASK_ISSUER,
     externally_custodied_roles,
     operationally_isolated_roles,
+    prepare_role_signature_request,
     validate_campaign_trust_policy,
 )
 from core.learning.verified_transition_episode import canonical_json_bytes
@@ -59,6 +62,11 @@ def test_provisioned_role_keys_never_enter_disk_and_sign_only_sealed_policy(
             now_unix=result["issued_at_unix"],
         )
         config = _read(result["task_issuer_signer_config_path"])
+        assert set(result["role_signer_config_paths"]) == set(CAMPAIGN_TRUST_ROLES)
+        for role, config_path in result["role_signer_config_paths"].items():
+            role_config = _read(config_path)
+            role_index = role_config["arguments"].index("--role")
+            assert role_config["arguments"][role_index + 1] == role
         broker = CommandRoleSignerBroker(
             identity=config["identity"],
             executable=config["executable"],
@@ -102,6 +110,48 @@ def test_provisioned_role_keys_never_enter_disk_and_sign_only_sealed_policy(
         assert campaign_attestation["signed_payload"]["operation"] == (
             "campaign_manifest"
         )
+        answer_request = prepare_role_signature_request(
+            policy,
+            role=TASK_ISSUER,
+            payload={"schema": "fixture.answer-reveal", "value": 11},
+            signed_at_unix=result["issued_at_unix"],
+            operation="answer_reveal",
+            purpose=f"{campaign_id}:answer-reveal",
+        )
+        answer_attestation = broker.attest_prepared_request(
+            policy,
+            role=TASK_ISSUER,
+            request=answer_request,
+        )
+        assert answer_attestation["signed_payload"] == answer_request["signed_payload"]
+
+        runner_config = _read(result["campaign_runner_signer_config_path"])
+        runner = CommandRoleSignerBroker(
+            identity=runner_config["identity"],
+            executable=runner_config["executable"],
+            executable_sha256=runner_config["executable_sha256"],
+            release_manifest=runner_config["release_manifest"],
+            custody_evidence=runner_config["custody_evidence"],
+            arguments=runner_config["arguments"],
+            timeout_seconds=runner_config["timeout_millis"] / 1000,
+            inherited_environment_names=runner_config[
+                "inherited_environment_names"
+            ],
+        )
+        final_request = prepare_role_signature_request(
+            policy,
+            role=CAMPAIGN_RUNNER,
+            payload={"schema": "fixture.final-run", "value": 13},
+            signed_at_unix=result["issued_at_unix"],
+            operation="final_run",
+            purpose=f"{campaign_id}:final-run",
+        )
+        final_attestation = runner.attest_prepared_request(
+            policy,
+            role=CAMPAIGN_RUNNER,
+            request=final_request,
+        )
+        assert final_attestation["signed_payload"] == final_request["signed_payload"]
         assert operationally_isolated_roles(policy) is True
         assert externally_custodied_roles(policy) is False
 

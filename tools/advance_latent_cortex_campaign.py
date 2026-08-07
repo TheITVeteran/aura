@@ -147,6 +147,8 @@ def _role_request(
     *,
     policy: Any,
     role: str,
+    operation: str,
+    purpose: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     request = read_canonical_json(path, role=f"{role}_phase_request")
     signed = request.get("signed_payload")
@@ -160,6 +162,8 @@ def _role_request(
         role=role,
         payload=payload,
         signed_at_unix=signed["signed_at_unix"],
+        operation=operation,
+        purpose=purpose,
     )
     if request != expected:
         _fail(f"{role}_phase_request_mismatch")
@@ -186,7 +190,11 @@ def _answer_evidence(
     )
     request_path = campaign_dir / runner.ANSWER_REVEAL_REQUEST_FILE
     request, payload = _role_request(
-        request_path, policy=policy, role=TASK_ISSUER
+        request_path,
+        policy=policy,
+        role=TASK_ISSUER,
+        operation="answer_reveal",
+        purpose=f"{plan.campaign_name}:answer-reveal",
     )
     if (
         set(payload)
@@ -562,7 +570,11 @@ def _final_evidence(
     )
     request_path = campaign_dir / runner.FINAL_RUN_REQUEST_FILE
     request, payload = _role_request(
-        request_path, policy=policy, role=CAMPAIGN_RUNNER
+        request_path,
+        policy=policy,
+        role=CAMPAIGN_RUNNER,
+        operation="final_run",
+        purpose=f"{plan.campaign_name}:final-run",
     )
     sequential_binding = runner._sequential_final_evidence_binding(
         campaign_dir,

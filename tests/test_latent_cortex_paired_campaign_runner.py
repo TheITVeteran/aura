@@ -624,6 +624,8 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         payload=request["signed_payload"]["payload"],
         signed_at_unix=request["signed_payload"]["signed_at_unix"],
         private_key=role_keys[TASK_ISSUER],
+        operation="answer_reveal",
+        purpose=f"{campaign_name}:answer-reveal",
     )
     attestation_path = tmp_path / "answer-reveal-attestation.json"
     attestation_path.write_bytes(canonical_json_bytes(attestation) + b"\n")
@@ -662,6 +664,8 @@ def test_claim_reveal_pauses_for_exact_external_issuer_signature(
         payload=final_request["signed_payload"]["payload"],
         signed_at_unix=final_request["signed_payload"]["signed_at_unix"],
         private_key=role_keys[CAMPAIGN_RUNNER],
+        operation="final_run",
+        purpose=f"{campaign_name}:final-run",
     )
     final_attestation_path = tmp_path / "final-run-attestation.json"
     final_attestation_path.write_bytes(canonical_json_bytes(final_attestation) + b"\n")

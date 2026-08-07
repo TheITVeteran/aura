@@ -406,36 +406,35 @@ def provision(
                 "custody_class": "host_isolated_service",
                 "custody_evidence_sha256": _file_sha256(custody_path),
             }
-            if role in {"task_issuer", "evidence_verifier"}:
-                config = {
-                    "schema": SIGNER_CONFIG_SCHEMA,
-                    "identity": signer_id,
-                    "executable": str(launcher),
-                    "executable_sha256": _file_sha256(launcher),
-                    "release_manifest": str(release_path),
-                    "custody_evidence": str(custody_path),
-                    "arguments": [
-                        "--socket",
-                        services[role]["socket_path"],
-                        "--role",
-                        role,
-                        "--campaign",
-                        contract["campaign_id"],
-                        "--protocol-sha256",
-                        contract["contract_sha256"],
-                        "--trust-root",
-                        str(artifact_dir / "root-public.pem"),
-                        "--repo-root",
-                        str(REPO_ROOT),
-                    ],
-                    "timeout_millis": 300000,
-                    "inherited_environment_names": [],
-                }
-                config_path = _publish_json(
-                    artifact_dir / f"{role}-signer-config.json",
-                    config,
-                )
-                signer_configs[role] = str(config_path)
+            config = {
+                "schema": SIGNER_CONFIG_SCHEMA,
+                "identity": signer_id,
+                "executable": str(launcher),
+                "executable_sha256": _file_sha256(launcher),
+                "release_manifest": str(release_path),
+                "custody_evidence": str(custody_path),
+                "arguments": [
+                    "--socket",
+                    services[role]["socket_path"],
+                    "--role",
+                    role,
+                    "--campaign",
+                    contract["campaign_id"],
+                    "--protocol-sha256",
+                    contract["contract_sha256"],
+                    "--trust-root",
+                    str(artifact_dir / "root-public.pem"),
+                    "--repo-root",
+                    str(REPO_ROOT),
+                ],
+                "timeout_millis": 300000,
+                "inherited_environment_names": [],
+            }
+            config_path = _publish_json(
+                artifact_dir / f"{role}-signer-config.json",
+                config,
+            )
+            signer_configs[role] = str(config_path)
 
         policy_body = {
             "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
@@ -523,7 +522,12 @@ def provision(
             "policy_sha256": validated.policy_sha256,
             "trust_policy_path": str(policy_path),
             "trust_root_path": str(root_path),
+            "role_signer_config_paths": dict(sorted(signer_configs.items())),
             "task_issuer_signer_config_path": signer_configs["task_issuer"],
+            "campaign_runner_signer_config_path": signer_configs["campaign_runner"],
+            "contamination_auditor_signer_config_path": signer_configs[
+                "contamination_auditor"
+            ],
             "evidence_verifier_signer_config_path": signer_configs["evidence_verifier"],
             "services": services,
             "issued_at_unix": started_at,

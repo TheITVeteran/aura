@@ -620,6 +620,28 @@ class CommandRoleSignerBroker:
             ),
             purpose=purpose,
         )
+        return self.attest_prepared_request(
+            policy,
+            role=role,
+            request=request,
+        )
+
+    def attest_prepared_request(
+        self,
+        policy: VerifiedCampaignTrustPolicy,
+        *,
+        role: str,
+        request: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Sign an already-persisted request without reconstructing its bytes."""
+
+        signed_payload = request.get("signed_payload")
+        if not isinstance(signed_payload, Mapping):
+            _fail("signer_broker_prepared_request_invalid")
+        purpose = _identifier(
+            signed_payload.get("purpose"),
+            role="signer_broker_purpose",
+        )
         envelope = {
             "schema": COMMAND_SIGNER_REQUEST_SCHEMA,
             "purpose": purpose,
