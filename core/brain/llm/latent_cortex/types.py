@@ -427,6 +427,11 @@ class CortexConfig:
     decode_temperature: float = 0.0
     decode_top_p: float = 1.0
     decode_bridge_policy: str = "none"
+    # Public decode authority. ``latent`` preserves historical/research
+    # behavior. ``vanilla_incumbent`` runs the full latent episode but emits
+    # from the untouched prompt-tail lane until a separately admitted fusion
+    # policy has demonstrated a behavioral gain.
+    decode_incumbent_policy: str = "latent"
     # Contract-aware decode termination (CP180): "final_answer_v1" stops the
     # decode the moment a single FINAL_ANSWER JSON object completes — a
     # uniform serving-side stop rule so bounded budgets measure reasoning,
@@ -764,6 +769,10 @@ class CortexConfig:
                 problems.append("prefix_stability_calibrator config is invalid")
         if self.decode_contract not in ("none", "final_answer_v1"):
             problems.append("decode_contract must be 'none' or 'final_answer_v1'")
+        if self.decode_incumbent_policy not in {"latent", "vanilla_incumbent"}:
+            problems.append(
+                "decode_incumbent_policy must be latent or vanilla_incumbent"
+            )
         if not integer_in(self.decode_contract_grace_tokens, 0, 4096):
             problems.append("decode_contract_grace_tokens outside [0, 4096]")
         if type(self.verifier_accept_non_regression) is not bool:
@@ -1389,6 +1398,8 @@ class EpisodeReceipt:
     decode_contract_satisfied: bool = False
     decode_contract_grace_tokens: int = 0
     decode_contract_grace_used_tokens: int = 0
+    decode_incumbent_policy: str = "latent"
+    decode_incumbent_prompt_logits_sha256: str = ""
     # Times the decode sampler masked a pure-newline token because the run
     # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
     # editing; nonzero values reveal the model still trying to babble.
@@ -1717,6 +1728,10 @@ class EpisodeReceipt:
             "decode_contract_satisfied": self.decode_contract_satisfied,
             "decode_contract_grace_tokens": self.decode_contract_grace_tokens,
             "decode_contract_grace_used_tokens": (self.decode_contract_grace_used_tokens),
+            "decode_incumbent_policy": self.decode_incumbent_policy,
+            "decode_incumbent_prompt_logits_sha256": (
+                self.decode_incumbent_prompt_logits_sha256
+            ),
             "decode_newline_suppressions": self.decode_newline_suppressions,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),

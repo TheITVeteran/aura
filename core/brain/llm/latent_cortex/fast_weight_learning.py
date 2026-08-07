@@ -103,6 +103,7 @@ _DISPOSITIONS = {
     "rejected_verifier_unavailable",
     "rejected_state_lineage_changed",
     "accepted_causal_improvement",
+    "accepted_probe_not_output_under_incumbent_policy",
 }
 
 
@@ -675,6 +676,9 @@ def validate_fast_weight_learning_receipt(
     disposition = value["disposition"]
     not_admitted = disposition == "not_admitted_high_confidence_evidence_absent"
     accepted = disposition == "accepted_causal_improvement"
+    accepted_probe_only = (
+        disposition == "accepted_probe_not_output_under_incumbent_policy"
+    )
     attached = bool(lease["acquired"])
     if causal["evaluated"]:
         if (
@@ -779,6 +783,25 @@ def validate_fast_weight_learning_receipt(
             != "accepted_bounded_refinement"
         ):
             raise ValueError("accepted fast-weight adaptation lacks causal improvement")
+    elif accepted_probe_only:
+        if (
+            optimization["accepted_steps"] <= 0
+            or optimization["budget_exhausted"] is not False
+            or controls["decision"] not in {"accepted", "rescaled"}
+            or causal["evaluated"] is not True
+            or causal["token_sequence_changed"] is not True
+            or causal["strict_improvement"] is not True
+            or not isinstance(causal["pre_score"], (int, float))
+            or not isinstance(causal["post_score"], (int, float))
+            or float(causal["post_score"]) <= float(causal["pre_score"]) + 1e-6
+            or causal["pre_text_sha256"] != admission["source_sha256"]
+            or final["decoded_under_adaptation"] is not False
+            or test_time_training["decision"]
+            != "accepted_bounded_refinement"
+        ):
+            raise ValueError(
+                "probe-only fast-weight adaptation lacks causal improvement"
+            )
     elif not not_admitted and final["decoded_under_adaptation"] is not False:
         raise ValueError("rejected fast-weight adaptation influenced the final answer")
     if disposition == "rejected_no_accepted_step" and (

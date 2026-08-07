@@ -2402,6 +2402,7 @@ class LatentCortexEngine:
         receipt.decode_temperature = float(self.config.decode_temperature)
         receipt.decode_top_p = float(self.config.decode_top_p)
         receipt.decode_bridge_policy = self.config.decode_bridge_policy
+        receipt.decode_incumbent_policy = self.config.decode_incumbent_policy
         receipt.verifier_probe_max_tokens = self.config.verifier_probe_max_tokens
         receipt.decode_contract_required = self.config.decode_contract == "final_answer_v1"
         receipt.decode_contract_grace_tokens = (
@@ -2812,7 +2813,10 @@ class LatentCortexEngine:
                 f"required={minimum_admission} remaining={budget.remaining_layer_apps}"
             )
 
-        embeddings, _tail_logits = self._prefill(tokens, cache, budget)
+        embeddings, prompt_tail_logits = self._prefill(tokens, cache, budget)
+        receipt.decode_incumbent_prompt_logits_sha256 = _logits_digest(
+            prompt_tail_logits
+        )
         from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
 
         kv_state_tree = KVStateTree(
@@ -6119,7 +6123,11 @@ class LatentCortexEngine:
                 bridge_tokens.extend(terminal_instruction_tokens)
             final_fusion_audit = None
             final_decode_transaction = None
-            if heterogeneous_fusion_context is not None:
+            latent_decode_authorized = self.config.decode_incumbent_policy == "latent"
+            heterogeneous_decode_applied = bool(
+                heterogeneous_fusion_context is not None and latent_decode_authorized
+            )
+            if heterogeneous_decode_applied:
 
                 def checkpoint_fusion_phase(stage: str) -> None:
                     nonlocal stage_started
@@ -6175,7 +6183,7 @@ class LatentCortexEngine:
                 )
                 receipt.first_logits_digest = final_fusion_audit["policy_initial_logits_sha256"]
                 receipt.flag("heterogeneous_fusion_decode_applied")
-            else:
+            elif latent_decode_authorized:
                 persist_transaction = kv_state_tree.begin_speculation(
                     cache,
                     start=0,
@@ -6215,6 +6223,43 @@ class LatentCortexEngine:
                     progress=progress,
                     cancel_check=cancel_check,
                 )
+            else:
+                # Recurrence, branch selection, verification, and learning may
+                # still run and remain fully receipted, but they do not own the
+                # public answer until an independent gain gate promotes them.
+                # Restore the immutable prompt root before opening the output
+                # transaction. This is the checkpoint's ordinary decode lane,
+                # not a latent reconstruction of it.
+                if fast_weight_decode_active and fast_weights is not None:
+                    fast_weights.canary_erase()
+                    fast_weight_decode_active = False
+                    if fast_weight_learning_state is not None:
+                        fast_weight_learning_state["disposition"] = (
+                            "accepted_probe_not_output_under_incumbent_policy"
+                        )
+                kv_state_tree.restore_boundary(cache, kv_state_tree.root_sha256)
+                final_decode_transaction = kv_state_tree.begin_speculation(
+                    cache,
+                    start=0,
+                    end=self.n_layers,
+                    purpose="final_vanilla_incumbent_decode",
+                    branch_index=winner.index,
+                    parent_sha256=kv_state_tree.root_sha256,
+                )
+                decode_logits = prompt_tail_logits
+                receipt.first_logits_digest = (
+                    receipt.decode_incumbent_prompt_logits_sha256
+                )
+                stage_started = self._stage_checkpoint(
+                    receipt=receipt,
+                    budget=budget,
+                    stage="incumbent_restore",
+                    stage_started=stage_started,
+                    episode_started=episode_started,
+                    progress=progress,
+                    cancel_check=cancel_check,
+                    decode_authority="vanilla_incumbent",
+                )
             if bridge_tokens:
                 serialized_bridge = json.dumps(
                     bridge_tokens,
@@ -6224,7 +6269,7 @@ class LatentCortexEngine:
                 receipt.decode_bridge_applied = True
                 receipt.decode_bridge_token_count = len(bridge_tokens)
                 receipt.decode_bridge_tokens_sha256 = hashlib.sha256(serialized_bridge).hexdigest()
-                if heterogeneous_fusion_context is not None:
+                if heterogeneous_decode_applied:
                     receipt.decode_bridge_logits_digest = final_fusion_audit[
                         "policy_initial_logits_sha256"
                     ]
@@ -6246,9 +6291,9 @@ class LatentCortexEngine:
                         bridge_policy=self.config.decode_bridge_policy,
                         bridge_tokens=len(bridge_tokens),
                     )
-            elif heterogeneous_fusion_context is None:
+            elif latent_decode_authorized:
                 decode_logits = slot_logits
-            if heterogeneous_fusion_context is None:
+            if not heterogeneous_decode_applied:
                 out_tokens, decode_termination = self._decode(
                     cache,
                     budget,
@@ -6267,8 +6312,14 @@ class LatentCortexEngine:
                 final_decode_transaction.observe_mutation(cache)
                 winner.kv_boundary_sha256 = final_decode_transaction.commit(
                     label="final_output_lane",
-                    authority="confidence_bound_output_candidate",
-                    latent_sha256=tensor_sha256(winner.z),
+                    authority=(
+                        "confidence_bound_output_candidate"
+                        if latent_decode_authorized
+                        else "vanilla_incumbent_output"
+                    ),
+                    latent_sha256=(
+                        tensor_sha256(winner.z) if latent_decode_authorized else ""
+                    ),
                     final=True,
                 )
             receipt.decode_requested_tokens = decode_limit
@@ -6280,7 +6331,7 @@ class LatentCortexEngine:
             )
             receipt.decode_newline_suppressions = int(self._last_decode_newline_suppressions)
             receipt.decode_repetition_penalty_applied = float(self.config.decode_repetition_penalty)
-            if heterogeneous_finalized:
+            if heterogeneous_finalized and final_fusion_audit is not None:
                 from core.brain.llm.latent_cortex.heterogeneous_integrator import (
                     build_heterogeneous_decode_receipt,
                 )
@@ -6348,7 +6399,10 @@ class LatentCortexEngine:
                         values,
                         receipt=receipt,
                     ),
-                    enabled=self.config.answer_replacement_enabled,
+                    enabled=(
+                        self.config.answer_replacement_enabled
+                        and latent_decode_authorized
+                    ),
                     margin=self.config.answer_replacement_margin,
                     max_output_tokens=replacement_output_limit,
                 )

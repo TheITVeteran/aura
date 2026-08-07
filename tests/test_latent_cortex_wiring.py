@@ -443,11 +443,20 @@ def _kv_state_tree_fields(config, *, episode_id, n_layers=2):
     rejected.restore_parent(cache)
     rejected.reject_after_restore(cache)
 
+    incumbent_policy = config.get(
+        "decode_incumbent_policy",
+        "vanilla_incumbent",
+    )
+    incumbent = incumbent_policy == "vanilla_incumbent"
     final = tree.begin_speculation(
         cache,
         start=0,
         end=n_layers,
-        purpose="final_output_decode",
+        purpose=(
+            "final_vanilla_incumbent_decode"
+            if incumbent
+            else "final_output_decode"
+        ),
         branch_index=0,
         parent_sha256=tree.root_sha256,
     )
@@ -456,13 +465,21 @@ def _kv_state_tree_fields(config, *, episode_id, n_layers=2):
     final.observe_mutation(cache)
     final.commit(
         label="final_output_lane",
-        authority="user_visible_decode",
-        latent_sha256=_digest("final-latent"),
+        authority=(
+            "vanilla_incumbent_output"
+            if incumbent
+            else "user_visible_decode"
+        ),
+        latent_sha256=("" if incumbent else _digest("final-latent")),
         final=True,
     )
+    prompt_logits_sha256 = _digest(f"{episode_id}:prompt-tail-logits")
     return {
         "n_layers": n_layers,
         "kv_state_tree": tree.receipt(),
+        "decode_incumbent_policy": incumbent_policy,
+        "decode_incumbent_prompt_logits_sha256": prompt_logits_sha256,
+        "first_logits_digest": prompt_logits_sha256,
     }
 
 
@@ -984,6 +1001,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.branches.isolation_steps == 2
     assert cfg.latent_opt.enabled is False
     assert cfg.fast_weights.enabled is False
+    assert cfg.decode_incumbent_policy == "vanilla_incumbent"
     assert cfg.verifier_probe_max_tokens == 48
     assert cfg.verifier_accept_non_regression is False
     assert cfg.prefix_stability_enabled is True
@@ -1025,6 +1043,8 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"verifier_probe_max_tokens": 15})
     with pytest.raises(ValueError, match="JSON boolean"):
         config_from_job({"verifier_accept_non_regression": "true"})
+    with pytest.raises(ValueError, match="decode_incumbent_policy"):
+        config_from_job({"decode_incumbent_policy": "unproven_fusion"})
     with pytest.raises(ValueError, match="outside"):
         config_from_job({"prefix_stability_samples": 2})
     with pytest.raises(ValueError, match="outside"):
@@ -1132,6 +1152,12 @@ def test_config_from_job_rejects_out_of_band_requests():
                 }
             }
         )
+
+
+def test_config_from_job_can_explicitly_restore_research_latent_decode():
+    cfg = config_from_job({"decode_incumbent_policy": "latent"})
+
+    assert cfg.decode_incumbent_policy == "latent"
 
 
 def test_config_from_job_maps_every_advanced_mechanism():
@@ -1632,6 +1658,22 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert "answer_replacement_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
+            contract_config,
+            **answer_contract_args,
+        )
+    )
+    assert "decode_incumbent_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+            **answer_contract_args,
+        )
+    )
+    tampered_incumbent = copy.deepcopy(body["receipt"])
+    tampered_incumbent["decode_incumbent_prompt_logits_sha256"] = "0" * 64
+    assert "decode_incumbent_unproven" in (
+        LatentCortexService._receipt_contract_errors(
+            tampered_incumbent,
             contract_config,
             **answer_contract_args,
         )

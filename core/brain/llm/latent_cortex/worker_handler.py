@@ -19,6 +19,7 @@ Job contract (all optional except the prompt source):
      "verifier_probe_max_tokens": 48,
      "verifier_accept_non_regression": false,
      "decode_bridge_policy": "none",
+     "decode_incumbent_policy": "vanilla_incumbent",
      "schedule": {...}       # optional explicit program
   },
   "budget": {"max_layer_apps": ..., "wall_clock_s": ...}
@@ -70,6 +71,7 @@ _CONFIG_KEYS = {
     "decode_contract_grace_tokens",
     "decode_min_tokens",
     "decode_bridge_policy",
+    "decode_incumbent_policy",
     "decode_repetition_penalty",
     "decode_repetition_window",
     "decode_temperature",
@@ -296,6 +298,15 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_repetition_penalty=_typed_value(raw, "decode_repetition_penalty", 1.0, float),
         decode_repetition_window=_typed_value(raw, "decode_repetition_window", 72, int),
         decode_bridge_policy=_typed_value(raw, "decode_bridge_policy", "none", str),
+        # The resident/live worker preserves the checkpoint's ordinary answer
+        # as the output incumbent. Research callers can explicitly request the
+        # historical latent decode while it is being improved and measured.
+        decode_incumbent_policy=_typed_value(
+            raw,
+            "decode_incumbent_policy",
+            "vanilla_incumbent",
+            str,
+        ),
         input_context_max_chars=_typed_value(raw, "input_context_max_chars", 0, int),
         allow_vanilla_fallback=_typed_value(raw, "allow_vanilla_fallback", True, bool),
         escape=raw.get("escape"),

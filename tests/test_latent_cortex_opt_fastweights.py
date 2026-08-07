@@ -1093,7 +1093,7 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     }
     errors = LatentCortexService._receipt_contract_errors(
         payload,
-        {"fast_weights": True},
+        {"fast_weights": True, "decode_incumbent_policy": "latent"},
         **contract_args,
     )
     assert "fast_weight_matched_compute_resource_unproven" not in errors
@@ -1104,10 +1104,51 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     ]["transformer_layer_apps"] += 1
     errors = LatentCortexService._receipt_contract_errors(
         tampered,
-        {"fast_weights": True},
+        {"fast_weights": True, "decode_incumbent_policy": "latent"},
         **contract_args,
     )
     assert "fast_weight_matched_compute_resource_unproven" in errors
+
+
+def test_positive_fast_weight_probe_cannot_override_vanilla_incumbent(
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    _force_accepted_step(monkeypatch)
+    _patch_matched_fast_weight_probe(monkeypatch)
+    calls = {"n": 0}
+
+    def improving_score(_text: str) -> float:
+        calls["n"] += 1
+        return calls["n"] / (calls["n"] + 1)
+
+    config = _fw_engine_config()
+    config.decode_incumbent_policy = "vanilla_incumbent"
+    engine = LatentCortexEngine(
+        _fresh_model(),
+        _ProbeTokenizer(),
+        config=config,
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=_TrustedScriptedVerifier(improving_score),
+    )
+
+    assert result.ok
+    learning = result.receipt.fast_weight_learning
+    assert learning["causal_probe"]["strict_improvement"] is True
+    assert learning["disposition"] == (
+        "accepted_probe_not_output_under_incumbent_policy"
+    )
+    assert learning["final_answer"]["decoded_under_adaptation"] is False
+    assert result.receipt.fast_weights_erased is True
+    final_nodes = [
+        node for node in result.receipt.kv_state_tree["nodes"] if node["final"]
+    ]
+    assert len(final_nodes) == 1
+    assert final_nodes[0]["authority"] == "vanilla_incumbent_output"
 
 
 def test_post_verifier_state_change_removes_fast_weight_decode_authority(

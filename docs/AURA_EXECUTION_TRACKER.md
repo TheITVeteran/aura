@@ -37771,3 +37771,39 @@ trainer/resume state, detached controller, canary, and materialization tests
 pass `152/152`; smoke passes `103/103`; Ruff, bytecode compilation, and diff
 hygiene pass. No new model campaign has run, proxy admission remains closed,
 and the completed negative resident result is unchanged.
+
+## Checkpoint 2026-08-07-013: Unproven Recurrence Cannot Degrade the Live Answer
+
+The completed resident campaign showed that recurrence was causally active but
+behaviorally harmful: vanilla scored `13/28`, base RLC `5/28`, and adapter plus
+RLC `3/28`. The live worker nevertheless still gave the synthetic latent
+workspace unconditional authority over the public decode. A correct ordinary
+answer could therefore be discarded even though no retained gain had ever
+authorized that replacement.
+
+The worker now defaults to a `vanilla_incumbent` decode policy. Aura still runs
+the complete recurrent episode, branch isolation, verification, cognitive
+operators, and temporary-learning probes, but the final output transaction
+restores the immutable prompt-prefill KV root and begins from the checkpoint's
+original prompt-tail logits. Any accepted episode fast weights are detached
+before that decode; their strict causal probe remains receipted as evidence but
+does not silently alter an output labelled vanilla. Confidence-bound answer
+replacement and heterogeneous latent fusion likewise remain advisory under
+this policy. Scientific callers can explicitly request the historical `latent`
+decode, so experiments continue to measure the mechanism rather than the
+incumbent safeguard.
+
+The service independently verifies the configured policy, prompt-logit digest,
+single final KV node, root-parent lineage, empty latent binding, and
+`vanilla_incumbent_output` authority. It also now validates supplied blind and
+decoy reviews even when an unrelated branch-output contract is empty, closing a
+tamper-check shortcut exposed by the new lane. A causal regression compares the
+entire emitted token sequence and termination against a separate ordinary
+decode and proves exact equality after the recurrent episode completes.
+
+Engine, worker/service wiring, and fast-weight lifecycle tests pass `197/197`;
+smoke passes `103/103`; Ruff, bytecode compilation, and diff hygiene pass. This
+prevents the known negative RLC from degrading daily answers while preserving
+its live internal computation and research observability. It does not prove a
+recurrent gain, authorize a fusion or adapter activation, admit another
+resident campaign, or close the still-pending free-generation proxy gates.

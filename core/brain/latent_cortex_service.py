@@ -1592,6 +1592,59 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("kv_state_tree_unproven")
         try:
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            policy = receipt.get("decode_incumbent_policy")
+            prompt_logits_sha256 = receipt.get(
+                "decode_incumbent_prompt_logits_sha256"
+            )
+            if (
+                policy != executed_config.decode_incumbent_policy
+                or not isinstance(prompt_logits_sha256, str)
+                or len(prompt_logits_sha256) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in prompt_logits_sha256
+                )
+            ):
+                raise ValueError("decode incumbent identity is invalid")
+            if policy == "vanilla_incumbent":
+                tree = receipt.get("kv_state_tree")
+                if not isinstance(tree, dict):
+                    raise ValueError("decode incumbent KV tree is absent")
+                finals = [
+                    node
+                    for node in tree.get("nodes", [])
+                    if isinstance(node, dict) and node.get("final") is True
+                ]
+                if (
+                    len(finals) != 1
+                    or finals[0].get("authority") != "vanilla_incumbent_output"
+                    or finals[0].get("latent_sha256") != ""
+                    or receipt.get("first_logits_digest")
+                    != prompt_logits_sha256
+                ):
+                    raise ValueError("decode incumbent final node is invalid")
+                commits = [
+                    event
+                    for event in tree.get("events", [])
+                    if isinstance(event, dict)
+                    and event.get("purpose")
+                    == "final_vanilla_incumbent_decode"
+                    and event.get("disposition") == "committed"
+                ]
+                if (
+                    len(commits) != 1
+                    or commits[0].get("parent_node_sha256")
+                    != tree.get("root_node_sha256")
+                    or commits[0].get("result_node_sha256")
+                    != finals[0].get("node_sha256")
+                ):
+                    raise ValueError("decode incumbent lineage is invalid")
+        except (ImportError, KeyError, TypeError, ValueError):
+            errors.append("decode_incumbent_unproven")
+        try:
             from core.brain.llm.latent_cortex.update_gate import (
                 UpdateGateRuntime,
                 validate_update_gate_receipt,
@@ -2585,7 +2638,10 @@ class LatentCortexService:
                     private_evidence=answer_replacement_private,
                     expected_objective=expected_objective,
                     expected_selected_branch=int(receipt.get("selected_branch")),
-                    expected_enabled=executed_config.answer_replacement_enabled,
+                    expected_enabled=(
+                        executed_config.answer_replacement_enabled
+                        and executed_config.decode_incumbent_policy == "latent"
+                    ),
                     expected_margin=executed_config.answer_replacement_margin,
                     expected_max_output_tokens=replacement_output_limit,
                     expected_output_text=(
@@ -2634,7 +2690,14 @@ class LatentCortexService:
                     raise ValueError("decoy preflight rejection was not disclosed")
             except (ImportError, TypeError, ValueError):
                 errors.append("decoy_verifier_preflight_unproven")
-        if receipt.get("branch_contract"):
+        if any(
+            receipt.get(field)
+            for field in (
+                "branch_contract",
+                "blind_review",
+                "decoy_verification",
+            )
+        ):
             try:
                 from core.brain.llm.latent_cortex.blind_review import (
                     validate_blind_review_receipt,

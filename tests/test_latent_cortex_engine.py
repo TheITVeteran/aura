@@ -27,6 +27,7 @@ from core.brain.llm.latent_cortex.causal_receipt import (  # noqa: E402
 from core.brain.llm.latent_cortex.engine import (  # noqa: E402
     LatentCortexEngine,
     _contract_admitted_branch_score,
+    _logits_digest,
 )
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
 from core.brain.llm.latent_cortex.governance import parameter_fingerprint  # noqa: E402
@@ -218,6 +219,59 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.stage_timings_s["decode"] >= 0.0
     assert r.stage_timings_s["total"] >= 0.0
     assert not r.honest_flags, f"clean episode must carry no flags: {r.honest_flags}"
+
+
+def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
+    tiny_model,
+):
+    baseline = LatentCortexEngine(tiny_model, config=_config())
+    baseline_budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    baseline_cache = baseline._fresh_cache()
+    _, baseline_logits = baseline._prefill(
+        PROMPT_TOKENS,
+        baseline_cache,
+        baseline_budget,
+    )
+    baseline_tokens, baseline_termination = baseline._decode(
+        baseline_cache,
+        baseline_budget,
+        baseline_logits,
+        max_tokens=8,
+        temperature=0.0,
+    )
+
+    incumbent = LatentCortexEngine(
+        tiny_model,
+        config=_config(decode_incumbent_policy="vanilla_incumbent"),
+    )
+    result = incumbent.reason(token_ids=PROMPT_TOKENS)
+
+    assert result.ok
+    assert result.tokens == baseline_tokens
+    assert result.receipt.decode_termination == baseline_termination
+    assert result.receipt.decode_incumbent_policy == "vanilla_incumbent"
+    assert result.receipt.decode_incumbent_prompt_logits_sha256 == _logits_digest(
+        baseline_logits
+    )
+    assert result.receipt.first_logits_digest == _logits_digest(baseline_logits)
+    assert result.receipt.steps_taken >= 2
+    assert result.receipt.branch_selection_admitted is True
+    assert result.receipt.answer_replacement["decision"] == "retain"
+    final_nodes = [
+        node for node in result.receipt.kv_state_tree["nodes"] if node["final"]
+    ]
+    assert len(final_nodes) == 1
+    assert final_nodes[0]["authority"] == "vanilla_incumbent_output"
+    assert final_nodes[0]["latent_sha256"] == ""
+    final_events = [
+        event
+        for event in result.receipt.kv_state_tree["events"]
+        if event["purpose"] == "final_vanilla_incumbent_decode"
+    ]
+    assert len(final_events) == 1
+    assert final_events[0]["parent_node_sha256"] == (
+        result.receipt.kv_state_tree["root_node_sha256"]
+    )
 
 
 def test_verifier_probe_cost_uses_receipted_profile_and_bridge(tiny_model):
