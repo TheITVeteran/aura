@@ -220,7 +220,7 @@ def classify_terminal_disposition(
         reason, disposition = COMPUTE_BUDGET, "bounded_answer"
     elif mode == "budget_abstain":
         reason, disposition = RECURRENCE_BUDGET, "abstain"
-    elif mode == "budget_stop" or "budget" in halting_reason or "max_steps" in halting_reason:
+    elif mode == "budget_stop" or "budget" in halting_reason:
         reason, disposition = RECURRENCE_BUDGET, "bounded_answer"
     elif (
         stop is not None
@@ -250,7 +250,19 @@ def classify_terminal_disposition(
         reason, disposition = STABILITY_CONTAINMENT, "bounded_answer"
     elif "cancel" in halting_reason or "interrupt" in halting_reason:
         reason, disposition = INTERRUPTED, "defer"
-    elif halting_reason in {"fixed_depth", "schedule_complete", "value_controller_answer"}:
+    elif halting_reason in {
+        "fixed_depth",
+        "schedule_complete",
+        "value_controller_answer",
+    } or "max_steps" in halting_reason:
+        # A fixed-depth schedule that runs its planned steps reports
+        # ``max_steps``. That is the plan completing, not a budget running out
+        # — real exhaustion is already caught above by the budget flags and by
+        # ``budget_stop``/``budget_abstain``. Classifying normal completion as
+        # exhaustion made "give only the best bounded answer, disclose the
+        # unresolved part" the default terminal instruction on 24 of 28
+        # episodes in the 2026-08-06 directional campaign, against a vanilla
+        # control that received no instruction at all.
         reason, disposition = PLANNED_DEPTH_COMPLETE, "answer"
     else:
         reason, disposition = UNCLASSIFIED_TERMINATION, "bounded_answer"

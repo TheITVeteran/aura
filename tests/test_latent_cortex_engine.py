@@ -1592,3 +1592,51 @@ def test_eos_floor_suppresses_early_stop(tiny_model, monkeypatch):
     assert termination == "eos"
     assert len(out) == 8, "EOS must be masked until the floor, then honored"
     assert all(token == word_id for token in out), "runner-up token fills the floor"
+
+
+def test_bridge_receipt_answers_for_the_policy_not_the_disposition(tiny_model):
+    """A ``none`` bridge policy cannot publish an applied bridge.
+
+    Terminal-disposition language was extended into the same token list the
+    decode bridge used, so every recurrent episode in the 2026-08-06 campaign
+    published ``decode_bridge_policy="none"`` beside
+    ``decode_bridge_applied=True`` and a 43-token count. The bridge receipt now
+    answers for the configured policy alone; the total injection is attributed
+    separately.
+    """
+
+    engine = LatentCortexEngine(tiny_model, config=_config(decode_bridge_policy="none"))
+    receipt = engine.reason(token_ids=PROMPT_TOKENS).receipt.to_dict()
+
+    assert receipt["decode_bridge_policy"] == "none"
+    assert receipt["decode_bridge_applied"] is False
+    assert receipt["decode_bridge_token_count"] == 0
+
+    composition = receipt["decode_prefix_composition"]
+    assert composition["policy_bridge_tokens"] == 0
+    assert composition["terminal_instruction_policy"] == "applied"
+    # Whatever the disposition injected is still counted, just not as a bridge.
+    assert (
+        receipt["decode_prefix_token_count"]
+        == composition["policy_bridge_tokens"]
+        + composition["terminal_instruction_tokens"]
+    )
+
+
+def test_suppressed_terminal_instruction_leaves_the_decode_prefix_empty(tiny_model):
+    """A research arm can decode from the same context an ordinary decode sees."""
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(
+            decode_bridge_policy="none",
+            terminal_instruction_policy="suppressed",
+        ),
+    )
+    receipt = engine.reason(token_ids=PROMPT_TOKENS).receipt.to_dict()
+
+    composition = receipt["decode_prefix_composition"]
+    assert composition["terminal_instruction_policy"] == "suppressed"
+    assert composition["terminal_instruction_tokens"] == 0
+    assert receipt["decode_prefix_token_count"] == 0
+    assert receipt["decode_bridge_applied"] is False

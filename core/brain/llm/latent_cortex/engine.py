@@ -5537,7 +5537,14 @@ class LatentCortexEngine:
             cognitive_action_trace=receipt.cognitive_action_trace,
             budget=budget.to_receipt(),
         )
-        if self.tokenizer is not None:
+        # The disposition is always classified and receipted. Injecting it as
+        # language ahead of the decode is a separate, configurable act: the
+        # text is an instruction, so an arm that receives it is not comparable
+        # to a control arm that does not.
+        terminal_instruction_suppressed = (
+            self.config.terminal_instruction_policy == "suppressed"
+        )
+        if self.tokenizer is not None and not terminal_instruction_suppressed:
             terminal_instruction_tokens = self._encode_terminal_instruction(
                 terminal_decision.instruction
             )
@@ -6119,6 +6126,14 @@ class LatentCortexEngine:
                     receipt.flag("fast_weight_state_lineage_changed")
 
             # ── Commit the winner + decode the answer ────────────────────
+            # ``bridge_tokens`` is what the model actually reads before the
+            # answer. It has two independent sources, and conflating them let a
+            # ``decode_bridge_policy="none"`` episode publish
+            # ``decode_bridge_applied=True`` with a 43-token count — the policy
+            # bridge was empty and the terminal-disposition language supplied
+            # every one of those tokens. Count the policy bridge on its own so
+            # the bridge receipt answers for the policy alone.
+            policy_bridge_token_count = len(bridge_tokens)
             if terminal_instruction_tokens:
                 bridge_tokens.extend(terminal_instruction_tokens)
             final_fusion_audit = None
@@ -6260,14 +6275,20 @@ class LatentCortexEngine:
                     cancel_check=cancel_check,
                     decode_authority="vanilla_incumbent",
                 )
+            receipt.decode_prefix_token_count = len(bridge_tokens)
+            receipt.decode_prefix_composition = {
+                "policy_bridge_tokens": policy_bridge_token_count,
+                "terminal_instruction_tokens": len(terminal_instruction_tokens),
+                "terminal_instruction_policy": self.config.terminal_instruction_policy,
+            }
             if bridge_tokens:
                 serialized_bridge = json.dumps(
                     bridge_tokens,
                     separators=(",", ":"),
                     allow_nan=False,
                 ).encode("ascii")
-                receipt.decode_bridge_applied = True
-                receipt.decode_bridge_token_count = len(bridge_tokens)
+                receipt.decode_bridge_applied = policy_bridge_token_count > 0
+                receipt.decode_bridge_token_count = policy_bridge_token_count
                 receipt.decode_bridge_tokens_sha256 = hashlib.sha256(serialized_bridge).hexdigest()
                 if heterogeneous_decode_applied:
                     receipt.decode_bridge_logits_digest = final_fusion_audit[

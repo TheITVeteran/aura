@@ -432,6 +432,17 @@ class CortexConfig:
     # from the untouched prompt-tail lane until a separately admitted fusion
     # policy has demonstrated a behavioral gain.
     decode_incumbent_policy: str = "latent"
+    # Terminal disposition language injected ahead of the answer decode.
+    # ``applied`` preserves live behavior: the episode tells itself, in words,
+    # how its own reasoning ended. ``suppressed`` withholds that block so a
+    # research arm decodes from exactly the context an ordinary vanilla decode
+    # sees. The disposition is still classified and receipted either way — only
+    # the injection is withheld — so an arm that suppresses it is still
+    # attributable. Suppression exists because the injected text is an
+    # instruction ("give only the best bounded answer", "disclose the
+    # unresolved part"), and an arm that receives it is not comparable to a
+    # control arm that does not.
+    terminal_instruction_policy: str = "applied"
     # Contract-aware decode termination (CP180): "final_answer_v1" stops the
     # decode the moment a single FINAL_ANSWER JSON object completes — a
     # uniform serving-side stop rule so bounded budgets measure reasoning,
@@ -784,6 +795,8 @@ class CortexConfig:
             "assistant_answer_v3",
         }:
             problems.append("decode_bridge_policy must be none or an assistant_answer_v1-v3 policy")
+        if self.terminal_instruction_policy not in {"applied", "suppressed"}:
+            problems.append("terminal_instruction_policy must be applied or suppressed")
         if not (
             type(self.input_context_max_chars) is int
             and (self.input_context_max_chars == 0 or 2048 <= self.input_context_max_chars <= 65536)
@@ -1511,6 +1524,13 @@ class EpisodeReceipt:
     decode_bridge_token_count: int = 0
     decode_bridge_tokens_sha256: str = ""
     decode_bridge_logits_digest: str = ""
+    # Everything the model reads between the latent episode and the answer,
+    # attributed to its sources. ``decode_bridge_*`` above answers for the
+    # configured bridge policy only; terminal-disposition language is a
+    # separate injection and is counted separately here. An arm comparing
+    # itself to an ordinary decode must read this, not the bridge fields.
+    decode_prefix_token_count: int = 0
+    decode_prefix_composition: dict[str, Any] = field(default_factory=dict)
     output_quality: dict[str, Any] = field(default_factory=dict)
     # Runtime lifecycle evidence. Timings are stage-local wall-clock seconds;
     # progress messages use the same stage names so a parent can distinguish a
@@ -1772,6 +1792,8 @@ class EpisodeReceipt:
             "decode_bridge_token_count": self.decode_bridge_token_count,
             "decode_bridge_tokens_sha256": self.decode_bridge_tokens_sha256,
             "decode_bridge_logits_digest": self.decode_bridge_logits_digest,
+            "decode_prefix_token_count": self.decode_prefix_token_count,
+            "decode_prefix_composition": dict(self.decode_prefix_composition),
             "output_quality": dict(self.output_quality),
             "last_stage": self.last_stage,
             "stage_timings_s": {

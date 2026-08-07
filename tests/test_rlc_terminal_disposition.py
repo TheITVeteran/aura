@@ -283,3 +283,52 @@ def test_resident_language_cannot_claim_an_unapplied_instruction():
             output_text="answer",
             output_source="resident_model_decode",
         )
+
+
+def test_completed_fixed_depth_schedule_is_not_budget_exhaustion():
+    """``max_steps`` on a fixed-depth plan is completion, not exhaustion.
+
+    The recurrence loop reports ``max_steps`` when it runs the number of steps
+    it was configured to run. Classifying that as ``recurrence_budget_exhausted``
+    injected "give only the best bounded answer, disclose the unresolved part"
+    ahead of the answer decode on 24 of 28 episodes in the 2026-08-06
+    directional campaign -- an instruction to answer partially, delivered only
+    to the recurrent arms while the vanilla control received nothing.
+    """
+
+    from core.brain.llm.latent_cortex.terminal_disposition import (
+        PLANNED_DEPTH_COMPLETE,
+    )
+
+    completed = classify_terminal_disposition(
+        halting_reason="max_steps",
+        halting=_halting(),
+        loop_stability=_loop(fixed=False),
+        cognitive_action_trace=[],
+        budget=_budget(),
+    )
+    assert (completed.reason, completed.disposition) == (
+        PLANNED_DEPTH_COMPLETE,
+        "answer",
+    )
+    assert "bounded answer" not in completed.instruction
+
+    # A real budget stop at the same halting reason still reports exhaustion.
+    stopped = classify_terminal_disposition(
+        halting_reason="max_steps",
+        halting=_halting(),
+        loop_stability=_loop(fixed=False),
+        cognitive_action_trace=_trace(action="answer", mode="budget_stop"),
+        budget=_budget(),
+    )
+    assert stopped.reason == RECURRENCE_BUDGET
+
+    # And an exhausted compute budget still dominates.
+    exhausted = classify_terminal_disposition(
+        halting_reason="max_steps",
+        halting=_halting(),
+        loop_stability=_loop(fixed=False),
+        cognitive_action_trace=[],
+        budget=_budget(exhausted=True),
+    )
+    assert exhausted.reason == COMPUTE_BUDGET
