@@ -1,5 +1,5 @@
 {
-  "content_sha256": "2293f9537b3bc2cf2486b211caab6f6302acd47f9182d827d603848561dd4687",
+  "content_sha256": "25a79943f242ae2e2ec324182c6e20520f774e84eefe9ce4eeca8d9aa0b91c4a",
   "entries": [
     {
       "acceptance_ids": [
@@ -609,12 +609,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "e57acb3ebfaeb27db3efc3061ef04ae041b23bde",
+      "commit": "e1a02eea9cdb0dcd81eed0e103fd3e24fa691428",
       "evidence_class": "test",
       "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e57acb3ebfaeb27db3efc3061ef04ae041b23bde.json",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e1a02eea9cdb0dcd81eed0e103fd3e24fa691428.json",
       "requirement_id": "PROGRESS-CONTROL-001",
-      "sha256": "c5758f89d788e30af42c549292be7b4609666417fdaf895c152aea58941e6c4f"
+      "sha256": "508479b8ea3d7fce55f15ac9b8063baab3626c5c343112cbea4678fa912edac9"
     },
     {
       "acceptance_ids": [
@@ -653,12 +653,12 @@
       "acceptance_ids": [
         "A1"
       ],
-      "commit": "e57acb3ebfaeb27db3efc3061ef04ae041b23bde",
+      "commit": "e1a02eea9cdb0dcd81eed0e103fd3e24fa691428",
       "evidence_class": "test",
       "recorded_at": "2026-08-07",
-      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e57acb3ebfaeb27db3efc3061ef04ae041b23bde.json",
+      "ref": "artifacts/reqproof/evidence/reqproof-control-plane-contract-tests/e1a02eea9cdb0dcd81eed0e103fd3e24fa691428.json",
       "requirement_id": "SCOPE-001",
-      "sha256": "c5758f89d788e30af42c549292be7b4609666417fdaf895c152aea58941e6c4f"
+      "sha256": "508479b8ea3d7fce55f15ac9b8063baab3626c5c343112cbea4678fa912edac9"
     },
     {
       "acceptance_ids": [
