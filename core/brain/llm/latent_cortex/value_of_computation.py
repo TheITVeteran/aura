@@ -21,7 +21,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from core.brain.llm.latent_cortex.action_calibration import (
     ACTION_CALIBRATION_EVIDENCE_SCHEMA,
@@ -922,6 +922,11 @@ def action_cost_estimate(
     }
 
 
+_TERMINAL_ACTIONS: Final = frozenset(
+    {OperationKind.ANSWER, OperationKind.ABSTAIN}
+)
+
+
 def _bootstrap_gain(action: OperationKind, state: CognitiveStateSignal) -> float:
     """Conservative structural prior used only while measurements are sparse."""
 
@@ -1081,6 +1086,26 @@ class ValueOfComputationPolicy:
                 measured = bool(estimate["measured"])
                 gain = float(estimate["gain_lcb"]) if measured else _bootstrap_gain(action, state)
                 cost = float(estimate["cost_ucb"]) if measured else _BASE_COST[action]
+                if action in _TERMINAL_ACTIONS:
+                    # Ranking a terminal action by value-per-cost is a category
+                    # error: ANSWER and ABSTAIN cost almost nothing to execute
+                    # (0.01) but they END the episode, so dividing by that
+                    # execution cost multiplies their score ~100x and they win
+                    # against anything that does real work. Measured: at step 2
+                    # of 8 with uncertainty 0.5, abstain scored 3.1 against
+                    # check_assumption's 2.75, and every full-stack episode on
+                    # both the 1.5B and the 32B halted at the floor depth of 2.
+                    #
+                    # What stopping actually costs is the computation it
+                    # forfeits. Charging the remaining budget makes the trade
+                    # honest -- expensive to quit early, progressively cheaper
+                    # as the budget genuinely runs out -- and introduces no new
+                    # constant. The cases where stopping is correct are already
+                    # handled by explicit rules above this branch: a verified
+                    # answer stops at ``verified_stop`` and genuinely
+                    # irreducible uncertainty stops at ``irreducible_abstain``,
+                    # neither of which reaches this scoring path.
+                    cost = max(cost, float(state.budget_remaining_fraction))
                 value = gain / max(_EPSILON_COST, cost)
                 scored.append(
                     (
