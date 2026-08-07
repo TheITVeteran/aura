@@ -15,7 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final, Never
 
 FREE_GENERATION_REPORT_SCHEMA: Final = (
-    "aura.rlc.recurrent_checkpoint_free_generation.v1"
+    "aura.rlc.recurrent_checkpoint_free_generation.v2"
 )
 CHECKPOINT_ADMISSION_SCHEMA: Final = (
     "aura.rlc.recurrent_checkpoint_behavioral_admission.v1"
@@ -67,6 +67,69 @@ def _normalize_depths(depths: Sequence[int]) -> tuple[int, ...]:
     ):
         _fail("recurrent_checkpoint_depths_invalid")
     return values
+
+
+def _validate_episode_evidence(
+    value: Any,
+    *,
+    depth: int,
+    token_count: int,
+    decode_termination: str,
+    branch_selection_admitted: bool,
+    episode_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Validate the recurrent mechanics behind one graded completion.
+
+    Earlier reports retained only a digest of an unavailable episode receipt.
+    That bound bytes but left an independent verifier unable to establish that
+    recurrence or the scoped adapter actually executed. The complete public
+    receipt is now carried in the report and its promotion-critical fields are
+    reconstructed here.
+    """
+
+    if not isinstance(value, Mapping):
+        _fail("recurrent_checkpoint_episode_evidence_invalid")
+    receipt = dict(value)
+    activation = receipt.get("recurrence_adapter")
+    nonparametric = receipt.get("nonparametric_memory")
+    honest_flags = receipt.get("honest_flags")
+    selected_branch = receipt.get("selected_branch")
+    n_branches = receipt.get("n_branches")
+    if (
+        _sha(receipt) != episode_receipt_sha256
+        or not isinstance(receipt.get("episode_id"), str)
+        or not receipt["episode_id"]
+        or not _is_sha256(receipt.get("input_tokens_sha256"))
+        or type(receipt.get("input_token_count")) is not int
+        or receipt["input_token_count"] < 1
+        or type(receipt.get("steps_taken")) is not int
+        or receipt["steps_taken"] != depth
+        or type(n_branches) is not int
+        or n_branches < 2
+        or type(selected_branch) is not int
+        or not 0 <= selected_branch < n_branches
+        or receipt.get("branch_selection_admitted")
+        is not branch_selection_admitted
+        or receipt.get("decode_incumbent_policy") != "latent"
+        or receipt.get("decode_termination") != decode_termination
+        or type(receipt.get("decode_generated_tokens")) is not int
+        or receipt["decode_generated_tokens"] != token_count
+        or receipt.get("params_unchanged") is not True
+        or not isinstance(nonparametric, Mapping)
+        or nonparametric.get("status") != "disabled_by_policy"
+        or not isinstance(honest_flags, list)
+        or any(str(flag).startswith("fallback_") for flag in honest_flags)
+        or not isinstance(activation, Mapping)
+        or activation.get("schema") != "aura.recurrence_adapter_activation.v1"
+        or activation.get("scope") != "latent_slots_only"
+        or activation.get("active") is not True
+        or type(activation.get("calls")) is not int
+        or activation["calls"] < 1
+        or type(activation.get("adapted_positions")) is not int
+        or activation["adapted_positions"] < 1
+    ):
+        _fail("recurrent_checkpoint_episode_evidence_invalid")
+    return receipt
 
 
 def build_recurrence_task_manifest(
@@ -191,6 +254,7 @@ def build_free_generation_report(
                 "branch_selection_admitted",
                 "decode_incumbent_policy",
                 "episode_receipt_sha256",
+                "episode_receipt",
             }
             or row.get("task_id") != task_id
             or row.get("depth") != depth
@@ -222,6 +286,14 @@ def build_free_generation_report(
             or (row["correct"] and not row["branch_selection_admitted"])
         ):
             _fail("recurrent_checkpoint_report_record_invalid")
+        row["episode_receipt"] = _validate_episode_evidence(
+            row.get("episode_receipt"),
+            depth=depth,
+            token_count=row["token_count"],
+            decode_termination=row["decode_termination"],
+            branch_selection_admitted=row["branch_selection_admitted"],
+            episode_receipt_sha256=row["episode_receipt_sha256"],
+        )
         normalized_rows.append(row)
     correct_by_depth = {
         str(depth): sum(

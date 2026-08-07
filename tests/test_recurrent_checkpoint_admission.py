@@ -33,6 +33,28 @@ def _record(task_id: str, depth: int, correct: bool) -> dict[str, object]:
     response_text = task.answer if correct else 'FINAL_ANSWER: {"wrong":true}'
     tokens = [depth, int(correct), len(task_id)]
     grade = task.grade(response_text)
+    episode_receipt = {
+        "episode_id": f"episode:{task_id}:{depth}:{correct}",
+        "input_tokens_sha256": _digest(f"prompt:{task_id}"),
+        "input_token_count": 11,
+        "steps_taken": depth,
+        "n_branches": 2,
+        "selected_branch": 0,
+        "branch_selection_admitted": True,
+        "decode_incumbent_policy": "latent",
+        "decode_termination": "token_limit",
+        "decode_generated_tokens": len(tokens),
+        "params_unchanged": True,
+        "nonparametric_memory": {"status": "disabled_by_policy"},
+        "honest_flags": [],
+        "recurrence_adapter": {
+            "schema": "aura.recurrence_adapter_activation.v1",
+            "scope": "latent_slots_only",
+            "active": True,
+            "calls": 2,
+            "adapted_positions": 8,
+        },
+    }
     return {
         "task_id": task_id,
         "depth": depth,
@@ -56,9 +78,16 @@ def _record(task_id: str, depth: int, correct: bool) -> dict[str, object]:
         "decode_termination": "token_limit",
         "branch_selection_admitted": True,
         "decode_incumbent_policy": "latent",
-        "episode_receipt_sha256": _digest(
-            f"receipt:{task_id}:{depth}:{correct}"
-        ),
+        "episode_receipt_sha256": hashlib.sha256(
+            json.dumps(
+                episode_receipt,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest(),
+        "episode_receipt": episode_receipt,
     }
 
 
@@ -207,6 +236,30 @@ def test_report_replay_rejects_tampering_and_incomplete_execution():
     tampered["records"][0]["correct"] = True
     with pytest.raises(RecurrentCheckpointAdmissionError, match="commitment"):
         validate_free_generation_report(tampered)
+
+    inactive = copy.deepcopy(report)
+    inactive["records"][0]["episode_receipt"]["recurrence_adapter"][
+        "calls"
+    ] = 0
+    inactive["records"][0]["episode_receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            inactive["records"][0]["episode_receipt"],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    with pytest.raises(RecurrentCheckpointAdmissionError, match="episode_evidence"):
+        build_free_generation_report(
+            arm=inactive["arm"],
+            adapter_sha256=inactive["adapter_sha256"],
+            execution_spec_sha256=inactive["execution_spec_sha256"],
+            task_manifest_sha256=inactive["task_manifest_sha256"],
+            task_ids=inactive["task_ids"],
+            depths=inactive["depths"],
+            records=inactive["records"],
+        )
 
     incomplete = copy.deepcopy(report)
     incomplete["records"][0]["episode_ok"] = False

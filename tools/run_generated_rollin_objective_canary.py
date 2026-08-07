@@ -360,6 +360,7 @@ def _free_generation_report(
                     "episode_receipt_sha256": hashlib.sha256(
                         _canonical_json_bytes(receipt_payload)
                     ).hexdigest(),
+                    "episode_receipt": receipt_payload,
                 }
             )
             del engine, result
