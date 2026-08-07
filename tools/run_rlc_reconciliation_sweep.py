@@ -90,6 +90,13 @@ ARMS: tuple[Arm, ...] = (
     # 63s on the 32B, so three independent samples sit at the same price.
     Arm("vanilla_equal_compute", None, "applied", None, "ordinary_best_of_3"),
     Arm("full_stack", 8, "applied", None, "full"),
+    # The one divergence from ordinary decode that survives vanilla_incumbent:
+    # bridge tokens, including the 27-token terminal disposition, are still
+    # prepended to the answer decode. The deployed system does this, so the
+    # product arm must too -- but it means the honest floor is "vanilla plus
+    # disposition", not "vanilla". Crossing it here costs one arm; discovering
+    # it after a negative result costs the whole battery again.
+    Arm("full_stack_nodisp", 8, "suppressed", None, "full"),
     Arm("full_stack_oracle", 8, "applied", None, "full_oracle"),
     # Ablations, meaningful only underneath the full arm.
     Arm("rlc_mechanism", 4, "suppressed", None, "mechanism"),

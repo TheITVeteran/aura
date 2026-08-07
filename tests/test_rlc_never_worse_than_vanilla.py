@@ -77,3 +77,21 @@ def test_every_arm_declares_which_side_of_the_floor_it_is_on():
     unbounded = {"mechanism", "ordinary", "ordinary_best_of_3"}
     for arm in sweep.ARMS:
         assert arm.profile in bounded | unbounded, arm
+
+
+def test_the_last_divergence_is_crossed_rather_than_assumed():
+    """Bridge tokens -- including the 27-token terminal disposition -- are
+    prepended to the answer decode even under vanilla_incumbent, so the
+    product's honest floor is "vanilla plus disposition", not "vanilla". The
+    deployed system does this, so the product arm keeps it; the matched arm
+    with it suppressed measures what it costs. Discovering that after a
+    negative result would cost the whole battery a second time."""
+    by_name = {a.name: a for a in sweep.ARMS}
+    product = by_name["full_stack"]
+    matched = by_name["full_stack_nodisp"]
+    assert product.profile == matched.profile == "full"
+    assert product.steps == matched.steps
+    assert product.max_tokens == matched.max_tokens
+    # The disposition is the ONLY thing that differs between them.
+    assert product.policy == "applied"
+    assert matched.policy == "suppressed"
