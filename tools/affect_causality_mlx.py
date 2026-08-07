@@ -74,6 +74,7 @@ class MlxAffectResponder:
         lease: Any,
         max_output_tokens: int,
         settle_iterations: int = 60,
+        magnitude: float = 0.0,
     ) -> None:
         self._model = model
         self._tokenizer = tokenizer
@@ -84,6 +85,9 @@ class MlxAffectResponder:
         # 60 iterations puts the smoothed composite within measurement noise of
         # its fixed point (measured: cosine stops moving between 60 and 120).
         self._settle_iterations = int(settle_iterations)
+        # Injected as vector scale, divided by the pinned effective alpha so
+        # the product is exactly the requested magnitude.
+        self._magnitude = float(magnitude)
         self._closed = False
 
     def _hooks(self) -> list[Any]:
@@ -103,7 +107,13 @@ class MlxAffectResponder:
         return hooks
 
     def _set_vector(self, vector: Any | None) -> None:
-        for hook in self._hooks():
+        hooks = self._hooks()
+        if vector is not None and self._magnitude > 0.0:
+            import numpy as np
+
+            floor = float(getattr(hooks[0], "_STALE_SAFE_ALPHA", 0.35)) or 0.35
+            vector = np.asarray(vector, dtype=np.float32) * (self._magnitude / floor)
+        for hook in hooks:
             hook.override_composite_vector(vector)
 
     def _real_vector(self, probe: AffectProbe) -> Any:
@@ -233,6 +243,21 @@ def make_affect_responder(
         model, tokenizer = load(model_id)
         engine = get_steering_engine()
         engine.attach(model, tokenizer)
+        # Pin alpha to the staleness floor and carry the magnitude in the
+        # VECTOR instead.
+        #
+        # _effective_alpha() derates to _STALE_SAFE_ALPHA (0.35) once the
+        # substrate sync is more than 2s old. A 32B generating 40 tokens takes
+        # far longer than 2s, so alpha collapses partway through every
+        # generation and whatever was configured stops applying. Measured: an
+        # ablation run at alpha=10 produced byte-identical output across all
+        # three arms, while the same vectors scaled directly moved the 32B's
+        # text at every magnitude from 10 up.
+        #
+        # Pinning alpha AT the floor makes the effective value 0.35 whether or
+        # not the sync is fresh, which is the only way to get a magnitude that
+        # does not change halfway through a generation. The requested
+        # magnitude is then applied to the vector itself.
         if alpha > 0.0:
             # The SHIPPED effective alpha is 3.0 (DEFAULT_ALPHA 5.0 clipped by
             # _INJECTION_ALPHA_CEILING). Measured on a 1.5B: at 1 and at 3 the
@@ -242,12 +267,9 @@ def make_affect_responder(
             # text, and an ablation run at it measures the ceiling rather than
             # the affect. This makes the magnitude an explicit, reported
             # parameter instead of a silent one.
-            engine.set_alpha(float(alpha))
             for hook in engine.active_hooks():
-                hook._alpha = float(alpha)
-                hook._INJECTION_ALPHA_CEILING = max(
-                    float(alpha), hook._INJECTION_ALPHA_CEILING
-                )
+                engine.set_alpha(hook._STALE_SAFE_ALPHA)
+                hook._alpha = hook._STALE_SAFE_ALPHA
         if not getattr(engine, "_model_attached", False):
             raise SteeringUnavailableError(
                 "the steering engine did not attach (AURA_DISABLE_AFFECTIVE_STEERING "
@@ -266,6 +288,7 @@ def make_affect_responder(
         engine=engine,
         lease=lease,
         max_output_tokens=max_output_tokens,
+        magnitude=alpha,
     )
 
 
