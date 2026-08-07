@@ -128,3 +128,12 @@ def test_independent_evidence_is_a_required_rule() -> None:
         independent_valid=False,
     )
     assert rules["independent_evidence_and_receipts_validate"] is False
+
+
+def test_directional_verdict_write_is_create_or_verify(tmp_path) -> None:
+    path = tmp_path / "verdict.json"
+    document = {"schema": "fixture", "value": 1}
+    gate._write_once(path, document)
+    gate._write_once(path, document)
+    with pytest.raises(gate.DirectionalGateError, match="output_conflict"):
+        gate._write_once(path, {"schema": "fixture", "value": 2})

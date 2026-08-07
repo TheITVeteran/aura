@@ -39,6 +39,7 @@ from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     BASE_VANILLA,
     exact_campaign_power_plan,
 )
+from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools.verify_latent_cortex_directional_gate import (  # noqa: E402
     EXPECTED_RULES,
 )
@@ -73,7 +74,9 @@ def _sha(value: Any) -> str:
 
 def _file_binding(path: Path, *, role: str) -> dict[str, Any]:
     resolved = path.expanduser().resolve(strict=True)
-    payload = resolved.read_bytes()
+    if path.expanduser().is_symlink():
+        _fail(f"{role}_symlink_rejected")
+    payload = read_stable_bytes(resolved, max_bytes=64 * 1024 * 1024)
     return {
         "role": role,
         "path": str(resolved),

@@ -37440,7 +37440,9 @@ negative certificate remains useful evidence and emits exact repair diagnoses
 instead of collapsing into a generic benchmark failure. The focused verifier,
 historical-pilot, and paired-grading slice passes `47/47`; smoke passes
 `103/103`; Ruff and bytecode compilation pass. No live result is recorded by
-this checkpoint: the active campaign was still executing, with zero failed
+this checkpoint. Terminal certificate publication is create-or-verify and
+rejects symlinks or conflicting reruns, so an accepted verdict cannot be
+silently replaced after inspection. The active campaign was still executing, with zero failed
 attempts, when the source contract was added. The powered externally rooted
 campaign, production activation, installed-app proof, release gates, and final
 soaks remain open.

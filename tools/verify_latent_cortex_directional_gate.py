@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -36,7 +37,6 @@ from core.brain.llm.latent_cortex.paired_campaign import (  # noqa: E402
     BASE_RLC,
     BASE_VANILLA,
 )
-from core.runtime.file_write_gateway import atomic_write_bytes  # noqa: E402
 from tools.verify_paired_campaign_evidence import (  # noqa: E402
     VERDICT_SCHEMA as INDEPENDENT_VERDICT_SCHEMA,
 )
@@ -82,6 +82,35 @@ def _file_sha(path: Path) -> str:
         for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _write_once(path: Path, document: Mapping[str, Any]) -> None:
+    payload = canonical_json_bytes(document) + b"\n"
+    destination = path.expanduser().resolve(strict=False)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or destination.read_bytes() != payload:
+            _fail("directional_verdict_output_conflict")
+        return
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                _fail("directional_verdict_short_write")
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _counter(values: Sequence[Any]) -> dict[str, int]:
@@ -452,8 +481,7 @@ def main() -> int:
             independent_verdict_path=args.independent_verdict,
             contamination_trust_root=args.contamination_trust_root,
         )
-        output = args.output.expanduser().resolve(strict=False)
-        atomic_write_bytes(output, canonical_json_bytes(verdict) + b"\n", mode=0o600)
+        _write_once(args.output, verdict)
     except Exception as exc:  # noqa: BLE001 - fail-closed CLI boundary
         print(
             f"verify_latent_cortex_directional_gate: {type(exc).__name__}: {exc}",
