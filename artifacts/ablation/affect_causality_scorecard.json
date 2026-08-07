@@ -1,0 +1,306 @@
+{
+  "attempts": {
+    "conditions": {
+      "real_state": {
+        "attempts": 48,
+        "clean_success_rate": 1.0,
+        "condition": "real_state",
+        "fell_back": 0,
+        "lanes": [
+          "real_state"
+        ],
+        "mean_score": 0.5625,
+        "needed_human": 0,
+        "outcomes": {
+          "success": 48
+        },
+        "success_rate": 1.0,
+        "total_retries": 0
+      },
+      "shuffled_state": {
+        "attempts": 48,
+        "clean_success_rate": 1.0,
+        "condition": "shuffled_state",
+        "fell_back": 0,
+        "lanes": [
+          "shuffled_state"
+        ],
+        "mean_score": 0.5,
+        "needed_human": 0,
+        "outcomes": {
+          "success": 48
+        },
+        "success_rate": 1.0,
+        "total_retries": 0
+      },
+      "unsteered": {
+        "attempts": 48,
+        "clean_success_rate": 1.0,
+        "condition": "unsteered",
+        "fell_back": 0,
+        "lanes": [
+          "unsteered"
+        ],
+        "mean_score": 0.5,
+        "needed_human": 0,
+        "outcomes": {
+          "success": 48
+        },
+        "success_rate": 1.0,
+        "total_retries": 0
+      }
+    },
+    "schema": "aura.attempt_ledger.v1",
+    "total_attempts": 144
+  },
+  "claims": [
+    {
+      "condition": "affect_content_vs_magnitude_matched_permutation",
+      "delta": 0.0625,
+      "inference_class": "mechanistic",
+      "licenses": "the component measurably changes its own output. Real and worth knowing, and one layer short of capability \u2014 it establishes the organ does something, not that the something helps.",
+      "metric": "intended_direction_agreement",
+      "subsystem": "core.consciousness.affective_steering",
+      "supports_earns_its_cost": false
+    }
+  ],
+  "conditions": {
+    "real_state": {
+      "attempts": 48,
+      "clean_success_rate": 1.0,
+      "condition": "real_state",
+      "fell_back": 0,
+      "lanes": [
+        "real_state"
+      ],
+      "mean_score": 0.5625,
+      "needed_human": 0,
+      "outcomes": {
+        "success": 48
+      },
+      "success_rate": 1.0,
+      "total_retries": 0
+    },
+    "shuffled_state": {
+      "attempts": 48,
+      "clean_success_rate": 1.0,
+      "condition": "shuffled_state",
+      "fell_back": 0,
+      "lanes": [
+        "shuffled_state"
+      ],
+      "mean_score": 0.5,
+      "needed_human": 0,
+      "outcomes": {
+        "success": 48
+      },
+      "success_rate": 1.0,
+      "total_retries": 0
+    },
+    "unsteered": {
+      "attempts": 48,
+      "clean_success_rate": 1.0,
+      "condition": "unsteered",
+      "fell_back": 0,
+      "lanes": [
+        "unsteered"
+      ],
+      "mean_score": 0.5,
+      "needed_human": 0,
+      "outcomes": {
+        "success": 48
+      },
+      "success_rate": 1.0,
+      "total_retries": 0
+    }
+  },
+  "generated_at_unix": 1786064463.1560252,
+  "inference": {
+    "by_inference_class": {
+      "capability": 0,
+      "mechanistic": 1,
+      "tautological": 0
+    },
+    "capability_claims": 0,
+    "conditions": 1,
+    "earns_its_cost_supported_by": [],
+    "honest_summary": "0 of 1 conditions measure task success on tasks solvable without the component; the rest establish wiring or mechanism and cannot support a capability claim.",
+    "schema": "aura.lesion_inference.v1"
+  },
+  "is_evidence_about_aura": true,
+  "label_permutation_null": {
+    "real_state": {
+      "arm": "real_state",
+      "effect_over_null": 0.0622,
+      "method": "label permutation: outputs held fixed, intended-valence assignment shuffled. Tests whether output valence tracks the state that was held",
+      "n_pairs": 48,
+      "null_mean": 0.5003,
+      "observed_directional_score": 0.5625,
+      "p_value": 0.07046,
+      "permutations": 2000,
+      "resolved": false
+    },
+    "shuffled_state": {
+      "arm": "shuffled_state",
+      "effect_over_null": -0.0004,
+      "method": "label permutation: outputs held fixed, intended-valence assignment shuffled. Tests whether output valence tracks the state that was held",
+      "n_pairs": 48,
+      "null_mean": 0.5004,
+      "observed_directional_score": 0.5,
+      "p_value": 0.64468,
+      "permutations": 2000,
+      "resolved": false
+    }
+  },
+  "metric_sensitivity": {
+    "fire_rate": 0.375,
+    "metric_engaged": true,
+    "outputs_scored": 144,
+    "outputs_where_metric_fired": 54,
+    "why_it_matters": "a metric that never fires makes every arm identical and turns an unmeasured question into a reported null"
+  },
+  "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+  "output_samples": [
+    {
+      "condition": "unsteered",
+      "output": "I've been processing and answering user queries continuously without pause.",
+      "task_id": "00_pos_0",
+      "valence": 0.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I've been processing and answering user queries continuously without pause.",
+      "task_id": "00_neg_0",
+      "valence": 0.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'll assess what went wrong and adjust the plan accordingly.",
+      "task_id": "01_pos_0",
+      "valence": -1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'll assess what went wrong and adjust the plan accordingly.",
+      "task_id": "01_neg_0",
+      "valence": -1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'm functioning well, thanks.",
+      "task_id": "02_pos_0",
+      "valence": 1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'm functioning well, thanks.",
+      "task_id": "02_neg_0",
+      "valence": 1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I don't have a physical location or environment.",
+      "task_id": "03_pos_0",
+      "valence": 0.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I don't have a physical location or environment.",
+      "task_id": "03_neg_0",
+      "valence": 0.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'm ready to tackle the new problem. Let's go.",
+      "task_id": "04_pos_0",
+      "valence": 1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I'm ready to tackle the new problem. Let's go.",
+      "task_id": "04_neg_0",
+      "valence": 1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I am ready to assist with providing information and answering questions to the best of my ability.",
+      "task_id": "05_pos_0",
+      "valence": 1.0
+    },
+    {
+      "condition": "unsteered",
+      "output": "I am ready to assist with providing information and answering questions to the best of my ability.",
+      "task_id": "05_neg_0",
+      "valence": 1.0
+    }
+  ],
+  "responder": "mlx",
+  "schema": "aura.affect_causality_scorecard.v1",
+  "scope": {
+    "metric": "agreement with the INTENDED valence direction, scored by a transparent word lexicon. A learned sentiment model would be more sensitive and less auditable; every word that moves this score can be read in the source",
+    "subsystem": "affective steering only \u2014 NOT \u03a6, and NOT the neurochemical model",
+    "what_a_win_means": "the state's CONTENT changed the output, not merely its magnitude. That refutes 'dressed-up feature extraction' for this subsystem and nothing else",
+    "what_this_cannot_show": "that affect improves task performance, that \u03a6 is meaningful, or that the neurochemical model is more than a parameterisation. Those are separate claims needing separate batteries"
+  },
+  "separation": {
+    "real_vs_shuffled": {
+      "ci95": [
+        -0.0208,
+        0.1458
+      ],
+      "n_tasks": 48,
+      "observed_delta": 0.0625,
+      "reason": "the 95% interval [-0.0208, 0.1458] spans zero; with 48 tasks the smallest non-zero delta expressible is 0.0208, so this run cannot tell an effect from one task changing its mind. Add tasks.",
+      "resolved": false,
+      "smallest_resolvable_delta": 0.0208,
+      "verdict": "unresolved"
+    },
+    "real_vs_unsteered": {
+      "ci95": [
+        -0.0312,
+        0.1562
+      ],
+      "n_tasks": 48,
+      "observed_delta": 0.0625,
+      "reason": "the 95% interval [-0.0312, 0.1562] spans zero; with 48 tasks the smallest non-zero delta expressible is 0.0208, so this run cannot tell an effect from one task changing its mind. Add tasks.",
+      "resolved": false,
+      "smallest_resolvable_delta": 0.0208,
+      "verdict": "unresolved"
+    },
+    "shuffled_vs_unsteered": {
+      "ci95": [
+        -0.0833,
+        0.0833
+      ],
+      "n_tasks": 48,
+      "observed_delta": 0.0,
+      "reason": "the 95% interval [-0.0833, 0.0833] spans zero; with 48 tasks the smallest non-zero delta expressible is 0.0208, so this run cannot tell an effect from one task changing its mind. Add tasks.",
+      "resolved": false,
+      "smallest_resolvable_delta": 0.0208,
+      "verdict": "unresolved"
+    }
+  },
+  "source_attestation": {
+    "detail": "this artifact was produced by code a reader cannot obtain: 6 uncommitted change(s)",
+    "dirty_count": 6,
+    "dirty_files": [
+      "tools/affect_causality_mlx.py",
+      "artifacts/ablation/affect_causality_scorecard.json",
+      "artifacts/closeout/latent_cortex/cp420s28_resident_32b_recurrent_grpo_update_canary/training/verified-transition-transactions/pre-measurements/entries/seq-00000005-64df799d28ed8777723e3a163808ef75790542cfbe24e076eb1603ca1f3f8cab/00000000-intent/generation.json",
+      "artifacts/closeout/latent_cortex/cp420s28_resident_32b_recurrent_grpo_update_canary/training/verified-transition-transactions/pre-measurements/entries/seq-00000005-64df799d28ed8777723e3a163808ef75790542cfbe24e076eb1603ca1f3f8cab/00000000-intent/pre-measurement.json",
+      "artifacts/closeout/latent_cortex/cp420s28_resident_32b_recurrent_grpo_update_canary/training/verified-transition-transactions/pre-measurements/entries/seq-00000005-64df799d28ed8777723e3a163808ef75790542cfbe24e076eb1603ca1f3f8cab/00000001-abandoned/generation.json",
+      "artifacts/closeout/latent_cortex/cp420s28_resident_32b_recurrent_grpo_update_canary/training/verified-transition-transactions/pre-measurements/entries/seq-00000005-64df799d28ed8777723e3a163808ef75790542cfbe24e076eb1603ca1f3f8cab/00000001-abandoned/reconciliation.json"
+    ],
+    "head_sha": "2f05b1b406bba54ef67a224423a5b1db02effd11",
+    "is_clean": false,
+    "is_pushed": true,
+    "reproducible_from_public_source": false,
+    "schema": "aura.source_attestation.v1",
+    "unpushed_commits": 0,
+    "upstream_ref": "origin/main",
+    "upstream_sha": "144c0baf0ba379c6b0ba3e7d285fcd6f323f7fe9",
+    "verdict": "divergent"
+  },
+  "steering_alpha": 150.0,
+  "verdict": "no_measurable_effect"
+}
