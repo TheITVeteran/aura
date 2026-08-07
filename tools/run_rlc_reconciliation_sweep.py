@@ -86,6 +86,9 @@ class Arm:
 
 ARMS: tuple[Arm, ...] = (
     Arm("vanilla", None, "applied", None, "ordinary"),
+    # Compute-matched control: the full stack measured 164s against vanilla's
+    # 63s on the 32B, so three independent samples sit at the same price.
+    Arm("vanilla_equal_compute", None, "applied", None, "ordinary_best_of_3"),
     Arm("full_stack", 8, "applied", None, "full"),
     Arm("full_stack_oracle", 8, "applied", None, "full_oracle"),
     # Ablations, meaningful only underneath the full arm.
@@ -350,6 +353,57 @@ def _render_prompt_text(tokenizer, task) -> str:
         add_generation_prompt=True,
         tokenize=False,
     )
+
+
+def _run_vanilla_best_of(
+    model, tokenizer, rendered: str, max_tokens: int, samples: int
+) -> str:
+    """Equal-compute control: N independent samples, self-consistency vote.
+
+    Anima Rationis sets this as the bar the latent system has to clear --
+    "compare eight latent branches against eight ordinary textual samples
+    under equal FLOPs ... otherwise it is just expensive self-consistency."
+    A unified stack that beats a single greedy decode while costing 2.6x has
+    not shown an architectural gain; it has shown that spending more compute
+    helps, which was never in doubt.
+
+    Selection is a majority vote over the extracted FINAL_ANSWER payload, not
+    a verifier score. Giving this arm the verifier would make it a different
+    system rather than the compute-matched control.
+    """
+    import mlx.core as mx
+    from mlx_lm import stream_generate
+    from mlx_lm.sample_utils import make_sampler
+
+    from core.brain.llm.latent_cortex.answer_contract import is_contract_complete
+
+    candidates: list[str] = []
+    for index in range(max(1, samples)):
+        mx.random.seed(20260807 + index)
+        pieces: list[str] = []
+        for response in stream_generate(
+            model,
+            tokenizer,
+            prompt=rendered,
+            max_tokens=max_tokens,
+            sampler=make_sampler(temp=0.7, top_p=0.95),
+        ):
+            pieces.append(response.text)
+            if "}" in response.text and is_contract_complete("".join(pieces)):
+                break
+        candidates.append("".join(pieces))
+
+    payloads: dict[str, list[str]] = {}
+    for text in candidates:
+        marker = text.rfind("FINAL_ANSWER:")
+        key = text[marker:].strip() if marker >= 0 else ""
+        if key:
+            payloads.setdefault(key, []).append(text)
+    if not payloads:
+        return candidates[0]
+    # Ties break on first appearance, which is deterministic given the seeds.
+    winner = max(payloads.items(), key=lambda kv: len(kv[1]))
+    return winner[1][0]
 
 
 def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
@@ -699,7 +753,15 @@ def main() -> int:
                 receipt: dict[str, Any] = {}
                 text = ""
                 try:
-                    if config is None:
+                    if config is None and spec.profile == "ordinary_best_of_3":
+                        text = _run_vanilla_best_of(
+                            model,
+                            tokenizer,
+                            _render_prompt_text(tokenizer, task),
+                            tokens,
+                            samples=3,
+                        )
+                    elif config is None:
                         text = _run_vanilla(
                             model,
                             tokenizer,
