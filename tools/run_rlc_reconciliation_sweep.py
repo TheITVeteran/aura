@@ -360,6 +360,24 @@ def _run_vanilla(model, tokenizer, rendered: str, max_tokens: int) -> str:
     return "".join(pieces)
 
 
+def _episode_verifier(task):
+    """The admitted, deployable verifier for a full-stack episode.
+
+    ``EpisodeTaskVerifier`` already implements the whole admission contract:
+    it is deterministic, it separates correct from incorrect arithmetic and
+    parseable from unparseable code (so it passes the blind-review decoy
+    preflight, which an answer-key lookup cannot), and it exposes the
+    ``fast_weight_learning_evidence`` provider that fast-weight attachment
+    requires. It scores a candidate by re-deriving what the candidate itself
+    asserts, never by consulting the expected answer -- which is what makes an
+    episode guided by it a measurement of the reasoning rather than of the
+    answer key.
+    """
+    from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+
+    return EpisodeTaskVerifier(task.public.prompt)
+
+
 def _oracle_verifier(task):
     """Ground-truth scorer for the verifier ablation.
 
@@ -670,7 +688,9 @@ def main() -> int:
                         # arm name carries so no downstream reader can lose
                         # track of which one produced a number.
                         verifier = None
-                        if spec.profile == "full_oracle":
+                        if spec.profile == "full":
+                            verifier = _episode_verifier(task)
+                        elif spec.profile == "full_oracle":
                             verifier = _oracle_verifier(task)
                         text, receipt = _run_rlc(
                             model,
