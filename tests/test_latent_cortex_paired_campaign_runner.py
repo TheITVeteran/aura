@@ -1408,6 +1408,46 @@ def test_claim_eligibility_requires_full_powered_seven_domain_protocol():
     assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is False
 
 
+def test_claim_eligibility_accepts_only_a_terminal_powered_sequential_plan():
+    args = SimpleNamespace(
+        confirmatory=True,
+        seed_values=tuple((1 << 60) + value for value in range(640)),
+        profile="full",
+        domain_values=runner.FRONTIER_DOMAINS,
+        sequential_look_values=(160, 320, 480, 640),
+        sequential_alpha_weight_values=(
+            runner.Rational(1, 100),
+            runner.Rational(4, 100),
+            runner.Rational(15, 100),
+            runner.Rational(80, 100),
+        ),
+    )
+    model_identity = {
+        "runtime_bundle": {
+            "model_type": "qwen2",
+            "logical_parameter_count": 32_000_000_000,
+            "logical_parameter_count_basis": "architecture_config_logical",
+        }
+    }
+    adapter_identity = {"manifest": {"dataset_manifest": {"sha256": "d" * 64}}}
+    audit = {"status": "passed_zero_overlap", "signature": {"verified": True}}
+    trust = {"prelaunch_verified": True, "externally_custodied": True}
+
+    power = runner._statistical_power_plan(args)
+    assert power["terminal_look_powered_for_zero_loss_noninferiority"] is True
+    assert power["looks"][0]["powered_for_zero_loss_noninferiority"] is False
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is True
+
+    args.seed_values = args.seed_values[:400]
+    args.sequential_look_values = (160, 320, 400)
+    args.sequential_alpha_weight_values = (
+        runner.Rational(1, 100),
+        runner.Rational(4, 100),
+        runner.Rational(95, 100),
+    )
+    assert runner._claim_eligible(args, model_identity, adapter_identity, audit, trust) is False
+
+
 def test_contamination_audit_verifies_ed25519_external_trust_root(tmp_path: Path):
     tasks = generate_task_battery([7], domains=("mathematics",), difficulty=2)
     manifest = runner.build_task_manifest(tasks)

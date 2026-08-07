@@ -1027,6 +1027,10 @@ def _extract_rows(
         configured_domains = execution_config.get("domains")
         generation_seed_count = execution_config.get("generation_seed_count")
         observed_power = execution_config.get("exact_statistical_power")
+        sequential_looks = execution_config.get(
+            "sequential_look_observations_per_domain"
+        )
+        sequential_weights = execution_config.get("sequential_alpha_weights")
         domain_counts: dict[str, int] = defaultdict(int)
         for task in task_records.values():
             domain_counts[cast(str, task["domain"])] += 1
@@ -1042,17 +1046,46 @@ def _extract_rows(
             or not isinstance(observed_power, Mapping)
         ):
             _fail("independent_claim_power_invalid")
-        expected_power = _exact_campaign_power_plan(
-            domain_count=len(domain_counts),
-            comparison_count=4
-            + int(BASE_EQUAL_COMPUTE in arms)
-            + int(ADAPTER_EQUAL_COMPUTE in arms),
-            arm_count=len(arms),
-            planned_observations_per_domain=generation_seed_count,
-        )
+        if sequential_looks or sequential_weights:
+            if (
+                not isinstance(sequential_looks, list)
+                or not isinstance(sequential_weights, list)
+                or len(sequential_looks) != len(sequential_weights)
+            ):
+                _fail("independent_claim_power_invalid")
+            try:
+                independent_weights = tuple(
+                    _Q(**weight) for weight in sequential_weights
+                )
+            except (TypeError, IndependentScoringError) as exc:
+                raise IndependentScoringError(
+                    "independent_claim_power_invalid"
+                ) from exc
+            expected_power = _exact_group_sequential_power_plan(
+                domain_count=len(domain_counts),
+                comparison_count=4
+                + int(BASE_EQUAL_COMPUTE in arms)
+                + int(ADAPTER_EQUAL_COMPUTE in arms),
+                arm_count=len(arms),
+                look_observations_per_domain=sequential_looks,
+                alpha_weights=independent_weights,
+            )
+            powered = expected_power[
+                "terminal_look_powered_for_zero_loss_noninferiority"
+            ]
+        else:
+            expected_power = _exact_campaign_power_plan(
+                domain_count=len(domain_counts),
+                comparison_count=4
+                + int(BASE_EQUAL_COMPUTE in arms)
+                + int(ADAPTER_EQUAL_COMPUTE in arms),
+                arm_count=len(arms),
+                planned_observations_per_domain=generation_seed_count,
+            )
+            powered = expected_power["powered_for_zero_loss_noninferiority"]
         if (
             _canonical_bytes(dict(observed_power)) != _canonical_bytes(expected_power)
-            or expected_power["powered_for_zero_loss_noninferiority"] is not True
+            or powered is not True
         ):
             _fail("independent_claim_power_invalid")
     arm_execution_order = metadata.get("arm_execution_order")

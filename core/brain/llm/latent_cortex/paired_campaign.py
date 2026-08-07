@@ -22,10 +22,10 @@ from core.brain.llm.latent_cortex.exact_paired_grade import (
     ALPHA,
     BOUND_PRECISION_BITS,
     MINIMUM_EFFECT,
-    ExactPairedGradeError,
     ExactPairedObservation,
     campaign_global_bound_family_count,
     exact_campaign_power_plan,
+    exact_group_sequential_power_plan,
     exact_interaction_proven,
     exact_interaction_refuted,
     grade_exact_interaction,
@@ -154,6 +154,10 @@ def _validate_claim_exact_power(
     domains = execution_config.get("domains")
     generation_seed_count = execution_config.get("generation_seed_count")
     observed_receipt = execution_config.get("exact_statistical_power")
+    sequential_looks = execution_config.get(
+        "sequential_look_observations_per_domain"
+    )
+    sequential_weights = execution_config.get("sequential_alpha_weights")
     domain_counts: dict[str, int] = defaultdict(int)
     for domain in task_domains:
         if not isinstance(domain, str) or not domain:
@@ -172,17 +176,39 @@ def _validate_claim_exact_power(
     ):
         _fail("campaign_exact_power_required")
     try:
-        expected_receipt = exact_campaign_power_plan(
-            domain_count=len(domain_counts),
-            comparison_count=_comparison_count(arms),
-            arm_count=len(arms),
-            planned_observations_per_domain=generation_seed_count,
-        )
-    except ExactPairedGradeError as exc:
+        if sequential_looks or sequential_weights:
+            if (
+                not isinstance(sequential_looks, list)
+                or not isinstance(sequential_weights, list)
+                or len(sequential_looks) != len(sequential_weights)
+            ):
+                _fail("campaign_exact_power_required")
+            expected_receipt = exact_group_sequential_power_plan(
+                domain_count=len(domain_counts),
+                comparison_count=_comparison_count(arms),
+                arm_count=len(arms),
+                look_observations_per_domain=sequential_looks,
+                alpha_weights=tuple(
+                    Rational(**weight)
+                    for weight in sequential_weights
+                ),
+            )
+            powered = expected_receipt[
+                "terminal_look_powered_for_zero_loss_noninferiority"
+            ]
+        else:
+            expected_receipt = exact_campaign_power_plan(
+                domain_count=len(domain_counts),
+                comparison_count=_comparison_count(arms),
+                arm_count=len(arms),
+                planned_observations_per_domain=generation_seed_count,
+            )
+            powered = expected_receipt["powered_for_zero_loss_noninferiority"]
+    except (TypeError, ValueError) as exc:
         raise PairedCampaignError("campaign_exact_power_required") from exc
     if (
         canonical_json_bytes(dict(observed_receipt)) != canonical_json_bytes(expected_receipt)
-        or expected_receipt["powered_for_zero_loss_noninferiority"] is not True
+        or powered is not True
     ):
         _fail("campaign_exact_power_required")
 

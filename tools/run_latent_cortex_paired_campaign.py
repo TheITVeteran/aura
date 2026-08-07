@@ -61,7 +61,9 @@ from core.brain.llm.latent_cortex.detached_campaign_evidence import (  # noqa: E
 )
 from core.brain.llm.latent_cortex.exact_paired_grade import (  # noqa: E402
     exact_campaign_power_plan,
+    exact_group_sequential_power_plan,
 )
+from core.brain.llm.latent_cortex.exact_paired_statistics import Rational  # noqa: E402
 from core.brain.llm.latent_cortex.frontier_tasks import (  # noqa: E402
     CURRENT_REGISTRY_VERSION,
     FRONTIER_DOMAINS,
@@ -201,6 +203,29 @@ def _csv_ints(parser: argparse.ArgumentParser, raw: str, role: str) -> tuple[int
     if not values or len(set(values)) != len(values) or any(value < 0 for value in values):
         parser.error(f"{role} must contain unique non-negative integers")
     return values
+
+
+def _csv_rationals(
+    parser: argparse.ArgumentParser,
+    raw: str,
+    role: str,
+) -> tuple[Rational, ...]:
+    values: list[Rational] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        parts = token.split("/")
+        if len(parts) != 2:
+            parser.error(f"{role} values must use numerator/denominator syntax")
+        try:
+            values.append(Rational(int(parts[0]), int(parts[1])))
+        except (TypeError, ValueError) as exc:
+            parser.error(f"{role} contains an invalid rational: {token!r}")
+            raise AssertionError from exc
+    if not values:
+        parser.error(f"{role} must contain at least one rational")
+    return tuple(values)
 
 
 def _csv_domains(parser: argparse.ArgumentParser, raw: str) -> tuple[str, ...]:
@@ -1499,6 +1524,22 @@ def _execution_config(
         "worker_origin_attempt_slots": args.max_infra_attempts,
         "vanilla_fallback_allowed": False,
         "exact_statistical_power": _statistical_power_plan(args),
+        **(
+            {
+                "sequential_look_observations_per_domain": list(
+                    args.sequential_look_values
+                ),
+                "sequential_alpha_weights": [
+                    {
+                        "numerator": value.numerator,
+                        "denominator": value.denominator,
+                    }
+                    for value in args.sequential_alpha_weight_values
+                ],
+            }
+            if getattr(args, "sequential_look_values", ())
+            else {}
+        ),
         "implementation_sha256": _implementation_sha256(),
     }
 
@@ -1511,6 +1552,18 @@ def _statistical_power_plan(args: argparse.Namespace) -> dict[str, Any]:
     if ADAPTER_EQUAL_COMPUTE in arms:
         comparison_count += 1
     planned = int(getattr(args, "seed_count", 0) or len(args.seed_values))
+    sequential_looks = tuple(getattr(args, "sequential_look_values", ()))
+    sequential_weights = tuple(
+        getattr(args, "sequential_alpha_weight_values", ())
+    )
+    if sequential_looks or sequential_weights:
+        return exact_group_sequential_power_plan(
+            domain_count=len(args.domain_values),
+            comparison_count=comparison_count,
+            arm_count=len(arms),
+            look_observations_per_domain=sequential_looks,
+            alpha_weights=sequential_weights,
+        )
     return exact_campaign_power_plan(
         domain_count=len(args.domain_values),
         comparison_count=comparison_count,
@@ -1624,8 +1677,10 @@ def _claim_eligible(
     contamination_audit: dict[str, Any],
     campaign_trust: Mapping[str, Any] | None,
 ) -> bool:
-    per_domain = int(getattr(args, "seed_count", 0) or len(args.seed_values))
     power = _statistical_power_plan(args)
+    powered = power.get("powered_for_zero_loss_noninferiority") is True
+    if power.get("schema") == "aura.latent_cortex.exact_group_sequential_power.v1":
+        powered = power.get("terminal_look_powered_for_zero_loss_noninferiority") is True
     seed_entropy_bits = int(
         getattr(args, "seed_entropy_bits", 0)
         or min(value.bit_length() for value in args.seed_values)
@@ -1633,8 +1688,7 @@ def _claim_eligible(
     runtime_bundle = model_identity.get("runtime_bundle")
     return bool(
         args.confirmatory
-        and per_domain >= power["minimum_observations"]
-        and power["powered_for_zero_loss_noninferiority"] is True
+        and powered
         and seed_entropy_bits >= 60
         and args.profile == "full"
         and set(args.domain_values) == set(FRONTIER_DOMAINS)
@@ -2386,6 +2440,10 @@ def _worker_args(
         str(seed_count),
         "--seed-entropy-bits",
         str(seed_entropy_bits),
+        "--sequential-look-observations",
+        str(getattr(args, "sequential_look_observations", "") or ""),
+        "--sequential-alpha-weights",
+        str(getattr(args, "sequential_alpha_weights", "") or ""),
         "--domains",
         args.domains,
         "--difficulty",
@@ -3578,6 +3636,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed-count", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--seed-entropy-bits", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--sequential-look-observations",
+        default="",
+        help="comma-separated cumulative observations per domain",
+    )
+    parser.add_argument(
+        "--sequential-alpha-weights",
+        default="",
+        help="comma-separated exact rational alpha shares, such as 1/100,99/100",
+    )
     parser.add_argument("--domains", default=",".join(FRONTIER_DOMAINS))
     parser.add_argument("--difficulty", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument(
@@ -3635,6 +3703,30 @@ def main() -> int:
     else:
         args.seed_values = _csv_ints(parser, args.seeds, "--seeds")
     args.domain_values = _csv_domains(parser, args.domains)
+    if bool(args.sequential_look_observations) != bool(args.sequential_alpha_weights):
+        parser.error(
+            "--sequential-look-observations and --sequential-alpha-weights "
+            "must be supplied together"
+        )
+    if args.sequential_look_observations:
+        args.sequential_look_values = _csv_ints(
+            parser,
+            args.sequential_look_observations,
+            "--sequential-look-observations",
+        )
+        args.sequential_alpha_weight_values = _csv_rationals(
+            parser,
+            args.sequential_alpha_weights,
+            "--sequential-alpha-weights",
+        )
+        expected_final = int(args.seed_count) if args.worker_arm else len(args.seed_values)
+        if args.sequential_look_values[-1] != expected_final:
+            parser.error(
+                "the terminal sequential look must equal the campaign seed count"
+            )
+    else:
+        args.sequential_look_values = ()
+        args.sequential_alpha_weight_values = ()
     worker_origin_values = (
         args.worker_attempt_slot,
         args.worker_stage_journal,
