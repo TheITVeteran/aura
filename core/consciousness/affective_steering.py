@@ -1211,6 +1211,55 @@ class AffectiveSteeringHook:
                 # This prevents lazy evaluation from stalling the main generation thread
                 mx.eval(self._cached_composite_mx)
 
+    def current_composite_vector(self) -> Any | None:
+        """The real composite as numpy, or None when steering stood down.
+
+        Exists so an ablation can obtain the vector the system actually built
+        without reading a private attribute. A harness that reaches into
+        `_last_composite_np` silently starts measuring something else the day
+        that attribute changes meaning.
+        """
+        with self._substrate_lock:
+            composite = self._last_composite_np
+            return None if composite is None else composite.copy()
+
+    def override_composite_vector(self, vector: Any | None) -> None:
+        """Force the injected vector. FOR ABLATION ONLY.
+
+        A steering ablation has to answer a counterfactual — what would this
+        model have said under a DIFFERENT vector of the same magnitude — and
+        that question cannot be asked through `update_substrate()`, which
+        derives the vector from the state rather than accepting one.
+
+        Passing None clears the override and restores substrate-derived
+        steering. The override is not persisted and does not survive a process,
+        deliberately: a knob that can pin live steering to a fixed direction is
+        exactly the kind of thing that gets left set after an experiment, so
+        the only way to hold it is to keep re-asserting it in-process.
+
+        The vector still passes through the same admission gate as any other on
+        the next substrate update; this sets what is cached now, it does not
+        grant an exemption from `admit_steering_vector`.
+        """
+        import numpy as np
+
+        with self._substrate_lock:
+            if vector is None:
+                self._last_composite_np = None
+                self._cached_composite_mx = None
+                return
+            array = np.asarray(vector, dtype=np.float32)
+            self._last_composite_np = array.copy()
+            try:
+                import mlx.core as mx
+
+                self._cached_composite_mx = mx.array(array)
+                mx.eval(self._cached_composite_mx)
+            except ImportError:
+                # No MLX here — the numpy side is still the record of what was
+                # asked for, and a caller without MLX cannot inject anyway.
+                self._cached_composite_mx = None
+
     def compute_composite_vector_mx(self, dtype=None) -> Any | None:
         """
         [ZERO-COST] Return the pre-computed MLX array from the background sync.
@@ -1419,10 +1468,34 @@ class AffectiveSteeringHook:
                     # Diagnostic
                     hook._inject_count += 1
                     hook._last_effective_alpha = effective_alpha
-                    # Note: norm is expensive, only do it occasionally
+                    # Note: norm is expensive, only do it occasionally.
+                    #
+                    # This is an OBSERVATION and it must never be able to void
+                    # the injection above. It could, and it did: the call was
+                    # `mx.norm`, which does not exist in this MLX version — the
+                    # symbol is `mx.linalg.norm`. Every 50th injection therefore
+                    # raised AttributeError, the enclosing handler caught it and
+                    # "returned original block output after steering injection
+                    # failed", and the steering that had ALREADY been applied on
+                    # the line above was discarded along with it.
+                    #
+                    # Measured on 2026-08-06 while running the affect ablation:
+                    # a continuous stream of MARGINAL faults, each one throwing
+                    # away a successful injection to compute a number nobody
+                    # reads during generation. A statistic that can destroy the
+                    # effect it is measuring is worse than no statistic.
                     if hook._inject_count % 50 == 0:
-                        import mlx.core as mx
-                        hook._last_injection_norm = float(mx.norm(composite)) * effective_alpha
+                        try:
+                            import mlx.core as mx
+
+                            hook._last_injection_norm = (
+                                float(mx.linalg.norm(composite)) * effective_alpha
+                            )
+                        except (AttributeError, ImportError, TypeError, ValueError):
+                            # Losing a diagnostic is survivable. Losing the
+                            # injection is not, so this swallows deliberately
+                            # and leaves the previous reading in place.
+                            hook._last_injection_norm = None
 
                 # φ's ACTIVATION GROUNDING USED TO DEPEND ON STEERING FIRING.
                 # This sample sat inside `if composite is not None`, so whenever
