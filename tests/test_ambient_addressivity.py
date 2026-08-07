@@ -228,3 +228,85 @@ def test_every_verdict_carries_its_reasons(gate: AddressivityGate) -> None:
 def test_empty_input_is_not_addressed(gate: AddressivityGate) -> None:
     assert not gate.evaluate("", cold()).addressed
     assert not gate.evaluate("   ", cold()).addressed
+
+
+# ── the floor command ────────────────────────────────────────────────────
+
+
+def test_the_session_stands_the_gate_down_when_the_floor_is_opened() -> None:
+    """Focused voice mode is consent, and consent outranks the heuristic.
+
+    Without this the full-screen surface would still be deciding whether it
+    was being spoken to — the one place that judgement is not wanted, because
+    the user opened it precisely to talk.
+    """
+    import asyncio
+
+    from core.voice.duplex.session import DuplexVoiceSession
+
+    async def exercise() -> None:
+        async def send_json(_payload):
+            return None
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="floor", send_json=send_json, send_binary=send_binary
+        )
+        assert session._ambient_gate is not None
+        assert session._floor_explicitly_open is False
+
+        await session.handle_command({"command": "set_floor", "open": True})
+        assert session._floor_explicitly_open is True
+
+        # Ordinary overheard speech is answered while the floor is open.
+        verdict = session._evaluate_addressivity("the traffic was unbelievable", None)
+        assert verdict.addressed
+        assert verdict.rung == "explicit"
+
+        await session.handle_command({"command": "set_floor", "open": False})
+        assert session._floor_explicitly_open is False
+        assert not session._evaluate_addressivity("the traffic was unbelievable", None).addressed
+
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_a_disabled_gate_cannot_be_switched_back_on_by_a_message() -> None:
+    """With ambient gating off, the floor is permanently open.
+
+    A stale or hostile message must not be able to introduce a gate the user
+    never asked for and cannot see.
+    """
+    import asyncio
+
+    from core.voice.duplex.config import DuplexConfig
+    from core.voice.duplex.session import DuplexVoiceSession
+
+    async def exercise() -> None:
+        async def send_json(_payload):
+            return None
+
+        async def send_binary(_payload):
+            return None
+
+        config = DuplexConfig()
+        config.ambient.enabled = False
+        session = DuplexVoiceSession(
+            session_id="no-gate",
+            send_json=send_json,
+            send_binary=send_binary,
+            config=config,
+        )
+        assert session._ambient_gate is None
+        assert session._floor_explicitly_open is True
+
+        await session.handle_command({"command": "set_floor", "open": False})
+        assert session._floor_explicitly_open is True
+        assert session._evaluate_addressivity("anything at all", None).addressed
+
+        await session.close()
+
+    asyncio.run(exercise())

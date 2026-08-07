@@ -103,3 +103,9 @@ CMD_PLAYBACK = "playback"          # periodic playback position report
 CMD_TEXT = "text"                  # typed message while in voice mode
 CMD_SET_VOICE = "set_voice"        # switch her speaking voice mid-session
 CMD_LIST_VOICES = "list_voices"
+# Whether the user has deliberately opened the floor — focused voice mode or
+# push-to-talk, as opposed to a microphone that is merely on. Inside an open
+# floor everything said is for her by definition, and the addressivity gate
+# steps aside: a heuristic that can veto an explicit act of address would
+# make the control not a control.
+CMD_SET_FLOOR = "set_floor"

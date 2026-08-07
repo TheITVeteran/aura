@@ -405,6 +405,11 @@
             const token = (window.AURA_API_TOKEN || '');
             if (token) ws.send(JSON.stringify({ type: 'auth', token }));
             sendCommand('list_voices');
+            // Re-assert the floor on every connect. A reconnect gets a fresh
+            // session that defaults to ambient, so without this a dropped
+            // socket would silently put the gate back in front of a user who
+            // is sitting in focused voice mode.
+            sendCommand('set_floor', { open: !state.ambient });
         };
 
         ws.onmessage = (e) => {
@@ -812,6 +817,12 @@
             root.classList.remove('vm-open');
             document.body.classList.remove('vm-active');
         }
+        // Opening the focused surface is the user saying "everything I say
+        // now is for you". The server stands its addressivity gate down for
+        // the duration; without this, focused voice mode would still be
+        // second-guessing whether it was being spoken to, which is the one
+        // place that judgement is not wanted.
+        sendCommand('set_floor', { open: Boolean(show) });
     }
 
     async function enterVoiceMode() {

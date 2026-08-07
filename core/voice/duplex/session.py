@@ -544,7 +544,7 @@ class DuplexVoiceSession:
             # before that, "quieter than usual" has no "usual" to mean.
             loudness_z = (
                 float(self._delivery.energy_z)
-                if self._speaker_baseline.ready()
+                if self._speaker_baseline.ready
                 else None
             )
 
@@ -1731,6 +1731,19 @@ class DuplexVoiceSession:
                 message.get("played_ms"),
                 maximum=3_600_000.0,
             ) / 1000.0
+        elif command == protocol.CMD_SET_FLOOR:
+            # Focused voice mode and push-to-talk are the user saying "this is
+            # all for you". The addressivity gate is for a microphone that
+            # happens to be on; it must not second-guess a deliberate act.
+            #
+            # When ambient gating is off entirely, the floor is permanently
+            # open and the client cannot close it — otherwise a stale message
+            # could switch on a gate the user never asked for.
+            if self._ambient_gate is not None:
+                self._floor_explicitly_open = bool(message.get("open"))
+                logger.info(
+                    "floor %s", "opened deliberately" if self._floor_explicitly_open else "released to ambient"
+                )
         elif command == protocol.CMD_LIST_VOICES:
             await self._send_json(
                 {"type": protocol.EVT_VOICES, "voices": self._tts.available_voices(),
