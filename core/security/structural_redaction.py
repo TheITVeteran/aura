@@ -81,7 +81,7 @@ SENSITIVE_KEY_EXEMPTIONS: frozenset[str] = frozenset({
 })
 
 #: Values that are credentials whatever key they arrived under.
-_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+CREDENTIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"sk-[A-Za-z0-9\-_]{20,}"), "[REDACTED_API_KEY]"),
     (re.compile(r"\bBearer\s+[A-Za-z0-9\-_.=]{10,}", re.IGNORECASE), "[REDACTED_BEARER]"),
     (re.compile(r"\beyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]+"), "[REDACTED_JWT]"),
@@ -94,14 +94,25 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     # Credentials embedded in a URL: scheme://user:password@host
     (re.compile(r"\b([a-z][a-z0-9+.\-]*://)[^\s/:@]+:[^\s/@]+@"), r"\1[REDACTED_USERINFO]@"),
-    # Direct personal identifiers.
-    #
-    # Added when core/constitution.py's tool telemetry was routed through
-    # here: that bus carries every tool call in the system, so "credentials
-    # only" was the wrong boundary — a shell argument or an email tool's
-    # payload carries the person, not just their keys. Ordering matters, so
-    # these sit after the credential patterns: an email inside a userinfo
-    # URL is already gone by the time this runs.
+)
+
+#: Direct personal identifiers.
+#:
+#: Added when core/constitution.py's tool telemetry was routed through here:
+#: that bus carries every tool call in the system, so "credentials only" was
+#: the wrong boundary — a shell argument or an email tool's payload carries
+#: the person, not just their keys.
+#:
+#: Kept as a separate tuple because the two tiers answer to different
+#: authorities. A credential leaving this machine is never right, so
+#: :data:`CREDENTIAL_PATTERNS` applies everywhere unconditionally. A person's
+#: email address leaving this machine is the whole point of an email tool, so
+#: the personal tier is applied where the destination — not the content —
+#: makes it wrong, which today means a third-party model provider. Ordering
+#: is preserved by composition below: these still run AFTER the credential
+#: patterns whenever both tiers apply, so an email inside a userinfo URL is
+#: already gone by the time this runs.
+PERSONAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), "[EMAIL_REDACTED]"),
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN_REDACTED]"),
     (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "[CARD_REDACTED]"),
@@ -112,6 +123,11 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "[PHONE_REDACTED]",
     ),
+)
+
+#: Every pattern, in the order the audit paths have always applied them.
+_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    CREDENTIAL_PATTERNS + PERSONAL_PATTERNS
 )
 
 DEFAULT_MAX_DEPTH = 8
@@ -168,12 +184,22 @@ def is_sensitive_key(key: Any) -> bool:
     return any(marker in collapsed for marker in SENSITIVE_KEY_MARKERS)
 
 
-def redact_text(text: str) -> tuple[str, bool]:
-    """Strip credential-shaped substrings. Returns (text, changed)."""
+def redact_text(
+    text: str,
+    *,
+    patterns: Sequence[tuple[re.Pattern[str], str]] | None = None,
+) -> tuple[str, bool]:
+    """Strip credential-shaped substrings. Returns (text, changed).
+
+    ``patterns`` narrows the tier — :data:`CREDENTIAL_PATTERNS` alone, for a
+    boundary where a person's own contact details are the payload rather than
+    the leak. Default is every pattern, which is what every existing caller
+    means.
+    """
     if not text:
         return text, False
     redacted = text
-    for pattern, replacement in _VALUE_PATTERNS:
+    for pattern, replacement in patterns if patterns is not None else _VALUE_PATTERNS:
         redacted = pattern.sub(replacement, redacted)
     return redacted, redacted != text
 
@@ -364,10 +390,12 @@ def redaction_marker(report: RedactionReport) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "CREDENTIAL_PATTERNS",
     "DEFAULT_MAX_DEPTH",
     "DEFAULT_MAX_ITEMS",
     "DEFAULT_MAX_STRING",
     "DEFAULT_MAX_TOTAL_CHARS",
+    "PERSONAL_PATTERNS",
     "REDACTED",
     "SENSITIVE_KEY_EXEMPTIONS",
     "SENSITIVE_KEY_MARKERS",

@@ -113,6 +113,51 @@ def _record_web_provenance(url: str) -> None:
             enforce_failure_policy=False,
         )
 
+def _filter_outbound_body(
+    *, url: str, body: bytes | None, source: str
+) -> dict[str, Any]:
+    """Read the outbound body through the egress privacy boundary.
+
+    Returns a receipt carrying the body that may actually be sent. The import
+    is local for the same reason the defensive preflight's is: this module is
+    under ``core/runtime`` and may not take a load-time dependency on
+    ``core/security``.
+
+    If the filter itself cannot be loaded, a model-provider destination is
+    refused and everything else proceeds with the failure recorded. A privacy
+    control that silently becomes a no-op when its import breaks is the same
+    defect as a gate that reads an absent verdict as permission.
+    """
+    try:
+        from core.security.egress_privacy import filter_outbound_body
+
+        result = filter_outbound_body(url=url, body=body, source=source)
+        return {**result.to_dict(), "body": result.body}
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        is_model_provider = str(source or "").startswith("llm_provider:")
+        record_degradation(
+            "network_gateway.egress_privacy",
+            exc,
+            severity="warning" if is_model_provider else "info",
+            action=(
+                "refused the request rather than send an uninspected body to a "
+                "model provider"
+                if is_model_provider
+                else "sent the body uninspected after the egress filter failed to load"
+            ),
+            enforce_failure_policy=False,
+        )
+        return {
+            "allowed": not is_model_provider,
+            "inspected": False,
+            "tier": "full" if is_model_provider else "credentials",
+            "redactions": 0,
+            "kinds": [],
+            "reason": f"egress privacy filter unavailable: {exc}",
+            "body": body,
+        }
+
+
 class NetworkGateway:
     """Single canonical owner for HTTP/Network requests."""
 
@@ -201,6 +246,23 @@ class NetworkGateway:
                 strict=True,
                 allowed_domains=self._allowed_domains,
             )
+
+        # The last read before the bytes leave the machine. Everything above
+        # decided whether *a* request may be made; this is the only step that
+        # looks at what is inside it. It runs after governance so a request
+        # that will be denied anyway is never scanned, and before the Request
+        # is built so there is no path from here to the socket that skips it.
+        privacy = _filter_outbound_body(url=url_text, body=request_data, source=source)
+        if not privacy["allowed"]:
+            return {
+                "status_code": 0,
+                "headers": {},
+                "content": b"",
+                "ok": False,
+                "error": str(privacy.get("reason") or "blocked_by_egress_privacy"),
+                "egress_privacy": privacy,
+            }
+        request_data = privacy["body"]
 
         req = urllib.request.Request(
             url_text,

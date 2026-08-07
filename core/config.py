@@ -180,6 +180,13 @@ class SecurityConfig(BaseModel):
     max_modifications_per_day: int = Field(default=100, ge=0, le=86_400)
     allow_network_access: bool = True
     allowed_domains: list[str] = Field(default_factory=lambda: ["*"])
+    # Credentials never leave this machine regardless of this setting — see
+    # core/security/egress_privacy.py. This governs only the personal tier
+    # (email, phone, card, SSN) on requests to a third-party model provider,
+    # where a turn's context becomes somebody else's log line. Turning it off
+    # buys a cloud fallback that can read the owner's contact details back to
+    # them; it does not affect local inference, which never crosses a wire.
+    redact_personal_data_to_model_providers: bool = True
     enable_stealth_mode: bool = True
     force_unity_on: bool = False
 
