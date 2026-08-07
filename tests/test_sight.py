@@ -423,14 +423,51 @@ def test_a_worker_that_never_started_can_still_be_stopped() -> None:
     So any failure *during* spawn turned every later stop() into
     "can only join a started process" — which buried the real reason the
     worker did not come up, and cost an hour of debugging the wrong thing.
-    """
-    from pathlib import Path
 
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "core" / "brain" / "llm" / "mlx_vision_client.py"
-    ).read_text(encoding="utf-8")
-    assert 'getattr(process, "_popen", None) is None' in source
+    Exercised rather than grepped: the first version of this test asserted
+    on the source string and then broke the moment the fix was refined,
+    while a genuinely broken implementation could have passed it.
+    """
+    import multiprocessing as mp
+
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    client = MLXVisionClient()
+    # Exactly the state a failure during spawn leaves behind: a Process
+    # object constructed and assigned, never started.
+    client._process = mp.get_context("spawn").Process(target=print, args=("x",))
+    assert client._process._popen is None
+
+    # Must not raise. Before the fix this was AssertionError every time.
+    client.stop(reason="test_never_started")
+    assert client._process is None
+
+
+def test_stopping_a_started_worker_still_joins_it() -> None:
+    """The unstarted guard must not become "never join anything".
+
+    A double has no ``_popen`` at all, and collapsing "absent" into "never
+    started" skipped the very teardown such doubles exist to observe — which
+    is what the vision-lane tests caught.
+    """
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    class _Joinable:
+        def __init__(self) -> None:
+            self.joined = False
+            self.name = "double"
+
+        def join(self, timeout: float | None = None) -> None:
+            self.joined = True
+
+        def is_alive(self) -> bool:
+            return False
+
+    client = MLXVisionClient()
+    double = _Joinable()
+    client._process = double
+    client.stop(reason="test_started")
+    assert double.joined, "a joinable process must still be joined"
 
 
 def test_one_vision_worker_is_shared_across_call_sites() -> None:

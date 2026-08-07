@@ -52,27 +52,47 @@ def test_a_reconnect_does_not_start_a_new_conversation() -> None:
 
 
 def test_the_voice_route_derives_a_stable_key_not_a_per_socket_uuid() -> None:
-    """Read the route's own source: the socket id must not be the thread id.
+    """The derivation is a named function, so it can be exercised rather than read.
 
-    A behavioural test would need a live websocket and an authenticated
-    principal. What actually regressed here is a single argument, and the
-    regression is invisible at runtime — two threads that each work fine on
-    their own — so this asserts the wiring directly.
+    The first version of this test asserted against `inspect.getsource` of the
+    route, which the source-inspection ratchet correctly rejected: a string
+    match passes on code that has been commented out. Naming the derivation
+    made it testable *and* gave the concept somewhere to live.
     """
-    import inspect
+    from interface.routes.voice_duplex import conversation_key_for
 
-    from interface.routes import voice_duplex
+    # A local owner: the key is the caller, which is exactly what the
+    # desktop's own chat turns derive.
+    assert conversation_key_for(None, "127.0.0.1") == "127.0.0.1"
 
-    source = inspect.getsource(voice_duplex.voice_duplex_endpoint)
-    assert "conversation_key = (" in source
+    # Same person, same conversation, however they said it — and stable
+    # across the reconnects the client performs with backoff.
+    assert conversation_key_for(None, "127.0.0.1") == conversation_key_for(
+        None, "127.0.0.1"
+    )
 
-    # The governed chat turn must receive the conversation key. The socket's
-    # own uuid stays where it belongs — session bookkeeping, reservations and
-    # logs — so this checks the one call that decides the thread.
-    call = source[source.index("run_governed_voice_chat_turn(") :]
-    call = call[: call.index(")\n")]
-    assert "session_id=conversation_key" in call
-    assert "session_id=session_id" not in call
+    # A paired device is its own thread, and cannot collide with a host.
+    assert conversation_key_for("phone-42", "127.0.0.1") == "paired:phone-42"
+    assert conversation_key_for("phone-42", "127.0.0.1") != conversation_key_for(
+        None, "127.0.0.1"
+    )
+
+
+def test_the_voice_key_is_what_the_desktop_would_produce() -> None:
+    """The two derivations have to agree, or the thread splits on surface.
+
+    This is the property the whole fix is about, and it is checkable without
+    a websocket: run both derivations for the same principal and compare.
+    """
+    from types import SimpleNamespace
+
+    from interface.routes.voice_duplex import conversation_key_for
+
+    spoken = conversation_key_for(None, "127.0.0.1")
+    typed = _chat_turn_session_key(
+        _request("127.0.0.1"), SimpleNamespace(session_id=spoken)
+    )
+    assert spoken == typed
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])

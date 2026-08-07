@@ -31,6 +31,8 @@ from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
 
 from .mlx_vision_worker import _mlx_vision_worker_loop
 
+from core.runtime.lockdep import LockRank, checked_lock
+
 logger = logging.getLogger("MLXVisionClient")
 DEFAULT_VISION_MODEL = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
 
@@ -578,12 +580,23 @@ class MLXVisionClient:
                     _exc,
                 )
         process, self._process = self._process, None
-        # A process object that was created but never started has no popen,
-        # and join() *asserts* rather than returning. So any failure during
-        # spawn turned every subsequent stop() into an AssertionError, which
-        # then buried the original cause — the operator sees "can only join a
-        # started process" and never learns why the worker did not come up.
-        if process is not None and getattr(process, "_popen", None) is None:
+        # A multiprocessing.Process that was created but never started has a
+        # ``_popen`` of None, and join() *asserts* rather than returning. So
+        # any failure during spawn turned every subsequent stop() into an
+        # AssertionError, which then buried the original cause — the operator
+        # sees "can only join a started process" and never learns why the
+        # worker did not come up.
+        #
+        # ``hasattr`` before the value check, not ``getattr(..., None)``: a
+        # test double has no ``_popen`` at all and is perfectly joinable, and
+        # collapsing "absent" into "never started" skipped the very teardown
+        # those doubles exist to observe.
+        never_started = (
+            process is not None
+            and hasattr(process, "_popen")
+            and process._popen is None
+        )
+        if never_started:
             close = getattr(process, "close", None)
             if callable(close):
                 with contextlib.suppress(ValueError, OSError):
@@ -642,7 +655,10 @@ class MLXVisionClient:
 # is the accessor for everything that just wants "the vision worker".
 
 _SHARED_CLIENT: MLXVisionClient | None = None
-_SHARED_CLIENT_LOCK = threading.Lock()
+# Checked rather than raw: lockdep only sees the locks it wraps, and this one
+# is held across a worker stop() that can take seconds. REGISTRY because it
+# guards a process-wide singleton and is taken before anything under it.
+_SHARED_CLIENT_LOCK = checked_lock("mlx_vision.shared_client", rank=LockRank.REGISTRY)
 
 
 def get_vision_client(model_path: str = DEFAULT_VISION_MODEL) -> MLXVisionClient:

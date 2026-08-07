@@ -42,6 +42,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_async_lock
 
 logger = logging.getLogger("Aura.Senses.Sight")
 
@@ -113,7 +114,11 @@ class CaptureBroker:
 
     def __init__(self) -> None:
         self._pending: dict[str, asyncio.Future[Frame]] = {}
-        self._lock = asyncio.Lock()
+        # Checked rather than raw: lockdep only sees the locks it wraps, and
+        # a lock it cannot see is one that cannot be ordered against the rest
+        # — which is how an ABBA deadlock stays invisible until it happens on
+        # the live runtime. LEAF because nothing is acquired underneath it.
+        self._lock = checked_async_lock("sight.capture_broker", rank=LockRank.LEAF)
 
     async def request_frame(self, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Frame | None:
         """Ask the surface for a fresh frame. None if none arrived in time."""

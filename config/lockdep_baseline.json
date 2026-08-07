@@ -98,7 +98,6 @@
     "core/brain/llm/latent_cortex/epistemic_state.py::EpistemicStateMachine.__init__::threading.RLock",
     "core/brain/llm/latent_cortex/execution_controller.py::::threading.Lock",
     "core/brain/llm/latent_cortex/execution_controller.py::ExecutionController.__init__::threading.RLock",
-    "core/brain/llm/latent_cortex/fast_weights.py::::threading.Lock",
     "core/brain/llm/latent_cortex/schedules.py::ScheduleLibrary.__init__::threading.RLock",
     "core/brain/llm/llm_router.py::::threading.Lock",
     "core/brain/llm/llm_router.py::BoundedLRUCache.__init__::threading.Lock",

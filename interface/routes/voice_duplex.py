@@ -126,6 +126,28 @@ def _governed_chat_source_headers(
     return filtered
 
 
+def conversation_key_for(device_id: str | None, client_host: str) -> str:
+    """The thread a spoken turn belongs to.
+
+    One conversation, however it is being conducted. The socket's own id is a
+    fresh uuid per connection — right for bookkeeping, wrong for identity.
+    Passing it downstream as the conversation key made a spoken turn and a
+    typed turn two different threads to everything that keys on it, and a
+    voice socket that merely *reconnected* (the client retries with backoff,
+    so this is routine rather than exotic) started a third. Switching from
+    talking to typing mid-thought is the most ordinary thing a person does
+    with something that sits on their desk, and it must not be the moment she
+    loses the thread.
+
+    So the key is derived from the principal, exactly as the desktop's own
+    chat turns derive theirs: same person, same conversation, whichever way
+    they said it.
+    """
+    if device_id:
+        return f"paired:{device_id}"
+    return str(client_host or "")
+
+
 def active_sessions() -> dict[str, dict[str, Any]]:
     """Status of every live voice session, for health surfaces."""
     return {sid: session.status() for sid, session in _SESSIONS.items()}
@@ -336,23 +358,11 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                     raise RuntimeError("voice_principal_authorization_revoked")
                 await ws.send_bytes(payload)
 
-        # One conversation, however it is being conducted.
-        #
-        # The socket's own id is a fresh uuid per connection — right for
-        # bookkeeping, wrong for identity. Passing it downstream as the
-        # conversation key meant a spoken turn and a typed turn were two
-        # different threads to everything that keys on it, and a voice socket
-        # that merely *reconnected* (the client retries with backoff, so this
-        # is routine rather than exotic) started a third. Switching from
-        # talking to typing mid-thought is the most ordinary thing a person
-        # does with something that sits on their desk, and it must not be the
-        # moment she loses the thread.
-        #
-        # So the conversation key is derived from the principal, exactly as
-        # the desktop's own chat turns derive theirs: same person, same
-        # conversation, whichever way they said it.
-        conversation_key = (
-            f"paired:{device_session.device_id}" if device_session is not None else host
+        # One conversation, however it is being conducted. See
+        # `conversation_key_for` for why this is not the socket's own id.
+        conversation_key = conversation_key_for(
+            device_session.device_id if device_session is not None else None,
+            host,
         )
 
         async def governed_responder(
