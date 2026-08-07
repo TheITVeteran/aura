@@ -17,6 +17,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -31,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
+    CampaignPlan,
     canonical_json_bytes,
 )
 from core.runtime.atomic_writer import atomic_write_bytes, ensure_private_directory  # noqa: E402
@@ -41,9 +43,14 @@ CONFIG_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_config.v2"
 STATE_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_state.v2"
 STATUS_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_status.v2"
 EVENT_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_event.v2"
+PROGRESS_SCHEMA = "aura.latent_cortex.campaign_progress.v1"
+CAMPAIGN_EVENT_SCHEMA = "aura.latent_cortex.campaign_event.v1"
 MAX_CONFIG_BYTES = 16 * 1024 * 1024
+MAX_CAMPAIGN_JOURNAL_BYTES = 1024 * 1024 * 1024
 _active_pgid = 0
 _stop_signal = 0
+_progress_cache: dict[str, tuple[tuple[int, int, int, int], dict[str, Any]]] = {}
+_progress_last_valid: dict[str, dict[str, Any]] = {}
 
 
 class PilotControllerError(RuntimeError):
@@ -324,6 +331,269 @@ def _write_state(path: Path, state: Mapping[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _campaign_progress(campaign_dir: Path) -> dict[str, Any]:
+    """Return integrity-checked progress without taking the campaign writer lock."""
+
+    plan_path = campaign_dir / "plan.json"
+    journal_path = campaign_dir / "campaign.jsonl"
+    cache_key = str(journal_path)
+    if not plan_path.exists() or not journal_path.exists():
+        return {"schema": PROGRESS_SCHEMA, "availability": "waiting_for_plan"}
+    try:
+        metadata = journal_path.stat(follow_symlinks=False)
+        if journal_path.is_symlink() or plan_path.is_symlink():
+            _fail("campaign_progress_symlink_rejected")
+        identity = (
+            int(metadata.st_dev),
+            int(metadata.st_ino),
+            int(metadata.st_size),
+            int(metadata.st_mtime_ns),
+        )
+        cached = _progress_cache.get(cache_key)
+        if cached is not None and cached[0] == identity:
+            return dict(cached[1])
+
+        raw_plan = read_stable_bytes(plan_path, max_bytes=MAX_CONFIG_BYTES)
+        plan_document = json.loads(raw_plan)
+        if not isinstance(plan_document, dict):
+            _fail("campaign_progress_plan_invalid")
+        plan = CampaignPlan.from_dict(plan_document)
+        cells = plan.to_dict()["cells"]
+        definitions = {cell["cell_id"]: cell["definition"] for cell in cells}
+
+        raw_journal = read_stable_bytes(
+            journal_path,
+            max_bytes=MAX_CAMPAIGN_JOURNAL_BYTES,
+        )
+        if not raw_journal.endswith(b"\n"):
+            _fail("campaign_progress_journal_torn")
+
+        previous = "0" * 64
+        active: dict[str, tuple[str, str]] = {}
+        attempts: dict[str, tuple[str, str]] = {}
+        start_counts: dict[str, int] = {}
+        result_cells: set[str] = set()
+        verified_cells: set[str] = set()
+        committed_cells: set[str] = set()
+        failed_attempts = 0
+        started_attempts = 0
+        latency_by_arm: dict[str, list[float]] = {}
+        records = raw_journal.splitlines()
+        event_keys = {
+            "schema",
+            "sequence",
+            "plan_sha256",
+            "previous_event_sha256",
+            "event",
+            "cell_id",
+            "attempt_id",
+            "payload",
+            "event_sha256",
+        }
+        for sequence, raw_record in enumerate(records):
+            record = json.loads(raw_record)
+            if (
+                not isinstance(record, dict)
+                or set(record) != event_keys
+                or canonical_json_bytes(record) != raw_record
+            ):
+                _fail("campaign_progress_event_invalid")
+            claimed = record["event_sha256"]
+            body = {key: value for key, value in record.items() if key != "event_sha256"}
+            if (
+                record["schema"] != CAMPAIGN_EVENT_SCHEMA
+                or record["sequence"] != sequence
+                or record["plan_sha256"] != plan.plan_sha256
+                or record["previous_event_sha256"] != previous
+                or not _is_sha256(claimed)
+                or hashlib.sha256(canonical_json_bytes(body)).hexdigest() != claimed
+            ):
+                _fail("campaign_progress_hash_chain_invalid")
+            previous = claimed
+            event = record["event"]
+            payload = record["payload"]
+            cell_id = record["cell_id"]
+            attempt_id = record["attempt_id"]
+            if sequence == 0:
+                if (
+                    event != "PLAN"
+                    or cell_id is not None
+                    or attempt_id is not None
+                    or payload != {"plan": plan.to_dict()}
+                ):
+                    _fail("campaign_progress_genesis_invalid")
+                continue
+            if (
+                cell_id not in definitions
+                or not isinstance(attempt_id, str)
+                or not isinstance(payload, dict)
+            ):
+                _fail("campaign_progress_cell_event_invalid")
+            if event == "STARTED":
+                attempt_number = payload.get("attempt_number")
+                expected_number = start_counts.get(cell_id, 0) + 1
+                attempt_material = {
+                    "attempt_number": expected_number,
+                    "cell_id": cell_id,
+                    "plan_sha256": plan.plan_sha256,
+                    "schema": "aura.latent_cortex.campaign_attempt.v1",
+                }
+                expected_attempt_id = (
+                    f"attempt-{hashlib.sha256(canonical_json_bytes(attempt_material)).hexdigest()}"
+                )
+                if (
+                    set(payload) != {"attempt_number"}
+                    or type(attempt_number) is not int
+                    or attempt_number != expected_number
+                    or attempt_id != expected_attempt_id
+                    or cell_id in active
+                    or cell_id in committed_cells
+                    or attempt_id in attempts
+                ):
+                    _fail("campaign_progress_transition_invalid")
+                start_counts[cell_id] = expected_number
+                attempts[attempt_id] = (cell_id, event)
+                active[cell_id] = (attempt_id, event)
+                started_attempts += 1
+                continue
+            current = attempts.get(attempt_id)
+            if current is None or current[0] != cell_id or active.get(cell_id, (None,))[0] != attempt_id:
+                _fail("campaign_progress_attempt_invalid")
+            prior = current[1]
+            if event == "ACTION_INTERVENTION_CLAIMED" and prior == "STARTED":
+                if set(payload) != {
+                    "intervention_sha256",
+                    "request_payload_sha256",
+                    "signed_journal_event_count",
+                    "signed_journal_head_sha256",
+                }:
+                    _fail("campaign_progress_intervention_claim_invalid")
+                attempts[attempt_id] = (cell_id, event)
+            elif event == "ARM_RESULT" and prior in {"STARTED", "ACTION_INTERVENTION_CLAIMED"}:
+                result = payload.get("result")
+                if set(payload) != {"result"} or not isinstance(result, dict):
+                    _fail("campaign_progress_result_invalid")
+                attempts[attempt_id] = (cell_id, event)
+                active[cell_id] = (attempt_id, event)
+                result_cells.add(cell_id)
+                latency = result.get("latency_s")
+                if type(latency) in {int, float} and math.isfinite(float(latency)) and latency >= 0:
+                    arm = str(definitions[cell_id].get("arm", "unknown"))
+                    latency_by_arm.setdefault(arm, []).append(float(latency))
+            elif event == "VERIFIED" and prior == "ARM_RESULT":
+                if set(payload) != {"verification"} or not isinstance(
+                    payload.get("verification"), dict
+                ):
+                    _fail("campaign_progress_verification_invalid")
+                attempts[attempt_id] = (cell_id, event)
+                active[cell_id] = (attempt_id, event)
+                verified_cells.add(cell_id)
+            elif event == "COMMITTED" and prior == "VERIFIED":
+                if set(payload) != {"commit"} or not isinstance(payload.get("commit"), dict):
+                    _fail("campaign_progress_commit_invalid")
+                attempts[attempt_id] = (cell_id, event)
+                committed_cells.add(cell_id)
+                active.pop(cell_id, None)
+            elif event == "FAILED" and prior != "ACTION_INTERVENTION_CLAIMED":
+                if (
+                    set(payload) != {"details", "reason"}
+                    or not isinstance(payload.get("details"), dict)
+                    or not isinstance(payload.get("reason"), str)
+                    or not payload["reason"]
+                    or payload["reason"] != payload["reason"].strip()
+                ):
+                    _fail("campaign_progress_failure_invalid")
+                attempts[attempt_id] = (cell_id, event)
+                active.pop(cell_id, None)
+                failed_attempts += 1
+            else:
+                _fail("campaign_progress_transition_invalid")
+
+        by_arm: dict[str, dict[str, int]] = {}
+        for cell_id, definition in definitions.items():
+            arm = str(definition.get("arm", "unknown"))
+            summary = by_arm.setdefault(
+                arm,
+                {"planned": 0, "sealed_results": 0, "verified": 0, "committed": 0},
+            )
+            summary["planned"] += 1
+            summary["sealed_results"] += int(cell_id in result_cells)
+            summary["verified"] += int(cell_id in verified_cells or cell_id in committed_cells)
+            summary["committed"] += int(cell_id in committed_cells)
+
+        observed_means = {
+            arm: sum(values) / len(values) for arm, values in latency_by_arm.items() if values
+        }
+        global_projection = max(observed_means.values(), default=0.0)
+        projected_remaining = 0.0
+        if global_projection:
+            for arm, summary in by_arm.items():
+                remaining = summary["planned"] - summary["sealed_results"]
+                projected_remaining += remaining * observed_means.get(arm, global_projection)
+        all_latencies = [value for values in latency_by_arm.values() for value in values]
+        active_cells = [
+            {
+                "arm": definitions[cell_id].get("arm"),
+                "cell_id": cell_id,
+                "domain": definitions[cell_id].get("domain"),
+                "state": state,
+                "task_id": definitions[cell_id].get("task_id"),
+            }
+            for cell_id, (_attempt_id, state) in active.items()
+            if state in {"STARTED", "ACTION_INTERVENTION_CLAIMED"}
+        ]
+        progress = {
+            "schema": PROGRESS_SCHEMA,
+            "availability": "current",
+            "plan_sha256": plan.plan_sha256,
+            "journal_head_sha256": previous,
+            "journal_event_count": len(records),
+            "total_cells": len(definitions),
+            "started_attempts": started_attempts,
+            "sealed_result_cells": len(result_cells),
+            "verified_cells": len(verified_cells | committed_cells),
+            "committed_cells": len(committed_cells),
+            "failed_attempts": failed_attempts,
+            "active_cells": active_cells,
+            "by_arm": by_arm,
+            "observed_cell_latency_seconds": {
+                "count": len(all_latencies),
+                "mean": sum(all_latencies) / len(all_latencies) if all_latencies else None,
+                "minimum": min(all_latencies) if all_latencies else None,
+                "maximum": max(all_latencies) if all_latencies else None,
+            },
+            "projection": {
+                "method": "per_arm_observed_mean_else_slowest_observed_arm",
+                "projected_remaining_inference_seconds": (
+                    projected_remaining if global_projection else None
+                ),
+                "confidence": "low" if len(all_latencies) < 8 else "provisional",
+                "excludes": [
+                    "future_model_load_and_warmup",
+                    "post_seal_scoring",
+                    "independent_verification",
+                    "fusion_validation",
+                ],
+            },
+        }
+        _progress_cache[cache_key] = (identity, progress)
+        _progress_last_valid[cache_key] = progress
+        return dict(progress)
+    except (OSError, TypeError, ValueError, PilotControllerError) as exc:
+        prior = _progress_last_valid.get(cache_key)
+        if prior is not None:
+            return {
+                **prior,
+                "availability": "stale",
+                "stale_reason": type(exc).__name__,
+            }
+        return {
+            "schema": PROGRESS_SCHEMA,
+            "availability": "unavailable",
+            "reason": type(exc).__name__,
+        }
+
+
 def _append_event(path: Path, state: dict[str, Any], event: str, detail: Any) -> None:
     body = {
         "schema": EVENT_SCHEMA,
@@ -418,6 +688,7 @@ def _write_status(
         "active_child_pgid": state["active_child_pgid"],
         "active_detached_run_dir": state.get("active_detached_run_dir", ""),
         "campaign_dir": config["campaign_dir"],
+        "campaign_progress": _campaign_progress(Path(str(config["campaign_dir"]))),
         "source_commit": config["source_commit"],
         "config_sha256": config["config_sha256"],
     }

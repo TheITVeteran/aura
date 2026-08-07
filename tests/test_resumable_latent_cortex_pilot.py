@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from core.brain.llm.latent_cortex.campaign_journal import CampaignJournal, CampaignPlan
 from tools import run_resumable_latent_cortex_pilot as controller
 
 
@@ -79,6 +80,7 @@ def test_controller_accepts_scientific_nonzero_after_independent_verification(
     status = json.loads((Path(config["state_dir"]) / "controller-status.json").read_text())
     state = json.loads((Path(config["state_dir"]) / "controller-state.json").read_text())
     assert status["phase"] == "complete"
+    assert status["campaign_progress"]["availability"] == "waiting_for_plan"
     assert state["terminal"] is True
     assert state["attempts_started"] == 1
     assert state["active_child_pid"] == 0
@@ -265,6 +267,66 @@ def test_config_accepts_explicit_input_outside_mutable_output_root(tmp_path: Pat
     path.write_bytes(controller.canonical_json_bytes(config) + b"\n")
 
     assert controller.load_config(path)["runner_command"] == command
+
+
+def test_campaign_progress_counts_only_hash_valid_sealed_cells(tmp_path: Path) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    plan = CampaignPlan.build(
+        "progress-test",
+        [
+            {"arm": "base_rlc", "domain": "logic", "task_id": "task-1"},
+            {"arm": "adapter_vanilla", "domain": "math", "task_id": "task-2"},
+        ],
+    )
+    (campaign / "plan.json").write_bytes(controller.canonical_json_bytes(plan.to_dict()) + b"\n")
+    with CampaignJournal(campaign / "campaign.jsonl", plan) as journal:
+        first = journal.start_cell(plan.cell_ids[0])
+        journal.record_arm_result(
+            plan.cell_ids[0],
+            first,
+            {"latency_s": 12.5, "text": "answer"},
+        )
+        journal.start_cell(plan.cell_ids[1])
+
+    progress = controller._campaign_progress(campaign)
+
+    assert progress["availability"] == "current"
+    assert progress["total_cells"] == 2
+    assert progress["started_attempts"] == 2
+    assert progress["sealed_result_cells"] == 1
+    assert progress["verified_cells"] == 0
+    assert progress["committed_cells"] == 0
+    assert progress["by_arm"]["base_rlc"]["sealed_results"] == 1
+    assert progress["active_cells"][0]["arm"] == "adapter_vanilla"
+    assert progress["projection"]["projected_remaining_inference_seconds"] == 12.5
+
+
+def test_campaign_progress_rejects_rehashed_invalid_attempt_identity(tmp_path: Path) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    plan = CampaignPlan.build(
+        "tamper-test",
+        [{"arm": "base_vanilla", "domain": "logic", "task_id": "task-1"}],
+    )
+    (campaign / "plan.json").write_bytes(controller.canonical_json_bytes(plan.to_dict()) + b"\n")
+    with CampaignJournal(campaign / "campaign.jsonl", plan) as journal:
+        journal.start_cell(plan.cell_ids[0])
+    rows = (campaign / "campaign.jsonl").read_text().splitlines()
+    event = json.loads(rows[-1])
+    event["attempt_id"] = f"attempt-{'0' * 64}"
+    body = {key: value for key, value in event.items() if key != "event_sha256"}
+    event["event_sha256"] = controller._sha256(body)
+    rows[-1] = controller.canonical_json_bytes(event).decode()
+    (campaign / "campaign.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    progress = controller._campaign_progress(campaign)
+
+    assert progress == {
+        "schema": controller.PROGRESS_SCHEMA,
+        "availability": "unavailable",
+        "reason": "PilotControllerError",
+    }
 
 
 def test_event_journal_recovers_one_committed_event_after_state_write_gap(
