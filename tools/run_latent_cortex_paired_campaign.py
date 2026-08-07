@@ -103,6 +103,10 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
     build_worker_identity,
     logical_model_parameter_count,
 )
+from core.brain.llm.latent_cortex.sequential_campaign_evidence import (  # noqa: E402
+    SequentialCampaignEvidenceError,
+    sequential_task_look_assignments,
+)
 from core.brain.llm.latent_cortex.worker_attempt_import import (  # noqa: E402
     PAIRED_CAMPAIGN_CELL_TYPE,
     import_verified_worker_stage,
@@ -1590,37 +1594,16 @@ def _worker_attempt_slot_range(
 
 
 def _task_look_assignments(plan: CampaignPlan) -> dict[str, int]:
-    metadata = plan.to_dict()["metadata"]
-    execution_config = metadata["execution_config"]
-    raw_looks = execution_config.get("sequential_look_observations_per_domain")
-    tasks = metadata["task_manifest"]["tasks"]
-    if not raw_looks:
-        return {task["task_id"]: 0 for task in tasks}
-    if (
-        not isinstance(raw_looks, list)
-        or not raw_looks
-        or any(type(value) is not int or value <= 0 for value in raw_looks)
-    ):
-        raise CampaignProducerError("frozen sequential look contract is invalid")
-    domain_ordinals: Counter[str] = Counter()
-    assignments: dict[str, int] = {}
-    for task in tasks:
-        task_id = task.get("task_id")
-        domain = task.get("domain")
-        if not isinstance(task_id, str) or not isinstance(domain, str):
-            raise CampaignProducerError("frozen sequential task manifest is invalid")
-        domain_ordinals[domain] += 1
-        ordinal = domain_ordinals[domain]
-        worker_look = next(
-            (index for index, boundary in enumerate(raw_looks, 1) if ordinal <= boundary),
-            None,
-        )
-        if worker_look is None:
-            raise CampaignProducerError("sequential task exceeds terminal look")
-        assignments[task_id] = worker_look
-    if any(count != raw_looks[-1] for count in domain_ordinals.values()):
-        raise CampaignProducerError("sequential domains are not balanced at terminal look")
-    return assignments
+    execution_config = plan.to_dict()["metadata"]["execution_config"]
+    if not execution_config.get("sequential_look_observations_per_domain"):
+        return {
+            task["task_id"]: 0
+            for task in plan.to_dict()["metadata"]["task_manifest"]["tasks"]
+        }
+    try:
+        return sequential_task_look_assignments(plan)
+    except SequentialCampaignEvidenceError as exc:
+        raise CampaignProducerError(str(exc)) from exc
 
 
 def _arm_cell_ids_for_look(
