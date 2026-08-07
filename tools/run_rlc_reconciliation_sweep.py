@@ -589,9 +589,17 @@ def grade(out_dir: Path, tasks) -> dict[str, Any]:
     # control task there is no baseline to be at parity with. The floor is
     # structural (a baseline exists / does not), not a tuned threshold.
     informative = vanilla > 0
-    reaches_parity = complete and informative and best_rlc >= vanilla
+    # No recurrent arm ran, so nothing about the recurrent path was observed.
+    # The sentinel -1 is smaller than any vanilla score, which would otherwise
+    # publish "below ordinary decode" as a finding drawn from no data at all.
+    measured_recurrence = best_rlc >= 0
+    reaches_parity = (
+        complete and informative and measured_recurrence and best_rlc >= vanilla
+    )
     if not complete:
         decision = "inconclusive_arms_carry_harness_faults"
+    elif not measured_recurrence:
+        decision = "inconclusive_no_recurrent_arm_measured"
     elif not informative:
         decision = "inconclusive_battery_uninformative_ordinary_decode_scored_zero"
     elif reaches_parity:

@@ -462,3 +462,32 @@ def test_an_unfingerprinted_journal_is_still_readable(tmp_path: Path):
     )
     assert sweep.Journal(path).done == {("vanilla", "task-a")}
     assert sweep.Journal(path).superseded == 0
+
+
+def test_no_recurrent_arm_is_not_a_verdict_about_recurrence(tmp_path: Path):
+    """Grading a vanilla-only run reported recurrent_path_below_ordinary_decode
+    off a -1 sentinel. A conclusion about the recurrent path requires having
+    run one."""
+    from core.brain.llm.latent_cortex import frontier_tasks as ft
+
+    tasks = ft.generate_task_battery([20260807], difficulty=2)
+    journal = sweep.Journal(tmp_path / "journal.jsonl")
+    for task in tasks:
+        reveal = task.reveal_for_verifier()
+        journal.append(
+            {
+                "event": "CELL",
+                "arm": "vanilla",
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "text": "FINAL_ANSWER: " + json.dumps(reveal["expected"]),
+                "error": "",
+            }
+        )
+
+    verdict = sweep.grade(tmp_path, tasks)
+    assert verdict["vanilla_correct"] == len(tasks)
+    assert verdict["best_recurrent_correct"] == -1
+    assert verdict["reaches_parity_with_ordinary_decode"] is False
+    assert verdict["decision"] == "inconclusive_no_recurrent_arm_measured"
+    assert verdict["claims"]["fusion_authorized"] is False
