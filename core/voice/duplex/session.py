@@ -1316,11 +1316,11 @@ class DuplexVoiceSession:
 
             delivered = await self._deliver_utterance(_pieces(), cause=None)
             # Captured before the finally, because a barge-in clears
-            # ``_speaking`` and the distinction is what decides whether a
-            # correction is owed at all.
-            interrupted = self._speaking is None and bool(
-                self._mind.last_spoken and self._mind.last_spoken.interrupted
-            )
+            # ``_speaking`` and both of these decide whether a correction is
+            # owed at all.
+            last = self._mind.last_spoken
+            interrupted = bool(last and last.interrupted)
+            delivery_complete = bool(last and last.delivery_complete)
         finally:
             if not producer.done():
                 producer.cancel()
@@ -1333,22 +1333,30 @@ class DuplexVoiceSession:
 
         final = await turn.final()
 
-        if interrupted:
-            # The listener cut her off, so the reply is already incomplete for
-            # a reason that has nothing to do with governance, and the
-            # interruption machinery has already recorded the heard prefix and
-            # handed the unheard tail to the next turn. Issuing a correction
-            # on top of that would apologise for a revision to text they never
-            # reached, which is worse than saying nothing.
+        if interrupted or not delivery_complete:
+            # Either the listener cut her off, or synthesis stopped short.
+            # Both mean the reply is incomplete for a reason that has nothing
+            # to do with governance, and both already record the heard prefix
+            # and hand the unheard tail to the next turn. A governance
+            # correction on top would apologise for a revision to text they
+            # never reached.
             return True
 
-        # Reconcile against what was *delivered*, not what was released to the
-        # synthesiser. They differ whenever synthesis stopped short, and the
-        # correction context claims "the user heard X" — a claim that must be
-        # true, or her next turn refers to words nobody heard, which is the
-        # exact hallucination this whole lane is built to avoid.
-        heard = delivered or spoken_via_stream
-        verdict = reconcile(heard, final or "")
+        # Reconcile the *governed clause text*, not the delivered text.
+        #
+        # They are not the same string and the difference is not cosmetic: the
+        # synthesiser cannot pronounce characters, so everything downstream of
+        # governance passes through `spoken_form.prepare_for_speech`, which
+        # turns "45%" into "forty-five percent" and "2026-07-27" into a date a
+        # person would say. Comparing that against the raw final reply reports
+        # a divergence for every answer containing a number, a percentage, a
+        # date, a currency amount or a URL — which is to say, constantly, and
+        # each one would have her interrupt herself to "correct" a
+        # pronunciation.
+        #
+        # What is being checked here is whether *governance* changed its mind,
+        # so both sides have to be in the representation governance produced.
+        verdict = reconcile(spoken_via_stream, final or "")
 
         if verdict.consistent and verdict.remainder:
             # Governance kept everything already said and had more to add.
@@ -1428,16 +1436,21 @@ class DuplexVoiceSession:
         sentence Aura does not stand behind.
         """
         final = str(getattr(verdict, "final", "") or "").strip()
-        if final:
-            await self._speak_text(
-                "Hold on — let me correct that. " + final, cause=ThinkingCause.UNCERTAINTY
+        text = (
+            "Hold on — let me correct that. " + final
+            if final
+            else (
+                "Hold on — I need to take that back. What I just said did not "
+                "survive my own checks, and I do not have a replacement answer yet."
             )
-            return
-        await self._speak_text(
-            "Hold on — I need to take that back. What I just said did not survive "
-            "my own checks, and I do not have a replacement answer yet.",
-            cause=ThinkingCause.UNCERTAINTY,
         )
+        # Sent as a reply, not just spoken. The correction has to reach the
+        # transcript and the chat thread as its own turn, or the visible
+        # history keeps the retracted answer and disagrees with both what was
+        # heard and what she remembers — which is the failure this is here to
+        # prevent, reproduced one layer up.
+        await self._send_json({"type": protocol.EVT_REPLY, "text": text})
+        await self._speak_text(text, cause=ThinkingCause.UNCERTAINTY)
 
     async def _speak_text(self, text: str, *, cause: ThinkingCause | None) -> None:
         """Chunk, synthesise and stream one utterance whose text is known."""
