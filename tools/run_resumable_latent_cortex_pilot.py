@@ -3,10 +3,12 @@
 
 The campaign runner owns the scientific journal and exact resume semantics.
 This controller owns only process liveness: it verifies an immutable source
-checkout, keeps the actual runner under caffeinate, records authenticated
-attempt events, adopts a still-running child after controller restart, and
-retries infrastructure exits until the independent evidence verifier accepts
-the terminal campaign.
+checkout, records authenticated attempt events, adopts a still-running child
+after controller restart, and retries infrastructure exits until the
+independent evidence verifier accepts the terminal campaign. Direct attempts
+run under caffeinate here. Brokered attempts require the launchd job to run
+this controller under caffeinate because the detached target is intentionally
+confined by a no-fork sandbox.
 """
 
 from __future__ import annotations
@@ -33,11 +35,12 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
 )
 from core.runtime.atomic_writer import atomic_write_bytes, ensure_private_directory  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
+from tools import run_detached_step as detached  # noqa: E402
 
-CONFIG_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_config.v1"
-STATE_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_state.v1"
-STATUS_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_status.v1"
-EVENT_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_event.v1"
+CONFIG_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_config.v2"
+STATE_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_state.v2"
+STATUS_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_status.v2"
+EVENT_SCHEMA = "aura.latent_cortex.resumable_pilot_controller_event.v2"
 MAX_CONFIG_BYTES = 16 * 1024 * 1024
 _active_pgid = 0
 _stop_signal = 0
@@ -122,6 +125,10 @@ def load_config(path: Path) -> dict[str, Any]:
         "verifier_command",
         "verifier_command_sha256",
         "verifier_executable_sha256",
+        "detached_broker_policy",
+        "detached_broker_policy_sha256",
+        "detached_attempt_timeout_seconds",
+        "execution_output_root",
         "max_attempts",
         "retry_backoff_seconds",
         "heartbeat_seconds",
@@ -152,14 +159,27 @@ def load_config(path: Path) -> dict[str, Any]:
         _fail("runner_command_hash_mismatch")
     if _sha256(verifier) != config["verifier_command_sha256"]:
         _fail("verifier_command_hash_mismatch")
+    broker_policy = config.get("detached_broker_policy")
+    if not isinstance(broker_policy, list) or config.get(
+        "detached_broker_policy_sha256"
+    ) != _sha256(broker_policy):
+        _fail("detached_broker_policy_invalid")
     _verify_executables({**config, "runner_command": runner, "verifier_command": verifier})
     source_root = _absolute_path(config.get("source_root"), role="source_root")
     campaign_dir = _absolute_path(config.get("campaign_dir"), role="campaign_dir", must_exist=False)
     state_dir = _absolute_path(config.get("state_dir"), role="state_dir", must_exist=False)
+    output_root = _absolute_path(
+        config.get("execution_output_root"),
+        role="execution_output_root",
+        must_exist=False,
+    )
+    if output_root == source_root or not output_root.is_relative_to(source_root):
+        _fail("execution_output_root_invalid")
     for name, minimum, maximum in (
         ("max_attempts", 1, 100),
         ("retry_backoff_seconds", 1, 3600),
         ("heartbeat_seconds", 1, 300),
+        ("detached_attempt_timeout_seconds", 60, 172800),
     ):
         value = config.get(name)
         if type(value) not in {int, float} or not minimum <= float(value) <= maximum:
@@ -169,6 +189,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "source_root": str(source_root),
         "campaign_dir": str(campaign_dir),
         "state_dir": str(state_dir),
+        "execution_output_root": str(output_root),
         "runner_command": runner,
         "verifier_command": verifier,
     }
@@ -226,6 +247,7 @@ def _default_state(config: Mapping[str, Any]) -> dict[str, Any]:
         "active_child_pid": 0,
         "active_child_pgid": 0,
         "active_child_command_sha256": "",
+        "active_detached_run_dir": "",
         "journal_head_sha256": "0" * 64,
         "journal_sequence": 0,
         "terminal": False,
@@ -313,15 +335,20 @@ def _reconcile_event_journal(path: Path, state: dict[str, Any]) -> bool:
         if not isinstance(detail, Mapping):
             _fail("controller_event_recovery_invalid")
         event = document.get("event")
-        if event == "ATTEMPT_STARTED":
+        if event == "ATTEMPT_RESERVED":
+            state["attempts_started"] = detail.get("attempt")
+            state["active_detached_run_dir"] = detail.get("detached_run_dir", "")
+        elif event in {"ATTEMPT_STARTED", "ATTEMPT_ADOPTED"}:
             state["attempts_started"] = detail.get("attempt")
             state["active_child_pid"] = detail.get("pid")
             state["active_child_pgid"] = detail.get("pgid")
             state["active_child_command_sha256"] = detail.get("command_sha256")
+            state["active_detached_run_dir"] = detail.get("detached_run_dir", "")
         elif event == "ATTEMPT_EXITED":
             state["active_child_pid"] = 0
             state["active_child_pgid"] = 0
             state["active_child_command_sha256"] = ""
+            state["active_detached_run_dir"] = ""
         elif event == "VERIFIED_TERMINAL":
             state["terminal"] = True
         state["journal_sequence"] = document["sequence"]
@@ -348,6 +375,7 @@ def _write_status(
         "max_attempts": config["max_attempts"],
         "active_child_pid": state["active_child_pid"],
         "active_child_pgid": state["active_child_pgid"],
+        "active_detached_run_dir": state.get("active_detached_run_dir", ""),
         "campaign_dir": config["campaign_dir"],
         "source_commit": config["source_commit"],
         "config_sha256": config["config_sha256"],
@@ -416,6 +444,115 @@ def _monitor_pid(
     _write_state(state_path, state)
 
 
+def _stop_detached(run_dir: Path) -> None:
+    detached.main(["stop", "--run-dir", str(run_dir)])
+
+
+def _run_brokered_attempt(
+    *,
+    config: Mapping[str, Any],
+    state: dict[str, Any],
+    state_path: Path,
+    status_path: Path,
+    event_path: Path,
+) -> int:
+    existing = str(state.get("active_detached_run_dir") or "")
+    attempt = int(state["attempts_started"]) if existing else int(state["attempts_started"]) + 1
+    run_dir = Path(str(config["state_dir"])) / "detached-attempts" / f"attempt-{attempt:04d}"
+    if existing and Path(existing) != run_dir:
+        _fail("detached_attempt_state_mismatch")
+    if not existing:
+        state["attempts_started"] = attempt
+        state["active_detached_run_dir"] = str(run_dir)
+        _append_event(
+            event_path,
+            state,
+            "ATTEMPT_RESERVED",
+            {"attempt": attempt, "detached_run_dir": str(run_dir)},
+        )
+        state.update(_write_state(state_path, state))
+    launched = not (run_dir / detached.PLAN_FILE).exists()
+    if launched:
+        launch_args = [
+            "launch",
+            "--run-dir",
+            str(run_dir),
+            "--name",
+            f"{config['campaign_name']}-attempt-{attempt}",
+            "--cwd",
+            str(config["source_root"]),
+            "--timeout",
+            str(config["detached_attempt_timeout_seconds"]),
+            "--broker-policy-json",
+            json.dumps(
+                config["detached_broker_policy"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "--execution-output-root",
+            str(config["execution_output_root"]),
+            "--",
+            *config["runner_command"],
+        ]
+        if detached.main(launch_args) != 0:
+            _fail("detached_attempt_launch_failed")
+        observed = detached._status(run_dir)
+        state["active_child_pid"] = int(observed.get("child_pid") or 0)
+        state["active_child_pgid"] = int(observed.get("child_process_group_id") or 0)
+        state["active_child_command_sha256"] = ""
+        _append_event(
+            event_path,
+            state,
+            "ATTEMPT_STARTED",
+            {
+                "attempt": attempt,
+                "pid": state["active_child_pid"],
+                "pgid": state["active_child_pgid"],
+                "command_sha256": "",
+                "detached_run_dir": str(run_dir),
+            },
+        )
+        state.update(_write_state(state_path, state))
+    else:
+        observed = detached._status(run_dir)
+        state["active_child_pid"] = int(observed.get("child_pid") or 0)
+        state["active_child_pgid"] = int(observed.get("child_process_group_id") or 0)
+        _append_event(
+            event_path,
+            state,
+            "ATTEMPT_ADOPTED",
+            {
+                "attempt": attempt,
+                "pid": state["active_child_pid"],
+                "pgid": state["active_child_pgid"],
+                "command_sha256": "",
+                "detached_run_dir": str(run_dir),
+            },
+        )
+        state.update(_write_state(state_path, state))
+    deadline = time.monotonic() + float(config["detached_attempt_timeout_seconds"]) + 120
+    while True:
+        observed = detached._status(run_dir)
+        state["active_child_pid"] = int(observed.get("child_pid") or 0)
+        state["active_child_pgid"] = int(observed.get("child_process_group_id") or 0)
+        state.update(_write_state(state_path, state))
+        _write_status(status_path, config, state, phase="running")
+        if observed.get("terminal") is True:
+            receipt = observed.get("receipt")
+            if not isinstance(receipt, Mapping) or type(receipt.get("returncode")) is not int:
+                _fail("detached_attempt_receipt_invalid")
+            return int(receipt["returncode"])
+        if observed.get("completion_indeterminate") is True:
+            return 125
+        if _stop_signal:
+            _stop_detached(run_dir)
+            return 128 + _stop_signal
+        if time.monotonic() >= deadline:
+            _stop_detached(run_dir)
+            return 124
+        time.sleep(float(config["heartbeat_seconds"]))
+
+
 def run(config: Mapping[str, Any]) -> int:
     global _active_pgid
     verify_source(config)
@@ -435,15 +572,18 @@ def run(config: Mapping[str, Any]) -> int:
     state = _read_state(state_path, config)
     if _reconcile_event_journal(event_path, state):
         state = _write_state(state_path, state)
+    brokered = bool(config["detached_broker_policy"])
     with lock, log_path.open("ab", buffering=0) as log:
-        if _verify_terminal(config, log):
+        if not state.get("active_detached_run_dir") and _verify_terminal(config, log):
             state["terminal"] = True
             _append_event(event_path, state, "VERIFIED_TERMINAL", {})
             state = _write_state(state_path, state)
             _write_status(status_path, config, state, phase="complete")
             return 0
         active_pid = int(state.get("active_child_pid") or 0)
-        if _pid_matches(active_pid, str(state.get("active_child_command_sha256") or "")):
+        if not brokered and _pid_matches(
+            active_pid, str(state.get("active_child_command_sha256") or "")
+        ):
             _active_pgid = int(state.get("active_child_pgid") or 0)
             _append_event(event_path, state, "ADOPTED_ACTIVE_CHILD", {"pid": active_pid})
             state = _write_state(state_path, state)
@@ -454,21 +594,62 @@ def run(config: Mapping[str, Any]) -> int:
                 state_path=state_path,
                 status_path=status_path,
             )
-        caffeinate = shutil.which("caffeinate")
-        if not caffeinate:
+        caffeinate = shutil.which("caffeinate") if not brokered else None
+        if not brokered and not caffeinate:
             _fail("caffeinate_unavailable")
-        while int(state["attempts_started"]) < int(config["max_attempts"]):
-            if _verify_terminal(config, log):
+        while state.get("active_detached_run_dir") or int(state["attempts_started"]) < int(
+            config["max_attempts"]
+        ):
+            if not state.get("active_detached_run_dir") and _verify_terminal(config, log):
                 state["terminal"] = True
                 _append_event(event_path, state, "VERIFIED_TERMINAL", {})
                 state = _write_state(state_path, state)
                 _write_status(status_path, config, state, phase="complete")
                 return 0
             verify_source(config)
+            if brokered:
+                returncode = _run_brokered_attempt(
+                    config=config,
+                    state=state,
+                    state_path=state_path,
+                    status_path=status_path,
+                    event_path=event_path,
+                )
+                state["active_child_pid"] = 0
+                state["active_child_pgid"] = 0
+                state["active_child_command_sha256"] = ""
+                state["active_detached_run_dir"] = ""
+                _append_event(
+                    event_path,
+                    state,
+                    "ATTEMPT_EXITED",
+                    {
+                        "attempt": state["attempts_started"],
+                        "returncode": returncode,
+                    },
+                )
+                state = _write_state(state_path, state)
+                if _stop_signal:
+                    return 128 + _stop_signal
+                if _verify_terminal(config, log):
+                    state["terminal"] = True
+                    _append_event(event_path, state, "VERIFIED_TERMINAL", {})
+                    state = _write_state(state_path, state)
+                    _write_status(status_path, config, state, phase="complete")
+                    return 0
+                _write_status(
+                    status_path,
+                    config,
+                    state,
+                    phase="retry_wait",
+                    reason=f"runner_exit_{returncode}",
+                )
+                time.sleep(float(config["retry_backoff_seconds"]))
+                continue
             environment = dict(os.environ)
             environment["AURA_LOG_DIR"] = str(ensure_private_directory(state_dir / "aura-logs"))
             child = subprocess.Popen(
-                [caffeinate, "-dims", *config["runner_command"]],
+                [str(caffeinate), "-dims", *config["runner_command"]],
                 cwd=config["source_root"],
                 env=environment,
                 stdin=subprocess.DEVNULL,

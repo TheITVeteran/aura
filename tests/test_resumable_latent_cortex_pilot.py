@@ -60,6 +60,10 @@ def _config(tmp_path: Path) -> dict:
         "verifier_command": verifier,
         "verifier_command_sha256": controller._sha256(verifier),
         "verifier_executable_sha256": controller._executable_sha256(verifier[0]),
+        "detached_broker_policy": [],
+        "detached_broker_policy_sha256": controller._sha256([]),
+        "detached_attempt_timeout_seconds": 60,
+        "execution_output_root": str(campaign),
         "max_attempts": 2,
         "retry_backoff_seconds": 1,
         "heartbeat_seconds": 1,
@@ -111,6 +115,79 @@ def test_controller_retries_infrastructure_exit_from_durable_state(tmp_path: Pat
     state = json.loads((Path(config["state_dir"]) / "controller-state.json").read_text())
     assert state["attempts_started"] == 2
     assert state["terminal"] is True
+
+
+def test_controller_runs_broker_policy_through_detached_supervisor(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    campaign = Path(config["campaign_dir"])
+    policy = [
+        {
+            "command": [sys.executable, "-c", "raise SystemExit(0)"],
+            "cwd": config["source_root"],
+            "stdout_path": str(campaign / "broker.log"),
+            "timeout_s_max": 30.0,
+            "max_invocations": 1,
+        }
+    ]
+    body = {
+        **{key: value for key, value in config.items() if key != "config_sha256"},
+        "detached_broker_policy": policy,
+        "detached_broker_policy_sha256": controller._sha256(policy),
+    }
+    config = {**body, "config_sha256": controller._sha256(body)}
+    assert controller.run(config) == 0
+    state = json.loads((Path(config["state_dir"]) / "controller-state.json").read_text())
+    assert state["terminal"] is True
+    assert state["attempts_started"] == 1
+    detached_root = Path(config["state_dir"]) / "detached-attempts" / "attempt-0001"
+    assert (detached_root / controller.detached.RECEIPT_FILE).exists()
+
+
+def test_controller_adopts_detached_attempt_if_launch_return_is_lost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    campaign = Path(config["campaign_dir"])
+    policy = [
+        {
+            "command": [sys.executable, "-c", "raise SystemExit(0)"],
+            "cwd": config["source_root"],
+            "stdout_path": str(campaign / "broker.log"),
+            "timeout_s_max": 30.0,
+            "max_invocations": 1,
+        }
+    ]
+    body = {
+        **{key: value for key, value in config.items() if key != "config_sha256"},
+        "detached_broker_policy": policy,
+        "detached_broker_policy_sha256": controller._sha256(policy),
+    }
+    config = {**body, "config_sha256": controller._sha256(body)}
+    real_main = controller.detached.main
+    launch_return_lost = False
+
+    def _lose_first_launch_return(arguments: list[str]) -> int:
+        nonlocal launch_return_lost
+        result = real_main(arguments)
+        if arguments[0] == "launch" and not launch_return_lost:
+            launch_return_lost = True
+            raise controller.PilotControllerError("simulated_controller_crash_after_launch")
+        return result
+
+    monkeypatch.setattr(controller.detached, "main", _lose_first_launch_return)
+    with pytest.raises(controller.PilotControllerError, match="simulated_controller_crash"):
+        controller.run(config)
+
+    monkeypatch.setattr(controller.detached, "main", real_main)
+    assert controller.run(config) == 0
+    state = json.loads((Path(config["state_dir"]) / "controller-state.json").read_text())
+    assert state["attempts_started"] == 1
+    events = [
+        json.loads(line)
+        for line in (Path(config["state_dir"]) / "controller-events.jsonl").read_text().splitlines()
+    ]
+    assert [event["event"] for event in events].count("ATTEMPT_RESERVED") == 1
 
 
 def test_controller_rejects_tracked_source_drift(tmp_path: Path) -> None:
