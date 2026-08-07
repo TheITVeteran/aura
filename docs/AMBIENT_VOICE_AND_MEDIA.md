@@ -96,7 +96,57 @@ voiced stretch, in semitones so one threshold serves every speaker. The
 safety argument is the asymmetry: it can only ever **extend** the wait. A
 wrong reading costs a beat of latency and can never cost an interruption.
 
-## 4. Media went somewhere else, and failures had a script
+## 4. She could not see, and did not know it
+
+"How many fingers am I holding up" is answerable only by looking, now. There
+was already a camera path and it is not this one: the interaction-signal lane
+samples a 320×240 thumbnail every few seconds to know whether somebody is in
+front of the machine. That is all presence needs; fingers are a smudge at
+that resolution, and the frame in the buffer is a moment that has passed. So
+`core/senses/sight.py` is a request/response round trip to whichever surface
+owns a camera, at a resolution a model can read, bounded so a closed window
+or a camera held by another app costs one turn.
+
+The interesting part is what was found underneath. Every vision call in the
+repository was failing, and one of the three reasons is worth stating on its
+own because of *how* it fails:
+
+> The worker built its message with a text part and no image part, and called
+> `apply_chat_template` without `num_images`. A call that "succeeded"
+> therefore produced a prompt with **no image token** — so the model answered
+> from the question alone, fluently and with complete confidence. Nothing in
+> the output distinguishes that from working sight.
+
+The other two were fatal rather than silent: the base64 payload was passed
+where a path was expected, and the exception it raised was outside the
+handler, so one bad call killed the worker rather than the request; and
+`temperature=` is rejected by this mlx_vlm build.
+
+`core/config.py` still names `Qwen2.5-32B-Instruct` as `vision_model`. That
+is the text cortex and cannot read an image at all. Sight goes to
+`MLXVisionClient` and its genuinely multimodal Qwen2-VL-2B, through
+`get_vision_client()` — constructing the client spawns a subprocess holding
+1.2 GB, and every prior call site built its own.
+
+`transformers` 5.x builds its image processors on torchvision, so a machine
+with torch and no torchvision loads text models fine and cannot construct a
+vision processor. `sight_dependency_gap()` checks that up front, because a
+missing package reaching the parent as "failed to initialize within 30s" is
+indistinguishable from a wedged model.
+
+**"Turn on the camera" is an action.** She writes the same setting the UI's
+own switch writes and tells the surface, so the control, the privacy record
+and the device move together. A record reading "on" over a camera that is off
+is the worst possible split there is.
+
+**Intent is gated on a deictic.** A sight request needs "this", "here", "am
+I" — a question about the visible world is anchored to the shared present,
+and "what colour is this" and "what colour is a stop sign" differ only by the
+pointing word. Missing a request costs a repeat; firing on a remark turns the
+webcam on in a conversation that was not about it, which is how a camera
+permission gets revoked permanently.
+
+## 5. Media went somewhere else, and failures had a script
 
 Ask any shipped assistant to play something and the best case is a hand-off:
 a card that opens another app, a link, a new tab. Aura runs on the machine
@@ -130,6 +180,12 @@ over-generalising "one host is unreachable" into "I'm offline".
 - **The addressivity gate has no null.** It has never been run against a
   control condition — an equivalent gate with its evidence shuffled — so the
   ladder's structure has not been shown to beat a simpler rule.
+- **Sight was measured, narrowly.** Worker up in 5.0 s, ~0.7 s per look, and
+  4/4 on "how many fingers am I holding up" against *stylised* hands — not
+  photographs, not a real webcam, not varying light. On abstract shapes the
+  same model scored 1/2, reading five circles as four, so counting at 2B is
+  approximate and fingers are a strong shape prior rather than evidence of
+  general counting. Nothing here has been run against the live camera.
 
 ## Where to look
 
@@ -143,6 +199,9 @@ over-generalising "one host is unreachable" into "I'm offline".
 | Session wiring | `core/voice/duplex/session.py` |
 | Local media index, playback resolution | `core/media/` |
 | Byte serving with Range | `interface/routes/media.py` |
+| Looking now, and failing honestly | `core/senses/sight.py` |
+| Look vs. talking about cameras | `core/senses/sight_intent.py` |
+| The vision worker's model call | `core/brain/llm/mlx_vision_worker.py` |
 | Ambient client, chat binding | `interface/static/voice_mode.js` |
 
 Settings: `voice.auto_listen` turns ambient listening on; `voice.input_enabled`

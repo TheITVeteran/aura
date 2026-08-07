@@ -51,6 +51,14 @@ without evidence to back a claim yet.
   seeking works and a large file does not buffer entirely before it starts.
   The index is the allowlist: playback resolves an opaque id through it, so
   there is no path in the URL to sanitise.
+- **Sight** (`core/senses/sight.py`, `core/senses/sight_intent.py`) — "how
+  many fingers am I holding up" captures a frame *now*, at a resolution a
+  model can read, and answers from it. Distinct from the presence lane, whose
+  320×240 thumbnail is right for knowing somebody is there and useless for
+  counting anything. "Turn on the camera" writes the same setting the UI's
+  own switch writes, so the control, the privacy record and the device move
+  together. Measured: worker up in 5.0 s, ~0.7 s per look, 4/4 on stylised
+  hands — see the limits recorded in **Not claimed**.
 - **Failures she can explain** (`core/conversation/failure_context.py`) — a
   failed capability records what it tried, what stopped it, how it knows, and
   what is still possible. Her turn reads those and words it herself. The
@@ -70,6 +78,25 @@ without evidence to back a claim yet.
   process, and one structural redaction primitive.
 
 ### Fixed
+- **Every vision call in the repository was failing, and the loudest way it
+  failed was silently.** The worker's message carried no image part and the
+  chat template was never told there was an image, so a call that succeeded
+  produced a prompt with no image token — the model answered from the
+  question alone, fluently and with complete confidence, and nothing in the
+  output distinguished that from working sight. Two fatal defects sat
+  underneath: the base64 payload was passed where a path was expected, and
+  the resulting exception was outside the handler, so one bad call killed the
+  worker rather than the request.
+- `MLXVisionClient.stop()` called `join()` on a process that had never
+  started, which asserts rather than returning — so any failure during spawn
+  turned every later stop into "can only join a started process" and buried
+  the reason the worker never came up.
+- Every vision call site constructed its own client, and each construction
+  spawns a subprocess holding 1.2 GB of weights. `get_vision_client()` is now
+  the shared accessor.
+- `torchvision` was missing and undeclared. `transformers` 5.x builds its
+  image processors on it, so torch alone loads text models fine and cannot
+  construct a vision processor at all.
 - The clause-streaming carve-out had a complete test suite and **zero
   production callers** — the voice lane still blocked on the finished string
   and then chunked it, so the latency it was written to remove was entirely
