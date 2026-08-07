@@ -70,6 +70,7 @@ from core.evaluation.matched_budget import (  # noqa: E402
     check_budget_parity,
     paired_separation,
 )
+from core.evaluation.source_attestation import attest  # noqa: E402
 
 STATELESS = "stateless"
 LONG_CONTEXT = "long_context"
@@ -424,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     is_evidence = args.responder == "mlx"
     report = {
         "schema": "aura.capability_scorecard.v1",
+        "source_attestation": attest().to_dict(),
         "generated_at_unix": time.time(),
         "responder": args.responder,
         "is_evidence_about_aura": is_evidence,

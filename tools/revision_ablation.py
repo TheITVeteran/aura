@@ -62,6 +62,7 @@ from core.evaluation.matched_budget import (  # noqa: E402
     AttemptLedger,
     paired_separation,
 )
+from core.evaluation.source_attestation import attest  # noqa: E402
 
 SINGLE_PASS = "single_pass"
 ALWAYS_REVISE = "always_revise"
@@ -446,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     is_evidence = args.responder == "mlx"
     report = {
         "schema": "aura.revision_scorecard.v1",
+        "source_attestation": attest().to_dict(),
         "generated_at_unix": time.time(),
         "responder": args.responder,
         "model": model_id,
