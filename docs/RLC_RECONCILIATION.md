@@ -1,176 +1,128 @@
-# RLC reconciliation — what the two negative runs actually showed
+# RLC reconciliation — state of the campaign
 
-Started 2026-08-07. This document is the resume point: read it, then read
-`/Users/bryan/.aura/rlc-reconcile-20260807/DECISION.md` if it exists.
+Last updated 2026-08-07 12:35 PDT. Read this first; it supersedes every
+earlier plan in this file's history.
 
-## The question
+## The one thing to understand
 
-Two resident-32B recurrence training runs came back negative. Retraining costs
-about two days each, so the question was whether anything could be resolved
-without a third run. Most of it could: the decisive measurement never needed an
-optimizer at all.
+**Every negative RLC result this program has produced measured a system that
+was not switched on.** Not "failed" — never ran.
 
-## What the retained evidence says
+Everything above the recurrence loop is gated on an *admitted task verifier*.
+Nothing ever supplied one, so on every prior run:
 
-The 2026-08-06 four-arm directional campaign, on identical frozen weights:
+- fast weights took **0** optimization attempts (`verifier_unavailable`)
+- the generative and counterfactual verifiers reported
+  `admitted_task_verifier_unavailable`
+- latent optimization descended a proxy with `verifier policy: off` — its loss
+  moved 0.001 across 4 steps
+- the value-of-computation controller, with no evidence to act on, chose
+  `ABSTAIN` and halted at the minimum step
 
-| arm | correct / 28 | median response |
-| --- | ---: | ---: |
-| base vanilla | 13 | 1,502 chars |
-| adapter vanilla | 13 | 1,502 chars |
-| base RLC | 5 | 1,681 chars |
-| adapter RLC | 3 | 80 chars |
+The 2026-08-06 campaign's 13-vs-5, and this morning's 9-vs-4 reproduction of
+it, are both measurements of that state. They say nothing about recurrence,
+the terminal disposition, or the unified architecture. `RLC Proofs` named this
+exact gap as an open item before any of it was run.
 
-Three separate defects sit underneath those numbers.
+## What is fixed and pushed
 
-**1. The recurrent arms were instructed to answer partially.** Every recurrent
-episode injected a terminal-disposition block ahead of the answer decode; no
-vanilla episode did. On 24 of 28 tasks that block read *"give only the best
-bounded answer … disclose the unresolved part."* The retained failures match
-the instruction: five of the seven losses are well-formed answers carrying
-truncated values, including 4- and 5-element sequences where the graded answer
-has 7.
+Admission is not granted by passing a callable. `blind_review.run_decoy_preflight`
+scores four synthetic controls — correct arithmetic + valid code, wrong
+arithmetic + invalid code, and two byte-identical texts — and admits only a
+reviewer that separates correct from incorrect by ≥0.05 **and** returns
+bit-identical scores for identical input. That deliberately refuses an
+answer-key oracle (which scores every control alike) and admits an executable
+verifier.
 
-That block fired because a fixed-depth schedule reports `max_steps` when it runs
-the steps it was configured to run, and the classifier read that as
-`recurrence_budget_exhausted`. Completing a plan is not exhausting a budget.
+`EpisodeTaskVerifier` (core/brain/llm/latent_cortex/task_verifiers.py) already
+implemented the whole contract, including the `fast_weight_learning_evidence`
+provider that fast-weight attachment requires. Use it. Do not write another
+one — that mistake was already made and reverted today.
 
-**2. The bridge receipt was not answering for the bridge.** The disposition
-tokens were appended to the same list the decode bridge used, so all 56
-recurrent episodes published `decode_bridge_policy="none"` beside
-`decode_bridge_applied=True` and a 43-token count.
+With it admitted, previously unreachable code ran for the first time and
+immediately crashed: `±inf` sentinels meaning "no verified score yet" leaked
+into a causal receipt canonicalized with `allow_nan=False`, raising inside
+receipt construction and destroying episodes that had already produced their
+answers. Fixed at the single serialization boundary they all cross
+(`_finite_record` in types.py), not field by field.
 
-**3. The trained adapter learned to stop reasoning.** Every SFT target was
-literally `FINAL_ANSWER: {json}` + EOS — `resident_recurrent_sft_bootstrap_execution.py`
-requires it. No reasoning tokens were ever inside the loss, so the cheapest way
-to lower it is to emit the answer immediately, and that is exactly what happened:
-median generated tokens 28 against 452 for the untrained path. Validation
-cross-entropy fell smoothly and monotonically the entire way (cp796: 3.347 →
-2.072 over 96 steps). **No teacher-forced loss on an answer-only target can see
-this failure**, which is why neither run warned anyone.
+Also fixed: the harness passed `token_ids` alone, leaving the verification
+objective empty, so both verifiers refused with
+`verification_objective_unavailable` however well the verifier was admitted.
 
-## What was fixed
+## Current live status
 
-- `terminal_disposition.py` — a completed fixed-depth schedule classifies as
-  `planned_depth_complete`, not budget exhaustion.
-- `types.py` / `engine.py` — `terminal_instruction_policy` lets a research arm
-  decode from exactly the context an ordinary decode sees; the bridge receipt
-  answers for the configured policy alone, and `decode_prefix_composition`
-  attributes every injected token to its source.
-- `recurrent_checkpoint_admission.py` — the **vanilla floor**: an admission
-  built without an `ordinary_decode` control is sealed
-  `reject_no_ordinary_decode_control`, and a trained arm that does not
-  out-answer that control fails `beats_ordinary_decode`. Plus
-  `no_answer_only_collapse`, structural rather than a length threshold: a
-  response with nothing before its `FINAL_ANSWER` marker answered without
-  working, and the trained arm may not do that more often than the ordinary
-  path does.
+Working: verifier admitted, both verifiers emitting real receipts, latent opt
+on `strict_task_score_improvement_v1`, branch scores real for the first time
+(`[None, 0.558594]` — one branch scored on evidence, one unscored).
 
-## Four more defects the live run exposed
+**Open, and blocking the battery:** `value_controller_abstain`. On both the
+1.5B and the 32B the controller takes `steps_taken = 2` — the floor — against
+`max_steps = 8`, every single task. The full stack therefore pays ~2.6×
+ordinary decode for two recurrent steps. Running the battery before this is
+fixed would produce a third "it didn't help" result that again means "it
+didn't run."
 
-Probing against the real 32B before committing the full sweep caught four
-things that would each have silently ruined the result.
+Fast weights report `not_admitted_high_confidence_evidence_absent`. That is
+believed **correct** — TheSpark specifies adaptation only on high-confidence
+evidence — and should not be "fixed" without evidence it is wrong.
 
-1. **The episode wall clock.** The engine default is 120s; the campaign's
-   median recurrent episode ran 298s. Every recurrent cell terminated
-   `budget_exhausted` with no text, and would have graded as a wrong answer.
-   The sweep now passes an explicit 720s episode budget.
-2. **Serving-side answer replacement.** It abstained rather than emit a
-   candidate it could not bound, which destroys a research observation. Same
-   thing aborted CP420S12. Disabled for research arms; the raw recurrent
-   answer is retained and graded on its own terms.
-3. **Atomic decomposition killed long answers.** A mathematics trace needing
-   more than 256 atoms raised, and the *completed* latent episode died with it
-   (`latent_phase_failed`). Both the atom and transition budgets now coarsen
-   instead of refusing — a diagnostic layer must cost resolution, not the
-   result it is describing. Fixed in the product, not just the harness.
-4. **No repetition penalty.** A probe cell decoded 640 tokens of "to to to
-   to". The campaign ran at 1.25/72, so without it `rlc_asrun` was not
-   reproducing the arm it exists to reproduce.
+## Measured costs (32B, 2026-08-07)
 
-Also corrected: an unfinished decode is a *policy* observation and is scored
-incorrect, per CP420S12 — only infrastructure failures are excluded. This
-matters in one direction specifically: the 2026-08-06 `base_rlc` arm carried
-nine output-channel failures out of 28, so excluding them would flatter the
-recurrent path rather than measure it.
+| arm | median latency | note |
+|---|---|---|
+| vanilla | 62–66s | ordinary decode, the deployability bar |
+| full_stack | 164s | ~2.6× ordinary decode |
 
-## What is running
+## The battery to run once the controller is fixed
 
-Run root: `/Users/bryan/.aura/rlc-reconcile-20260807/`
+One run answers both "does it work" and "is it just compute" — the
+equal-compute control is an arm, and the depth-scaling curve comes free from
+`steps_taken`, which is recorded per cell.
 
-Two detached processes, both reparented to launchd, both sleep-inhibited:
+| arm | purpose | est. |
+|---|---|---|
+| `vanilla` | baseline | 29 min |
+| `vanilla_equal_compute` | best-of-N at matched FLOPs — **the real bar** | ~75 min |
+| `full_stack` | the unified system | ~77 min |
+| `full_stack_oracle` | selection vs generation ceiling; never promotable | ~77 min |
 
-- `launch_sweep.sh` → `sweep/` — the frozen execution-spec sweep. Five arms ×
-  28 tasks, one model load. Crosses terminal-disposition injection against
-  recurrent depth on frozen weights: `vanilla`, `rlc_asrun` (4 steps,
-  disposition applied — reproduces the 5/28), `rlc_nodisp` (4 steps,
-  suppressed), `rlc_shallow` (1 step), `rlc_shallow_nodisp`. **No optimizer
-  runs.** Resumable: re-running the script skips every committed cell.
-- `launch_pipeline.sh` → `DECISION.md` — waits on the sweep, then gates each
-  later phase on the previous one's evidence.
+≈4.3h. Anima Rationis sets the standard: *"the latent system wins only if…
+otherwise it is just expensive self-consistency."* A win over plain vanilla
+that is not also a win over equal-compute vanilla is not an architectural
+result.
 
-The decision rule, in order:
+## Taking the machine back
 
-1. If no recurrent arm reaches the vanilla score → `no_fusion_recurrent_path_below_ordinary_decode`. Stop.
-2. Else bisect the 97 retained cp796 generations for the one that still
-   reasons. If none out-answers ordinary decode → `no_fusion_no_checkpoint_beats_ordinary_decode`. Stop.
-3. Else fuse it and re-validate on a seed the candidate has never seen. If
-   ordinary decode regresses or the recurrent gain does not reproduce →
-   `no_activation_fused_candidate_regressed`. Stop.
-4. Else → `fused_candidate_passed_staged_for_activation`, with the resident
-   preserved byte-for-byte as the rollback target.
-
-Fusion is separate from activation on purpose. The recurrence adapter is a
-`ScopedLoRALinear`: its delta applies at latent slot positions and nowhere
-else. Folding it into the linear weights removes that scoping, so a fused
-model is a different function on every ordinary token too — it has to re-earn
-ordinary decode, and the pipeline refuses to activate one that does not.
-
-## What the live probes caught before the full run (2026-08-07)
-
-Five defects, none of which teacher-forced metrics or unit tests could see.
-Each is now a gate, because the point is to stop finding this class by
-spending 32B hours on it.
-
-1. **Mutual failure passed as parity.** The 1.5B rig scored 0/7 on both arms
-   and the sweep published `reaches_parity_with_ordinary_decode: true` →
-   `proceed_to_checkpoint_phase`. `0 >= 0` satisfies the gate. Parity is a
-   claim about a baseline; with no solved control task there is no baseline.
-   Now `battery_informative`.
-2. **A vanilla-only run announced a verdict about recurrence.** The `-1`
-   no-arm sentinel is below any vanilla score, so it took the deficit branch.
-   Now `inconclusive_no_recurrent_arm_measured`.
-3. **Cells were reused across decode configurations — twice.** First the
-   recurrent arms, then the control. Both times the stale cells were
-   deliberately preserved to save compute, so the mistake looks like
-   diligence. Decode identity now travels with the cell and a mismatch is
-   treated as absent; the first real run discarded 42 cells by itself.
-4. **The control was running at 320 tokens against a campaign that used 512.**
-   Vanilla emitted a terminal `FINAL_ANSWER` on 12% of tasks and scored 4/28.
-   At 512 it finished 43% and scored 3/7 — matching the campaign's 13/28.
-   Every cell that finished was correct, so vanilla's binding constraint is
-   *finishing*, not reasoning.
-5. **The disposition instruction is also a brevity effect.** "Give only the
-   best bounded answer" makes the recurrent arms finish 96% of the time
-   against the control's 43%. A deficit measured against a control that mostly
-   runs out of tokens is a statement about budget. Budget is therefore crossed
-   directly: `vanilla_long` and `rlc_nodisp_long` repeat the matched pair at
-   1024 while the five reproduction arms stay pinned to 512.
-
-## Honest expectation
-
-Low. The frozen path starts 8 points behind ordinary decode, and the
-disposition confound explains some of that gap but is not guaranteed to
-explain all of it. The value of the run is that it converts "two negatives" into
-a measured attribution, at a cost of hours rather than another two days — and
-that the `rlc_nodisp` arm is the first clean measurement of the recurrent path
-this program has ever taken.
-
-## Resume
+The host cannot hold two 32B models, so the campaign and the live instance are
+exclusive — but the campaign leaves on request. See `YIELD.md` in the run
+directory:
 
 ```bash
-cat /Users/bryan/.aura/rlc-reconcile-20260807/DECISION.md
+touch /Users/bryan/.aura/rlc-reconcile-20260807/sweep/YIELD
 ```
 
-If it is absent, check `pipeline_status.json` and `sweep/status.json`. A stalled
-sweep is restarted by re-running `launch_sweep.sh` — it skips committed cells.
+Stops at the next cell boundary (≤165s). Resume by deleting the file and
+re-running `launch_sweep.sh`. Cells carry the sha256 of the decode
+configuration that produced them, so a resume can never mix configurations.
+
+## If you are a new session picking this up
+
+1. `git pull` — everything is on origin/main.
+2. Read the "Open" item above. Fix the controller first.
+3. Validate on the 1.5B rig before spending 32B time. It is a `--model` swap:
+   `~/.cache/huggingface/hub/models--mlx-community--Qwen2.5-1.5B-Instruct-4bit/snapshots/*/`
+   — same `qwen2` architecture and tokenizer as the fused 32B, ~2 min for a
+   full 7-arm protocol run, ~1GB. It found four live defects today in minutes.
+4. Then launch the battery detached: `cd /Users/bryan/.aura/rlc-reconcile-20260807
+   && nohup ./launch_sweep.sh >> runner.log 2>&1 &` — nohup + caffeinate
+   reparents it to PID 1, so it survives the session that started it.
+
+**Anything launched with the harness's own background runner does NOT survive
+a session.** Only the `launch_*.sh` scripts detach properly.
+
+## Standing rule
+
+Nothing here awards a reasoning gain, a frontier result, or a promotion. An
+arm whose subsystems report `unavailable` has not measured the thing its name
+claims. Check the receipt before believing the number.
