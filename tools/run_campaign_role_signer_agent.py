@@ -338,11 +338,85 @@ def _validate_signature_request(
         if purpose != f"{campaign_id}:final-run" or operation != "final_run":
             raise SignerAgentError("campaign_runner_purpose_rejected")
     elif role == "evidence_verifier":
-        if purpose != "verified-recurrent-campaign-close" or operation != "campaign_close":
+        allowed = (
+            purpose == "verified-recurrent-campaign-close"
+            and operation == "campaign_close"
+        ) or (
+            purpose == "verified-recurrent-adapter-activation"
+            and operation == "activate_recurrent_adapter"
+        )
+        if not allowed:
             raise SignerAgentError("evidence_verifier_purpose_rejected")
     else:
         raise SignerAgentError("inactive_campaign_role_rejected")
     return payload_bytes, idempotency_key
+
+
+def _verify_activation_signer_packet(
+    args: argparse.Namespace,
+    *,
+    packet_path: str,
+    signature_request: Mapping[str, Any],
+    sealed: Mapping[str, Any],
+) -> dict[str, Any]:
+    lexical = Path(packet_path).expanduser()
+    if not lexical.is_absolute():
+        raise SignerAgentError("activation_signer_packet_path_invalid")
+    current = Path(lexical.anchor)
+    for part in lexical.parts[1:]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except OSError as exc:
+            raise SignerAgentError("activation_signer_packet_unavailable") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise SignerAgentError("activation_signer_packet_symlink_rejected")
+    try:
+        resolved = lexical.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError as exc:
+        raise SignerAgentError("activation_signer_packet_unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise SignerAgentError("activation_signer_packet_storage_invalid")
+    try:
+        repo_root = Path(args.repo_root).expanduser().resolve(strict=True)
+        if not repo_root.is_dir():
+            raise SignerAgentError("repo_root_invalid")
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from tools import materialize_live_recurrent_adapter_activation as activation
+
+        implementation_path = Path(activation.__file__).resolve(strict=True)
+        if implementation_path != repo_root / (
+            "tools/materialize_live_recurrent_adapter_activation.py"
+        ):
+            raise SignerAgentError("activation_verifier_implementation_unpinned")
+        receipt = activation.verify_portable_signer_packet(resolved)
+    except SignerAgentError:
+        raise
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise SignerAgentError(
+            f"activation_signer_packet_verification_failed:{exc}"
+        ) from exc
+    if (
+        receipt.get("passed") is not True
+        or receipt.get("publication_authority") is not False
+        or receipt.get("campaign_name") != sealed.get("campaign_id")
+        or receipt.get("_signature_request") != signature_request
+        or receipt.get("activation_sha256")
+        != signature_request.get("signed_payload", {}).get("payload", {}).get(
+            "activation_sha256"
+        )
+    ):
+        raise SignerAgentError("activation_signer_packet_request_mismatch")
+    return {
+        key: value for key, value in receipt.items() if not key.startswith("_")
+    }
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -477,7 +551,10 @@ def _serve(args: argparse.Namespace) -> int:
                             expires_at_unix=sealed["expires_at_unix"],
                             purpose=purpose,
                         )
-                        if role == "evidence_verifier":
+                        activation_verification_receipt = None
+                        if role == "evidence_verifier" and purpose == (
+                            "verified-recurrent-campaign-close"
+                        ):
                             close_payload = signature_request["signed_payload"].get("payload")
                             if not isinstance(close_payload, dict):
                                 raise SignerAgentError("evidence_close_payload_invalid")
@@ -503,11 +580,36 @@ def _serve(args: argparse.Namespace) -> int:
                                 raise SignerAgentError(
                                     "evidence_close_without_recorded_verification"
                                 )
+                        elif role == "evidence_verifier" and purpose == (
+                            "verified-recurrent-adapter-activation"
+                        ):
+                            packet_path = payload.get("verification_packet_path")
+                            if not isinstance(packet_path, str):
+                                raise SignerAgentError(
+                                    "activation_signer_packet_path_missing"
+                                )
+                            activation_verification_receipt = (
+                                _verify_activation_signer_packet(
+                                    args,
+                                    packet_path=packet_path,
+                                    signature_request=signature_request,
+                                    sealed=sealed,
+                                )
+                            )
                         unsigned_result = {
                             "request_sha256": signature_request["request_sha256"],
                             "signature_b64": base64.b64encode(
                                 private_key.sign(signed_payload)
                             ).decode("ascii"),
+                            **(
+                                {
+                                    "activation_verification_receipt": (
+                                        activation_verification_receipt
+                                    )
+                                }
+                                if activation_verification_receipt is not None
+                                else {}
+                            ),
                         }
                         result = _record_idempotent_result(
                             journal,

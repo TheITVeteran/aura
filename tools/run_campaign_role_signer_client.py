@@ -113,21 +113,49 @@ def _agent_call(
 
 
 def _sign_role(document: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    allowed_keys = {"schema", "purpose", "signature_request"}
+    if "verification_packet_path" in document:
+        allowed_keys.add("verification_packet_path")
     if (
-        set(document) != {"schema", "purpose", "signature_request"}
+        set(document) != allowed_keys
         or document.get("schema") != COMMAND_SIGNER_REQUEST_SCHEMA
         or not isinstance(document.get("purpose"), str)
         or not isinstance(document.get("signature_request"), dict)
     ):
         raise SignerClientError("command_signer_request_invalid")
+    purpose = document["purpose"]
+    verification_packet = document.get("verification_packet_path")
+    if purpose == "verified-recurrent-adapter-activation":
+        if not isinstance(verification_packet, str) or not verification_packet:
+            raise SignerClientError("activation_verification_packet_required")
+        candidate = Path(verification_packet).expanduser()
+        if not candidate.is_absolute():
+            if not args.request_file:
+                raise SignerClientError("activation_verification_packet_path_invalid")
+            request_path = Path(args.request_file).expanduser().resolve(strict=True)
+            request_root = request_path.parent
+            candidate = request_root / candidate
+            resolved = candidate.resolve(strict=True)
+            if resolved != request_root and not resolved.is_relative_to(request_root):
+                raise SignerClientError("activation_verification_packet_path_escape")
+        else:
+            resolved = candidate.resolve(strict=True)
+        if candidate.is_symlink() or not resolved.is_file():
+            raise SignerClientError("activation_verification_packet_path_invalid")
+        verification_packet = str(resolved)
+    elif verification_packet is not None:
+        raise SignerClientError("verification_packet_unexpected")
+    payload = {
+        "purpose": purpose,
+        "signature_request": document["signature_request"],
+    }
+    if verification_packet is not None:
+        payload["verification_packet_path"] = verification_packet
     result = _agent_call(
         Path(args.socket),
         role=args.role,
         action="sign",
-        payload={
-            "purpose": document["purpose"],
-            "signature_request": document["signature_request"],
-        },
+        payload=payload,
     )
     return {
         "schema": COMMAND_SIGNER_RESPONSE_SCHEMA,

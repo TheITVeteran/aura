@@ -37510,3 +37510,40 @@ compilation, and diff hygiene pass. Tampering with a copied plan is detected
 before finalization. This closes portable evidence delivery to an external
 signer, not the external custody, positive powered result, installed-app
 admission, release, or soak obligations.
+
+## Checkpoint 2026-08-07-004: The Activation Signer Verifies Before It Signs
+
+Checkpoint `2026-08-07-003` correctly made the evidence bytes immutable, but a
+second review found two external-host defects before the path was used. The
+bundle manifest still named source-host absolute paths, and it carried only the
+independent verdict's claimed verifier-attestation hash rather than the actual
+attestation. Those are now closed rather than treated as documentation
+caveats.
+
+The evidence manifest uses contained relative paths and is verified after the
+whole directory is copied to a different location. One portable signer packet
+binds the activation, exact signature request, evidence bundle, trust policy,
+public root, plan, verdict, adapter manifest, freeze certificate, and actual
+independent evidence-verifier attestation. Verification reconstructs the trust
+policy, validates the final attestation against its policy-pinned public key
+and expected payload, rechecks the positive verdict and plan, and rejects
+traversal, symlinks, changed bytes, malformed provenance, or an internally
+inconsistent freeze inventory.
+
+The isolated role signer now accepts `activate_recurrent_adapter` only for the
+`verified-recurrent-adapter-activation` purpose and only after reopening this
+packet itself with the pinned verifier implementation. The signer client
+resolves a relative packet beside the transferred command file, rejects path
+escape, and sends the signer an absolute verified target. Preparation emits
+that exact external-signer command. Finalization consumes the structured signer
+response directly and rejects a valid signature response carrying another
+request's SHA-256. The signer journal retains the packet-verification receipt;
+the activation materializer still loads no private key, performs no static
+weight fusion, and cannot publish before the full dry-run admission succeeds.
+
+The activation, signer client/service, directional gate, powered handoff, and
+campaign-launch bundle slice passes `40/40`; smoke passes `103/103`; Ruff,
+bytecode compilation, and diff hygiene pass. This closes the software path for
+externally verified activation signing. It does not manufacture external key
+custody, a positive powered campaign result, installed-app admission, release
+certification, or final soak evidence.

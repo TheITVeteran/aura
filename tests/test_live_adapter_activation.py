@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,6 +25,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     validate_campaign_trust_policy,
 )
 from tools import materialize_live_recurrent_adapter_activation as materializer
+from tools import run_campaign_role_signer_agent as signer_agent
 
 
 def _public_raw(key: Ed25519PrivateKey) -> bytes:
@@ -149,6 +152,31 @@ def _fixture(
     )
     campaign_dir = tmp_path / "campaign"
     plan_binding = _write(campaign_dir / "plan.json", plan.to_dict())
+    policy_document, root, role_keys = _policy(campaign_name)
+    policy_binding = _write(tmp_path / "campaign-policy.json", policy_document)
+    verified_policy = validate_campaign_trust_policy(
+        policy_document,
+        trusted_root_public_key_pem=_public_pem(root),
+        expected_campaign_name=campaign_name,
+        now_unix=1_800_000_200,
+    )
+    final_verifier_payload = {
+        "schema": "aura.latent_cortex.final_evidence_verifier_payload.v1",
+        "campaign_name": campaign_name,
+        "policy_sha256": verified_policy.policy_sha256,
+        "plan_sha256": plan.plan_sha256,
+    }
+    final_verifier_attestation = build_role_attestation(
+        verified_policy,
+        role=EVIDENCE_VERIFIER,
+        payload=final_verifier_payload,
+        signed_at_unix=1_800_000_250,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+    _write(
+        tmp_path / "independent-verifier-attestation.json",
+        final_verifier_attestation,
+    )
     verdict = {
         "schema": activation.INDEPENDENT_VERDICT_SCHEMA,
         "campaign_dir": str(campaign_dir.resolve()),
@@ -164,7 +192,18 @@ def _fixture(
         "production_grade_implementation_sha256": "2" * 64,
         "independent_scoring_implementation_sha256": "3" * 64,
         "verifier_implementation_sha256": "4" * 64,
-        "verifier_attestation_sha256": "5" * 64,
+        "verifier_attestation_request": {
+            "role": EVIDENCE_VERIFIER,
+            "signer_id": verified_policy.role_pin(EVIDENCE_VERIFIER)["signer_id"],
+            "policy_sha256": verified_policy.policy_sha256,
+            "payload": final_verifier_payload,
+            "payload_sha256": hashlib.sha256(
+                canonical_json_bytes(final_verifier_payload)
+            ).hexdigest(),
+        },
+        "verifier_attestation_sha256": hashlib.sha256(
+            canonical_json_bytes(final_verifier_attestation)
+        ).hexdigest(),
         "plan_sha256": plan.plan_sha256,
         "answer_reveal": {"required": True, "verified": True},
         "worker_origins": {"required": True, "verified": True},
@@ -182,14 +221,6 @@ def _fixture(
     (package / "adapter.safetensors").write_bytes(b"fixture")
     (package / "adapter.safetensors").chmod(0o600)
 
-    policy_document, root, role_keys = _policy(campaign_name)
-    policy_binding = _write(tmp_path / "campaign-policy.json", policy_document)
-    verified_policy = validate_campaign_trust_policy(
-        policy_document,
-        trusted_root_public_key_pem=_public_pem(root),
-        expected_campaign_name=campaign_name,
-        now_unix=1_800_000_200,
-    )
     activation_document = activation.build_live_adapter_activation(
         campaign_name=campaign_name,
         policy_sha256=verified_policy.policy_sha256,
@@ -329,6 +360,31 @@ def test_relocated_verdict_rejects_relative_declared_campaign_provenance(
         )
 
 
+def test_materializer_rejects_signer_response_for_another_request(
+    tmp_path: Path,
+) -> None:
+    response = tmp_path / "signer-response.json"
+    response.write_bytes(
+        canonical_json_bytes(
+            {
+                "schema": materializer.COMMAND_SIGNER_RESPONSE_SCHEMA,
+                "request_sha256": "a" * 64,
+                "signature_b64": base64.b64encode(b"s" * 64).decode("ascii"),
+            }
+        )
+        + b"\n"
+    )
+
+    with pytest.raises(
+        materializer.ActivationMaterializationError,
+        match="activation_materialization_signature_invalid",
+    ):
+        materializer._signature(
+            response,
+            expected_request_sha256="b" * 64,
+        )
+
+
 def test_activation_materializer_publishes_only_after_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -340,7 +396,7 @@ def test_activation_materializer_publishes_only_after_admission(
     root_path.chmod(0o600)
     output = tmp_path / "prepared"
     activation_document = existing_pointer["activation"]
-    adapter_freeze = {
+    adapter_freeze_material = {
         "schema": "aura.latent_cortex.adapter_freeze.v1",
         "adapter_id": identity["adapter_id"],
         "content_root_sha256": "6" * 64,
@@ -354,7 +410,12 @@ def test_activation_materializer_publishes_only_after_admission(
         "identity_receipt": identity,
         "model_identity": {},
         "validator_identity": {},
-        "certificate_sha256": "8" * 64,
+    }
+    adapter_freeze = {
+        **adapter_freeze_material,
+        "certificate_sha256": hashlib.sha256(
+            canonical_json_bytes(adapter_freeze_material)
+        ).hexdigest(),
     }
     monkeypatch.setattr(
         materializer,
@@ -367,6 +428,9 @@ def test_activation_materializer_publishes_only_after_admission(
         independent_verdict_path=Path(
             activation_document["independent_verdict"]["path"]
         ),
+        independent_verifier_attestation_path=(
+            tmp_path / "independent-verifier-attestation.json"
+        ),
         campaign_policy_path=Path(existing_pointer["campaign_policy"]["path"]),
         trusted_root_path=root_path,
         adapter_package_path=Path(activation_document["adapter_package_path"]),
@@ -378,7 +442,9 @@ def test_activation_materializer_publishes_only_after_admission(
     )
 
     assert preparation["publication_allowed"] is False
-    assert preparation["required_next_step"].startswith("detached_evidence")
+    assert preparation["required_next_step"] == (
+        "external_evidence_verifier_command_then_finalize"
+    )
     assert not (output / "active.json").exists()
     bundle = json.loads((output / "evidence" / "evidence-bundle.json").read_text())
     prepared_activation = json.loads((output / "activation.json").read_text())
@@ -396,15 +462,37 @@ def test_activation_materializer_publishes_only_after_admission(
     assert prepared_activation["campaign_plan"]["path"] != activation_document[
         "campaign_plan"
     ]["path"]
-    copied_plan = Path(bundle["documents"]["campaign_plan"]["path"])
+    packet = json.loads((output / "external-signer-packet.json").read_text())
+    assert all(
+        not Path(binding["path"]).is_absolute()
+        for binding in packet["artifacts"].values()
+    )
+    moved_packet = tmp_path / "external-review-copy"
+    shutil.copytree(output, moved_packet)
+    external_receipt = materializer.verify_portable_signer_packet(
+        moved_packet / "external-signer-packet.json"
+    )
+    assert external_receipt["passed"] is True
+    assert external_receipt["publication_authority"] is False
+    service_receipt = signer_agent._verify_activation_signer_packet(
+        SimpleNamespace(repo_root=str(Path(materializer.__file__).resolve().parent.parent)),
+        packet_path=str(moved_packet / "external-signer-packet.json"),
+        signature_request=external_receipt["_signature_request"],
+        sealed={"campaign_id": external_receipt["campaign_name"]},
+    )
+    assert service_receipt["receipt_sha256"] == external_receipt["receipt_sha256"]
+    assert not any(key.startswith("_") for key in service_receipt)
+    copied_plan = (
+        output / "evidence" / bundle["documents"]["campaign_plan"]["path"]
+    )
     copied_plan_raw = copied_plan.read_bytes()
     copied_plan.write_bytes(b"{}")
     with pytest.raises(
         materializer.ActivationMaterializationError,
         match="activation_materialization_evidence_bundle_binding_mismatch",
     ):
-        materializer._validate_portable_evidence_bundle(
-            preparation,
+        materializer.verify_portable_evidence_bundle(
+            output / "evidence" / "evidence-bundle.json",
             activation=prepared_activation,
         )
     copied_plan.write_bytes(copied_plan_raw)
@@ -459,7 +547,16 @@ def test_activation_materializer_publishes_only_after_admission(
         lambda *_args, **_kwargs: dict(identity),
     )
     signature = tmp_path / "signature.bin"
-    signature.write_bytes(b"s" * 64)
+    signature.write_bytes(
+        canonical_json_bytes(
+            {
+                "schema": materializer.COMMAND_SIGNER_RESPONSE_SCHEMA,
+                "request_sha256": request["request_sha256"],
+                "signature_b64": base64.b64encode(b"s" * 64).decode("ascii"),
+            }
+        )
+        + b"\n"
+    )
     pointer_out = output / "active.json"
     receipt_out = output / "publication.json"
 
