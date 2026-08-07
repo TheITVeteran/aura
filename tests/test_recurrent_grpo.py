@@ -566,6 +566,41 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
     assert recurrent_policy_sample_from_receipt(sample_receipt).receipt() == (sample_receipt)
 
 
+def test_causal_pair_keeps_role_conditioned_adapter_inside_slot_scope():
+    model = _model(seed=9271)
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    attach_recurrent_policy_adapters(
+        model,
+        spec,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("o_proj",),
+        initialization_seed=117,
+        lora_scale=1.0,
+        depth_conditioned_steps=2,
+        role_conditioned_branches=2,
+    )
+
+    pair = sample_final_recurrent_transition_pair(
+        model,
+        [5, 9, 17],
+        spec=spec,
+        branch_index=1,
+        seed=119,
+        sampling=RecurrentSamplingConfig(max_tokens=3),
+        episode_id="causal-role-conditioned-119",
+    )
+
+    assert pair.child_behavior_admitted is True
+    assert pair.max_abs_child_logprob_drift == pytest.approx(0.0, abs=1e-7)
+    assert pair.recurrence_adapter["active"] is True
+    assert pair.recurrence_adapter["complete"] is True
+    assert pair.recurrence_adapter["adapted_positions"] > 0
+
+
 def test_causal_sample_receipt_rejects_trace_substitution():
     pair = sample_final_recurrent_transition_pair(
         _prepared(seed=928),

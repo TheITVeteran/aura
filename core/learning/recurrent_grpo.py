@@ -636,7 +636,11 @@ def _decode_frozen_recurrent_state(
     from mlx_lm.models.cache import KVCache
 
     from core.brain.llm.latent_cortex.recurrence import WindowRunner
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
     from core.brain.llm.latent_cortex.types import ComputeBudget
+    from core.learning.role_conditioned_lora import recurrent_branch_index
 
     if type(branch_index) is not int or not 0 <= branch_index < len(transition.seeds):
         raise ValueError("branch_index is outside the frozen transition")
@@ -673,13 +677,14 @@ def _decode_frozen_recurrent_state(
         transition.prelude_end,
         persist=True,
     )
-    persisted = runner.run(
-        state,
-        cache,
-        transition.prelude_end,
-        transition.coda_start,
-        persist=True,
-    )
+    with recurrent_branch_index(branch_index), recurrence_adapter_scope():
+        persisted = runner.run(
+            state,
+            cache,
+            transition.prelude_end,
+            transition.coda_start,
+            persist=True,
+        )
     output = runner.run(
         persisted,
         cache,
@@ -776,7 +781,7 @@ def sample_final_recurrent_transition_pair(
 
     from core.brain.llm.latent_cortex.governance import CheckpointInvariant
     from core.brain.llm.latent_cortex.recurrence_adapter import (
-        recurrence_adapter_scope,
+        recurrence_adapter_activation_collector,
         scoped_recurrence_adapter_sites,
     )
     from core.brain.llm.latent_cortex.types import EpisodeReceipt
@@ -847,7 +852,7 @@ def sample_final_recurrent_transition_pair(
         seed=seed,
         sampling_config=resolved,
     )
-    with recurrence_adapter_scope() as activation:
+    with recurrence_adapter_activation_collector() as activation:
         transition = prepare_final_recurrent_transition(
             model,
             prompt,

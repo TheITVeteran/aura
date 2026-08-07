@@ -93,6 +93,10 @@ _ACTIVE_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
     "aura_recurrence_adapter_scope",
     default=None,
 )
+_ACTIVATION_COLLECTOR: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
+    "aura_recurrence_adapter_activation_collector",
+    default=None,
+)
 _DISABLE_DEPTH: ContextVar[int] = ContextVar(
     "aura_recurrence_adapter_disable_depth",
     default=0,
@@ -113,6 +117,21 @@ def current_recurrence_adapter_scope() -> RecurrenceAdapterActivation | None:
     """Return the current task-local activation, if one is open."""
 
     return _ACTIVE_SCOPE.get()
+
+
+@contextmanager
+def recurrence_adapter_activation_collector() -> Iterator[RecurrenceAdapterActivation]:
+    """Collect nested activation receipts without activating other calls."""
+
+    parent = _ACTIVATION_COLLECTOR.get()
+    collector = RecurrenceAdapterActivation()
+    token = _ACTIVATION_COLLECTOR.set(collector)
+    try:
+        yield collector
+    finally:
+        _ACTIVATION_COLLECTOR.reset(token)
+        if parent is not None:
+            parent.absorb(collector)
 
 
 def scoped_recurrence_adapter_sites(
@@ -200,6 +219,10 @@ def recurrence_adapter_scope(
         _ACTIVE_SCOPE.reset(token)
         if parent is not None:
             parent.absorb(activation)
+        else:
+            collector = _ACTIVATION_COLLECTOR.get()
+            if collector is not None:
+                collector.absorb(activation)
 
 
 class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
@@ -305,6 +328,7 @@ __all__ = [
     "RecurrenceAdapterActivation",
     "ScopedLoRALinear",
     "current_recurrence_adapter_scope",
+    "recurrence_adapter_activation_collector",
     "recurrence_adapter_disabled",
     "recurrence_adapter_scope",
     "scoped_recurrence_adapter_sites",

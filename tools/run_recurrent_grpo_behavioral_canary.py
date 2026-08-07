@@ -48,7 +48,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     build_recurrent_policy_optimizer,
     exact_adjoint_sampled_group_value_and_grad,
     recurrent_policy_sha256,
-    sample_recurrent_completion,
+    sample_final_recurrent_transition_completion,
 )
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     adapter_tensor_dict,
@@ -65,7 +65,9 @@ SOURCE_PATHS: Final = (
     "core/learning/recurrent_behavioral_probe.py",
     "core/learning/recurrent_checkpoint_admission.py",
     "core/learning/recurrent_grpo.py",
+    "core/learning/recurrence_native_objective_v2.py",
     "core/learning/recurrent_sft_execution.py",
+    "core/brain/llm/latent_cortex/execution_spec.py",
     "core/brain/llm/latent_cortex/engine.py",
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/learning/depth_conditioned_lora.py",
@@ -242,10 +244,12 @@ def _sample_group(
             break
         sample_seed = _stable_seed(campaign_seed, "grpo", step, task.task_id, attempt)
         try:
-            sample = sample_recurrent_completion(
+            branch_index = attempt % len(spec.branch_roles)
+            sample = sample_final_recurrent_transition_completion(
                 model,
                 prompt_tokens,
                 spec=spec,
+                branch_index=branch_index,
                 seed=sample_seed,
                 sampling=sampling,
                 tokenizer=tokenizer,
@@ -265,6 +269,7 @@ def _sample_group(
         rows.append(
             {
                 "sample_seed": sample_seed,
+                "branch_index": sample.branch_index,
                 "response_text": response_text,
                 "response_sha256": hashlib.sha256(response_text.encode("utf-8")).hexdigest(),
                 "verdict": verdict,
