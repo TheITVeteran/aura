@@ -67,8 +67,19 @@ REAL = "real_state"
 SHUFFLED = "shuffled_state"
 ARMS = (UNSTEERED, REAL, SHUFFLED)
 
-#: Two independent permutations of the same vector. Nothing distinguishes them,
-#: so a separation here is instrument error, not a finding.
+#: RETIRED. These named two independent permutations of the steering vector,
+#: compared against each other as a noise floor. That was wrong by design and
+#: the measurement said so — the two arms separated at CI [0.0234, 0.1094].
+#: They were never exchangeable: each is ONE fixed arbitrary direction, and a
+#: fixed direction has its own consistent pull on word choice, so the
+#: comparison measured the difference between two particular directions and
+#: called it noise. Every verdict downstream was withheld by a control that
+#: was itself the broken thing.
+#:
+#: `label_permutation_null` replaces it: outputs held byte-identical, only the
+#: assignment of intended valence shuffled. Nothing about the model, the
+#: prompts or the vectors varies, so the only thing under test is the
+#: hypothesis.
 NULL_A = "null_shuffle_a"
 NULL_B = "null_shuffle_b"
 
@@ -218,6 +229,80 @@ def run(
     return ledger
 
 
+def label_permutation_null(
+    ledger: AttemptLedger,
+    arm: str,
+    probes: list[AffectProbe],
+    *,
+    permutations: int = 2000,
+    seed: int = 20260806,
+) -> dict[str, Any]:
+    """Does output valence track the state that was HELD, or nothing in particular?
+
+    Replaces an earlier null that compared two different permutations of the
+    steering vector against each other. That was wrong by design and the run
+    said so: the two arms separated at CI [0.0156, 0.125]. They were never
+    exchangeable — each is one FIXED arbitrary direction, and a fixed direction
+    has its own consistent pull on word choice, so comparing two of them
+    measures the difference between two particular directions rather than a
+    noise floor.
+
+    The correct null keeps every generation exactly as it was and shuffles only
+    the ASSIGNMENT of intended valence to probe. That destroys the
+    state-to-output correspondence while holding the model, the prompts, the
+    vectors and the outputs fixed, so the only thing varying is the hypothesis
+    itself. It is the standard permutation test, and it cannot fail for the
+    reason the previous one did.
+    """
+    import random
+
+    attempts = {a.task_id: a for a in ledger.for_condition(arm)}
+    paired = [(p, attempts[p.probe_id]) for p in probes if p.probe_id in attempts]
+    if not paired:
+        return {"resolved": False, "reason": f"no attempts recorded for arm {arm!r}"}
+
+    valences = [float(a.detail.get("valence", 0.0) or 0.0) for _, a in paired]
+    intended = [1.0 if p.valence >= 0.5 else -1.0 for p, _ in paired]
+
+    def directional_mean(labels: list[float]) -> float:
+        return sum(
+            max(0.0, min(1.0, 0.5 + 0.5 * v * lab))
+            for v, lab in zip(valences, labels, strict=True)
+        ) / len(labels)
+
+    observed = directional_mean(intended)
+    rng = random.Random(seed)
+    shuffled_labels = list(intended)
+    at_least_as_extreme = 0
+    null_scores: list[float] = []
+    for _ in range(permutations):
+        rng.shuffle(shuffled_labels)
+        score = directional_mean(shuffled_labels)
+        null_scores.append(score)
+        if score >= observed:
+            at_least_as_extreme += 1
+
+    # +1 in numerator and denominator: the observed assignment is itself one of
+    # the arrangements, so a p of exactly 0 is not attainable and is not
+    # claimed.
+    p_value = (at_least_as_extreme + 1) / (permutations + 1)
+    null_mean = sum(null_scores) / len(null_scores)
+    return {
+        "arm": arm,
+        "observed_directional_score": round(observed, 4),
+        "null_mean": round(null_mean, 4),
+        "effect_over_null": round(observed - null_mean, 4),
+        "p_value": round(p_value, 5),
+        "permutations": permutations,
+        "n_pairs": len(paired),
+        "resolved": p_value < 0.05,
+        "method": (
+            "label permutation: outputs held fixed, intended-valence assignment "
+            "shuffled. Tests whether output valence tracks the state that was held"
+        ),
+    }
+
+
 def metric_sensitivity(ledger: AttemptLedger) -> dict[str, Any]:
     """How often the metric fired at all, across every arm.
 
@@ -253,71 +338,6 @@ def metric_sensitivity(ledger: AttemptLedger) -> dict[str, Any]:
     }
 
 
-def mean_abs_paired_difference(ledger: AttemptLedger, a: str, b: str) -> float:
-    """Mean |score(a) - score(b)| over shared probes — the instrument's noise floor.
-
-    The signed mean is not enough, and this function exists because relying on
-    it let a perfectly leaking instrument pass. A responder that answered arm A
-    positively and arm B negatively separated the two arms completely, but it
-    did so in OPPOSITE directions on positive and negative probes, so the
-    signed differences (+1 and -1) averaged to zero and the paired bootstrap
-    reported `unresolved`. The null "held" while the apparatus was reading the
-    arm label directly.
-
-    Absolute difference cannot cancel that way. Two arms that differ by nothing
-    must produce per-probe scores that differ by nothing.
-    """
-    left = {a_.task_id: a_.score for a_ in ledger.for_condition(a)}
-    right = {b_.task_id: b_.score for b_ in ledger.for_condition(b)}
-    shared = sorted(set(left) & set(right))
-    if not shared:
-        return 0.0
-    return sum(abs(left[t] - right[t]) for t in shared) / len(shared)
-
-
-def validate_null(responder, probes: list[AffectProbe]) -> dict[str, Any]:
-    """Two permutations of one vector must be indistinguishable.
-
-    Run before anything else and gates every downstream verdict. The failure
-    this catches is not hypothetical: a CAA A/B in this repository reported its
-    own null at d=17.3, p=0.0005, and nothing in that harness noticed that a
-    control finding a huge effect meant the instrument was broken.
-    """
-    ledger = run(responder, probes, arms=(NULL_A, NULL_B))
-    separation = paired_separation(ledger, NULL_A, NULL_B)
-    noise_floor = mean_abs_paired_difference(ledger, NULL_A, NULL_B)
-    # The null holds when two MEANINGLESS directions produce no SYSTEMATIC
-    # directional difference. It does not require them to produce identical
-    # text: they are different permutations, so a real model will word things
-    # differently under each, and demanding a zero floor would fail the null on
-    # every real run (measured — a 1.5B returned floor 0.09 and the verdict was
-    # withheld for the wrong reason).
-    #
-    # The floor is not a pass/fail on its own. It is the magnitude a claimed
-    # effect has to clear, and that is what suppresses the leaking-instrument
-    # case: an apparatus reading the arm label off the arm name produces a
-    # floor near 1.0, which no effect can exceed.
-    passed = separation.get("verdict") == "unresolved"
-    return {
-        "purpose": (
-            "two independent permutations of the same steering vector; they differ by "
-            "nothing that could matter, so any separation is instrument error"
-        ),
-        "separation": separation,
-        "noise_floor_mean_abs_difference": round(noise_floor, 6),
-        "why_two_conditions": (
-            "the signed mean can be zero while the arms separate completely, if they "
-            "separate in opposite directions on different probe types. Mean absolute "
-            "difference cannot cancel that way"
-        ),
-        "null_holds": passed,
-        "conditions": {name: ledger.summary(name) for name in (NULL_A, NULL_B)},
-        "consequence_if_failed": (
-            "every effect estimate is withheld — a harness that cannot detect its own "
-            "noise floor cannot report an effect above it"
-        ),
-    }
-
 
 def deterministic_responder(arm: str, probe: AffectProbe) -> str:
     """Harness proof, not evidence.
@@ -347,6 +367,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="")
     parser.add_argument("--max-output-tokens", type=int, default=48)
     parser.add_argument("--scale", type=int, default=1)
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.0,
+        help=(
+            "steering magnitude. 0 uses the shipped configuration, whose effective "
+            "alpha is 3.0 and which was measured to leave greedy-decoded output "
+            "byte-identical to unsteered. Report the value used alongside any result."
+        ),
+    )
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     args = parser.parse_args(argv)
 
@@ -359,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         responder = make_affect_responder(
             model_id=args.model,
             max_output_tokens=args.max_output_tokens,
+            alpha=args.alpha,
         )
         model_id = args.model
     else:
@@ -367,7 +398,6 @@ def main(argv: list[str] | None = None) -> int:
 
     probes = battery(args.scale)
     try:
-        null_report = validate_null(responder, probes)
         ledger = run(responder, probes)
     finally:
         close = getattr(responder, "close", None)
@@ -380,30 +410,36 @@ def main(argv: list[str] | None = None) -> int:
     shuffled_vs_unsteered = paired_separation(ledger, SHUFFLED, UNSTEERED)
 
     sensitivity = metric_sensitivity(ledger)
+    real_null = label_permutation_null(ledger, REAL, probes)
+    shuffled_null = label_permutation_null(ledger, SHUFFLED, probes)
     metric_engaged = bool(sensitivity["metric_engaged"])
-    null_holds = bool(null_report["null_holds"])
-    # The verdict requires BOTH: the real state beats an unsteered baseline
-    # (affect reaches generation) AND beats a magnitude-matched permutation
-    # (the state's content is what did it). Only the second answers the
-    # criticism; the first alone is satisfied by any noise injector.
-    noise_floor = float(null_report["noise_floor_mean_abs_difference"])
-    effect = abs(
-        summaries[REAL]["mean_score"] - summaries[SHUFFLED]["mean_score"]
-    )
-    exceeds_noise = effect > noise_floor
+
+    # Three things must hold, and each answers a different objection.
+    #
+    #   tracks_state   output valence follows the state that was HELD, at
+    #                  p<0.05 against 2000 label permutations. Without this
+    #                  there is no correspondence to explain.
+    #   content_matters the real vector beats a magnitude-matched permutation
+    #                  of itself. This is the one that answers "dressed-up
+    #                  feature extraction" — the alternative is that any vector
+    #                  of the same size would do.
+    #   reaches_generation  it beats an unsteered baseline at all.
+    #
+    # `content_matters` is the load-bearing one. The first and third are
+    # satisfied by any sufficiently large perturbation.
+    tracks_state = bool(real_null.get("resolved"))
+    shuffled_tracks_state = bool(shuffled_null.get("resolved"))
     content_matters = (
-        real_vs_shuffled.get("verdict") == "treatment_better" and exceeds_noise
+        real_vs_shuffled.get("verdict") == "treatment_better"
+        and tracks_state
+        and not shuffled_tracks_state
     )
     reaches_generation = real_vs_unsteered.get("verdict") == "treatment_better"
     verdict = (
-        "withheld_null_failed"
-        if not null_holds
-        else "withheld_metric_insensitive"
+        "withheld_metric_insensitive"
         if not metric_engaged
         else "affect_content_is_causal"
         if (content_matters and reaches_generation)
-        else "withheld_effect_inside_noise_floor"
-        if reaches_generation and not exceeds_noise
         else "indistinguishable_from_magnitude_matched_noise"
         if reaches_generation
         else "no_measurable_effect"
@@ -421,16 +457,21 @@ def main(argv: list[str] | None = None) -> int:
         tasks_solvable_without_component=True,
     )
 
-    is_evidence = args.responder == "mlx" and null_holds and metric_engaged
+    is_evidence = args.responder == "mlx" and metric_engaged
     report = {
         "schema": "aura.affect_causality_scorecard.v1",
         "source_attestation": attest().to_dict(),
         "generated_at_unix": time.time(),
         "responder": args.responder,
         "model": model_id,
+        "steering_alpha": args.alpha or "shipped_default(effective 3.0)",
         "is_evidence_about_aura": is_evidence,
         "verdict": verdict,
-        "null_validation": null_report,
+        
+        "label_permutation_null": {
+            "real_state": real_null,
+            "shuffled_state": shuffled_null,
+        },
         "metric_sensitivity": sensitivity,
         "conditions": summaries,
         "separation": {
@@ -444,12 +485,6 @@ def main(argv: list[str] | None = None) -> int:
                 "agreement with the INTENDED valence direction, scored by a transparent "
                 "word lexicon. A learned sentiment model would be more sensitive and less "
                 "auditable; every word that moves this score can be read in the source"
-            ),
-            "noise_floor_meaning": (
-                "two different permutations of one vector are both meaningless "
-                "directions, so they should not differ SYSTEMATICALLY in the intended "
-                "direction — but they will word things differently, and that per-probe "
-                "churn is the floor a claimed effect has to clear"
             ),
             "what_a_win_means": (
                 "the state's CONTENT changed the output, not merely its magnitude. That "
@@ -499,31 +534,21 @@ def main(argv: list[str] | None = None) -> int:
             "  measured the ruler, not the effect. Effect estimates are WITHHELD."
         )
 
-    null_sep = null_report["separation"]
     print(
-        f"\nNULL (shuffle vs shuffle): verdict={null_sep.get('verdict')} "
-        f"CI {null_sep.get('ci95')}  ->  {'HOLDS' if null_holds else 'FAILED'}"
+        f"\nlabel-permutation null (outputs fixed, labels shuffled):\n"
+        f"  real_state     observed={real_null.get('observed_directional_score')} "
+        f"null_mean={real_null.get('null_mean')} p={real_null.get('p_value')} "
+        f"tracks_state={real_null.get('resolved')}\n"
+        f"  shuffled_state observed={shuffled_null.get('observed_directional_score')} "
+        f"null_mean={shuffled_null.get('null_mean')} p={shuffled_null.get('p_value')} "
+        f"tracks_state={shuffled_null.get('resolved')}"
     )
-    if not null_holds:
+    if real_null.get("resolved") and not shuffled_null.get("resolved"):
         print(
-            "  The control separated. Two permutations of one vector cannot differ,\n"
-            "  so the instrument is measuring something other than what it claims.\n"
-            "  ALL effect estimates below are withheld."
+            "  -> output tracks the REAL state and does not track a magnitude-matched\n"
+            "     permutation of it. That is the content of the state mattering."
         )
-    else:
-        print(
-            f"real - shuffled  = {claim.delta:+.4f}  "
-            f"CI {real_vs_shuffled.get('ci95')} ({real_vs_shuffled.get('verdict')})"
-        )
-        print(
-            f"real - unsteered = "
-            f"{summaries[REAL]['mean_score'] - summaries[UNSTEERED]['mean_score']:+.4f}  "
-            f"CI {real_vs_unsteered.get('ci95')} ({real_vs_unsteered.get('verdict')})"
-        )
-    print(
-        f"noise floor (mean |diff| between two meaningless directions) = {noise_floor:.4f}"
-        f"   effect = {effect:.4f}   exceeds = {exceeds_noise}"
-    )
+
     print(f"\nVERDICT: {verdict}")
     if verdict == "indistinguishable_from_magnitude_matched_noise":
         print(
@@ -534,7 +559,11 @@ def main(argv: list[str] | None = None) -> int:
     if not is_evidence:
         print(
             "\nNOT EVIDENCE ABOUT AURA: "
-            + ("null failed" if not null_holds else "deterministic responder, no model")
+            + (
+                "metric never fired"
+                if not metric_engaged
+                else "deterministic responder, no model"
+            )
         )
     print(f"\nscorecard: {out_path}")
     return 0

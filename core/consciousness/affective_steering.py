@@ -1098,6 +1098,21 @@ class AffectiveSteeringHook:
         return alpha
 
     @staticmethod
+    def _neutral_reference_state() -> np.ndarray:
+        """The substrate vector for "no particular affect".
+
+        Every mood dimension in `_vector_from_moods` is a 0..1 activation, so
+        the midpoint is 0.5 and neutral is 0.5 everywhere those dimensions are
+        read. Nothing here is tuned: it is the centre of the declared range,
+        and it is a reference point rather than a magnitude, so it does not
+        introduce a constant anyone has to justify.
+        """
+        neutral = np.zeros(64, dtype=np.float32)
+        for index in (0, 1, 3, 4, 5):
+            neutral[index] = 0.5
+        return neutral
+
+    @staticmethod
     def _vector_from_moods(moods: dict[str, float]) -> np.ndarray:
         latest = {str(key): float(value) for key, value in dict(moods or {}).items()}
         x = np.zeros(64, dtype=np.float32)
@@ -1154,8 +1169,33 @@ class AffectiveSteeringHook:
             target_composite_np = np.zeros(self._vectors[next(iter(self._vectors))].d_model, dtype=np.float32)
             active = False
             
+            # DEVIATION FROM NEUTRAL, not absolute level.
+            #
+            # Measured 2026-08-06: two OPPOSING affect states — valence 0.9 vs
+            # 0.1, with stress/motivation/energy moved to match — produced
+            # composites with cosine 0.9925. Nearly the same direction, so no
+            # metric could ever detect that the state's content mattered,
+            # because after normalisation it barely did.
+            #
+            # The derived vectors were not the problem: full rank 5, mean
+            # pairwise |cos| 0.26, valence_positive . frustration = -0.50. The
+            # problem was here. Every weight was an ABSOLUTE activation, so a
+            # dimension sitting at the same value in both states — arousal was
+            # 0.7 in both — contributed an identical term to both composites,
+            # and that shared common-mode dominated the unit-normalised result
+            # while carrying no information about the state.
+            #
+            # Subtracting the neutral-state weight makes each term encode how
+            # far this dimension has moved from the middle, which is what a
+            # steering vector is supposed to represent. It also gives the
+            # semantically right boundary condition: a genuinely neutral affect
+            # now produces a zero composite and stands steering down, instead
+            # of injecting a constant direction that means nothing.
+            neutral = self._neutral_reference_state()
             for sv in self._vectors.values():
-                weight = sv.compute_weight_from_state(state)
+                weight = sv.compute_weight_from_state(state) - sv.compute_weight_from_state(
+                    neutral
+                )
                 if abs(weight) > 0.05:
                     target_composite_np += weight * sv.v
                     active = True

@@ -2126,8 +2126,19 @@ def _dnu_budget_parity_report() -> dict:
         ConditionBudget(
             condition="full_aura",
             model_id="local",
-            max_output_tokens=DNU_BASELINE_MAX_TOKENS,
-            max_wall_clock_s=baseline_timeout,
+            # The treatment's REAL budget, not the baseline's copied across.
+            # The first version of this function declared full_aura at the
+            # baseline's 2048/90s and got `matched: True` for a comparison this
+            # repository has already retracted as unmatched — a parity check
+            # that asserts parity instead of measuring it is worse than none,
+            # because it launders the defect it was added to catch.
+            #
+            # full_aura runs the live message path: no per-call token cap, and
+            # the 240s ceiling named in FULL_AURA_WALL_CLOCK_S. Declared
+            # honestly, this comparison is VOID, and that is the correct
+            # current state of the DNU bundle.
+            max_output_tokens=None,  # unbounded, by construction of the live path
+            max_wall_clock_s=FULL_AURA_WALL_CLOCK_S,
             solver_available=solver_on,
             varied=varied,
         ),
@@ -2136,8 +2147,16 @@ def _dnu_budget_parity_report() -> dict:
     payload = report.to_dict()
     payload["refusal_reason"] = report.refusal_reason()
     payload["summary"] = (
-        f"tokens={DNU_BASELINE_MAX_TOKENS} wall_clock={baseline_timeout}s "
-        f"solver={'varied(declared)' if solver_on else 'off for both arms'}"
+        f"baselines: tokens={DNU_BASELINE_MAX_TOKENS} wall_clock={baseline_timeout}s "
+        f"solver=off | full_aura: tokens=unbounded "
+        f"wall_clock={FULL_AURA_WALL_CLOCK_S}s "
+        f"solver={'on(declared varied)' if solver_on else 'off'}"
+    )
+    payload["what_would_match_them"] = (
+        "cap the live path at the same token budget the baselines get, and hold both "
+        "arms to one wall-clock ceiling. Until then this comparison is void and the "
+        "100/100 stands only as an ABSOLUTE score on a self-authored battery — which "
+        "is exactly what CLAIMS_MATRIX claim 13 says."
     )
     payload["treatment_wall_clock_ceiling_s"] = FULL_AURA_WALL_CLOCK_S
     payload["note"] = (

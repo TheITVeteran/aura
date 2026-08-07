@@ -73,6 +73,7 @@ class MlxAffectResponder:
         engine: Any,
         lease: Any,
         max_output_tokens: int,
+        settle_iterations: int = 60,
     ) -> None:
         self._model = model
         self._tokenizer = tokenizer
@@ -80,6 +81,9 @@ class MlxAffectResponder:
         self._engine = engine
         self._lease = lease
         self._max_output_tokens = int(max_output_tokens)
+        # 60 iterations puts the smoothed composite within measurement noise of
+        # its fixed point (measured: cosine stops moving between 60 and 120).
+        self._settle_iterations = int(settle_iterations)
         self._closed = False
 
     def _hooks(self) -> list[Any]:
@@ -107,15 +111,27 @@ class MlxAffectResponder:
         hooks = self._hooks()
         for hook in hooks:
             hook.override_composite_vector(None)
-        hooks[0].update_substrate(
-            {
+        # Drive the substrate to CONVERGENCE before reading the composite.
+        #
+        # The composite is exponentially smoothed at momentum 0.85 to stop
+        # affective jitter, so a single update moves it only 15% toward the
+        # requested state. Reading after one update returns mostly the previous
+        # probe's vector: measured, two OPPOSING states read that way had
+        # cosine +0.9939, and every arm of the ablation was therefore handed
+        # almost the same vector. Converged, the same two states sit at -0.8437.
+        #
+        # The smoothing is correct for a 20Hz live sync and wrong to read
+        # through one-shot, so the harness pays the iterations instead of the
+        # runtime losing the damping.
+        moods = {
                 "valence": float(probe.valence),
                 "arousal": float(probe.arousal),
                 "stress": 1.0 - float(probe.valence),
                 "motivation": float(probe.arousal),
                 "energy": float(probe.arousal),
             }
-        )
+        for _ in range(self._settle_iterations):
+            hooks[0].update_substrate(moods)
         vector = hooks[0].current_composite_vector()
         if vector is None:
             raise SteeringUnavailableError(
@@ -198,7 +214,9 @@ class MlxAffectResponder:
             self._lease.release(reason="affect_causality_complete")
 
 
-def make_affect_responder(*, model_id: str, max_output_tokens: int) -> MlxAffectResponder:
+def make_affect_responder(
+    *, model_id: str, max_output_tokens: int, alpha: float = 0.0
+) -> MlxAffectResponder:
     from mlx_lm import generate, load
 
     from core.consciousness.affective_steering import get_steering_engine
@@ -215,6 +233,21 @@ def make_affect_responder(*, model_id: str, max_output_tokens: int) -> MlxAffect
         model, tokenizer = load(model_id)
         engine = get_steering_engine()
         engine.attach(model, tokenizer)
+        if alpha > 0.0:
+            # The SHIPPED effective alpha is 3.0 (DEFAULT_ALPHA 5.0 clipped by
+            # _INJECTION_ALPHA_CEILING). Measured on a 1.5B: at 1 and at 3 the
+            # steered output is byte-identical to unsteered; the first change
+            # appears near 10 and the text degenerates by 30. So the shipped
+            # configuration injects a vector too small to alter greedy-decoded
+            # text, and an ablation run at it measures the ceiling rather than
+            # the affect. This makes the magnitude an explicit, reported
+            # parameter instead of a silent one.
+            engine.set_alpha(float(alpha))
+            for hook in engine.active_hooks():
+                hook._alpha = float(alpha)
+                hook._INJECTION_ALPHA_CEILING = max(
+                    float(alpha), hook._INJECTION_ALPHA_CEILING
+                )
         if not getattr(engine, "_model_attached", False):
             raise SteeringUnavailableError(
                 "the steering engine did not attach (AURA_DISABLE_AFFECTIVE_STEERING "

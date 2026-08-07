@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from tools.affect_causality_ablation import (
     ARMS,
-    NULL_A,
-    NULL_B,
     REAL,
     SHUFFLED,
     UNSTEERED,
@@ -25,8 +23,8 @@ from tools.affect_causality_ablation import (
     directional_score,
     permute,
     run,
+    label_permutation_null,
     valence_score,
-    validate_null,
 )
 
 
@@ -71,48 +69,43 @@ def test_directional_score_is_chance_when_nothing_moves() -> None:
     assert valence_score("the hour passed") == 0.0
 
 
-def test_null_holds_for_a_responder_that_ignores_the_arm() -> None:
-    """Two permutations of one vector cannot differ. The null must say so."""
-    report = validate_null(deterministic_responder, battery(2))
+def test_label_permutation_null_finds_nothing_when_output_ignores_state() -> None:
+    """A responder blind to the state must not clear the permutation test."""
 
-    assert report["null_holds"] is True
-    assert report["separation"]["verdict"] == "unresolved"
+    def state_blind(arm: str, probe: AffectProbe) -> str:
+        return "good clear steady progress"
+
+    probes = battery(3)
+    ledger = run(state_blind, probes)
+    result = label_permutation_null(ledger, REAL, probes, permutations=500)
+
+    assert result["resolved"] is False, result
+    assert result["p_value"] > 0.05
 
 
-def test_null_fails_when_the_instrument_separates_identical_arms() -> None:
-    """The d=17.3 defect, caught.
+def test_label_permutation_null_detects_output_that_tracks_state() -> None:
+    """And it must fire when the correspondence is real."""
+    probes = battery(3)
+    ledger = run(deterministic_responder, probes)
+    result = label_permutation_null(ledger, REAL, probes, permutations=500)
 
-    This responder answers differently under two arms that differ by nothing.
-    That is instrument error by construction, and the null must refuse to
-    certify it — otherwise every effect size measured on top is noise wearing
-    a confidence interval.
-    """
+    assert result["resolved"] is True, result
+    assert result["p_value"] < 0.05
+    assert result["effect_over_null"] > 0.0
 
-    def leaks_arm_identity(arm: str, probe: AffectProbe) -> str:
-        if arm == NULL_A:
-            return "good clear steady progress"
-        if arm == NULL_B:
-            return "hard slow stuck trouble"
-        return "the hour passed"
 
-    report = validate_null(leaks_arm_identity, battery(2))
+def test_label_permutation_null_holds_outputs_fixed() -> None:
+    """The old null compared two fixed arbitrary directions and separated at
+    CI [0.0234, 0.1094]. They were never exchangeable. This one varies only
+    the hypothesis, so it cannot fail for that reason."""
+    probes = battery(2)
+    ledger = run(deterministic_responder, probes)
+    result = label_permutation_null(ledger, REAL, probes, permutations=200)
 
-    # The signed bootstrap does NOT catch this one, and that is the lesson.
-    # This instrument separates the arms perfectly but in opposite directions
-    # on positive and negative probes, so the paired differences (+1 and -1)
-    # average to zero and the signed verdict reads `unresolved`.
-    assert report["separation"]["verdict"] == "unresolved"
-
-    # What catches it is the noise floor. It is not a pass/fail by itself —
-    # two different permutations legitimately word things differently, and a
-    # real 1.5B run produced a floor of 0.09 — but it is the magnitude any
-    # claimed effect has to clear. This instrument's floor is near the top of
-    # the metric's range, so no effect can exceed it and every verdict is
-    # suppressed. That is the correct outcome for an apparatus reading the
-    # answer off the arm name.
-    floor = report["noise_floor_mean_abs_difference"]
-    assert floor > 0.5, floor
-    assert floor >= 1.0 or floor > 0.5, "floor must dominate any achievable effect"
+    assert result["n_pairs"] == len(probes)
+    assert result["permutations"] == 200
+    # p can never be exactly zero: the observed arrangement is one of them.
+    assert result["p_value"] >= 1 / (200 + 1)
 
 
 def test_shuffled_matching_real_is_reported_as_noise_not_causality() -> None:
