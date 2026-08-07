@@ -304,6 +304,31 @@ def test_live_adapter_builders_reject_invalid_activation_window(tmp_path: Path) 
         )
 
 
+def test_relocated_verdict_rejects_relative_declared_campaign_provenance(
+    tmp_path: Path,
+) -> None:
+    pointer_path, _root_pem, _identity = _fixture(tmp_path)
+    pointer = json.loads(pointer_path.read_text())
+    activation_document = pointer["activation"]
+    plan_document = json.loads(
+        Path(activation_document["campaign_plan"]["path"]).read_text()
+    )
+    verdict_path = Path(activation_document["independent_verdict"]["path"])
+    verdict = json.loads(verdict_path.read_text())
+    verdict["campaign_dir"] = "relative/campaign"
+
+    with pytest.raises(
+        activation.LiveAdapterActivationError,
+        match="live_adapter_positive_certificate_invalid",
+    ):
+        activation.validate_positive_live_adapter_evidence(
+            activation_document,
+            campaign_plan=plan_document,
+            independent_verdict=verdict,
+            independent_verdict_path=verdict_path,
+        )
+
+
 def test_activation_materializer_publishes_only_after_admission(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -315,6 +340,27 @@ def test_activation_materializer_publishes_only_after_admission(
     root_path.chmod(0o600)
     output = tmp_path / "prepared"
     activation_document = existing_pointer["activation"]
+    adapter_freeze = {
+        "schema": "aura.latent_cortex.adapter_freeze.v1",
+        "adapter_id": identity["adapter_id"],
+        "content_root_sha256": "6" * 64,
+        "artifacts": [
+            {
+                "path": "adapter.safetensors",
+                "sha256": "7" * 64,
+                "size_bytes": 7,
+            }
+        ],
+        "identity_receipt": identity,
+        "model_identity": {},
+        "validator_identity": {},
+        "certificate_sha256": "8" * 64,
+    }
+    monkeypatch.setattr(
+        materializer,
+        "verify_adapter_freeze",
+        lambda _path: adapter_freeze,
+    )
 
     preparation = materializer.prepare_activation(
         campaign_plan_path=Path(activation_document["campaign_plan"]["path"]),
@@ -334,6 +380,35 @@ def test_activation_materializer_publishes_only_after_admission(
     assert preparation["publication_allowed"] is False
     assert preparation["required_next_step"].startswith("detached_evidence")
     assert not (output / "active.json").exists()
+    bundle = json.loads((output / "evidence" / "evidence-bundle.json").read_text())
+    prepared_activation = json.loads((output / "activation.json").read_text())
+    assert (
+        bundle["review_contract"]["all_documentary_signing_inputs_embedded"] is True
+    )
+    assert bundle["review_contract"]["adapter_payload_bytes_embedded"] is False
+    assert bundle["adapter_weights_embedded"] is False
+    assert preparation["portable_evidence_bundle"]["path"] == str(
+        (output / "evidence" / "evidence-bundle.json").resolve()
+    )
+    assert prepared_activation["campaign_plan"]["path"].startswith(
+        str((output / "evidence").resolve())
+    )
+    assert prepared_activation["campaign_plan"]["path"] != activation_document[
+        "campaign_plan"
+    ]["path"]
+    copied_plan = Path(bundle["documents"]["campaign_plan"]["path"])
+    copied_plan_raw = copied_plan.read_bytes()
+    copied_plan.write_bytes(b"{}")
+    with pytest.raises(
+        materializer.ActivationMaterializationError,
+        match="activation_materialization_evidence_bundle_binding_mismatch",
+    ):
+        materializer._validate_portable_evidence_bundle(
+            preparation,
+            activation=prepared_activation,
+        )
+    copied_plan.write_bytes(copied_plan_raw)
+    copied_plan.chmod(0o600)
     request = json.loads((output / "activation-signature-request.json").read_text())
     assert request["signed_payload"]["operation"] == "activate_recurrent_adapter"
     assert request["signed_payload"]["purpose"] == (
@@ -346,6 +421,11 @@ def test_activation_materializer_publishes_only_after_admission(
         materializer,
         "assemble_role_attestation",
         lambda *_args, **_kwargs: existing_attestation,
+    )
+    monkeypatch.setattr(
+        activation,
+        "verify_role_attestation",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         materializer,

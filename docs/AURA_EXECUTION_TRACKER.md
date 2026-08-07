@@ -37478,3 +37478,35 @@ and paired-grade slice passes `42/42`; Ruff and bytecode compilation pass. This
 checkpoint closes configuration drift between a positive pilot and external
 campaign preparation. It does not supply external custody, run the powered
 campaign, prove gain, or authorize installation.
+
+## Checkpoint 2026-08-07-003: Activation Evidence Is Portable and Immutable
+
+The live recurrent-adapter activation path no longer asks an externally held
+evidence-verifier key to trust host-local source paths that it cannot inspect.
+`tools/materialize_live_recurrent_adapter_activation.py prepare` first verifies
+the adapter freeze certificate against the complete frozen package and the
+claim-eligible campaign identity. It then emits one private, create-or-verify
+review bundle containing exact copies of the campaign plan, independent
+verdict, trust policy, public trust root, adapter manifest, and adapter freeze
+certificate. The large tensor payload is not duplicated; its complete path,
+size, and SHA-256 inventory and content root come from the independently
+reopened freeze certificate.
+
+The activation signed payload now binds the bundled plan and verdict bytes,
+and the preparation record binds the bundle, bundled policy, bundled trust
+root, and freeze certificate. Finalization reopens every bundle member, rejects
+content or binding drift, compares the operator-supplied policy and trust root
+to the embedded exact bytes, assembles the detached attestation, performs the
+full model/package/runtime admission dry run, and only then atomically
+publishes the default-on role/depth-conditioned pointer. Independent verdict
+bytes may be relocated into this immutable packet while their signed declared
+campaign directory remains provenance; relative or malformed provenance is
+still rejected. No private signing key is loaded, no static weight fusion is
+performed, and the packet itself grants no publication authority.
+
+The live-activation, directional-gate, powered-handoff, and campaign-launch
+bundle slice passes `33/33`; smoke passes `103/103`; Ruff, bytecode
+compilation, and diff hygiene pass. Tampering with a copied plan is detected
+before finalization. This closes portable evidence delivery to an external
+signer, not the external custody, positive powered result, installed-app
+admission, release, or soak obligations.

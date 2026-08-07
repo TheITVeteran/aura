@@ -458,10 +458,24 @@ def _validate_positive_verdict(
         if isinstance(adapter_identity, Mapping)
         else None
     )
-    campaign_dir = certificate_path.parent
+    declared_campaign_dir = verdict.get("campaign_dir")
+    declared_campaign_path = (
+        Path(declared_campaign_dir)
+        if isinstance(declared_campaign_dir, str)
+        else None
+    )
+    declared_campaign_dir_valid = (
+        declared_campaign_path is not None
+        and declared_campaign_path.is_absolute()
+        and str(declared_campaign_path) == os.path.normpath(declared_campaign_dir)
+    )
     if (
         verdict.get("schema") != INDEPENDENT_VERDICT_SCHEMA
-        or verdict.get("campaign_dir") != str(campaign_dir)
+        # A signed verdict may be copied into an immutable external-review
+        # bundle. Its declared source directory remains provenance; the
+        # activation binding authenticates the relocated exact bytes.
+        or not declared_campaign_dir_valid
+        or not certificate_path.is_absolute()
         or verdict.get("passed") is not True
         or verdict.get("claim_tier") != "PROVEN"
         or verdict.get("verified_verdict") != "gain_proven"

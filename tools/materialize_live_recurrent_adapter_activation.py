@@ -31,6 +31,10 @@ from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
     CampaignPlan,
     canonical_json_bytes,
 )
+from core.brain.llm.latent_cortex.campaign_launch_bundle import (  # noqa: E402
+    CampaignLaunchBundleError,
+    verify_adapter_freeze,
+)
 from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     EVIDENCE_VERIFIER,
     CampaignTrustError,
@@ -57,6 +61,7 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
 PREPARATION_SCHEMA = "aura.latent_cortex.live_adapter_activation_preparation.v1"
+EVIDENCE_BUNDLE_SCHEMA = "aura.latent_cortex.live_adapter_evidence_bundle.v1"
 PUBLICATION_SCHEMA = "aura.latent_cortex.live_adapter_activation_publication.v1"
 MAX_JSON_BYTES = 64 * 1024 * 1024
 MAX_KEY_BYTES = 1024 * 1024
@@ -122,17 +127,22 @@ def _binding(path: Path, payload: bytes) -> dict[str, Any]:
     }
 
 
-def _atomic_create_or_verify(path: Path, document: Mapping[str, Any]) -> Path:
-    destination = path.expanduser().absolute()
-    payload = canonical_json_bytes(document) + b"\n"
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    parent_metadata = destination.parent.stat()
+def _ensure_private_directory(path: Path) -> Path:
+    directory = path.expanduser().absolute()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    metadata = directory.stat()
     if (
-        not stat.S_ISDIR(parent_metadata.st_mode)
-        or parent_metadata.st_uid != os.getuid()
-        or stat.S_IMODE(parent_metadata.st_mode) & 0o077
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
     ):
         _fail("activation_materialization_output_parent_not_private")
+    return directory
+
+
+def _atomic_create_or_verify_bytes(path: Path, payload: bytes) -> Path:
+    destination = path.expanduser().absolute()
+    _ensure_private_directory(destination.parent)
     if destination.is_symlink():
         _fail("activation_materialization_output_symlink_rejected")
     if destination.exists():
@@ -168,6 +178,161 @@ def _atomic_create_or_verify(path: Path, document: Mapping[str, Any]) -> Path:
     finally:
         os.close(directory)
     return destination.resolve(strict=True)
+
+
+def _atomic_create_or_verify(path: Path, document: Mapping[str, Any]) -> Path:
+    return _atomic_create_or_verify_bytes(
+        path,
+        canonical_json_bytes(document) + b"\n",
+    )
+
+
+def _copy_evidence(
+    destination: Path,
+    *,
+    filename: str,
+    payload: bytes,
+) -> tuple[Path, dict[str, Any]]:
+    copied = _atomic_create_or_verify_bytes(destination / filename, payload)
+    return copied, _binding(copied, payload)
+
+
+def _portable_evidence_bundle(
+    *,
+    destination: Path,
+    plan: CampaignPlan,
+    plan_raw: bytes,
+    verdict_raw: bytes,
+    policy_raw: bytes,
+    trusted_root: bytes,
+    adapter_manifest_raw: bytes,
+    adapter_freeze: Mapping[str, Any],
+    adapter_package_path: Path,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    evidence_dir = destination / "evidence"
+    copied: dict[str, dict[str, Any]] = {}
+    for role, filename, payload in (
+        ("campaign_plan", "campaign-plan.json", plan_raw),
+        ("independent_verdict", "independent-verdict.json", verdict_raw),
+        ("campaign_policy", "campaign-policy.json", policy_raw),
+        ("trusted_root", "trusted-root.pem", trusted_root),
+        ("adapter_manifest", "recurrence-adapter-manifest.json", adapter_manifest_raw),
+        (
+            "adapter_freeze",
+            "adapter-freeze.json",
+            canonical_json_bytes(adapter_freeze) + b"\n",
+        ),
+    ):
+        _path, copied[role] = _copy_evidence(
+            evidence_dir,
+            filename=filename,
+            payload=payload,
+        )
+    material = {
+        "schema": EVIDENCE_BUNDLE_SCHEMA,
+        "campaign_name": plan.campaign_name,
+        "plan_sha256": plan.plan_sha256,
+        "adapter_id": adapter_freeze["adapter_id"],
+        "adapter_package_path": str(adapter_package_path),
+        "documents": copied,
+        "adapter_content_root_sha256": adapter_freeze["content_root_sha256"],
+        "adapter_artifacts": adapter_freeze["artifacts"],
+        "adapter_weights_embedded": False,
+        "adapter_weights_binding": "adapter_freeze_artifact_inventory",
+        "review_contract": {
+            "portable_without_private_keys": True,
+            "all_documentary_signing_inputs_embedded": True,
+            "adapter_payload_identity_embedded": True,
+            "adapter_payload_bytes_embedded": False,
+            "large_adapter_payload_remains_in_approved_package": True,
+            "publication_authority": False,
+        },
+    }
+    bundle = {
+        **material,
+        "bundle_sha256": hashlib.sha256(canonical_json_bytes(material)).hexdigest(),
+    }
+    bundle_path = _atomic_create_or_verify(
+        evidence_dir / "evidence-bundle.json",
+        bundle,
+    )
+    copied["bundle"] = _binding(
+        bundle_path,
+        canonical_json_bytes(bundle) + b"\n",
+    )
+    return bundle, copied
+
+
+def _validate_portable_evidence_bundle(
+    preparation: Mapping[str, Any],
+    *,
+    activation: Mapping[str, Any],
+) -> dict[str, Any]:
+    bundle_binding = preparation.get("portable_evidence_bundle")
+    if not isinstance(bundle_binding, Mapping):
+        _fail("activation_materialization_evidence_bundle_missing")
+    bundle, bundle_raw, bundle_path = _read_json(
+        Path(str(bundle_binding.get("path"))),
+        role="evidence_bundle",
+    )
+    material = dict(bundle)
+    claimed = material.pop("bundle_sha256", None)
+    documents = bundle.get("documents")
+    if (
+        _binding(bundle_path, bundle_raw) != dict(bundle_binding)
+        or bundle.get("schema") != EVIDENCE_BUNDLE_SCHEMA
+        or claimed != hashlib.sha256(canonical_json_bytes(material)).hexdigest()
+        or bundle.get("campaign_name") != activation.get("campaign_name")
+        or bundle.get("adapter_id") != activation.get("adapter_id")
+        or not isinstance(documents, Mapping)
+    ):
+        _fail("activation_materialization_evidence_bundle_invalid")
+    reopened: dict[str, dict[str, Any]] = {}
+    reopened_documents: dict[str, dict[str, Any]] = {}
+    for role in (
+        "campaign_plan",
+        "independent_verdict",
+        "campaign_policy",
+        "adapter_manifest",
+        "adapter_freeze",
+    ):
+        binding = documents.get(role)
+        if not isinstance(binding, Mapping):
+            _fail("activation_materialization_evidence_bundle_invalid")
+        document, payload, path = _read_json(
+            Path(str(binding.get("path"))),
+            role=f"evidence_bundle_{role}",
+        )
+        if _binding(path, payload) != dict(binding):
+            _fail("activation_materialization_evidence_bundle_binding_mismatch")
+        reopened[role] = dict(binding)
+        reopened_documents[role] = document
+    root_binding = documents.get("trusted_root")
+    if not isinstance(root_binding, Mapping):
+        _fail("activation_materialization_evidence_bundle_invalid")
+    root_path = Path(str(root_binding.get("path")))
+    root_raw = read_live_adapter_trust_root(root_path)
+    if _binding(root_path.resolve(strict=True), root_raw) != dict(root_binding):
+        _fail("activation_materialization_evidence_bundle_binding_mismatch")
+    if (
+        reopened["campaign_plan"] != activation.get("campaign_plan")
+        or reopened["independent_verdict"] != activation.get("independent_verdict")
+        or reopened["campaign_policy"] != preparation.get("campaign_policy")
+        or reopened["adapter_freeze"] != preparation.get("adapter_freeze")
+        or reopened["adapter_manifest"].get("sha256")
+        != activation.get("adapter_manifest_sha256")
+        or root_binding.get("sha256") != preparation.get("trusted_root_sha256")
+        or reopened_documents["adapter_freeze"].get("identity_receipt", {}).get(
+            "adapter_id"
+        )
+        != activation.get("adapter_id")
+        or reopened_documents["adapter_freeze"].get("content_root_sha256")
+        != bundle.get("adapter_content_root_sha256")
+        or reopened_documents["adapter_freeze"].get("artifacts")
+        != bundle.get("adapter_artifacts")
+    ):
+        _fail("activation_materialization_evidence_bundle_activation_mismatch")
+    return bundle
 
 
 def _signature(path: Path) -> str:
@@ -237,19 +402,17 @@ def prepare_activation(
     not_before_unix: int,
     expires_at_unix: int,
 ) -> dict[str, Any]:
-    plan_document, plan_raw, plan_path = _read_json(campaign_plan_path, role="plan")
-    verdict, verdict_raw, verdict_path = _read_json(
+    destination = _ensure_private_directory(output_dir)
+    plan_document, plan_raw, _plan_path = _read_json(campaign_plan_path, role="plan")
+    verdict, verdict_raw, _verdict_path = _read_json(
         independent_verdict_path,
         role="verdict",
     )
-    policy_document, policy_raw, policy_path = _read_json(
+    policy_document, policy_raw, _policy_path = _read_json(
         campaign_policy_path,
         role="policy",
     )
-    root = read_stable_bytes(
-        trusted_root_path.expanduser().absolute(),
-        max_bytes=MAX_KEY_BYTES,
-    )
+    root = read_live_adapter_trust_root(trusted_root_path)
     plan = CampaignPlan.from_dict(plan_document)
     policy = validate_campaign_trust_policy(
         policy_document,
@@ -289,6 +452,28 @@ def prepare_activation(
         or hashlib.sha256(manifest_raw).hexdigest() != identity.get("manifest_sha256")
     ):
         _fail("activation_materialization_adapter_manifest_mismatch")
+    try:
+        adapter_freeze = verify_adapter_freeze(package)
+    except (CampaignLaunchBundleError, OSError, ValueError) as exc:
+        raise ActivationMaterializationError(
+            "activation_materialization_adapter_freeze_invalid"
+        ) from exc
+    if (
+        adapter_freeze.get("adapter_id") != identity.get("adapter_id")
+        or adapter_freeze.get("identity_receipt") != identity
+    ):
+        _fail("activation_materialization_adapter_freeze_identity_mismatch")
+    _bundle, evidence = _portable_evidence_bundle(
+        destination=destination,
+        plan=plan,
+        plan_raw=plan_raw,
+        verdict_raw=verdict_raw,
+        policy_raw=policy_raw,
+        trusted_root=root,
+        adapter_manifest_raw=manifest_raw,
+        adapter_freeze=adapter_freeze,
+        adapter_package_path=package,
+    )
     activation = build_live_adapter_activation(
         campaign_name=plan.campaign_name,
         policy_sha256=policy.policy_sha256,
@@ -298,8 +483,8 @@ def prepare_activation(
         adapter_composite_identity_sha256=str(identity.get("composite_identity_sha256")),
         base_checkpoint_fingerprint=str(identity.get("base_checkpoint_fingerprint")),
         model_behavior_bundle_sha256=str(identity.get("model_behavior_bundle_sha256")),
-        campaign_plan=_binding(plan_path, plan_raw),
-        independent_verdict=_binding(verdict_path, verdict_raw),
+        campaign_plan=evidence["campaign_plan"],
+        independent_verdict=evidence["independent_verdict"],
         not_before_unix=not_before_unix,
         expires_at_unix=expires_at_unix,
     )
@@ -307,7 +492,7 @@ def prepare_activation(
         activation,
         campaign_plan=plan_document,
         independent_verdict=verdict,
-        independent_verdict_path=verdict_path,
+        independent_verdict_path=Path(evidence["independent_verdict"]["path"]),
     )
     request = prepare_role_signature_request(
         policy,
@@ -317,7 +502,6 @@ def prepare_activation(
         operation="activate_recurrent_adapter",
         purpose="verified-recurrent-adapter-activation",
     )
-    destination = output_dir.expanduser().absolute()
     activation_path = _atomic_create_or_verify(destination / "activation.json", activation)
     request_path = _atomic_create_or_verify(
         destination / "activation-signature-request.json",
@@ -335,8 +519,10 @@ def prepare_activation(
             request_path,
             canonical_json_bytes(request) + b"\n",
         ),
-        "campaign_policy": _binding(policy_path, policy_raw),
+        "campaign_policy": evidence["campaign_policy"],
         "trusted_root_sha256": hashlib.sha256(root).hexdigest(),
+        "portable_evidence_bundle": evidence["bundle"],
+        "adapter_freeze": evidence["adapter_freeze"],
         "publication_allowed": False,
         "required_next_step": "detached_evidence_verifier_signature_then_finalize",
     }
@@ -392,13 +578,30 @@ def finalize_activation(
         or _binding(request_path, request_raw) != dict(request_binding)
     ):
         _fail("activation_materialization_preparation_binding_mismatch")
-    policy_document, policy_raw, policy_resolved = _read_json(
-        campaign_policy_path,
-        role="policy",
+    bundle = _validate_portable_evidence_bundle(
+        preparation,
+        activation=activation,
     )
-    root = read_live_adapter_trust_root(trusted_root_path)
+    documents = bundle["documents"]
+    policy_binding = dict(documents["campaign_policy"])
+    policy_document, policy_raw, policy_resolved = _read_json(
+        Path(str(policy_binding["path"])),
+        role="bundled_policy",
+    )
+    supplied_policy, supplied_policy_raw, _supplied_policy_path = _read_json(
+        campaign_policy_path,
+        role="supplied_policy",
+    )
+    root_binding = dict(documents["trusted_root"])
+    bundled_root_path = Path(str(root_binding["path"]))
+    root = read_live_adapter_trust_root(bundled_root_path)
+    supplied_root = read_live_adapter_trust_root(trusted_root_path)
     if (
-        _binding(policy_resolved, policy_raw) != preparation.get("campaign_policy")
+        _binding(policy_resolved, policy_raw) != policy_binding
+        or supplied_policy != policy_document
+        or hashlib.sha256(supplied_policy_raw).hexdigest() != policy_binding["sha256"]
+        or len(supplied_policy_raw) != policy_binding["size_bytes"]
+        or supplied_root != root
         or hashlib.sha256(root).hexdigest() != preparation.get("trusted_root_sha256")
     ):
         _fail("activation_materialization_trust_binding_mismatch")
@@ -423,7 +626,7 @@ def finalize_activation(
     attestation_raw = canonical_json_bytes(attestation) + b"\n"
     pointer = build_live_adapter_pointer(
         activation=activation,
-        campaign_policy=_binding(policy_resolved, policy_raw),
+        campaign_policy=policy_binding,
         activation_attestation=_binding(attestation_path, attestation_raw),
     )
     candidate_path = pointer_path.expanduser().absolute().with_name(
