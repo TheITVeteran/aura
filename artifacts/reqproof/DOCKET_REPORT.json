@@ -32,8 +32,7 @@
     },
     {
       "counts": {
-        "certified_complete": 1,
-        "claimed_complete_needs_children": 1,
+        "certified_complete": 2,
         "in_progress": 1,
         "ready_for_implementation": 12
       },
@@ -150,8 +149,7 @@
     },
     {
       "counts": {
-        "certified_complete": 5,
-        "claimed_complete_needs_evidence": 2,
+        "certified_complete": 7,
         "in_progress": 3,
         "ready_for_implementation": 37
       },
@@ -636,7 +634,7 @@
     }
   ],
   "inputs": {
-    "evidence_ledger_sha256": "e79eac2b0075443e0d5f67278238334c10a6eb20895dec9e631d4957c4deb2bf",
+    "evidence_ledger_sha256": "b739d5fc519c10c9a2525aa5497f918f419a1b44b04cdc73f64635cbfa847a0c",
     "registry_sha256": "7152e128d1adaa142355e77f291f229be9901322d2594dde0da8433f333c3811"
   },
   "non_claims": [
@@ -644,7 +642,7 @@
     "Ready for implementation means direct dependencies are not open; it does not waive closure children or evidence.",
     "The docket does not infer evidence from source presence, checkpoint prose, or test names."
   ],
-  "report_sha256": "09a99cbdcd00bdd8185753bb99622a6679961fb823d54167d7f68a73cf890f6b",
+  "report_sha256": "bdcfb072e99e137f7e179375fa80e0dc63df3f7daf328995d75a093d9a6a8dae",
   "requirements": [
     {
       "acceptance_units": 1,
@@ -3059,64 +3057,6 @@
       "parent": null,
       "state_claim": "in_progress",
       "title": "Give every structured subsystem, swarm, and distributed signal one typed, attributed, bounded ingress into the canonical GlobalWorkspace."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
-      "family": "CTX2",
-      "id": "CTX2-GATE-001",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
-    },
-    {
-      "acceptance_units": 1,
-      "closure_blockers": [],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_evidence",
-      "evidence_cells_total": 2,
-      "evidence_cells_verified": 1,
-      "family": "CTX2",
-      "id": "CTX2-GATE-002",
-      "kind": "atomic",
-      "mandatory": true,
-      "missing_evidence_cells": [
-        "implementation:A1"
-      ],
-      "owner": "unassigned",
-      "parent": "ADDENDUM-23",
-      "state_claim": "complete",
-      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
-    },
-    {
-      "acceptance_units": 5,
-      "closure_blockers": [
-        "CTX2-GATE-001",
-        "CTX2-GATE-002"
-      ],
-      "direct_dependency_blockers": [],
-      "disposition": "claimed_complete_needs_children",
-      "evidence_cells_total": 14,
-      "evidence_cells_verified": 14,
-      "family": "ADDENDUM",
-      "id": "ADDENDUM-23",
-      "kind": "parent",
-      "mandatory": true,
-      "missing_evidence_cells": [],
-      "owner": "unassigned",
-      "parent": null,
-      "state_claim": "complete",
-      "title": "Fail-closed cognitive gates and complete skill discovery"
     },
     {
       "acceptance_units": 5,
@@ -7962,6 +7902,23 @@
       "title": "Run bounded multi-hour and then 24-72 hour longevity/pressure/idle/recovery soaks only after `VALIDATE-001` and every shorter requirement are green; triage any\u2026"
     },
     {
+      "acceptance_units": 5,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 14,
+      "evidence_cells_verified": 14,
+      "family": "ADDENDUM",
+      "id": "ADDENDUM-23",
+      "kind": "parent",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": null,
+      "state_claim": "complete",
+      "title": "Fail-closed cognitive gates and complete skill discovery"
+    },
+    {
       "acceptance_units": 4,
       "closure_blockers": [],
       "direct_dependency_blockers": [],
@@ -7977,6 +7934,40 @@
       "parent": null,
       "state_claim": "complete",
       "title": "Signal-safe quiescence and no-resurrection shutdown"
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-GATE-001",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a safety boundary."
+    },
+    {
+      "acceptance_units": 1,
+      "closure_blockers": [],
+      "direct_dependency_blockers": [],
+      "disposition": "certified_complete",
+      "evidence_cells_total": 2,
+      "evidence_cells_verified": 2,
+      "family": "CTX2",
+      "id": "CTX2-GATE-002",
+      "kind": "atomic",
+      "mandatory": true,
+      "missing_evidence_cells": [],
+      "owner": "unassigned",
+      "parent": "ADDENDUM-23",
+      "state_claim": "complete",
+      "title": "- `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate gate for exception-to-admission behavior, stale approvals, missing gate instances, t\u2026"
     },
     {
       "acceptance_units": 1,
@@ -8138,15 +8129,10 @@
   ],
   "schema_version": 1,
   "summary": {
-    "claimed_complete_needs_evidence_ids": [
-      "CTX2-GATE-001",
-      "CTX2-GATE-002"
-    ],
+    "claimed_complete_needs_evidence_ids": [],
     "dispositions": {
       "blocked_by_dependency": 33,
-      "certified_complete": 9,
-      "claimed_complete_needs_children": 1,
-      "claimed_complete_needs_evidence": 2,
+      "certified_complete": 12,
       "deferred": 1,
       "in_progress": 100,
       "nonmandatory": 1,
