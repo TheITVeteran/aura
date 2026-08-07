@@ -19,7 +19,13 @@ optimizer update and awards no claim. It answers one question: can the
 recurrent execution path reach parity with an ordinary decode on this
 checkpoint? Until it can, training against that path is training into a hole.
 
-All five arms share one model load -- they differ only in configuration --
+A third candidate cause surfaced from the sweep's own first cells and is
+crossed here too: the control is completion-limited. At the campaign's decode
+budget the ordinary decode emitted a terminal FINAL_ANSWER on 43% of tasks
+against 96% for an arm instructed to answer briefly, so part of the deficit
+may be a token budget rather than a reasoning result.
+
+All seven arms share one model load -- they differ only in configuration --
 which is what makes the whole sweep affordable.
 """
 from __future__ import annotations
@@ -38,13 +44,24 @@ sys.path.insert(0, str(REPO_ROOT))
 
 SWEEP_SCHEMA = "aura.rlc_reconciliation_sweep.v1"
 
-# (arm, recurrent_steps or None for vanilla, terminal_instruction_policy)
-ARMS: tuple[tuple[str, int | None, str], ...] = (
-    ("vanilla", None, "applied"),
-    ("rlc_asrun", 4, "applied"),
-    ("rlc_nodisp", 4, "suppressed"),
-    ("rlc_shallow", 1, "applied"),
-    ("rlc_shallow_nodisp", 1, "suppressed"),
+# (name, recurrent steps or None for ordinary decode, terminal-instruction
+# policy, decode token budget or None for the campaign default).
+#
+# The first five reproduce the 2026-08-06 campaign at its own budget of 512.
+# The last two exist because the control turned out to be completion-limited
+# there: at 512 the ordinary decode emitted a terminal FINAL_ANSWER on only
+# 43% of tasks, while an arm carrying "give only the best bounded answer"
+# finished 96% of the time. A deficit measured against a control that mostly
+# runs out of tokens is a statement about budget, not about recurrence, so the
+# budget is varied directly rather than argued about.
+ARMS: tuple[tuple[str, int | None, str, int | None], ...] = (
+    ("vanilla", None, "applied", None),
+    ("rlc_asrun", 4, "applied", None),
+    ("rlc_nodisp", 4, "suppressed", None),
+    ("rlc_shallow", 1, "applied", None),
+    ("rlc_shallow_nodisp", 1, "suppressed", None),
+    ("vanilla_long", None, "applied", 1024),
+    ("rlc_nodisp_long", 4, "suppressed", 1024),
 )
 
 
@@ -75,6 +92,7 @@ def decode_fingerprint(
     episode_wall_s: float,
     seed: int,
     per_domain: int,
+    arm: str = "",
 ) -> str:
     """Identity of the decode configuration every cell in a run must share.
 
@@ -87,7 +105,8 @@ def decode_fingerprint(
     """
     body = json.dumps(
         {
-            "contract": "rlc_reconciliation_decode.v1",
+            "arm": str(arm),
+            "contract": "rlc_reconciliation_decode.v2",
             "episode_wall_s": float(episode_wall_s),
             "max_tokens": int(max_tokens),
             "model": str(model),
@@ -107,8 +126,12 @@ class Journal:
     cell from a superseded configuration is discarded and re-run.
     """
 
-    def __init__(self, path: Path, fingerprint: str | None = None) -> None:
+    def __init__(
+        self, path: Path, fingerprint: str | dict[str, str] | None = None
+    ) -> None:
         self.path = path
+        # Arms may differ in decode budget, so identity is per arm. A bare
+        # string applies to every arm; None admits everything.
         self.fingerprint = fingerprint
         self.done: set[tuple[str, str]] = set()
         self.superseded = 0
@@ -132,7 +155,12 @@ class Journal:
     def _current(self, record: dict[str, Any]) -> bool:
         if self.fingerprint is None:
             return True
-        return record.get("decode_fingerprint") == self.fingerprint
+        if isinstance(self.fingerprint, str):
+            return record.get("decode_fingerprint") == self.fingerprint
+        expected = self.fingerprint.get(record.get("arm", ""))
+        # An arm absent from the current configuration was not asked for, so
+        # its cells are not evidence for this run either.
+        return expected is not None and record.get("decode_fingerprint") == expected
 
     def append(self, record: dict[str, Any]) -> None:
         with self.path.open("a", encoding="utf-8") as handle:
@@ -395,26 +423,40 @@ def main() -> int:
         print(json.dumps({"tasks": len(tasks), "arms": [a[0] for a in selected]}, indent=2))
         return 0
 
-    fingerprint = decode_fingerprint(
-        model=args.model,
-        n_slots=args.n_slots,
-        max_tokens=args.max_tokens,
-        episode_wall_s=args.episode_wall_s,
-        seed=args.seed,
-        per_domain=args.per_domain,
-    )
+    arm_tokens = {
+        name: (args.max_tokens if override is None else override)
+        for name, _steps, _policy, override in selected
+    }
+    fingerprints = {
+        name: decode_fingerprint(
+            model=args.model,
+            n_slots=args.n_slots,
+            max_tokens=tokens,
+            episode_wall_s=args.episode_wall_s,
+            seed=args.seed,
+            per_domain=args.per_domain,
+            arm=name,
+        )
+        for name, tokens in arm_tokens.items()
+    }
     _atomic_write(
         out_dir / "decode_fingerprint.json",
-        json.dumps({"decode_fingerprint": fingerprint}, indent=1, sort_keys=True) + "\n",
+        json.dumps(
+            {"decode_fingerprint": fingerprints, "arm_max_tokens": arm_tokens},
+            indent=1,
+            sort_keys=True,
+        )
+        + "\n",
     )
-    journal = Journal(out_dir / "journal.jsonl", fingerprint)
+    journal = Journal(out_dir / "journal.jsonl", fingerprints)
     planned = len(selected) * len(tasks)
     print(f"planned cells {planned}, already committed {len(journal.done)}", flush=True)
     if journal.superseded:
         # Loud, because silently re-running them looks identical to a slow start.
         print(
             f"discarded {journal.superseded} cells from a superseded decode "
-            f"configuration; they will be re-run under {fingerprint[:16]}",
+            f"configuration; they will be re-run under the current arm budgets "
+            f"{arm_tokens}",
             flush=True,
         )
 
@@ -443,11 +485,12 @@ def main() -> int:
         model, tokenizer = load(args.model)
         print("model loaded", flush=True)
 
-        for arm, steps, policy in selected:
+        for arm, steps, policy, _override in selected:
+            tokens = arm_tokens[arm]
             config = (
                 None
                 if steps is None
-                else _build_config(steps, args.n_slots, policy, args.max_tokens)
+                else _build_config(steps, args.n_slots, policy, tokens)
             )
             for index, task in enumerate(tasks):
                 key = (arm, task.task_id)
@@ -467,7 +510,7 @@ def main() -> int:
                             model,
                             tokenizer,
                             _render_prompt_text(tokenizer, task),
-                            args.max_tokens,
+                            tokens,
                         )
                     else:
                         text, receipt = _run_rlc(
@@ -488,7 +531,8 @@ def main() -> int:
                         "arm": arm,
                         "task_id": task.task_id,
                         "domain": task.domain,
-                        "decode_fingerprint": fingerprint,
+                        "decode_fingerprint": fingerprints[arm],
+                        "decode_max_tokens": tokens,
                         "recurrent_steps": steps,
                         "terminal_instruction_policy": policy,
                         "text": text,

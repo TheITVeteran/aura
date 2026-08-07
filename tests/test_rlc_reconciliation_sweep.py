@@ -23,13 +23,48 @@ import run_rlc_reconciliation_sweep as sweep  # noqa: E402
 
 def test_arms_cross_disposition_against_recurrence_depth():
     """The sweep must be a factorial, or it cannot attribute the deficit."""
-    by_name = {name: (steps, policy) for name, steps, policy in sweep.ARMS}
+    by_name = {name: (steps, policy) for name, steps, policy, _tokens in sweep.ARMS}
     assert by_name["vanilla"][0] is None
     # Both factors must vary, and vary independently.
     assert by_name["rlc_asrun"] == (4, "applied")
     assert by_name["rlc_nodisp"] == (4, "suppressed")
     assert by_name["rlc_shallow"] == (1, "applied")
     assert by_name["rlc_shallow_nodisp"] == (1, "suppressed")
+
+
+def test_the_token_budget_is_crossed_against_the_disposition():
+    """The control was completion-limited, so budget is a third factor and has
+    to vary against a matched recurrent arm -- otherwise a budget effect and a
+    recurrence effect are indistinguishable."""
+    by_name = {
+        name: (steps, policy, tokens) for name, steps, policy, tokens in sweep.ARMS
+    }
+    # Same decode as `vanilla`, more room to finish.
+    assert by_name["vanilla_long"] == (None, "applied", 1024)
+    # Same depth and policy as `rlc_nodisp`, matched to `vanilla_long`.
+    assert by_name["rlc_nodisp_long"] == (4, "suppressed", 1024)
+    assert by_name["rlc_nodisp"][:2] == by_name["rlc_nodisp_long"][:2]
+    # The five reproduction arms must stay on the campaign's own budget.
+    for name in ("vanilla", "rlc_asrun", "rlc_nodisp", "rlc_shallow"):
+        assert by_name[name][2] is None, f"{name} must inherit the campaign budget"
+
+
+def test_each_arm_carries_its_own_configuration_identity():
+    """A 1024-token arm and a 512-token arm are different measurements, so a
+    single run-wide fingerprint would let one be resumed as the other."""
+    common = dict(
+        model="/models/resident",
+        n_slots=16,
+        episode_wall_s=720.0,
+        seed=20260807,
+        per_domain=4,
+    )
+    short = sweep.decode_fingerprint(max_tokens=512, arm="vanilla", **common)
+    long = sweep.decode_fingerprint(max_tokens=1024, arm="vanilla_long", **common)
+    same_budget_other_arm = sweep.decode_fingerprint(
+        max_tokens=512, arm="rlc_nodisp", **common
+    )
+    assert len({short, long, same_budget_other_arm}) == 3
 
 
 def test_config_carries_the_arm_policy_and_validates():
@@ -491,3 +526,44 @@ def test_no_recurrent_arm_is_not_a_verdict_about_recurrence(tmp_path: Path):
     assert verdict["reaches_parity_with_ordinary_decode"] is False
     assert verdict["decision"] == "inconclusive_no_recurrent_arm_measured"
     assert verdict["claims"]["fusion_authorized"] is False
+
+
+def test_per_arm_fingerprints_retire_only_the_arm_that_changed(tmp_path: Path):
+    """Production passes a per-arm mapping. Raising one arm's budget must not
+    discard the arms whose configuration is untouched."""
+    common = dict(
+        model="/models/resident",
+        n_slots=16,
+        episode_wall_s=720.0,
+        seed=20260807,
+        per_domain=4,
+    )
+    vanilla_fp = sweep.decode_fingerprint(max_tokens=512, arm="vanilla", **common)
+    long_512 = sweep.decode_fingerprint(max_tokens=512, arm="vanilla_long", **common)
+    long_1024 = sweep.decode_fingerprint(max_tokens=1024, arm="vanilla_long", **common)
+
+    path = tmp_path / "journal.jsonl"
+    writer = sweep.Journal(path)
+    for arm, fp in (("vanilla", vanilla_fp), ("vanilla_long", long_512)):
+        writer.append(
+            {
+                "event": "CELL",
+                "arm": arm,
+                "task_id": "task-a",
+                "domain": "mathematics",
+                "decode_fingerprint": fp,
+                "text": "FINAL_ANSWER: {}",
+                "error": "",
+            }
+        )
+
+    resumed = sweep.Journal(
+        path, {"vanilla": vanilla_fp, "vanilla_long": long_1024}
+    )
+    assert resumed.done == {("vanilla", "task-a")}
+    assert resumed.superseded == 1
+
+    # An arm dropped from the configuration stops counting as evidence.
+    narrowed = sweep.Journal(path, {"vanilla": vanilla_fp})
+    assert narrowed.done == {("vanilla", "task-a")}
+    assert narrowed.superseded == 1
