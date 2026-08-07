@@ -6420,10 +6420,32 @@ class LatentCortexEngine:
                         values,
                         receipt=receipt,
                     ),
-                    enabled=(
-                        self.config.answer_replacement_enabled
-                        and latent_decode_authorized
-                    ),
+                    # Do NOT couple this to latent_decode_authorized.
+                    #
+                    # That coupling made a win structurally impossible. Under
+                    # "latent" the recurrent path owns the answer outright, so
+                    # there is no floor and the episode can score far below
+                    # ordinary decode. Under "vanilla_incumbent" the floor
+                    # holds -- and replacement was force-disabled, so the
+                    # episode was exactly ordinary decode at several times the
+                    # cost, incapable of improving on it. Neither policy could
+                    # both keep the floor and gain, which is why this path had
+                    # never beaten vanilla.
+                    #
+                    # The lower-bound-dominance rule exists precisely to
+                    # promote safely FROM a safe baseline: it replaces only
+                    # when a candidate's lower confidence bound clears the
+                    # incumbent's upper bound plus a margin. Gating it on
+                    # "latent already owns the output" let it fire only once it
+                    # was no longer needed. Everything it needs is already
+                    # built here under either policy -- the incumbent answer as
+                    # baseline, the branch probes and repairs as candidates.
+                    #
+                    # This is also what the incumbent branch's own comment
+                    # promised: recurrence and verification "do not own the
+                    # public answer until an independent gain gate promotes
+                    # them". This is that gate.
+                    enabled=self.config.answer_replacement_enabled,
                     margin=self.config.answer_replacement_margin,
                     max_output_tokens=replacement_output_limit,
                 )

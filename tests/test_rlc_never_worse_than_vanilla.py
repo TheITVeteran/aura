@@ -95,3 +95,36 @@ def test_the_last_divergence_is_crossed_rather_than_assumed():
     # The disposition is the ONLY thing that differs between them.
     assert product.policy == "applied"
     assert matched.policy == "suppressed"
+
+
+def test_the_floor_and_the_gain_are_not_mutually_exclusive():
+    """The deadlock that made a win impossible.
+
+    decode_incumbent_policy governs WHO owns the answer; answer_replacement
+    governs WHETHER a better candidate may take it. Wiring the second to the
+    first meant:
+
+      latent            -> may promote, but no floor at all
+      vanilla_incumbent -> floor holds, promotion force-disabled
+
+    so no configuration could both stay at or above ordinary decode AND
+    improve on it. The product arm must be the combination the engine's own
+    incumbent comment promises: ordinary decode owns the answer until an
+    independent gain gate promotes something better.
+    """
+    full = sweep._build_config(8, 16, "applied", 512, profile="full")
+    assert full.decode_incumbent_policy == "vanilla_incumbent"
+    assert full.answer_replacement_enabled is True
+
+    import inspect
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+
+    src = inspect.getsource(engine_mod)
+    assert "enabled=self.config.answer_replacement_enabled," in src, (
+        "the promotion gate must not be re-coupled to decode_incumbent_policy"
+    )
+    assert (
+        "self.config.answer_replacement_enabled\n                        and latent_decode_authorized"
+        not in src
+    )
