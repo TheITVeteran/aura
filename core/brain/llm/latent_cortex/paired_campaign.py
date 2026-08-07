@@ -210,11 +210,17 @@ def _validate_claim_exact_power(
         _fail("campaign_exact_power_required")
 
 
-def _validate_claim_output_policy(execution_config: Mapping[str, Any]) -> None:
-    """Require arm-symmetric raw outputs for causal gain attribution."""
+def _validate_output_policy(
+    execution_config: Mapping[str, Any],
+    *,
+    required: bool,
+) -> None:
+    """Validate arm-symmetric raw outputs when declared or claim-required."""
 
     policy = execution_config.get("response_contract_policy")
     effective = execution_config.get("effective_rlc_config")
+    if policy is None and effective is None and not required:
+        return
     if (
         not isinstance(policy, Mapping)
         or not isinstance(effective, Mapping)
@@ -224,7 +230,11 @@ def _validate_claim_output_policy(execution_config: Mapping[str, Any]) -> None:
         or policy.get("causal_attribution_rule") != "raw_terminal_decode_all_arms"
         or effective.get("answer_replacement_enabled") is not False
     ):
-        _fail("campaign_claim_output_policy_invalid")
+        _fail(
+            "campaign_claim_output_policy_invalid"
+            if required
+            else "campaign_output_policy_invalid"
+        )
 
 
 def _is_sha256(value: Any) -> bool:
@@ -433,7 +443,7 @@ def build_campaign_plan(
             task_domains=(task.domain for task in public_tasks),
             arms=normalized_arms,
         )
-        _validate_claim_output_policy(execution_config)
+    _validate_output_policy(execution_config, required=claim_eligible)
     task_by_id = {task.task_id: task for task in public_tasks}
     ordered_tasks = [task_by_id[record.task_id] for record in manifest.tasks]
     execution_order = _arm_execution_order(campaign_name, normalized_arms)
@@ -919,7 +929,10 @@ def grade_campaign(
             task_domains=(cast(str, task["domain"]) for task in tasks_by_id.values()),
             arms=arms,
         )
-        _validate_claim_output_policy(cast(Mapping[str, Any], execution_config))
+    _validate_output_policy(
+        cast(Mapping[str, Any], execution_config),
+        required=claim_eligible,
+    )
     rows: dict[
         str,
         dict[str, tuple[str, bool, int, dict[str, Any], dict[str, Any]]],

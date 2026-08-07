@@ -1020,23 +1020,29 @@ def _extract_rows(
     claim_eligible = metadata.get("claim_eligible")
     if type(claim_eligible) is not bool:
         _fail("independent_claim_eligibility_invalid")
+    response_policy = execution_config.get("response_contract_policy")
+    effective_rlc_config = execution_config.get("effective_rlc_config")
+    output_policy_bound = response_policy is not None or effective_rlc_config is not None
+    output_policy_valid = bool(
+        isinstance(response_policy, Mapping)
+        and isinstance(effective_rlc_config, Mapping)
+        and response_policy.get("applies_identically_to_all_decode_arms") is True
+        and response_policy.get("output_editing") is False
+        and response_policy.get("rlc_answer_replacement_enabled") is False
+        and response_policy.get("causal_attribution_rule")
+        == "raw_terminal_decode_all_arms"
+        and effective_rlc_config.get("answer_replacement_enabled") is False
+    )
+    if (output_policy_bound or claim_eligible) and not output_policy_valid:
+        _fail(
+            "independent_claim_output_policy_invalid"
+            if claim_eligible
+            else "independent_output_policy_invalid"
+        )
     if claim_eligible:
         campaign_trust = metadata.get("campaign_trust")
         contamination_root = metadata.get("contamination_trust_root_sha256")
         audit = metadata.get("contamination_audit")
-        response_policy = execution_config.get("response_contract_policy")
-        effective_rlc_config = execution_config.get("effective_rlc_config")
-        if (
-            not isinstance(response_policy, Mapping)
-            or not isinstance(effective_rlc_config, Mapping)
-            or response_policy.get("applies_identically_to_all_decode_arms") is not True
-            or response_policy.get("output_editing") is not False
-            or response_policy.get("rlc_answer_replacement_enabled") is not False
-            or response_policy.get("causal_attribution_rule")
-            != "raw_terminal_decode_all_arms"
-            or effective_rlc_config.get("answer_replacement_enabled") is not False
-        ):
-            _fail("independent_claim_output_policy_invalid")
         if (
             execution_config.get("worker_origin_protocol")
             != "detached_supervisor_staged_arm_import_v3"

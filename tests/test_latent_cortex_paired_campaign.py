@@ -728,14 +728,22 @@ def test_claim_output_policy_requires_arm_symmetric_raw_decodes():
         },
     }
 
-    paired._validate_claim_output_policy(valid)
+    paired._validate_output_policy(valid, required=True)
     asymmetric = json.loads(json.dumps(valid))
     asymmetric["effective_rlc_config"]["answer_replacement_enabled"] = True
     with pytest.raises(
         PairedCampaignError,
         match="campaign_claim_output_policy_invalid",
     ):
-        paired._validate_claim_output_policy(asymmetric)
+        paired._validate_output_policy(asymmetric, required=True)
+
+    with pytest.raises(
+        PairedCampaignError,
+        match="campaign_output_policy_invalid",
+    ):
+        paired._validate_output_policy(asymmetric, required=False)
+
+    paired._validate_output_policy({}, required=False)
 
 
 def test_claim_grade_requires_out_of_band_campaign_policy_pin():

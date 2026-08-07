@@ -619,6 +619,35 @@ def test_independent_complete_semantic_tree_matches_production_byte_for_byte():
     )
 
 
+def test_nonclaiming_bound_output_policy_cannot_contradict_effective_runtime():
+    plan, tasks = _plan_and_tasks()
+    document = plan.to_dict()
+    config = document["metadata"]["execution_config"]
+    config["effective_rlc_config"] = {"answer_replacement_enabled": True}
+    config["response_contract_policy"] = {
+        "applies_identically_to_all_decode_arms": True,
+        "output_editing": False,
+        "rlc_answer_replacement_enabled": True,
+        "causal_attribution_rule": "raw_terminal_decode_all_arms",
+    }
+    asymmetric = type(plan).build(
+        document["campaign_name"],
+        [plan.cell_definition(cell_id) for cell_id in plan.cell_ids],
+        metadata=document["metadata"],
+    )
+
+    with pytest.raises(
+        production_campaign.PairedCampaignError,
+        match="campaign_output_policy_invalid",
+    ):
+        production_campaign.grade_campaign([], plan=asymmetric, issuer_tasks=tasks)
+    with pytest.raises(
+        IndependentScoringError,
+        match="independent_output_policy_invalid",
+    ):
+        independent_grade_campaign([], plan=asymmetric, issuer_tasks=tasks)
+
+
 def test_independent_interim_scope_and_alpha_match_production_byte_for_byte():
     plan, tasks = _plan_and_tasks()
     records = _records(plan, tasks)
