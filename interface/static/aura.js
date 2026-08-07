@@ -2308,6 +2308,80 @@ class VoiceStreamPlayer {
 }
 const voicePlayer = new VoiceStreamPlayer();
 
+/**
+ * Play media in the chat, rather than handing the conversation off.
+ *
+ * The current state of the art for "play X" is a hand-off: a card that opens
+ * a streaming app, or a link to a new tab. The conversation stops and
+ * something else starts. Aura is running on the machine that holds the file,
+ * so there is no reason for the music to happen anywhere but here.
+ *
+ * The card is deliberately quiet — a title, where it came from, and the
+ * browser's own transport controls. Native controls rather than drawn ones:
+ * they are keyboard accessible, they are what the platform's assistive
+ * technology already knows how to drive, and a hand-rolled scrubber is a
+ * large amount of code whose only achievement is being less good at this.
+ */
+function appendMediaMessage(media, metadata = {}) {
+    const messages = DOM.messages || $('messages');
+    if (!messages || !media || !media.id) return;
+
+    const div = document.createElement('div');
+    div.className = 'msg aura';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'aura-avatar';
+    div.appendChild(avatar);
+
+    const content = document.createElement('div');
+    content.className = 'msg-content media-card';
+
+    const isVideo = media.kind === 'video';
+    const player = document.createElement(isVideo ? 'video' : 'audio');
+    player.controls = true;
+    player.preload = 'metadata';
+    player.className = isVideo ? 'media-video' : 'media-audio';
+    // Same-origin, id-addressed. The endpoint resolves it through the media
+    // index, which is the allowlist — there is no path here to sanitise.
+    player.src = `/api/media/stream/${encodeURIComponent(media.id)}`;
+
+    const title = document.createElement('div');
+    title.className = 'media-title';
+    title.textContent = media.title || 'Untitled';
+
+    const where = document.createElement('div');
+    where.className = 'media-where';
+    where.textContent = media.folder ? `${media.folder} · on this machine` : 'on this machine';
+
+    content.appendChild(title);
+    content.appendChild(where);
+    content.appendChild(player);
+
+    if (media.broadly_playable === false) {
+        // Findable but possibly not decodable here. Saying so beats showing a
+        // player that silently does nothing, which reads as a broken file.
+        const note = document.createElement('div');
+        note.className = 'media-note';
+        note.textContent = 'This format only plays in some browsers — it may not decode here.';
+        content.appendChild(note);
+    }
+
+    // The element is the authority on whether it can actually play the file.
+    // An extension check is a guess; a decode error is a fact.
+    player.addEventListener('error', () => {
+        const failed = document.createElement('div');
+        failed.className = 'media-note media-note-error';
+        failed.textContent = 'Your browser could not decode this file.';
+        content.appendChild(failed);
+        player.remove();
+    }, { once: true });
+
+    div.appendChild(content);
+    messages.appendChild(div);
+    pruneVisibleMessages(messages);
+    if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
+}
+
 function appendGeneratedImageMessage(imageUrl, metadata = {}) {
     const safeUrl = safeDisplayUrl(imageUrl, { imageOnly: true });
     if (!safeUrl) {
@@ -2615,8 +2689,14 @@ function handleWsEvent(data) {
         const displayType = (result && result.display_type) || data.display_type;
         const imageUrl = (result && result.url) || data.url;
 
+        const mediaItem = (result && result.media) || data.media;
+
         if (displayType === 'image' && imageUrl) {
             appendGeneratedImageMessage(imageUrl, { autonomic: isAutonomic });
+            $('typing-ind').classList.remove('show');
+            setChatPanelState('idle');
+        } else if (mediaItem) {
+            appendMediaMessage(mediaItem, { autonomic: isAutonomic });
             $('typing-ind').classList.remove('show');
             setChatPanelState('idle');
         } else if (result) {

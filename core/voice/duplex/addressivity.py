@@ -79,8 +79,21 @@ def _vocative_name(text: str, names: tuple[str, ...]) -> bool:
     for name in names:
         n = re.escape(name.lower())
         if re.search(rf"^\s*(?:hey\s+|hi\s+|ok\s+|okay\s+)?{n}\b[\s,!?.:]", low):
-            # Opening position — but not if what follows makes it a subject.
-            if re.search(rf"^\s*(?:hey\s+|hi\s+|ok\s+|okay\s+)?{n}\s+(?:is|was|has|had|does|did|can|could|will|would|says|said|seems|looks|keeps|never|always)\b", low):
+            # Opening position — but not if what follows makes her the
+            # subject of the sentence rather than the person being addressed.
+            #
+            # The modals need care: "Aura can do it" is about her, while
+            # "Aura can you open my notes" is to her. A following "you" is
+            # what decides it, so the modal branch checks for one.
+            subject = rf"^\s*(?:hey\s+|hi\s+|ok\s+|okay\s+)?{n}\s+"
+            if re.search(
+                subject + r"(?:is|was|has|had|does|did|says|said|seems|looks|keeps|never|always)\b",
+                low,
+            ):
+                continue
+            if re.search(subject + r"(?:can|could|will|would|should)\b", low) and not re.search(
+                subject + r"(?:can|could|will|would|should)\s+(?:you|we|i)\b", low
+            ):
                 continue
             return True
         if re.search(rf"[,;]\s*{n}\s*[?!.]?\s*$", low):
@@ -91,6 +104,13 @@ def _vocative_name(text: str, names: tuple[str, ...]) -> bool:
 
 
 def _mentions_name_as_subject(text: str, names: tuple[str, ...]) -> bool:
+    """"Aura is being weird" — she is the subject, not the addressee.
+
+    The modals are deliberately absent from this list. "Aura can do it" is
+    about her and "Aura can you open my notes" is to her, and the word that
+    separates them is the "you" immediately after — which the vocative check
+    handles, so putting modals here would reject the address form outright.
+    """
     low = text.lower()
     return any(
         re.search(
@@ -117,6 +137,26 @@ _SECOND_PERSON = re.compile(
     r"|\bplease\b",
     re.IGNORECASE,
 )
+
+# A bare imperative is address with the addressee left implicit — "play
+# something quiet", "open my notes", "remind me at six". English drops the
+# "you" in commands, so a rule that only looks for second-person pronouns
+# misses the most direct form of address there is.
+#
+# Anchored to the start of the utterance on purpose. Mid-sentence these same
+# verbs are ordinary narration ("we should play that again", "they opened the
+# file"), and matching those would answer people describing their day.
+_IMPERATIVE_OPENER = re.compile(
+    r"^\s*(?:please\s+|just\s+|now\s+|go\s+ahead\s+and\s+)?"
+    r"(?:play|open|close|stop|pause|resume|start|find|search|look\s+up|pull\s+up|show|tell"
+    r"|write|make|create|send|read|explain|remind|set|turn|add|remove|delete|cancel"
+    r"|help|check|call|email|schedule|summarise|summarize|translate|convert)\b",
+    re.IGNORECASE,
+)
+
+
+def _addressed_to_a_listener(text: str) -> bool:
+    return bool(_SECOND_PERSON.search(text) or _IMPERATIVE_OPENER.match(text))
 
 # Somebody else is the addressee, or the subject is a third party. These veto
 # rather than merely subtract: "tell him I'll call back" is unambiguous, and
@@ -172,6 +212,15 @@ class AddressContext:
     floor_explicitly_open: bool = False
 
 
+def _as_reasons(value: object) -> tuple[str, ...]:
+    """Normalise a reason list, treating a bare string as one reason."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value.strip() else ()
+    return tuple(str(item) for item in value if str(item).strip())
+
+
 @dataclass(slots=True)
 class AddressVerdict:
     """Whether to answer, and exactly why."""
@@ -181,6 +230,15 @@ class AddressVerdict:
     reasons: tuple[str, ...] = ()
     vetoes: tuple[str, ...] = ()
     at: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        # A one-element tuple written without its trailing comma is a string,
+        # and a string satisfies every type check here while iterating as
+        # individual characters. It reached a verdict already; the failure is
+        # silent and only shows up as a reason list rendered one letter at a
+        # time. Coercing at the boundary makes the mistake unwritable.
+        self.reasons = _as_reasons(self.reasons)
+        self.vetoes = _as_reasons(self.vetoes)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -257,7 +315,7 @@ class AddressivityGate:
         # series of commands, and it is where dropping the wake word actually
         # pays.
         if floor_open:
-            if _CONTINUATION.match(text) or _SECOND_PERSON.search(text):
+            if _CONTINUATION.match(text) or _addressed_to_a_listener(text):
                 return AddressVerdict(
                     True,
                     "open_floor",
@@ -290,7 +348,7 @@ class AddressivityGate:
         # confidence and loudness say it was spoken near this machine, and the
         # absence of competing speech says the room is not full of it.
         reasons: list[str] = []
-        if not _SECOND_PERSON.search(text):
+        if not _addressed_to_a_listener(text):
             return AddressVerdict(
                 False,
                 "cold_open_unaddressed",
@@ -323,8 +381,10 @@ class AddressivityGate:
                 False,
                 "cold_open_distant",
                 vetoes=(
-                    f"{context.loudness_z:.1f}σ quieter than this speaker normally is, "
-                    "so it was probably not aimed here"
+                    (
+                        f"{context.loudness_z:.1f}σ quieter than this speaker normally "
+                        "is, so it was probably not aimed here"
+                    ),
                 ),
             )
         if context.loudness_z is not None:

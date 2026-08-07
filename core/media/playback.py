@@ -47,9 +47,15 @@ _PLAY_REQUEST = re.compile(
     re.IGNORECASE,
 )
 
-# Words that are about the request rather than part of the title.
+# Words that are about the request rather than part of the title. Applied
+# repeatedly until the text stops changing, because they stack: "play me that
+# song by Radiohead" has four of them in a row before the part that matters.
 _STOPWORDS = re.compile(
-    r"^\s*(?:me\s+|some\s+|the\s+|a\s+|an\s+|that\s+|my\s+)+"
+    r"^\s*(?:me\s+|some\s+|the\s+|a\s+|an\s+|that\s+|my\s+|by\s+)+"
+    # A leading medium word is a description of what is wanted, not its name:
+    # "play some music by X" is a request for X. A *trailing* one is the same
+    # ("play the Radiohead album"), so both ends are stripped.
+    r"|^\s*(?:song|track|album|playlist|video|movie|film|music)\s+(?=\S)"
     r"|\b(?:please|for me|in here|in chat|out loud)\b"
     r"|\s+(?:song|track|album|video|movie|music)\s*$",
     re.IGNORECASE,

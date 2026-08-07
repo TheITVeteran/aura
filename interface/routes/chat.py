@@ -163,6 +163,41 @@ class CheatCodeRequest(BaseModel):
     silent: bool = False
 
 
+def _publish_media_card(resolution: Any) -> None:
+    """Put the player on screen.
+
+    Best-effort by construction: this is a UI event, and a surface that
+    cannot be reached must never take down the turn that produced it. If the
+    card does not arrive the reply still does, and the reply is where the
+    conversation actually lives.
+    """
+    item = getattr(resolution, "item", None)
+    if item is None:
+        return
+    try:
+        from core.container import ServiceContainer
+
+        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        publish = getattr(orchestrator, "_publish_telemetry", None)
+        if publish is None:
+            return
+        publish(
+            {
+                "type": "action_result",
+                "tool": "media_playback",
+                "media": item.to_dict(),
+                "result": {"message": f"Playing {item.title}."},
+            }
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.media",
+            exc,
+            action="the media card did not reach the surface; the reply still did",
+            severity="warning",
+        )
+
+
 async def run_governed_surface_chat_turn(
     message: str,
     *,
@@ -20386,6 +20421,40 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 record_degradation('chat', _dir_exc)
                 logger.debug("Chat directive preflight skipped: %s", _dir_exc)
             
+            # Media. "Play Kind of Blue" resolves against what is actually on
+            # this machine, and the card goes out before the reply so the
+            # music starts while she is still forming the sentence about it —
+            # which is the right order, because the request was for the music.
+            #
+            # Either outcome ends up in her context rather than in a fixed
+            # string: a hit tells her what is playing, and a miss records what
+            # was searched and what the connectivity probe really said, so the
+            # "I can't stream anything" case comes out in her own words.
+            try:
+                from core.media.playback import resolve_play_request
+
+                _media = resolve_play_request(_original_user_message)
+                if _media.playable and _media.item is not None:
+                    _publish_media_card(_media)
+                    body.message = (
+                        f"[you are already playing {_media.item.title!r} "
+                        f"({_media.item.kind}) from this machine, in the chat, "
+                        "right now — the card is on screen and the audio has "
+                        "started. Say what you put on the way a person would; "
+                        "do not describe a file or offer to play it.]\n\n"
+                        f"{body.message}"
+                    )
+                elif _media.status == "needs_network":
+                    body.message = (
+                        f"[nothing matching {_media.query!r} is on this machine "
+                        f"({_media.searched}), but the network is up, so finding "
+                        "it is a thing you can offer to do.]\n\n"
+                        f"{body.message}"
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as _media_exc:
+                record_degradation("chat.media", _media_exc)
+                logger.debug("Chat media preflight skipped: %s", _media_exc)
+
             # Grounded recall: positional/temporal questions ("what did I first
             # ask?") are answered from the ACTUAL earliest/most-recent turn in the
             # live transcript, not a confabulated guess. Injected as an

@@ -7649,3 +7649,48 @@ body.theme-light .skill-card::before {
     font-size: 0.58rem;
     color: color-mix(in srgb, var(--text-dim) 78%, transparent);
 }
+
+/* ── media in the chat ─────────────────────────────────────────────────
+ *
+ * The card is a title, a provenance line, and the browser's own transport
+ * controls. Native controls on purpose: they are keyboard accessible, the
+ * platform's assistive technology already knows how to drive them, and a
+ * hand-rolled scrubber is a lot of code whose only achievement is being
+ * worse at this.
+ */
+.media-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aura-space-2);
+  max-width: 44rem;
+}
+
+.media-title {
+  font-size: var(--aura-text-1);
+  line-height: var(--aura-text-1h);
+  color: var(--aura-fg);
+}
+
+.media-where {
+  font-size: var(--aura-text-2);
+  color: var(--aura-fg-mute);
+}
+
+.media-audio {
+  width: 100%;
+  min-width: 16rem;
+}
+
+.media-video {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: var(--aura-radius-2);
+  background: #000;
+}
+
+.media-note {
+  font-size: var(--aura-text-2);
+  color: var(--aura-fg-mute);
+}
+
+.media-note-error { color: var(--aura-warn); }
