@@ -135,7 +135,12 @@ def build_sequential_look_certificate(
         _fail("sequential_previous_certificate_required")
 
     records = tuple(committed_records)
-    expected_cells = len(task_ids) * len(metadata["arms"])
+    expected_cell_ids = {
+        cell_id
+        for cell_id in plan.cell_ids
+        if plan.cell_definition(cell_id).get("task_id") in task_ids
+    }
+    expected_cells = len(expected_cell_ids)
     observed_task_ids: set[str] = set()
     observed_cell_ids: set[str] = set()
     record_receipts: list[dict[str, Any]] = []
@@ -147,8 +152,10 @@ def build_sequential_look_certificate(
         commit = record.get("commit")
         if (
             not isinstance(cell_id, str)
+            or cell_id not in expected_cell_ids
             or cell_id in observed_cell_ids
             or not isinstance(definition, Mapping)
+            or dict(definition) != plan.cell_definition(cell_id)
             or definition.get("task_id") not in task_ids
             or not isinstance(commit, Mapping)
             or not _is_sha256(commit.get("result_sha256"))
@@ -166,6 +173,7 @@ def build_sequential_look_certificate(
         )
     if (
         observed_task_ids != set(task_ids)
+        or observed_cell_ids != expected_cell_ids
         or len(observed_cell_ids) != expected_cells
         or len(records) != expected_cells
     ):
@@ -188,9 +196,9 @@ def build_sequential_look_certificate(
     verdict = production.get("verdict")
     terminal = look == len(power["looks"])
     if verdict == "gain_preverified":
-        decision = "positive_stop"
+        decision = "positive_boundary_crossed"
     elif verdict == "gain_refuted":
-        decision = "refutation_stop"
+        decision = "refutation_boundary_crossed"
     elif terminal:
         decision = "terminal_inconclusive"
     else:

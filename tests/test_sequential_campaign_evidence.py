@@ -116,7 +116,7 @@ def test_look_certificate_chains_and_classifies_only_exact_grade_verdicts():
         independent_grade=final_grade,
         previous_certificate_sha256=first["certificate_sha256"],
     )
-    assert final["decision"] == "positive_stop"
+    assert final["decision"] == "positive_boundary_crossed"
     assert final["previous_certificate_sha256"] == first["certificate_sha256"]
 
 
@@ -135,6 +135,21 @@ def test_look_certificate_rejects_independent_or_scope_tampering():
             committed_records=_records(plan, 1),
             production_grade=grade,
             independent_grade=independent,
+            previous_certificate_sha256=None,
+        )
+
+    records = _records(plan, 1)
+    records[0]["cell_id"] = "cell-" + "f" * 64
+    with pytest.raises(
+        SequentialCampaignEvidenceError,
+        match="sequential_record_invalid",
+    ):
+        build_sequential_look_certificate(
+            plan=plan,
+            look=1,
+            committed_records=records,
+            production_grade=grade,
+            independent_grade=grade,
             previous_certificate_sha256=None,
         )
 

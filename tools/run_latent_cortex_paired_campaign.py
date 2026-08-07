@@ -105,6 +105,8 @@ from core.brain.llm.latent_cortex.runtime_identity import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.sequential_campaign_evidence import (  # noqa: E402
     SequentialCampaignEvidenceError,
+    build_sequential_look_certificate,
+    cumulative_task_ids,
     sequential_task_look_assignments,
 )
 from core.brain.llm.latent_cortex.worker_attempt_import import (  # noqa: E402
@@ -120,6 +122,9 @@ from core.runtime.detached_subprocess_broker import (  # noqa: E402
 )
 from core.runtime.detached_worker_origin_channel import (  # noqa: E402
     DetachedWorkerOriginChannelClient,
+)
+from tools.independent_paired_campaign_scoring import (  # noqa: E402
+    independent_grade_campaign,
 )
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     absent_personality_identity,
@@ -137,6 +142,7 @@ FINAL_RUN_REQUEST_FILE = "final_run_request.json"
 FINAL_RUN_ENVELOPE_FILE = "final_run_envelope.json"
 WORKER_ATTEMPT_DIR = "worker_attempts"
 WORKER_EXECUTION_MANIFEST_FILE = "worker_execution_manifest.json"
+SEQUENTIAL_LOOK_DIR = "sequential_looks"
 OBJECTIVE_SOURCE = REPO_ROOT / "core/learning/recurrence_native_objective.py"
 V2_MANIFEST_FILE = "recurrence_adapter_manifest.json"
 CONTAMINATION_AUDIT_SCHEMA = "aura.latent_cortex.contamination_audit.v2"
@@ -2859,6 +2865,95 @@ def _score_sealed_outputs(
             )
 
 
+def _evaluate_sequential_look(
+    args: argparse.Namespace,
+    plan: CampaignPlan,
+    tasks: tuple[FrontierTask, ...],
+    *,
+    worker_look: int,
+) -> dict[str, Any] | None:
+    if worker_look == 0:
+        return None
+    campaign_dir = Path(args.campaign_dir).expanduser().resolve()
+    task_ids = cumulative_task_ids(plan, worker_look)
+    _score_sealed_outputs(campaign_dir, plan, tasks)
+    with CampaignJournal(campaign_dir / JOURNAL_FILE, plan) as journal:
+        records = tuple(
+            record
+            for record in journal.committed_records()
+            if record["definition"]["task_id"] in task_ids
+        )
+    metadata = plan.to_dict()["metadata"]
+    power = metadata["execution_config"]["exact_statistical_power"]
+    look_receipt = power["looks"][worker_look - 1]
+    family_alpha = Rational(**look_receipt["family_alpha"])
+    contamination_root = (
+        _load_contamination_trust_root(args.contamination_trust_root)[2]
+        if args.contamination_audit
+        else None
+    )
+    policy_sha256 = (
+        metadata["campaign_trust"]["policy_sha256"]
+        if isinstance(metadata.get("campaign_trust"), dict)
+        else None
+    )
+    production = grade_campaign(
+        records,
+        plan=plan,
+        issuer_tasks=tasks,
+        trusted_contamination_root_sha256=contamination_root,
+        trusted_campaign_policy_sha256=policy_sha256,
+        family_alpha=family_alpha,
+        included_task_ids=task_ids,
+    )
+    independent = independent_grade_campaign(
+        records,
+        plan=plan,
+        issuer_tasks=tasks,
+        trusted_contamination_root_sha256=contamination_root,
+        trusted_campaign_policy_sha256=policy_sha256,
+        family_alpha=look_receipt["family_alpha"],
+        included_task_ids=task_ids,
+    )["semantic_grade"]
+    look_dir = campaign_dir / SEQUENTIAL_LOOK_DIR
+    look_dir.mkdir(mode=0o700, exist_ok=True)
+    previous_sha256 = None
+    if worker_look > 1:
+        previous = _read_canonical_json_artifact(
+            look_dir / f"look-{worker_look - 1:03d}.json",
+            role="previous sequential look certificate",
+        )
+        previous_sha256 = previous.get("certificate_sha256")
+    try:
+        certificate = build_sequential_look_certificate(
+            plan=plan,
+            look=worker_look,
+            committed_records=records,
+            production_grade=production,
+            independent_grade=independent,
+            previous_certificate_sha256=previous_sha256,
+        )
+    except SequentialCampaignEvidenceError as exc:
+        raise CampaignProducerError(str(exc)) from exc
+    path = look_dir / f"look-{worker_look:03d}.json"
+    _atomic_create_or_verify(path, canonical_json_bytes(certificate) + b"\n")
+    print(
+        json.dumps(
+            {
+                "state": "sequential_look_certified",
+                "look": worker_look,
+                "decision": certificate["decision"],
+                "certificate_sha256": certificate["certificate_sha256"],
+                "path": str(path),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return certificate
+
+
 def _admit_final_run_envelope(
     args: argparse.Namespace,
     plan: CampaignPlan,
@@ -3657,6 +3752,13 @@ def _orchestrate(
                 )
                 if code != 0 and attempts >= args.max_infra_attempts:
                     return code or 4
+        if worker_look:
+            _evaluate_sequential_look(
+                args,
+                plan,
+                tasks,
+                worker_look=worker_look,
+            )
 
     worker_execution = _build_worker_execution_manifest(args, plan)
     sealed_outputs = _seal_output_manifest(

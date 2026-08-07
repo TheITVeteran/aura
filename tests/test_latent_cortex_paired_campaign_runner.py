@@ -813,6 +813,13 @@ def _sequential_runner_plan():
         domains=("mathematics", "coding"),
         difficulty=1,
     )
+    power = runner.exact_group_sequential_power_plan(
+        domain_count=2,
+        comparison_count=4,
+        arm_count=len(runner.PRIMARY_ARMS),
+        look_observations_per_domain=(2, 4),
+        alpha_weights=(runner.Rational(1, 10), runner.Rational(9, 10)),
+    )
     return build_campaign_plan(
         "sequential-runner-contract",
         tasks,
@@ -824,6 +831,7 @@ def _sequential_runner_plan():
                 {"numerator": 1, "denominator": 10},
                 {"numerator": 9, "denominator": 10},
             ],
+            "exact_statistical_power": power,
         },
         arms=runner.PRIMARY_ARMS,
     )
@@ -905,6 +913,76 @@ def test_sequential_attempt_slots_are_disjoint_per_look():
     args = SimpleNamespace(max_infra_attempts=3)
     assert tuple(runner._worker_attempt_slot_range(args, 1)) == (1, 2, 3)
     assert tuple(runner._worker_attempt_slot_range(args, 2)) == (4, 5, 6)
+
+
+def test_sequential_look_evaluation_publishes_independent_chained_certificate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    plan = _sequential_runner_plan()
+    task_ids = runner.cumulative_task_ids(plan, 1)
+    records = []
+    for cell_id in plan.cell_ids:
+        definition = plan.cell_definition(cell_id)
+        if definition["task_id"] in task_ids:
+            records.append(
+                {
+                    "cell_id": cell_id,
+                    "definition": definition,
+                    "commit": {
+                        "result_sha256": "a" * 64,
+                        "verification_sha256": "b" * 64,
+                    },
+                }
+            )
+    grade = {
+        "plan_sha256": plan.plan_sha256,
+        "expected_task_count": len(task_ids),
+        "expected_cell_count": len(records),
+        "statistical_policy": {
+            "alpha": {"numerator": 1, "denominator": 200}
+        },
+        "verdict": "inconclusive",
+    }
+
+    class FakeJournal:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def committed_records(self):
+            return tuple(records)
+
+    monkeypatch.setattr(runner, "CampaignJournal", FakeJournal)
+    monkeypatch.setattr(runner, "_score_sealed_outputs", lambda *_args: None)
+    monkeypatch.setattr(runner, "grade_campaign", lambda *_args, **_kwargs: grade)
+    monkeypatch.setattr(
+        runner,
+        "independent_grade_campaign",
+        lambda *_args, **_kwargs: {"semantic_grade": grade},
+    )
+    args = SimpleNamespace(
+        campaign_dir=str(tmp_path),
+        contamination_audit="",
+        contamination_trust_root="",
+    )
+
+    certificate = runner._evaluate_sequential_look(
+        args,
+        plan,
+        (),
+        worker_look=1,
+    )
+
+    assert certificate is not None
+    assert certificate["decision"] == "continue"
+    path = tmp_path / runner.SEQUENTIAL_LOOK_DIR / "look-001.json"
+    assert json.loads(path.read_text()) == certificate
 
 
 def test_claim_broker_policy_covers_every_exact_worker_attempt_command(
