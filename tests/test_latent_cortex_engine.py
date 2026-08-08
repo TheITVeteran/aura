@@ -529,7 +529,7 @@ def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
         return 0.9 if "= 5" in text else 0.1
 
     def fresh(prompt: str, *_args, **_kwargs):
-        assert "PRESERVED_PREFIX:" in prompt
+        assert "PRESERVED_PREFIX_CHARS:" in prompt
         return {
             "text": (
                 'FINAL_ANSWER: {"replacement_suffix":'

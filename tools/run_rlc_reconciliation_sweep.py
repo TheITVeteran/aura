@@ -372,7 +372,9 @@ def _build_config(
         # -- the chain ran end to end and then dropped its only candidate,
         # which is why the arm could tie ordinary decode but never beat it.
         # The repair therefore gets the same room as the answer it replaces.
-        local_repair_max_tokens=min(512, max_tokens) if full else 128,
+        local_repair_max_tokens=(
+            max(32, min(512, max_tokens)) if full else 128
+        ),
         # A degraded episode that quietly serves an ordinary decode would make
         # this arm a second copy of the vanilla control wearing the recurrent
         # arm's label -- the worst possible failure here, because it looks like
