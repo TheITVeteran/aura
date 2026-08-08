@@ -256,10 +256,15 @@ class ImmuneSystem:
         proceed. An emergency is not authority.
         """
         try:
-            from core.will import ActionDomain, get_will
+            from core.runtime.action_executor import ActionExecutor
+            from core.will import ActionDomain
 
-            decision = get_will().decide(
-                content=f"immune_rollback:{snapshot.name}",
+            admission = ActionExecutor.authorize_action(
+                action_name="immune_system.core_code_rollback",
+                params={
+                    "snapshot": str(snapshot),
+                    "target": "core/cognition/cognitive_kernel.py",
+                },
                 source="immune_system",
                 domain=ActionDomain.SELF_MODIFICATION,
                 priority=0.95,
@@ -269,7 +274,7 @@ class ImmuneSystem:
                     "target": "core/cognition/cognitive_kernel.py",
                 },
             )
-            return bool(decision.is_approved())
+            return admission.approved
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 'immune_system', exc, severity="warning",
@@ -285,4 +290,3 @@ def get_immune_system():
     if _instance is None:
         _instance = ImmuneSystem()
     return _instance
-

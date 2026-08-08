@@ -38788,3 +38788,31 @@ collision. The completion envelope stays `809/920` (approximately `87.9%`);
 this closes two Will-decision ownership debts, not the remaining effect
 migration, RLC verdict, fusion, release, exhaustive semantic review, live proof,
 or endurance program.
+
+## Checkpoint 2026-08-08-030: Immune Admissions Use the Action Owner
+
+Adaptive immune effectors and legacy emergency rollback no longer import and
+decide through Unified Will from their subsystem modules. Both now use the
+canonical `ActionExecutor.authorize_action` boundary. Adaptive recovery passes
+the exact artifact ID, component, payload digest, allowlisted recovery context,
+cell generation, strategy, and bounded payload evidence; emergency rollback
+passes the verified snapshot and exact executable target under the
+`self_modification` domain.
+
+The migration does not broaden immune authority. Recovery remains limited to
+the internal-only operations accepted by `recovery_authority`, prohibited
+external/self-modification markers still fail closed, a payload changed after
+admission is still refused, and unavailable governance still blocks the effect.
+Rollback still requires containment, manifest integrity, parseability, and an
+approved decision before preserving and replacing executable code.
+
+The complete adaptive and legacy immune-system contract selection passes
+`125/125`; governance-lint self-tests pass `15/15`; canonical smoke passes
+`103/103`; layering, exact effect ownership, affected Ruff, byte compilation,
+and diff hygiene pass. The exact inventory falls from 2,213 calls in 2,065
+buckets with 1,945 migration-debt calls to 2,211 calls in 2,063 buckets with
+1,943 migration-debt calls. The source-bound resident-32B campaign remained
+detached and no competing model was loaded. The completion envelope stays
+`809/920` (approximately `87.9%`); this closes two immune Will-decision ownership
+debts, not the remaining effect migration, RLC verdict, fusion, release,
+exhaustive semantic review, live proof, or endurance program.

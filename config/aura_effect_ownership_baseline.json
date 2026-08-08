@@ -16173,24 +16173,8 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
-      "path": "core/adaptation/adaptive_immunity.py",
-      "scope": "<module>.AdaptiveImmuneSystem._authorize_protected_action"
-    },
-    {
-      "callee": "core.will.get_will().decide",
-      "canonical_owner": false,
-      "category": "will_decision",
-      "count": 1,
       "path": "core/adaptation/dimensional_expansion.py",
       "scope": "<module>.DimensionalExpansionEngine._governance_approve_expansion"
-    },
-    {
-      "callee": "core.will.get_will().decide",
-      "canonical_owner": false,
-      "category": "will_decision",
-      "count": 1,
-      "path": "core/adaptation/immune_system.py",
-      "scope": "<module>.ImmuneSystem._rollback_authorized"
     },
     {
       "callee": "core.will.get_will().decide",
@@ -16522,6 +16506,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "939c226dfdc3771e42f6cf8fec6e21430b4e7e91937fa2f6a8a4043672b5c7fd",
+  "inventory_sha256": "890905c686214f3063cf90bc5d4f840eb605361f1e52e868420ebc9dd8878648",
   "schema_version": 1
 }

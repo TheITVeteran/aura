@@ -2758,7 +2758,8 @@ class AdaptiveImmuneSystem:
             from core.governance.recovery_authority import (
                 build_internal_recovery_context,
             )
-            from core.will import ActionDomain, get_will
+            from core.runtime.action_executor import ActionExecutor
+            from core.will import ActionDomain
 
             # CP126 81f0c6a0: Will saw only component, kind, danger and
             # lineage — it authorized a CATEGORY of action, not the action.
@@ -2792,14 +2793,19 @@ class AdaptiveImmuneSystem:
                     "error_signature": antigen.error_signature[:200],
                 },
             )
-            decision = get_will().decide(
-                content=f"Adaptive immune effector: {artifact.kind.value} on {artifact.component}",
+            admission = ActionExecutor.authorize_action(
+                action_name=f"adaptive_immune.{artifact.kind.value}",
+                params={
+                    "artifact_id": artifact.artifact_id,
+                    "component": artifact.component,
+                    "payload_digest": payload_digest,
+                },
                 source="adaptive_immune_system",
                 domain=ActionDomain.STATE_MUTATION,
                 priority=min(0.95, 0.45 + 0.35 * antigen.danger),
                 context=recovery_context,
             )
-            if not bool(decision.is_approved()):
+            if not admission.approved:
                 return False
             # The approval covered THIS payload. If anything mutated the
             # artifact between the decision and here, the approval no longer
