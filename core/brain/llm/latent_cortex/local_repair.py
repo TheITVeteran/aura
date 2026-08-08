@@ -307,20 +307,28 @@ def _repair_requests(
                 invalidated_atoms, invalidated_transitions = _descendant_closure(
                     decomposition, atom_id
                 )
+                # Must match the dispute path's shapes exactly: admission
+                # compares preserved_prefix_atoms against a freshly decomposed
+                # {atom_id, atom_sha256, text_sha256}. Building the
+                # preserved_unrelated_atoms shape here instead made that
+                # comparison impossible to satisfy, so every refutation-driven
+                # repair was rejected preserved_prefix_changed however good the
+                # candidate was.
                 preserved_atoms = [
                     {
-                        "ordinal": index,
                         "atom_id": atom["atom_id"],
-                        "kind": atom["kind"],
+                        "atom_sha256": atom["atom_sha256"],
                         "text_sha256": atom["text_sha256"],
-                        "dependency_cues": list(atom["dependency_cues"]),
                     }
-                    for index, atom in enumerate(decomposition["atoms"])
-                    if index < atom_index
+                    for atom in decomposition["atoms"][:atom_index]
                 ]
                 verified_ancestor_routes = [
-                    row["route_sha256"]
-                    for row in envelope["routes"]
+                    {
+                        "atom_id": row["atom_id"],
+                        "verifier": row["verifier"],
+                        "route_sha256": row["route_sha256"],
+                    }
+                    for row in envelope["routes"][:atom_index]
                     if row["verifier"] in _EXACT_VERIFIERS
                     and row["outcome"] == "verified"
                 ]
@@ -420,6 +428,25 @@ def prepare_local_repair_requests(
             if row["route_sha256"] == request["failed_route_sha256"]
         )
         prefix = _request_prefix(request, decomposition, candidate)
+        # Splice, do not regenerate to the end.
+        #
+        # The prompt used to ask for "the replacement suffix", i.e. everything
+        # after the prefix, while admission still required every atom outside
+        # the dependency closure to survive byte-identically. On the 32B with
+        # failed_ordinal 15, atom 16 sat after the failure and outside the
+        # closure: the model had to rewrite around it AND reproduce it exactly,
+        # and every candidate was rejected unrelated_atom_changed. That is a
+        # transcription requirement, not a reasoning one.
+        #
+        # The model now replaces only the invalidated span and the original
+        # tail is spliced back verbatim, so later independent work is preserved
+        # by construction rather than by asking the model to retype it.
+        invalidated = set(request["invalidated_atom_ids"])
+        spanned = [
+            atom for atom in decomposition["atoms"] if atom["atom_id"] in invalidated
+        ]
+        tail_start = max(int(atom["end"]) for atom in spanned) if spanned else len(candidate)
+        tail = candidate[tail_start:]
         # Instructions FIRST, data LAST, ending on the contract cue.
         #
         # The previous ordering closed with a paragraph of rules, so the most
@@ -436,9 +463,10 @@ def prepare_local_repair_requests(
             f"{request['required_verifier']} refuted the failed claim with evidence "
             f"{json.dumps(route['detail'], sort_keys=True, ensure_ascii=True)}. "
             "Every original atom outside the invalidation set must remain "
-            "byte-identical and in the same order. Write the replacement suffix "
-            "itself as plain text, continuing directly from the preserved "
-            "prefix, and write nothing else.\n"
+            "byte-identical and in the same order. Write ONLY the replacement "
+            "for the invalidated span as plain text, continuing directly from "
+            "the preserved prefix. Do not continue past it -- the remainder of "
+            "the answer is preserved automatically. Write nothing else.\n"
             f"Objective: {objective}\n"
             f"INVALIDATED_ATOM_IDS: {request['invalidated_atom_ids']}\n"
             # The preserved prefix is by definition ORIGINAL_CANDIDATE's first
@@ -454,6 +482,7 @@ def prepare_local_repair_requests(
             {
                 **request,
                 "prefix": prefix,
+                "tail": tail,
                 "prompt": prompt,
                 "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             }
@@ -461,10 +490,14 @@ def prepare_local_repair_requests(
     return prepared
 
 
-def parse_local_repair_generation(value: Any, *, prefix: str) -> str:
+def parse_local_repair_generation(value: Any, *, prefix: str, tail: str = "") -> str:
     """Parse a fresh-context repair response and restore its preserved prefix."""
 
-    if not isinstance(value, str) or not isinstance(prefix, str):
+    if (
+        not isinstance(value, str)
+        or not isinstance(prefix, str)
+        or not isinstance(tail, str)
+    ):
         raise TypeError("local repair generation must be text")
     # Plain text, not JSON.
     #
@@ -488,7 +521,9 @@ def parse_local_repair_generation(value: Any, *, prefix: str) -> str:
     head = prefix.strip()[:80]
     if len(prefix.strip()) >= 80 and suffix.startswith(head):
         raise ValueError("local repair generation repeated the preserved prefix")
-    return prefix + suffix
+    # The tail is spliced verbatim, so atoms after the invalidated span are
+    # preserved by construction instead of by asking the model to retype them.
+    return prefix + suffix + tail
 
 
 def _validate_generation_context(value: Any) -> dict[str, Any]:
@@ -705,7 +740,14 @@ def build_local_repair_receipt(
             }
         transactions.append(transaction)
     public_requests = [
-        {key: value for key, value in request.items() if key not in {"prefix", "prompt"}}
+        # prefix/tail/prompt are generation inputs, not part of the committed
+        # request identity, and including them would change every stored
+        # commitment hash.
+        {
+            key: value
+            for key, value in request.items()
+            if key not in {"prefix", "tail", "prompt"}
+        }
         for request in prepared
     ]
     branches = [dict(row) for row in disagreement_graph.get("branches", [])]

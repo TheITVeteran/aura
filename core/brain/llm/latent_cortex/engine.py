@@ -5187,6 +5187,7 @@ class LatentCortexEngine:
                     repaired_candidate = parse_local_repair_generation(
                         generated["text"],
                         prefix=str(repair_request["prefix"]),
+                        tail=str(repair_request.get("tail") or ""),
                     )
                     from core.brain.llm.latent_cortex.atomic_decomposition import (
                         build_atomic_decomposition,
