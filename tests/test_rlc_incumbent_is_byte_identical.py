@@ -126,3 +126,50 @@ def test_the_disposition_never_steers_the_incumbent(tiny_model):
         "the terminal disposition changed the incumbent answer, so the "
         "product arm's floor is 'vanilla plus disposition' rather than vanilla"
     )
+
+
+def test_both_abstain_paths_are_guarded_under_the_incumbent():
+    """Structural check, because the behavioural one cannot reach here.
+
+    Abstention needs an ADMITTED verifier that then refutes the baseline --
+    a decoy-preflight pass plus a deterministic refutation. The tiny-model
+    tests above cannot construct that, so they passed while the second abstain
+    path was still discarding answers on the 32B. Rather than pretend the
+    behavioural test covers it, this pins the two guards directly.
+
+    Both paths presented identically in the receipts and had to be fixed
+    separately:
+
+      1. `decision == "abstain"` setting decode_termination and emptying
+         out_tokens;
+      2. `decision == "abstain"` setting failure_reason, which fails the whole
+         episode -- ok=False, zero tokens -- and is then correctly classified
+         as a policy failure by the harness, so it scores as an empty answer
+         with no fault raised.
+
+    Measured before the second fix: four of fourteen 32B cells returned empty
+    text against receipts reporting 278-560 generated tokens, three of them on
+    tasks ordinary decode got right.
+    """
+    import inspect
+
+    from core.brain.llm.latent_cortex import engine as engine_mod
+
+    src = inspect.getsource(engine_mod)
+
+    # Path 2: failing the episode is permitted only when latent owns output.
+    assert (
+        'if self.config.decode_incumbent_policy == "latent":\n'
+        '                        failure_reason = "answer_replacement_abstained"'
+        in src
+    ), "the episode-failing abstain path is no longer guarded by the incumbent policy"
+
+    # Path 1: emptying out_tokens is permitted only when latent owns output.
+    assert "if latent_decode_authorized:\n                        out_tokens = []" in src, (
+        "the token-emptying abstain path is no longer guarded"
+    )
+
+    # And the decline is recorded rather than silent, so a receipt reader can
+    # tell that an abstention was considered and overridden.
+    assert "answer_replacement_abstention_declined_under_incumbent" in src
+    assert "confidence_bound_abstention_declined_under_incumbent" in src
