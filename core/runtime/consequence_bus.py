@@ -50,6 +50,21 @@ class ConsequenceEvent:
     recovery_required: float = 0.0   # 0-1 how much recovery is needed
     will_receipt_id: str = ""        # provenance link
     error: str = ""                  # error message if failed
+    #: True when this event REPORTS a measurement rather than records an
+    #: action's consequence.
+    #:
+    #: CP126 594d43b7: subsystems were publishing here specifically to appear
+    #: in the system-Φ stream — one docstring said so outright ("join the
+    #: ghost line's system-Φ event stream as a real subsystem"). Φ measures
+    #: how much the organs actually cause one another; an event published in
+    #: order to be counted raises cross-subsystem influence and subsystem
+    #: diversity using the measurement's own publication. The instrument was
+    #: reading its own reflection.
+    #:
+    #: Measurement events stay on the bus — they are useful to subscribers —
+    #: and are excluded from integration accounting, which reports how many
+    #: it excluded so the exclusion is visible rather than silent.
+    measurement_only: bool = False
 
 
 # Type for subscriber callbacks

@@ -50,6 +50,29 @@ def _fresh_singletons():
 # ─── worker-side tap ─────────────────────────────────────────────────────────
 
 
+def _certified_verdict(fingerprint: str, verifier: str):
+    """A real, signed, certified verdict from the evidence service."""
+    from core.brain.verification.independent_evidence import (
+        ClaimClass,
+        EvidenceBundle,
+        VerifierExecution,
+        adjudicate,
+    )
+
+    verdict = adjudicate(
+        EvidenceBundle(
+            claim=ClaimClass.TURN_QUALITY,
+            subject_identity=fingerprint,
+            raw_candidate="the answer under test",
+            verifier_identity=verifier,
+            verifier_execution=VerifierExecution.SEPARATE_TRUST_DOMAIN,
+            verifier_score=0.9,
+        )
+    )
+    assert verdict.is_certified, f"fixture produced {verdict.status}: {verdict.missing}"
+    return verdict
+
+
 class TestStepStats:
     def test_exact_math_on_known_distribution(self):
         lp = _logprobs([0.7, 0.2, 0.05, 0.05])
@@ -361,14 +384,66 @@ class TestThoughtInteroceptionEngine:
             foreground=True, response_text="shaky answer",
         )
         assert engine.introspective_calibration()["verdict"] == "insufficient_data"
-        for _ in range(3):
-            engine.record_ground_truth(confident.fingerprint, True, "test")
-            engine.record_ground_truth(shaky.fingerprint, False, "test")
+
+        # CP126 b3123a6d: this used to file the SAME two labels three times
+        # each, unsigned, to reach six pairs. Both halves are now refused —
+        # a bare boolean is not a verdict, and refiling one verdict does not
+        # create new evidence. Distinct verifiers, each certified.
+        for index in range(3):
+            assert engine.record_ground_truth(
+                confident.fingerprint,
+                True,
+                f"verifier-{index}",
+                verdict=_certified_verdict(confident.fingerprint, f"verifier-{index}"),
+            )
+            assert engine.record_ground_truth(
+                shaky.fingerprint,
+                False,
+                f"verifier-{index}",
+                verdict=_certified_verdict(shaky.fingerprint, f"verifier-{index}"),
+            )
         report = engine.introspective_calibration()
         assert report["pairs"] == 6
         assert report["verdict"] == "discriminative"
         assert report["mean_confidence_when_correct"] > report["mean_confidence_when_wrong"]
         assert 0.0 <= report["brier"] <= 1.0
+
+    def test_an_unsigned_label_cannot_set_introspective_calibration(self):
+        """The finding, exactly: arbitrary labels decided the calibration."""
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        felt = engine.ingest(_payload(), foreground=True, response_text="an answer")
+
+        assert engine.record_ground_truth(felt.fingerprint, True, "anyone") is False
+        assert engine.introspective_calibration()["pairs"] == 0
+
+    def test_the_same_verdict_filed_twice_counts_once(self):
+        """Replay moved the Brier score without new evidence existing."""
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        felt = engine.ingest(_payload(), foreground=True, response_text="an answer")
+        verdict = _certified_verdict(felt.fingerprint, "verifier-a")
+
+        assert engine.record_ground_truth(felt.fingerprint, True, "verifier-a", verdict=verdict)
+        assert not engine.record_ground_truth(
+            felt.fingerprint, True, "verifier-a", verdict=verdict
+        )
+        assert engine.introspective_calibration()["pairs"] == 1
+
+    def test_a_verdict_about_another_response_is_refused(self):
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        felt = engine.ingest(_payload(), foreground=True, response_text="an answer")
+
+        assert not engine.record_ground_truth(
+            felt.fingerprint,
+            True,
+            "verifier-a",
+            verdict=_certified_verdict("a-different-fingerprint", "verifier-a"),
+        )
 
     def test_prompt_block_honest_empty_and_populated(self):
         from core.being.thought_interoception import ThoughtInteroceptionEngine
@@ -1015,3 +1090,195 @@ class TestInteroceptionProvenanceAndStage:
 
         assert payload["measured"] is False
         assert payload["request_id"] == "req-9"
+
+
+# ───────── CP126: a trace must be bound, and Φ must not read its own echo ────
+
+
+class TestTraceBinding:
+    """ingest took `payload` and `response_text` as unrelated arguments.
+
+    Nothing tied them together — no generation id, no digest, nothing. Under
+    concurrent lanes a worker's measurement could be filed against a
+    different lane's answer, and every consumer downstream (felt confidence,
+    epistemic reach, introspective calibration) would read it as a
+    measurement of that answer.
+    """
+
+    def test_a_mismatched_generation_id_is_refused_outright(self):
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        payload = _payload()
+        payload["generation_id"] = "req-A"
+
+        felt = engine.ingest(
+            payload, response_text="an answer", generation_id="req-B"
+        )
+
+        assert felt is None, (
+            "a trace from generation req-A was attached to req-B's answer"
+        )
+
+    def test_a_matching_generation_id_binds_the_trace(self):
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        payload = _payload()
+        payload["generation_id"] = "req-A"
+
+        felt = engine.ingest(
+            payload, response_text="an answer", generation_id="req-A"
+        )
+
+        assert felt.bound is True
+        assert felt.binding_reason == "generation_id_verified"
+
+    def test_a_response_digest_binds_and_a_wrong_one_refuses(self):
+        import hashlib
+
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        text = "the exact answer that was measured"
+        good = dict(_payload())
+        good["response_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+
+        felt = engine.ingest(good, response_text=text)
+        assert felt.binding_reason == "response_digest_verified"
+
+        bad = dict(_payload())
+        bad["response_sha256"] = "0" * 64
+        assert engine.ingest(bad, response_text=text) is None
+
+    def test_an_unproven_pairing_is_admitted_but_graded_as_such(self):
+        """A think-heavy turn must not be marked unbound for being long.
+
+        The first version of this check compared measured tokens against
+        response characters. token_count spans the whole generation
+        including <think>; response_text is the stripped surface. That check
+        marked every reasoning turn unbound and would have silently ended
+        calibration on exactly the turns it matters for.
+        """
+        from core.being.thought_interoception import (
+            ThoughtInteroceptionEngine,
+            binding_is_proven,
+        )
+
+        engine = ThoughtInteroceptionEngine()
+        felt = engine.ingest(
+            _payload(), response_text="short", foreground=True
+        )
+
+        assert felt is not None
+        assert felt.bound is True
+        assert binding_is_proven(felt.binding_reason) is False
+
+    def test_the_calibration_report_separates_proven_from_unverified_pairs(self):
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        engine = ThoughtInteroceptionEngine()
+        payload = _payload()
+        payload["generation_id"] = "req-A"
+        proven = engine.ingest(
+            payload, response_text="proven answer", generation_id="req-A"
+        )
+        unproven = engine.ingest(_payload(), response_text="unproven answer")
+
+        engine.record_ground_truth(
+            proven.fingerprint, True, "v1",
+            verdict=_certified_verdict(proven.fingerprint, "v1"),
+        )
+        engine.record_ground_truth(
+            unproven.fingerprint, False, "v2",
+            verdict=_certified_verdict(unproven.fingerprint, "v2"),
+        )
+
+        report = engine.introspective_calibration()
+        assert report["pairs_with_proven_binding"] == 1
+        assert report["pairs_with_unverified_binding"] == 1
+
+
+class TestPhiDoesNotReadItsOwnReflection:
+    """A consequence event published in order to appear in Φ inflates Φ."""
+
+    def test_a_thought_that_influenced_nothing_is_marked_measurement_only(self):
+        from unittest import mock
+
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        published = []
+
+        class _Bus:
+            def publish(self, event):
+                published.append(event)
+
+        engine = ThoughtInteroceptionEngine()
+        with mock.patch(
+            "core.runtime.consequence_bus.ConsequenceBus.get", return_value=_Bus()
+        ), mock.patch(
+            "core.runtime.service_registry.get_runtime_service", return_value=None
+        ):
+            engine.ingest(_payload(), response_text="an answer")
+
+        assert published, "no consequence event was published at all"
+        assert published[0].measurement_only is True, (
+            "a measurement published itself into the system-Φ stream, raising "
+            "cross-subsystem influence with its own publication"
+        )
+
+    def test_a_thought_that_reached_a_subsystem_is_a_real_consequence(self):
+        from unittest import mock
+
+        from core.being.thought_interoception import ThoughtInteroceptionEngine
+
+        published = []
+
+        class _Bus:
+            def publish(self, event):
+                published.append(event)
+
+        class _Sink:
+            def accept_inference_feedback(self, **kwargs):
+                return None
+
+            def accept_surprise_signal(self, *args, **kwargs):
+                return None
+
+        engine = ThoughtInteroceptionEngine()
+        with mock.patch(
+            "core.runtime.consequence_bus.ConsequenceBus.get", return_value=_Bus()
+        ), mock.patch(
+            "core.runtime.service_registry.get_runtime_service", return_value=_Sink()
+        ):
+            engine.ingest(_payload(), response_text="an answer")
+
+        assert published[0].measurement_only is False
+        assert published[0].actual_outcome == "influenced"
+
+    def test_phi_excludes_measurement_events_and_says_how_many(self):
+        from core.ghost.causal_integration import SystemIntegration
+        from core.runtime.consequence_bus import ConsequenceEvent
+
+        events = [
+            ConsequenceEvent(
+                event_id=f"m-{index}",
+                timestamp=float(index),
+                source="interoception",
+                domain="felt_thought",
+                action_content="measured",
+                measurement_only=True,
+            )
+            for index in range(12)
+        ]
+        integration = SystemIntegration()
+        integration._recent_events = lambda: events
+
+        report = integration.report(force=True)
+
+        assert report.measurement_events_excluded == 12
+        assert report.phi_system == 0.0, (
+            "twelve self-published measurements produced a non-zero "
+            "integration score"
+        )
+        assert report.to_dict()["measurement_events_excluded"] == 12

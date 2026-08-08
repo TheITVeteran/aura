@@ -121,6 +121,10 @@ class SystemIntegrationReport:
     subsystem_diversity: float = 0.0
     core_participation: float = 0.0
     window_seconds: float = 0.0
+    #: Events dropped for being reports of a measurement rather than records
+    #: of an action. Named, not silent: a reader comparing Φ across versions
+    #: needs to see that the denominator changed and why.
+    measurement_events_excluded: int = 0
     computed_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,6 +132,7 @@ class SystemIntegrationReport:
             "phi_system": round(self.phi_system, 4),
             "label": self.label,
             "events": self.events,
+            "measurement_events_excluded": self.measurement_events_excluded,
             "subsystems": list(self.subsystems),
             "cross_subsystem_influence": round(self.cross_subsystem_influence, 4),
             "feedback_recurrence": round(self.feedback_recurrence, 4),
@@ -214,19 +219,36 @@ class SystemIntegration:
             and (now - self._cached_at) < self._ttl
         ):
             return self._cached
-        events = self._recent_events()
-        report = self._compute(events, now=now)
+        raw_events = self._recent_events()
+        # CP126 594d43b7: an event published in order to appear here is not
+        # evidence of causal integration. Φ measures how much the organs
+        # actually cause one another; counting a measurement's own
+        # publication is the instrument reading its own reflection.
+        events = [
+            event
+            for event in raw_events
+            if not bool(getattr(event, "measurement_only", False))
+        ]
+        excluded = len(raw_events) - len(events)
+        report = self._compute(events, now=now, measurement_excluded=excluded)
         self._cached = report
         self._cached_at = now
         return report
 
     # ── computation ───────────────────────────────────────────────────────
-    def _compute(self, events: list[Any], *, now: float) -> SystemIntegrationReport:
+    def _compute(
+        self,
+        events: list[Any],
+        *,
+        now: float,
+        measurement_excluded: int = 0,
+    ) -> SystemIntegrationReport:
         if len(events) < self._min_events:
             return SystemIntegrationReport(
                 phi_system=0.0,
                 label=_label_for(0.0, len(events), self._min_events),
                 events=len(events),
+                measurement_events_excluded=measurement_excluded,
                 computed_at=now,
             )
 
@@ -257,6 +279,7 @@ class SystemIntegration:
             phi_system=phi,
             label=_label_for(phi, len(events), self._min_events),
             events=len(events),
+            measurement_events_excluded=measurement_excluded,
             subsystems=subsystems,
             cross_subsystem_influence=cross,
             feedback_recurrence=recurrence,

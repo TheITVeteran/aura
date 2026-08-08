@@ -747,16 +747,57 @@ class EpistemicReachEngine:
         )
 
     def _record_ground_truth(self, verdict: ReachVerdict) -> None:
+        """File this verification as a SIGNED verdict, or not at all.
+
+        CP126 b3123a6d: introspective calibration accepted a fingerprint, a
+        bare boolean and a free-text source. This organ genuinely has the
+        evidence — the claim it checked, the URL it fetched, the excerpt, the
+        overlap — it simply never packaged any of it, so the one number
+        claiming Aura's self-report is checked against reality rested on an
+        unsigned boolean anyone could send.
+        """
         if verdict.verdict == VERDICT_INCONCLUSIVE or not verdict.fingerprint:
             return
         try:
             from core.being.thought_interoception import get_thought_interoception
+            from core.brain.verification.independent_evidence import (
+                ClaimClass,
+                EvidenceBundle,
+                VerifierExecution,
+                adjudicate,
+            )
 
-            get_thought_interoception().record_ground_truth(
+            source = f"epistemic_reach:{verdict.source_url[:48]}"
+            certified = adjudicate(
+                EvidenceBundle(
+                    claim=ClaimClass.TURN_QUALITY,
+                    subject_identity=verdict.fingerprint,
+                    raw_candidate=verdict.claim,
+                    verifier_identity=source,
+                    # The evidence came from a fetched external source, not
+                    # from this process reasoning about itself.
+                    verifier_execution=VerifierExecution.SEPARATE_TRUST_DOMAIN,
+                    verifier_score=float(verdict.overlap),
+                    notes={
+                        "verdict_id": verdict.verdict_id,
+                        "source_url": verdict.source_url[:200],
+                        "evidence_excerpt": verdict.evidence_excerpt[:400],
+                    },
+                )
+            )
+            accepted = get_thought_interoception().record_ground_truth(
                 verdict.fingerprint,
                 verdict.verdict == VERDICT_SUPPORTED,
-                source=f"epistemic_reach:{verdict.source_url[:48]}",
+                source=source,
+                verdict=certified,
             )
+            if not accepted:
+                logger.debug(
+                    "Reach verdict %s was not admitted to introspective "
+                    "calibration (status=%s)",
+                    verdict.verdict_id,
+                    getattr(certified.status, "value", certified.status),
+                )
         except _RECOVERABLE as exc:
             record_degradation(
                 "epistemic_reach", exc, severity="warning",

@@ -5986,6 +5986,18 @@ def _mlx_worker_loop(
                                     if intero_tap is not None:
                                         _intero_final = intero_tap.finalize(attempt=internal_attempt)
                                         if _intero_final is not None:
+                                            # CP126 0b3bbd3e: stamp the trace
+                                            # with the job it measured. Without
+                                            # it the organ receives a payload
+                                            # and a response as two unrelated
+                                            # arguments and cannot tell whether
+                                            # they belong together under
+                                            # concurrent lanes.
+                                            _intero_final["generation_id"] = str(
+                                                job.get("request_id")
+                                                or job.get("id")
+                                                or ""
+                                            )
                                             interoception_payload = _intero_final
 
                                     # Log sentinel diagnostics

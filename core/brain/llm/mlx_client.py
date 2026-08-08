@@ -5049,11 +5049,17 @@ class MLXLocalClient:
             # dropped. The store ran regardless, so a rejected payload was
             # still published as the latest felt-thought measurement. Only an
             # accepted one is retained now, and only in bounded form.
+            # CP126 0b3bbd3e: the trace and the response arrived as two
+            # unrelated arguments, so under concurrent lanes a worker's
+            # measurement could be filed against a different lane's answer.
+            # The response carries the request id the worker echoed; handing
+            # it over lets the organ PROVE the pairing rather than assume it.
             felt = get_thought_interoception().ingest(
                 payload,
                 origin=owner_label or "mlx",
                 foreground=bool(foreground_request),
                 response_text=str(response.get("text") or ""),
+                generation_id=str(response.get("id") or ""),
             )
             if felt is None:
                 _record_mlx_degradation(

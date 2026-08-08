@@ -97,6 +97,69 @@ def _normalized_prefix(text: str, n: int = 160) -> str:
     return _WS_RE.sub(" ", _THINK_RE.sub("", str(text or "")).lower()).strip()[:n]
 
 
+def _binding_verdict(
+    payload: dict[str, Any],
+    *,
+    response_text: str,
+    generation_id: str,
+    measurement_count: int,
+) -> tuple[bool, str]:
+    """Is this trace provably a measurement OF this response?
+
+    Three independent checks, cheapest first:
+
+    * generation id — the caller's id against the worker's own. A mismatch is
+      not weak evidence, it is proof of the wrong pairing;
+    * response digest — the worker may hash what it measured;
+    There is deliberately NO length heuristic. "A token is at least one
+    character, so measured tokens cannot exceed response characters" is
+    false here: token_count covers the whole generation including <think>
+    spans, while response_text is the think-stripped surface. That check was
+    written, and it marked every reasoning turn unbound — which would have
+    silently ended introspective calibration on exactly the turns it matters
+    for. A check that fires on the normal case is not a safety property.
+
+    Returns (bound, reason). Absence of evidence is graded, never upgraded:
+    an unverified pairing is admissible and says so, so a reader can see
+    which grade a calibration pair rests on.
+    """
+    worker_id = str(payload.get("generation_id") or payload.get("request_id") or "")
+    caller_id = str(generation_id or "")
+    if worker_id and caller_id and worker_id != caller_id:
+        return False, "generation_id_mismatch"
+
+    digest = str(payload.get("response_sha256") or "")
+    if digest and response_text:
+        actual = hashlib.sha256(response_text.encode("utf-8", "ignore")).hexdigest()
+        if digest != actual:
+            return False, "generation_id_mismatch"
+        return True, "response_digest_verified"
+
+    if worker_id and caller_id:
+        return True, "generation_id_verified"
+
+    # Nothing proved the pairing and nothing contradicted it. Admissible,
+    # and graded so the weakness travels with the datum.
+    if response_text:
+        return True, "unverified_pairing"
+    return False, "no_response_to_bind_to"
+
+
+#: Binding reasons that PROVE the pairing, as opposed to failing to
+#: contradict it. Ground truth is admitted on either, and the calibration
+#: report says how many pairs rest on each — a Brier score computed over
+#: length-consistent-only pairs is a weaker claim than one computed over
+#: digest-verified pairs, and must not read the same.
+_PROVEN_BINDINGS = frozenset(
+    {"response_digest_verified", "generation_id_verified"}
+)
+
+
+def binding_is_proven(reason: str) -> bool:
+    """Was the pairing PROVED, or merely not contradicted?"""
+    return str(reason) in _PROVEN_BINDINGS
+
+
 @dataclass(frozen=True)
 class FeltThought:
     """One generation's substrate trace, distilled into felt qualities.
@@ -130,6 +193,22 @@ class FeltThought:
     spikes: tuple[dict[str, Any], ...]
     curve: tuple[float, ...]
     normalized_prefix: str = ""
+    #: The generation this trace was measured FROM, and whether that link was
+    #: actually established.
+    #:
+    #: CP126 0b3bbd3e: ingest accepted `payload` and `response_text` as
+    #: independent arguments with nothing tying them together — no generation
+    #: id, no length consistency, nothing. Under concurrent lanes a worker
+    #: trace could be attached to a different lane's answer, and every
+    #: downstream consumer (felt confidence, epistemic reach, introspective
+    #: calibration) would treat the mismatch as a reading of that answer.
+    #:
+    #: An unbound trace is kept — it is still a real measurement of SOME
+    #: generation — but it may not carry a claim about a specific response,
+    #: so it is barred from ground-truth calibration.
+    generation_id: str = ""
+    bound: bool = False
+    binding_reason: str = "no_generation_id_supplied"
     # Bounded excerpt of the spoken surface (think-stripped) so downstream
     # organs (epistemic reach) can extract claims without re-plumbing text.
     text_excerpt: str = ""
@@ -138,6 +217,9 @@ class FeltThought:
     def to_dict(self) -> dict[str, Any]:
         return {
             "fingerprint": self.fingerprint,
+            "generation_id": self.generation_id,
+            "bound": self.bound,
+            "binding_reason": self.binding_reason,
             "origin": self.origin,
             "foreground": self.foreground,
             "token_count": self.token_count,
@@ -199,6 +281,15 @@ class ThoughtInteroceptionEngine:
         self._dropped_payloads = 0
         # (felt_confidence, externally_verified_correct) pairs — the falsifier.
         self._ground_truth: deque[tuple[float, bool, str]] = deque(maxlen=256)
+        # Replay protection: one (response, verifier) pair contributes once.
+        # Filing the same verdict twice moves the Brier score without any new
+        # evidence coming into existence.
+        self._ground_truth_keys: set[tuple[str, str]] = set()
+        # Was each pair's trace PROVED to be a measurement of the response it
+        # grades, or merely not contradicted? A Brier score over unproven
+        # pairings is a weaker claim than one over digest-verified pairings
+        # and must not be readable as the same number.
+        self._binding_grades: deque[bool] = deque(maxlen=256)
 
     # ── ingestion ────────────────────────────────────────────────────────────
     def ingest(
@@ -208,11 +299,13 @@ class ThoughtInteroceptionEngine:
         origin: str = "unknown",
         foreground: bool = False,
         response_text: str = "",
+        generation_id: str = "",
     ) -> FeltThought | None:
         """Distil one worker payload into a FeltThought and fan it out. Never raises."""
         try:
             felt = self._distil(payload, origin=origin, foreground=foreground,
-                                response_text=response_text)
+                                response_text=response_text,
+                                generation_id=generation_id)
         except _RECOVERABLE as exc:
             record_degradation(
                 "thought_interoception", exc, severity="warning",
@@ -237,7 +330,13 @@ class ThoughtInteroceptionEngine:
         return felt
 
     def _distil(
-        self, payload: Any, *, origin: str, foreground: bool, response_text: str
+        self,
+        payload: Any,
+        *,
+        origin: str,
+        foreground: bool,
+        response_text: str,
+        generation_id: str = "",
     ) -> FeltThought | None:
         if not isinstance(payload, dict):
             return None
@@ -285,8 +384,23 @@ class ThoughtInteroceptionEngine:
         )
         curve = tuple(round(max(0.0, _f(v)), 4) for v in (payload.get("curve") or [])[:128])
 
+        bound, binding_reason = _binding_verdict(
+            payload,
+            response_text=response_text,
+            generation_id=generation_id,
+            measurement_count=measurement_count,
+        )
+        if binding_reason == "generation_id_mismatch":
+            # Not a weak binding — a proven WRONG one. The trace belongs to a
+            # different generation, so attaching it to this response would be
+            # manufacturing a reading of an answer it never saw.
+            return None
+
         return FeltThought(
             fingerprint=text_fingerprint(response_text),
+            generation_id=str(generation_id or payload.get("generation_id") or "")[:64],
+            bound=bound,
+            binding_reason=binding_reason,
             origin=str(origin or "unknown")[:64],
             foreground=bool(foreground),
             token_count=token_count,
@@ -331,10 +445,16 @@ class ThoughtInteroceptionEngine:
 
     # ── causal fan-out ───────────────────────────────────────────────────────
     def _fan_out(self, felt: FeltThought) -> None:
-        self._feed_liquid_substrate(felt)
-        self._feed_free_energy(felt)
-        self._feed_precision(felt)
-        self._publish_consequence(felt)
+        accepted = [
+            name
+            for name, fed in (
+                ("liquid_substrate", self._feed_liquid_substrate(felt)),
+                ("free_energy_engine", self._feed_free_energy(felt)),
+                ("precision_engine", self._feed_precision(felt)),
+            )
+            if fed
+        ]
+        self._publish_consequence(felt, accepted)
         self._publish_bus_event(felt)
         self._emit_metrics(felt)
         self._offer_epistemic_reach(felt)
@@ -357,13 +477,13 @@ class ThoughtInteroceptionEngine:
                 action="continued after epistemic-reach offer failed",
             )
 
-    def _feed_liquid_substrate(self, felt: FeltThought) -> None:
+    def _feed_liquid_substrate(self, felt: FeltThought) -> bool:
         try:
             from core.runtime.service_registry import get_runtime_service
 
             substrate = get_runtime_service("liquid_substrate", default=None)
             if substrate is None:
-                return
+                return False
             # Same scales the substrate already consumes (see
             # accept_inference_feedback): surprise in [0,3] nats-ish, coherence
             # in [-1,1]. Coherence here means "how settled the thought felt".
@@ -371,48 +491,70 @@ class ThoughtInteroceptionEngine:
                 surprise=min(_SURPRISE_NORM, felt.mean_surprisal),
                 coherence=felt.felt_confidence * 2.0 - 1.0,
             )
+            return True
         except _RECOVERABLE as exc:
             record_degradation(
                 "thought_interoception", exc, severity="warning",
                 action="continued after liquid-substrate felt feedback failed",
             )
+            return False
 
-    def _feed_free_energy(self, felt: FeltThought) -> None:
+    def _feed_free_energy(self, felt: FeltThought) -> bool:
         try:
             from core.runtime.service_registry import get_runtime_service
 
             engine = get_runtime_service("free_energy_engine", default=None)
             if engine is None:
-                return
+                return False
             engine.accept_surprise_signal(felt.surprise)
+            return True
         except _RECOVERABLE as exc:
             record_degradation(
                 "thought_interoception", exc, severity="warning",
                 action="continued after free-energy felt feedback failed",
             )
+            return False
 
-    def _feed_precision(self, felt: FeltThought) -> None:
+    def _feed_precision(self, felt: FeltThought) -> bool:
         try:
             from core.runtime.service_registry import get_runtime_service
 
             engine = get_runtime_service("precision_engine", default=None)
             if engine is None:
-                return
+                return False
             engine.accept_inference_feedback(
                 surprise=min(_SURPRISE_NORM, felt.mean_surprisal),
                 coherence=felt.felt_confidence * 2.0 - 1.0,
             )
+            return True
         except _RECOVERABLE as exc:
             record_degradation(
                 "thought_interoception", exc, severity="warning",
                 action="continued after precision-engine felt feedback failed",
             )
+            return False
 
-    def _publish_consequence(self, felt: FeltThought) -> None:
-        """Join the ghost line's system-Φ event stream as a real subsystem."""
+    def _publish_consequence(self, felt: FeltThought, accepted: list[str]) -> None:
+        """Report the effect this felt thought actually had, if any.
+
+        CP126 594d43b7: this used to publish on every accepted thought, with
+        the stated purpose of joining the system-Φ stream "as a real
+        subsystem" — and Φ measures precisely how much the subsystems cause
+        one another. Publishing in order to be counted inflates
+        cross-subsystem influence and subsystem diversity with the
+        measurement's own publication.
+
+        Interoception DOES have real downstream effects: the liquid
+        substrate, the free-energy engine and the precision engine each
+        consume this feedback. So the event now records which of them
+        accepted it, and when none did there was no effect to report — the
+        event is marked ``measurement_only`` and Φ excludes it. Presence in
+        the integration measure has to be earned by actual coupling.
+        """
         try:
             from core.runtime.consequence_bus import ConsequenceBus, ConsequenceEvent
 
+            influenced = bool(accepted)
             ConsequenceBus.get().publish(
                 ConsequenceEvent(
                     event_id=f"felt-{uuid.uuid4().hex[:12]}",
@@ -420,10 +562,16 @@ class ThoughtInteroceptionEngine:
                     source="interoception",
                     domain="felt_thought",
                     action_content=(
-                        f"measured generation: confidence={felt.felt_confidence:.2f} "
-                        f"fluency={felt.fluency:.2f} strain={felt.strain:.2f}"
+                        "felt state accepted by " + ", ".join(sorted(accepted))
+                        if influenced
+                        else (
+                            "measured generation: confidence="
+                            f"{felt.felt_confidence:.2f} "
+                            f"fluency={felt.fluency:.2f} strain={felt.strain:.2f}"
+                        )
                     ),
-                    actual_outcome="measured",
+                    actual_outcome="influenced" if influenced else "measured",
+                    measurement_only=not influenced,
                 )
             )
         except _RECOVERABLE as exc:
@@ -484,11 +632,32 @@ class ThoughtInteroceptionEngine:
             return dict(self._live, age_s=round(time.time() - self._live_at, 2))
 
     # ── external ground truth (the falsifier) ───────────────────────────────
-    def record_ground_truth(self, fingerprint: str, correct: bool, source: str) -> None:
-        """Attach an external verification verdict to a felt trace.
+    def record_ground_truth(
+        self,
+        fingerprint: str,
+        correct: bool,
+        source: str,
+        *,
+        verdict: Any = None,
+    ) -> bool:
+        """Attach an EXTERNALLY CERTIFIED verdict to a felt trace.
 
-        Called by epistemic reach (or any verifier with real-world evidence).
-        Builds the dataset that makes introspective accuracy measurable.
+        CP126 b3123a6d: this accepted a fingerprint, a bare boolean and a
+        free-text source. No verifier identity, no evidence artifact, no
+        signature, no replay protection. Anything that could call it could
+        decide what "introspective calibration" says — the one number in this
+        module that claims Aura's self-report is checked against reality was
+        settled by whoever spoke last.
+
+        A verdict must now be a signed, certified adjudication from the
+        independent evidence service. Its subject must be the trace's own
+        response, so a verdict about one answer cannot be filed against
+        another. And the trace must be BOUND to its generation: a measurement
+        that is not provably of a specific response cannot be evidence about
+        that response's correctness.
+
+        Returns whether the pair was accepted, so a caller that supplies
+        nothing verifiable learns that it did.
         """
         trace = None
         with self._lock:
@@ -497,9 +666,76 @@ class ThoughtInteroceptionEngine:
                     trace = felt
                     break
         if trace is None:
-            return
+            return False
+        if not trace.bound:
+            record_degradation(
+                "thought_interoception",
+                ValueError(f"unbound trace offered as ground truth: {trace.binding_reason}"),
+                severity="warning",
+                action=(
+                    "refused a calibration pair whose trace is not provably a "
+                    "measurement of the response being graded"
+                ),
+            )
+            return False
+        if not self._verdict_is_admissible(verdict, fingerprint):
+            return False
         with self._lock:
+            key = (fingerprint, str(source)[:64])
+            if key in self._ground_truth_keys:
+                # Replay protection: the same verdict filed twice would move
+                # the Brier score without any new evidence existing.
+                return False
+            self._ground_truth_keys.add(key)
             self._ground_truth.append((trace.felt_confidence, bool(correct), str(source)[:64]))
+            self._binding_grades.append(binding_is_proven(trace.binding_reason))
+        return True
+
+    @staticmethod
+    def _verdict_is_admissible(verdict: Any, fingerprint: str) -> bool:
+        """A certified, signed verdict about THIS response, or nothing."""
+        if verdict is None:
+            record_degradation(
+                "thought_interoception",
+                ValueError("ground truth offered with no verdict"),
+                severity="warning",
+                action=(
+                    "refused an unsigned calibration label; introspective "
+                    "calibration accepts only certified verdicts"
+                ),
+            )
+            return False
+        try:
+            from core.brain.verification.independent_evidence import (
+                VerdictStatus,
+                verdict_signature_valid,
+            )
+        except ImportError as exc:
+            record_degradation(
+                "thought_interoception", exc, severity="warning",
+                action="refused a calibration label because the evidence service is unavailable",
+            )
+            return False
+        if getattr(verdict, "status", None) is not VerdictStatus.CERTIFIED:
+            return False
+        if not verdict_signature_valid(verdict):
+            record_degradation(
+                "thought_interoception",
+                ValueError("ground-truth verdict signature did not verify"),
+                severity="error",
+                action="refused a calibration label carrying an invalid signature",
+            )
+            return False
+        subject = str(getattr(verdict, "subject_identity", "") or "")
+        if subject and subject != fingerprint:
+            record_degradation(
+                "thought_interoception",
+                ValueError("verdict subject does not match the trace"),
+                severity="error",
+                action="refused a verdict about a different response",
+            )
+            return False
+        return True
 
     def introspective_calibration(self) -> dict[str, Any]:
         """Does felt confidence track externally-verified truth? Measured, not claimed.
@@ -510,6 +746,7 @@ class ThoughtInteroceptionEngine:
         """
         with self._lock:
             pairs = list(self._ground_truth)
+            grades = list(self._binding_grades)
         n = len(pairs)
         if n == 0:
             return {"pairs": 0, "verdict": "insufficient_data"}
@@ -525,6 +762,12 @@ class ThoughtInteroceptionEngine:
             "mean_confidence_when_wrong": (
                 round(sum(wrong_confs) / len(wrong_confs), 4) if wrong_confs else None
             ),
+            # How many of these pairs rest on a PROVED trace-to-response
+            # pairing rather than an unverified one. A Brier score computed
+            # over unverified pairings is a weaker claim, and a reader who is
+            # not told cannot tell the two apart.
+            "pairs_with_proven_binding": sum(1 for proven in grades if proven),
+            "pairs_with_unverified_binding": sum(1 for proven in grades if not proven),
         }
         out["verdict"] = "insufficient_data" if n < 5 else (
             "discriminative"
