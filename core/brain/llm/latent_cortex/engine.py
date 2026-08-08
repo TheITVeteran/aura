@@ -2465,7 +2465,30 @@ class LatentCortexEngine:
                     nonparametric_memory_enabled=nonparametric_memory_enabled,
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
-                    failure_reason = "answer_replacement_abstained"
+                    # Abstention may end the episode only when the latent lane
+                    # owns the output. Under vanilla_incumbent the answer on
+                    # the table IS ordinary decode, and failing the episode
+                    # discards it -- ok=False, zero tokens, empty text.
+                    #
+                    # This is the SECOND abstain path; guarding only the one
+                    # that sets decode_termination left this one live. Measured
+                    # on the 32B: four of fourteen cells returned empty text
+                    # against receipts reporting 278-560 generated tokens and
+                    # clean eos/token_limit terminations, and three of those
+                    # four were tasks ordinary decode got RIGHT. The reason was
+                    # known_refutation_has_no_dominant_repair -- the verifier
+                    # judged the baseline refuted when it was correct, and a
+                    # false refutation then threw the correct answer away.
+                    #
+                    # Serving the incumbent is weakly better in every case:
+                    # equal when the refutation is right (vanilla was wrong
+                    # anyway) and strictly better when it is wrong.
+                    if self.config.decode_incumbent_policy == "latent":
+                        failure_reason = "answer_replacement_abstained"
+                    else:
+                        receipt.flag(
+                            "answer_replacement_abstention_declined_under_incumbent"
+                        )
             except _FastWeightCleanupError as exc:
                 record_degradation(
                     "latent_cortex",
