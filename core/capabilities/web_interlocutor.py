@@ -110,6 +110,28 @@ def _effect_source(source: str) -> str:
     return f"{source}:run={run_id}" if run_id else source
 
 
+def _effect_constraints(effect_site: str) -> dict[str, Any]:
+    """Who is causing this browser effect, and under which run.
+
+    CP126 e14d8807: a web effect is a visible action taken on someone
+    else's site, and its receipt carried no principal — so an effect could
+    not be traced back to the exchange that caused it, and two concurrent
+    runs were indistinguishable in the audit trail.
+
+    Outside a run both fields are EMPTY rather than filled with a plausible
+    default. Inventing a caller would be the defect, not the fix: an
+    unattributed effect must read as unattributed.
+    """
+    authority = _ACTIVE_CALLER_AUTHORITY.get() or {}
+    return {
+        "initiating_principal": str(authority.get("principal") or ""),
+        "interlocutor_run_id": str(authority.get("run_id") or ""),
+        "effect_site": str(effect_site or ""),
+        # Every effect from this module drives a browser the person can see.
+        "user_visible_browser_action": True,
+    }
+
+
 @contextlib.contextmanager
 def _existing_tool_scope(source: str) -> Any:
     """Assert the session's real action receipt without minting a replacement."""

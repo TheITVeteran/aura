@@ -208,6 +208,9 @@ class MindTick:
         self._last_deferred_cortex_health_log_at = 0.0
         self._last_liveness_repair_at = 0.0
         self._liveness_repair_count = 0
+        #: True while a cancelled loop is unwinding and its replacement has
+        #: not started yet. Exactly one _run_loop exists at any instant.
+        self._repair_pending = False
         self._owner_loop = None
         
         # Cognitive Deepening Components
@@ -566,6 +569,75 @@ class MindTick:
             )
         return False
 
+
+    def _schedule_restart_after(self, old_task: Any, *, reason: str = "") -> None:
+        """Start the replacement loop only once the old one has actually ended.
+
+        The whole point of the fix for CP126 e98446be: there must never be
+        two ``_run_loop`` coroutines alive at the same time. A done-callback
+        is the only way to know the cancelled one has really unwound,
+        because ``cancel()`` returns long before that happens.
+        """
+
+        def _restart(finished: Any) -> None:
+            try:
+                if is_shutdown_requested():
+                    self._repair_pending = False
+                    return
+                self._consecutive_loop_failures = 0
+                self._running = True
+                self._started_at = time.time()
+                self._active_tick_started_at = 0.0
+                self._active_tick_stage = "repair_after_cancel"
+                self._last_successful_tick_at = 0.0
+                self._mark_loop_progress("repair_after_cancel")
+                count = int(getattr(self, "_liveness_repair_count", 0) or 0) + 1
+                name = f"mind_tick.run_loop.recovered.{count}"
+                self._task = _schedule_mind_task(self._run_loop(), name=name)
+                if self._task is None:
+                    self._running = False
+                    self._repair_pending = False
+                    record_degraded_event(
+                        "mind_tick",
+                        "liveness_repair_failed",
+                        detail="replacement loop could not be scheduled after cancel",
+                        severity="error",
+                        classification="background_degraded",
+                    )
+                    return
+                self._install_loop_done_callback(self._task, name=name)
+                self._liveness_repair_count = count
+                self._repair_pending = False
+                record_degraded_event(
+                    "mind_tick",
+                    "liveness_repair",
+                    detail=reason or "stale loop cancelled and replaced after it unwound",
+                    severity="warning",
+                    classification="runtime_recovered",
+                    context={"repair_count": count},
+                )
+                logger.warning(
+                    "💓 MindTick: stale loop unwound; replacement started (repair %d).",
+                    count,
+                )
+            except _MIND_BOUNDARY_ERRORS as exc:
+                self._repair_pending = False
+                _record_mind_degradation(
+                    exc,
+                    action="MindTick replacement loop could not start after the stale loop ended",
+                    severity="critical",
+                )
+
+        try:
+            old_task.add_done_callback(_restart)
+        except _MIND_BOUNDARY_ERRORS as exc:
+            self._repair_pending = False
+            _record_mind_degradation(
+                exc,
+                action="could not chain the MindTick restart to the cancelled loop",
+                severity="critical",
+            )
+
     def _attempt_liveness_repair(self, *, reason: str = "", cancel_existing: bool = False) -> bool:
         """Restart the supervised cognitive loop when a live runtime loses it.
 
@@ -588,6 +660,17 @@ class MindTick:
 
         existing_task = getattr(self, "_task", None)
         if cancel_existing and existing_task is not None and not existing_task.done():
+            # CP126 e98446be: this cancelled and immediately started a new
+            # loop. `cancel()` only REQUESTS cancellation — the old
+            # coroutine keeps running until it next reaches an await point,
+            # so both loops ran concurrently, each mutating the same state
+            # object and committing over the other. A repair that produces
+            # two minds is worse than the stall it was repairing.
+            #
+            # The restart is now chained to the old task's completion, so
+            # there is exactly one loop at every instant. If the old task
+            # will not die, no new one is started and that is recorded —
+            # a stuck loop must not be masked by a second one.
             try:
                 existing_task.cancel()
             except _MIND_BOUNDARY_ERRORS as exc:
@@ -596,6 +679,10 @@ class MindTick:
                     action="continued MindTick liveness repair after stale loop cancel failed",
                     severity="warning",
                 )
+            else:
+                self._repair_pending = True
+                self._schedule_restart_after(existing_task, reason=reason)
+                return True
 
         try:
             asyncio.get_running_loop()
@@ -625,10 +712,24 @@ class MindTick:
                     self._liveness_repair_count = (
                         int(getattr(self, "_liveness_repair_count", 0) or 0) + 1
                     )
+                    self._repair_pending = False
                     logger.warning("💓 MindTick: loop revived via owning-loop repair.")
 
+                self._repair_pending = True
                 owner_loop.call_soon_threadsafe(_threadsafe_repair)
                 logger.info("MindTick repair scheduled onto owning loop from thread.")
+                # CP126 c76abf56: this returned False immediately, so health
+                # read "unhealthy" while a recovery was already in flight and
+                # nothing recorded that one had been started. The pending flag
+                # is the receipt; get_health_status reports it.
+                record_degraded_event(
+                    "mind_tick",
+                    "liveness_repair_scheduled",
+                    detail=reason or "repair handed to the owning loop from a probe thread",
+                    severity="warning",
+                    classification="runtime_recovering",
+                    context={"stage": str(getattr(self, "_active_tick_stage", "") or "")},
+                )
             else:
                 # A repair that silently cannot run is how a runtime sits
                 # DEGRADED for hours with 'repair machinery present'. Say so.
@@ -704,6 +805,11 @@ class MindTick:
             "active_tick_started_at": float(getattr(self, "_active_tick_started_at", 0.0) or 0.0),
             "active_tick_stage": str(getattr(self, "_active_tick_stage", "") or ""),
             "liveness_repair_count": int(getattr(self, "_liveness_repair_count", 0) or 0),
+            # CP126 c76abf56: a recovery already in flight used to be
+            # invisible, so the surface said "unhealthy" with no indication
+            # that anything was being done about it. "Recovering" and
+            # "broken and unattended" are different operational states.
+            "repair_pending": bool(getattr(self, "_repair_pending", False)),
         }
 
     async def stop(self):

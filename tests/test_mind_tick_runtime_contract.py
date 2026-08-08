@@ -198,14 +198,100 @@ async def test_mind_tick_liveness_repairs_stale_alive_task():
 
     assert tick.is_alive() is False
     assert stale_task.cancelled() or stale_task.done() or stale_task.cancelling()
+
+    # CP126 e98446be. The replacement is CHAINED to the stale loop actually
+    # unwinding, not started the instant cancel() returns. `cancel()` only
+    # requests cancellation — the old coroutine runs on until its next await
+    # — so starting the replacement immediately meant two _run_loop
+    # coroutines alive at once, both mutating the same state and committing
+    # over each other. A repair that produces two minds is worse than the
+    # stall it repairs.
+    #
+    # While the old loop unwinds the repair is IN FLIGHT and says so, which
+    # is also the fix for CP126 c76abf56: "recovering" and "broken and
+    # unattended" are different operational states.
+    assert tick._repair_pending is True
+    assert tick._task is stale_task, (
+        "a replacement loop started before the stale one had unwound"
+    )
+
+    release_old.set()
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if tick._task is not stale_task:
+            break
+
     assert tick._task is not stale_task
     assert tick._task is not None
     assert not tick._task.done()
+    assert tick._repair_pending is False
     assert tick._last_loop_progress_at > time.time() - 5
     assert tick._liveness_repair_count == 1
 
     release_new.set()
     await tick._task
+
+
+@pytest.mark.asyncio
+async def test_mind_tick_never_runs_two_cognitive_loops_at_once():
+    """The concurrency the repair used to create.
+
+    Both loops mutate one state object and commit over each other, so the
+    invariant is not "the replacement starts quickly" — it is that exactly
+    one _run_loop exists at every instant.
+    """
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._started_at = time.time() - 600
+    tick._last_successful_tick_at = time.time() - 601
+    tick._last_loop_progress_at = time.time() - 601
+    tick._consecutive_loop_failures = 0
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+    tick._repair_pending = False
+    tick._owner_loop = asyncio.get_running_loop()
+    tick.orchestrator = SimpleNamespace()
+
+    live = {"count": 0, "peak": 0}
+    release_old = asyncio.Event()
+    release_new = asyncio.Event()
+
+    async def stale_loop():
+        live["count"] += 1
+        live["peak"] = max(live["peak"], live["count"])
+        try:
+            await release_old.wait()
+        finally:
+            live["count"] -= 1
+
+    async def recovered_loop():
+        live["count"] += 1
+        live["peak"] = max(live["peak"], live["count"])
+        try:
+            await release_new.wait()
+        finally:
+            live["count"] -= 1
+
+    stale_task = asyncio.create_task(stale_loop())
+    await asyncio.sleep(0)
+    tick._task = stale_task
+    tick._run_loop = recovered_loop
+
+    tick.is_alive()
+    release_old.set()
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if tick._task is not stale_task:
+            break
+
+    assert live["peak"] == 1, (
+        f"{live['peak']} cognitive loops were alive at once; the repair "
+        "started a replacement before the cancelled loop had unwound"
+    )
+
+    release_new.set()
+    if tick._task is not None and not tick._task.done():
+        await tick._task
 
 
 @pytest.mark.asyncio
