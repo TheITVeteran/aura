@@ -295,6 +295,17 @@
       "path": "tools/front_door_demo.py"
     },
     {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/fuse_rlc_candidate.py",
+      "purpose": "fuse"
+    },
+    {
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 2,
@@ -469,6 +480,39 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/run_latent_cortex_paired_campaign.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_recurrent_grpo_behavioral_canary.py",
+      "purpose": "training"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_rlc_checkpoint_sweep.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_rlc_reconciliation_sweep.py",
+      "purpose": "evaluation"
     },
     {
       "expected_load_references": 1,

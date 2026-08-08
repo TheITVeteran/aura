@@ -37946,3 +37946,48 @@ returns `full_semantic_review_current=false`: only `458/6,721` current code
 files are fully reviewed, `6,232` remain unreviewed, and `1,391` stale receipts
 still require current review. This checkpoint corrects the denominator model;
 it does not reduce or claim completion of the actual semantic-review burden.
+
+## Checkpoint 2026-08-08-005: Active Source Leads, Frozen Evidence Remains Counted
+
+The semantic queue classified every code-shaped historical artifact as live
+source. In particular, `924` immutable latent-cortex source snapshots added
+`1,004,086` duplicate lines at the same priority as current runtime modules.
+That did not merely enlarge the denominator: it pushed current chat, inference,
+worker, and reliability code behind frozen experiment copies in the review
+queue.
+
+The ledger now exposes an additive `active_code` classification. Runtime,
+interface, test, tool, training, and other operational code sorts first;
+`artifacts/`, `archive/`, `dev_archive/`, `scratch/`, and `scratchpad/` code
+remains tracked, hash-bound, queued, and required by the exhaustive all-text
+verdict. A separate active-code verdict permits operational-source progress to
+be measured without pretending frozen evidence was reviewed or deleting it
+from the final obligation.
+
+The current tree contains `6,721` code files and `5,645` active-code files.
+Only `461` code files and `396` active-code files are fully current-reviewed;
+`6,229` and `5,218`, respectively, remain in their honest queues. Active-code
+line coverage is `5.766%`; exhaustive code-line coverage is `4.0502%`; both
+completion verdicts remain false. Focused classification, queue, and frozen-
+evidence regressions pass `4/4`; this checkpoint changes review order and
+measurement fidelity, not the all-tracked closeout standard.
+
+## Checkpoint 2026-08-08-006: Every New RLC Model Load Has One Owner
+
+The repository-wide closeout gate found four model loads introduced by the RLC
+research path outside the model-load ownership inventory. Three evaluation or
+training tools already held `standalone_model_lane` across their load and use
+lifecycle and are now explicitly registered. Candidate fusion was materially
+unsafe: it held only an MLX memory envelope, so it could load and rewrite a
+resident-scale checkpoint concurrently with Aura or another campaign.
+
+Fusion now validates the adapter manifest before requesting model resources,
+then holds one non-preemptible `purpose=fuse` standalone lane across model
+load, adapter application, evaluation, and candidate serialization. A failure-
+path test proves the lease is active at the load call and released when loading
+raises. The whole-tree ownership audit passes with `60` owned paths, `73` load
+references, and zero findings; model-loader, ownership, and lane-contract tests
+pass `35/35`. The exact closeout-bundle regression that exposed the defect
+passes after a fresh `108.20s` repository scan. This closes model-load
+ownership for the current source; it does not authorize fusion or claim that
+the running complete-engine experiment has earned a candidate.

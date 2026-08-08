@@ -42,30 +42,37 @@ def main() -> int:
         print(f"refusing to overwrite existing candidate: {out}", file=sys.stderr)
         return 2
 
+    manifest_path = adapter_dir.parent.parent / "recurrence_adapter_manifest.json"
+    found = list(adapter_dir.parent.parent.rglob("recurrence_adapter_manifest.json"))
+    if not manifest_path.exists() and found:
+        manifest_path = found[0]
+    if not manifest_path.exists():
+        print("no recurrence adapter manifest; cannot fuse safely", file=sys.stderr)
+        return 2
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    lora = manifest["lora"]
+    rank = int(lora["rank"])
+    scale = float(lora.get("alpha", rank)) / float(rank)
+
     import mlx.core as mx
     from mlx.utils import tree_flatten, tree_unflatten
     from mlx_lm import load
 
     from core.runtime.mlx_memory_guard import mlx_memory_envelope
+    from core.runtime.model_lane_control import standalone_model_lane
 
-    with mlx_memory_envelope(fraction=0.40):
+    with standalone_model_lane(
+        owner_id=f"rlc-fusion:{out.name}",
+        model_path=str(base),
+        purpose="fuse",
+        preemptible=False,
+        metadata={"tool": "fuse_rlc_candidate", "output": str(out)},
+    ), mlx_memory_envelope(fraction=0.40):
         model, tokenizer = load(str(base))
         adapter = mx.load(str(adapter_dir / "adapter.safetensors"))
 
         # lora_a/lora_b pairs fold as W + (b @ a).T scaled by the package's
         # own alpha/rank, matching how ScopedLoRALinear applies them live.
-        manifest_path = adapter_dir.parent.parent / "recurrence_adapter_manifest.json"
-        found = list(adapter_dir.parent.parent.rglob("recurrence_adapter_manifest.json"))
-        if not manifest_path.exists() and found:
-            manifest_path = found[0]
-        if not manifest_path.exists():
-            print("no recurrence adapter manifest; cannot fuse safely", file=sys.stderr)
-            return 2
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        lora = manifest["lora"]
-        rank = int(lora["rank"])
-        scale = float(lora.get("alpha", rank)) / float(rank)
-
         params = dict(tree_flatten(model.parameters()))
         fused = 0
         for key in sorted(adapter):

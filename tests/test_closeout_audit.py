@@ -266,6 +266,9 @@ def test_semantic_review_status_reports_code_coverage_and_unreviewed_queue(tmp_p
     code.write_text("a\nb\nc\n", encoding="utf-8")
     data = tmp_path / "data.json"
     data.write_text('{"ok": true}\n' * 5, encoding="utf-8")
+    snapshot = tmp_path / "artifacts" / "run" / "source_snapshots" / "large.py"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("frozen\n" * 20, encoding="utf-8")
     ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
     append_entries(
         ledger,
@@ -274,25 +277,58 @@ def test_semantic_review_status_reports_code_coverage_and_unreviewed_queue(tmp_p
 
     summary = summarize_semantic_reviews(
         ledger_path=ledger,
-        tracked_paths=[reviewed, code, data],
+        tracked_paths=[reviewed, code, data, snapshot],
         root=tmp_path,
     )
     queue = build_semantic_review_queue(
         ledger_path=ledger,
-        tracked_paths=[reviewed, code, data],
+        tracked_paths=[reviewed, code, data, snapshot],
         root=tmp_path,
         code_only=True,
         limit=5,
     )
 
-    assert summary["tracked_text_file_count"] == 3
-    assert summary["tracked_code_file_count"] == 2
+    assert summary["tracked_text_file_count"] == 4
+    assert summary["tracked_code_file_count"] == 3
+    assert summary["tracked_active_code_file_count"] == 2
     assert summary["fully_reviewed_code_file_count"] == 1
-    assert summary["unreviewed_file_count"] == 2
-    assert summary["unreviewed_code_file_count"] == 1
+    assert summary["fully_reviewed_active_code_file_count"] == 1
+    assert summary["unreviewed_file_count"] == 3
+    assert summary["unreviewed_code_file_count"] == 2
+    assert summary["unreviewed_active_code_file_count"] == 1
     assert summary["unreviewed_files"][0]["file"] == "large.py"
     assert summary["unreviewed_files"][0]["code"] is True
-    assert queue["files"] == [summary["unreviewed_files"][0]]
+    assert summary["unreviewed_files"][0]["active_code"] is True
+    assert summary["unreviewed_files"][1]["file"] == snapshot.relative_to(tmp_path).as_posix()
+    assert summary["unreviewed_files"][1]["active_code"] is False
+    assert queue["files"] == summary["unreviewed_files"][:2]
+
+
+def test_frozen_evidence_remains_in_exhaustive_semantic_denominator(tmp_path):
+    source = tmp_path / "core" / "live.py"
+    snapshot = tmp_path / "artifacts" / "run" / "source_snapshots" / "live.py"
+    source.parent.mkdir(parents=True)
+    snapshot.parent.mkdir(parents=True)
+    source.write_text("live = True\n", encoding="utf-8")
+    snapshot.write_text("live = False\n", encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    append_entries(
+        ledger,
+        [build_review_entry(source, reviewer="codex", checkpoint_id="live", root=tmp_path)],
+    )
+
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger,
+        tracked_paths=[source, snapshot],
+        root=tmp_path,
+    )
+
+    assert summary["full_active_code_semantic_review_current"] is True
+    assert summary["full_semantic_review_current"] is False
+    assert summary["tracked_code_file_count"] == 2
+    assert summary["tracked_active_code_file_count"] == 1
+    assert summary["unreviewed_code_file_count"] == 1
+    assert summary["unreviewed_files"][0]["file"] == snapshot.relative_to(tmp_path).as_posix()
 
 
 def test_semantic_review_excludes_its_mutating_ledger_from_source_coverage(tmp_path):

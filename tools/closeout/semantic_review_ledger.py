@@ -29,6 +29,9 @@ DEFAULT_INVENTORY_LEDGER = ROOT / "artifacts" / "current" / "semantic_review_inv
 SEMANTIC_CAMPAIGN_SCHEMA = "aura.closeout.semantic_review_campaign.v1"
 SEMANTIC_INVENTORY_ENTRY_SCHEMA = "aura.closeout.semantic_inventory_entry.v1"
 _MAX_SEMANTIC_ARTIFACT_BYTES = 512 * 1024 * 1024
+NON_ACTIVE_CODE_ROOTS = frozenset(
+    {"archive", "artifacts", "dev_archive", "scratch", "scratchpad"}
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class CurrentFile:
     sha256: str
     text: bool
     code: bool
+    active_code: bool
     line_count: int
     lines: tuple[str, ...]
 
@@ -94,6 +98,13 @@ def _is_code(path: Path) -> bool:
         } or path.name == "Makefile"
 
 
+def _is_active_code(path: Path, *, root: Path = ROOT) -> bool:
+    if not _is_code(path):
+        return False
+    parts = Path(_rel(path, root)).parts
+    return not parts or parts[0] not in NON_ACTIVE_CODE_ROOTS
+
+
 def current_file(path: Path, *, root: Path = ROOT) -> CurrentFile:
     data = path.read_bytes()
     text = _is_text(path, data)
@@ -105,6 +116,7 @@ def current_file(path: Path, *, root: Path = ROOT) -> CurrentFile:
         sha256=_sha256_bytes(data),
         text=text,
         code=_is_code(path),
+        active_code=_is_active_code(path, root=root),
         line_count=len(lines),
         lines=lines,
     )
@@ -338,8 +350,10 @@ def summarize_semantic_reviews(
     reviewed_files: dict[str, dict[str, Any]] = {}
     reviewed_line_count = 0
     reviewed_code_line_count = 0
+    reviewed_active_code_line_count = 0
     fully_reviewed_count = 0
     fully_reviewed_code_count = 0
+    fully_reviewed_active_code_count = 0
     fully_reviewed_files: set[str] = set()
     for file_name, spans in sorted(current_spans.items()):
         info = current_by_path[file_name]
@@ -348,13 +362,17 @@ def summarize_semantic_reviews(
         reviewed_line_count += line_count
         if info.code:
             reviewed_code_line_count += line_count
+        if info.active_code:
+            reviewed_active_code_line_count += line_count
         fully_reviewed = line_count == info.line_count
         fully_reviewed_count += int(fully_reviewed)
         fully_reviewed_code_count += int(fully_reviewed and info.code)
+        fully_reviewed_active_code_count += int(fully_reviewed and info.active_code)
         if fully_reviewed:
             fully_reviewed_files.add(file_name)
         reviewed_files[file_name] = {
             "code": info.code,
+            "active_code": info.active_code,
             "line_count": info.line_count,
             "reviewed_line_count": line_count,
             "fully_reviewed": fully_reviewed,
@@ -383,8 +401,16 @@ def summarize_semantic_reviews(
 
     total_text_lines = sum(info.line_count for info in current_by_path.values())
     total_code_lines = sum(info.line_count for info in current_by_path.values() if info.code)
+    total_active_code_lines = sum(
+        info.line_count for info in current_by_path.values() if info.active_code
+    )
     coverage = reviewed_line_count / total_text_lines if total_text_lines else 0.0
     code_coverage = reviewed_code_line_count / total_code_lines if total_code_lines else 0.0
+    active_code_coverage = (
+        reviewed_active_code_line_count / total_active_code_lines
+        if total_active_code_lines
+        else 0.0
+    )
     unreviewed_files: list[dict[str, Any]] = []
     for file_name, info in sorted(current_by_path.items()):
         reviewed = reviewed_files.get(file_name, {})
@@ -395,6 +421,7 @@ def summarize_semantic_reviews(
             {
                 "file": file_name,
                 "code": info.code,
+                "active_code": info.active_code,
                 "line_count": info.line_count,
                 "reviewed_line_count": reviewed_lines,
                 "missing_line_count": info.line_count - reviewed_lines,
@@ -402,6 +429,7 @@ def summarize_semantic_reviews(
         )
     unreviewed_files.sort(
         key=lambda item: (
+            not bool(item["active_code"]),
             not bool(item["code"]),
             -int(item["missing_line_count"]),
             str(item["file"]),
@@ -416,17 +444,26 @@ def summarize_semantic_reviews(
         "excluded_mutable_evidence_files": excluded_evidence_files,
         "tracked_text_file_count": len(current_by_path),
         "tracked_code_file_count": sum(1 for info in current_by_path.values() if info.code),
+        "tracked_active_code_file_count": sum(
+            1 for info in current_by_path.values() if info.active_code
+        ),
         "tracked_text_line_count": total_text_lines,
         "tracked_code_line_count": total_code_lines,
         "reviewed_file_count": len(reviewed_files),
         "fully_reviewed_text_file_count": fully_reviewed_count,
         "fully_reviewed_code_file_count": fully_reviewed_code_count,
+        "fully_reviewed_active_code_file_count": fully_reviewed_active_code_count,
         "semantic_reviewed_line_count": reviewed_line_count,
         "semantic_reviewed_code_line_count": reviewed_code_line_count,
+        "semantic_reviewed_active_code_line_count": reviewed_active_code_line_count,
         "semantic_review_coverage_ratio": round(coverage, 6),
         "semantic_code_review_coverage_ratio": round(code_coverage, 6),
+        "semantic_active_code_review_coverage_ratio": round(active_code_coverage, 6),
         "unreviewed_file_count": len(unreviewed_files),
         "unreviewed_code_file_count": sum(1 for item in unreviewed_files if item["code"]),
+        "unreviewed_active_code_file_count": sum(
+            1 for item in unreviewed_files if item["active_code"]
+        ),
         "unreviewed_files": unreviewed_files[: max(0, int(unreviewed_limit))],
         "stale_review_count": len(stale_entries),
         "superseded_stale_review_count": len(superseded_stale_entries),
@@ -446,6 +483,12 @@ def summarize_semantic_reviews(
             and fully_reviewed_count == len(current_by_path)
             and reviewed_line_count == total_text_lines
             and not stale_entries
+        ),
+        "full_active_code_semantic_review_current": (
+            bool(total_active_code_lines)
+            and fully_reviewed_active_code_count
+            == sum(1 for info in current_by_path.values() if info.active_code)
+            and reviewed_active_code_line_count == total_active_code_lines
         ),
         "claim_supported": "semantic_review_coverage_status",
         "claim_not_supported": [
@@ -524,6 +567,9 @@ def build_semantic_review_queue(
         "code_only": bool(code_only),
         "unreviewed_file_count": summary["unreviewed_file_count"],
         "unreviewed_code_file_count": summary["unreviewed_code_file_count"],
+        "unreviewed_active_code_file_count": summary[
+            "unreviewed_active_code_file_count"
+        ],
         "files": files[:limit],
     }
 
@@ -666,6 +712,7 @@ def build_semantic_review_campaign(
                         "line_count": last - first + 1,
                         "span_sha256": span_sha256(info.lines, first, last),
                         "code": info.code,
+                        "active_code": info.active_code,
                         "subsystem": _semantic_subsystem(file_name),
                     }
                 )
@@ -674,6 +721,7 @@ def build_semantic_review_campaign(
 
     work_items.sort(
         key=lambda item: (
+            not bool(item["active_code"]),
             not bool(item["code"]),
             str(item["subsystem"]),
             str(item["file"]),

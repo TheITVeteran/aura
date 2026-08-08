@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import runpy
 import sys
 import threading
@@ -78,6 +79,63 @@ def _patch_standalone_context(
 
     monkeypatch.setattr(model_lane_control, "standalone_model_lane", _lane)
     return state
+
+
+def test_rlc_fusion_holds_lane_and_releases_when_model_load_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import mlx_memory_guard
+    from tools import fuse_rlc_candidate
+
+    base = tmp_path / "base"
+    adapter = tmp_path / "run" / "generations" / "sequence-0001"
+    out = tmp_path / "candidate"
+    base.mkdir()
+    adapter.mkdir(parents=True)
+    (base / "config.json").write_text("{}\n", encoding="utf-8")
+    (adapter / "adapter.safetensors").write_bytes(b"adapter")
+    (adapter.parent.parent / "recurrence_adapter_manifest.json").write_text(
+        json.dumps({"lora": {"rank": 2, "alpha": 2}}),
+        encoding="utf-8",
+    )
+
+    events: list[str] = []
+    state = _patch_standalone_context(monkeypatch, events)
+    monkeypatch.setattr(
+        mlx_memory_guard,
+        "mlx_memory_envelope",
+        lambda **_kwargs: contextlib.nullcontext(),
+    )
+
+    def _load(_path: str) -> tuple[object, object]:
+        assert state["active"] is True
+        events.append("load")
+        raise RuntimeError("fusion model load failed")
+
+    _install_fake_mlx(monkeypatch, load=_load)
+    mlx_utils = ModuleType("mlx.utils")
+    mlx_utils.tree_flatten = lambda _value: []  # type: ignore[attr-defined]
+    mlx_utils.tree_unflatten = lambda value: value  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx.utils", mlx_utils)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fuse_rlc_candidate.py",
+            "--model",
+            str(base),
+            "--adapter",
+            str(adapter),
+            "--out",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="fusion model load failed"):
+        fuse_rlc_candidate.main()
+
+    assert events == ["acquire", "load", "release:context"]
 
 
 @pytest.mark.asyncio
