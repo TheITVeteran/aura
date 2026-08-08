@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import base64
 import copy
-import threading
-import os
-import hmac
 import hashlib
+import hmac
 import itertools
 import json
 import math
 import random
 import re
+import secrets
 import statistics
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -1295,26 +1295,23 @@ def _chain_key() -> bytes | None:
         if _CHAIN_KEY_CACHE is not None:
             return _CHAIN_KEY_CACHE
         try:
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
             from core.runtime.state_ownership import state_root
 
             path = state_root() / "keys" / _CHAIN_KEY_NAME
-            if path.exists():
-                material = path.read_bytes()
-                _CHAIN_KEY_CACHE = material if len(material) == 32 else None
-                return _CHAIN_KEY_CACHE
-            path.parent.mkdir(parents=True, exist_ok=True)
-            candidate = os.urandom(32)
-            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with open(fd, "wb") as handle:
-                handle.write(candidate)
-            _CHAIN_KEY_CACHE = candidate
-        except FileExistsError:
-            try:
-                material = (state_root() / "keys" / _CHAIN_KEY_NAME).read_bytes()
-                _CHAIN_KEY_CACHE = material if len(material) == 32 else None
-            except OSError:
-                _CHAIN_KEY_CACHE = None
-        except (ImportError, OSError, ValueError):
+            with local_internal_governed_scope(
+                "frontier_evidence.chain_key",
+                domain="file_write",
+            ):
+                _CHAIN_KEY_CACHE = get_file_write_gateway().provision_private_bytes(
+                    path,
+                    secrets.token_bytes(32),
+                    expected_size=32,
+                    mode=0o600,
+                    source="frontier_evidence.chain_key",
+                )
+        except (ImportError, OSError, RuntimeError, ValueError):
             _CHAIN_KEY_CACHE = None
         return _CHAIN_KEY_CACHE
 
@@ -1328,7 +1325,7 @@ def sign_chain_head(head_sha256: str | None) -> str:
     key = _chain_key()
     if key is None:
         return ""
-    body = f"{EVIDENCE_CHAIN_GENESIS}:{head_sha256 or ''}".encode("utf-8")
+    body = f"{EVIDENCE_CHAIN_GENESIS}:{head_sha256 or ''}".encode()
     return hmac.new(key, body, hashlib.sha256).hexdigest()
 
 

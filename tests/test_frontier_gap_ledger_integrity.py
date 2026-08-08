@@ -7,6 +7,7 @@ by crashing.
 from __future__ import annotations
 
 import asyncio
+import stat
 import threading
 
 import pytest
@@ -22,7 +23,6 @@ from core.brain.frontier_gap import (
     build_battery,
     run_battery,
 )
-
 
 # ── ledger anti-rollback ───────────────────────────────────────────────────
 
@@ -295,3 +295,22 @@ def test_an_unsigned_head_is_not_a_verified_head():
     assert verify_chain_head(head, "") is False
     assert verify_chain_head(head, None) is False
     assert verify_chain_head("d" * 64, signature) is False
+
+
+def test_chain_key_is_private_stable_and_adopted(monkeypatch, tmp_path):
+    from core.brain import frontier_evidence_v5 as evidence
+    from core.runtime import state_ownership
+
+    monkeypatch.setattr(state_ownership, "state_root", lambda: tmp_path)
+    monkeypatch.setattr(evidence, "_CHAIN_KEY_CACHE", None)
+
+    first = evidence._chain_key()
+    assert first is not None
+    assert len(first) == 32
+
+    key_path = tmp_path / "keys" / evidence._CHAIN_KEY_NAME
+    assert key_path.read_bytes() == first
+    assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
+
+    monkeypatch.setattr(evidence, "_CHAIN_KEY_CACHE", None)
+    assert evidence._chain_key() == first
