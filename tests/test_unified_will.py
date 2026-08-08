@@ -914,6 +914,73 @@ class TestActionCoverage:
         ]
         assert len(aura_now_warnings) == 1
 
+    def test_aura_now_defer_warning_deduplicates_volatile_tick_evidence(
+        self,
+        will,
+        monkeypatch,
+        caplog,
+    ):
+        sample = {"tick": 20, "state_hash": "state-20", "drive": 0.606}
+
+        def defer_policy(**_kwargs):
+            return {
+                "outcome": "defer",
+                "constraints": [f"welfare_recovery_drive={sample['drive']:.3f}"],
+                "defers": ["welfare_recovery_required_before_action"],
+                "evidence": {
+                    "state_hash": sample["state_hash"],
+                    "dominant_drive": "coherence",
+                    "workspace_winner": "body_pressure",
+                    "tick": sample["tick"],
+                    "source": "being_runtime",
+                },
+            }
+
+        monkeypatch.setattr(will, "_sample_aura_now_evidence", defer_policy)
+        with caplog.at_level("WARNING", logger="Aura.Will"):
+            first = will.decide(
+                content="generic state mutation",
+                source="being_runtime",
+                domain=ActionDomain.STATE_MUTATION,
+            )
+            sample.update(tick=21, state_hash="state-21", drive=0.604)
+            second = will.decide(
+                content="generic state mutation",
+                source="being_runtime",
+                domain=ActionDomain.STATE_MUTATION,
+            )
+
+        assert first.outcome == WillOutcome.DEFER
+        assert second.outcome == WillOutcome.DEFER
+        assert len([
+            record for record in caplog.records
+            if "Will AuraNow defer:" in record.getMessage()
+        ]) == 1
+
+    def test_aura_now_defer_warning_surfaces_a_new_policy_cause_immediately(
+        self,
+        will,
+    ):
+        first, _ = will._should_log_aura_now_defer_warning(
+            domain=ActionDomain.STATE_MUTATION,
+            source="being_runtime",
+            constraints=["welfare_recovery_drive=0.606"],
+            defers=["welfare_recovery_required_before_action"],
+            evidence={"state_hash": "state-20", "tick": 20},
+            now=100.0,
+        )
+        changed, _ = will._should_log_aura_now_defer_warning(
+            domain=ActionDomain.STATE_MUTATION,
+            source="being_runtime",
+            constraints=["aura_now_controllability_low: controllability=0.100"],
+            defers=["action_controllability_too_low"],
+            evidence={"state_hash": "state-21", "tick": 21},
+            now=101.0,
+        )
+
+        assert first is True
+        assert changed is True
+
     def test_expression_path(self, will):
         d = will.decide(content="I find this fascinating", source="spontaneous",
                         domain=ActionDomain.EXPRESSION)

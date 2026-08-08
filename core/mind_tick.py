@@ -153,25 +153,30 @@ def _authorize_state_mutation_through_will(
     priority: float = 0.5,
     context: dict | None = None,
 ):
-    """Fail-closed Will gate for background state mutation paths."""
+    """Fail-closed canonical admission for background state mutations."""
     try:
-        from core.will import ActionDomain, get_will
+        from core.runtime.action_executor import ActionExecutor
+        from core.will import ActionDomain
 
-        decision = get_will().decide(
-            content=content[:500],
-            source=source,
+        source_text = str(source or "").strip()
+        if not source_text or source_text.casefold() == "unknown":
+            raise ValueError("mind tick state mutation requires an attributable source")
+        bound_context = dict(context or {})
+        declared_source = str(bound_context.get("source") or "").strip()
+        if declared_source and declared_source != source_text:
+            raise ValueError(
+                "mind tick state mutation context source does not match its admission source"
+            )
+        bound_context["source"] = source_text
+        admission = ActionExecutor.authorize_action(
+            action_name=source_text,
+            params={"purpose": str(content or "")[:500]},
+            source=source_text,
             domain=ActionDomain.STATE_MUTATION,
             priority=priority,
-            context=context,
+            context=bound_context,
         )
-        if not decision.is_approved():
-            logger.warning(
-                "MindTick: Will blocked state mutation from %s (%s): %s",
-                source,
-                decision.outcome.value,
-                decision.reason,
-            )
-        return decision
+        return admission.decision
     except _MIND_BOUNDARY_ERRORS as exc:
         _record_mind_degradation(exc)
         logger.warning("MindTick: UnifiedWill unavailable for %s; state mutation blocked: %s", source, exc)

@@ -33,6 +33,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -1751,14 +1752,33 @@ class UnifiedWill:
         """
 
         now_s = time.time() if now is None else float(now)
+        def constraint_family(value: Any) -> str:
+            """Collapse volatile measurements without merging policy causes."""
+
+            text = str(value or "").strip()
+            if not text:
+                return ""
+            return re.split(r"[=:]", text, maxsplit=1)[0].strip()
+
+        # A state hash and the measured values inside constraints change on
+        # every BeingRuntime tick. Including either in the cache key defeated
+        # the rate limiter and emitted the same welfare defer continuously.
+        # Decision receipts retain the exact evidence; the user-visible warning
+        # is keyed by the stable policy cause so a genuinely different defer
+        # still surfaces immediately.
         key_payload = {
             "domain": domain.value,
             "source": str(source or "unknown"),
-            "constraints": sorted(str(item) for item in constraints),
-            "defers": sorted(str(item) for item in defers),
-            "state_hash": str(evidence.get("state_hash") or ""),
-            "dominant_drive": str(evidence.get("dominant_drive") or ""),
-            "workspace_winner": str(evidence.get("workspace_winner") or ""),
+            "constraint_families": sorted(
+                family
+                for family in (constraint_family(item) for item in constraints)
+                if family
+            ),
+            "defer_families": sorted(
+                family
+                for family in (constraint_family(item) for item in defers)
+                if family
+            ),
         }
         key = hashlib.sha256(
             json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode(
